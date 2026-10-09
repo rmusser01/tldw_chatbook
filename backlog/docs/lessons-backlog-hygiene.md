@@ -1251,3 +1251,15 @@ showed it (`2 insertions(+), 12 deletions(-)`); the CLI printed nothing unusual.
 **What to do.** Use `--notes` only on a task with no notes yet. To add to a task that
 has history, use `--append-notes`. After any task edit, check `git diff --stat` on the
 file: deletions you did not intend mean the edit replaced something.
+
+
+## TASK-34406: Windows CLI success did not preserve multiline arguments
+
+**Incident (2026-10-06).** Python subprocess invoked the Windows `backlog.cmd`
+wrapper with multiline `--append-plan` and `--append-notes` arguments. It returned
+exit0, but reading the task showed only the first plan line and no complete
+verification note. The complete before-implementation text remained in the
+evidence scripts. Replaying cohesive single-line arguments through the same CLI
+and verifying both exact strings in the saved task restored the full records.
+Do not treat CLI exit0 as persistence evidence for multiline arguments through
+a Windows command wrapper; read back the complete intended plan and notes.

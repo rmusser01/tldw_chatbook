@@ -1174,7 +1174,7 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
             "value": ConsoleSettingsReadiness("Ready", "", True),
         }
         monkeypatch.setattr(
-            console,
+            console._context_spend,
             "_build_console_settings_summary_state",
             lambda: ConsoleSettingsSummaryState(
                 provider_row="Provider: test",

@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, fields, is_dataclass
 from functools import wraps
 from pathlib import Path
+from types import MethodType
 
 from tldw_chatbook.Utils.platform_files import os
 
@@ -331,6 +332,139 @@ def _identity(path):
     return info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)
 
 
+_SCALAR_IDENTITY = _identity
+_WINDOWS_METADATA_MODULE = sys.modules.get("tldw_chatbook.Utils.windows_files")
+_WINDOWS_METADATA_CLASS = (
+    vars(_WINDOWS_METADATA_MODULE).get("_WINDOWS_METADATA_CLASS_ORIGINAL")
+    if _WINDOWS_METADATA_MODULE is not None
+    else None
+)
+_WINDOWS_METADATA_DEFINITIONS = (
+    vars(_WINDOWS_METADATA_MODULE).get("_WINDOWS_METADATA_METHODS_ORIGINAL", ())
+    if _WINDOWS_METADATA_MODULE is not None
+    else ()
+)
+_WINDOWS_METADATA_CLOSE_ERROR = (
+    vars(_WINDOWS_METADATA_MODULE).get("_WINDOWS_METADATA_CLOSE_ERROR_ORIGINAL")
+    if _WINDOWS_METADATA_MODULE is not None
+    else None
+)
+_WINDOWS_METADATA_FACADE = (
+    os
+    if os.name == "nt"
+    and _WINDOWS_METADATA_CLASS is not None
+    and type(os) is _WINDOWS_METADATA_CLASS
+    else None
+)
+
+
+def _windows_metadata_descriptors_current():
+    return (
+        _WINDOWS_METADATA_CLASS is not None
+        and sys.modules.get("tldw_chatbook.Utils.windows_files")
+        is _WINDOWS_METADATA_MODULE
+        and vars(_WINDOWS_METADATA_MODULE).get("WindowsOS") is _WINDOWS_METADATA_CLASS
+        and vars(_WINDOWS_METADATA_MODULE).get("_WINDOWS_METADATA_CLASS_ORIGINAL")
+        is _WINDOWS_METADATA_CLASS
+        and vars(_WINDOWS_METADATA_MODULE).get("_WINDOWS_METADATA_METHODS_ORIGINAL")
+        is _WINDOWS_METADATA_DEFINITIONS
+        and vars(_WINDOWS_METADATA_MODULE).get("_AdmissionMetadataCloseError")
+        is _WINDOWS_METADATA_CLOSE_ERROR
+        and vars(_WINDOWS_METADATA_MODULE).get("_WINDOWS_METADATA_CLOSE_ERROR_ORIGINAL")
+        is _WINDOWS_METADATA_CLOSE_ERROR
+        and all(
+            vars(_WINDOWS_METADATA_CLASS).get(name) is function
+            for name, function in _WINDOWS_METADATA_DEFINITIONS
+        )
+    )
+
+
+_WINDOWS_METADATA_BINDINGS = (
+    tuple(
+        (
+            name,
+            function,
+            object.__getattribute__(_WINDOWS_METADATA_FACADE, "__dict__").get(name),
+        )
+        for name, function in _WINDOWS_METADATA_DEFINITIONS
+    )
+    if _WINDOWS_METADATA_FACADE is not None and _windows_metadata_descriptors_current()
+    else ()
+)
+
+
+def _windows_metadata_current():
+    if (
+        _WINDOWS_METADATA_FACADE is None
+        or os is not _WINDOWS_METADATA_FACADE
+        or type(os) is not _WINDOWS_METADATA_CLASS
+        or not _windows_metadata_descriptors_current()
+        or not _WINDOWS_METADATA_BINDINGS
+        or _identity is not _SCALAR_IDENTITY
+    ):
+        return False
+    members = object.__getattribute__(os, "__dict__")
+    return all(
+        type(current) is MethodType
+        and current.__self__ is _WINDOWS_METADATA_FACADE
+        and current.__func__ is function
+        for name, function, bound in _WINDOWS_METADATA_BINDINGS
+        for current in (members.get(name),)
+    )
+
+
+def _retain_metadata_close(state, error):
+    if type(error) is not _WINDOWS_METADATA_CLOSE_ERROR:
+        raise error
+    with storage._changed:
+        if (
+            type(state) is not _NativeState
+            or state not in _states
+            or state not in storage._raw_operations
+        ):
+            raise error
+        state.failed_metadata_handles.extend(error.failed_handles)
+        state.uncertain = True
+        storage._changed.notify_all()
+    raise VisualIdentityNativeError(state) from error
+
+
+def _observe_identities(paths, state):
+    """Observe one fresh fixed set; optional native data grants no authority."""
+    paths = tuple(dict.fromkeys(paths))
+    if paths and _windows_metadata_current():
+        snapshot = _WINDOWS_METADATA_BINDINGS[-1][2]
+        observed = None
+        try:
+            observed = snapshot(paths)
+        except OSError as error:
+            if type(error) is _WINDOWS_METADATA_CLOSE_ERROR:
+                _retain_metadata_close(state, error)
+        except ValueError:
+            pass
+        if not _windows_metadata_current():
+            raise bootstrap.RecoveryRequired(
+                "visual_identity_native_capability_changed"
+            )
+        if observed is not None:
+            return {
+                path: None
+                if observed[path] is None
+                else (
+                    observed[path][0].st_dev,
+                    observed[path][0].st_ino,
+                    stat.S_IFMT(observed[path][0].st_mode),
+                )
+                for path in paths
+            }
+    try:
+        return {path: _identity(path) for path in paths}
+    except OSError as error:
+        if type(error) is _WINDOWS_METADATA_CLOSE_ERROR:
+            _retain_metadata_close(state, error)
+        raise
+
+
 @dataclass(eq=False)
 class _NativeState:
     source: object
@@ -346,6 +480,7 @@ class _NativeState:
     descriptors: dict = field(default_factory=dict)
     streams: list = field(default_factory=list)
     failed_closes: set = field(default_factory=set)
+    failed_metadata_handles: list = field(default_factory=list)
     leases: list = field(default_factory=list)
     holds: list = field(default_factory=list)
     uncertain: bool = False
@@ -433,13 +568,18 @@ def _check_path(state, selected, *, writing=False):
         writing and selected not in state.writable
     ):
         raise bootstrap.RecoveryRequired("visual_identity_path_outside_scope")
-    expected = state.expectations[selected]
-    if _identity(selected) != expected:
+    members = (
+        selected,
+        *(parent for parent in selected.parents if parent in state.expectations),
+    )
+    observed = _observe_identities(members, state)
+    check(state)
+    if observed[selected] != state.expectations[selected]:
         raise bootstrap.RecoveryRequired("visual_identity_file_identity_changed")
     for parent in selected.parents:
         if (
             parent in state.expectations
-            and _identity(parent) != state.expectations[parent]
+            and observed[parent] != state.expectations[parent]
         ):
             raise bootstrap.RecoveryRequired("visual_identity_parent_identity_changed")
 
@@ -509,17 +649,34 @@ def files(
                     )
                 _states[state] = state
                 storage._raw_operations.add(state)
-            for p in paths + directories:
-                for ancestor in (p, *p.parents):
-                    if ancestor not in state.expectations:
-                        state.expectations[ancestor] = _identity(ancestor)
+            members = tuple(
+                dict.fromkeys(
+                    ancestor
+                    for p in paths + directories
+                    for ancestor in (p, *p.parents)
+                )
+            )
+            attempt.check()
+            state.expectations = _observe_identities(members, state)
+            attempt.check()
+            if source is not None:
+                _validate_source(source)
             for p in (paths + directories) or (None,):
                 attempt.check()
-                lease = storage.acquire_storage(p)
+                try:
+                    lease = storage.acquire_storage(p)
+                except OSError as error:
+                    if type(error) is _WINDOWS_METADATA_CLOSE_ERROR:
+                        _retain_metadata_close(state, error)
+                    raise
                 state.leases.append(lease)
                 state.holds.append(storage._holds.get(lease._key))
+            observed = _observe_identities(state.expectations, state)
+            attempt.check()
+            if source is not None:
+                _validate_source(source)
             for p, identity in state.expectations.items():
-                if _identity(p) != identity:
+                if observed[p] != identity:
                     raise bootstrap.RecoveryRequired(
                         "visual_identity_preflight_changed"
                     )

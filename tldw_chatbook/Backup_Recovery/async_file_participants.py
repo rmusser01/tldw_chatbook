@@ -33,7 +33,17 @@ class _FileJob:
     def __init__(self, source, route):
         self._attempt = storage._Acquisition()
         try:
-            self.selected, installed = raw._async_source_selection(source, route)
+            self._deferred_history = False
+            if route == "prompt_history":
+                from ..Chat.prompt_history import PromptHistory
+
+                self._deferred_history = (
+                    type(source) is PromptHistory and source._default_path
+                )
+            if self._deferred_history:
+                self.selected, installed = None, False
+            else:
+                self.selected, installed = raw._async_source_selection(source, route)
             self._attempt.check()
             if installed and raw._pinned_io_available():
                 participant = raw._raw_participant(source)
@@ -105,7 +115,18 @@ class _FileJob:
             if self._route == "prompt_history":
                 from ..Chat.prompt_history import PromptHistory
 
-                value = PromptHistory._history_io(self._source, self.selected, payload)
+                if self._deferred_history:
+                    PromptHistory._resolve_default_path(self._source)
+                    self.selected = self._source.path
+                    # Select and admit once at the actual file operation. Keep
+                    # the job's default origin even if source flags later change.
+                    value = PromptHistory._history_io(
+                        self._source, self.selected, payload, _require_installed=True
+                    )
+                else:
+                    value = PromptHistory._history_io(
+                        self._source, self.selected, payload
+                    )
             elif self._route == "note_templates":
                 from ..Event_Handlers.note_ingest_events import _import_template_files
 

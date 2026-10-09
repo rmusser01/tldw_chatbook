@@ -87,6 +87,11 @@ Code starts at fetched dev `8f83422dde2a5b95da648882b8f7e09da5b41f08` in
 - ADR required: no new ADR. ADR path: backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md. Reason: complete its existing exact-request retry contract; provider followups implement ADR-179.
 
 Broader targeted trace runtime/service/system-prompt run: **160 passed, two failed**. Both failing cases are `test_failed_rollback_releases_observers_and_reports_ambiguous_outcome[False/True]`: the unchanged test constructs a transaction manager and exits without entering, so `_maintenance_context` is absent and masks its intended rollback/commit error. The same two failures reproduced after temporarily restoring trace_service from origin/dev; the DB and test files are byte-identical to origin/dev. The repaired service was restored afterward. These pre-existing test-fixture failures were not silently excluded or repaired in this provider PR.
+## Historical PR #3017 resyncs
+
+These records preserve the original PR heads and their then-current limits.
+The current combined UAT followups are recorded in TASK-34367.1 through .5
+and TASK-34368, whose additional scope remains In Progress for final integration.
 
 Further dev resync: conflict-free rebases onto `a78a9a900b` and then `8c4dfe59a2` preserve the reviewed production/test patches. First rebase: 259 targeted passes. Console-command base: 147 passes and six generation-template profile-fixture failures, all six reproduced identically on exact dev. Both derived-artifact preflights pass. Full evidence and failed node names are in the provider audit; no full suite or new paid live requests. Follow newly merged AGENTS.md and ADR-218 merge rules (rebase with lease, disable auto before pushing, current-head Qodo review before re-arming).
 

@@ -5148,7 +5148,9 @@ class AgentService:
         # Two-phase: the writer was constructed before any run id existed.
         # Only the PRIMARY run binds; a child finds it already bound.
         if agent_kind == AGENT_KIND_PRIMARY:
-            writer.bind(run_id)
+            from .run_log import bind_scoped_log_writer
+
+            bind_scoped_log_writer(writer, run_id)
         started = self.clock()
         from .automatic_work_budget import AutomaticWorkLimits, AutomaticWorkRefused
         from .automatic_work_runtime import current_automatic_work
@@ -9210,6 +9212,9 @@ class AgentService:
             not a barrier -- it fsyncs the final segment and leaves the
             writer active, so a survivor's later appends still land.
         """
+        from .run_log import check_scoped_log_service
+
+        check_scoped_log_service(self)
         if requested_run_id is not None and (
             not isinstance(requested_run_id, str)
             or not requested_run_id
@@ -9273,7 +9278,10 @@ class AgentService:
         # didn't pass one to the constructor (i.e. every production caller
         # today), so this builds a new, unbound writer each call; an
         # injected writer is honored unchanged.
-        if self._injected_run_log_writer is not None:
+        source = check_scoped_log_service(self)
+        if source is not None:
+            self.run_log_writer = source.writer
+        elif self._injected_run_log_writer is not None:
             self.run_log_writer = self._injected_run_log_writer
         else:
             from .run_log import RunLogWriter as _RunLogWriter
@@ -9524,3 +9532,17 @@ class AgentService:
             return False
         self._cancel_fleet_handles([handle_id])
         return True
+
+
+# The source shortcut never learns a replacement wrapper on first use.
+_SCOPED_RUN_TURN_ANCHOR = (
+    sys.modules[__name__],
+    AgentService,
+    AgentService.run_turn,
+    AgentService.run_turn.__wrapped__,
+    AgentService.run_turn.__code__,
+    AgentService.run_turn.__globals__,
+    AgentService.run_turn.__wrapped__.__code__,
+    AgentService.run_turn.__wrapped__.__globals__,
+    AgentService.run_turn.__closure__,
+)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import sqlite3
 import threading
 import time
@@ -842,3 +843,168 @@ COMMIT;
                 """,
                 (datetime.now(timezone.utc).isoformat(),),
             )
+
+
+# Capture the actual defining guard/context factories and body, without
+# learning a callback from a later caller or unwrapping a customized reader.
+_workspace_connection_factory = vars(WorkspaceDB)["connection"]
+_workspace_counted_connection = dict(
+    zip(
+        _workspace_connection_factory.__code__.co_freevars,
+        _workspace_connection_factory.__closure__,
+    )
+)["func"].cell_contents
+_workspace_native_connection_factory = dict(
+    zip(
+        _workspace_counted_connection.__code__.co_freevars,
+        _workspace_counted_connection.__closure__,
+    )
+)["function"].cell_contents
+_workspace_transaction_factory = vars(WorkspaceDB)["transaction"]
+_workspace_counted_transaction = dict(
+    zip(
+        _workspace_transaction_factory.__code__.co_freevars,
+        _workspace_transaction_factory.__closure__,
+    )
+)["func"].cell_contents
+_workspace_native_transaction_factory = dict(
+    zip(
+        _workspace_counted_transaction.__code__.co_freevars,
+        _workspace_counted_transaction.__closure__,
+    )
+)["function"].cell_contents
+_WORKSPACE_COMPOSITE_CONNECTION_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    WorkspaceDB,
+    tuple(
+        (name, vars(WorkspaceDB)[name])
+        for name in (
+            "connection",
+            "transaction",
+            "close",
+            "_held_connection",
+            "_get_connection",
+        )
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        )
+        for function in (
+            _workspace_connection_factory,
+            _workspace_counted_connection,
+            _workspace_native_connection_factory,
+            _workspace_native_connection_factory.__wrapped__,
+            WorkspaceDB.close,
+            _workspace_transaction_factory,
+            _workspace_counted_transaction,
+            _workspace_native_transaction_factory,
+            _workspace_native_transaction_factory.__wrapped__,
+            WorkspaceDB._held_connection,
+            WorkspaceDB._held_connection.__wrapped__,
+            WorkspaceDB._get_connection,
+            WorkspaceDB._get_connection.__wrapped__,
+        )
+    ),
+    inspect.getattr_static(WorkspaceDB, "__getattribute__"),
+)
+
+
+# Original explicit core-close custody used only for a captured composite handle.
+_WORKSPACE_COMPOSITE_CLOSING_SOURCE = (
+    _core_closing.__wrapped__.__globals__,
+    _core_closing.__wrapped__.__globals__["__file__"],
+    _core_closing.__wrapped__.__globals__["__spec__"],
+    getattr(_core_closing.__wrapped__.__globals__["__spec__"], "origin", None),
+    _core_closing,
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        )
+        for function in (_core_closing, _core_closing.__wrapped__)
+    ),
+)
+
+
+# Defining callbacks for the optional finite legacy run-log probe only.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "WorkspaceDB", WorkspaceDB),
+        *(
+            (WorkspaceDB, name, vars(WorkspaceDB)[name])
+            for name in (
+                "__init__",
+                "_initialize_schema",
+                "_get_connection",
+                "_held_connection",
+                "connection",
+                "close",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            (globals(), "WorkspaceDB", WorkspaceDB),
+            *(
+                (WorkspaceDB, name, vars(WorkspaceDB)[name])
+                for name in (
+                    "__init__",
+                    "_initialize_schema",
+                    "_get_connection",
+                    "_held_connection",
+                    "connection",
+                    "close",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)

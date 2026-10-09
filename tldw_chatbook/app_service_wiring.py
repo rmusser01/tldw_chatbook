@@ -25,7 +25,7 @@ import os
 import threading
 import time
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, Mapping  # noqa: UP035
+from typing import TYPE_CHECKING, Any, Callable, Mapping, NamedTuple  # noqa: UP035
 
 from loguru import logger
 from textual.worker import Worker
@@ -363,6 +363,28 @@ def _disabled_builtin_skills(config: Any) -> frozenset[str]:
     )
 
     return disabled_builtins_from_config(config)
+
+
+def _read_app_disabled_builtin_skills(app: object) -> frozenset[str]:
+    """Read the current stock app config without invoking a UI callback."""
+    return _disabled_builtin_skills(getattr(app, "app_config", None))
+
+
+_STOCK_DISABLED_BUILTINS_READER = (
+    _read_app_disabled_builtin_skills,
+    _read_app_disabled_builtin_skills.__code__,
+)
+
+
+def _read_app_published_plugin_service(app: object) -> Any:
+    """Return only the already resident plugin metadata owner."""
+    return getattr(app, "_plugin_service", None)
+
+
+_STOCK_PUBLISHED_PLUGIN_READER = (
+    _read_app_published_plugin_service,
+    _read_app_published_plugin_service.__code__,
+)
 
 
 def _build_terminal_backend() -> "TerminalBackend":
@@ -754,6 +776,400 @@ class _DeferredCollectionsCaptureScope:
 
     def __delattr__(self, name: str) -> None:
         delattr(self._resolve(), name)
+
+
+class _CollectionsSetupObsolete(RuntimeError):
+    """The original deferred initializer no longer owns publication."""
+
+
+def _collections_setup_sources_current(sources):
+    import inspect
+    import sys
+
+    for namespace, entries in sources:
+        module = sys.modules.get(namespace["__name__"])
+        if module is None or vars(module) is not namespace:
+            return False
+        for owner, name, expected, records in entries:
+            actual = (
+                owner.get(name)
+                if type(owner) is dict  # noqa: E721 - exact stock compatibility boundary
+                else inspect.getattr_static(owner, name, None)
+            )
+            if actual is not expected:
+                return False
+            for (
+                function,
+                code,
+                defining,
+                defaults,
+                keywords,
+                items,
+                closure,
+                cells,
+                wrapped,
+            ) in records:
+                defining_module = sys.modules.get(defining["__name__"])
+                if (
+                    defining_module is None
+                    or vars(defining_module) is not defining
+                    or function.__code__ is not code
+                    or function.__globals__ is not defining
+                    or function.__defaults__ is not defaults
+                    or function.__kwdefaults__ is not keywords
+                    or len(keywords or {}) != len(items)
+                    or any(
+                        key not in (keywords or {}) or keywords[key] is not value
+                        for key, value in items
+                    )
+                    or function.__closure__ is not closure
+                    or any(cell.cell_contents is not value for cell, value in cells)
+                    or vars(function).get("__wrapped__") is not wrapped
+                ):
+                    return False
+    return True
+
+
+def _capture_deferred_collections_setup(app):
+    import inspect
+    import sys
+    from types import SimpleNamespace
+    from tldw_chatbook import config
+    from tldw_chatbook.DB import Library_Collections_DB
+    from tldw_chatbook.Library import (
+        collections_capture_repository,
+        collections_capture_service,
+        collections_legacy_recovery,
+        collections_offline_store,
+    )
+
+    app_module = sys.modules["tldw_chatbook.app"]
+    app_type, defining, factory, factory_code, _runtime_type = (
+        app_module._CONSOLE_SKILL_APP_SOURCE
+    )
+    fields = vars(app)
+    database = fields.get("local_library_collections_db")
+    scope = fields.get("collections_capture_scope_service")
+    if (
+        defining is not vars(app_module)
+        or app_module.TldwCli is not app_type
+        or type(app) is not app_type
+        or factory.__code__ is not factory_code
+        or inspect.getattr_static(app, "_create_deferred_startup_task") is not factory
+        or type(database) is not LibraryCollectionsDB
+        or database.is_memory_db
+        or type(scope) is not _DeferredCollectionsCaptureScope
+        or fields.get("_collections_capture_initializer_closed", False)
+        or fields.get("_shutting_down", False)
+        or fields.get("_exit", False)
+        or type(fields.get("_deferred_startup_tasks")) is not set  # noqa: E721 - exact stock compatibility boundary
+        or any(
+            fields.get(name) is not None for name in _COLLECTIONS_CAPTURE_RESULT_FIELDS
+        )
+    ):
+        return None
+    sources = (
+        _COLLECTIONS_SETUP_SOURCE,
+        config._COLLECTIONS_SETUP_SOURCE,
+        Library_Collections_DB._COLLECTIONS_SETUP_SOURCE,
+        collections_capture_repository._COLLECTIONS_SETUP_SOURCE,
+        collections_capture_service._COLLECTIONS_SETUP_SOURCE,
+        collections_legacy_recovery._COLLECTIONS_SETUP_SOURCE,
+        collections_offline_store._COLLECTIONS_SETUP_SOURCE,
+    )
+    checker, checker_code = _COLLECTIONS_SOURCE_CHECKER
+    if (
+        _collections_setup_sources_current is not checker
+        or checker.__code__ is not checker_code
+        or not checker(sources)
+    ):
+        return None
+    receivers = tuple(
+        (app, name, original) for name, original in _COLLECTIONS_APP_METHODS
+    )
+    receivers += ((app, "_create_deferred_startup_task", factory),)
+    receivers += tuple(
+        (database, name, original)
+        for owner, name, original, _records in Library_Collections_DB._COLLECTIONS_SETUP_SOURCE[
+            1
+        ]
+        if owner is LibraryCollectionsDB
+    )
+    if any(
+        inspect.getattr_static(owner, name, None) is not original
+        for owner, name, original in receivers
+    ):
+        return None
+    policy = app.runtime_policy
+    if policy is None:
+        return None
+    request = SimpleNamespace(
+        app=app,
+        scope=scope,
+        database=database,
+        local=database._thread_local,
+        path=database.db_path,
+        participant=database._maintenance_participant,
+        policy=policy,
+        state=policy.state,
+        identity=config.current_config_identity(),
+        sources=sources,
+        receivers=receivers,
+        factory=factory,
+        factory_code=factory_code,
+        reads=set(),
+        initializer=None,
+        loop=asyncio.get_running_loop(),
+        thread=threading.current_thread(),
+    )
+    require = _require_collections_setup_current
+    checker = _collections_setup_sources_current
+    require_code, checker_code = require.__code__, checker.__code__
+
+    def current():
+        if (
+            globals().get("_require_collections_setup_current") is not require
+            or require.__code__ is not require_code
+            or globals().get("_collections_setup_sources_current") is not checker
+            or checker.__code__ is not checker_code
+        ):
+            raise _CollectionsSetupObsolete("collections_capture_setup_source_changed")
+        require(request)
+
+    request.require_current = current
+    return request
+
+
+def _require_collections_setup_current(request):
+    import inspect
+    from tldw_chatbook import config
+
+    app, database = request.app, request.database
+    if (
+        vars(app).get("_collections_capture_setup") is not request
+        or vars(app).get("_collections_capture_initializer_task")
+        is not request.initializer
+        or type(request.initializer) is not _COLLECTIONS_TASK
+        or request.initializer.get_loop() is not request.loop
+        or request.factory.__code__ is not request.factory_code
+        or vars(app).get("_collections_capture_initializer_closed", False)
+        or vars(app).get("_shutting_down", False)
+        or vars(app).get("_exit", False)
+        or any(
+            inspect.getattr_static(owner, name, None) is not original
+            for owner, name, original in request.receivers
+        )
+        or app.collections_capture_scope_service is not request.scope
+        or app.local_library_collections_db is not database
+        or database._thread_local is not request.local
+        or database.db_path != request.path
+        or database._maintenance_participant is not request.participant
+        or app.runtime_policy is not request.policy
+        or request.policy.state is not request.state
+        or not _collections_setup_sources_current(request.sources)
+        or config.current_config_identity() != request.identity
+        or any(
+            vars(app).get(name) is not None
+            for name in _COLLECTIONS_CAPTURE_RESULT_FIELDS
+        )
+    ):
+        raise _CollectionsSetupObsolete("collections_capture_setup_changed")
+    if threading.current_thread() is request.thread and (
+        asyncio.get_running_loop() is not request.loop
+        or asyncio.current_task() is not request.initializer
+    ):
+        raise _CollectionsSetupObsolete("collections_capture_initializer_changed")
+
+
+def _build_deferred_collections_capture_parts(request):
+    from tldw_chatbook.Backup_Recovery.participants import (
+        _core_cached_connection,
+        _core_closing,
+    )
+    from tldw_chatbook.Utils.private_paths import lexical_path
+
+    request.require_current()
+    database_path = get_library_collections_db_path()
+    request.require_current()
+    if lexical_path(database_path) != request.path:
+        raise _CollectionsSetupObsolete(
+            "collections_capture_database_selection_changed"
+        )
+    data_root = get_user_data_dir()
+    request.require_current()
+    database, local = request.database, request.local
+    previous = _core_cached_connection(database, getattr(local, "conn", None))
+    connection = None
+    try:
+        request.require_current()
+        connection = database._held_connection()
+        request.require_current()
+        # Each original repository/filesystem call keeps its own admission.
+        # A database-only outer scope would reject the separate archive root.
+        return _collections_capture_parts(
+            database,
+            database_path,
+            data_root,
+            require_current=request.require_current,
+        )
+    finally:
+        if connection is not None and connection is not previous:
+            with _core_closing(database, connection) as allowed:
+                if not allowed:
+                    raise RuntimeError("collections_capture_connection_not_retired")
+                connection.close()
+                if getattr(local, "conn", None) is connection:
+                    local.conn = None
+
+
+async def _initialize_deferred_collections_capture(request):
+    app = request.app
+    try:
+        parts = await _COLLECTIONS_RUN_PREPARATION(
+            lambda: _build_deferred_collections_capture_parts(request),
+            creator=app,
+            session_id=None,
+            reads=request.reads,
+            require_current=request.require_current,
+        )
+        request.require_current()
+        scope = _collections_capture_scope(app)
+        service = _local_collections_capture_service(parts)
+        request.require_current()
+    except _CollectionsSetupObsolete:
+        return
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        try:
+            request.require_current()
+        except _CollectionsSetupObsolete:
+            return
+        app.collections_capture_scope_service = _collections_capture_scope(app)
+        logger.opt(exception=True).warning(
+            "Local Collections capture service unavailable during app wiring"
+        )
+        return
+    else:
+        app.collections_capture_scope_service = scope
+        _publish_collections_capture_parts(app, parts, service)
+        app._create_deferred_startup_task(
+            app._reconcile_collections_capture_startup(),
+            name="deferred_collections_capture_reconciliation",
+        )
+    finally:
+        if vars(app).get("_collections_capture_setup") is request:
+            app._collections_capture_setup = None
+
+
+async def _retire_deferred_collections_capture(app):
+    app._collections_capture_initializer_closed = True
+    task = vars(app).get("_collections_capture_initializer_task")
+    cancellation = None
+    if task is None:
+        return None
+    if not task.done():
+        task.cancel()
+    while not task.done():
+        try:
+            # wait does not propagate child cancellation or cancel the child.
+            await asyncio.wait({task})
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+    if not task.cancelled():
+        task.result()
+    return cancellation
+
+
+def _collections_capture_scope(app):
+    from tldw_chatbook.Library.collections_capture_service import (
+        CollectionsCaptureScopeService,
+    )
+
+    return CollectionsCaptureScopeService(
+        resolve_media_reference=functools.partial(
+            _resolve_collections_media_reference, app
+        ),
+        resolve_note_reference=functools.partial(
+            _resolve_collections_note_reference, app
+        ),
+    )
+
+
+def _collections_capture_parts(
+    database, database_path, data_root, *, require_current=None
+):
+    from tldw_chatbook.Library.collections_capture_repository import (
+        CollectionsCaptureRepository,
+    )
+    from tldw_chatbook.Library.collections_capture_service import (
+        build_local_capture_authority,
+    )
+    from tldw_chatbook.Library.collections_legacy_recovery import (
+        LegacyCollectionsRecovery,
+        LegacyCollectionsRecoveryError,
+    )
+    from tldw_chatbook.Library.collections_offline_store import CollectionsOfflineStore
+
+    if require_current is not None:
+        require_current()
+    authority = build_local_capture_authority(
+        profile_id=str(data_root.resolve()),
+        database_identity=str(database_path.resolve()),
+    )
+    if require_current is not None:
+        require_current()
+    repository = CollectionsCaptureRepository(database, authority_key=authority.key)
+    if require_current is not None:
+        require_current()
+    offline_store = CollectionsOfflineStore(
+        repository,
+        data_root=data_root,
+        authority_fingerprint=authority.fingerprint,
+    )
+    if require_current is not None:
+        require_current()
+    legacy_recovery = LegacyCollectionsRecovery(database)
+    try:
+        legacy_recovery.list_collections(page=1, size=1)
+        legacy_recovery_available = True
+    except LegacyCollectionsRecoveryError:
+        legacy_recovery_available = False
+    if require_current is not None:
+        require_current()
+    return (
+        authority,
+        repository,
+        offline_store,
+        legacy_recovery,
+        legacy_recovery_available,
+    )
+
+
+def _local_collections_capture_service(parts):
+    from tldw_chatbook.Library.collections_capture_service import (
+        LocalCollectionsCaptureService,
+    )
+
+    authority, repository, offline_store, legacy_recovery, legacy_available = parts
+    service = LocalCollectionsCaptureService(
+        authority,
+        repository,
+        offline_store=offline_store,
+        extractor=_extract_collections_article,
+        legacy_recovery_available=legacy_available,
+    )
+    return service
+
+
+def _publish_collections_capture_parts(app, parts, service):
+    authority, repository, offline_store, legacy_recovery, _legacy_available = parts
+    app.collections_capture_repository = repository
+    app.collections_offline_store = offline_store
+    app.collections_legacy_recovery_service = legacy_recovery
+    app.local_collections_capture_authority = authority
+    app.local_collections_capture_service = service
+    TldwCli._activate_collections_capture_authority(app)
 
 
 class ServiceWiringMixin:
@@ -1218,8 +1634,8 @@ class ServiceWiringMixin:
                 plugin_service_factory=self._build_plugin_service,
                 # In-memory config read: this runs on every skills read,
                 # including the Console's per-send capture.
-                builtin_disabled_loader=lambda: _disabled_builtin_skills(
-                    getattr(self, "app_config", None)
+                builtin_disabled_loader=partial(
+                    _read_app_disabled_builtin_skills, self
                 ),
             )
         if self._skills_scope_service is None:
@@ -1236,7 +1652,13 @@ class ServiceWiringMixin:
             self._local_skill_trust_service = self._build_local_skill_trust_service()
         return self._local_skill_trust_service
 
-    async def ensure_local_skill_trust_service(self) -> Any:
+    async def ensure_local_skill_trust_service(
+        self,
+        *,
+        _source_current: Callable[[], bool] | None = None,
+        _owner_current: Callable[[Any], bool] | None = None,
+        _read_observers: tuple[set, ...] = (),
+    ) -> Any:
         """First-use trust service build, OFF the UI event loop (task-33081).
 
         The build performs OS keyring backend discovery (SecretService/D-Bus
@@ -1249,13 +1671,41 @@ class ServiceWiringMixin:
             The shared local skill trust service, built once; concurrent
             first callers await the same build under the build lock.
         """
+        if _owner_current is not None and _owner_current() is not True:
+            raise RuntimeError("console_skill_trust_owner_changed")
         if self._local_skill_trust_service is not None:
             return self._local_skill_trust_service
         async with self._local_skill_trust_service_build_lock:
+            if (
+                _owner_current is not None
+                and _owner_current(self._local_skill_trust_service) is not True
+            ):
+                raise RuntimeError("console_skill_trust_owner_changed")
             if self._local_skill_trust_service is None:
-                self._local_skill_trust_service = await asyncio.to_thread(
-                    self._build_local_skill_trust_service
+                from .Chat.console_preparation_reads import run_preparation_read
+
+                # Hold singleflight ownership until the original executor
+                # callback physically returns, even through repeated cancel.
+                def require_current():
+                    if _source_current is not None and _source_current() is not True:
+                        raise RuntimeError("console_skill_trust_source_changed")
+
+                service = await run_preparation_read(
+                    self._build_local_skill_trust_service,
+                    creator=self,
+                    session_id=None,
+                    reads=set(),
+                    observers=_read_observers,
+                    require_current=require_current,
                 )
+                if (
+                    _owner_current is not None
+                    and _owner_current(self._local_skill_trust_service) is not True
+                ):
+                    raise RuntimeError("console_skill_trust_owner_changed")
+                # Preserve a ready/injected winner installed during the build.
+                if self._local_skill_trust_service is None:
+                    self._local_skill_trust_service = service
             return self._local_skill_trust_service
 
     @local_skill_trust_service.setter
@@ -1435,6 +1885,33 @@ class ServiceWiringMixin:
             server_service=self.server_chat_dictionary_service,
             policy_enforcer=self.service_policy_enforcer,
         )
+
+    async def _run_actor_pack_recovery_owned(self, callback: Callable[[], None]) -> None:
+        """Keep the original startup callback alive until its thread retires."""
+        from .Chat.console_preparation_reads import run_preparation_read
+
+        def require_open() -> None:
+            if self._actor_pack_recovery_closed:
+                raise asyncio.CancelledError
+
+        await run_preparation_read(
+            callback,
+            creator=self,
+            session_id=None,
+            reads=self._actor_pack_recovery_reads,
+            require_current=require_open,
+        )
+
+    async def _shutdown_actor_pack_recovery(self) -> asyncio.CancelledError | None:
+        """Close startup admission and drain its exact physical callbacks."""
+        self._actor_pack_recovery_closed = True
+        reads = getattr(self, "_actor_pack_recovery_reads", None)
+        if reads:
+            from .Chat.console_preparation_reads import drain_preparation_reads
+
+            if await drain_preparation_reads(reads):
+                return asyncio.CancelledError()
+        return None
 
     def ensure_actor_pack_recovery(self) -> None:
         """Run Actor Pack crash recovery once per app session (task-21106).
@@ -1819,7 +2296,6 @@ class ServiceWiringMixin:
         registry = getattr(self, "workspace_registry_service", None)
         persona_service = getattr(self, "local_character_persona_service", None)
         unified_service = getattr(self, "unified_mcp_service", None)
-        permission_store = getattr(unified_service, "permission_store", None)
         if registry is not None:
             guard = registry.tool_profile_guard
             if (
@@ -1830,6 +2306,7 @@ class ServiceWiringMixin:
                 # bound. The create dialog or eligible startup backfill awaits
                 # the existing Tool Pack composition before retrying wiring.
                 return
+        permission_store = getattr(unified_service, "permission_store", None)
         # Lazy import (boot budget, ADR-097): this wiring runs on a
         # post-ready timer, and importing at module scope would make
         # `Workspaces.agent_provisioning` resident at `_ui_ready`.
@@ -1994,76 +2471,22 @@ class ServiceWiringMixin:
 
     def _wire_collections_capture_services(self) -> None:
         """Compose the profile-owned Local capture authority and scope seam."""
-        from tldw_chatbook.Library.collections_capture_repository import (
-            CollectionsCaptureRepository,
-        )
-        from tldw_chatbook.Library.collections_capture_service import (
-            CollectionsCaptureScopeService,
-            LocalCollectionsCaptureService,
-            build_local_capture_authority,
-        )
-        from tldw_chatbook.Library.collections_legacy_recovery import (
-            LegacyCollectionsRecovery,
-            LegacyCollectionsRecoveryError,
-        )
-        from tldw_chatbook.Library.collections_offline_store import (
-            CollectionsOfflineStore,
-        )
-
         TldwCli._reset_collections_capture_services(self)
-        self.collections_capture_scope_service = CollectionsCaptureScopeService(
-            resolve_media_reference=functools.partial(
-                _resolve_collections_media_reference, self
-            ),
-            resolve_note_reference=functools.partial(
-                _resolve_collections_note_reference, self
-            ),
-        )
+        self.collections_capture_scope_service = _collections_capture_scope(self)
         try:
             database_path = get_library_collections_db_path()
             database = getattr(self, "local_library_collections_db", None)
             if not isinstance(database, LibraryCollectionsDB):
                 database = LibraryCollectionsDB(database_path, CLI_APP_CLIENT_ID)
                 self.local_library_collections_db = database
-            data_root = get_user_data_dir()
-            authority = build_local_capture_authority(
-                profile_id=str(data_root.resolve()),
-                database_identity=str(database_path.resolve()),
-            )
-            repository = CollectionsCaptureRepository(
-                database,
-                authority_key=authority.key,
-            )
-            offline_store = CollectionsOfflineStore(
-                repository,
-                data_root=data_root,
-                authority_fingerprint=authority.fingerprint,
-            )
-            legacy_recovery = LegacyCollectionsRecovery(database)
-            try:
-                legacy_recovery.list_collections(page=1, size=1)
-                legacy_recovery_available = True
-            except LegacyCollectionsRecoveryError:
-                legacy_recovery_available = False
-            service = LocalCollectionsCaptureService(
-                authority,
-                repository,
-                offline_store=offline_store,
-                extractor=_extract_collections_article,
-                legacy_recovery_available=legacy_recovery_available,
-            )
+            parts = _collections_capture_parts(database, database_path, get_user_data_dir())
+            service = _local_collections_capture_service(parts)
         except Exception:
             logger.opt(exception=True).warning(
                 "Local Collections capture service unavailable during app wiring"
             )
             return
-
-        self.collections_capture_repository = repository
-        self.collections_offline_store = offline_store
-        self.collections_legacy_recovery_service = legacy_recovery
-        self.local_collections_capture_authority = authority
-        self.local_collections_capture_service = service
-        TldwCli._activate_collections_capture_authority(self)
+        _publish_collections_capture_parts(self, parts, service)
 
     def _reset_collections_capture_services(self) -> None:
         """Install inert capture seams without importing their implementations."""
@@ -2082,10 +2505,46 @@ class ServiceWiringMixin:
         if scope is None or isinstance(scope, _DeferredCollectionsCaptureScope):
             TldwCli._wire_collections_capture_services(self)
             scope = getattr(self, "collections_capture_scope_service", None)
+            initializer = getattr(self, "_collections_capture_initializer_task", None)
+            if (
+                initializer is not None
+                and not initializer.done()
+                and not any(
+                    getattr(self, flag, False)
+                    for flag in (
+                        "_collections_capture_initializer_closed", "_shutting_down", "_exit"
+                    )
+                )
+                and getattr(self, "collections_capture_repository", None) is not None
+            ):
+                # First use wins publication; the displaced initializer cannot
+                # schedule reconciliation for this independently composed owner.
+                self._create_deferred_startup_task(
+                    self._reconcile_collections_capture_startup(),
+                    name="deferred_collections_capture_reconciliation",
+                )
         return scope
 
     def _deferred_wire_collections_capture_services(self) -> None:
-        """Compose and reconcile capture services after the first frame."""
+        """Prepare stock file-backed capture services away from the UI loop."""
+        if any(vars(self).get(flag, False) for flag in (
+            "_collections_capture_initializer_closed", "_shutting_down", "_exit",
+        )):
+            return
+        task = vars(self).get("_collections_capture_initializer_task")
+        if task is not None and not task.done():
+            return
+        request = _capture_deferred_collections_setup(self)
+        if request is not None:
+            self._collections_capture_setup = request
+            task = _COLLECTIONS_TASK(
+                _initialize_deferred_collections_capture(request),
+                name="deferred_collections_capture_setup",
+            )
+            request.initializer = self._collections_capture_initializer_task = task
+            self._deferred_startup_tasks.add(task)
+            task.add_done_callback(self._deferred_startup_tasks.discard)
+            return
         self.ensure_collections_capture_services()
         if getattr(self, "collections_capture_repository", None) is not None:
             self._create_deferred_startup_task(
@@ -2169,37 +2628,61 @@ class ServiceWiringMixin:
                 deactivate()
 
     async def _reconcile_collections_capture_startup(self) -> None:
-        """Repair interrupted Local capture state outside the event loop."""
-        repository = getattr(self, "collections_capture_repository", None)
+        """Repair interrupted capture state with retained physical callbacks."""
+        from .Chat.console_preparation_reads import run_preparation_read
         from .DB.base_db import operation_owned_connection
 
+        def require_open() -> None:
+            if any(getattr(self, flag, False) for flag in (
+                "_collections_capture_initializer_closed", "_shutting_down", "_exit",
+            )):
+                raise asyncio.CancelledError
+
+        require_open()
+        reads = getattr(self, "_collections_capture_reconciliation_reads", None)
+        if reads is None:
+            reads = self._collections_capture_reconciliation_reads = set()
+        repository = getattr(self, "collections_capture_repository", None)
         if repository is not None:
             def interrupt_in_worker():
-                with operation_owned_connection(repository.db):
+                with operation_owned_connection(getattr(repository, "db", None)):
                     return repository.interrupt_stale_extractions()
 
-            await asyncio.to_thread(interrupt_in_worker)
+            await run_preparation_read(
+                interrupt_in_worker, creator=self, session_id=None,
+                reads=reads, require_current=require_open,
+            )
         offline_store = getattr(self, "collections_offline_store", None)
         if offline_store is not None:
             def reconcile_in_worker():
-                with operation_owned_connection(offline_store.repository.db):
+                with operation_owned_connection(getattr(getattr(offline_store, "repository", None), "db", None)):
                     return offline_store.reconcile_batch(limit=25)
 
-            await asyncio.to_thread(reconcile_in_worker)
+            await run_preparation_read(
+                reconcile_in_worker, creator=self, session_id=None,
+                reads=reads, require_current=require_open,
+            )
 
     async def _shutdown_collections_capture_runtime(self) -> None:
-        """Fence capture authority before cancelling app-owned extraction work."""
+        """Fence capture authority and retire its finite setup before disposal."""
+        self._collections_capture_initializer_closed = True
         scope = getattr(self, "collections_capture_scope_service", None)
-        if scope is not None and not isinstance(
-            scope,
-            _DeferredCollectionsCaptureScope,
-        ):
+        if scope is not None and not isinstance(scope, _DeferredCollectionsCaptureScope):
             deactivate = getattr(scope, "deactivate", None)
             if callable(deactivate):
                 deactivate()
+        cancellation = await _retire_deferred_collections_capture(self)
+        reads = getattr(self, "_collections_capture_reconciliation_reads", None)
+        if reads:
+            from .Chat.console_preparation_reads import drain_preparation_reads
+
+            if await drain_preparation_reads(reads):
+                cancellation = cancellation or asyncio.CancelledError()
         local_service = getattr(self, "local_collections_capture_service", None)
         if local_service is not None:
             await local_service.cancel_extractions()
+        if cancellation is not None:
+            raise cancellation
 
     def _wire_workspace_registry_services(self) -> None:
         self.change_review_consent_service = None
@@ -2309,11 +2792,65 @@ class ServiceWiringMixin:
         self.research_source_association_scheduler = scheduler
 
     def _build_chatbook_db_paths(self) -> dict[str, str]:
-        return {
-            "ChaChaNotes": str(get_chachanotes_db_path()),
-            "Media": str(get_media_db_path()),
-            "Prompts": str(get_prompts_db_path()),
-        }
+        import sys
+        from types import FunctionType
+
+        from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery import config_participants as life
+
+        callbacks = (get_chachanotes_db_path, get_media_db_path, get_prompts_db_path)
+        names = ("get_chachanotes_db_path", "get_media_db_path", "get_prompts_db_path")
+        selected = None
+        retained = life.__dict__.get("_STARTUP_PATH_READER_ORIGINAL")
+        tuple_type = tuple
+        if type(retained) is tuple_type and len(retained) == 3:
+            reader, code, namespace = retained
+            if (
+                type(reader) is FunctionType
+                and life.__dict__.get("_startup_path_config_bundle") is reader
+                and reader.__code__ is code
+                and reader.__globals__ is namespace
+                and namespace is life.__dict__
+                and reader.__defaults__ is None
+                and reader.__kwdefaults__ is None
+                and reader.__closure__ is None
+            ):
+                selected = reader(
+                    config,
+                    tuple(
+                        (sys.modules[__name__], name, callback)
+                        for name, callback in zip(names, callbacks)
+                    ),
+                )
+        if selected is None:
+            return {
+                "ChaChaNotes": str(get_chachanotes_db_path()),
+                "Media": str(get_media_db_path()),
+                "Prompts": str(get_prompts_db_path()),
+            }
+        bundle, check = selected
+        operation, identity = bundle.operation, bundle.checked_identity
+        capture, publish, key, error = (
+            bundle.capture_publication,
+            bundle.check_publication,
+            bundle.key,
+            bundle.error,
+        )
+        check()
+        with operation(config) as active:
+            check()
+            owner = capture(config, active)
+            paths = {}
+            for label, callback in zip(("ChaChaNotes", "Media", "Prompts"), callbacks):
+                check()
+                paths[label] = str(callback())
+                check()
+                if identity(config, active) != (key[1], key[3]):
+                    raise error("chatbook_path_source_changed")
+        with owner[-1]:
+            check(publication=True)
+            publish(config, owner)
+            return paths
 
     def _wire_prompt_chatbook_services(self) -> None:
         self.local_prompt_service = LocalPromptService(prompts_interop)
@@ -3572,7 +4109,7 @@ class ServiceWiringMixin:
 
     def apply_briefing_schedules_enabled(self, enabled: bool) -> Any:
         """Apply the persisted global briefing gate to existing runtime owners."""
-        if type(enabled) is not bool:
+        if type(enabled) is not bool:  # noqa: E721 -- persisted briefing gate requires an exact bool.
             raise TypeError("enabled must be a bool")
         projection = BriefingProjection(self.subscriptions_db) if enabled else None
         self.scheduling_service.briefing_projection = projection
@@ -3619,3 +4156,909 @@ class ServiceWiringMixin:
     def llamacpp_snapshot_service(self, service: Any) -> None:
         """Preserve the public injection seam used by screens and tests."""
         self._llamacpp_snapshot_service = service
+
+
+# Stock Console capture reads only this factory's already resident facade.
+_STOCK_PLUGIN_SERVICE_FACTORY = (
+    ServiceWiringMixin._build_plugin_service,
+    ServiceWiringMixin._build_plugin_service.__code__,
+)
+
+
+def _console_skill_metadata_current(metadata):
+    """Check the three reused proof helpers before invoking their bodies."""
+    import sys
+    from importlib.machinery import ModuleSpec
+    from types import FunctionType, MappingProxyType, ModuleType
+
+    if type(metadata) is not ModuleType:
+        return False
+    if sys.modules.get(__package__ + ".Widgets.compact_model_bar") is not metadata:
+        return False
+    namespace = vars(metadata)
+    source = namespace.get("_WIDGET_SOURCE")
+    if type(source) is not tuple or len(source) != 6 or type(source[5]) is not tuple:
+        return False
+    defining, path, spec, origin, bindings, _records = source
+    if (
+        defining is not namespace
+        or type(path) is not str  # noqa: E721 -- exact source metadata
+        or type(origin) is not str  # noqa: E721 -- exact plain metadata; no custom dispatch
+        or type(namespace.get("__file__")) is not str  # noqa: E721 -- exact source metadata
+        or namespace.get("__file__") != path  # noqa: E721 -- exact plain metadata; no custom dispatch
+        or namespace.get("__spec__") is not spec
+        or type(spec) is not ModuleSpec
+        or type(spec.origin) is not str  # noqa: E721 -- exact source metadata
+        or spec.origin != origin
+        or origin != path  # noqa: E721 -- exact plain metadata; no custom dispatch
+        or type(bindings) is not tuple
+    ):
+        return False
+    for row in bindings:
+        if (
+            type(row) is not tuple
+            or len(row) != 3
+            or type(row[1]) is not str  # noqa: E721 -- exact plain metadata; no custom dispatch
+            or (type(row[0]) is not dict and type(row[0]) is not MappingProxyType)  # noqa: E721 -- exact plain metadata; no custom dispatch
+            or row[0].get(row[1]) is not row[2]
+        ):
+            return False
+    names = {"_plain_fields", "_source_current", "_function_current"}
+    records = tuple(
+        row
+        for row in source[5]
+        if type(row) is tuple
+        and len(row) == 11
+        and row[0] is namespace
+        and type(row[1]) is str  # noqa: E721 -- plain capsule key
+        and row[1] in names
+    )
+    return len(records) == 3 and all(
+        namespace.get(row[1]) is row[2]
+        and type(row[2]) is FunctionType
+        and row[2].__code__ is row[3]
+        and row[2].__globals__ is row[4] is namespace
+        and row[2].__defaults__ is None
+        and row[2].__kwdefaults__ is None
+        and row[2].__closure__ is None
+        for row in records
+    )
+
+
+from textual.dom import DOMNode as _SkillMessagePump  # noqa: E402
+from textual.app import App as _SkillAppBase  # noqa: E402
+from textual.message_pump import MessagePump as _SkillAppAccessor  # noqa: E402
+from textual.worker_manager import WorkerManager as _SkillWorkerManager  # noqa: E402
+
+_CONSOLE_SKILL_RUN_WORKER = _SkillMessagePump.run_worker
+_CONSOLE_SKILL_WAIT = Worker.wait
+_CONSOLE_SKILL_WORKERS = _SkillAppBase.__dict__["workers"]
+_CONSOLE_SKILL_WORKERS_GET = _CONSOLE_SKILL_WORKERS.fget
+_CONSOLE_SKILL_APP = _SkillAppAccessor.__dict__["app"]
+_CONSOLE_SKILL_APP_GET = _CONSOLE_SKILL_APP.fget
+_CONSOLE_SKILL_NEW_WORKER = _SkillWorkerManager._new_worker
+_CONSOLE_SKILL_ADD_WORKER = _SkillWorkerManager.add_worker
+_CONSOLE_SKILL_START_WORKER = Worker._start
+_CONSOLE_SKILL_SCOPE_SLOTS = (
+    "get_context",
+    "_call",
+    "_enforce_policy",
+    "_require_service",
+    "_normalize_mode",
+    "_normalize_response",
+    "_maybe_await",
+    "_source_action_id",
+    "_normalize_item",
+    "_with_record_id",
+)
+_CONSOLE_SKILL_LOCAL_SLOTS = ("get_context", "trust_service")
+
+
+def _console_skill_source_current(metadata, source):
+    """Reuse the existing finite source capsule checker for this stock route."""
+    if type(source) is not tuple or len(source) != 6:
+        return False
+    from importlib.machinery import ModuleSpec
+
+    namespace, path, spec, origin, bindings, records = source
+    if type(namespace) is not dict or type(path) is not str or type(origin) is not str:  # noqa: E721 -- exact stock metadata; no custom dispatch
+        return False
+    if (
+        type(spec) is not ModuleSpec
+        or type(spec.origin) is not str  # noqa: E721 -- exact stock metadata; no custom dispatch
+        or type(namespace.get("__name__")) is not str  # noqa: E721 -- exact stock metadata; no custom dispatch
+        or type(namespace.get("__file__")) is not str  # noqa: E721 -- exact stock metadata; no custom dispatch
+        or namespace.get("__file__") != path
+        or spec.origin != origin
+        or path != origin
+    ):
+        return False
+    if type(bindings) is not tuple or type(records) is not tuple:
+        return False
+    # Reject foreign names/containers before the existing checker hashes keys.
+    for row in bindings:
+        if type(row) is not tuple or len(row) != 3 or type(row[1]) is not str:  # noqa: E721 -- exact stock metadata; no custom dispatch
+            return False
+        if type(row[0]) is not dict and type(row[0]) is not _SkillMappingProxyType:  # noqa: E721 -- exact stock metadata; no custom dispatch
+            return False
+    for row in records:
+        if type(row) is not tuple or len(row) != 11 or type(row[1]) is not str:  # noqa: E721 -- exact stock metadata; no custom dispatch
+            return False
+        if type(row[0]) is not dict and type(row[0]) is not _SkillMappingProxyType:  # noqa: E721 -- exact stock metadata; no custom dispatch
+            return False
+        if type(row[2]) is not _SkillFunctionType:
+            return False
+        defaults = row[2].__kwdefaults__
+        if defaults is not None and (
+            type(defaults) is not dict or any(type(key) is not str for key in defaults)  # noqa: E721 -- exact stock metadata; no custom dispatch
+        ):
+            return False
+    return metadata._source_current(source)
+
+
+def _capture_console_skill_trust_source(app, service):
+    """Capture resident service sources without a UI scheduling dependency."""
+    import inspect
+    import sys
+    from types import FunctionType, ModuleType
+
+    metadata = sys.modules.get("tldw_chatbook.Widgets.compact_model_bar")
+    if not _console_skill_metadata_current(metadata):
+        return None
+    app_module = sys.modules.get("tldw_chatbook.app")
+    scope_module = sys.modules.get("tldw_chatbook.Skills_Interop.skills_scope_service")
+    local_module = sys.modules.get("tldw_chatbook.Skills_Interop.local_skills_service")
+    config_module = sys.modules.get("tldw_chatbook.config")
+    if any(
+        type(module) is not ModuleType
+        for module in (app_module, scope_module, local_module, config_module)
+    ):
+        return None
+    app_namespace = vars(app_module)
+    app_record = app_namespace.get("_CONSOLE_SKILL_APP_SOURCE")
+    if type(app_record) is not tuple or len(app_record) != 5:
+        return None
+    app_type, defining, factory, factory_code, runtime_type = app_record
+    if (
+        defining is not app_namespace
+        or type(app) is not app_type
+        or app_namespace.get("TldwCli") is not app_type
+        or type(factory) is not FunctionType
+        or factory.__globals__ is not defining
+        or factory.__code__ is not factory_code
+        or factory.__defaults__ is not None
+        or factory.__kwdefaults__ is not None
+        or factory.__closure__ is not None
+        or inspect.getattr_static(app_type, "_create_deferred_startup_task", None)
+        is not factory
+    ):
+        return None
+    source = _CONSOLE_SKILL_WIRING_SOURCE
+    scope_source = vars(scope_module).get("_CONSOLE_SKILL_CONTEXT_SOURCE")
+    local_source = vars(local_module).get("_CONSOLE_SKILL_CONTEXT_SOURCE")
+    config_source = vars(config_module).get("_COMPACT_MODEL_CONFIG_SOURCE")
+    if source is not globals().get("_CONSOLE_SKILL_CONTEXT_SOURCE"):
+        return None
+    sources = (source, scope_source, local_source, config_source)
+    if not all(_console_skill_source_current(metadata, row) for row in sources):
+        return None
+    app_slots = (
+        "_build_local_skill_trust_service",
+        "_build_local_skills_stack",
+        "ensure_local_skill_trust_service",
+        "local_skill_trust_service",
+        "local_skills_service",
+        "skills_scope_service",
+    )
+    if any(
+        inspect.getattr_static(app_type, name, None)
+        is not ServiceWiringMixin.__dict__[name]
+        for name in app_slots
+    ):
+        return None
+    scope_type = vars(scope_module).get("SkillsScopeService")
+    local_type = vars(local_module).get("LocalSkillsService")
+    app_fields = metadata._plain_fields(
+        app,
+        app_type,
+        (
+            "_local_skill_trust_service",
+            "_local_skill_trust_service_build_lock",
+            "_local_skills_service",
+            "_skills_scope_service",
+            "_local_skills_stack_inputs",
+            "app_config",
+            "_shutting_down",
+            "_exit",
+            "_workers",
+            "_thread_id",
+            "console_runtime",
+            "_console_runtime_shutdown_task",
+        ),
+    )
+    scope_fields = metadata._plain_fields(
+        service, scope_type, ("local_service", "server_service", "policy_enforcer")
+    )
+    if app_fields is None or scope_fields is None:
+        return None
+    runtime = app_fields.get("console_runtime")
+    if (
+        runtime is None
+        or app_fields.get("_console_runtime_shutdown_task") is not None
+        or app_fields.get("_shutting_down") is not False
+        or app_fields.get("_exit") is not False
+    ):
+        raise RuntimeError("console_skill_trust_runtime_closed")
+    runtime_fields = metadata._plain_fields(
+        runtime, runtime_type, ("_disposed", "_preparation_reads", "_app")
+    )
+    if (
+        runtime_fields is None
+        or type(runtime_fields.get("_preparation_reads")) is not set  # noqa: E721 -- exact source metadata
+    ):  # noqa: E721 -- exact observer ownership
+        return None
+    runtime_reads = runtime_fields["_preparation_reads"]
+
+    def runtime_current():
+        return (
+            app_namespace.get("ConsoleRuntime") is runtime_type
+            and metadata._plain_fields(
+                runtime, runtime_type, ("_disposed", "_preparation_reads", "_app")
+            )
+            is runtime_fields
+            and app_fields.get("console_runtime") is runtime
+            and app_fields.get("_console_runtime_shutdown_task") is None
+            and app_fields.get("_shutting_down") is False
+            and app_fields.get("_exit") is False
+            and runtime_fields.get("_app") is app
+            and runtime_fields.get("_disposed") is False
+            and runtime_fields.get("_preparation_reads") is runtime_reads
+        )
+
+    # An original closing Runtime is a refusal, not eligibility for direct IO.
+    if not runtime_current():
+        raise RuntimeError("console_skill_trust_runtime_closed")
+    local = scope_fields.get("local_service")
+    local_fields = metadata._plain_fields(
+        local,
+        local_type,
+        (
+            "_trust_service",
+            "_trust_service_factory",
+            "store_dir",
+            "skills_dir",
+            "policy_enforcer",
+        ),
+    )
+    if local_fields is None:
+        return None
+    if (
+        any(name in app_fields for name in app_slots)
+        or any(name in scope_fields for name in _CONSOLE_SKILL_SCOPE_SLOTS)
+        or any(name in local_fields for name in _CONSOLE_SKILL_LOCAL_SLOTS)
+    ):
+        return None
+    if (
+        app_fields.get("_skills_scope_service") is not service
+        or app_fields.get("_local_skills_service") is not local
+        or app_fields.get("_shutting_down") is not False
+        or app_fields.get("_exit") is not False
+        or type(app_fields.get("app_config")) is not dict  # noqa: E721 -- exact stock metadata; no custom dispatch
+    ):
+        return None
+    lazy = local_fields.get("_trust_service_factory")
+    if (
+        type(lazy) is not FunctionType
+        or lazy.__code__ is not _CONSOLE_SKILL_TRUST_FACTORY_CODE
+        or lazy.__globals__ is not globals()
+        or lazy.__defaults__ is not None
+        or lazy.__kwdefaults__ is not None
+        or lazy.__code__.co_freevars != ("self",)
+        or type(lazy.__closure__) is not tuple
+        or len(lazy.__closure__) != 1
+        or lazy.__closure__[0].cell_contents is not app
+    ):
+        return None
+    lazy_closure = lazy.__closure__
+    # Preserve the original captured policy collaborators; no verdict is reused.
+    inputs = app_fields.get("_local_skills_stack_inputs")
+    if type(inputs) is not tuple or len(inputs) != 2:
+        return None
+    if (
+        scope_fields.get("policy_enforcer") is not inputs[0]
+        or local_fields.get("policy_enforcer") is not inputs[0]
+        or scope_fields.get("server_service") is not inputs[1]
+    ):
+        return None
+    mapping = app_fields["app_config"]
+    lock = app_fields["_local_skill_trust_service_build_lock"]
+    if type(lock) is not asyncio.Lock:
+        return None
+    store_dir, skills_dir = (
+        local_fields.get("store_dir"),
+        local_fields.get("skills_dir"),
+    )
+    identity = config_module.current_config_identity()
+    cache = vars(config_module).get("_SETTINGS_CACHE")
+    posture = vars(config_module).get("_SETTINGS_CACHE_POSTURE")
+    selector = tuple(
+        os.environ.get(key)
+        for key in (
+            "TLDW_CONFIG_PATH",
+            "HOME",
+            "USERPROFILE",
+            "XDG_CONFIG_HOME",
+            "XDG_DATA_HOME",
+        )
+    )
+    loop, thread = asyncio.get_running_loop(), threading.current_thread()
+    if (
+        type(app_fields.get("_thread_id")) is not int  # noqa: E721 -- exact stock metadata; no custom dispatch
+        or app_fields.get("_thread_id") != thread.ident
+    ):
+        return None
+
+    metadata_check = _console_skill_metadata_current
+    source_check = _console_skill_source_current
+    support = tuple(
+        row for row in source[5] if row[2] is metadata_check or row[2] is source_check
+    )
+    if len(support) != 2 or any(
+        row[5] is not None or row[6] is not None or row[8] is not None
+        for row in support
+    ):
+        return None
+
+    def source_current():
+        # Check captured helper records without invoking either helper first.
+        # Bound references alone do not reject an in-place body replacement.
+        for row in support:
+            namespace, name, function = row[:3]
+            if (
+                namespace.get(name) is not function
+                or type(function) is not FunctionType
+                or function.__code__ is not row[3]
+                or function.__globals__ is not row[4]
+                or function.__defaults__ is not None
+                or function.__kwdefaults__ is not None
+                or function.__closure__ is not None
+                or type(vars(function)) is not dict  # noqa: E721 -- plain defining metadata
+                or vars(function).get("__wrapped__") is not row[10]
+            ):
+                return False
+        if not metadata_check(metadata):
+            return False
+        if not all(source_check(metadata, row) for row in sources):
+            return False
+        # Captured plain fields only: no Textual accessor or cached authority.
+        if not (
+            runtime_current()
+            and sys.modules.get("tldw_chatbook.app") is app_module
+            and app_namespace.get("_CONSOLE_SKILL_APP_SOURCE") is app_record
+            and app_namespace.get("TldwCli") is app_type
+            and factory.__code__ is factory_code
+            and factory.__defaults__ is None
+            and factory.__kwdefaults__ is None
+            and factory.__closure__ is None
+            and inspect.getattr_static(app_type, "_create_deferred_startup_task", None)
+            is factory
+            and config_module.current_config_identity() == identity
+            and vars(config_module).get("_SETTINGS_CACHE") is cache
+            and vars(config_module).get("_SETTINGS_CACHE_POSTURE") is posture
+            and tuple(
+                os.environ.get(key)
+                for key in (
+                    "TLDW_CONFIG_PATH",
+                    "HOME",
+                    "USERPROFILE",
+                    "XDG_CONFIG_HOME",
+                    "XDG_DATA_HOME",
+                )
+            )
+            == selector
+        ):
+            return False
+        return (
+            metadata._plain_fields(
+                app,
+                app_type,
+                (
+                    "_local_skill_trust_service",
+                    "_local_skill_trust_service_build_lock",
+                    "_local_skills_service",
+                    "_skills_scope_service",
+                    "_local_skills_stack_inputs",
+                    "app_config",
+                    "_shutting_down",
+                    "_exit",
+                    "_workers",
+                    "_thread_id",
+                    "console_runtime",
+                    "_console_runtime_shutdown_task",
+                ),
+            )
+            is app_fields
+            and metadata._plain_fields(
+                service,
+                scope_type,
+                ("local_service", "server_service", "policy_enforcer"),
+            )
+            is scope_fields
+            and metadata._plain_fields(
+                local,
+                local_type,
+                (
+                    "_trust_service",
+                    "_trust_service_factory",
+                    "store_dir",
+                    "skills_dir",
+                    "policy_enforcer",
+                ),
+            )
+            is local_fields
+            and app_fields.get("_skills_scope_service") is service
+            and app_fields.get("_local_skills_service") is local
+            and app_fields.get("_local_skill_trust_service_build_lock") is lock
+            and app_fields.get("app_config") is mapping
+            and type(app_fields.get("_thread_id")) is int  # noqa: E721 -- original exact source field
+            and app_fields.get("_thread_id") == thread.ident
+            and app_fields.get("_shutting_down") is False
+            and app_fields.get("_exit") is False
+            and all(
+                inspect.getattr_static(app_type, name, None)
+                is ServiceWiringMixin.__dict__[name]
+                for name in app_slots
+            )
+            and not any(name in app_fields for name in app_slots)
+            and local_fields.get("_trust_service_factory") is lazy
+            and lazy.__code__ is _CONSOLE_SKILL_TRUST_FACTORY_CODE
+            and lazy.__globals__ is globals()
+            and lazy.__defaults__ is None
+            and lazy.__kwdefaults__ is None
+            and lazy.__closure__ is lazy_closure
+            and lazy_closure[0].cell_contents is app
+            and local_fields.get("store_dir") is store_dir
+            and local_fields.get("skills_dir") is skills_dir
+            and not any(name in scope_fields for name in _CONSOLE_SKILL_SCOPE_SLOTS)
+            and not any(name in local_fields for name in _CONSOLE_SKILL_LOCAL_SLOTS)
+            and scope_fields.get("server_service") is inputs[1]
+            and app_fields.get("_local_skills_stack_inputs") is inputs
+            and scope_fields.get("local_service") is local
+            and scope_fields.get("policy_enforcer") is inputs[0]
+            and local_fields.get("policy_enforcer") is inputs[0]
+        )
+
+    def current():
+        try:
+            return (
+                asyncio.get_running_loop() is loop
+                and threading.current_thread() is thread
+                and source_current()
+            )
+        except (AttributeError, TypeError, ValueError):
+            return False
+
+    if not current():
+        return None
+    return _ConsoleSkillTrustSource(
+        app, service, local, source_current, current, loop, thread, runtime_reads
+    )
+
+
+class _ConsoleSkillTrustSource(NamedTuple):
+    """One stock service proof; no UI owner or permission verdict is captured."""
+
+    app: Any
+    scope: Any
+    local: Any
+    source_current: Callable[[], bool]
+    current: Callable[[], bool]
+    loop: Any
+    thread: Any
+    runtime_reads: set
+
+
+def _capture_console_skill_trust_preparation(
+    app, service, owner_current, controller_source
+):
+    """Add the original skill-discovery App-worker scheduling contract."""
+    import inspect
+    import sys
+
+    source = _capture_console_skill_trust_source(app, service)
+    if source is None:
+        return None
+    app_fields = vars(app)
+    if (
+        app_fields.get("_local_skill_trust_service") is not None
+        or vars(source.local).get("_trust_service") is not None
+    ):
+        return None
+    metadata = sys.modules.get("tldw_chatbook.Widgets.compact_model_bar")
+    if not _console_skill_source_current(metadata, controller_source):
+        return None
+    manager = app_fields.get("_workers")
+    manager_fields = metadata._plain_fields(
+        manager, _SkillWorkerManager, ("_app", "_workers")
+    )
+    if manager_fields is None:
+        return None
+    manager_workers = manager_fields.get("_workers")
+
+    def source_current():
+        return source.source_current() and _console_skill_source_current(
+            metadata, controller_source
+        )
+
+    def current(expected_trust=None):
+        try:
+            return (
+                source.current()
+                and source_current()
+                and owner_current() is True
+                and source.loop.get_task_factory() is None
+                and app_fields.get("_local_skill_trust_service") is expected_trust
+                and app_fields.get("_workers") is manager
+                and metadata._plain_fields(
+                    manager, _SkillWorkerManager, ("_app", "_workers")
+                )
+                is manager_fields
+                and manager_fields.get("_app") is app
+                and type(manager_workers) is set  # noqa: E721 -- original exact worker owner
+                and manager_fields.get("_workers") is manager_workers
+                and not any(
+                    name in manager_fields for name in ("_new_worker", "add_worker")
+                )
+                and "workers" not in app_fields
+                and "app" not in app_fields
+                and inspect.getattr_static(type(app), "workers", None)
+                is _CONSOLE_SKILL_WORKERS
+                and inspect.getattr_static(type(app), "app", None) is _CONSOLE_SKILL_APP
+                and _CONSOLE_SKILL_APP_GET(app) is app
+                and "run_worker" not in app_fields
+                and inspect.getattr_static(type(app), "run_worker", None)
+                is _CONSOLE_SKILL_RUN_WORKER
+            )
+        except (AttributeError, TypeError, ValueError):
+            return False
+
+    if not current():
+        return None
+    return (
+        app,
+        source_current,
+        current,
+        (manager, manager_fields, source.loop, source.runtime_reads),
+    )
+
+
+async def _prepare_console_skill_trust_service(captured):
+    """Retain a stock preparation in the App's selected worker drain scope."""
+    app, source_current, current, custody = captured
+    if not current():
+        raise RuntimeError("console_skill_trust_owner_changed")
+    preparation = ServiceWiringMixin.ensure_local_skill_trust_service(
+        app,
+        _source_current=source_current,
+        _owner_current=current,
+        _read_observers=(custody[3],),
+    )
+    try:
+        worker = _CONSOLE_SKILL_RUN_WORKER(
+            app,
+            preparation,
+            group="console-skill-trust-setup",
+            exclusive=False,
+            exit_on_error=False,
+        )
+    except BaseException:
+        preparation.close()
+        raise
+    from textual.worker import WorkerCancelled, WorkerFailed
+
+    if type(worker) is not Worker:
+        raise RuntimeError("console_skill_trust_worker_changed")
+    manager, manager_fields, loop, _runtime_reads = custody
+    values = vars(worker)
+    task = values.get("_task")
+    if (
+        vars(app).get("_workers") is not manager
+        or vars(manager) is not manager_fields
+        or manager_fields.get("_app") is not app
+        or values.get("_node") is not app
+        or values.get("_work") is not preparation
+        or type(task) is not asyncio.Task
+        or task.get_loop() is not loop
+        or not any(item is worker for item in manager_fields["_workers"])
+    ):
+        raise RuntimeError("console_skill_trust_worker_changed")
+    try:
+        value = await _CONSOLE_SKILL_WAIT(worker)
+    except WorkerCancelled:
+        error = vars(worker).get("_error")
+        if isinstance(error, asyncio.CancelledError):
+            raise error
+        raise asyncio.CancelledError
+    except WorkerFailed:
+        error = vars(worker).get("_error")
+        if isinstance(error, BaseException):
+            raise error
+        raise
+    if not current(value):
+        raise RuntimeError("console_skill_trust_owner_changed")
+
+
+# Definition-time originals for stock Console trust preparation only.
+from types import (  # noqa: E402
+    FunctionType as _SkillFunctionType,
+    MappingProxyType as _SkillMappingProxyType,
+)  # noqa: E402
+
+
+_CONSOLE_SKILL_FUNCTIONS = {
+    "_build_local_skill_trust_service": ServiceWiringMixin.__dict__[
+        "_build_local_skill_trust_service"
+    ],
+    "_build_local_skills_stack": ServiceWiringMixin.__dict__[
+        "_build_local_skills_stack"
+    ],
+    "ensure_local_skill_trust_service": ServiceWiringMixin.__dict__[
+        "ensure_local_skill_trust_service"
+    ],
+    "local_skill_trust_service": ServiceWiringMixin.__dict__[
+        "local_skill_trust_service"
+    ].fget,
+    "local_skills_service": ServiceWiringMixin.__dict__["local_skills_service"].fget,
+    "skills_scope_service": ServiceWiringMixin.__dict__["skills_scope_service"].fget,
+    "_console_skill_metadata_current": _console_skill_metadata_current,
+    "_console_skill_source_current": _console_skill_source_current,
+    "_capture_console_skill_trust_source": _capture_console_skill_trust_source,
+    "_capture_console_skill_trust_preparation": _capture_console_skill_trust_preparation,
+    "_prepare_console_skill_trust_service": _prepare_console_skill_trust_service,
+    "_CONSOLE_SKILL_RUN_WORKER": _CONSOLE_SKILL_RUN_WORKER,
+    "_CONSOLE_SKILL_WAIT": _CONSOLE_SKILL_WAIT,
+    "_CONSOLE_SKILL_WORKERS_GET": _CONSOLE_SKILL_WORKERS_GET,
+    "_CONSOLE_SKILL_APP_GET": _CONSOLE_SKILL_APP_GET,
+    "_CONSOLE_SKILL_NEW_WORKER": _CONSOLE_SKILL_NEW_WORKER,
+    "_CONSOLE_SKILL_ADD_WORKER": _CONSOLE_SKILL_ADD_WORKER,
+    "_CONSOLE_SKILL_START_WORKER": _CONSOLE_SKILL_START_WORKER,
+}
+_CONSOLE_SKILL_CONTEXT_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "ServiceWiringMixin", ServiceWiringMixin),
+        (globals(), "_CONSOLE_SKILL_FUNCTIONS", _CONSOLE_SKILL_FUNCTIONS),
+        (
+            ServiceWiringMixin.__dict__,
+            "_build_local_skill_trust_service",
+            ServiceWiringMixin.__dict__["_build_local_skill_trust_service"],
+        ),
+        (
+            ServiceWiringMixin.__dict__,
+            "_build_local_skills_stack",
+            ServiceWiringMixin.__dict__["_build_local_skills_stack"],
+        ),
+        (
+            ServiceWiringMixin.__dict__,
+            "ensure_local_skill_trust_service",
+            ServiceWiringMixin.__dict__["ensure_local_skill_trust_service"],
+        ),
+        (
+            ServiceWiringMixin.__dict__,
+            "local_skill_trust_service",
+            ServiceWiringMixin.__dict__["local_skill_trust_service"],
+        ),
+        (
+            ServiceWiringMixin.__dict__,
+            "local_skills_service",
+            ServiceWiringMixin.__dict__["local_skills_service"],
+        ),
+        (
+            ServiceWiringMixin.__dict__,
+            "skills_scope_service",
+            ServiceWiringMixin.__dict__["skills_scope_service"],
+        ),
+        (globals(), "_ConsoleSkillTrustSource", _ConsoleSkillTrustSource),
+        (
+            globals(),
+            "_capture_console_skill_trust_source",
+            _capture_console_skill_trust_source,
+        ),
+        (globals(), "_console_skill_metadata_current", _console_skill_metadata_current),
+        (globals(), "_console_skill_source_current", _console_skill_source_current),
+        (
+            globals(),
+            "_capture_console_skill_trust_preparation",
+            _capture_console_skill_trust_preparation,
+        ),
+        (
+            globals(),
+            "_prepare_console_skill_trust_service",
+            _prepare_console_skill_trust_service,
+        ),
+        (globals(), "_CONSOLE_SKILL_RUN_WORKER", _CONSOLE_SKILL_RUN_WORKER),
+        (globals(), "_CONSOLE_SKILL_WAIT", _CONSOLE_SKILL_WAIT),
+        (globals(), "_CONSOLE_SKILL_WORKERS_GET", _CONSOLE_SKILL_WORKERS_GET),
+        (globals(), "_CONSOLE_SKILL_APP_GET", _CONSOLE_SKILL_APP_GET),
+        (globals(), "_CONSOLE_SKILL_NEW_WORKER", _CONSOLE_SKILL_NEW_WORKER),
+        (globals(), "_CONSOLE_SKILL_ADD_WORKER", _CONSOLE_SKILL_ADD_WORKER),
+        (globals(), "_CONSOLE_SKILL_START_WORKER", _CONSOLE_SKILL_START_WORKER),
+        (globals(), "get_user_data_dir", get_user_data_dir),
+        (globals(), "LocalSkillsService", LocalSkillsService),
+        (globals(), "SkillsScopeService", SkillsScopeService),
+        (globals(), "Worker", Worker),
+        (globals(), "_CONSOLE_SKILL_SCOPE_SLOTS", _CONSOLE_SKILL_SCOPE_SLOTS),
+        (globals(), "_CONSOLE_SKILL_LOCAL_SLOTS", _CONSOLE_SKILL_LOCAL_SLOTS),
+        (globals(), "_SkillWorkerManager", _SkillWorkerManager),
+        (globals(), "_CONSOLE_SKILL_WORKERS", _CONSOLE_SKILL_WORKERS),
+        (globals(), "_CONSOLE_SKILL_APP", _CONSOLE_SKILL_APP),
+        (_SkillAppBase.__dict__, "workers", _SkillAppBase.__dict__["workers"]),
+        (_SkillAppAccessor.__dict__, "app", _SkillAppAccessor.__dict__["app"]),
+        (
+            _CONSOLE_SKILL_APP_GET.__globals__,
+            "active_app",
+            _CONSOLE_SKILL_APP_GET.__globals__["active_app"],
+        ),
+        (_CONSOLE_SKILL_NEW_WORKER.__globals__, "Worker", Worker),
+        (
+            _SkillWorkerManager.__dict__,
+            "_new_worker",
+            _SkillWorkerManager.__dict__["_new_worker"],
+        ),
+        (
+            _SkillWorkerManager.__dict__,
+            "add_worker",
+            _SkillWorkerManager.__dict__["add_worker"],
+        ),
+        (Worker.__dict__, "_start", Worker.__dict__["_start"]),
+        (Worker.__dict__, "wait", Worker.__dict__["wait"]),
+        (
+            _SkillMessagePump.__dict__,
+            "run_worker",
+            _SkillMessagePump.__dict__["run_worker"],
+        ),
+    ),
+    tuple(
+        (
+            _CONSOLE_SKILL_FUNCTIONS,
+            _skill_name,
+            _skill_function,
+            _skill_function.__code__,
+            _skill_function.__globals__,
+            _skill_function.__defaults__,
+            _skill_function.__kwdefaults__,
+            tuple((_skill_function.__kwdefaults__ or {}).items()),
+            _skill_function.__closure__,
+            tuple(
+                (cell, cell.cell_contents) for cell in _skill_function.__closure__ or ()
+            ),
+            vars(_skill_function).get("__wrapped__"),
+        )
+        for _skill_name, _skill_function in _CONSOLE_SKILL_FUNCTIONS.items()
+        if type(_skill_function) is _SkillFunctionType
+    ),
+)
+
+_CONSOLE_SKILL_WIRING_SOURCE = _CONSOLE_SKILL_CONTEXT_SOURCE
+_CONSOLE_SKILL_ENTRY = (
+    _capture_console_skill_trust_preparation,
+    _prepare_console_skill_trust_service,
+)
+_CONSOLE_SKILL_TRUST_FACTORY_CODE = next(
+    code
+    for code in ServiceWiringMixin._build_local_skills_stack.__code__.co_consts
+    if isinstance(code, type(ServiceWiringMixin._build_local_skills_stack.__code__))
+    and code.co_name == "<lambda>"
+    and code.co_names == ("local_skill_trust_service",)
+)
+_CONSOLE_SKILL_CONTEXT_SOURCE = (
+    *_CONSOLE_SKILL_CONTEXT_SOURCE[:4],
+    _CONSOLE_SKILL_CONTEXT_SOURCE[4]
+    + (
+        (globals(), "_CONSOLE_SKILL_ENTRY", _CONSOLE_SKILL_ENTRY),
+        (
+            globals(),
+            "_CONSOLE_SKILL_TRUST_FACTORY_CODE",
+            _CONSOLE_SKILL_TRUST_FACTORY_CODE,
+        ),
+    ),
+    _CONSOLE_SKILL_CONTEXT_SOURCE[5],
+)
+_CONSOLE_SKILL_WIRING_SOURCE = _CONSOLE_SKILL_CONTEXT_SOURCE
+
+
+# Definition-time compatibility boundary for the finite Collections initializer.
+from tldw_chatbook.Chat.console_preparation_reads import (  # noqa: E402
+    run_preparation_read as _COLLECTIONS_RUN_PREPARATION,
+)
+
+_COLLECTIONS_TASK = asyncio.Task
+_COLLECTIONS_SOURCE_CHECKER = (
+    _collections_setup_sources_current,
+    _collections_setup_sources_current.__code__,
+)
+_COLLECTIONS_CAPTURE_RESULT_FIELDS = (
+    "collections_capture_repository",
+    "collections_offline_store",
+    "collections_legacy_recovery_service",
+    "local_collections_capture_authority",
+    "local_collections_capture_service",
+)
+_COLLECTIONS_APP_METHODS = tuple(
+    (name, ServiceWiringMixin.__dict__[name])
+    for name in (
+        "_wire_collections_capture_services",
+        "_reset_collections_capture_services",
+        "ensure_collections_capture_services",
+        "_deferred_wire_collections_capture_services",
+        "_activate_collections_capture_authority",
+        "_shutdown_collections_capture_runtime",
+        "_reconcile_collections_capture_startup",
+    )
+)
+
+
+# Original callbacks eligible for finite deferred Collections setup only.
+def _record_collections_setup_source(entries):
+    from types import FunctionType
+
+    rows = []
+    for owner, name in entries:
+        original = owner[name] if type(owner) is dict else getattr(owner, name)  # noqa: E721 - exact stock compatibility boundary
+        function = getattr(original, "__func__", original)
+        records = []
+        while type(function) is FunctionType:
+            records.append(
+                (
+                    function,
+                    function.__code__,
+                    function.__globals__,
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple((function.__kwdefaults__ or {}).items()),
+                    function.__closure__,
+                    tuple(
+                        (cell, cell.cell_contents)
+                        for cell in function.__closure__ or ()
+                    ),
+                    vars(function).get("__wrapped__"),
+                )
+            )
+            function = vars(function).get("__wrapped__")
+        rows.append((owner, name, original, tuple(records)))
+    return globals(), tuple(rows)
+
+
+_COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
+    (
+        (globals(), "_collections_setup_sources_current"),
+        (globals(), "_capture_deferred_collections_setup"),
+        (globals(), "_require_collections_setup_current"),
+        (globals(), "_build_deferred_collections_capture_parts"),
+        (globals(), "_initialize_deferred_collections_capture"),
+        (globals(), "_retire_deferred_collections_capture"),
+        (globals(), "_collections_capture_scope"),
+        (globals(), "_collections_capture_parts"),
+        (globals(), "_local_collections_capture_service"),
+        (globals(), "_publish_collections_capture_parts"),
+        (globals(), "get_library_collections_db_path"),
+        (globals(), "get_user_data_dir"),
+        (globals(), "LibraryCollectionsDB"),
+        (globals(), "_COLLECTIONS_RUN_PREPARATION"),
+        (globals(), "_COLLECTIONS_TASK"),
+        (globals(), "_resolve_collections_media_reference"),
+        (globals(), "_resolve_collections_note_reference"),
+        (globals(), "_extract_collections_article"),
+        (ServiceWiringMixin, "_wire_collections_capture_services"),
+        (ServiceWiringMixin, "_reset_collections_capture_services"),
+        (ServiceWiringMixin, "ensure_collections_capture_services"),
+        (ServiceWiringMixin, "_deferred_wire_collections_capture_services"),
+        (ServiceWiringMixin, "_activate_collections_capture_authority"),
+        (ServiceWiringMixin, "_shutdown_collections_capture_runtime"),
+        (ServiceWiringMixin, "_reconcile_collections_capture_startup"),
+    )
+)
+del _record_collections_setup_source

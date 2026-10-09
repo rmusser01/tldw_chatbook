@@ -20,6 +20,39 @@ _NO_CHILD_FAILURE = (
 )
 
 
+def _private_profile_checkpoint(phase, *, launcher_pid=None):
+    """Opt-in bounded diagnostic metadata; never a readiness/cleanup proof."""
+    prefix = os.environ.get("TLDW_TEST_PRIVATE_PROFILE_STAGE_PREFIX")
+    if not prefix:
+        return
+    try:
+        import hashlib
+        import json
+        import time
+
+        role = "child" if _CHILD_NODE in os.environ else "parent"
+        target = Path(prefix + ".private-" + role + ".json")
+        source = Path(__file__)
+        row = {
+            "diagnostic_only": True,
+            "terminal_source_native_coverage": False,
+            "role": role,
+            "phase": phase,
+            "pid": os.getpid(),
+            "parent_pid": os.getppid(),
+            "launcher_pid": launcher_pid,
+            "monotonic_ns": time.monotonic_ns(),
+            "source": str(source),
+            "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        }
+        temporary = target.with_name(target.name + "." + str(os.getpid()) + ".tmp")
+        temporary.write_text(json.dumps(row), encoding="utf-8")
+        temporary.replace(target)
+    except OSError:
+        # A missing checkpoint is explicitly incomplete, never a body failure.
+        return
+
+
 def is_private_profile_child(request: pytest.FixtureRequest) -> bool:
     """Recognize only the exact opted-in case selected by its parent test."""
     return os.environ.get(_CHILD_NODE) == request.node.nodeid and getattr(
@@ -55,8 +88,12 @@ def private_profile_test(function):
     async def wrapped(*args, **kwargs):
         request = kwargs["request"]
         if is_private_profile_child(request):
-            result = function(*args, **kwargs)
-            return await result if inspect.isawaitable(result) else result
+            _private_profile_checkpoint("original_body_entered")
+            try:
+                result = function(*args, **kwargs)
+                return await result if inspect.isawaitable(result) else result
+            finally:
+                _private_profile_checkpoint("original_body_exited")
         if _CHILD_NODE in os.environ:
             pytest.fail("private profile child node changed")
         work = request.getfixturevalue("tmp_path") / "private-profile-process"
@@ -73,6 +110,7 @@ def private_profile_test(function):
             XDG_DATA_HOME=str(profile / "data"),
             TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+            PYTHONIOENCODING="utf-8",
         )
         for name in (
             "TLDW_TEST_CONFIG_ROOT_OWNER",
@@ -119,7 +157,8 @@ def private_profile_test(function):
                 coverage_args += [
                     f"--cov-context={coverage_plugin.options.cov_context}"
                 ]
-        with log.open("w") as output:
+        _private_profile_checkpoint("child_spawn_requested")
+        with log.open("w", encoding="utf-8") as output:
             process = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "-m",
@@ -139,6 +178,7 @@ def private_profile_test(function):
                 stdout=output,
                 stderr=asyncio.subprocess.STDOUT,
             )
+            _private_profile_checkpoint("child_spawned", launcher_pid=process.pid)
             try:
                 await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
             finally:
@@ -157,7 +197,7 @@ def private_profile_test(function):
         if process.returncode:
             pytest.fail(
                 f"{log}\n{_child_failure_report(report)}\n"
-                f"--- child log tail ---\n{log.read_text()[-16000:]}"
+                f"--- child log tail ---\n{log.read_text(encoding="utf-8")[-16000:]}"
             )
         if coverage_controller is not None and not coverage_file.is_file():
             pytest.fail(f"private profile child did not produce coverage: {log}")
@@ -177,3 +217,6 @@ def private_profile_test(function):
 
     wrapped._private_profile_test = True
     return wrapped
+
+
+_private_profile_checkpoint("module_loaded")

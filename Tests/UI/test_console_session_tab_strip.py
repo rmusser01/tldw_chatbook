@@ -25,6 +25,10 @@ from tldw_chatbook.Widgets.Console.console_session_surface import (
 pytestmark = pytest.mark.bootstrap_profile
 
 
+# Keep the imported config participant bound to its collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 def _rendered_tooltip(button: Button) -> str:
     """Return a tab's tooltip as Textual will actually DISPLAY it.
 

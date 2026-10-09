@@ -337,6 +337,7 @@ try:
  assert fresh==[None]
  assert not scheduled
  assert not storage._raw_operations and getattr(raw._local,'operation',None) is None
+ assert not storage._pending_acquisitions
 finally:
  Admission.pause_requested=original_probe
  cancel.set()
@@ -432,10 +433,19 @@ _WORKER_RETRY = (
     + r"""
 import asyncio
 from contextlib import nullcontext
-async def no_async():pass
+async def no_async(*args,**kwargs):pass
 def no_sync(*args,**kwargs):pass
 screen._console_sync_in_progress=False;screen._console_sync_requested=False
 screen._console_chat_store=None
+screen._console_chat_controller=None
+screen._console_context_read_snapshot=None
+# This synthetic control surface is unmounted and has no runtime owner.
+# Keep the original visit comparison without constructing unrelated services.
+screen._console_runtime=lambda:None
+screen._console_runtime_attachment_generation=None
+screen._console_attach_visit_generation=0
+screen._console_attach_sync_complete=False
+screen._is_active_console_screen=lambda:False
 screen._message=SimpleNamespace(reconcile_console_speech_context=no_sync)
 screen._session=SimpleNamespace(_sync_console_session_draft=no_sync,schedule_manual_read_acknowledgement=no_sync)
 screen._retrieval=SimpleNamespace(
@@ -443,7 +453,7 @@ screen._retrieval=SimpleNamespace(
  _refresh_active_dictionaries_summary_if_scope_changed=no_async,
  _refresh_active_world_books_summary_if_scope_changed=no_async)
 screen._character=SimpleNamespace(_refresh_active_character_avatar_if_scope_changed=no_async)
-screen._character_context=SimpleNamespace(refresh_if_scope_changed=no_async)
+screen._character_context=SimpleNamespace(refresh_presentation_if_scope_changed=no_async)
 screen._workspace=SimpleNamespace(tick_workspace_build_scope=nullcontext)
 for name in ('_record_ui_worker_started','_record_ui_worker_finished','_sync_console_chat_core_state','_sync_console_settings_summary','_sync_console_settings_recovery_surfaces','_sync_console_live_work_readiness_rows','_dispatch_active_console_roleplay_refresh','_sync_console_workspace_context','_dispatch_console_rail_preference_prune'):
  setattr(screen,name,no_sync)
@@ -525,3 +535,207 @@ def test_console_native_worker_defers_later_native_reads_with_its_refresh(
     tmp_path, case
 ):
     _run(tmp_path, case, "config-sync", script=_WORKER_RETRY, timeout=40)
+
+
+_LOCK_RETRY = (
+    _SYNC.split("if case=='pause_before':")[0]
+    + r"""
+import asyncio,threading
+from tldw_chatbook.Backup_Recovery import config_participants
+rebuild=config._settings_rebuild_lock();file_lock=config._config_file_lock()
+held_lock=rebuild if case=='lock-rebuild' else file_lock
+holding=threading.Event();release=threading.Event();errors=[]
+def hold():
+ try:
+  with held_lock:
+   holding.set()
+   release.wait(2)
+ except BaseException as error:errors.append(error)
+thread=threading.Thread(target=hold)
+before={name:getattr(config,name) for name in config_participants._STATE_NAMES if hasattr(config,name)}
+persistence_error=config._CONFIG_PERSISTENCE_ERROR
+async def main():
+ thread.start()
+ assert holding.wait(2),'worker must actually own the real config lock'
+ beat=[]
+ async def heartbeat():
+  await asyncio.sleep(.03)
+  beat.append(time.monotonic())
+ task=asyncio.create_task(heartbeat())
+ await asyncio.sleep(0)
+ started=time.monotonic()
+ completed=screen._sync_console_control_bar('stale rail snapshot')
+ elapsed=time.monotonic()-started
+ assert elapsed<.1,f'presentation blocked on config lock for {elapsed:.3f}s'
+ assert completed is False
+ for _ in range(5):assert screen._sync_console_control_bar('other stale state') is False
+ await task
+ assert beat[0]-started<.15,'real worker config lock stalled the UI heartbeat'
+ assert not rendered and not operations and len(scheduled)==1
+ assert config._CONFIG_PERSISTENCE_ERROR==persistence_error
+ assert all(getattr(config,name) is value for name,value in before.items())
+ assert not storage._raw_operations and getattr(raw._local,'operation',None) is None
+ if held_lock is file_lock:
+  acquired=[]
+  def probe_rebuild():
+   obtained=rebuild.acquire(blocking=False)
+   acquired.append(obtained)
+   if obtained:rebuild.release()
+  probe=threading.Thread(target=probe_rebuild);probe.start();probe.join(2)
+  assert acquired==[True],'try-entry retained its earlier rebuild lock'
+ release.set();thread.join(2)
+ assert not thread.is_alive() and not errors
+ assert config.save_setting_to_cli_config('general','users_name','fresh after worker')
+ if case=='lock-maintenance':
+  pause=storage._begin_local_pause()
+  try:
+   delay,callback=scheduled.pop();callback()
+   assert len(scheduled)==1 and not rendered and not operations
+  finally:pause.resume()
+ if case=='lock-teardown':screen._closing=True
+ delay,callback=scheduled.pop();callback()
+ if case=='lock-teardown':
+  assert not rendered and not operations and not scheduled
+ else:
+  assert rendered==[('fresh after worker','fresh after worker')]
+  assert operations[0] is not None and all(value is operations[0] for value in operations)
+  assert operations[0] not in raw._states and not scheduled
+try:asyncio.run(main())
+finally:
+ release.set()
+ if thread.ident is not None:thread.join(3)
+assert not errors and not storage._raw_operations
+print('retired and reopened')
+"""
+)
+
+
+@pytest.mark.parametrize(
+    "case", ["lock-rebuild", "lock-file", "lock-maintenance", "lock-teardown"]
+)
+def test_console_refresh_defers_real_worker_held_config_locks(tmp_path, case):
+    _run(tmp_path, case, "config-sync", script=_LOCK_RETRY, timeout=40)
+
+
+_DEFAULT_LOCK_WAIT = (
+    _SYNC.split("if case=='pause_before':")[0]
+    + r"""
+import threading
+held_lock=config._settings_rebuild_lock() if case=='default-rebuild' else config._config_file_lock()
+holding=threading.Event();release=threading.Event()
+def hold():
+ with held_lock:
+  holding.set()
+  release.wait(2)
+thread=threading.Thread(target=hold);thread.start()
+assert holding.wait(2)
+def finish():
+ time.sleep(.15)
+ release.set()
+finisher=threading.Thread(target=finish);finisher.start()
+try:
+ started=time.monotonic()
+ assert config.save_setting_to_cli_config('general','users_name','explicit action')
+ assert time.monotonic()-started>=.12,'default action skipped its real config lock'
+ assert config.get_cli_setting('general','users_name')=='explicit action'
+finally:
+ release.set();thread.join(3);finisher.join(3)
+assert not thread.is_alive() and not finisher.is_alive()
+assert not storage._raw_operations and not storage._pending_acquisitions
+assert getattr(raw._local,'operation',None) is None
+print('retired and reopened')
+"""
+)
+
+
+@pytest.mark.parametrize("case", ["default-rebuild", "default-file"])
+def test_explicit_config_action_still_waits_for_worker_held_lock(tmp_path, case):
+    _run(tmp_path, case, "config-sync", script=_DEFAULT_LOCK_WAIT, timeout=40)
+
+
+def test_console_body_busy_error_is_not_mistaken_for_entry_deferral(tmp_path):
+    script = _SYNC.replace(
+        "fail=ValueError('synthetic refresh failure')",
+        "from tldw_chatbook.Backup_Recovery.config_participants import ConfigOperationBusy\n"
+        "fail=ConfigOperationBusy('config_lock_busy')",
+    ).replace(
+        "assert not storage._raw_operations\n",
+        "assert not scheduled\nassert not storage._raw_operations\n",
+    )
+    _run(tmp_path, "error", "config-sync", script=script, timeout=40)
+
+
+_FULL_SYNC_LOCK_RETRY = (
+    _WORKER_RETRY.split("async def main():")[0]
+    + r"""
+# No maintenance request is involved in this lock-contention intervention.
+Admission.pause_requested=original_probe
+boundary,kind=case.split('-')
+blocked=config._settings_rebuild_lock() if kind=='rebuild' else config._config_file_lock()
+holding=threading.Event();release=threading.Event();expired=threading.Event()
+errors=[];observed=[]
+def holder():
+ try:
+  with blocked:
+   holding.set()
+   assert release.wait(5)
+ except BaseException as error:errors.append(error)
+owner=threading.Thread(target=holder)
+def expire():expired.set();release.set()
+watchdog=threading.Timer(2,expire)
+started_holder=False
+def begin_holding():
+ global started_holder
+ if started_holder:return
+ started_holder=True
+ owner.start();assert holding.wait(3)
+ watchdog.start()
+def read_live():
+ operation=raw._runtime_operation()
+ value=config.get_cli_setting('general','users_name')
+ observed.append((operation,value))
+if boundary=='core':
+ screen._sync_console_chat_core_state=read_live
+else:
+ screen._dispatch_active_console_roleplay_refresh=read_live
+ # The original FULL now performs roleplay before its final mode bar.
+ # Hold its real lock immediately before that admission, after core retires.
+ async def hold_before_roleplay(*args,**kwargs):begin_holding()
+ screen._sync_console_native_session_tabs=hold_before_roleplay
+async def main():
+ if boundary=='core':begin_holding()
+ await screen._sync_native_console_chat_ui()
+ assert holding.is_set() and not expired.is_set(),'ordinary Console sync blocked on config lock'
+ assert owner.is_alive() and not release.is_set()
+ assert not observed,'busy config entry must defer before mutating live state'
+ assert screen._console_control_bar_replay_whole_sync
+ assert len(scheduled)==1 and not workers
+ assert not screen._console_sync_in_progress
+ release.set();owner.join(3);watchdog.cancel();watchdog.join(3)
+ assert not owner.is_alive() and not errors
+ assert config.save_setting_to_cli_config('general','users_name','fresh full sync')
+ delay,callback=scheduled.pop();assert delay>0;callback()
+ assert len(workers)==1
+ await workers.pop()
+ assert len(observed)==1 and observed[0][1]=='fresh full sync'
+ assert observed[0][0] is not None and observed[0][0] not in raw._states
+ assert not scheduled and not workers
+ assert not screen._console_control_bar_replay_whole_sync
+try:asyncio.run(main())
+finally:
+ release.set();watchdog.cancel()
+ if owner.ident is not None:owner.join(3)
+ if watchdog.ident is not None:watchdog.join(3)
+ for worker in workers:worker.close()
+ storage._shutdown()
+assert not storage._raw_operations
+print('retired and reopened')
+"""
+)
+
+
+@pytest.mark.parametrize(
+    "case", ["core-rebuild", "core-file", "roleplay-rebuild", "roleplay-file"]
+)
+def test_full_console_sync_defers_live_state_until_fresh_config_entry(tmp_path, case):
+    _run(tmp_path, case, "config-sync", script=_FULL_SYNC_LOCK_RETRY, timeout=40)

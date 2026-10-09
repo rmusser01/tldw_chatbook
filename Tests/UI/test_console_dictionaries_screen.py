@@ -32,12 +32,15 @@ original tests missed entirely.
 
 import pytest
 
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
+from Tests.UI.test_console_session_tab_close import (
+    ProductionConsoleHarness as ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_display_state import ConsoleDisplayRow
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class _FakeDictionaryScopeService:
@@ -344,7 +347,9 @@ async def test_actions_reflect_conversation_and_attach_state():
 
 
 @pytest.mark.asyncio
-async def test_real_native_console_session_switch_drives_dictionary_summary_per_session():
+async def test_real_native_console_session_switch_drives_dictionary_summary_per_session(
+    wait_for_condition,
+):
     """Drives an ACTUAL native Console session switch -- the scenario the
     original (app-reactive) wiring never handled, because clicking a session
     tab never touches `app.current_chat_conversation_id`.
@@ -404,6 +409,12 @@ async def test_real_native_console_session_switch_drives_dictionary_summary_per_
         calls_before = len(service.calls)
         console.query_one(f"#console-session-tab-{session_a_id}").press()
         await _wait_for_active_session_id(store, pilot, session_a_id)
+        await wait_for_condition(
+            lambda: len(service.calls) == calls_before + 1
+            and console._build_console_inspector_state(None).dictionary_rows
+            == (ConsoleDisplayRow("Slang", "from conversation"),),
+            timeout=2.0
+        )
 
         assert len(service.calls) == calls_before + 1
         assert service.calls[-1] == ("conv-with-dict", None, "local")
@@ -423,6 +434,12 @@ async def test_real_native_console_session_switch_drives_dictionary_summary_per_
         calls_before_b = len(service.calls)
         console.query_one(f"#console-session-tab-{session_b_id}").press()
         await _wait_for_active_session_id(store, pilot, session_b_id)
+        await wait_for_condition(
+            lambda: len(service.calls) == calls_before_b + 1
+            and console._build_console_inspector_state(None).dictionary_rows
+            == (ConsoleDisplayRow("No dictionaries in play", ""),),
+            timeout=2.0
+        )
 
         assert len(service.calls) == calls_before_b + 1
         assert service.calls[-1] == ("conv-without-dict", None, "local")
@@ -450,7 +467,9 @@ async def _wait_for_active_session_change(
 
 
 @pytest.mark.asyncio
-async def test_sync_native_console_chat_ui_does_not_resummarize_when_scope_is_unchanged():
+async def test_sync_native_console_chat_ui_does_not_resummarize_when_scope_is_unchanged(
+    wait_for_condition,
+):
     """`_sync_native_console_chat_ui()` is also invoked by the 0.2s
     transcript-poll timer while a run is streaming
     (`_start_console_transcript_sync_timer`). Without a change-guard, every
@@ -467,6 +486,10 @@ async def test_sync_native_console_chat_ui_does_not_resummarize_when_scope_is_un
         _active_native_session(console).persisted_conversation_id = "conv-steady"
 
         await console._sync_native_console_chat_ui()
+        await wait_for_condition(
+            lambda: bool(service.calls)
+            and console._active_dictionaries_summary == service.summary
+        )
         calls_after_first = len(service.calls)
         assert calls_after_first >= 1
 

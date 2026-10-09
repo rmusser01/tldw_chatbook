@@ -22,15 +22,18 @@ rather than a fake.
 
 import pytest
 
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
+from Tests.UI.test_console_session_tab_close import (
+    ProductionConsoleHarness as ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_display_state import ConsoleDisplayRow
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Persona_Widgets.world_book_picker import WorldBookPicker
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _active_native_session(console: ChatScreen):
@@ -159,7 +162,9 @@ async def test_conversation_with_no_books_renders_no_world_books_in_play_row(wb_
 
 
 @pytest.mark.asyncio
-async def test_sync_native_console_chat_ui_refreshes_world_books_on_scope_change(wb_db):
+async def test_sync_native_console_chat_ui_refreshes_world_books_on_scope_change(
+    wb_db, wait_for_condition,
+):
     wb_db.add_conversation({"id": "conv-wb", "title": "C"})
     manager = WorldBookManager(wb_db)
     book_a = manager.create_world_book("Alpha")
@@ -175,6 +180,12 @@ async def test_sync_native_console_chat_ui_refreshes_world_books_on_scope_change
         _active_native_session(screen).persisted_conversation_id = "conv-wb"
 
         await screen._sync_native_console_chat_ui()
+        await wait_for_condition(
+            lambda: any(
+                "Alpha" in row.text
+                for row in screen._retrieval._console_world_book_inspector_rows()
+            )
+        )
 
         rows = screen._retrieval._console_world_book_inspector_rows()
         assert any("Alpha" in row.text for row in rows)

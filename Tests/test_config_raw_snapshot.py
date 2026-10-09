@@ -17,8 +17,30 @@ from tldw_chatbook.Utils.config_encryption import config_encryption
 def config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     target = tmp_path / "config.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
-    config._invalidate_config_caches()
-    config.clear_encryption_password()
+    import sys
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+    from tldw_chatbook.UI.Screens import settings_config_adapter as adapter
+
+    source = install_config_source(monkeypatch)
+    monkeypatch.setattr(sys.modules[__name__], "config", source)
+    for name in (
+        "ConfigFileSnapshot",
+        "delete_settings_from_cli_config",
+        "get_cli_config_path",
+        "load_cli_config_and_ensure_existence",
+        "read_cli_config_backup_serialized",
+        "read_cli_config_serialized",
+        "read_cli_config_snapshot",
+        "replace_cli_config_serialized",
+        "replace_cli_config_snapshot",
+        "save_setting_to_cli_config",
+        "save_settings_to_cli_config",
+    ):
+        monkeypatch.setattr(adapter, name, getattr(source, name))
+    source._invalidate_config_caches()
+    source.clear_encryption_password()
+    # Bootstrap enrolls the real source; the raw-snapshot controls start missing.
+    target.unlink()
     yield target
     config._invalidate_config_caches()
     config.clear_encryption_password()
@@ -252,7 +274,7 @@ def test_snapshot_save_preserves_encryption_and_rejects_downgrade(
     assert loaded["api_settings"]["openai"]["api_key"] == "new-secret-SENTINEL"
     assert saved.serialized == config_path.read_bytes().decode("utf-8")
     assert "SENTINEL" not in saved.serialized
-    assert backup.read_text(encoding="utf-8") == before.serialized
+    assert backup.read_bytes().decode("utf-8") == before.serialized
     assert config_encryption.is_encrypted(
         toml.loads(saved.serialized)["api_settings"]["openai"]["api_key"]
     )
@@ -261,4 +283,4 @@ def test_snapshot_save_preserves_encryption_and_rejects_downgrade(
             '[api_settings.openai]\napi_key = "plaintext-SENTINEL"\n', saved
         )
     assert config_path.read_bytes().decode("utf-8") == saved.serialized
-    assert backup.read_text(encoding="utf-8") == before.serialized
+    assert backup.read_bytes().decode("utf-8") == before.serialized

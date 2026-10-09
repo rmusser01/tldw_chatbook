@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+import asyncio
 import base64
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
+import inspect
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 from secrets import token_urlsafe
 import sqlite3
+import sys
 import threading
+from types import MethodType
 from typing import Any, ContextManager, Protocol
 from uuid import NAMESPACE_URL, RFC_4122, UUID, uuid4, uuid5
 
@@ -26,6 +31,7 @@ from tldw_chatbook.Chat.rag_scope import (
     serialize_scope,
 )
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.input_validation import validate_workspace_name
 from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
@@ -48,6 +54,7 @@ from .models import (
 )
 from .change_review_consent import (
     ChangeReviewConsent,
+    _WorkspaceCompositeEntryError,
     ChangeReviewState,
     ChangeReviewStateConflict,
     MISSING_CHANGE_REVIEW_REVISION,
@@ -628,6 +635,301 @@ def _validated_remote_exclusion_relative(binding: Any, path: str) -> PurePosixPa
     return candidate
 
 
+
+
+def _workspace_function_current(record):
+    function, code, defining, defaults, kwdefaults, items, closure, cells = record
+    try:
+        return (
+            function.__code__ is code
+            and function.__globals__ is defining
+            and function.__defaults__ is defaults
+            and function.__kwdefaults__ is kwdefaults
+            and len(function.__kwdefaults__ or {}) == len(items)
+            and all(
+                (function.__kwdefaults__ or {}).get(key) is value
+                for key, value in items
+            )
+            and function.__closure__ is closure
+            and all(cell.cell_contents is value for cell, value in cells)
+        )
+    except (AttributeError, ValueError):
+        return False
+
+
+def _workspace_sources_current(registry, database):
+    from tldw_chatbook.DB import Workspace_DB as database_source
+    from tldw_chatbook.DB import base_db as ownership_source
+
+    registry_source = _WORKSPACE_COMPOSITE_REGISTRY_SOURCE
+    defining, path, spec, origin, owner, readers, clock, lookup, serializer = (
+        registry_source
+    )
+    db_source = database_source._WORKSPACE_COMPOSITE_CONNECTION_SOURCE
+    (
+        db_globals,
+        db_path,
+        db_spec,
+        db_origin,
+        db_owner,
+        descriptors,
+        db_functions,
+        db_lookup,
+    ) = db_source
+    owned_source = ownership_source._WORKSPACE_OWNED_CONNECTION_SOURCE
+    owned_globals, owned_path, owned_spec, owned_origin, owned_functions, base_owner = (
+        owned_source
+    )
+    return (
+        globals() is defining
+        and __file__ == path
+        and __spec__ is spec
+        and getattr(__spec__, "origin", None) == origin
+        and LocalWorkspaceRegistryService is owner
+        and type(registry) is owner
+        and inspect.getattr_static(owner, "__getattribute__") is lookup
+        and "db" not in vars(owner)
+        and database_source.__dict__ is db_globals
+        and database_source.__file__ == db_path
+        and database_source.__spec__ is db_spec
+        and database_source.__spec__.origin == db_origin
+        and database_source.WorkspaceDB is db_owner
+        and WorkspaceDB is db_owner
+        and type(database) is db_owner
+        and inspect.getattr_static(db_owner, "__getattribute__") is db_lookup
+        and all(
+            name not in vars(db_owner)
+            for name in ("_thread_local", "db_path", "db_path_str", "is_memory_db")
+        )
+        and not database.is_memory_db
+        and ownership_source.__dict__ is owned_globals
+        and ownership_source.__file__ == owned_path
+        and ownership_source.__spec__ is owned_spec
+        and ownership_source.__spec__.origin == owned_origin
+        and ownership_source.operation_owned_connection is owned_functions[0][0]
+        and operation_owned_connection is owned_functions[0][0]
+        and ownership_source.BaseDB is base_owner[0]
+        and inspect.getattr_static(base_owner[0], "_get_connection") is base_owner[1]
+        and all(
+            inspect.getattr_static(db_owner, name) is descriptor
+            and name not in vars(database)
+            and type(getattr(database, name)) is MethodType
+            and getattr(database, name).__self__ is database
+            and getattr(database, name).__func__ is descriptor
+            for name, descriptor in descriptors
+        )
+        and all(
+            inspect.getattr_static(owner, name) is record[0]
+            and name not in vars(registry)
+            and _workspace_function_current(record)
+            for name, record in readers
+        )
+        and registry._now_factory is clock[0]
+        and _workspace_function_current(clock)
+        and _metadata_to_json is serializer[0]
+        and _workspace_function_current(serializer)
+        and database_source._core_closing
+        is database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[4]
+        and database_source._core_closing.__wrapped__
+        is database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[5][1][0]
+        and database_source._core_closing.__wrapped__.__globals__
+        is database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[0]
+        and getattr(
+            sys.modules.get(
+                database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[0].get("__name__")
+            ),
+            "__dict__",
+            None,
+        )
+        is database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[0]
+        and database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[0].get("__file__")
+        == database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[1]
+        and database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[0].get("__spec__")
+        is database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[2]
+        and getattr(
+            database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[2], "origin", None
+        )
+        == database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[3]
+        and database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[0].get("_core_closing")
+        is database_source._core_closing
+        and all(
+            _workspace_function_current(record)
+            for record in (
+                *db_functions,
+                *owned_functions,
+                *database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE[5],
+            )
+        )
+    )
+
+
+@contextmanager
+def _owned_workspace_composite(registry, owner_is_current, *, enabled=True):
+    """Hold only one stock finite composite's real connection, never authority."""
+    owner = _WORKSPACE_COMPOSITE_REGISTRY_SOURCE[4]
+    # Unsupported/custom/memory receivers keep the original callback route.
+    # Read the stock instance field without invoking a custom property.
+    if (
+        type(registry) is not owner
+        or inspect.getattr_static(owner, "__getattribute__")
+        is not _WORKSPACE_COMPOSITE_REGISTRY_SOURCE[7]
+    ):
+        yield None
+        return
+    database = vars(registry).get("db")
+    if (
+        not enabled
+        or database is None
+        or not _workspace_sources_current(registry, database)
+    ):
+        yield None
+        return
+    from tldw_chatbook.DB import Workspace_DB as database_source
+
+    (
+        closing_globals,
+        closing_path,
+        closing_spec,
+        closing_origin,
+        closing,
+        closing_records,
+    ) = database_source._WORKSPACE_COMPOSITE_CLOSING_SOURCE
+    local = database._thread_local
+    path = database.db_path
+    path_text = database.db_path_str
+    actor = (os.getpid(), threading.current_thread())
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    connection_reader = database.connection
+    if (
+        type(connection_reader) is not MethodType
+        or connection_reader.__self__ is not database
+    ):
+        yield None
+        return
+
+    def require_current():
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+        if (
+            not owner_is_current()
+            or vars(registry).get("db") is not database
+            or database._thread_local is not local
+            or database.db_path != path
+            or database.db_path_str != path_text
+            or not _workspace_sources_current(registry, database)
+            or os.getpid() != actor[0]
+            or threading.current_thread() is not actor[1]
+            or current_task is not task
+        ):
+            raise RuntimeError("workspace_composite_source_changed")
+
+    require_current()
+    previous = getattr(local, "conn", None)
+    connection = None
+    entry_error = None
+    body_error = None
+    operation_error = None
+    try:
+        with ExitStack() as stack:
+            require_current()
+            try:
+                connection = stack.enter_context(connection_reader())
+            except sqlite3.Error as error:
+                # Let the callsite preserve its original SQL-error conversion,
+                # after cleanup and source checks; do not retry a failed read.
+                entry_error = error
+                require_current()
+            else:
+                require_current()  # Admission can run callbacks.
+                try:
+                    yield require_current
+                except BaseException as error:
+                    body_error = error
+                    raise
+                else:
+                    require_current()
+    except BaseException as error:
+        operation_error = error
+    retirement_error = None
+    try:
+        connection = (
+            connection if connection is not None else getattr(local, "conn", None)
+        )
+        if connection is not None and connection is not previous:
+            # This scope created this handle. Never close through a mutable cache
+            # receiver, adopt its replacement, or alter a caller's old borrower.
+            try:
+                closing_task = asyncio.current_task()
+            except RuntimeError:
+                closing_task = None
+            if (
+                os.getpid() != actor[0]
+                or threading.current_thread() is not actor[1]
+                or closing_task is not task
+            ):
+                raise RuntimeError("workspace_composite_source_changed")
+            if (
+                getattr(
+                    sys.modules.get(closing_globals.get("__name__")), "__dict__", None
+                )
+                is not closing_globals
+                or closing_globals.get("__file__") != closing_path
+                or closing_globals.get("__spec__") is not closing_spec
+                or getattr(closing_spec, "origin", None) != closing_origin
+                or closing_globals.get("_core_closing") is not closing
+                or closing.__wrapped__ is not closing_records[1][0]
+            ):
+                raise RuntimeError("workspace_composite_source_changed")
+            if not all(
+                _workspace_function_current(record) for record in closing_records
+            ):
+                raise RuntimeError("workspace_composite_source_changed")
+            with closing(database, connection) as allowed:
+                if not allowed:
+                    raise RuntimeError("workspace_composite_connection_not_retired")
+                connection.close()
+            try:
+                sqlite3.Connection.in_transaction.__get__(connection)
+            except sqlite3.ProgrammingError:
+                pass
+            else:
+                raise RuntimeError("workspace_composite_connection_not_retired")
+            if getattr(local, "conn", None) is connection:
+                local.conn = None
+        require_current()  # Refuse publication after cleanup, including source errors.
+    except BaseException as error:
+        retirement_error = error
+    if body_error is not None:
+        secondary = retirement_error
+        if secondary is None and operation_error is not body_error:
+            secondary = operation_error
+        if secondary is not None:
+            raise body_error from secondary
+        raise body_error
+    if operation_error is not None:
+        if retirement_error is not None:
+            raise operation_error from retirement_error
+        raise operation_error
+    if retirement_error is not None:
+        raise retirement_error
+    if entry_error is not None:
+        raise _WorkspaceCompositeEntryError from entry_error
+
+
+def _workspace_composite_context(registry, owner_is_current, *, enabled=True):
+    factory, records = _WORKSPACE_COMPOSITE_FACTORY_SOURCE
+    if _owned_workspace_composite is not factory or not all(
+        _workspace_function_current(record) for record in records
+    ):
+        return nullcontext(None)
+    return factory(registry, owner_is_current, enabled=enabled)
+
+
 class LocalWorkspaceRegistryService:
     """SQLite-backed local workspace registry."""
 
@@ -916,7 +1218,8 @@ class LocalWorkspaceRegistryService:
                 """
             params = (0,)
         try:
-            with self.db.connection() as conn:
+            database = self.db
+            with operation_owned_connection(database), database.connection() as conn:
                 rows = conn.execute(query, params).fetchall()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
@@ -927,7 +1230,8 @@ class LocalWorkspaceRegistryService:
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
-            with self.db.connection() as conn:
+            database = self.db
+            with operation_owned_connection(database), database.connection() as conn:
                 row = conn.execute(
                     """
                     SELECT *
@@ -2652,64 +2956,93 @@ class LocalWorkspaceRegistryService:
             raise WorkspaceRegistryServiceError(
                 "Default workspace does not allow runtime bindings."
             )
-        if self.get_workspace(binding.workspace_id) is None:
-            raise WorkspaceNotFound(binding.workspace_id)
-        safe_binding = WorkspaceRuntimeBinding(
-            workspace_id=binding.workspace_id,
-            binding_id=binding.binding_id,
-            binding_kind=binding.binding_kind,
-            label=binding.label,
-            locator=binding.locator,
-            status=binding.status,
-            metadata=binding.metadata,
-            created_at=binding.created_at,
-            updated_at=self._now_factory(),
-        )
-        metadata_json = _metadata_to_json(safe_binding.metadata)
         try:
-            with self.db.transaction() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO workspace_runtime_bindings (
-                        binding_id,
-                        workspace_id,
-                        binding_kind,
-                        label,
-                        locator,
-                        status,
-                        metadata_json,
-                        created_at,
-                        updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(binding_id) DO UPDATE SET
-                        workspace_id = excluded.workspace_id,
-                        binding_kind = excluded.binding_kind,
-                        label = excluded.label,
-                        locator = excluded.locator,
-                        status = excluded.status,
-                        metadata_json = excluded.metadata_json,
-                        updated_at = excluded.updated_at
-                    """,
-                    (
-                        safe_binding.binding_id,
-                        safe_binding.workspace_id,
-                        safe_binding.binding_kind.value,
-                        safe_binding.label,
-                        safe_binding.locator,
-                        safe_binding.status.value,
-                        metadata_json,
-                        safe_binding.created_at,
-                        safe_binding.updated_at,
-                    ),
+            with _workspace_composite_context(
+                self,
+                lambda: True,
+                enabled=(
+                    WorkspaceRuntimeBinding is _WORKSPACE_COMPOSITE_BINDING_OWNER
+                    and type(binding) is _WORKSPACE_COMPOSITE_BINDING_OWNER
+                    and type(binding.workspace_id) is str  # noqa: E721 -- stock input avoids custom validation callbacks
+                    and bool(binding.workspace_id.strip())
+                ),
+            ) as check:
+                if self.get_workspace(binding.workspace_id) is None:
+                    raise WorkspaceNotFound(binding.workspace_id)
+                if check is not None:
+                    check()
+                safe_binding = WorkspaceRuntimeBinding(
+                    workspace_id=binding.workspace_id,
+                    binding_id=binding.binding_id,
+                    binding_kind=binding.binding_kind,
+                    label=binding.label,
+                    locator=binding.locator,
+                    status=binding.status,
+                    metadata=binding.metadata,
+                    created_at=binding.created_at,
+                    updated_at=self._now_factory(),
                 )
-        except sqlite3.Error as exc:
-            raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc
-        self._bump_mutation_generation()
-        stored = self.get_runtime_binding(safe_binding.binding_id)
-        if stored is None:
-            raise WorkspaceRegistryServiceError("Runtime binding save failed.")
-        return stored
+                if check is not None:
+                    check()
+                metadata_json = _metadata_to_json(safe_binding.metadata)
+                try:
+                    if check is not None:
+                        check()
+                    with self.db.transaction() as conn:
+                        conn.execute(
+                            """
+                            INSERT INTO workspace_runtime_bindings (
+                                binding_id,
+                                workspace_id,
+                                binding_kind,
+                                label,
+                                locator,
+                                status,
+                                metadata_json,
+                                created_at,
+                                updated_at
+                            )
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ON CONFLICT(binding_id) DO UPDATE SET
+                                workspace_id = excluded.workspace_id,
+                                binding_kind = excluded.binding_kind,
+                                label = excluded.label,
+                                locator = excluded.locator,
+                                status = excluded.status,
+                                metadata_json = excluded.metadata_json,
+                                updated_at = excluded.updated_at
+                            """,
+                            (
+                                safe_binding.binding_id,
+                                safe_binding.workspace_id,
+                                safe_binding.binding_kind.value,
+                                safe_binding.label,
+                                safe_binding.locator,
+                                safe_binding.status.value,
+                                metadata_json,
+                                safe_binding.created_at,
+                                safe_binding.updated_at,
+                            ),
+                        )
+                        if check is not None:
+                            check()
+                except sqlite3.Error as exc:
+                    raise WorkspaceRegistryServiceError(
+                        _STORAGE_FAILURE_MESSAGE
+                    ) from exc
+                if check is not None:
+                    check()
+                self._bump_mutation_generation()
+                if check is not None:
+                    check()
+                stored = self.get_runtime_binding(safe_binding.binding_id)
+                if stored is None:
+                    raise WorkspaceRegistryServiceError("Runtime binding save failed.")
+                return stored
+        except _WorkspaceCompositeEntryError as exc:
+            raise WorkspaceRegistryServiceError(
+                _STORAGE_FAILURE_MESSAGE
+            ) from exc.__cause__
 
     def add_folder_binding(
         self,
@@ -3201,7 +3534,8 @@ class LocalWorkspaceRegistryService:
         """
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
-            with self.db.connection() as conn:
+            database = self.db
+            with operation_owned_connection(database), database.connection() as conn:
                 row = conn.execute(
                     """
                     SELECT enabled, updated_at FROM workspace_change_review
@@ -3359,7 +3693,8 @@ class LocalWorkspaceRegistryService:
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
-            with self.db.connection() as conn:
+            database = self.db
+            with operation_owned_connection(database), database.connection() as conn:
                 row = conn.execute(
                     """
                     SELECT payload, updated_at
@@ -3811,3 +4146,344 @@ def next_local_workspace_identity(
         if workspace_id not in existing_ids and workspace_name not in existing_names:
             return workspace_id, workspace_name
         index += 1
+
+
+# Definition-time identities qualify only the optional hook connection scope.
+# They retain no connection, permission verdict, or reader result.
+_HOOK_WORKSPACE_READERS = tuple(
+    (LocalWorkspaceRegistryService, name, function, function.__code__,
+     function.__defaults__, function.__kwdefaults__, function.__closure__)
+    for name in ("get_workspace", "read_change_review_consent")
+    for function in (getattr(LocalWorkspaceRegistryService, name),)
+)
+
+
+_WORKSPACE_COMPOSITE_BINDING_OWNER = WorkspaceRuntimeBinding
+_WORKSPACE_COMPOSITE_REGISTRY_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    LocalWorkspaceRegistryService,
+    tuple(
+        (
+            name,
+            (
+                function,
+                function.__code__,
+                function.__globals__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+                function.__closure__,
+                tuple(
+                    (cell, cell.cell_contents) for cell in function.__closure__ or ()
+                ),
+            ),
+        )
+        for name in (
+            "get_workspace",
+            "read_change_review_consent",
+            "list_folder_bindings",
+            "list_runtime_bindings",
+            "get_runtime_binding",
+            "save_runtime_binding",
+            "_bump_mutation_generation",
+        )
+        for function in (vars(LocalWorkspaceRegistryService)[name],)
+    ),
+    (
+        registry_now_iso,
+        registry_now_iso.__code__,
+        registry_now_iso.__globals__,
+        registry_now_iso.__defaults__,
+        registry_now_iso.__kwdefaults__,
+        tuple((registry_now_iso.__kwdefaults__ or {}).items()),
+        registry_now_iso.__closure__,
+        tuple(
+            (cell, cell.cell_contents) for cell in registry_now_iso.__closure__ or ()
+        ),
+    ),
+    inspect.getattr_static(LocalWorkspaceRegistryService, "__getattribute__"),
+    (
+        _metadata_to_json,
+        _metadata_to_json.__code__,
+        _metadata_to_json.__globals__,
+        _metadata_to_json.__defaults__,
+        _metadata_to_json.__kwdefaults__,
+        tuple((_metadata_to_json.__kwdefaults__ or {}).items()),
+        _metadata_to_json.__closure__,
+        tuple(
+            (cell, cell.cell_contents) for cell in _metadata_to_json.__closure__ or ()
+        ),
+    ),
+)
+_WORKSPACE_COMPOSITE_FACTORY_SOURCE = (
+    _owned_workspace_composite,
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        )
+        for function in (
+            _owned_workspace_composite,
+            _owned_workspace_composite.__wrapped__,
+        )
+    ),
+)
+
+
+def _default_presentation_bindings(registry):
+    """Return an invocation-local stock policy checker, never DB authority."""
+    try:
+        from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery import (
+            participants,
+            storage_admission as storage,
+        )
+
+        source = _DEFAULT_PRESENTATION_SOURCE
+        if type(source) is not tuple or len(source) != 7:
+            return None
+        (
+            owner,
+            lookup,
+            dictionary,
+            records,
+            default_id,
+            profile_record,
+            database_dictionary,
+        ) = source
+        if (
+            LocalWorkspaceRegistryService is not owner
+            or type(registry) is not owner  # noqa: E721 - exact defining class required.
+            or inspect.getattr_static(owner, "__getattribute__") is not lookup
+            or inspect.getattr_static(owner, "__dict__") is not dictionary
+            or "db" in vars(owner)
+        ):
+            return None
+        values = vars(registry)
+        if type(values) is not dict:  # noqa: E721 - exact stock owner dictionaries required.
+            return None
+        database = values.get("db")
+        if (
+            database is None
+            or type(database) is not WorkspaceDB
+            or inspect.getattr_static(WorkspaceDB, "__dict__")
+            is not database_dictionary
+            or type(vars(database)) is not dict  # noqa: E721 - exact stock owner dictionaries required.
+            or not _workspace_sources_current(registry, database)
+        ):
+            return None
+        profile = getattr(config, "_CONSOLE_PENDING_FACTS_IDENTITY_SOURCE", None)
+        if (
+            type(profile) is not tuple
+            or len(profile) != 6
+            or profile is not profile_record
+        ):
+            return None
+
+        def profile_current():
+            function, code, namespace, defaults, keywords, closure = profile
+            return (
+                config.__dict__ is namespace
+                and config.current_config_identity is function
+                and function.__code__ is code
+                and function.__globals__ is namespace
+                and function.__defaults__ is defaults is None
+                and function.__kwdefaults__ is keywords is None
+                and function.__closure__ is closure is None
+            )
+
+        if not profile_current():
+            return None
+        identity_reader = profile[0]
+        identity = identity_reader()
+        participant = database._maintenance_participant
+        actor = os.getpid(), threading.current_thread()
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            task = None
+
+        def current():
+            try:
+                try:
+                    current_task = asyncio.current_task()
+                except RuntimeError:
+                    current_task = None
+                if (
+                    os.getpid() != actor[0]
+                    or threading.current_thread() is not actor[1]
+                    or current_task is not task
+                    or globals().get("_DEFAULT_PRESENTATION_SOURCE") is not source
+                    or DEFAULT_WORKSPACE_ID is not default_id
+                    or getattr(config, "_CONSOLE_PENDING_FACTS_IDENTITY_SOURCE", None)
+                    is not profile
+                    or config.current_config_identity is not identity_reader
+                    or not profile_current()
+                    or inspect.getattr_static(owner, "__getattribute__") is not lookup
+                    or inspect.getattr_static(owner, "__dict__") is not dictionary
+                    or type(vars(registry)) is not dict  # noqa: E721 - exact stock owner dictionaries required.
+                    or vars(registry).get("db") is not database
+                    or inspect.getattr_static(WorkspaceDB, "__dict__")
+                    is not database_dictionary
+                    or type(vars(database)) is not dict  # noqa: E721 - exact stock owner dictionaries required.
+                    or not _workspace_sources_current(registry, database)
+                    or any(
+                        inspect.getattr_static(owner, name) is not record[0]
+                        or name in vars(registry)
+                        or not _workspace_function_current(record)
+                        for name, record in records
+                    )
+                    or identity_reader() != identity
+                ):
+                    return False
+                with storage._lock:
+                    return (
+                        participant in participants._installed_repositories
+                        and participant.repository() is database
+                        and database._maintenance_participant is participant
+                        and participant.path == database.db_path
+                        and not participant.closed
+                        and storage._pause is None
+                    )
+            except Exception:  # noqa: BLE001 - optional metadata must decline safely.
+                return False
+
+        return current if current() else None
+    except (AttributeError, TypeError, ValueError, KeyError):
+        return None
+
+
+def _default_presentation_record(function):
+    return (
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+
+
+_DEFAULT_PRESENTATION_SELECTOR_SOURCE = _default_presentation_record(
+    _default_presentation_bindings
+)
+_DEFAULT_PRESENTATION_SOURCE = (
+    LocalWorkspaceRegistryService,
+    inspect.getattr_static(LocalWorkspaceRegistryService, "__getattribute__"),
+    inspect.getattr_static(LocalWorkspaceRegistryService, "__dict__"),
+    tuple(
+        (name, _default_presentation_record(vars(LocalWorkspaceRegistryService)[name]))
+        for name in ("list_runtime_bindings", "_delete_default_runtime_bindings")
+    ),
+    DEFAULT_WORKSPACE_ID,
+    getattr(
+        sys.modules.get("tldw_chatbook.config"),
+        "_CONSOLE_PENDING_FACTS_IDENTITY_SOURCE",
+        None,
+    ),
+    inspect.getattr_static(WorkspaceDB, "__dict__"),
+)
+
+
+# Defining callbacks for the optional finite legacy run-log probe only.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "LocalWorkspaceRegistryService", LocalWorkspaceRegistryService),
+        (globals(), "WorkspaceDB", WorkspaceDB),
+        *(
+            (
+                LocalWorkspaceRegistryService,
+                name,
+                vars(LocalWorkspaceRegistryService)[name],
+            )
+            for name in (
+                "__init__",
+                "get_active_workspace",
+                "list_folder_bindings",
+                "list_runtime_bindings",
+            )
+        ),
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "_workspace_from_row",
+                "_runtime_binding_from_row",
+                "_filesystem_binding_missing",
+                "_assistant_defaults_from_json",
+                "_metadata_from_json",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            (globals(), "LocalWorkspaceRegistryService", LocalWorkspaceRegistryService),
+            (globals(), "WorkspaceDB", WorkspaceDB),
+            *(
+                (
+                    LocalWorkspaceRegistryService,
+                    name,
+                    vars(LocalWorkspaceRegistryService)[name],
+                )
+                for name in (
+                    "__init__",
+                    "get_active_workspace",
+                    "list_folder_bindings",
+                    "list_runtime_bindings",
+                )
+            ),
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "_workspace_from_row",
+                    "_runtime_binding_from_row",
+                    "_filesystem_binding_missing",
+                    "_assistant_defaults_from_json",
+                    "_metadata_from_json",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)

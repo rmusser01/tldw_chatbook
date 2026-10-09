@@ -3,16 +3,10 @@
 Preset-cost: three registry records + three dispatch entries are the ENTIRE
 implementation -- no per-provider ``LLM_Calls`` module may ship for them.
 
-Allowances reality (Task 2 outcome): this environment holds no provider
-keys, so NO cloud fixtures exist. Every preset therefore ships EMPTY
-allowance sets behind a PROVISIONAL PENDING FIRST LIVE CAPTURE comment;
-Task 7's live probes capture real envelopes and reconcile the sets (amend,
-never silent). Memory-not-evidence (fixture-unproven, recorded in the
-registry comment only): Together a top-level ``prompt`` string plus
-choice-level ``logprobs``; Cerebras a top-level ``time_info`` object.
-
-Live captures of these (and every other engine preset) replay under their
-record in ``Tests/LLM_Calls/test_live_capture_replay.py`` (TASK-33640).
+Current response allowances are qualified by primary-schema fixtures through
+chat_api_call and the actual adapters in test_documented_provider_response_contracts.py
+(TASK-34367.3-.5); no paid live-capture claim is made. Live reconciliation
+remains Tests/LLM_Calls/test_live_capture_replay.py (TASK-33640).
 """
 
 from __future__ import annotations
@@ -87,37 +81,22 @@ def test_settings_defaults_carry_no_model_key(key: str) -> None:
     }
 
 
-# --- allowances: empty + provisional (Task 2 fixture reality) ---
+# --- tool-call extras: record-scoped live-capture contract ---
 
 
-# Allowances a live capture proved, with the fixture that proves them.
-_CAPTURED_CHOICE_ALLOWANCES = {
-    "together": frozenset({"logprobs"}),  # cloud_live/together.json (TASK-34362)
-}
+# Other preset response levels keep their documented contracts; this field is
+# qualified by the actual Fireworks tool fixture (TASK-34364).
 _CAPTURED_TOOL_CALL_ALLOWANCES = {
-    "fireworks": frozenset({"index", "name"}),  # cloud_live/fireworks.json (TASK-34364)
+    "fireworks": frozenset({"index", "name"}),  # cloud_live/fireworks.json
 }
 
 
 @pytest.mark.parametrize("key", PRESET_KEYS)
-def test_allowances_ship_empty_pending_first_capture(key: str) -> None:
-    record = RECORDS_BY_KEY[key]
-    assert record.response_allowances == frozenset()
-    assert record.choice_allowances == _CAPTURED_CHOICE_ALLOWANCES.get(key, frozenset())
-    assert record.message_allowances == frozenset()
-    assert record.tool_call_allowances == _CAPTURED_TOOL_CALL_ALLOWANCES.get(key, frozenset())
-
-
-def test_registry_carries_the_provisional_allowance_comment() -> None:
-    """The empty sets must not be mistaken for fixture-proven cleanliness:
-    the registry source itself marks them provisional so Task 7's live
-    probes (amend, never silent) are discoverable from the data site."""
-    registry_source = (
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "provider_registry.py"
-    ).read_text(encoding="utf-8")
-    assert "PROVISIONAL PENDING FIRST LIVE CAPTURE" in registry_source
+def test_tool_call_allowances_match_the_captured_contract(key: str) -> None:
+    """Only the captured preset accepts these non-streamed tool-call extras."""
+    assert RECORDS_BY_KEY[key].tool_call_allowances == (
+        _CAPTURED_TOOL_CALL_ALLOWANCES.get(key, frozenset())
+    )
 
 
 # --- fireworks: proprietary reasoning ---
@@ -138,9 +117,7 @@ def test_fireworks_reasoning_is_proprietary() -> None:
 def test_no_per_provider_module_ships() -> None:
     """The whole preset is a registry record + dispatch entry: the engine
     closure replaces what a ``chat_with_together`` module used to be."""
-    llm_calls_root = (
-        Path(__file__).resolve().parents[2] / "tldw_chatbook" / "LLM_Calls"
-    )
+    llm_calls_root = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "LLM_Calls"
     for key in PRESET_KEYS:
         matches = sorted(llm_calls_root.glob(f"{key}*.py"))
         assert matches == [], f"unexpected per-provider module(s): {matches}"

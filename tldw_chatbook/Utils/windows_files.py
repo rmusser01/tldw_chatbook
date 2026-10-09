@@ -4,7 +4,9 @@ This is a *local* os facade, never a patch to Python's os module. Names beneath
 pinned directories use NtCreateFile(RootDirectory); every component refuses
 reparse points. Security metadata is a conservative projection of the actual
 owner SID and DACL, not Windows' synthetic POSIX permission bits. UID 1000 means
-the process token user, UID 0 means SYSTEM/Administrators/TrustedInstaller.
+private custody of the process token user (actual owner, or proven private
+TokenOwner custody); UID 0 means other SYSTEM/Administrators/TrustedInstaller
+ownership. Actual owner SID and DACL are always read, never inferred from UID.
 
 Only local NTFS is supported. All native handles use FILE_WRITE_THROUGH. Directory barriers issue normal
 NtFlushBuffersFileEx requests (data, metadata and device synchronization); files
@@ -20,6 +22,7 @@ import contextlib
 import ctypes as C
 import errno
 import functools
+from pathlib import Path
 import ntpath
 import os as _os
 import platform
@@ -203,6 +206,34 @@ def _acl_mode(
     return mode
 
 
+def _owner_uid(
+    owner_sid: str,
+    user_sid: str,
+    token_owner_sid: str,
+    aces: list[tuple[int, int, int, str]],
+    mode: int,
+) -> int:
+    """Project actual ownership, accepting only exact private TokenOwner custody."""
+    if owner_sid == user_sid:
+        return 1000
+    full_access = 0x1F01FF
+    if (
+        owner_sid == token_owner_sid
+        and owner_sid in _SYSTEM_SIDS
+        and not mode & 0o077
+        and all(kind == 0 for kind, _, _, _ in aces)
+        and any(
+            kind == 0
+            and not flags & 8
+            and sid == user_sid
+            and mask & full_access == full_access
+            for kind, flags, mask, sid in aces
+        )
+    ):
+        return 1000
+    return 0 if owner_sid in _SYSTEM_SIDS else -1
+
+
 class _Native:
     """Typed Windows ABI declarations, loaded only on native Windows."""
 
@@ -297,8 +328,10 @@ class _Native:
             (self.advapi, "ConvertSidToStringSidW", [_P, C.POINTER(_P)], _I32),
             (self.advapi, "GetSecurityDescriptorLength", [_P], _U32),
             (
-                self.advapi, "GetSecurityDescriptorOwner",
-                [_P, C.POINTER(_P), C.POINTER(_I32)], _I32,
+                self.advapi,
+                "GetSecurityDescriptorOwner",
+                [_P, C.POINTER(_P), C.POINTER(_I32)],
+                _I32,
             ),
             (
                 self.advapi,
@@ -389,6 +422,10 @@ class _Native:
             self.kernel.LocalFree(output)
 
     def _user_sid(self):
+        return self._token_sid(1)
+
+    def _token_sid(self, information_class):
+        """Read the current process token SID; never cache TokenOwner custody."""
         token = _HANDLE()
         self.check(
             self.advapi.OpenProcessToken(
@@ -397,10 +434,14 @@ class _Native:
         )
         try:
             size = _U32()
-            self.advapi.GetTokenInformation(token, 1, None, 0, C.byref(size))
+            self.advapi.GetTokenInformation(
+                token, information_class, None, 0, C.byref(size)
+            )
             buffer = C.create_string_buffer(size.value)
             self.check(
-                self.advapi.GetTokenInformation(token, 1, buffer, size, C.byref(size))
+                self.advapi.GetTokenInformation(
+                    token, information_class, buffer, size, C.byref(size)
+                )
             )
             return self.sid_string(C.cast(buffer, C.POINTER(_P))[0])
         finally:
@@ -452,7 +493,7 @@ class _Native:
         if device[1] & 0x10:
             raise OSError(errno.ENOTSUP, "remote_filesystem_refused")
 
-    def security(self, handle, is_directory):
+    def security(self, handle, is_directory, *, with_descriptor=False):
         """Read fresh security; reuse only decoding of byte-identical descriptors."""
         owner, dacl, descriptor = _P(), _P(), _P()
         result = self.advapi.GetSecurityInfo(
@@ -461,6 +502,7 @@ class _Native:
         if result:
             raise C.WinError(result)
         try:
+            token_owner_sid = self._token_sid(4)
             # GetSecurityInfo owns a complete valid descriptor. Self-relative
             # descriptors are contiguous; never retain its native pointers.
             # 128 entries of at most 4096 bytes bound retained descriptor data.
@@ -468,33 +510,44 @@ class _Native:
             if control & 0x8000:  # SE_SELF_RELATIVE
                 size = self.advapi.GetSecurityDescriptorLength(descriptor)
                 if 20 <= size <= 4096:
-                    return self._decoded_security(
-                        C.string_at(descriptor, size), is_directory, self.user_sid
+                    data = C.string_at(descriptor, size)
+                    projected = self._decoded_security(
+                        data, is_directory, self.user_sid, token_owner_sid
                     )
-            return self._decode_security(owner, dacl, is_directory, self.user_sid)
+                    return (*projected, data) if with_descriptor else projected
+            if with_descriptor:
+                raise OSError(errno.ENOTSUP, "windows_security_stamp_unavailable")
+            return self._decode_security(
+                owner, dacl, is_directory, self.user_sid, token_owner_sid
+            )
         finally:
             self.kernel.LocalFree(descriptor)
 
     @functools.lru_cache(maxsize=128)  # noqa: B019 - _native already retains this process-lifetime singleton.
-    def _decoded_security(self, data, is_directory, user_sid):
+    def _decoded_security(self, data, is_directory, user_sid, token_owner_sid):
         """Decode immutable bytes, never a cached handle or filesystem decision."""
         descriptor = C.create_string_buffer(data)
         owner, dacl = _P(), _P()
         defaulted, present = _I32(), _I32()
-        self.check(self.advapi.GetSecurityDescriptorOwner(
-            descriptor, C.byref(owner), C.byref(defaulted)
-        ))
-        self.check(self.advapi.GetSecurityDescriptorDacl(
-            descriptor, C.byref(present), C.byref(dacl), C.byref(defaulted)
-        ))
-        return self._decode_security(owner, dacl, is_directory, user_sid)
+        self.check(
+            self.advapi.GetSecurityDescriptorOwner(
+                descriptor, C.byref(owner), C.byref(defaulted)
+            )
+        )
+        self.check(
+            self.advapi.GetSecurityDescriptorDacl(
+                descriptor, C.byref(present), C.byref(dacl), C.byref(defaulted)
+            )
+        )
+        return self._decode_security(
+            owner, dacl, is_directory, user_sid, token_owner_sid
+        )
 
-    def _decode_security(self, owner, dacl, is_directory, user_sid):
+    def _decode_security(self, owner, dacl, is_directory, user_sid, token_owner_sid):
         """Conservatively project the native owner and ordered ACL entries."""
         sid = self.sid_string(owner)
-        uid = 1000 if sid == user_sid else (0 if sid in _SYSTEM_SIDS else -1)
         if not dacl.value:
-            return uid, 0o777
+            return _owner_uid(sid, user_sid, token_owner_sid, [], 0o777), 0o777
         header = C.string_at(dacl, 8)
         count = struct.unpack_from("<H", header, 4)[0]
         aces = []
@@ -507,7 +560,8 @@ class _Native:
             mask = struct.unpack("<I", C.string_at(ace.value + 4, 4))[0]
             trustee = self.sid_string(ace.value + 8) if kind in {0, 1} else ""
             aces.append((kind, flags, mask, trustee))
-        return uid, _acl_mode(aces, user_sid, is_directory=is_directory, owner_sid=sid)
+        mode = _acl_mode(aces, user_sid, is_directory=is_directory, owner_sid=sid)
+        return _owner_uid(sid, user_sid, token_owner_sid, aces, mode), mode
 
     def open_handle(
         self,
@@ -576,8 +630,16 @@ class _Native:
             self.ntfs(handle)
             return handle.value
         except BaseException:
-            self.kernel.CloseHandle(handle)
-            raise
+            record = _AdmissionMetadataHandle(self, handle.value, name)
+            try:
+                closed = self.kernel.CloseHandle(handle)
+            except BaseException as error:
+                record.close_error = error
+            else:
+                if closed:
+                    raise
+                record.close_error = C.get_last_error()
+            raise _AdmissionMetadataCloseError((record,))
 
     @contextlib.contextmanager
     def reopen(self, handle, access):
@@ -649,6 +711,23 @@ def _parent(path, dir_fd=None):
         yield handle, parts[-1] if parts else None
     finally:
         native.kernel.CloseHandle(handle)
+
+
+class _AdmissionMetadataHandle:
+    """One physical snapshot handle incarnation, retained on uncertain close."""
+
+    def __init__(self, native, handle, path):
+        self.native = native
+        self.handle = handle
+        self.path = path
+        self.identity = None
+        self.close_error = None
+
+
+class _AdmissionMetadataCloseError(OSError):
+    def __init__(self, failed_handles):
+        self.failed_handles = tuple(failed_handles)
+        super().__init__(errno.EIO, "windows_admission_metadata_not_retired")
 
 
 class WindowsOS:
@@ -732,25 +811,152 @@ class WindowsOS:
         return self._stat_handle(_native().handle(fd))
 
     def stat(self, path, *, dir_fd=None, follow_symlinks=True):
+        return self._named_stat(path, dir_fd=dir_fd)
+
+    def stat_for_admission(self, path, *, follow_symlinks=False):
+        """Read metadata and exact owner/DACL bytes from one fresh named handle."""
+        return self._named_stat(path, with_descriptor=True)
+
+    def stat_many_for_admission(self, paths):
+        """Read a fresh tree snapshot and positively retire every native handle.
+
+        Named associations are reopened bottom-up. A failed close keeps its
+        exact handle incarnation in the defining exception; it is never retried.
+        """
+        selected = tuple(Path(path) for path in paths)
+        nodes = sorted(
+            {node for path in selected for node in (*path.parents, path)},
+            key=lambda node: (len(node.parts), str(node)),
+        )
+        for node in nodes:
+            if (
+                not node.is_absolute()
+                or len(node.drive) != 2
+                or node.drive[1] != ":"
+                or not node.drive[0].isalpha()
+            ):
+                raise ValueError("local_absolute_drive_path_required")
+            # The node set includes every ancestor; validate each name once.
+            if node.parent != node:
+                _component(node.name)
+        parents = {node.parent for node in nodes if node.parent != node}
+        native = _native()
+        handles, identities, observations = {}, {}, {}
+        opened, failed = {}, []
+
+        def named_handle(node):
+            try:
+                if node.parent == node:
+                    handle = native.open_handle(
+                        "\\??\\" + node.drive + "\\", directory=True
+                    )
+                else:
+                    handle = native.open_handle(
+                        node.name,
+                        parent=handles[node.parent],
+                        metadata=True,
+                        directory=node in parents,
+                    )
+            except _AdmissionMetadataCloseError as error:
+                failed.extend(error.failed_handles)
+                raise
+            record = _AdmissionMetadataHandle(native, handle, node)
+            opened[handle] = record
+            info = native.info(handle)
+            record.identity = (info.volume, (info.index_high << 32) | info.index_low)
+            return handle
+
+        def close_handle(handle):
+            record = opened.pop(handle)
+            try:
+                closed = native.kernel.CloseHandle(handle)
+            except BaseException as error:
+                record.close_error = error
+                failed.append(record)
+            else:
+                if not closed:
+                    record.close_error = C.get_last_error()
+                    failed.append(record)
+
+        try:
+            for node in nodes:
+                if node.parent != node and handles[node.parent] is None:
+                    handles[node] = None
+                    continue
+                try:
+                    handle = named_handle(node)
+                except FileNotFoundError:
+                    handles[node] = None
+                    continue
+                handles[node] = handle
+                identities[node] = opened[handle].identity
+                if node not in parents:
+                    close_handle(handle)
+                    handles[node] = None
+                    if failed:
+                        raise _AdmissionMetadataCloseError(failed)
+            for node in reversed(nodes):
+                if node.parent != node and handles[node.parent] is None:
+                    observations[node] = None
+                    continue
+                try:
+                    current = named_handle(node)
+                except FileNotFoundError:
+                    current = None
+                if current is None:
+                    observed = None
+                else:
+                    try:
+                        observed = self._stat_handle(current, with_descriptor=True)
+                    finally:
+                        close_handle(current)
+                    if failed:
+                        raise _AdmissionMetadataCloseError(failed)
+                identity = (
+                    None
+                    if observed is None
+                    else (
+                        observed[0].st_dev,
+                        observed[0].st_ino,
+                    )
+                )
+                if identity != identities.get(node):
+                    raise OSError(errno.ESTALE, "windows_admission_snapshot_changed")
+                observations[node] = observed
+            return {path: observations[path] for path in selected}
+        finally:
+            for handle in reversed(tuple(opened)):
+                close_handle(handle)
+            if failed:
+                raise _AdmissionMetadataCloseError(failed)
+
+    def _named_stat(self, path, *, dir_fd=None, with_descriptor=False):
         if isinstance(path, int):
-            return self.fstat(path)
+            return self._stat_handle(
+                _native().handle(path), with_descriptor=with_descriptor
+            )
         native = _native()
         with _parent(path, dir_fd) as (parent, leaf):
             if leaf is None:
                 with native.reopen(
                     parent, _READ_CONTROL | _READ_ATTRIBUTES | _SYNCHRONIZE
                 ) as handle:
-                    return self._stat_handle(handle)
+                    return self._stat_handle(handle, with_descriptor=with_descriptor)
             handle = native.open_handle(leaf, parent=parent, metadata=True)
         try:
-            return self._stat_handle(handle)
+            return self._stat_handle(handle, with_descriptor=with_descriptor)
         finally:
             native.kernel.CloseHandle(handle)
 
-    def _stat_handle(self, handle):
+    def _stat_handle(self, handle, *, with_descriptor=False):
         native = _native()
         info = native.info(handle)
-        uid, mode = native.security(handle, bool(info.attributes & _DIRECTORY))
+        security = native.security(
+            handle,
+            bool(info.attributes & _DIRECTORY),
+            **({"with_descriptor": True} if with_descriptor else {}),
+        )
+        uid, mode = security[:2]
         basic = _BasicInfo()
         native.check(
             native.kernel.GetFileInformationByHandleEx(
@@ -761,7 +967,7 @@ class WindowsOS:
         def ns(value):
             return (value - _EPOCH_100NS) * 100
 
-        return _os.stat_result(
+        result = _os.stat_result(
             (
                 (_stat.S_IFDIR if info.attributes & _DIRECTORY else _stat.S_IFREG)
                 | mode,
@@ -785,6 +991,7 @@ class WindowsOS:
                 "st_file_attributes": info.attributes,
             },
         )
+        return (result, security[2]) if with_descriptor else result
 
     def fchmod(self, fd, mode):
         if mode not in {0o600, 0o700}:
@@ -1115,3 +1322,25 @@ def flush_file(fd: int) -> None:
     # never a reconstructed path, when a verifier holds a read-only descriptor.
     with native.reopen(handle, 0x40000000) as writable:
         native.check(native.kernel.FlushFileBuffers(writable))
+
+
+# Original callable provenance belongs to the defining module, before consumers.
+_WINDOWS_METADATA_CLASS_ORIGINAL = WindowsOS
+_WINDOWS_METADATA_METHODS_ORIGINAL = tuple(
+    (name, vars(WindowsOS)[name])
+    for name in ("stat", "_named_stat", "_stat_handle", "stat_many_for_admission")
+)
+_WINDOWS_METADATA_CLOSE_ERROR_ORIGINAL = _AdmissionMetadataCloseError
+
+# The binding batch admits only this definition-time body on an exact stock
+# receiver. Custom metadata readers keep their existing scalar path.
+_WINDOWS_BINDING_TREE_ORIGINAL = (
+    _WINDOWS_METADATA_CLASS_ORIGINAL,
+    WindowsOS.stat_many_for_admission,
+    WindowsOS.stat_many_for_admission.__code__,
+    WindowsOS.stat_many_for_admission.__globals__,
+    WindowsOS.stat_many_for_admission.__defaults__,
+    WindowsOS.stat_many_for_admission.__kwdefaults__,
+    WindowsOS.stat_many_for_admission.__closure__,
+    "stat_many_for_admission",
+)

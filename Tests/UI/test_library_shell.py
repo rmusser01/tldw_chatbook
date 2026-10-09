@@ -2944,32 +2944,19 @@ async def test_library_real_config_creation_admits_fresh_profile_to_starter(
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_real_existing_config_without_lifecycle_defaults_expanded(
     tmp_path, monkeypatch
 ) -> None:
     """An existing config has no transient admission fact and stays legacy-full."""
-    config_path = tmp_path / "existing-profile" / "config.toml"
-    config_path.parent.mkdir(parents=True)
-    config_path.write_text("[first_run]\nsetup_completed = true\n", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    monkeypatch.setattr(
-        app_config, "_FIRST_PROFILE_CREATED_THIS_SESSION", False, raising=False
-    )
-    app_config._CONFIG_CACHE = None
-    app_config._CONFIG_CACHE_SOURCE = None
-    app_config._SETTINGS_CACHE = None
-    app_config._SETTINGS_CACHE_SOURCE = None
-
-    app_config.load_settings(force_reload=True)
-    app = _build_test_app()
-    assert app.library_new_profile_admission is False
-    app.app_config.setdefault("library", {}).setdefault("rail_state", {}).pop(
-        "lifecycle", None
+    # This document is selected before the child first imports configuration.
+    # The original raw source guard and current parent profile stay installed.
+    from Tests.UI._library_profile_admission_process import (
+        run_original_library_profile_compat,
     )
 
-    screen = LibraryScreen(app)
-    assert screen._library_lifecycle is LibraryLifecycle.EXPANDED
+    run_original_library_profile_compat(tmp_path, existing=True)
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,7 @@ import hashlib
 import os
 from pathlib import Path
 import stat
+import subprocess
 
 import pytest
 
@@ -22,6 +23,31 @@ _ZERO_HASH = "0" * 64
 _ONE_HASH = "1" * 64
 _TWO_HASH = "2" * 64
 _NOW = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
+
+
+def _native_stat(path: Path):
+    """Inspect the actual host permission model used by receipt storage."""
+    return receipt_store_module.os.stat(path, follow_symlinks=False)
+
+
+def _relax_read_access(path: Path) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["icacls", str(path), "/grant", "*S-1-1-0:(R)"],
+            check=True,
+            capture_output=True,
+        )
+    else:
+        path.chmod(0o644)
+
+
+def _symlink(path: Path, target: Path, *, directory: bool = False) -> None:
+    try:
+        path.symlink_to(target, target_is_directory=directory)
+    except OSError as error:
+        if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+            pytest.skip("host lacks the Windows symlink creation privilege")
+        raise
 
 
 def _identity(
@@ -260,8 +286,8 @@ def test_receipt_is_private_reserved_and_digest_authenticated(tmp_path: Path) ->
         handle = reservation.commit(_receipt_bytes())
 
     verified = store.read(handle.receipt_id, expected_digest=handle.digest)
-    assert stat.S_IMODE(root.stat().st_mode) == 0o700
-    assert stat.S_IMODE(handle.path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(_native_stat(root).st_mode) == 0o700
+    assert stat.S_IMODE(_native_stat(handle.path).st_mode) == 0o600
     assert handle.receipt_id == "tp-" + "ab" * 16
     assert verified.digest == handle.digest
     assert verified.receipt.profile_id == "research"
@@ -272,7 +298,7 @@ def test_store_rejects_a_symlinked_receipt_root(tmp_path: Path) -> None:
     real = tmp_path / "real"
     real.mkdir()
     linked = tmp_path / "receipts"
-    linked.symlink_to(real, target_is_directory=True)
+    _symlink(linked, real, directory=True)
 
     with pytest.raises(ToolPackError, match=r"activation_failed$"):
         _store(linked)
@@ -281,7 +307,7 @@ def test_store_rejects_a_symlinked_receipt_root(tmp_path: Path) -> None:
 def test_read_rejects_receipt_with_relaxed_file_mode(tmp_path: Path) -> None:
     store = _store(tmp_path / "receipts")
     handle = _commit(store)
-    handle.path.chmod(0o644)
+    _relax_read_access(handle.path)
 
     with pytest.raises(ToolPackError, match=r"payload_invalid$"):
         store.read(handle.receipt_id, expected_digest=handle.digest)
@@ -314,7 +340,7 @@ def test_root_creation_directory_sync_failure_is_activation_failed(
 
     def fail_parent_sync(descriptor: int) -> None:
         nonlocal directory_syncs
-        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+        if stat.S_ISDIR(receipt_store_module.os.fstat(descriptor).st_mode):
             directory_syncs += 1
             if directory_syncs == 2:
                 raise OSError(errno.EIO, "parent directory fsync failed")
@@ -327,7 +353,7 @@ def test_root_creation_directory_sync_failure_is_activation_failed(
 
     assert directory_syncs == 2
     assert root.is_dir()
-    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+    assert stat.S_IMODE(_native_stat(root).st_mode) == 0o700
 
 
 def test_capacity_enforces_projection_actual_and_committed_files(
@@ -445,7 +471,7 @@ def test_unsupported_receipt_directory_sync_is_uncertain_and_visible(
     real_fsync = receipt_store_module.os.fsync
 
     def fail_directory_sync(descriptor: int) -> None:
-        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+        if stat.S_ISDIR(receipt_store_module.os.fstat(descriptor).st_mode):
             raise OSError(errno.EINVAL, "directory fsync unsupported")
         real_fsync(descriptor)
 
@@ -498,7 +524,7 @@ def test_read_rejects_digest_mismatch_noncanonical_bytes_and_symlink(
         )
 
     symlink = root / ("tp-" + "ef" * 16)
-    symlink.symlink_to(handle.path)
+    _symlink(symlink, handle.path)
     with pytest.raises(ToolPackError, match=r"payload_invalid$"):
         store.read(symlink.name, expected_digest=handle.digest)
 
@@ -542,7 +568,7 @@ def test_reconcile_removes_only_old_authenticated_unowned_regular_receipts(
     directory = root / ("tp-" + "06" * 16)
     directory.mkdir()
     symlink = root / ("tp-" + "07" * 16)
-    symlink.symlink_to(root / names["orphan"])
+    _symlink(symlink, root / names["orphan"])
 
     removed = store.reconcile_orphans(
         {names["linked"], names["corrupt_linked"]},

@@ -142,11 +142,14 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
         except MessageError as refusal:
             snapshot = ()
             error = refusal.code
-            self.query_one("#agent-progress-status", Static).update(
+            status = self.query_one("#agent-progress-status", Static)
+            message = (
                 "Saved reports remain queued. Close another chat to free live capacity, then reopen progress."
                 if error == "queue_full"
                 else "This inbox is unavailable. Close and reopen progress for the current session."
             )
+            if str(status.renderable) != message:
+                status.update(message)
         listing = self.query_one(SelectionList)
         if snapshot != self._snapshot:
             selected = set(listing.selected)
@@ -159,9 +162,7 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
             listing.add_options(
                 [
                     (
-                        Text(
-                            f"Report {index + 1} · {_literal(message.identity.agent)}"
-                        ),
+                        Text(f"Report {index + 1} · {_literal(message.identity.agent)}"),
                         message.message_id,
                         message.message_id in selected,
                     )
@@ -181,7 +182,8 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
                 if snapshot
                 else None
             )
-        self.query_one("#agent-progress-count", Static).update(
+        count = self.query_one("#agent-progress-count", Static)
+        count_text = (
             f"{len(snapshot)} queued · select reports to discard"
             if snapshot
             else "Progress unavailable · live capacity is full"
@@ -190,6 +192,8 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
             if error is not None
             else "No queued progress in this view."
         )
+        if str(count.renderable) != count_text:
+            count.update(count_text)
         self._sync_selection()
 
     @on(SelectionList.SelectionHighlighted, "#agent-progress-list")
@@ -212,7 +216,10 @@ class ConsoleAgentProgressModal(SafeModalDismissMixin, ModalScreen[None]):
             if message
             else "Highlight a queued report to inspect its content."
         )
-        self.query_one("#agent-progress-body", Static).update(Text(text))
+        body = self.query_one("#agent-progress-body", Static)
+        content = Text(text)
+        if body.renderable != content:
+            body.update(content)
 
     @on(SelectionList.SelectedChanged, "#agent-progress-list")
     def _sync_selection(self) -> None:

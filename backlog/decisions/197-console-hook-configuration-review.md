@@ -124,6 +124,29 @@ changes; revocation and changed definitions fence staged effects and queued work
 Host-injected engines retain their explicit authority resolver and never become
 standalone config grants. Lifecycle session replacement remains idle-only.
 
+
+### TASK-34406: admission must preserve observed consent history
+
+Every stock admission observation retains the existing fresh saved-config and
+durable permission reconciliation. Observing master disable, an individually
+disabled hook or removal must retire old queued launch epochs; removal must
+also retire the old durable grant before the same definition is restored.
+An unpublished or newly constructed owner does not prove an empty permission
+store: earlier owners and processes may have persisted consent.
+
+The proposed admission-only no-store shortcut was rejected before commit or
+push. Six actual native history controls paired the unchanged complete snapshot
+with the proposed controller admission route: the original three passed and
+all three shortcut routes retained old launch authority. Restoring the exact
+original five production files made all six pass with source and native
+retirement checked. The fresh zero-history work-count controls alone had not
+covered this durable-history requirement.
+
+Future cost reductions must independently preserve these observations, grants,
+queued epochs, current source/owner boundaries and cancellation cleanup. Keep
+the original full/custom/v2/launch/revoke routes and responsiveness limits.
+ADR-126 custody, ADR-148 execution and ADR-162/163 v2 behavior remain unchanged.
+
 The [TASK-33648 bounded disposal policy](163-expanded-console-hook-runtime.md#task-33648-saved-standalone-sessionend-during-host-disposal)
 retains only an authentic host-issued, effect-free SessionEnd command notification
 after ordinary admission closes. Its original grant is re-read and serialized

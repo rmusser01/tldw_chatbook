@@ -42,6 +42,7 @@ def _runtime(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_receipt_bootstrap_reuses_hydrated_owner_when_bridge_is_built(tmp_path):
     activity_id = _seed_result(tmp_path / "agent_runs.db")
     _, runtime = _runtime(tmp_path)

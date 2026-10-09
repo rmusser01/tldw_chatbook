@@ -10,6 +10,7 @@ import pytest
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.UI.Console_Modules.character_context import (
@@ -62,7 +63,7 @@ def test_metadata_retires_replacement_after_exact_file_quiescence(tmp_path, borr
 
 
 @pytest.mark.parametrize(
-    "database_type", [AgentRunsDB, WorkspaceDB, LibraryCollectionsDB]
+    "database_type", [AgentRunsDB, WorkspaceDB, LibraryCollectionsDB, MediaDatabase]
 )
 @pytest.mark.parametrize("replace", [False, True], ids=["unchanged", "replacement"])
 @pytest.mark.parametrize("fail_sql", [False, True], ids=["success", "sql-error"])
@@ -71,8 +72,11 @@ def test_core_guard_retires_only_replacement_borrowers(
 ):
     """Cleanup follows native identity on success/error, preserving live transactions."""
     db = database_type(tmp_path / "core-owner.sqlite", "finite-core")
+    get_connection = (
+        db.get_connection if database_type is MediaDatabase else db._held_connection
+    )
     try:
-        previous = db._held_connection()
+        previous = get_connection()
         previous.execute("BEGIN")
         error = (
             pytest.raises(sqlite3.OperationalError, match="no such table")
@@ -82,7 +86,7 @@ def test_core_guard_retires_only_replacement_borrowers(
         with error, operation_owned_connection(db):
             if replace:
                 db.close()
-            current = db._held_connection()
+            current = get_connection()
             assert current.execute("SELECT 1").fetchone()[0] == 1
             if fail_sql:
                 # Let an actual SQLite error cross the guard's finally boundary.

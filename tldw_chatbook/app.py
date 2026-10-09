@@ -222,7 +222,7 @@ from .config import (
     get_cli_setting,
     get_media_db_path,
     get_prompts_db_path,
-    get_subscriptions_db_path,
+    get_subscriptions_db_path,  # noqa: F401 - shared app-module compatibility alias.
     get_tts_profiles_db_path,
     get_user_data_dir,
     save_setting_to_cli_config,
@@ -1444,6 +1444,8 @@ class TldwCli(
         self._tts_initialization_task: asyncio.Task | None = None
         self._stts_initialization_task: asyncio.Task | None = None
         self._deferred_startup_tasks: set[asyncio.Task] = set()
+        self._actor_pack_recovery_reads: set[Any] = set()
+        self._actor_pack_recovery_closed = False
         # Portable Tool Packs are unavailable until first Tool Profiles use
         # composes every authority owner and attaches one complete guard.
         self.tool_pack_service: Any | None = None
@@ -1460,6 +1462,7 @@ class TldwCli(
         # times for different reasons; both are idempotent on their own handle.
         self._initial_screen_preimport_thread: threading.Thread | None = None
 
+        self._initial_screen_pushed = False
         self._ui_ready = False  # Track if UI is fully composed
         self._shutting_down = False  # Track if app is shutting down
         self._quit_in_progress = False
@@ -4224,6 +4227,57 @@ class TldwCli(
         # feature CSS exactly like an in-app navigation does.
         self._ensure_screen_owned_css(resolved_tab)
 
+        if resolved_tab == TAB_CHAT:
+            from tldw_chatbook.Chat.console_runtime import _initial_receipt_preparer
+
+            runtime = self.console_runtime
+            prepare = _initial_receipt_preparer(runtime)
+            if prepare is not None:
+                owner_task, owner_loop = asyncio.current_task(), asyncio.get_running_loop()
+                owner_thread = threading.current_thread()
+                runtime_identity = self._current_runtime_identity()
+                initial_stack = tuple(self.screen_stack)
+                initial_current_tab = self.current_tab
+                initial_database = self.chachanotes_db
+                initial_database_path = getattr(initial_database, "db_path", None)
+                initial_marks = self.conversation_local_marks_service
+                initial_route_value = getattr(self, "_initial_tab_value", TAB_CHAT)
+
+                def require_initial_owner() -> None:
+                    if _initial_receipt_preparer(runtime) is None:
+                        raise RuntimeError("initial_receipt_source_changed")
+                    current_stack = tuple(self.screen_stack)
+                    if (
+                        asyncio.current_task() is not owner_task
+                        or asyncio.get_running_loop() is not owner_loop
+                        or threading.current_thread() is not owner_thread
+                        or self.console_runtime is not runtime
+                        or runtime._app is not self
+                        or runtime._disposed
+                        or self.chachanotes_db is not initial_database
+                        or getattr(initial_database, "db_path", None) != initial_database_path
+                        or self.conversation_local_marks_service is not initial_marks
+                        or getattr(self, "_initial_tab_value", TAB_CHAT) != initial_route_value
+                        or self._current_runtime_identity() != runtime_identity
+                        or self.current_tab != initial_current_tab
+                        or len(current_stack) != len(initial_stack)
+                        or any(now is not before for now, before in zip(current_stack, initial_stack))
+                        or getattr(self, "_initial_screen_pushed", False)
+                        or self._shutting_down
+                        or self._exit
+                    ):
+                        raise RuntimeError("initial_screen_owner_changed")
+
+                # Existing initial-setup custody is already counted by the
+                # navigation drain. Accepted startup may finish while a new
+                # maintenance/navigation admission fence is closed.
+                async with self._screen_navigation_lock():
+                    require_initial_owner()
+                    if _initial_receipt_preparer(runtime) is None:
+                        raise RuntimeError("initial_receipt_source_changed")
+                    await prepare(self, require_current=require_initial_owner)
+                    require_initial_owner()
+
         new_screen = screen_class(self)
         # TASK-31520: retain the initial screen exactly like a navigated-to
         # one. Without this, a reusable initial tab (chat is the default!)
@@ -4655,16 +4709,15 @@ class TldwCli(
 
         def start_actor_pack_recovery() -> Worker:
             # task-21106: Actor Pack crash recovery, moved out of __init__ --
-            # synchronous SQLite has no place on the construction path. A
-            # thread worker (not a coroutine) because recovery does blocking
-            # DB I/O; the coordinator's own once-guard makes every later
+            # synchronous SQLite has no place on the construction path.
+            # Retain the finite blocking callback through worker cancellation;
+            # the coordinator's own once-guard makes every later
             # surface-side call (Personas mount, create_persona) a cached
             # no-op -- which is also why this may be staggered at all.
             return self.run_worker(
-                self.ensure_actor_pack_recovery,
+                self._run_actor_pack_recovery_owned(self.ensure_actor_pack_recovery),
                 name="deferred_actor_pack_recovery",
                 group="actor_pack_recovery",
-                thread=True,
                 exclusive=True,
                 exit_on_error=False,
             )
@@ -4699,12 +4752,8 @@ class TldwCli(
             )
 
         def start_subscriptions_fts_backfill() -> Worker | None:
-            from tldw_chatbook.Backup_Recovery.activation import execution_allowed
-
-            if not execution_allowed(
-                ("db.subscriptions",), get_subscriptions_db_path()
-            ):
-                return None
+            # The thread body resolves its path and takes fresh admission.
+            # Repeating that preflight here blocks the UI during boot.
             # task-688: index subscription_items rows scraped before the FTS5
             # index existed, so search covers a user's whole back catalogue
             # without any action on their part.
@@ -5688,6 +5737,16 @@ def __getattr__(name: str) -> Any:
 
         return getattr(app_entry, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# Defining App and Runtime identities for finite Console skill preparation.
+_CONSOLE_SKILL_APP_SOURCE = (
+    TldwCli,
+    globals(),
+    TldwCli._create_deferred_startup_task,
+    TldwCli._create_deferred_startup_task.__code__,
+    ConsoleRuntime,
+)
 
 
 # --- Main execution block ---

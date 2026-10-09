@@ -60,7 +60,7 @@ async def test_model_values_update_hidden_rows_without_screen_wide_scans(
             screen_scans.clear()
             with monkeypatch.context() as observer:
                 observer.setattr(DOMQuery, "nodes", property(observe_nodes))
-                console._apply_console_settings_summary_state(state)
+                console._context_spend._apply_console_settings_summary_state(state)
             assert [str(value.renderable).strip() for value in values] == [
                 temperature or "—",
                 max_tokens or "—",
@@ -100,10 +100,10 @@ async def test_model_values_follow_missing_and_remounted_rows(request) -> None:
             row = console.query_one(f"#console-model-section-{row_id}")
             parent = row.parent
             position = parent.children.index(row)
-            console._apply_console_settings_summary_state(state)
+            console._context_spend._apply_console_settings_summary_state(state)
 
             await row.query_one(".console-model-section-value", Static).remove()
-            console._apply_console_settings_summary_state(changed)
+            console._context_spend._apply_console_settings_summary_state(changed)
             for other_id, _, other_value in sections:
                 if other_id != row_id:
                     assert (
@@ -119,11 +119,11 @@ async def test_model_values_follow_missing_and_remounted_rows(request) -> None:
                 "stale", classes="console-model-section-value", markup=False
             )
             await row.mount(replacement_value)
-            console._apply_console_settings_summary_state(changed)
+            console._context_spend._apply_console_settings_summary_state(changed)
             assert str(replacement_value.renderable).strip() == expected
 
             await row.remove()
-            console._apply_console_settings_summary_state(state)
+            console._context_spend._apply_console_settings_summary_state(state)
             replacement_value = Static(
                 "stale", classes="console-model-section-value", markup=False
             )
@@ -134,7 +134,7 @@ async def test_model_values_follow_missing_and_remounted_rows(request) -> None:
                 classes="console-model-section-line",
             )
             await parent.mount(replacement_row, before=position)
-            console._apply_console_settings_summary_state(changed)
+            console._context_spend._apply_console_settings_summary_state(changed)
             assert (
                 console.query_one(f"#console-model-section-{row_id}") is replacement_row
             )
@@ -197,7 +197,7 @@ async def test_model_sync_updates_rows_with_the_actual_values(request) -> None:
             max_tokens="4096",
             streaming="Off",
         )
-        console._apply_console_settings_summary_state(state)
+        console._context_spend._apply_console_settings_summary_state(state)
         await pilot.pause(0.2)
 
         temperature = console.query_one(
@@ -230,7 +230,8 @@ def test_the_updater_reads_structured_values_and_no_deleted_ids() -> None:
     from pathlib import Path
 
     source = (
-        Path(__file__).resolve().parents[2] / "tldw_chatbook/UI/Screens/chat_screen.py"
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/UI/Console_Modules/context_spend.py"
     ).read_text()
     tree = ast.parse(source)
     body = None

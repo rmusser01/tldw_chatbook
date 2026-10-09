@@ -33,6 +33,8 @@ from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
 
+pytestmark = pytest.mark.bootstrap_profile
+
 APP_SIZE = (140, 42)
 
 #: Enough ticks that per-tick work cannot hide in warmup noise; at the real

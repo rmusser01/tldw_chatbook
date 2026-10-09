@@ -568,6 +568,7 @@ async def test_real_region_hides_live_owner_then_exposes_interruption() -> None:
         database.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 async def test_real_screen_sync_mounts_updates_and_clears_recovery_callout() -> None:
     database = CharactersRAGDB(":memory:", "console-continuation-reactive-ui")
     app_instance = _build_test_app()

@@ -1,0 +1,920 @@
+# Console optimization review list
+
+Maintained for the user's request to preserve every considered optimization that
+has not been used or implemented, for review after the main speed and stability
+work. Scope: the current Console Send investigation and its integration lane.
+Last reconciled: 2026-10-08. Seventy-six stable optimization IDs and fourteen related follow-ups are retained. Latest reported polling correctness evidence is `116628850f`: exact timer RED-to-GREEN, eleven attach passes, survivor pass, original late-FULL activation pass and actual two-saved-turn terminal/background pass. Broader polling narrowing and Send speed remain unqualified. Latest reported local publication evidence is `2d65a328ad` (seven status/recovery/action controls pass), following `5800bdc47d` (eleven targeted controls pass); original video controls pass at `41ab023e31`. Inspected prior failures are retained below. Census evidence is `435f948c56`, startup timing is `cee8faf944`, and the latest quiet whole-Send comparison is `36c6fb431a` to `fa3dad2d82` (below). Earlier `b4a284513b5837998017c12e146aea58b0356a7d`, task27/28 helper results and saved hook intervals remain historical evidence; none is an isolated comparison against the latest integrated sources.
+
+Latest preparation follow-up: the integration owner reports ten focused runtime-flag controls pass with correction `b0bfd8344a`, including the next real Send. The earlier host-refresh-worker cleanup gap was subsequently absent in the aligned original rerun; retain each run's cleanup result separately. The repeated-poll control reached core counts 5 and 5 but its stable-view qualification failed; original-writer diagnostic `received-draft-origin-1` proves a fixture-induced session switch, with the original draft and revision intact. Source correction `d41973538e` selects the real registry workspace before mount and waits for original attachment completion; `aligned-warm-poll-controls-1` at integrated `4b984d` then reaches the intended core5-versus-zero polling RED with exact draft intact, one real-next-Send PASS and zero pending workers. OPT69 is integrated at `6cad32ed67`, following candidate `d7d0cc2d71` and clean causal baseline `c653f5445e`. The integration owner reports 22 isolated contracts and both actual Enter/button receipt controls passing; remaining managed/cancellation qualification and matched whole-Send timing remain pending.
+
+Each ID stays stable. Record new ideas here as they arise. When an item is
+implemented, move it to the resolved section with its commit/task and measured
+outcome; do not silently delete it. A candidate is not a promised saving or a
+scheduled implementation. Historical timings below identify the measured source;
+re-measure after integration before treating them as current costs.
+
+Sources: [phase-attribution report](2026-10-06-console-send-phase-attribution.md),
+[approved architecture](../superpowers/specs/2026-10-06-console-send-preparation-architecture-design.md),
+[ADR-222](../../backlog/decisions/222-console-send-preparation-and-io-ownership.md),
+and [qualification task](../../backlog/tasks/task-34563.4%20-%20Qualify-shared-preparation-Send-latency.md).
+
+## Latest bounded cleanup and quiet comparison (2026-10-08)
+
+Integration commit `fa3dad2d82d31920bd18fdb8db2b7abf74565faf` implements
+OPT74 under TASK-34563.36. The original native count control fails at 54
+preflight filename checks versus ten distinct components, then passes at ten;
+all seven native count fields stay unchanged. The final targeted bundle has
+71 passes and one capability skip: this Windows token cannot assign the
+Administrators owner SID. Source review found no issue in the minimal change.
+
+Matched quiet real DeepSeek conversations use the same private profile seed,
+dialog flow and Enter/button/Enter routes, with three complete replies, three
+verified trace links, six messages and no pending checkpoint in each run.
+Sources and the owner configuration remain unchanged within each run; the
+integration owner reports normal App/server/browser retirement.
+
+| UI action to original provider adapter entry | First Send | Second Send | Third Send |
+| --- | ---: | ---: | ---: |
+| Before, `36c6fb431a` | 6.297 s | 5.093 s | 5.859 s |
+| After, `fa3dad2d82` | 5.766 s | 4.687 s | 4.952 s |
+
+These short paired samples improve by .531/.406/.907 s, but the two fresh
+profiles finish startup at different exact times. They do not statistically
+attribute the full difference to pure filename validation. The under-one-second
+Send target remains unmet; this comparison does not measure physical-input to
+terminal-flush latency. OPT73 and the larger serial-preparation investigation
+remain open. Evidence: integration-owned `deepseek-uat/component-matched-before`,
+`component-matched-after`, `component-matched-comparison.json` and
+`component-preflight-green-1.xml`.
+
+## Pre-cleanup Send baseline (2026-10-08)
+
+Fresh setup and three real DeepSeek/deepseek-chat replies succeeded on
+`36c6fb431a` (latest dev `a793acbef5` merged), with source unchanged. The
+integration owner reports clean App/server retirement. Existing stage timestamps
+give the following disjoint intervals in seconds; every column sums exactly to
+its recorded adapter-entry time. These are stage boundaries, not exclusive CPU,
+filesystem, database, lock or scheduler attribution.
+
+| Recorded interval | First Send | Second Send | Third Send |
+| --- | ---: | ---: | ---: |
+| UI action scope to receipt | 0.094 | 0.016 | 0.015 |
+| Receipt to controller submission | 1.125 | 1.484 | 1.282 |
+| Controller submission to save start | 0.640 | 0.641 | 0.671 |
+| Durable save interval | 0.563 | 0.218 | 0.172 |
+| Saved turn to trace reservation start | 3.140 | 2.468 | 2.625 |
+| Trace reservation | 0.219 | 0.142 | 0.110 |
+| Trace completion to adapter entry | 0.203 | 0.172 | 0.202 |
+| **Total to adapter entry** | **5.984** | **5.141** | **5.077** |
+
+The largest unexplained interval remains saved turn to trace reservation on all
+three Sends. The next diagnostic is restricted to that path and the earlier
+received preparation. Receipt is not a rendered feedback timestamp: exact input
+delivery and natural feedback frame times were not captured by this baseline.
+There is no matched before/after speed result yet. Native execution stays with
+the integration owner; unselected candidates and paused test drafts remain held.
+
+Evidence: integration-owned `36c6-real-three-message-uat-1/uat-performance-verification.json`,
+fields `commit`, `source_unchanged` and `send_stage_diagnostics`.
+
+## Historical measured leads; current Send trace pending
+
+`d221-quiet-three-send-1.measurement.json` records provider entry at
+10.643/10.102/9.395 seconds and phase-intersected UI heartbeat maxima of
+0.576/0.545/0.431 seconds. Three persisted exchanges/traces complete with zero
+dispatch checkpoints, but the report is incomplete and budgets fail. Whole-phase
+native open attempts are 68,203/60,296/53,591 across threads and background work;
+these are neither unique files nor dispatch-only work. Attempts without an
+observed return are 7,392/6,922/6,214, so their durations are unknown. Process
+containment retires normally; ordinary app-native cleanup remains unproven.
+OPT60 is the clearest repeated main-thread lead; OPT61 occurs at terminal
+attention publication. No reduction in provider-entry time is claimed.
+
+The unchanged startup census now passes at 1,032/1,033 in
+`optional-dialogs-and-census-1` on `435f948c56` (19 cases: 13 pass, 6 fail).
+This qualifies the count, not all dialog actions or responsiveness. The later
+`video-platform-and-session-constructor-1` run on `39d98a735e` has five passes
+and one video assertion failure: the final Save click lands, but the combined
+error/choice predicate times out. The test had notification rendering disabled;
+source-only `cbbda57fa6` enables it and adds bounded failure diagnostics. Its
+native outcome was followed by a post-attempt gate assertion failure: the original
+error/choice predicate passed, but the test incorrectly expected no retained
+artifact gate. Test-only38839369a7 preserves that gate until discard. Integration
+now reports all three original picker controls pass at41ab023e31 with frozen
+sources and no pending workers after fixture teardown. Supported-platform
+external-save success still requires its own native qualification. Separate
+`ci-cee8-targeted` original startup liveness still fails usable-input and mounted
+heartbeat budgets on all three platforms. Timing reports are diagnostic-only;
+OS page cache is uncontrolled, async inclusive spans overlap, and Pilot return
+is an input-delivery upper bound. Stage summaries can repeat one crossing
+heartbeat gap. OPT57-59 retain source-backed startup leads without inventing
+exclusive CPU or nested file-call attribution.
+
+OPT60 source follow-up at d221: the 0.2-second transcript timer always awaits
+full Console UI sync before deciding whether to stop. Receipt Preparing and
+custody draft commit start it, so this repeats during preparation as well as
+streaming. The transcript fingerprint skips redraw only after core/roleplay
+admission. The existing full-sync coalescer collapses overlap, but does not
+separate display requests from domain transitions; the control coalescer already
+has a narrow path with explicit whole-sync escalation. Reusing those owners to
+distinguish polling/display demand from full reconciliation is a separate
+possible approach within OPT60, not permission to reuse display evidence for
+live publication. Original poll ancestry accounts for 7/11/7 entries and
+.811/1.280/.781 seconds; missing async origins prevent assigning the other full
+sync calls to that timer. Keep settings/profile/session transitions, attach,
+rewind, Stop and terminal reconciliation fresh. Narrowed polling must still
+cover background runs, custody, wake/review publication, tabs/approvals and the
+final browser-cache invalidation/survivor handoff. No product change selected.
+Source: `chat_screen.py` d221 lines 17507-17842, 18219, 20682-20743;
+`wiring.py:792`; `console_spend_projection.py:440`.
+
+## Candidates preserved for review
+
+| ID / status | Opportunity and evidence | Why held; condition for revisiting |
+| --- | --- | --- |
+| OPT-01 / Deferred on the measured route | **Prepare local catalog configuration once at composition.** `_default_specs` separately reads three exposure gates; enabled Ask User adds a prompt-config lookup. Enabled deep search reads nine settings to use one displayed timeout. Root-specific builders repeat these reads. The new `031b` detail puts the whole local-provider function at .026118/.001266/.001510s. That rules out this sampled function as the main delay; enabled multi-root/deep-search construction remains unmeasured. | Revisit only a materially slower enabled route demonstrated by new evidence. Capture fresh raw merged config at the current composition owner, project small immutable inputs once, and preserve conditional/custom getter calls, prompt precedence, and fresh invocation-time policy/timeout reads. Older turn values would change construction-time freshness. |
+| OPT-02 / Deferred; optional shapes unmeasured | **Consolidate local root construction.** `WorkspaceToolExecutor` validates/resolves its root and captures each ancestor; `LocalToolProvider` separately resolves its redaction root. Multiple roots can repeat spec/executor construction. | The sampled local-provider function is tiny; it does not qualify all root shapes. Separate this from OPT-01's config cost. Reuse only an existing equivalent root proof within its valid ownership interval; preserve per-binding exclusions, remote-root separation, root replacement and invocation checks. Measure constructor cost before adding a new proof or cache. |
+| OPT-03 / Deferred | **Separate hook path naming from default-directory establishment.** `HookPermissions._current` owns a config snapshot and then `default_hook_permissions_path` derives the user directory again. Current `031b` original spans total .184/.342/.189 s across five contexts per Send. | Raw `cfg.profile_data_dir` supplies a name, while the default getter also verifies/establishes the selected directory and cold fallback. Revisit only with equivalent finite ownership, retaining custom getters, config-source drift refusal, configured-base validation and fallback serialization. |
+| OPT-04 / Deferred | **Reduce repeated hook preparation within equivalent boundaries.** Five hook-current contexts were observed per Send, associated with receipt, admission, initialization, capture policy and postcommit dispatch. Historical enclosing costs were seconds; JSON state reading was much smaller. | These contexts straddle real policy/effect boundaries. Current `031b` detail still records 1.282689/1.484787/1.579353s across five contexts per Send. Saved b4a reanalysis locates .814/1.118/1.777s in fresh config entry across the five contexts, versus .083/.077/.077s in hook-state reading; caller-held tails cannot explain the large lifetime. Identify a genuinely same-operation duplicate; keep consent reconciliation, resumed review, revocation and final launch serialization fresh. Empty inventory alone does not justify skipping admission. A naive master-off shortcut also skips persisted reconciliation: observing disable rotates grant tokens, and observed definition removal retires grants. Preserve disable/re-enable stale-target refusal and observed-removal behavior; readiness despite an unavailable disabled store is not proof that reconciliation is unnecessary. |
+| OPT-05 / Awaiting attribution | **Streamline remaining agent startup and serial handoffs.** The d524 detail run has six guard entries totaling .508/.460/.665s to their first yield; reply-worker launch to trace reservation takes 1.838/.899/1.062s. Run-log binding is nested within that interval. | Finite metadata/run-log preparation is already implemented. Remaining guards cross real workers/awaits and include separate stores. Partition current owner setup, scheduling and required admission before selecting a contraction; avoid adding nested times or keeping a lease across an await. |
+| OPT-06 / Deferred contract change | **Move auxiliary prompt-history persistence out of the pre-dispatch path.** On d524, awaited history took .262/.326/.470s. The approved design identifies it as auxiliary to conversation recovery. | Current ordering remains awaited. Revisit only with a concrete existing-owner queue/drain/failure contract covering Stop, shutdown, read-after-write and history ordering. A detached background write would trade latency for a lifetime bug. ADR-222 requires a separate explicit contract before changing this ordering. |
+| OPT-07 / Deferred, low measured return | **Return checked raw-discovery state to immediate consumers.** Task34563.19 (retained in the `codex/console-send-preparation-plan` planning branch) proposes removing an immediate duplicate check after successful stock operation discovery. The task18 sample recorded 102 eligible checks costing only .118839s across all three Sends. | No product implementation or native RED was performed; its prepared test is outside active collection. Revisit if a current profile makes this material or the API simplifies another necessary change. Preserve custom discovery callbacks, actual file-effect checks and physical retirement. |
+| OPT-08 / Unselected, lock-order risk | **Select/prepare an installed MCP source under its existing mutex.** Current task26 setup still observes the source before waiting on that mutex. Moving selection could avoid roughly one 38-open witness per read. | Small ceiling compared with the wider delay; it changes canonical-admission/source-mutex order. Requires a cancellation, recovery-maintenance and deadlock argument before implementation. Do not remove the four retained source/effect/publication checks or turn old observations into cached authority. |
+| OPT-10 / Deferred, attribution incomplete | **Coalesce redundant context-display refreshes.** The task22 integrated sample has 16 presentation version-reader calls before adapter entry; worker elapsed totals .303/.542/.825s by Send. The current display owner already serializes warming with owner/revision checks and a one-second TTL. | Counts do not prove identical message IDs/versions, explain invalidation, or establish that worker time delays Send. Revisit only after identifying redundant invalidations or actual contention. Keep live acceptance/dispatch reads separate and reject stale display publication. |
+| OPT-11 / Not selected, low return and freshness boundary | **Merge live preaccept/dispatch message-version reads.** Five actual live reads in the task22 integrated sample total only 2.662ms across three Sends. | Reads straddle the commit and cover changing requested IDs. No unconditional duplicate was found. Revisit only if a future profile demonstrates expensive same-state duplicates; retain changed-request and postcommit freshness. |
+| OPT-17 / Deferred, equivalence unproven | **Batch more Windows metadata work within a full raw check.** Remaining retained-identity and parent-pin observations reopen overlapping ancestor chains; `stat_many_for_admission` is an existing possible primitive. | This goes beyond the implemented parent-walk/control batching. Revisit only with current per-check evidence and equivalent alias, DACL/posture, handle-association and uncertain-close behavior. The existing batch is a stronger two-pass tree proof with exact security metadata, not a lightweight drop-in. A wider batch can add work or broaden ownership. |
+| OPT-18 / Deferred, low earlier priority | **Combine small agent lifecycle DB writes.** Earlier attribution measured run creation and context lifecycle rows separately; their bodies were much smaller than admission/run-log preparation. | These rows record distinct lifecycle facts. Revisit if current transaction/admission overhead is material and the original event order, failure visibility and recovery semantics can be retained. Existing per-entry preparation has already been improved. |
+| OPT-19 / Deferred contract change | **Defer other auxiliary audits/projections after dispatch.** They were considered as possible reductions to the serial postcommit path. | Classify each actual effect first: workspace binding may depend on projection, and audit policy belongs to its owner. No generic postcommit callback is presumed optional. Requires an explicit completion, failure, recovery and shutdown contract, as with history. |
+| OPT-20 / Not selected, tiny warm costs | **Further optimize warm run-budget, personal-context service and profile helpers.** Earlier measured maxima were .213ms for budget, .008ms for warm service, .033ms for profile-tool composition and .044ms for profile snapshot; one cold personal-context construction took .140s. | Warm bodies cannot explain the multi-second delay. Revisit only changed-source or cold-path evidence, keeping inclusive timings distinct from attainable savings. See the early agent-entry attribution in the phase report. |
+| OPT-21 / Deferred, startup scope | **Defer or streamline cold Notes initialization before first input.** Integration lane's original d524 timing: Windows Notes 4.643s/join 4.641s; Linux 1.406s/1.403s; macOS 1.083s/1.081s. Media/prompts were smaller. | These are overlapping inclusive spans, not additive savings. No constructor deferral/reordering is implemented. Preserve mandatory schema/seeding, admission, safe first use and shutdown ownership. Evidence: integration lane's `ci-d524-startup` original timing receipts. |
+| OPT-22 / Not adopted for live authority | **Use display caches in main-loop `sync_live_state`.** The integration lane measured .133–.296s in this path, within a full native Send census of 72,874/64,429/59,370 opens on d524 (first Send 13,664 main-thread and 59,210 worker opens). | Core/roleplay reads here intentionally feed live store mutations/projections. Disposable display cache substitution was rejected because it would change authority/freshness. Revisit narrower same-operation consolidation with current whole-Send attribution; task26's isolated reduction does not qualify that whole budget. |
+| OPT-23 / Deferred, ownership equivalence unproven | **Fuse the control-read initial traversal with the native snapshot forward pass.** Task24 batches control reads but still leaves initial traversal plus independent forward/reverse completion passes for each fresh witness. An earlier six-ancestor layout suggests an approximate ceiling of 54 opens at nine witnesses, or 48 at eight; neither is a measured saving. | Initial pins and snapshot handles have different lifetimes and uncertain-close handling. Partition original passes first, then prove an equivalent finite handoff preserving named associations, stamps/posture, registry locking and retirement. Sources: `bootstrap._control_observation`, `WindowsOS.stat_many_for_admission`, task34563.24 and its control-parent/lifetime tests. |
+| OPT-24 / Not adopted under current proof | **Use an already retained raw parent FD instead of a full private parent walk.** This could avoid traversing the same ancestors again. | Raw parent pins prove the current parent identity, not the private walk's full fresh ancestor ownership/mode/no-follow policy. A duplicated FD is insufficient. Revisit only when an existing domain supplies equivalent current ancestor and named-association evidence. Sources: task34563.22; `_check_parent_pins`, `_walk_verified_parent` and `_prepared_parent_walk`. |
+| OPT-25 / Deferred; small observed ceiling and diagnostic limit | **Use identity-only native metadata for raw parent association checks.** Non-companion checks consume device/inode/type, while `_stat_handle` also queries owner/ACL and timestamps. In the instrumented warm hook read, 64 checks take .226s; final metadata totals .0305s, including .0179s in security queries. Retained `fstat` opens no paths; named `stat` accounts for 442 opens. Nested times overlap. | No drop-in identity-only pair exists, and removing existing security-query failures changes behavior. Preserve named ancestry/reparse checks, companion owner/private-mode checks and replacement refusal. The diagnostic totals 1,375 attempts versus 1,008 with diagnostics off on the same isolated node; its cause is unresolved. These are instrumented-sample ceilings, not baseline counts or expected savings. Defer this shortcut; do not replace fresh named-path checks with a retained handle. |
+| OPT-26 / Deferred, optional route unmeasured | **Share project-binding list and automatic selection projection.** With enabled project instructions and no explicit binding ID, capture lists/validates eligible bindings and resolution lists/validates them again; local validation repeats ancestor lstat. | Current Send samples do not establish this route's cost. Revisit with enabled named-workspace counts, then derive sole-local selection from one finite capture while retaining remote first-selection checks, current root enforcement and custom routes. Sources: tasks34563.9/.14 and controller `capture_project_instruction_authority`/`resolve_project_instruction_binding`/`list_project_instruction_bindings`. |
+| OPT-27 / Deferred, optional route unmeasured | **Combine imported-skill trust status and fingerprint projection within one scan.** For trusted imported rows, `capture_skill_context_maximum` asks for summary trust status and then current fingerprint digest; both can call `_scan_skill`. Builtins and empty catalogs do not pay this cost. | Measure an actual imported-skill route first. A named finite single-scan result could share work; invocation trust/revocation and custom owner behavior must stay current. Sources: task34563.14, `console_configuration_capture.capture_skill_context_maximum`, local skill summary/trust fields and `skill_trust_service._scan_skill`. |
+| OPT-28 / Under source review; no implementation selected | **Consolidate nested catalog source preparation within one store-owned read.** The new `031b` `local_external_catalog` span is .540950/.366745/.360997s. JSON is read once, through guarded `get_catalog_bundle`/`load`/`_read_payload`; the repeated work is native source observation. | A named operation would need an initial owner and final publication check while retaining readable/recovery approval, missing defaults, file entry, migration writes and custom routes. Replacing two guards with a new outer/final pair yields no net postcommit reduction. Establish actual original counts and a shared body/API without duplicated qualification machinery before selecting it. Initial maximum and postcommit catalog reads stay independently fresh. |
+| OPT-29 / Deferred sibling route | **Use the same private lock-stream operation for default data-root selection.** `config._default_data_root_lock` also attempts empty creation before opening its stable lock inode. It does not establish an application-owned parent, so task34563.27's causal duplicate-parent case does not measure this route. | Keep its current pair while qualifying the config/hook owners. Revisit with actual ADR-127 default-root/fallback and concurrent-start controls, preserving selected inode, wait/maintenance checks, cross-process serialization and cold creation durability. No faster root-selection or startup claim is established. |
+| OPT-30 / Cold receipt attribution pending | **Locate remaining synchronous first receipt work.** On current b4a all three Sends use accepted early receipts, so the prior first-Send legacy fallback is no longer observed. Quiet first dispatch takes115.6ms; a separate detail sample puts92.1ms inside `receive_console_visible_intent`, versus3-4ms later. | No selected descendant or paint timestamp identifies the cold cost. Next smallest observation is the original `ConsoleRuntime.accept_received_intent` body, separating custody/projection from earlier selection/qualification. Heartbeat maxima do not identify layout, scheduling or a specific callback. No optimization is selected from this gap. |
+| OPT-31 / Deferred, overlap unmeasured | **Overlap independent MCP maximum and non-MCP configuration preparation after hook review is ready.** Source inspection finds no data dependency until final snapshot assembly; the current b4a non-MCP worker lasts .285-.606 s in the detailed sample. | This is only an overlap ceiling. Shared source/admission locks may serialize both. Any selected design must join physically retained reads, revalidate receipt/config/source revisions, drain cancelled siblings and preserve optional MCP versus required-config failure policy and custom callback order/affinity. Review must remain first because later capture may migrate/audit stores. No new queue/ledger or lease across the join is justified. |
+| OPT-33 / Unmeasured, source-supported candidate | **Share finite preparation in the directory-establishment walker.** `secure_private_directory` has its own root/component walk; it never enters task22's prepared `_open_verified_parent` walk. Each original component open can discover the raw owner and perform another complete parent-pin check. Windows stat then traverses absolute parent names again. This is repeated layered validation, not a recursive raw-check loop. | Measure full-check/native-open descendants on existing versus creation paths first. Any contraction must preserve source/actor/pause custody, component owner/type/mode checks, mkdir/chmod effect gates, final identity/posture and uncertain cleanup. The exact target is the selected directory, unlike the parent walker; require its retained pin and actual final-FD association before close, and full checks at any mkdir/chmod effect. Custom callbacks, visual/voice owners and unsupported routes retain ordinary behavior. Task27 removes one entire duplicate establishment but leaves this separate walk unchanged; OPT17/23-25 address different operations. |
+| OPT-34 / Deferred, unmeasured warm-path alternative | **Try an existing lock before exclusive creation.** The implemented OPT09 uses actual exclusive-create outcome, so a warm lock incurs a failed exclusive attempt before opening the existing file. | No measured latency benefit; removing this one attempt adds disappearance/replacement/concurrent-first-creation branches. Keep the simple qualified first version until its remaining cost is material. Actual cold creation must still fsync its own FD; a generic append open is not equivalent. |
+| OPT-35 / Deferred; default-root route unmeasured | **Avoid repeated default-root selection inside raw source checks when an equivalent finite boundary exists.** Each hook source-custody check calls `_hook_permissions_selection` and `profile_paths.user_data_dir`; default-root selection freshly checks fallback/conventional entries with `lstat`, reopening their Windows path chains. The explicit-data-directory census does not exercise this branch. | Selection is read-only but is not free of filesystem work. A competing fallback can appear while the config writer lock is held because the separate ADR-127 root-selection lock is not held. Do not cache that choice for an entire hook operation without equivalent freshness/serialization. Measure the actual default-root route before selecting a change; keep custom data directories and existing root-selection behavior distinct. |
+| OPT-37 / Deferred; early-receipt scheduling alignment unmeasured | **Coalesce unissued hook-indicator refresh while the initial received-Send snapshot is being prepared.** Legacy `ConsoleHooksController.dispatch` already sets its Send flag before scheduling; refresh defers new readers, shares an existing flight and replays once. Early received-intent wiring returns through the runtime before that legacy flag is set. | First prove actual early-receipt overlap, not just two RUNNING worker labels. Consult existing exact runtime/session custody instead of another state map. Keep the fresh Send snapshot and all already-issued native reads. Visits may reconcile disabled/removed grants on a cache miss, so do not substitute visit data for Send authority or extend suppression across arbitrary approval/provider waits. Source review supports a scheduling gap, not a measured saving or the cause of the peer legacy-test stall. |
+| OPT-38 / Unmeasured, source-supported candidate | **Batch the hook visit stamp's overlapping directory postures.** `HookPermissions._visit_stamp` makes two scalar lock-file posture observations and one scalar observation for every component of both config/store parent chains. Each scalar delegates to the same full ancestor snapshot used by task28. A warm visit still pays these metadata scans even when it reuses the published result. | Measure the actual original visit-stamp/warm-visit work before selection. One fresh ordered `_observe_stamps` call could reuse the existing native tree while preserving the exact returned tuple, missing/error behavior, DACL/owner sensitivity, file stamps, selection/generation, maintenance and in-memory sealing checks. Keep Send/review on fresh authority reads and preserve the before/after and settled-file rules. This is distinct from OPT37 scheduling; no reduced main-Send latency or duplicate UI issuance is established. See task33642 and `Tests/Agents/test_hook_permissions.py`. |
+| OPT-39 / Deferred; mutation cost and equivalence unmeasured | **Avoid unnecessary permission hardening of an already-private warm lock.** `_open_private_text_stream` calls `fchmod(0600)` for each existing file; Windows `fchmod` queries owner/security, reopens for DACL writes and applies its canonical private descriptor. Some sibling file helpers harden only when projected mode differs. | Measure the actual warm mutation cost before selection. A projected mode of 0600 does not prove exact canonical DACL equality, so copying a sibling mode-only condition may change hardening behavior. Preserve current owner checks, actual descriptor identity, postconditions and uncertain cleanup. No metadata, antivirus, timestamp-invalidation or whole-Send delay cause is established by this source finding. |
+| OPT-40 / Deferred; bound companion route unmeasured | **Share a fresh control-record view inside config companion validation.** `config_participants.companion_guard` holds the registry's shared lock, reads `_records`, calls `storage._scope` (which rereads `_records` and `_registry`), then reads `_registry` again. A pure derivation from one finite observed view could remove the repeated control reads. | First prove the current measured route reaches this body: no hold or no matching profile returns early. Preserve `_ScopeProof`, binding/fingerprint/containment checks, live authority and source checks, cleanup and applicable callback behavior. The registry lock alone does not establish that every record or native posture can be reused; verify each writer/record boundary. No new retained cache or cross-operation proof is proposed. |
+| OPT-41 / Deferred; narrower read contract unmeasured | **Declare only the config members required by a locked hook-config read.** The generic config operation declares config, its lock, the advanced backup and two temporary destinations even when `locked_hooks_config_snapshot` only reads config while retaining its writer lock. Companion validation may inspect those extra members. | Current route/count cost is unmeasured. A narrower named operation would still need lock creation/hardening, owned-parent establishment, source selection, failure restoration and existing read/write serialization. It must not silently narrow a generic writer or break nested/custom routes. Prefer an existing equivalent read contract before introducing a new cross-module route; any selected contract requires task/ADR review. |
+| OPT-44 / Deferred; source anchors and startup scheduling need proof | **Load optional display-pricing support at its actual finite display read.** Resident `console_spend_projection` eagerly imports `pricing_display`, which imports `models_dev_catalog`; both were added to the reported ready snapshot. | `pricing_display` captures original module/class/function anchors, subclasses the pricing catalog and later revalidates them. The projection independently captures that capsule/class. Preserve those original-versus-current checks, fallback behavior and first-frame output. A worker that starts before readiness may still load both modules; moving an import into mount is not a saving. Current source review establishes no timing improvement. |
+| OPT-45 / Deferred; several eager roots and evaluated defaults | **Defer MCP result projection until tool-result handling.** `MCP.tool_results` is newly resident, and most uses are invocation, wire decoding or result formatting. | Four existing roots import it: `Agents.mcp_tool_provider`, `MCP.client`, `MCP.local_control_service` and `MCP.unified_control_plane_service`. Changing just one edge cannot remove it. The client's bounded-copy default arguments evaluate exported limits at definition time; preserve them, public aliases, the shared dispatch ContextVar and class identity. No type-only cleanup or module-count saving is established. |
+| OPT-48 / Deferred; initial browser read may require residency | **Delay loading the stock browser-read helper until the initial browser read.** Workspace imports `console_browser_read` to pin `_CONSOLE_BROWSER_FACTORY`, although invocation is through the browser read owner. | Default/global browser initialization already uses this helper before readiness, so simple local import may save nothing. Preserve the direct original-factory/source check and current fallback behavior; lazy capture must not bless a replaced implementation. No new proxy/cache or constructor indirection is justified for census alone. |
+| OPT-49 / Integrated style/rewind residency verified; behavior and lifetime pending | Task34563.31 uses original style/rewind values at their existing actions. At integrated `cee8faf944`, unchanged Windows census is 1,036 versus 1,042 at `16f0bda38b`, still above 1,033. The six newly absent modules are both modals plus `Media_Creation`, its templates, image-generation service and SwarmUI client. | Two Personas style controls (stubbed picker result), rewind row opening and visible-Send cancellation pass. Two real Console style controls and two rewind controls fail; no import causality is established. Style has a concrete off-screen-click fixture lead pending reproduction. Original log also retains Canvas-policy watch/read tasks, despite clean driver process retirement. Scope/character/library-search alternatives stay deferred; no first-use or Send latency gain is claimed. |
+| OPT-51 / Deferred; action-only picker candidate | **Load DictionaryPicker when an attach/detach action opens it.** Its two eager product edges are `chat_screen` and `personas_screen`; actual uses found are Console attach/detach workers and the Personas character-attach worker. No package barrel export or before-ready class use was found. | Both edges must move, preserving original picker class, action results and supported alias/patch routes. The existing Personas attach/detach-through-picker control covers one route; no Console worker action control was located, so cold first use there needs explicit qualification. Modal-only tests are insufficient. This module is already in the pinned census, making it a possible offset, not a new regression cause or measured Send cost. |
+| OPT-54 / Deferred; two prompt-variable action routes | **Load the shared prompt-variable dialog after the variable-free fast path.** `UI.Console_Modules.prompts` and `UI.Screens.library_screen` eagerly import both its modal and request type; their actual application actions construct the request immediately before opening. No barrel export was found. | Both routes and both names must defer. Keep the original request/modal classes, captured composer/system guards and Library navigation. Existing Console command and Library cancellation/authorization/application/Use-original journeys cover actions, but cold module absence needs the unchanged isolated census. Preserve supported alias routes; no owner or authority movement. |
+| OPT-56 / Source fix saved; first-use qualification pending | **Avoid loading image-generation clients when only style templates are needed.** `console_style_picker_modal` imports the template leaf, but `Media_Creation.__init__` first eagerly imports `SwarmUIClient` and `ImageGenerationService`. The task31 census confirms the package plus all three descendants leave first-ready together when the style picker is deferred. | Startup deferral is already implemented by OPT49; this separate candidate concerns unnecessary service imports on the first template-only use. Measure that actual first-action cost before changing exports. Preserve documented package re-exports, class identity, import-order/cycle behavior and real generation callers; the integration owner saved generation-import deferral in `2998e5ab57`, together with startup census newline normalization. This entry remains pending isolated first-use/original generation-caller qualification; no result is inferred merely from the saved source change. This observation proves fanout, not network activity or an additional latency saving. |
+
+| OPT-57 / Deferred; measured synchronous startup boundary | **Streamline initial Console route loading.** Original diagnostic navigation-target resolution at `cee8faf944` takes cold/warm 1.513/1.471 s on Windows, 1.502/0.847 s on macOS and 0.929/0.945 s on Ubuntu. The synchronous chain is `_push_initial_screen` → `_resolve_screen_navigation_target` → `ScreenRoute.load_screen_class` → `import_module(ChatScreen)`; same-child heartbeat intervals overlap this source-backed synchronous boundary. | Partition the actual transitive work at this original boundary before selecting more import changes. The witness does not identify one descendant or file operation. Keep original class identity, required first-frame owners, source anchors and thread affinity; do not move mandatory initialization or disguise count by merging modules. Separate startup from Send and first optional-action cost. Evidence: each host's `ci-cee8-targeted/console-startup-timing/startup-timing-{cold,warm}.json`. |
+| OPT-58 / Deferred; constructor remainder unpartitioned | **Reduce synchronous constructor work after initializer workers finish.** Windows `cee8faf944` timing leaves 3.132 s cold / 2.259 s warm after the last selected initializer completes. Source includes later service wiring and worker-handler initialization; the existing witness cannot assign that remainder to one owner. | Observe the original post-initializer boundaries before selecting deferral/consolidation. Do not equate remainder with CPU or assign it to Notes: parallel worker spans overlap, and warm Notes/other initializer bodies do not explain the entire remainder. Preserve mandatory service availability, recovery/schema setup, source selection and shutdown ownership. This is separate from OPT21's measured cold Notes candidate. |
+| OPT-59 / Deferred; awaited screen mounting needs partition | **Streamline the original initial-screen push and mounting work.** `cee8faf944` diagnostic awaited `screen_push` takes cold/warm 3.680/3.582 s Windows, 2.419/2.004 s macOS and 2.789/2.735 s Ubuntu. Later macOS/Ubuntu warm heartbeat stalls overlap this boundary; the selected screen-owned CSS region is negligible (Windows 0.149 ms both runs). | Awaited inclusive time includes suspension and is not one continuous stall or exclusive rendering cost. Partition original mount callbacks/layout/workers before a fix; no stack sampler identifies their individual cost. Keep usable controls, first frame, source-current publication and original shutdown behavior. Do not claim the CSS region explains this delay or add nested `_push_initial_screen`/push durations. |
+| OPT-60 / Source-only plan proposed; no product implementation | **Investigate repeated fresh configuration admission during Console synchronization.** In `d221-quiet-three-send-1`, four main-thread `sync_live_state` caller groups enter `config_participants.operation` 43/48/39 times across the three Sends. Core refresh counts are 28/23/22 with entry intervals 1.171/1.556/1.479 s; roleplay 8/14/10 with .814/1.307/.725 s; transcript-poll core 4/6/4 with .575/.844/.458 s; poll roleplay 3/5/3 with .236/.435/.323 s. Entry ends at first yield or supported pre-yield return, before the callback body. Sampled ancestry reaches fresh native stamp/path observation. | `sync_live_state` deliberately omits `checked_projection`, unlike the decorated rail wrapper. Core callback publishes workspace/provider/controller/runtime state, including kill switch; roleplay may prepare persisted name/message refresh. ADR-126 keeps these live. First isolate presentation-only work or a provably unchanged publication before choosing coalescing; do not pass display evidence wholesale, reuse old authority, or bypass final live gates. Main `load_settings` invocation counts 19/25/21 match cache hits, not proven disk rereads. Worker hook scopes are separate. Do not add nested admission durations or attribute all whole-phase native opens to this owner. The roleplay key reads the current in-memory session ID/name, but excludes source path/generation, session incarnation and pause state. Its dedicated name-change generation is not general source provenance; tuple equality alone cannot justify bypass. A candidate effect-free no-op needs already-current standard proof for the exact owner/source and must preserve pending persistence drain; forced/custom/unproven/effectful routes keep live admission. Source-only [task34563.33](../../backlog/tasks/task-34563.33%20-%20Plan-Console-polling-and-full-state-reconciliation.md), [plan](../superpowers/plans/2026-10-08-console-polling-reconciliation-plan.md) and proposed [ADR223](../../backlog/decisions/223-console-polling-and-full-state-reconciliation.md) require origin/transition failure controls before narrowing. The integration owner approved Phase 1 source/test preparation. [TASK-34563.34](../../backlog/tasks/task-34563.34%20-%20Verify-Console-polling-reconciliation-boundaries.md) now holds two source-validated mounted controls (Preparing timer repetition and runtime disable to next real Send); the original two-control run at `557385e36e` failed fixture qualification before either intended assertion. Passive ancestry found real synchronous preparation fallback from cold trust; the first control also lacked a durable database. Test-only `551e43de6b` qualifies real warm sources before Send. At integrated `5b915c5eba`, rows 5/5/1 included a deferred last pass; subsequent `6fad0e9617` records all rows and requires two healthy callbacks within the unchanged five-second bound. `warm-repeated-poll-original-red-2` reached two full/core5 passes, but failed the draft assertion first. `received-draft-origin-1` attributes the empty visible composer to original attach reconciliation switching away from the fixture's directly modified workspace/session; the original received draft remains 23 characters/revision1 and current. Fixture correction `d41973538e` uses the real registry selection and original attach completion, retaining every draft assertion; `aligned-warm-poll-controls-1` at integrated `4b984d` then establishes the intended stable-view polling RED: two deferred rows followed by two healthy full/core5 rows, original draft assertion passes, no pending workers and clean source/custody. The in-place runtime-disable control separately established causal RED from the stale raw cache; correction `b0bfd8344a` has ten focused passes, including actual next Send and sibling builders. Earlier runs had a remaining host refresh worker; the aligned rerun subsequently records zero pending workers, without retroactively qualifying earlier cleanup. Stable-view polling causal RED is now established. Integration `116628850f` separately preserves a deferred final refresh before stopping polling, with original timer, attach, survivor, late-FULL and saved-turn/background controls qualified. Product polling narrowing and elapsed-time gain remain unimplemented/unqualified. |
+| OPT-61 / Deferred; terminal attention read measured | **Streamline terminal attention/unseen-mark publication if equivalent fresh data already exists.** Send 1 of the d221 witness records a .356 s main-thread `_acquire_storage` beneath `_finish_custodied_turn` → `recompute_console_attention` → `list_console_unseen_marks`. | This is terminal attention work, not pre-provider hook preparation, so it is not an explanation of provider-entry delay. Establish actual invalidation/read requirements and existing owned data before considering coalescing or an off-loop read. Keep unseen-mark correctness, current chat/workspace identity and safe shutdown. No repeated-identical-query or cache-equivalence proof exists. |
+
+| OPT-63 / Presentation addressed; generation suppression deferred | **Avoid unnecessary workspace-attention generation changes.** The original inventory proposed reducing generation churn. `2d65a328ad` instead guards only unchanged modal attention text; the newer generation is still accepted through the original gate. | Preserve generations as invalidation signals. The seven combined status/recovery/action controls pass, but no generation suppression was implemented or qualified. Separate this local publication guard from OPT61 terminal native reads and from measured Send speed. |
+| OPT-64 / Speech, inbox and conversation text repaired | **Coalesce unchanged Buddy modal, speech and workspace presentation updates.** Integration commit `5800bdc47d` guards unchanged speech status and inbox title/error using current renderable values. Five new original mounted controls reproduced redundant writes; eleven targeted controls pass after the combined Buddy/progress/Skills changes, with no pending workers and clean custody. | Changed speech text still grows geometry; actual reads/currentness/action ownership remain. AC72 additionally guards conversation title/activity/notice/empty text and fixes unchanged transcript recovery after unavailability. Three original causal failures become13 targeted passes including five actual decision-owner controls; no source checks or timer intervals change. Remaining decision-card candidates require their own equivalence and lifecycle evidence. No isolated elapsed-time saving is measured. These surfaces remain outside the poll/full-state plan. |
+| OPT-67 / Reported candidate; deferred | **Avoid repeated unchanged conversation-card publication.** The integration owner reports this surface remains in its pending inventory. | No original trigger/effect count or implementation is qualified here. Establish exact card inputs and preserve selection, conversation identity, changed content and accessibility before suppressing writes. No saving assumed. |
+| OPT-68 / Reported candidate; deferred | **Avoid repeated unchanged decision-card publication.** The integration owner reports this separately from the implemented text surfaces. | Decision/approval state is authoritative: preserve new choices, expiry, resolution, ownership and required actions. First demonstrate redundant presentation writes without suppressing state checks. No timing or implementation claim. |
+| OPT-70 / Duplicate native pause query repaired; remaining census excess open | **Remove redundant credential-poll file admissions only after attributing the fresh accesses.** The integration owner reports the Linux original guard records 81 opens across eight ticks versus its existing 54-open ceiling. | Integrated `fd32f2e7e6` removes the demonstrated duplicate pause query for one exact native hold while preserving both leases. The owner reports six final controls and ten broader passes with one POSIX-only skip; this qualifies that duplicate only. The remaining whole-census excess is unattributed. Preserve the unchanged ceiling, fresh credential/profile/source checks and native ownership. Read-only investigation remains in the integration lane; no cache, permission reuse or measured Send saving is selected. |
+| OPT-71 / Source-backed alternative; deferred beyond cold Send | **Avoid unconditional trust construction during builtin-only skill discovery if its native path ownership can be preserved.** Original `LocalSkillsService._content_sources` reads `owner.trust_service` to enumerate its native source paths before original `get_context`, even when the later catalog is builtin-only. The original eager-host trace at `82b2bb1685` demonstrates this trigger; stock default-worker placement is a separate contract. | This changes discovery/content-lifetime source selection, beyond OPT69's Send receipt and one-catalog scope. First determine how to prove every actually consumed store/trust/marker path and managed override within the original finite admission, without a preliminary scan, unowned read, lost policy check or stale absence cache. No implementation, count reduction or latency saving is qualified. Do not suppress original discovery to make a Send control pass; retain this alternative for the later architecture review. |
+| OPT-72 / Original lock contention attributed; design unselected | **Shorten the configuration writer-lock hold during a hook permission snapshot.** Integration reports an unchanged original Windows tab journey with 42 `ConfigOperationBusy` refusals, all `settings_rebuild` RLock attempts, each joined to its observed original holder. The dominant holder is `HookPermissions.visit_snapshot` → `snapshot` → `_current` → `locked_hooks_config_snapshot` → `_config_write_lock`; its original executor Future remained held over 10 seconds, with `_current` at lines 426/428. Initial `read_current` and prompt-history holders also occur. | Candidate choices require tracing which work needs writer serialization and which can use a checked detached input. Preserve atomic config/grant selection, fresh authority and source checks, writer ordering and physical retirement. Do not add a cross-operation permission cache or simply release the lock around unvalidated work. The diagnostic reports frozen sources, zero overflow, all refusals joined and restoration; the exact run revision and a causal repair remain integration-owned and pending. Related narrower ideas remain OPT03, OPT40 and OPT41. No saving or product fix is claimed. |
+| OPT-73 / Repeated native validation measured; consolidation unselected | **Consolidate nested admission in one stock local catalog read, if the existing finite owner supplies equivalent fresh checks.** On integrated `36c6fb431a`, `36c6-send-tree-delayed-1` observes warm catalog callbacks of .369/.378 s, each with nine generation witnesses, eight binding selections and seven participant-state binding checks. Witness descendants occupy .218/.227 s (inclusive, not additive). Catalog already loads its JSON state once. | Windows `_ordinary_hold` explicitly disables derived evidence reuse, so the missing-companion POSIX reuse candidate does not explain these repeated Windows reads. Do not enable that reuse or add a permission cache without its own equivalence proof. A finite consolidation could follow the existing owned permission-load contract, but catalog load may migrate/write; retain original custom routes, effect checks, fresh source/recovery gates and physical retirement. These instrumented wall spans include observer overhead and scheduling, not CPU or promised savings. The outer catalog scope retires on exit but has no unconditional final `raw._check`; an owned-read consolidation must supply an explicit final native check and preserve fresh guards on migration writes. No product patch is selected for this entry. |
+| OPT-75 / Considered; not selected | **Share same-handle metadata when Windows snapshot helpers immediately reread it.** `open_handle` validates type/reparse status, `named_handle` obtains handle identity, and the reverse `_stat_handle` obtains a fresh metadata sample. Existing native schedule controls expose five `info` calls per tree node across the two passes. | Reusing a prior observation changes timing and failure coverage. Require equivalent fresh reparse/type checks, exact identity on uncertain close, owner/DACL handling and final named association before considering an API change. Do not simply drop `info`, cache native authority, or weaken cleanup. No implementation or quiet timing gain is established; preserve this option for later review. |
+
+| OPT-76 / Not selected after source review | **Consolidate the late raw-source validation immediately before operation publication and the full check before yielding.** `raw._scope` performs `_participant_state` after preflight/pause checks, then only coordinator/attempt/identity/closed checks and actor-local activation, then `_check(operation)` repeats full source validation before the caller body. The warm catalog tree has two direct scope-to-participant validations totaling .0609 s inclusive; individual gate costs are not isolated. | Replacing the late gate with `_participant_identity` moves full binding validation after the attempt/closed-gate checks and into active operation context. A late retarget plus concurrent pause/close can therefore change which refusal wins. Root and peer source reviews agree this prevents treating the one-line change as equivalent. Preserve the earlier full pre-lock gate and its real source/pending refusal tests. Review active-but-not-yielded observers, concurrent pause/source replacement, exact refusal priority and retirement; do not infer equivalence merely from adjacent calls. No product change, test or saving is selected. A short draft plan was preserved but stopped before tests; priority returns to the full-Send native census. This remains a central finite-operation alternative for later contract review, not Windows witness caching. |
+
+| OPT-77 / Integrated at 67a7f526fb; focused hosts and three real turns pass; latency still unmet | **Skip derived-evidence construction when the existing owner rules prohibit its publication.** `raw._pin_parent` builds native `_path_evidence` for any retained hold, then `_note_derived` immediately refuses Windows via `_ordinary_hold`. The evidence/posture comparison only controls future metadata publication; actual pin validation is separate. `config_participants.companion_guard` has the same collector-before-eligibility shape on its successful full branch. | Prefer the existing exact ordinary-hold eligibility at these two evidence producers, as generation-witness and pause-query owners already do. Keep real native hold/lease ownership, original derivation, source/pause/parent checks and final publication eligibility unchanged. Do not enable Windows derived reuse or disable the distinct Windows-capable admission evidence. Prove actual discarded collection, original native count reduction and exact retirement under a warmed original hook snapshot; the companion success branch needs separate qualification. This is a simpler alternative to OPT33, not an established timing improvement. |
+
+## Architecture alternatives retained with their decision
+
+These were considered and deliberately not adopted under the current design.
+They remain visible for later review rather than becoming implicit future work.
+
+| ID / status | Alternative | Decision and revisit condition |
+| --- | --- | --- |
+| OPT-12 / Not adopted | A profile-wide storage actor, worker, shared cache or execution lock. | ADR-222 favors finite domain owners; a global mechanism adds invalidation/shutdown rules and can serialize unrelated chats. Revisit only with measured cross-operation reuse/contention and an explicit lifecycle design. |
+| OPT-13 / Not adopted | Keep a native snapshot/lease across preparation awaits, approval waits or later dispatch; use one permission observation for the whole Send. | Initial narrowing maximum, live composition and actual invocation have different freshness/authority roles. Native leases stay within finite operations. Any future redesign must explicitly replace those contracts rather than treating prepared data as permission. |
+| OPT-14 / Not adopted | Add a generic pipeline engine, dependency bag, scheduler, revision registry or duplicate preparation-state ledger. | Existing runtime/controller/store owners and named domain APIs already provide those responsibilities. Revisit only if concrete extension requirements justify the added owner/abstraction and simpler alternatives fail. |
+| OPT-15 / Not adopted | Dispatch a saved chat before required acceptance/checkpoint/consent/trace/context facts, weaken persistence, or silently switch to unsaved work. | The user chose save failure to stop Send and preserve the draft; existing temporary chats remain. No schema/PRAGMA/durability-mode change is selected. Current measurements put much of the delay in repeated preparation, not the minimum commit. Any change would require revisiting that explicit product decision. |
+| OPT-16 / Not adopted as the overall solution | Continue only with per-helper shortcuts or move unchanged repeated work into workers. | The approved design instead shares preparation within existing domain boundaries. A small change can still be retained when independently useful, but worker placement alone does not reduce the repeated I/O or total Send delay. |
+| OPT-50 / Not adopted; required before first frame | **Move new Console owner imports into constructors or postpone required receipt/controller construction.** Receipt intent/turn modules provide store bases and synchronous admission; the hook-review host is an interrupt-host base; shared preparation reads serve startup workers. Attach/context/spend/hooks controllers and the chat-start coordinator are installed during construction or initial reconciliation. | Constructor-local imports still run before the first-ready snapshot. Delaying these responsibilities would change lifecycle/first-frame behavior or risk moving work ahead of the first Send receipt. Preserve the owners; any genuine later-work boundary requires its own compatibility and timing proof. Do not merge modules or add forwarding proxies solely to disguise residency. |
+
+## Related finding to retain separately
+
+**FOLLOWUP-01 — startup readiness completion accounting.** The integration lane
+reports that the first attach can be marked complete while native full sync is
+still deferred by replay/maintenance. The integration owner implemented exact runtime/view/generation completion
+and deferred full-refresh replay in commit c5b1396daa, with33distinct targeted
+controls passing. This is a correctness and perceived-readiness repair with no
+isolated measured cost reduction. Keep it separate from catalog optimizations.
+
+
+**FOLLOWUP-02 — unrelated backup roundtrip fixture.** An original retained-MCP-
+history backup/restore control fails before app code on Windows: its copied
+child environment omits SYSTEMROOT and other interpreter inputs, causing
+asyncio import error10106. Reusing test_complete_roundtrip's existing tested
+allowlist is a reviewed candidate correction, but it has not been qualified or
+included in task27. The four-child full recovery run is broader than the changed
+append path; actual installed history append/rotation/pause and helper-scope
+controls passed separately. Also review TMPDIR versus inherited TEMP/TMP before
+claiming complete fixture-local temporary storage. This is test portability,
+not a demonstrated Console latency optimization.
+
+
+**FOLLOWUP-03 — first-ready import regression is not Send attribution.**
+Integration CI run `37757653003` on `8a4ed1e926` reported 1,046 resident
+`tldw_chatbook` modules against the unchanged 1,033 limit: 18 additions and two
+removals from the pinned 1,030 snapshot. The original guard snapshots at the
+first `_ui_ready = True` assignment in a fresh second process with a warmed
+profile. It also forbids `Agents.run_hooks` before ready; the earlier count
+assertion can hide that separate failure. Source review identifies import edges,
+not runtime savings. Preserve the budget and original test. OPT42 is integrated; task34563.30 additionally selects OPT43/46/47. Other
+reviewed import candidates remain deferred or rejected. Original Windows
+verification at `7b728190` records 59 passes and one census failure (1,045 versus
+1,033); the prior Linux result is not a same-host baseline. Task30 at `16f0bda38b`
+then measures 1,042 on Windows, with its three selected modules absent. Three
+preparation and three census-helper controls pass; four UI action tests fail
+before their actions in raw-source fixture setup. The guard remained red at that revision; the later combined 435f run passes
+at 1,032/1,033. No Send-time improvement follows from the module count. A later
+bootstrap-profile fixture run qualifies all three original feedback actions;
+comparison remains pending its gateway-double correction (see OPT46/47).
+
+**FOLLOWUP-04 — original action failures require real visibility and lifetime evidence.**
+At `cee8faf944`, the style tests use the production harness and click the seventh
+row without filtering/scrolling or asserting the click result. Shipping CSS puts
+that row below the initial results viewport; installed Pilot does not scroll it
+into view. This is a source-supported fixture lead, not recorded hit/geometry
+proof. Preserve real actions and original dismissal/draft assertions when
+reproducing. Separately, `style-rewind-imports-and-prompt-1.log` reports pending
+`console-canvas-policy-watch/read` tasks and an unawaited `to_thread`; clean
+process/pipe retirement does not qualify app-internal cleanup.
+
+**FOLLOWUP-05 — video save expectation must match native capabilities.**
+The original Windows cancel-control failure at `435f948c56` is a timeout after
+its third picker selection; both prior cancels and quit-Stay succeeded. The
+copy path requires directory-relative/no-follow primitives before touching the
+destination, and intentionally refuses unsupported native platforms. An
+unconditional successful-save assertion is incompatible with that contract.
+Test-only `c288ea18fa` keeps the original product gate/copy and all earlier
+assertions, checks a landed click and fresh visible original failure UI on an
+unsupported platform, retains the artifact, then discards only explicitly.
+Supported platforms retain byte/file/opener assertions. Source checks pass. Integrated 39d98 reaches the real Save click but times out
+on the combined error/choice predicate. Source inspection finds Textual test
+notification rendering disabled by default, preventing any ToastRack. Follow-up
+cbbda57fa6 enables the original test option and adds bounded failure notes,
+without changing the predicate/deadline; its native outcome awaits integration. The upfront capability check selects the
+expected branch; it does not prove which later copy check caused a generic
+error. This is test portability, not an optimization or established import
+regression cause.
+
+**FOLLOWUP-06 — separately owned Skills stale text, implemented.** The integration
+owner reports `5800bdc47d` fixes the stale skill-review text alongside bounded
+current-renderable guards. Its eleven targeted controls pass with no pending
+workers after fixture teardown and clean custody. Keep this as correctness
+evidence, not an isolated Send-latency saving or a polling-architecture change.
+
+**FOLLOWUP-07 — fresh-profile UAT observations remain unattributed.** At41ab,
+the integration owner reports three real DeepSeek/deepseek-chat user/reply flows,
+retained CEDAR context, three complete traces/links and zero dispatch checkpoints,
+with configuration/source unchanged and normal terminal quit. That is functional
+evidence, not responsiveness qualification. Before the second message, typed
+text visibly appeared in stages (blank, then a partial word, then the full text).
+Canvas also repeatedly fell back to Terminal only. Retain both observations for
+attribution; neither proves a Send regression or a cause in OPT60. Do not infer
+acceptance of input/render or provider-entry budgets from completed replies.
+
+**FOLLOWUP-08 — CI budget result lacks attribution.** Integration reports the
+PerfGuard run at `a1bea` failed its boot-budget step, but annotations expose only
+exit 1 and no artifact. Log endpoints returned HTTP 403, so the exact failing
+budget is unknown. This is not evidence of a module-census regression; retain
+the prior qualified census separately until an accessible detailed result exists.
+
+**FOLLOWUP-09 — warning lost during layout, fixed in the integration lane.**
+The recovery text controls exposed an outdated `DestinationRailSectionHeader.title`
+that could overwrite the visible Model warning during allocation. `2d65a328ad`
+updates the shared title along with the visible label. Its seven relevant original
+controls pass; the separate allocator fixture failure does not erase this result
+or establish a broad layout pass. Keep the correctness outcome distinct from speed.
+
+**FOLLOWUP-10 — held draft assertion exposed a fixture session switch.**
+`warm-repeated-poll-original-red-2` reached two successful full passes (core5 each)
+but failed before its no-repeat oracle because the visible composer was empty.
+The integration owner's original-writer diagnostic `received-draft-origin-1`
+shows attach/resume registry reconciliation creating/selecting another session;
+ordinary draft sync then loads that new session's empty draft. The original
+received session remains length23/revision1 with current inputs and request=None.
+This does not establish product draft loss. Test-only `d41973538e` selects the
+workspace through the registry before mount, waits original attachment completion
+within the same10s bound, and asserts exact active/visible/composer/store ownership.
+No forced full sync or weakened draft assertion. At integrated `4b984d`, the aligned rerun passes the draft assertion and reaches the intended repeated-core polling RED, with zero pending workers and clean source/custody.
+
+**FOLLOWUP-11 — cold trust setup failure is attributed to the eager host.**
+The first two cold receipt controls fail their initial cold assertion at
+`be8115f315`; no Send was attempted. `cold-trust-origin-1` at `82b2bb1685`
+observes the original builder 10.3534304s after observer installation, on
+MainThread beneath skill discovery's `_content_sources`, with no ensure/preparer
+entry. Frozen sources, zero after-fixture workers and clean 22.235s driver
+retirement qualify that attribution. They do not qualify normal default-worker
+startup or any cold Send timing. Reuse the existing real TldwCli/default-scheduler
+native fixture, holding its actual builder before publication; never reset a
+live service or remove the cold qualification assertion. Startup discovery and
+Send catalog demand remain separate scopes in OPT69.
+
+**FOLLOWUP-12 — final refresh must finish before polling stops.**
+The integration owner reports an original causal correctness failure:
+`_poll_transcript` ignores False from a maintenance-deferred final full sync and
+stops its timer when idle. Saved integration `116628850f` makes a minimal explicit-False
+return. The integration owner reports the exact original timer failure is now
+GREEN, eleven attach controls and the survivor control pass, actual coalesced
+late-FULL activation passes, and two actual saved turns exercise native receipt
+acknowledgment, a still-active background turn and final tail settlement. This
+closes a correctness boundary for OPT60/ADR223 narrowing; it does not establish
+that stable polling is streamlined or that Send is faster.
+
+**FOLLOWUP-13 — authentic cold Send reaches the original blocking path; a worker cache remains.**
+`stock-cold-send-original-1` uses original TldwCli/default scheduling at
+`116628850f` with frozen helper/integration changes. Enter and button both observe
+configuration SQL on the input thread, receipt absent, no loop progress and no
+Preparing frame during the hold. Cold slots/factory, active session and draft
+remain exact; the original lease is live, no probe timeout occurs and no remote
+call starts. The original startup builder Future and singleflight physically
+retire, with no observer invalidity. Fixture creator retirement then fails:
+ordinary leases remain 3, core/pending/raw are zero, and the original one-second
+drain returns False. Outer driver 59.159s/pytest 64.203s, frozen sources, zero
+parent workers and normal diagnostic containment do not erase that native failure.
+`stock-cold-send-retirement-origin-2` identifies the failed owner as
+`db.workspaces`: one live, nontransactional cache remains on `asyncio_11`.
+`WorkspaceDB.close` closes its calling thread's cache; a later main-thread close
+cannot prove retirement of that worker's handle. The subsequent exact connection
+trace `stock-cold-send-workspace-origin-3` identifies its birth in
+`ServiceWiringMixin._compose_tool_pack_service_off_thread` →
+`ToolPackService.reconcile_receipts` → `_WorkspaceReferences.capture` →
+`LocalWorkspaceRegistryService.list_workspaces` → original Workspace transaction/
+connection, within its original Textual worker and concurrent-futures WorkItem
+(`asyncio_7` in that run). Every other observed Workspace creator connection
+retired. This attributes the remaining cache to startup tool-pack composition,
+separate from the helper's Send cancellation. The integration owner is correcting
+that finite worker's ownership; no fix/pass is recorded yet. Do not broaden
+closure, relax drain or infer that the held main-thread SQL created the cache;
+original `get_workspace` already has an operation-owned scope. Cold product
+implementation remains pending.
+
+**FOLLOWUP-14 — worker profiler output mixed threads; retain only valid evidence.**
+
+`36c6-send-worker-diagnostic-1` on `36c6fb431a` completed three real replies
+and retired the App/server with unchanged source. Its original local monitoring
+records 889 events, no overflow and unchanged selected bodies. However the
+supposed worker-only cProfile outputs include original UI/event-loop functions;
+`worker-2-4-_CapturedSources.read_permission_payload.pstats` totals .519 s while
+the observed callback lasts .393 s, and several entries report self time greater
+than cumulative time. These pstats totals/counts cannot select a worker cause.
+The profiler/runtime interaction is not independently diagnosed. Keep original
+thread/task spans separate and use thread-filtered original-body observation
+for further attribution. Do not rerun broad profiling or erase the failed
+measurement. Original callback lifetime can include blocking and scheduling;
+it is not exclusive CPU time. The earlier span-only run records natural
+supplied Preparing frames .151/.042/.023 s after the UI action scope, not physical
+input or terminal-flush latency. No isolated speed improvement is claimed.
+
+The replacement `36c6-send-tree-delayed-1` arms original-code monitoring at the
+first actual UI action, avoiding the two earlier diagnostic startup failures.
+It records nine expected native callbacks across three real replies, with zero
+stack errors and zero unfinished roots; the owner reports normal App/server
+retirement. Per-root exclusive sums reconcile within four microseconds. Warm
+composition permission callbacks take .286/.289 s; catalog callbacks take
+.369/.378 s. These are scoped wall observations, including observer overhead
+and unselected/native waiting. They establish repeated Windows metadata work,
+not a quiet speed improvement. Its supplied Preparing frames occur .088/.790/.012 s after the UI action scope; retain the slow second frame and do not declare feedback acceptance from this instrumented run. Earlier startup probes produced no Send evidence
+and remain diagnostic failures, not product regressions.
+
+## Ruled-out premise
+
+The proposed removal of five supposedly eager database opens during configuration
+capture was ruled out by source review. `operation_owned_connection` owns cleanup;
+it does not eagerly open each database. The explicit Workspace connection is the
+sole forced scope and its nonempty-workspace lookup consumes it. Removing that
+scope could increase admissions. Preserve this conclusion from the phase report's
+"Domain priority after task18" rather than reopening the same premise as an
+unmeasured optimization.
+
+## Implemented entries and remaining qualification
+
+| ID / status | Implementation and evidence | Remaining qualification |
+| --- | --- | --- |
+| OPT-74 / Implemented; main latency target remains open | **Validate each node name once in Windows metadata preflight.** Integration commit `fa3dad2d82` under TASK-34563.36 replaces repeated full ancestor-chain scans with each non-root `node.name`, since the existing node set already contains every ancestor. The original native count control goes from 54 validations to ten, with all seven native count fields unchanged; four invalid-ancestor cases preserve refusal before native access. | Final targeted bundle: 71 passes, one owner-SID capability skip. Matched quiet three-turn samples improve from 6.297/5.093/5.859 s to 5.766/4.687/4.952 s to adapter entry, with complete replies/traces and normal retirement. Different exact startup settling and the small sample prevent assigning the full difference to this change. All drive checks, complete preflight, both native tree passes, ACL/posture checks and physical retirement remain. This does not close OPT73 or the overall latency target. |
+| OPT-32 / Implemented by integration owner | Commit `4874767fa357bfa18919c29dd6b3dbb579b3aa50` avoids startup persistence when rail preferences have no saved source. The eight distinct targeted controls pass, preserving saved-layout adoption, explicit edits and the real first-chat generation race. | Original compact compose/mount samples now retain generation 1 throughout, with no original config publisher, loop-progress checks passing and normal shutdown. The peer reports current model compose/mount controls now pass on Windows and model groups pass on Linux/macOS. Startup heartbeat/input limits still fail on all three hosts; this repair does not establish whole-budget acceptance. Historical combined b4a Send was 8.530/8.031/7.938s; this is not an isolated causal comparison. |
+| OPT-09 / Implemented and qualified within its task | Root commit `b14185060f48523b51462c7e084534f67a251ee1`, integrated in `7824bc6850b017760b55b6bfc60295fa34861085`, shares config/hook lock creation and stream preparation. Parent establishment2-to1; whole-read native attempts cold/warm config1623/1622-to1484/1495, hooks2117/1125-to1980/1008. All22new controls pass in root and integrated checkout; actual cold fsync, current posture, locking and retirement retained. | Quiet b4a Send remains8.530/8.031/7.938s, slower than the older031b point sample; count reduction has not established latency gain. That historical timing is combined-source evidence, not an isolated causal comparison. CI run37739739905 passes107/107 on Windows/Linux/macOS, including all22new controls; task34563.27 is Done, while the main latency task remains open. Unimplemented existing-first alternative is retained as OPT34. |
+| OPT-36 / Implemented and qualified | Task34563.28 batches `_user_data_dir_stamps` through the existing fresh multi-path snapshot. Native causal proof: 11 requested entries over 10 objects, 11 trees/126 opens become one tree/20 opens; exact ordered/DACL results and all physical handle retirements pass. Seven new and eight existing distinct controls pass on Windows, including actual warm memo invalidation and hardening. | Preserve empty-input zero work, missing/error fallback and original cache keys/brackets. No new cache or owner. The same complete warm hook read with optional diagnostics off drops 1,008-to-952 attempts (56, 5.6%), with one parent establishment and 34 descriptor closes unchanged. Integrated directory/count checks pass eight cases with normal native retirement. CI on Windows passes all seven new cases; Linux/macOS each pass four portable new cases and all twelve original POSIX memo cases, with platform-only cases skipped. Task34563.28 is complete. Later combined d221 whole-Send timing still fails its budgets; it is not an isolated comparison and the helper reduction is not an established whole-Send gain. The early bound-companion return remains unchanged. |
+| OPT-42 / Original targeted behavior verified; combined census now passes | Task34563.29 moves the annotation-only `HookPermissions` import into existing `TYPE_CHECKING` with postponed annotations. Integrated `7b728190` passes 56 original hook/interrupt checks and three census helpers; its actual census was 1,045/1,033. | The later combined 435f census is 1,032/1,033. Historical Linux 1,046 is not a same-host baseline. Source bodies/owners are unchanged; task closure still needs its recorded integration hygiene. No isolated count or Send-time saving is inferred. |
+| OPT-43 / Integrated; observer behavior and residency verified | Task34563.30 uses the canonical `observe_preparation_reads` function in controller wiring. On integrated `16f0bda38b`, three original ownership/observer controls pass and the hook facade is absent from the first-ready additions. | The unchanged Windows census falls from 1,045 at `7b728190` to 1,042 with OPT43/46/47, exactly their three removed residents, but at that revision still exceeded 1,033. Module residency is measured; Send latency is not. Existing attribution and native ownership remain intact. |
+| OPT-46 / Integrated; residency verified, behavior still pending | Task34563.30 moves the original comparison dialog import to its opening action and quotes only the type-only result annotation. The original first-ready census at `16f0bda38b` confirms absence. | The original action initially failed raw-source fixture setup. With existing bootstrap-profile setup it reaches app construction, where its gateway double lacks `cached_context_window`; the integration owner is correcting that test double. No action pass is claimed. Source review preserves original class, arguments, guard and callback; first-use timing remains unmeasured. |
+| OPT-47 / Integrated; residency and original actions verified | Task34563.30 imports the original feedback modal at its existing opening action. Original census `optional-imports-original-1` confirms absence at first-ready; after existing bootstrap-profile fixture setup, all three original real-modal submission/empty-submission/Escape controls pass in `cost-absence-red-and-fixtures-1`. | The later receipt records HEAD `16f0bda38b` with local fixture changes, frozen source/HEAD, normal driver retirement and no force/overflow/lookup race. The first suite's fixture refusal is not erased; corrected controls now exercise the actual actions. That run still exceeded the census budget; the later combined 435f guard passes. No first-action/Send latency gain is established. |
+| OPT-52 / Integrated; original Windows capacity and picker controls pass | Task34563.32 imports the original video-capacity modal inside its existing ownership loop. Original 435f census passes1,032/1,033 and capacity/discard/keep controls pass. The integration owner reports all three original video-picker tests pass at41ab023e31, with frozen sources and no pending workers after fixture teardown. | Preserve historical test failures: unsupported Windows save was assumed successful; the new Toast oracle initially lacked notifications=True; the post-attempt helper wrongly expected an empty artifact gate. Test-only c288/cbb/388 correct those premises while retaining real gate/copy, both cancels, quit-Stay and exact cleanup. Windows verifies refusal/retention/explicit discard. Supported-platform successful external save remains separate qualification. No import cause or latency saving is inferred. |
+| OPT-53 / Integrated; original editor controls pass | Task34563.32 loads the original system-prompt editor at its existing opening action after settings/callback preparation. Combined census at `435f948c56` passes 1,032/1,033. | Four original editor controls failed before their actions with `raw_source_selection_changed` in the legacy 435f fixture. Integration subsequently reports seven original/new editor controls pass at fab660f878 after fixture and immediate sidebar-publication fixes; that later receipt is retained by the integration owner. Preserve original class, callback and settings semantics; a count pass does not qualify these actions or prove startup/Send improvement. |
+| OPT-55 / Integrated; source/lifetime and selection controls pass | Task34563.32 imports original `ReactionOption` and picker classes at existing construction points, with annotation-only names under postponed `TYPE_CHECKING`. At `435f948c56`, combined census passes 1,032/1,033; original profile-DB replacement (open/selection), dismissed-preview cancellation/nonretention and screen-unmount drain controls pass. | The original avatar control initially saw Automatic instead of Relief. Integration commit `e00f230fbe` publishes the accepted reaction label immediately; the integration owner reports eight relevant original controls pass. Preserve that historical failure and separate first-action latency qualification. Class identities/current-source checks/weakrefs/preview ownership remain original. No measured first-action or Send gain, and process containment is not proof of app-internal cleanup. |
+| OPT-62 / Implemented; original status and recovery controls pass | `2d65a328ad` guards unchanged recovery title/context/default text. Original controls also exposed the layout allocator reading stale `header.title`; the fix updates that shared title so the model warning survives allocation. Seven combined relevant controls pass after five causal REDs. | An additional pre-existing allocator control failed before mount, including alone; its diagnostic fixture marker was reverted and the separate fixture/asynchronous-contract issue is documented. No broad allocator qualification or Send latency saving is claimed. |
+| OPT-65 / Implemented; targeted status/action controls pass | `2d65a328ad` compares current llama launch-preview title, connection status and bind warning text before widget updates. Seven combined recovery/status/action controls pass and original setup actions remain exercised. | Availability reads, model/runtime ownership, enabled states and changed/error publication stay original. Three-OS supplemental qualification and isolated elapsed-time saving are not established by this local receipt. |
+| OPT-66 / Implemented; original targeted publication controls pass | `5800bdc47d` compares current progress-modal count/body/refusal text before calling the original widget update. Five new mounted controls were RED on redundant writes before the combined changes; the final eleven targeted controls pass, with no pending workers after fixtures and clean custody. | Real changed progress/error publication remains covered. Added to the three-OS supplemental matrix, whose outcome is not yet recorded here. No isolated redraw or whole-Send timing improvement is established. |
+| OPT-69 / Integrated; receipt controls pass, remaining qualification open | **Keep cold skill-trust initialization off the next Send's input loop.** At `557385e36e`, passive original SQL ancestry follows actual Send preparation through `capture_turn_configuration_snapshot(selection=None)` into the synchronous session builder. Original exception observation identifies `_ready_attribute` refusing `LocalSkillsService._trust_service` while its factory remains cold (configuration preparation:72/154). | Existing `ensure_local_skill_trust_service` provides async retained initialization, and the original local `trust_service` property publishes it. A product design must preserve source identity, cancellation/physical retirement, trust/permission authority and custom-source compatibility; do not simply bypass the guard or silently drop trust. The new warm-poll tests initialize it before their action only to qualify that distinct scenario. The probe-induced eight-second hold is artificial, not a measured cold-start cost. The [bounded source plan](../superpowers/plans/2026-10-08-console-cold-trust-preparation-plan.md) reuses the existing stock service proof and finite initializer, keeps initial receipt resident-only, carries cold eligibility through existing received custody, initializes after hook readiness, preserves app/local winners and reruns the unchanged strict source guard. Existing App-worker skill-discovery policy/scheduling remains a separate adapter. Focused original native cancellation, source replacement, navigation, concurrent initializer, draft and real Send controls are approved for Task1 source/control preparation under [TASK-34563.35](../../backlog/tasks/task-34563.35%20-%20Receive-Console-Sends-while-stock-skill-trust-is-cold.md). The original causal RED is now qualified after `c653f5445e`; candidate `d7d0cc2d71` is integrated as `6cad32ed67`; the owner reports all 22 isolated contracts and both actual Enter/button receipt controls pass with full native retirement. A second option under this same candidate is to avoid initialization when original finite skill capture proves trust is unused: built-in records and later no-digest validation skip trust. This needs an explicit source/capture contract; do not infer absence from a UI cache or initialize unused trust just to satisfy a guard. The required-trust finite initializer remains a branch to qualify. `cold-sql-receipt-baseline-1` at `be8115f315` fails before Send because the aligned eager fixture is already warm; this is not causal RED. `cold-trust-origin-1` at `82b2bb1685` attributes construction to original discovery: `_refresh_console_skill_candidates` → `_fetch_console_skill_context` → `get_context` → `local_content_lifetime` → `_content_sources` → the lazy trust factory, on MainThread, with no finite ensure/preparer entry. The separate eager host triggers this compatibility fallback; it does not establish normal default-worker behavior. Original `_content_sources` requests trust even for builtin-only discovery, so zero construction over whole startup is an invalid no-demand Send oracle. Helper `414e6ec491` and the narrow real-App fixture patch were then exercised as frozen local changes on integration `116628850f`: both Send routes show receipt absent, original configuration SQL on the input thread, no loop progress or Preparing frame during the hold, exact cold sources/draft retained, live native lease and zero remote calls. Actual original builder Future/singleflight retire, but fixture-wide retirement fails; this is a qualified blocking observation with incomplete cleanup qualification, not an integrated control pass (FOLLOWUP13). The reviewed one-catalog/no-demand candidate preserves legitimate concurrent cold-to-ready publication and explicit skill workspace scope. Source compilation and changed-code lint pass. The actual receipt controls establish feedback during held preparation, not an uninstrumented latency improvement. Real managed-demand completion, received cancellation/source-change controls and matched current-source whole-Send timing remain open; their unrelated draft expansion is paused while the current Send trace takes priority. |
+
+Implemented work that predates this list (shared tool preparation,
+run-log and activation preparation, retained saves, early receipt, configuration
+workers, parent/control batching and the task26 owned permission load) remains in
+its existing tasks and evidence report; it is not a pending optimization here.
+
+## Review discipline
+
+- Add evidence, source revision and the reason for deferral when preserving an idea.
+- Keep operation-count reductions separate from measured Send/input improvement.
+- Update status as soon as an item is selected, ruled out, implemented or superseded.
+- Preserve the user's speed/stability goals and required durability/permission rules.
+- Use targeted checks and sequential native timing. The list does not authorize a full sweep.
+
+
+### 2026-10-08 integration evidence update for OPT69/70 and FOLLOWUP13
+
+Checkpoint c653f5445e repairs the finite list_workspaces read that stranded Tool Pack startup reconciliation's worker connection. Both original Enter/button cases now retire all14 App creators, all native lease/operation counters reach zero, and the unchanged one-second drain succeeds. The original tests then fail precisely at cold Send entering configuration SQL on the input thread before receipt/Preparing. This supersedes FOLLOWUP13's cleanup blocker while retaining its historical findings; OPT69's one-catalog product repair is now integrated as `6cad32ed67`; remaining qualification is recorded below.
+
+OPT70's original count control proves two counted leases point to one exact hold and issue two original native pause queries. The finite deduplication changes that to one query while preserving both leases and their retirement. Six final controls cover original count, custom callback/body, real maintenance between acquisitions, mid-call receiver replacement and custom instance dictionary refusal. Ten broader native controls passed with one POSIX-only skip locally. Linux/macOS results and the unchanged whole census budget remain pending; the previous81/54 count is not declared fixed, nor is the separate304 typing-pause excess. Original companion_guard early-return work remains under investigation.
+
+### 2026-10-08 cold preparation source candidate
+
+`d7d0cc2d71` implements the reviewed OPT69 candidate across the existing receipt,
+runtime, configuration and skill owners. It captures the original catalog once,
+keeps optional unavailability distinct, initializes only for managed demand and
+reuses the immutable result for that exact received turn. The no-demand branch
+accepts legitimate independent publication without treating unused trust as a
+consumed dependency. The managed branch rechecks the current winner through the
+existing initializer and strict guard. The selected skill workspace is explicit.
+
+Source compilation of nine files, catalog descriptor-name checks and changed-code
+Ruff checks pass; sixty unrelated controller lint findings match the baseline.
+The integration owner subsequently ran `cold-trust-contracts-candidate-1`
+(22 passes) and `stock-cold-send-candidate-1` (both original Enter/button cases
+pass), with frozen candidate sources, original receipt/Preparing/loop progress,
+complete native retirement and zero after-fixture workers. Product commit
+`6cad32ed67` is integrated. These are reported causal controls, not a fresh timing
+run by this lane or proof that whole-Send budgets are met. Eight existing cancellation/replacement/ready/custom regression controls also passed.
+Real managed completion and the additional received cancellation/source-change
+qualification remain open. Their extra drafts
+are preserved and paused.
+
+The active priority is the integration owner's current-source fresh setup to
+DeepSeek/deepseek-chat and three real messages. Record actual input to first
+naturally supplied feedback frame and original adapter entry; distinguish the
+first cold Send from later Sends. Separate quiet timestamps from instrumented
+critical-path attribution, retain unexplained time, and do not add overlapping
+spans. Native runs remain sequential. Select the next correction from the largest
+measured cause, then compare matched before/after absolute timings. This ledger
+preserves other ideas without authorizing their implementation or displacing
+that work.
+
+
+### 2026-10-08 whole-Send native census: OPT04/05/06/72/73
+
+At integrated `3ddb59e8fe85`, `3ddb-whole-send-census-1` observes three real
+Enter/button/Enter Sends through original provider entry. All three DeepSeek
+replies and response trace links verify, six messages persist, and no dispatch
+checkpoint remains pending. Source/HEAD stay unchanged. The external observer
+arms at the first actual Send and counts only four original native entry points;
+its counts are entry attempts, not distinct files, successful opens, or CPU time.
+
+The nine-root permission/catalog tree was too narrow to rank the whole Send.
+This census records the following repeated qualified Send work on both warm turns:
+
+| Original owner/family | Open-handle entries per warm Send | Interpretation |
+| --- | ---: | --- |
+| Five `HookPermissions._current` reads combined | 5,400 | Each read has 1,080 opens, 1,758 metadata entries and six multi-path snapshots. The family therefore totals 8,790 metadata entries and 30 snapshots. |
+| Configuration maximum capture | 1,165 | Includes its captured source work; do not add a nested permission span again. |
+| Remaining configuration capture | 821 | Separate original preparation callback. |
+| Awaited history file body | 709 | Joined through the original FileJob creator task and route; the executor does not copy diagnostic context. |
+| Local catalog composition | 608 | Same repeated native validation identified by OPT73. |
+| Composition permission read | 457 | The owned permission path remains distinct from the earlier maximum capture. |
+
+All qualified Send owner/read/history buckets total 12,278 open entries on each
+warm turn. Separate inherited-context-only counts are 7,564/4,234; background
+counts are 10,835/10,657. These unqualified buckets are not proven blockers and
+must not be assigned to a Send owner or added as exclusive duration. Main-loop
+background work and worker-result delivery need attribution alongside the finite
+hook operation; this census does not by itself identify every background caller.
+
+OPT04/72 remain unimplemented. Three reads are original readiness snapshots;
+one is v2 configuration capture; the remaining original `_current` lifetime
+occurs in the precommit hook-input interval (source review points to legacy
+UserPromptSubmit target selection; that immediate caller was not monitored).
+The five `_current` wall lifetimes total 1.080/2.032/2.075 seconds in this
+instrumented run. Nested `snapshot` lifetimes are excluded from those sums.
+Distinct live policy/effect gates must remain fresh; receipt-time authority is
+not a reusable permission cache. Investigate duplicate work inside the finite
+hook operation first. A possible admission/v2-initialization consolidation needs
+an explicit existing-owner result contract preserving refusal, reconciliation,
+custom callbacks and effect order before implementation.
+
+A concrete OPT04 internal candidate is an owned raw-config read/lock body:
+`locked_hooks_config_snapshot` enters `_config_write_lock`, the interprocess
+lock enters another config operation, and guarded `_read_raw_cli_config_unlocked`
+enters another. Their nested wrappers share the same operation but repeat source
+and parent checks. An existing-owner body seam could retain standalone/custom
+wrappers while sharing preparation, analogous to the implemented owned permission
+load. This is not selected: count the actual removable work and preserve native
+file-entry/final checks, lock ordering, source refusal, rollback/failure semantics
+and physical retirement first. Consumer-level admission/v2 consolidation also
+crosses awaited reference expansion on supported routes, so it is not an
+await-free duplicate that can simply receive the earlier permission result.
+
+Diagnostic action-to-provider times are 10.827/11.140/11.750 seconds, materially
+slower than the quiet 4.687-5.766-second reference. They cannot establish speed
+acceptance or expected savings. The disjoint diagnostic intervals in milliseconds
+are:
+
+| Send | Action to receipt | Receipt to controller | Controller to save | Save | Saved to trace | Trace | Trace to provider |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 94 | 1,890 | 907 | 671 | 6,547 | 298 | 420 |
+| 2 | 0 | 3,280 | 1,345 | 390 | 5,750 | 171 | 204 |
+| 3 | 15 | 3,437 | 1,203 | 203 | 6,079 | 390 | 423 |
+
+Natural supplied Preparing frames occur .094/1.686/.054 seconds after the
+original UI action. The slow second frame remains a failure of the feedback
+budget in this instrumented run, not a quiet terminal-flush measurement. Its
+initial hook callback returns at +1.003 seconds, while configuration capture
+starts at +1.840 seconds; that gap is not additional hook-body execution.
+Awaited history lasts .300/.613/.487 seconds; this does not authorize deferral.
+
+Observation integrity: 904 selected events and 321 aggregate count rows, zero
+native/read/ancestry/event overflow, zero address collisions or context mismatch,
+unchanged selected originals, and monitoring retired. All 25 preparation reads
+have unique monotonic ordinals and physically retired producers. Only 23 raw
+read/future address pairs occur: address reuse actually happened, so raw IDs
+alone would have merged separate reads. No active observed read or running
+FileJob remains. Expected received spans and one background read span cross the
+recording cutoff; their omitted return events do not contradict the independent
+original retirement records.
+
+Cleanup limit: normal Ctrl+Q, server exit zero, unchanged deadlines, no forced
+process retirement and an empty final process tree are verified. The final
+in-process sample still contains six live leases (pending/raw/core/retiring
+counts zero), and the custody receipt explicitly does not claim complete
+App-native cleanup. Preserve that unresolved ownership qualification separately
+from successful observed-read and process retirement. No product change or
+completed latency target is claimed by this diagnostic.
+
+
+### 2026-10-08 isolated hook-read partition and source limits
+
+The integration owner's `3ddb-hook-snapshot-native-probe.json` measures one
+original warmed `HookPermissions.snapshot` on the disposable UAT profile, with
+original native entry counters restricted to the exact actor and `_current`
+receiver ancestry. Its 1,080 open / 1,758 metadata / six multi-path-snapshot
+entries exactly reproduce the whole-Send count for each hook read.
+
+| Disjoint native stage | Open entries | Metadata entries | Multi-path snapshots |
+| --- | ---: | ---: | ---: |
+| `locked_hooks_config_snapshot` | 572 | 965 | 3 |
+| `HookPermissions._store_lock` | 383 | 602 | 2 |
+| `HookPermissions._read_state` | 75 | 105 | 0 |
+| `default_hook_permissions_path` | 50 | 86 | 1 |
+
+This does not select a product change. OPT03's directory-establishment candidate
+accounts for only 50 opens (4.6 percent) on this route, rather than most of the
+hook read. Keep default-root and custom-source variants distinct.
+
+Within those same stage totals, nearest `raw._check` callers account for 257
+opens at `_runtime_operation`, 72 at `_scope`, 48 at the prepared-parent finish,
+and 21 at config `operation`. These are overlapping classifications of the table,
+not additional opens. The 565 entries without a `raw._check` ancestor include
+original preparation and actual native access; they are not automatically
+removable. This probe counts entries, not elapsed cost or possible savings.
+
+OPT07 is narrower than the 257 discovery-associated opens. The retained original
+TASK-34563.19 plan selects only immediate duplicate consumers: admitted file,
+admitted reader, Windows binary-reader branch and trusted-directory verification.
+The admitted-file and admitted-reader buckets identify 9 and 16 opens at
+immediate second checks. The 16 entries labelled `open_private_binary` cannot be
+assigned to the eligible fallback branch from this caller-level trace: the
+native guarded branch also checks after `os.fdopen`, and that check remains
+required. The observed prepared-parent finish and current native Windows facade
+support the guarded branch. Thus 25 opens are directly identified immediate
+duplicates; the initial 41-open interpretation included a potentially required
+post-allocation boundary and was corrected before any product change. Actual
+allocation, stream-specific path checks and checks after native work remain
+required. The earlier .118839 seconds over three Sends remains historical
+evidence, not a current speed gain.
+
+Source review also rules out a supposed `_prepare_config_parent` plus config-lock
+parent-establishment duplicate on this read path. `_prepare_config_parent` is
+called by config writing, snapshot writing and restore, not by the hook snapshot.
+The measured profile explicitly sets `TLDW_CONFIG_PATH`, so
+`application_owned_config_directory` returns None after its companion check and
+the config lock's application-owned-parent helper returns immediately. The hook
+store lock does request its parent, once through the already implemented lock
+stream body (OPT09). Do not select a parent-creation removal from these counts.
+The remaining candidate is consolidation of actual finite configuration/lock
+preparation, with its source/effect checks and ownership preserved.
+
+Qualification: the observer reports ready state, zero ancestry overflow, current
+selected stage/counter bodies, retired monitoring, and raw/pending counts zero.
+The integration owner reports frozen source/HEAD, normal process retirement and
+4.64 seconds for the whole isolated driver (not snapshot execution time). The
+initial probe did not pin `_current`/`_check` in the final identity list, compare
+all native owner baselines, or explicitly close the HookPermissions owner. The
+review arrived as the run finished. These counts remain diagnostic attribution;
+no stronger internal cleanup claim or product pass follows from the process exit.
+A future causal control must include those small ownership checks.
+
+
+## Retirement-qualified isolated hook read
+
+The integration owner repeated the one warmed original snapshot at frozen
+`3ddb59e8fe` with the small missing ownership qualification added. The original
+`_current`, `raw._check` and `HookPermissions.close` identities are pinned along
+with all measured stage/counter callbacks. Before and after, the exact issued
+identity sets for leases, pending acquisitions, raw/core operations, retiring
+holds and raw states are equal. The baseline has one pre-existing live lease;
+the other sets are empty. After observation retirement, the original owner close
+sets its closed flag. No source change, overflow or forced process retirement
+occurs. Driver exit is zero; all counter buckets match the earlier snapshot.
+
+This qualifies that one read against its observed baseline, while preserving
+the separate six-live-lease limitation in the post-App census sample. It is not
+a claim of zero global native ownership. Evidence: integration-owned
+`deepseek-uat/3ddb-hook-snapshot-retirement-probe.json` and
+`3ddb-one-hook-retirement-census-1.{source,custody}.json`.
+
+The qualified partition remains 572 configuration/locking, 383 hook-store lock,
+75 permission-state read and 50 default-directory native open attempts. The
+main latency repair remains unimplemented; no permission snapshot is reused
+across awaited stages and no guard, reconciliation or directory effect is
+removed on this evidence alone. Quiet three-Send timings remain the acceptance
+comparison. The independent source lane is reviewing a finite preparation
+contract under existing owners rather than selecting the small ruled-out
+shortcuts.
+
+### 2026-10-08 OPT33 finite establishment contract (source-only, unselected)
+
+The independent source review finds a concrete repeated operation inside the
+383-open hook store-lock stage: `secure_private_directory` performs its original
+root/component trust walk, but every original `_native_open` also discovers the
+raw owner and repeats the full selected-parent proof. Task34563.22 already
+contracts this duplication for `_open_verified_parent`; it does not cover the
+separate directory-establishment loop. The saved hook partition attributes 144
+opens to runtime discovery in this stage (16 full checks at nine opens each),
+but does not identify every discovery's direct caller. Do not claim all 144 as
+removable, or convert that aggregate into a predicted latency improvement.
+
+The smallest proposed contract reuses the existing finite-walk machinery with
+an explicit actual directory: parent preparation supplies `selected.parent`,
+while establishment supplies `selected`. This is a private factoring of the
+same source/custody and descriptor owner, not a new service or general cache.
+Eligibility remains exact stock config/hook-permission/history ownership,
+unchanged directly consumed callbacks, native guards and an already retained
+pin for that exact directory. Standalone/custom, explicit open/close,
+voice/visual and unpinned/new-directory routes retain the original path.
+
+Preserve the original establishment loop, including every component's owner,
+type, mode, trusted-symlink and private-directory postcondition. Perform full
+source/parent checks at entry and completion, current source/actor/participant/
+lease checks before each native allocation, and a full gate before any actual
+mkdir/chmod effect. At completion the actual final FD must match the original
+still-retained selected-directory pin; repeat the source/custody fence after
+those native identity reads. Creator-owned cleanup must remain possible after
+source drift and must retain uncertain closes. This proposal does not change
+config/hook lock order, their lifetimes, reconciliation, token epochs, lock
+creation/fsync, per-Send hook observations or Windows derived-evidence eligibility.
+
+The integration owner should select a bounded causal control before product
+work: observe original `HookPermissions._current` and its actual establishment
+walk, attribute original full checks/native allocations to that walk, and prove
+exact before/after lease/raw/descriptor retirement. Existing-directory depth
+must increase real traversal while leaving the proposed full-check count
+constant. Keep actual component/native work visible rather than suppressing it.
+Additional controls should cover selected-directory rename/restore and final
+FD substitution, native source/lease revocation during final fstat, actual
+hardening/creation effect refusal, unsafe ancestor/link/owner cases, custom
+callback/default drift, unchanged unpinned fallback, and uncertain-close custody.
+Re-run task22 parent-walk and task27 config/hook lock controls after both product
+and control source are frozen, followed by sequential quiet integrated timing.
+No new whole-App census is needed to choose this candidate.
+
+ADR required: no new ADR if implemented within the above existing boundaries.
+ADR paths: `backlog/decisions/222-console-send-preparation-and-io-ownership.md`
+and `backlog/decisions/126-complete-local-backup-and-recovery.md`.
+Reason: the same finite source/descriptor contract already used by task22;
+creation, storage authority and observable hook semantics remain owner-defined.
+This is a review proposal, not an implementation plan or a qualified fix. Root
+must record the atomic task/plan and causal result before releasing product work.
+If the actual contraction is small, retain OPT33 for later and prioritize the
+existing OPT60 polling work; do not widen this into storage/registry caching.
+
+The larger 572-open config stage is not explained by duplicate raw leases in
+nested config wrappers: they already reuse the current raw operation. Storage
+acquisition also has an existing confirmed-evidence route. Source-level repeated
+`startup_permission`/`_scope` control reads therefore cannot be called a measured
+warm-path bottleneck from the current stage-only census. OPT40 remains subject
+to its recorded companion-guard branch qualification; no new generic control
+snapshot, cross-store lease or stale permission snapshot is proposed.
+
+
+### 2026-10-08 OPT77 source contract: avoid unpublishable evidence collection
+
+`storage._ordinary_hold` refuses native Windows, disabled evidence reuse,
+maintenance and non-serving owners. `_note_derived` applies that gate before
+examining or storing its collected evidence. `generation_witnesses._witnesses`
+and `AdmissionAuthority.pause_requested` already select their evidence hold
+through this gate; their collector returns immediately for `None`.
+
+Two producers instead pass their actual raw-operation hold directly:
+
+- `raw._pin_parent` builds `_path_evidence(hold.names, anchor)` after the real
+  guarded parent walk. Its evidence/posture comparison only clears the optional
+  evidence value; the actual FD still returns through the existing identity and
+  scope gates. On Windows this collected value cannot be published.
+- `config_participants.companion_guard` builds `_metadata_evidence` after the
+  successful original companion derivation, then the same publication gate
+  discards it. Its early-return/no-profile branch does not collect that evidence;
+  do not assume the successful branch explains the measured config stage.
+
+Proposed smallest contract: retain the real raw hold and every actual operation
+unchanged, but select a separate evidence-eligible hold through the existing
+`_ordinary_hold` rule and require exact identity with the retained hold. Use
+only that eligible hold for derived before/reuse/collection/publication. Keep
+`_note_derived`'s final eligibility gate because eligibility may change during
+native work. An initially ineligible operation may simply miss an optional
+future cache publication; it must still perform its complete original authority
+and physical-parent derivation. No cross-operation evidence or permission is
+introduced, and Windows derived-reuse eligibility stays disabled.
+
+Do not change `_path_evidence` globally. The separate `_reuse_evidence` and
+`_note_evidence` admission path also consumes it and supports native Windows.
+Do not pass the optional hold into the actual scope, pin or companion lifetime,
+and do not skip directory acquisition, fstat, parent association, source/pause,
+registry-lock, foreign-owner or final checks. No new reflection framework or
+shared mutable cache is needed for this producer-side selection.
+
+Before selecting product work, one integration-owner control should observe an
+original warmed `HookPermissions._current`, attribute `_path_evidence` and its
+native entries specifically to `_pin_parent`, and show that its publication
+reaches `_note_derived` with an ineligible actual hold. Keep both warmed snapshot
+outputs, all actual source/lock/effect work and exact before/after native custody
+observable. The desired failing assertion is absence of publication-only native
+collection on an ineligible owner, after proving that the original collectors
+really ran and retired. Cover the successful companion branch independently,
+and retain existing supported-platform eligible publication/reuse controls.
+Original failures in actual pin/companion preparation must still refuse and
+retire identically. No arbitrary replacement callback that removes real native
+work can establish the causal reduction. After implementation, root owns the
+integrated targeted checks and sequential quiet Send timing.
+
+ADR required: no new ADR under this scope; existing ADR-222 and ADR-126 apply.
+Reason: avoid preparing data the existing optional publication contract will
+reject, with no change to actual admission or derived-reuse policy. This remains
+a source-only proposal with unmeasured savings; OPT33 is retained as the separate
+finite directory-establishment alternative, not silently discarded.
+
+
+OPT77 selection checkpoint: the integration owner reserved TASK-34563.37 and
+selected only `raw._pin_parent` producer eligibility. The three-line candidate
+uses the existing `_ordinary_hold` gate and requires the exact original hold;
+it was source-reviewed but remains unapplied pending causal RED. The companion
+success branch and OPT33 remain separate, unselected follow-ups. The source-only
+`Tests/Backup_Recovery/test_raw_pin_evidence_eligibility.py` draft uses an actual
+warmed hook snapshot, original local monitoring, returned-evidence/publication
+identity joins, real pin closes and exact issued ownership baselines before its
+zero-unpublishable-collection assertion. Source compilation and Ruff checks pass;
+no native test or product import was run by this review lane. Root owns baseline,
+product edits, final integrated checks and sequential timing.
+
+OPT77 first baseline `c375-pin-evidence-red-1` is not causal RED. Both Windows
+cases failed the draft observer's assumption that collected `_path_evidence`
+reaches `_note_derived` unchanged. The original `_pin_parent` may clear that
+optional object after comparing its metadata posture with the independently read
+pin posture. The corrected observer requires the publisher argument to be the
+actual pin frame's evidence and records either exact forwarding or the original
+posture-mismatch discard before the unchanged ordinary-hold rejection. The
+zero-collection assertion and all source/pin/ownership/physical-close checks stay
+unchanged. Source and HEAD remained current; the 12.640-second driver retired
+normally, with no forced retirement or identity overflow/races and no remaining
+fixture worker rows. The early observer failure did not qualify the later
+in-test ownership/count assertions. Product remains unchanged pending a clean
+baseline. The control now includes default Windows plus the actual disabled-reuse
+setting on all hosts; eligible POSIX reuse remains a separate existing control.
+
+
+### 2026-10-08 OPT77 causal qualification
+
+The corrected `c375-pin-evidence-red-2` qualifies causal RED in both Windows
+cases: only the final two-versus-zero pin-evidence assertion fails after actual
+payload, source, pin, physical-close, exact-issued-custody and owner-close checks.
+The original code collects two optional metadata objects, discards both by its
+posture comparison, and reaches the existing ineligible publisher. Each snapshot
+uses 36 native open attempts solely for that discarded collection in this fixture.
+The source-current driver retires normally in 11.781 seconds.
+
+The integration owner's exact three-line `_pin_parent` eligibility change passes
+`c375-pin-evidence-green-1`: 42 passes and two existing Windows capability skips,
+66.747 seconds in pytest / 72.750 seconds in the contained driver. The skipped
+cases need Administrators owner-SID assignment and an actual native parent rename
+in the installed config-scope fixture. They are not passes. Source/HEAD remain
+frozen within the run; native containment retires normally with zero force,
+identity overflow or lookup races, and the after-fixture worker report is empty.
+
+Independent offline comparison of both XML properties confirms that every count
+and qualification field outside the following changes is identical:
+
+| Observed field | Original | Candidate |
+| --- | ---: | ---: |
+| Raw-pin publication-only evidence collections | 2 | 0 |
+| Native attempts inside that collection | 36 | 0 |
+| Default-mode metadata snapshots | 6 | 4 |
+| Disabled-reuse metadata snapshots | 3 | 1 |
+| Original storage acquisitions, both cases | 3 | 3 |
+| Full source checks / parent checks, both cases | 66 / 66 | 66 / 66 |
+| Actual raw pins / physical descriptor closes, both cases | 2 / 86 | 2 / 86 |
+| Default admission-native / other-native attempts | 198 / 970 | 198 / 970 |
+| Disabled-reuse admission-native / other-native attempts | 1242 / 970 | 1242 / 970 |
+
+The expected observer disposition moves from post-collection discard plus
+publisher eligibility rejection to pre-collection eligibility rejection and
+skipped collection. Both cases retain identical payload, source and positive
+retirement qualification. No authority check was replaced by a cached result.
+
+This establishes the bounded raw-pin contraction locally; it does not establish
+whole-Send elapsed savings, immediate rendered feedback or POSIX qualification.
+The integration owner is saving the candidate and arranging focused supported-host
+controls. Companion-guard evidence collection and OPT33 stay unselected. The
+main quiet Send reference remains approximately 4.7-5.8 seconds pending a fresh
+integrated measurement; the separate six App-sample leases remain unresolved.
+
+The original UAT-profile isolated snapshot also reproduces the contraction:
+`3ddb-hook-snapshot-retirement-probe.json` versus
+`c375-pin-candidate-hook-snapshot.json` falls from 1080 to 1048 open attempts,
+1758 to 1678 info calls and six to four metadata snapshots. Independent offline
+bucket reconciliation finds exactly six deltas: configuration no-raw-check
+metadata loses 14 opens / 35 info calls / one snapshot, and hook-lock
+no-raw-check metadata loses 18 / 45 / one. Every other native bucket is identical.
+Both retain original callbacks, zero overflow/pending/raw work, the exact starting
+custody baseline and normal owner close. The UAT-profile reduction is 32 opens;
+the separate regression fixture reduction is 36. Neither count comparison is a
+quiet whole-Send elapsed-time measurement.
+
+
+OPT77 integration checkpoint: the reviewed three-line product change, frozen
+causal control and focused Linux/macOS/Windows job are committed and pushed at
+`67a7f526fb0ff3e3e4b270e7d04de3f3b6bffdea` in PR3023. The job covers the actual
+disabled-reuse policy on all hosts, the Windows default rejection, separate
+Windows admission evidence, and existing eligible POSIX pin/source/retirement
+controls. Supported-host outcomes and the sequential three-message quiet Send
+run are still pending. TASK-34563.37 remains In Progress; integration alone does
+not qualify the latency budget or the separate App cleanup concern.
+
+
+OPT77 supported-host qualification: focused workflow run `37838634736` at
+exact `67a7f526fb` passes on all three hosts. Independent offline XML review
+confirms macOS 8 passes / 17 Windows-only skips, Linux 8 / 17, and Windows
+18 / 7 POSIX-only skips, with no failure or error. The eligible POSIX controls
+actually execute. Every executed new causal case records zero optional pin
+collections, two actual pins, three acquisitions, positive full/parent checks
+and physical descriptor closes, exact issued custody, current original source,
+owner close and observer retirement. macOS records 68 checks / 104 closes and
+Linux 63 / 59; the two Windows cases reproduce the local GREEN counts exactly.
+Artifacts are `67a7-pin-ci-{macos-15,windows-2022,ubuntu-24.04}/raw-pin-evidence.xml`
+in the integration evidence directory. The wider workflow status is separate
+from these focused jobs; quiet Send timing and App cleanup remain open.
+
+
+OPT77 latest real-provider sample: `67a7-pin-final-uat-1/uat-performance-verification.json`
+records exact `67a7f526fb`, unchanged sources and owner configuration, three
+completed DeepSeek calls, six persisted messages, three `verified_equal` revision
+links and zero pending dispatch checkpoints. Recorded UI-action-to-provider
+entry is **7.967 / 5.530 / 5.422 seconds**. This sample establishes no whole-Send
+speed improvement; retain the earlier 5.766 / 4.687 / 4.952 sample rather than
+replacing it with an implied improvement. The bounded native-open reduction
+remains qualified, but neither a causal elapsed regression nor an elapsed gain
+is established by these two short runs.
+
+Durable commit spans 0.423 / 0.125 / 0.218 seconds in the latest sample. The
+interval from successful durable commit to trace reservation spans 4.469 /
+2.265 / 2.485 seconds. Those are stage gaps, not attribution to one function or
+proof of removable work. Preserve save-before-dispatch and draft retention;
+repeated preparation and UI polling remain the larger open architecture work.
+This verification report does not itself establish final process/App retirement
+or actual rendered feedback within 100 ms. Those concerns remain separate.
+
+The integration owner subsequently verified normal Ctrl+Q exit and full server/
+browser retirement for this sample. That establishes process containment for
+this run, not a new audit of every App-owned native lease. Task 34563.37 can
+close on its bounded count, custody, host and functional criteria while the
+overall Send-delay task and broader architecture remain open. No wider OPT33
+change is selected by this checkpoint.
+
+
+Root completion checkpoint: TASK-34563.37 is Done after the scoped unused-evidence reduction, original count/custody/source controls, executed three-platform qualification and final real-provider UAT. Product checkpoint67a7f526fb remains the exact code exercised by those artifacts; later workflow path/documentation changes do not alter product bodies. The initial fresh setup flow was already verified on integrated dev, and the final Enter/button/Enter conversation has three complete calls and equal revision links with no checkpoints. Source and original configuration remained unchanged and normal App/server/browser retirement is verified.
+
+Latest quiet provider-entry7967/5530/5422ms is retained without a whole-Send gain claim. This task completion does not close the overall latency/architecture objective. The five fresh hook consumers, required consent epochs, background/main-loop work and unqualified intervals remain part of that investigation; no wider OPT33 or polling product change was made in task37.

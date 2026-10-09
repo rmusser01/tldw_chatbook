@@ -49,6 +49,7 @@ def _controller(**overrides: Any) -> ConsoleCharacterController:
     return ConsoleCharacterController(**dependencies)
 
 
+@pytest.mark.bootstrap_profile
 def test_character_picker_projection_is_bounded_and_fail_closed() -> None:
     long_description = "b" * 201
 
@@ -93,6 +94,7 @@ def test_character_picker_projection_is_bounded_and_fail_closed() -> None:
     assert controller._fetch_character_card_for_avatar(7) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_character_identity_reads_active_session_and_conversation_fallback() -> None:
     active = SimpleNamespace(
         persisted_conversation_id="conversation-A",
@@ -118,6 +120,7 @@ def test_character_identity_reads_active_session_and_conversation_fallback() -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_new_character_choice_preserves_prompt_seed_and_sync_order() -> None:
     store = ConsoleChatStore()
     notifications: list[tuple[str, str | None]] = []
@@ -171,6 +174,7 @@ async def test_new_character_choice_preserves_prompt_seed_and_sync_order() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_current_character_choice_uses_named_swap_edge() -> None:
     store = ConsoleChatStore()
     session = store.ensure_session(

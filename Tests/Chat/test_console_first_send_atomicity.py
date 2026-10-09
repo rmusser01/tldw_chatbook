@@ -905,28 +905,30 @@ async def test_project_folder_survives_a_first_send_cancelled_during_its_commit(
     request: pytest.FixtureRequest,
     tmp_path: Path,
 ) -> None:
-    """TASK-33621.13 review: Ctrl+Q (or closing the tab) while a new chat's
-    first commit waits on a locked database cancels the send, but the commit
-    thread still finishes -- ``to_thread`` survives cancellation. The folder
-    was written only after the await returned, so the chat was saved without
-    it and read 'Off · Project' after a restart."""
+    """Cancelled first saves retain both their native work and chosen folder."""
     db, store, controller, gateway = _controller(tmp_path)
     store.set_session_project_instruction_state("session-1", _FOLDER_7)
-
-    with _WriteLockHolder(tmp_path / "controller.sqlite"):
-        task = asyncio.create_task(
-            controller.submit_draft("cancelled mid-commit", session_id="session-1")
-        )
-        assert await _until(lambda: bool(store._durable_commit_in_flight)), (
-            "the durable commit never started; the cancel would land too early"
-        )
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-    # The lock is released; the orphaned commit thread finishes on its own.
-    # Nothing to wait for after this: the cancel never discards the
-    # reservation here, so the flag clears only once the commit has landed.
-    assert await _until(lambda: not store._durable_commit_in_flight)
+    task = None
+    try:
+        with _WriteLockHolder(tmp_path / "controller.sqlite"):
+            task = asyncio.create_task(
+                controller.submit_draft("cancelled mid-commit", session_id="session-1")
+            )
+            assert await _until(
+                lambda: bool(store._durable_commit_in_flight)
+            ), "the durable commit never started; the cancel would land too early"
+            for _ in range(2):
+                task.cancel()
+                await asyncio.sleep(0.05)
+                assert not task.done(), "first-save ownership ended before SQLite"
+                assert store._durable_commit_in_flight
+        result = await asyncio.wait_for(asyncio.shield(task), timeout=5)
+        assert result.accepted is True
+        assert result.provider_started is False
+    finally:
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        assert await _until(lambda: not store._durable_commit_in_flight)
 
     assert gateway.calls == 0
     _conversation_id, restored = _restored_project_state(tmp_path)

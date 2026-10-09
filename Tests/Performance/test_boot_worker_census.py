@@ -96,6 +96,25 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # TASK-32826: batch-read durable manual reminders off-loop so restored
         # conversation rows display their saved unread state on first use.
         ("_load_manual_unread_rows", "console-manual-unread-load"),
+        # TASK-34406 / ADR-126: restored Agent rail/fleet history and nonempty
+        # browser badges move their finite checked reads off the UI loop.
+        # Both are demand driven by the first visible owner/row projection.
+        ("_load_historical_presentation", "console-agent-history"),
+        ("_load_subagent_counts", "console-subagent-counts"),
+        # TASK-34406 / ADR-085/126: the already-issued resume Character
+        # display now uses a retained finite callback instead of a direct
+        # native read. First-screen resume can issue it; initial widget load
+        # and the existing bounded refresh memo preserve the read behavior.
+        ("refresh_if_scope_changed", "console-character-context-refresh"),
+        # TASK-34406 / ADR-126: cold provider/context display obtains one
+        # checked off-loop mapping, then publishes only its same-owner result.
+        ("_refresh", "console-readiness-config"),
+        ("_sync_native_console_chat_ui", "console-readiness-publication"),
+        # TASK-34406 / ADR-126: a selected readiness result that changes while
+        # publishing needs the existing coalesced whole-state replay. This
+        # conditional initial visible-state owner uses the Console's sync group;
+        # it is allowed, not required, and does not alter the boot policy.
+        ("_sync_native_console_chat_ui", "console-sync"),
         ("_refresh_console_skill_candidates", "default"),
         # ADR-197: one off-loop saved-consent snapshot for the Hooks indicator.
         ("_refresh_console_hooks", "console-hook-refresh"),
@@ -114,7 +133,7 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # Rail-preference persistence: observed on the FIRST boot of a fresh
         # profile (initial state write); allowlisted, not asserted present.
         ("_save_console_rail_preferences", "default"),
-        ("_prune_console_rail_preferences", "default"),
+        ("_prune_console_rail_preferences", "console-rail-prune"),
         ("_persist_sidebar_state_off_loop", "sidebar-state-persist"),
     }
 )
@@ -317,9 +336,9 @@ async def test_census_waits_for_the_serially_delayed_required_worker(
         assert 1.5 <= now < 2.0, "return once the required delayed starter arrives"
     else:
         assert delayed not in observed
-        assert 1.5 < now <= 10.1, (
-            "missing required work must stop at a bounded deadline"
-        )
+        assert (
+            1.5 < now <= 10.1
+        ), "missing required work must stop at a bounded deadline"
 
 
 def _normalize_thread_name(name: str) -> str:

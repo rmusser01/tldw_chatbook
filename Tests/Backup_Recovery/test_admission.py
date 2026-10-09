@@ -15,7 +15,7 @@ def test_publication_never_overwrites_existing_file(tmp_path):
 
 import json
 import os
-import select
+from Tests.pipe_readiness import pipe_readable
 import sqlite3
 import subprocess
 import sys
@@ -61,7 +61,7 @@ except Exception as error:
 
 
 def line(child):
-    assert select.select([child.stdout], [], [], 10)[0], "child did not respond"
+    assert pipe_readable(child.stdout, 10), "child did not respond"
     data = bytearray()
     while not data.endswith(b"\n"):
         part = os.read(child.stdout.fileno(), 1)
@@ -132,7 +132,7 @@ def test_maintenance_excludes_child_across_target_inode_replacement(registered, 
         replacement.write_bytes(b"new")
         os.replace(replacement, source)
         child = launch(admission.control_root, "normal")
-        assert not select.select([child.stdout], [], [], 0.1)[0]
+        assert not pipe_readable(child.stdout, 0.1)
     assert line(child) == "entered"
     release(child)
     assert source.read_bytes() == b"new"
@@ -162,7 +162,7 @@ def test_aliases_share_maintenance_boundary(tmp_path, launch, kind):
     admission.register("b", (alias,))
     with admission.maintenance(("a",), 2):
         child = launch(admission.control_root, "normal", ("b",))
-        assert not select.select([child.stdout], [], [], 0.1)[0]
+        assert not pipe_readable(child.stdout, 0.1)
     assert line(child) == "entered"
     release(child)
 
@@ -176,7 +176,7 @@ def test_real_sqlite_transaction_and_connection_retire_before_capture(tmp_path, 
     writer = launch(admission.control_root, "normal", extra=database)
     assert line(writer) == "entered"
     capture = launch(admission.control_root, "maintenance")
-    assert not select.select([capture.stdout], [], [], 0.1)[0]
+    assert not pipe_readable(capture.stdout, 0.1)
     release(writer)
     assert line(capture) == "entered"
     with sqlite3.connect(database) as connection:
@@ -256,13 +256,13 @@ def test_remap_reserves_old_and_new_aliases_without_blocking_retirement(
     blocked = launch(admission.control_root, "normal", ("b",))
     assert line(blocked) == "AdmissionError:remap_recovery_required"
     release(old)
-    assert not select.select([remap.stdout], [], [], 0.1)[0]
+    assert not pipe_readable(remap.stdout, 0.1)
     release(new)
     assert line(remap) == "remapped"
     assert remap.wait(timeout=10) == 0
     with admission.maintenance(("a",), 2):
         child = launch(admission.control_root, "normal", ("b",))
-        assert not select.select([child.stdout], [], [], 0.1)[0]
+        assert not pipe_readable(child.stdout, 0.1)
     assert line(child) == "entered"
     release(child)
     assert source.read_bytes() == b"original"
@@ -358,7 +358,7 @@ def test_opposing_namespace_orders_do_not_deadlock(registered, tmp_path, launch)
     first = launch(admission.control_root, "maintenance", ("b", "a"))
     assert line(first) == "entered"
     second = launch(admission.control_root, "maintenance", ("a", "b"))
-    assert not select.select([second.stdout], [], [], 0.1)[0]
+    assert not pipe_readable(second.stdout, 0.1)
     release(first)
     assert line(second) == "entered"
     release(second)
@@ -369,7 +369,7 @@ def test_crashed_maintenance_holder_reopens_admission(registered, launch):
     maintenance = launch(admission.control_root, "maintenance")
     assert line(maintenance) == "entered"
     writer = launch(admission.control_root, "normal")
-    assert not select.select([writer.stdout], [], [], 0.1)[0]
+    assert not pipe_readable(writer.stdout, 0.1)
     maintenance.kill()
     maintenance.wait(timeout=10)
     assert line(writer) == "entered"

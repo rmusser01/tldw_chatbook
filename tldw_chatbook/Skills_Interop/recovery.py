@@ -185,3 +185,13 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
     # Trust manifests/grants/snapshots remain historical bytes: importing a grant
     # never grants execution. Credential processing belongs to task14.
     return (_Skills("skills", leaf="skills", tree=True),)
+
+
+# TASK-34404: defining-module originals, retained before helper lazy import.
+_SENSITIVE_INPUT_ORIGINALS = (
+    globals(),
+    tuple(
+        (name, globals()[name], globals()[name].__globals__, globals()[name].__code__)
+        for name in ("default_local_skills_store_dir",)
+    ),
+)

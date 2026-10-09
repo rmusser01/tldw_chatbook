@@ -545,6 +545,18 @@ class ConsolePromptQueueRegion(Widget):
                 )
 
 
+def _preparation_refusal_detail(error: RuntimeError | ValueError) -> str:
+    """Keep the internal preparation reason out of the composer notice."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    if (
+        isinstance(error, RecoveryRequired)
+        and str(error) == "console_snapshot_owner_changed"
+    ):
+        return "Chat or settings changed while preparing Send. Your draft was kept; send again."
+    return str(error) or "Console runtime refused this turn."
+
+
 class ConsolePromptQueueUIController:
     """Join queue admission and normal chain launch behind one dispatcher."""
 
@@ -570,9 +582,18 @@ class ConsolePromptQueueUIController:
         edit_refusal: Callable[[str], str],
         sync_ui: Callable[[], Awaitable[None]],
         turn_recovery_reason: Callable[[str], str] = lambda _session_id: "",
+        capture_configuration_async: Callable[
+            [str, Any], Awaitable["ConsoleTurnConfigurationSnapshot"]
+        ]
+        | None = None,
+        launch_chain_async: Callable[
+            [str, str, "ConsoleDraftStash | None", Any], Awaitable[str]
+        ]
+        | None = None,
     ) -> None:
         self._chat_controller_accessor = chat_controller_accessor
         self._capture_configuration = capture_configuration
+        self._capture_configuration_async = capture_configuration_async
         self._ensure_active_session = ensure_active_session
         self._blocked_reason_accessor = blocked_reason_accessor
         self._setup_blocked_reason_accessor = setup_blocked_reason_accessor
@@ -581,6 +602,8 @@ class ConsolePromptQueueUIController:
         self._focus_composer = focus_composer
         self._note_follow_intent = note_follow_intent
         self._launch_chain = launch_chain
+        self._launch_chain_async = launch_chain_async
+        self._async_launch_sync_source = launch_chain
         self._commit_captured_draft = commit_captured_draft
         self._commit_queued_draft = commit_queued_draft
         self._turn_recovery_ids = turn_recovery_ids
@@ -774,6 +797,16 @@ class ConsolePromptQueueUIController:
                 failed_turn.preview if failed_turn is not None else None
             ),
         )
+        runtime = getattr(controller, "_hooks_v2_runtime", None)
+        if runtime is not None and runtime.has_received_intents(
+            session_id, unpromoted_only=True
+        ):
+            return replace(
+                presentation,
+                send_label="Preparing...",
+                send_enabled=False,
+                send_tooltip="Preparing this turn; draft kept until acceptance.",
+            )
         if controller._chat_start.is_prepared(session_id):
             return replace(
                 presentation,
@@ -1028,6 +1061,24 @@ class ConsolePromptQueueUIController:
             detail="Unknown prompt queue recovery action.",
         )
 
+    async def _capture_configuration_for_dispatch(
+        self, session_id: str, expected_controller: Any = None
+    ) -> "ConsoleTurnConfigurationSnapshot":
+        """Prepare production snapshots while preserving injected sync callbacks."""
+        if self._capture_configuration_async is None:
+            return self._capture_configuration(session_id)
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        controller = expected_controller or self._chat_controller_accessor()
+        callback = self._capture_configuration_async
+        context = await callback(session_id, controller)
+        if (
+            self._chat_controller_accessor() is not controller
+            or self._capture_configuration_async is not callback
+        ):
+            raise RecoveryRequired("console_snapshot_owner_changed")
+        return context
+
     async def dispatch(
         self,
         draft: str,
@@ -1081,16 +1132,28 @@ class ConsolePromptQueueUIController:
             )
 
         if activity.accepted_live_turn or snapshot.total_count > 0:
+            try:
+                configuration = await self._capture_configuration_for_dispatch(
+                    session_id, controller
+                )
+            except (RuntimeError, ValueError) as exc:
+                if self._capture_configuration_async is None:
+                    raise
+                detail = _preparation_refusal_detail(exc)
+                self._notify(detail, "warning")
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    session_id=session_id,
+                    detail=detail,
+                )
             queued = await controller.queue_prompt(
                 session_id,
                 text=draft,
                 expected_revision=snapshot.revision,
-                configuration=self._capture_configuration(session_id),
+                configuration=configuration,
             )
             if queued.status is QueueMutationStatus.REROUTE_NORMAL_SEND:
-                return await self._stage_normal_chain(
-                    controller, session_id, draft, stash
-                )
+                return await self._stage_normal_chain(controller, session_id, draft, stash)
             if queued.applied:
                 self._commit_queued_draft(session_id, stash)
                 await self._sync_ui()
@@ -1133,11 +1196,25 @@ class ConsolePromptQueueUIController:
             )
         if activity.accepted_live_turn:
             snapshot = controller.prompt_queue_registry.snapshot(session_id)
+            try:
+                configuration = await self._capture_configuration_for_dispatch(
+                    session_id, controller
+                )
+            except (RuntimeError, ValueError) as exc:
+                if self._capture_configuration_async is None:
+                    raise
+                detail = _preparation_refusal_detail(exc)
+                self._notify(detail, "warning")
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    session_id=session_id,
+                    detail=detail,
+                )
             queued = await controller.queue_prompt(
                 session_id,
                 text=draft,
                 expected_revision=snapshot.revision,
-                configuration=self._capture_configuration(session_id),
+                configuration=configuration,
             )
             if queued.applied:
                 self._commit_queued_draft(session_id, stash)
@@ -1149,9 +1226,15 @@ class ConsolePromptQueueUIController:
                 return self._refuse_queue_mutation(queued, session_id, stash)
         self._note_follow_intent()
         try:
-            self._launch_chain(draft, session_id)
+            if (
+                self._launch_chain_async is not None
+                and self._launch_chain is self._async_launch_sync_source
+            ):
+                await self._launch_chain_async(draft, session_id, stash, controller)
+            else:
+                self._launch_chain(draft, session_id)
         except (RuntimeError, ValueError) as exc:
-            detail = str(exc) or "Console runtime refused this turn."
+            detail = _preparation_refusal_detail(exc)
             self._notify(detail, "warning")
             return ConsolePromptDispatchResult(
                 ConsolePromptDispatchStatus.REFUSED,

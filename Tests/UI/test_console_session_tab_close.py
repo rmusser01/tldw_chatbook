@@ -23,7 +23,7 @@ import gc
 import threading
 import time
 import warnings
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 import pytest
@@ -33,6 +33,12 @@ from textual.css.query import NoMatches
 from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
+from Tests.UI._child_creation_original_admission import (
+    original_child_creation_admission,  # noqa: F401 - pytest fixture registration.
+)
+from Tests.UI._original_prepared_fleet_db_lifetime import (
+    original_prepared_fleet_db_lifetime,  # noqa: F401 - pytest fixture registration.
+)
 from Tests.UI.app_factory import (
     _build_test_app,
     drain_active_service_patches,
@@ -87,6 +93,33 @@ class ProductionConsoleHarness(ConsoleHarness):
 
     CSS_PATH = TldwCli.CSS_PATH
 
+    async def _shutdown(self) -> None:
+        from tldw_chatbook.UI.Console_Modules.view_workers import (
+            capture_console_view_workers,
+            drain_console_view_workers,
+        )
+
+        self._exit = True
+        drain_error = None
+        try:
+            # The actual host owns current and detached nodes in these groups.
+            captured = capture_console_view_workers(self)
+            view = self.screen
+            view._console_chat_tearing_down = True
+            await drain_console_view_workers(captured)
+        except BaseException as error:
+            drain_error = error
+        try:
+            await super()._shutdown()
+        except BaseException as error:
+            if drain_error is not None:
+                error.add_note(
+                    "Captured Console view drain also failed before host shutdown"
+                )
+            raise
+        if drain_error is not None:
+            raise drain_error
+
 
 def _ready_app():
     """A test app whose user has already sent a first message.
@@ -133,9 +166,9 @@ async def _await_tabs(console, pilot, expected: set[str]) -> None:
         except NoMatches:
             return False
 
-    assert await _settle(pilot, laid_out), (
-        f"tab strip never settled: {_open_tab_ids(console)} != {expected}"
-    )
+    assert await _settle(
+        pilot, laid_out
+    ), f"tab strip never settled: {_open_tab_ids(console)} != {expected}"
     await pilot.pause()
 
 
@@ -232,7 +265,9 @@ def _failure_toasts(notes: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return [note for note in notes if note[1] in {"error", "warning"}]
 
 
-async def _verify_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(request, tmp_path):
+async def _verify_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(
+    request, tmp_path
+):
     """AC #1 / #5: the real ✕ click runs the close worker and the tab goes."""
 
     app = _ready_app()
@@ -458,9 +493,9 @@ async def _verify_close_that_does_not_finish_is_reported_and_keeps_tab_state(
             runtime._voice_promotion_owner = owner
             try:
                 await _click(pilot, f"#console-close-session-tab-{saved.id}")
-                assert await _settle(pilot, lambda: bool(notes)), (
-                    "unfinished close was silent"
-                )
+                assert await _settle(
+                    pilot, lambda: bool(notes)
+                ), "unfinished close was silent"
             finally:
                 runtime._voice_promotion_owner = previous_owner
             message, severity = notes[-1]
@@ -496,9 +531,9 @@ async def _verify_close_flow_that_cannot_start_tells_the_user(request, monkeypat
         with monkeypatch.context() as patch:
             patch.setattr(console, "run_worker", refuse_worker)
             await _click(pilot, f"#console-close-session-tab-{blank.id}")
-            assert await _settle(pilot, lambda: bool(notes)), (
-                "unstartable close was silent"
-            )
+            assert await _settle(
+                pilot, lambda: bool(notes)
+            ), "unstartable close was silent"
         assert notes[-1] == (
             f'Couldn\'t close tab "{blank_title}": '
             "The close could not start. Try again in a moment.",
@@ -647,9 +682,9 @@ async def _verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
         try:
             failures_left[0] = 1
             await _click(pilot, f"#console-close-session-tab-{healed.id}")
-            assert await _settle(pilot, lambda: bool(notes)), (
-                "teardown failure was silent"
-            )
+            assert await _settle(
+                pilot, lambda: bool(notes)
+            ), "teardown failure was silent"
             assert notes == [
                 (
                     f'Closed tab "{titles[healed.id]}", but the Console did not '
@@ -676,32 +711,101 @@ async def _verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
             controller._sync_native_console_chat_ui_fn = real_sync
 
 
-@contextmanager
-def _pending_close_app(request, kind, *, surviving_child=False):
-    """Keep prepared databases alive until their captured Console owner retires."""
+@asynccontextmanager
+async def _pending_close_app(request, kind, *, surviving_child=False):
+    """Give prepared new-chat cases an exact runtime and database lifetime."""
+    import shutil
+    import sys
     from tempfile import mkdtemp
+    from Tests.UI._prepared_close_owned_resources import PreparedCloseOwnedResources
 
     app = _ready_app()
     if kind != "chat_create":
-        yield app
+        from Tests.UI._prepared_close_runtime_owner import PreparedCloseRuntimeOwner
+
+        runtime_owner = PreparedCloseRuntimeOwner(app)
+        try:
+            yield app
+        finally:
+            primary = sys.exception()
+            try:
+                await runtime_owner.dispose_runtime()
+            except BaseException as cleanup:
+                if primary is None:
+                    raise
+                reasons = {
+                    "prepared_close_runtime_wrong_thread",
+                    "prepared_close_runtime_wrong_loop",
+                    "prepared_close_runtime_owner_changed",
+                    "prepared_close_runtime_not_retired",
+                }
+                reason = (
+                    cleanup.args[0]
+                    if type(cleanup) is RuntimeError
+                    and len(cleanup.args) == 1
+                    and type(cleanup.args[0]) is str  # noqa: E721 - reject custom static error argument types
+                    and cleanup.args[0] in reasons
+                    else None
+                )
+                primary.add_note(
+                    "prepared_close_cleanup_error:"
+                    + type(cleanup).__name__
+                    + (":" + reason if reason is not None else "")
+                )
         return
-    # The private pytest profile owns this directory. owned_console_apps drains
-    # its exact runtime before closing the registered databases at test teardown.
-    directory = Path(
-        mkdtemp(prefix="prepared-close-", dir=request.getfixturevalue("tmp_path"))
-    )
+    temporary_root = request.getfixturevalue("tmp_path").resolve()
+    directory = Path(mkdtemp(prefix="prepared-close-", dir=temporary_root)).absolute()
+    assert directory.resolve().parent == temporary_root
     db = CharactersRAGDB(directory / "chats.sqlite", client_id="prepared-close")
-    register_database = request.getfixturevalue("owned_console_apps")
-    register_database(app.console_runtime, db)
     app.chachanotes_db = db
     app.local_chat_conversation_service = ChatConversationService(db)
+    runs = None
     if surviving_child:
         from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
         runs = AgentRunsDB(directory / "runs.sqlite")
-        register_database(app.console_runtime, runs)
         app._pending_close_runs = runs
-    yield app
+    owner = PreparedCloseOwnedResources(app, directory, db, runs)
+    app._pending_close_owned_resources = owner
+    try:
+        yield app
+    finally:
+        primary = sys.exception()
+        try:
+            try:
+                # The host is gone, but the original owner loop is still alive.
+                await owner.dispose_runtime()
+            finally:
+                if owner.runtime_terminal:
+                    owner.close_creators()
+                    assert directory.resolve().parent == temporary_root
+                    shutil.rmtree(directory)
+        except BaseException as cleanup:
+            if primary is None:
+                raise
+            # Only fixed helper refusal codes may accompany the primary failure.
+            reasons = {
+                "prepared_close_disposal_wrong_thread",
+                "prepared_close_runtime_runs_not_retained",
+                "prepared_close_finalization_wrong_thread",
+                "prepared_close_runtime_not_disposed",
+                "prepared_close_database_owner_changed",
+                "prepared_close_database_not_retired",
+                "prepared_close_directory_has_live_storage",
+            }
+            reason = (
+                cleanup.args[0]
+                if type(cleanup) is RuntimeError
+                and len(cleanup.args) == 1
+                and type(cleanup.args[0]) is str  # noqa: E721 - reject custom static error argument types
+                and cleanup.args[0] in reasons
+                else None
+            )
+            primary.add_note(
+                "prepared_close_cleanup_error:"
+                + type(cleanup).__name__
+                + (":" + reason if reason is not None else "")
+            )
 
 
 def _prepare_surviving_child(controller, session_id):
@@ -779,6 +883,11 @@ async def _arm_pending_round(
             prepared, creation_run = _prepare_close_new_chat(
                 controller, session_id, "private close chat"
             )
+        owner = getattr(controller.app, "_pending_close_owned_resources", None)
+        if owner is not None:
+            assert owner.app is controller.app
+            owner.adopt_runtime_runs()
+        prepared_runs = getattr(controller._agent_bridge, "runs_db", None)
 
     def request():
         if kind == "approval":
@@ -810,10 +919,16 @@ async def _arm_pending_round(
                 session_id=session_id,
             )
         if kind == "chat_create":
-            return controller.request_chat_create_confirm(
-                prepared,
-                session_id=session_id,
+            scope = (
+                owner.request_connection_scope(prepared_runs)
+                if owner is not None
+                else nullcontext()
             )
+            with scope:
+                return controller.request_chat_create_confirm(
+                    prepared,
+                    session_id=session_id,
+                )
         if kind == "worktree_merge":
             return controller.request_worktree_merge_confirm(
                 {"run_id": "private-child", "action": "merge"}, session_id=session_id
@@ -885,7 +1000,7 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
             {"allow": False, "remember": False},
         ),
     ]:
-        with _pending_close_app(request, kind) as app:
+        async with _pending_close_app(request, kind) as app:
             host = ProductionConsoleHarness(app)
             async with host.run_test(size=_SIZE) as pilot:
                 console = await _mounted_console(
@@ -936,12 +1051,37 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
 
                 run_task = asyncio.create_task(waiting_run())
                 try:
-                    assert await _settle(
+                    armed = await _settle(
                         pilot,
                         lambda kind=kind, controller=controller, doomed=doomed: (
                             kind in controller.pending_round_kinds(doomed.id)
                             and doomed.id in controller._active_stream_tasks
                         ),
+                    )
+                    if not armed:
+                        import faulthandler
+
+                        print(
+                            "pending round timeout:",
+                            kind,
+                            "request done:",
+                            round_task.done(),
+                            "request cancelled:",
+                            round_task.cancelled(),
+                            "run done:",
+                            run_task.done(),
+                            flush=True,
+                        )
+                        if round_task.done() and not round_task.cancelled():
+                            # Surface a real request exception before cleanup
+                            # can replace it with a secondary ownership error.
+                            print(
+                                "pending round result:", round_task.result(), flush=True
+                            )
+                        else:
+                            faulthandler.dump_traceback(file=2)
+                    assert (
+                        armed
                     ), "the actual pending round and its owning run did not arm"
                     await _show_tabs(console, pilot, {keeper, doomed.id})
                     assert (
@@ -979,7 +1119,17 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
                         lambda cancelled=cancelled, round_task=round_task: (
                             cancelled.is_set() and round_task.done()
                         ),
-                    )
+                    ), {
+                        "pending_kind": kind,
+                        "run_cancel_seen": cancelled.is_set(),
+                        "round_done": round_task.done(),
+                        "run_done": run_task.done(),
+                        "run_cancelled": run_task.cancelled(),
+                        "run_cancel_requests": run_task.cancelling(),
+                        "registered_run_is_exact_owner": (
+                            controller._active_stream_tasks.get(doomed.id) is run_task
+                        ),
+                    }
                     assert await round_task == result
                     assert run_task.cancelled()
                     assert not controller.has_pending_approval_round(doomed.id)
@@ -1023,7 +1173,7 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
         ("question", {"answered": False, "reason": "cancelled"}),
         ("chat_create", {"allow": False, "remember": False}),
     ):
-        with _pending_close_app(
+        async with _pending_close_app(
             request, kind, surviving_child=kind == "chat_create"
         ) as app:
             host = ProductionConsoleHarness(app)
@@ -1085,13 +1235,13 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                         ),
                     )
                     await _await_tabs(console, pilot, {keeper})
-                    assert await _settle(pilot, pending.done, timeout=2), (
-                        "closed session left its decision armed without an owning turn"
-                    )
+                    assert await _settle(
+                        pilot, pending.done, timeout=2
+                    ), "closed session left its decision armed without an owning turn"
                     assert await pending == expected
-                    assert not sibling.done(), (
-                        "closing the background tab answered the viewed tab"
-                    )
+                    assert (
+                        not sibling.done()
+                    ), "closing the background tab answered the viewed tab"
                     assert len(controller.pending_question_ids()) == 1
                     assert controller.pending_round_kinds(keeper) == {"question"}
                     assert not controller.has_pending_approval_round(doomed.id)
@@ -1114,7 +1264,7 @@ async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
         request: Pytest request selecting the isolated private-profile child.
         monkeypatch: Pause the real bridge at its payload-enrichment boundary.
     """
-    with _pending_close_app(request, "chat_create", surviving_child=True) as app:
+    async with _pending_close_app(request, "chat_create", surviving_child=True) as app:
         host = ProductionConsoleHarness(app)
         async with host.run_test(size=_SIZE) as pilot:
             console = await _mounted_console(host, pilot, "#console-native-composer")
@@ -1151,9 +1301,9 @@ async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
                 )
                 assert doomed.id in controller._session_close_generations
                 release.set()
-                assert await _settle(pilot, pending.done, timeout=2), (
-                    "chat-create confirmation armed after the committed Close sweep"
-                )
+                assert await _settle(
+                    pilot, pending.done, timeout=2
+                ), "chat-create confirmation armed after the committed Close sweep"
                 assert await pending == {"allow": False, "remember": False}
                 assert not controller.pending_chat_create_ids()
                 assert not controller._parked_chat_create_payloads
@@ -1528,7 +1678,9 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                         await _await_tabs(console, pilot, {keeper})
                         assert calls == [doomed.id, doomed.id]
                         generation = controller._session_close_generations[doomed.id]
-                        assert bridge._fleet_fence_generations == {doomed.id: generation}
+                        assert bridge._fleet_fence_generations == {
+                            doomed.id: generation
+                        }
                         assert controller._fleet_wake._conversation_fences == {
                             doomed.id: generation
                         }
@@ -1615,7 +1767,9 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                         assert reopened.id in (
                             console._console_runtime()._admission_fenced_sessions
                         )
-                        assert bridge._fleet_fence_generations == {doomed.id: generation}
+                        assert bridge._fleet_fence_generations == {
+                            doomed.id: generation
+                        }
                         assert controller._fleet_wake._conversation_fences == {
                             doomed.id: generation
                         }
@@ -1763,3 +1917,85 @@ async def test_session_close_pending_race_and_fleet_journeys(
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", ResourceWarning)
                 gc.collect()
+
+
+@pytest.fixture(autouse=True)
+def _observe_original_tab_sync_lifetime(request):
+    """Opt-in passive child-only observation; original journeys stay intact."""
+    import hashlib
+    import json
+    import os
+    import sys
+
+    from Tests.private_profile import is_private_profile_child
+
+    if (
+        os.environ.get("TLDW_TEST_TAB_SYNC_LIFETIME") != "1"
+        or request.node.name
+        not in {
+            "test_session_close_navigation_journeys",
+            "test_session_close_failure_and_retry_journeys",
+            "test_session_close_pending_race_and_fleet_journeys",
+        }
+        or not is_private_profile_child(request)
+    ):
+        yield
+        return
+
+    from Tests.UI._tab_sync_original_lifetime import OriginalTabSyncLifetime
+
+    # Keep the diagnostic beside this exact original child's XML unless the
+    # root supplies an explicit metadata-only Evidence receipt destination.
+    output = Path(
+        os.environ.get("TLDW_TEST_TAB_SYNC_RECEIPT")
+        or str(
+            Path(os.environ["TLDW_TEST_CONFIG_ROOT"]).parent
+            / (request.node.name + ".tab-sync-lifetime.json")
+        )
+    )
+    observer = OriginalTabSyncLifetime()
+    source_paths = {name: Path(module.__file__) for name, module in observer.modules}
+    helper_module = sys.modules[OriginalTabSyncLifetime.__module__]
+    source_paths[helper_module.__name__] = Path(helper_module.__file__)
+    before = {
+        name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for name, path in source_paths.items()
+    }
+    stop_error = None
+    try:
+        observer.start()
+        yield
+    finally:
+        try:
+            if observer.active:
+                observer.stop()
+        except BaseException as error:
+            stop_error = type(error).__name__
+            raise
+        finally:
+            facts = observer.receipt()
+            after = {
+                name: hashlib.sha256(path.read_bytes()).hexdigest()
+                for name, path in source_paths.items()
+            }
+            facts.update(
+                original_selected_node=request.node.nodeid,
+                source_hashes_before=before,
+                source_hashes_after=after,
+                all_source_hashes_stable=(before == after),
+                observer_stop_error_type=stop_error,
+                original_test_bodies_assertions_and_deadlines_unchanged=True,
+            )
+            output.write_text(json.dumps(facts, indent=2) + "\n", encoding="utf-8")
+            print(
+                "tab-sync-lifetime receipt="
+                + str(output)
+                + " events="
+                + str(len(facts["events"]))
+                + " overflow="
+                + str(facts["overflow"])
+                + " unmatched="
+                + str(facts["live_original_frames"])
+                + " restored="
+                + str(facts["restoration"])
+            )

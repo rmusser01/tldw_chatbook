@@ -11,11 +11,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tldw_chatbook.LLM_Provider_Catalog.models_dev_catalog import (
     ModelsDevCache,
     fetch_models_dev,
     parse_models_dev,
 )
+
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 _SAMPLE = {

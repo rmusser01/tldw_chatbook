@@ -34,6 +34,10 @@ from tldw_chatbook.runtime_policy import RuntimeSourceState
 # root conftest's autouse cleanup after each test.
 _created_dirs: list[Path] = []
 
+# Strong original owners paired with their exact newly-created sandbox files.
+_created_databases: dict[Path, tuple[tuple[object, type, Path], ...]] = {}
+_created_instance_locks: dict[Path, tuple[object, object, Path]] = {}
+
 # Every still-running `get_subscriptions_db_path` patch started by
 # `_build_test_app` (task-1631); stopped by the root conftest's autouse
 # cleanup after each test. See `_build_test_app`'s own comment for why this
@@ -203,23 +207,204 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
     return db
 
 
-def drain_created_dirs() -> int:
-    """Remove every user-data dir created since the last drain.
+def _record_created_databases(app: TldwCli, directory: Path) -> None:
+    """Retain exact factory file owners before callers can replace app fields."""
+    from tldw_chatbook.DB.Evals_DB import EvalsDB
+    from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Research_Interop.local_research_service import (
+        LocalResearchService,
+    )
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
 
-    Called by the root conftest's autouse cleanup fixture after each test, so
-    a test that builds several apps leaks nothing. Removal happens while the
-    app objects may still hold open sqlite handles — POSIX unlink semantics
-    make that safe, and the per-test gc in app-mounting dirs (task-1468)
-    closes the handles promptly afterwards.
+    declarations = (
+        (getattr(app, "local_workspace_db", None), WorkspaceDB, "workspaces.sqlite"),
+        (
+            getattr(app, "local_library_collections_db", None),
+            LibraryCollectionsDB,
+            "library_collections.sqlite",
+        ),
+        (
+            getattr(app, "subscriptions_db", None),
+            SubscriptionsDB,
+            "subscriptions.sqlite",
+        ),
+        (
+            getattr(getattr(app, "scheduling_service", None), "db", None),
+            ScheduledTasksDB,
+            "scheduled_tasks.sqlite",
+        ),
+        (
+            getattr(getattr(app, "evaluation_orchestrator", None), "db", None),
+            EvalsDB,
+            "evals.db",
+        ),
+        (
+            getattr(app, "local_research_service", None),
+            LocalResearchService,
+            "research.sqlite",
+        ),
+        (
+            getattr(app, "local_writing_service", None),
+            LocalWritingService,
+            "writing.sqlite",
+        ),
+    )
+    _created_databases[directory] = tuple(
+        (owner, expected_type, directory / filename)
+        for owner, expected_type, filename in declarations
+        if type(owner) is expected_type
+        and not owner.is_memory_db
+        and owner.db_path == directory / filename
+    )
+    # The advisory file handle is independent of storage._startups. Keep the
+    # exact original owner, not a later app-field lookup that could be borrowed.
+    from io import BufferedRandom
+    from tldw_chatbook.Utils.instance_lock import InstanceLockStatus
+
+    status = getattr(app, "_instance_lock_status", None)
+    handle = status.handle if type(status) is InstanceLockStatus else None
+    if (
+        type(handle) is BufferedRandom
+        and Path(handle.name) == directory / ".instance.lock"
+    ):
+        _created_instance_locks[directory] = (
+            status,
+            handle,
+            directory / ".instance.lock",
+        )
+
+
+def _retire_created_databases(
+    directory: Path, *, require_empty_directory: bool = True
+) -> None:
+    """Require actual original owner retirement before deleting this sandbox."""
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import (
+        _close_settled_core_cache,
+        _repository_participant,
+    )
+
+    for owner, expected_type, expected_path in _created_databases.get(directory, ()):
+        if type(owner) is not expected_type or owner.db_path != expected_path:
+            raise RuntimeError("test_factory_database_owner_changed")
+        participant = _repository_participant(owner)
+        with storage._lock:
+            already_retired = (
+                participant.closed
+                and storage._pause is None
+                and not participant.connections
+                and not participant.retiring_threads
+                and not any(
+                    operation.participant is participant
+                    for operation in storage._operations
+                )
+                and not any(
+                    lease.resource_path == expected_path
+                    for lease in storage._live_leases
+                )
+            )
+        if already_retired:
+            continue
+        if not _close_settled_core_cache(owner):
+            raise RuntimeError("test_factory_database_not_retired")
+        with storage._lock:
+            participant.close_admission()
+            if (
+                storage._pause is not None
+                or participant.connections
+                or participant.retiring_threads
+                or any(
+                    operation.participant is participant
+                    for operation in storage._operations
+                )
+                or any(
+                    lease.resource_path == expected_path
+                    for lease in storage._live_leases
+                )
+                or any(
+                    getattr(attempt.operation, "participant", None) is participant
+                    for attempt in storage._pending_acquisitions
+                )
+            ):
+                raise RuntimeError("test_factory_database_not_retired")
+    if require_empty_directory:
+        # The native close wrapper retires a resource lease only after physical
+        # close. Unknown or still-borrowed resources remain visible and keep the
+        # owned sandbox. Do not modify the global maintenance drain or startup.
+        with storage._lock:
+            participants = tuple(
+                _repository_participant(owner)
+                for owner, _, _ in _created_databases.get(directory, ())
+            )
+            if (
+                storage._pause is not None
+                or any(
+                    participant.connections or participant.retiring_threads
+                    for participant in participants
+                )
+                or any(
+                    isinstance(getattr(lease, "resource_path", None), Path)
+                    and lease.resource_path.is_relative_to(directory)
+                    for lease in storage._live_leases
+                )
+                or any(
+                    operation.participant in participants
+                    for operation in storage._operations
+                )
+                or any(
+                    getattr(attempt.operation, "participant", None) in participants
+                    for attempt in storage._pending_acquisitions
+                )
+            ):
+                raise RuntimeError("test_factory_directory_has_live_storage")
+    captured_lock = _created_instance_locks.get(directory)
+    if captured_lock is not None:
+        from io import BufferedRandom
+        from tldw_chatbook.Utils.instance_lock import InstanceLockStatus
+
+        status, handle, expected_path = captured_lock
+        if (
+            type(status) is not InstanceLockStatus
+            or type(handle) is not BufferedRandom
+            or Path(handle.name) != expected_path
+        ):
+            raise RuntimeError("test_factory_instance_lock_owner_changed")
+        # Exact native BinaryIO.close also releases the OS advisory lock.
+        # Never unlink around an open handle or release a borrowed profile.
+        BufferedRandom.close(handle)
+        if not handle.closed:
+            raise RuntimeError("test_factory_instance_lock_not_closed")
+
+
+def drain_created_dirs() -> int:
+    """Physically retire captured factory databases, then remove their dirs.
+
+    Retained/unmounted apps need no GC. Active or foreign handles, changed
+    owners and failed deletion keep the queue entry and surface the failure.
+    Borrowed databases outside the fresh factory directory are never owned.
 
     Returns:
-        The number of directories removed.
+        The number of directories physically removed.
     """
     drained = 0
     while _created_dirs:
-        path = _created_dirs.pop()
-        shutil.rmtree(path, ignore_errors=True)
+        path = _created_dirs[-1]
+        _retire_created_databases(path)
+        if path.exists():
+            shutil.rmtree(path)
+        _created_dirs.pop()
+        _created_databases.pop(path, None)
+        _created_instance_locks.pop(path, None)
         drained += 1
+    # Caller-owned directories retain their files. Only exact factory-created
+    # DB/lock handles are ours; unrelated profile resources may remain live.
+    for path in tuple(_created_databases):
+        _retire_created_databases(path, require_empty_directory=False)
+        _created_databases.pop(path, None)
+        _created_instance_locks.pop(path, None)
     return drained
 
 
@@ -242,12 +427,125 @@ def drain_active_service_patches() -> int:
     return drained
 
 
+def _has_explicit_library_lifecycle_override(
+    overrides: Mapping[str, Any] | None,
+) -> bool:
+    """Unknown/custom override shapes are explicit, never fixture-write eligible."""
+    if overrides is None:
+        return False
+    if type(overrides) is not dict:  # noqa: E721 -- decline custom override lookup
+        return True
+    if "library.rail_state" in overrides:
+        return True
+    if "library" not in overrides:
+        return False
+    library = overrides["library"]
+    if type(library) is not dict:  # noqa: E721 -- decline custom override lookup
+        return True
+    if "rail_state" not in library:
+        return False
+    rail = library["rail_state"]
+    return type(rail) is not dict or "lifecycle" in rail  # noqa: E721 -- decline custom override lookup
+
+
+def _prepare_returning_factory_library_lifecycle(
+    *, preserve_profile_admission: bool, explicit_override: bool
+) -> bool:
+    """Declare only an untouched stock-created factory profile as returning."""
+    if preserve_profile_admission or explicit_override:
+        return False
+    from tldw_chatbook import config as source
+    import copy
+    from types import FunctionType
+
+    if not source.first_profile_created_this_session():
+        return False
+    selector = source._fresh_profile_creation_content
+    selector_record = source._FRESH_LIBRARY_CREATION_SELECTOR
+    if type(selector_record) is not tuple or len(selector_record) != 4:  # noqa: E721 -- unknown source record declines.
+        return False
+    original_selector, original_code, original_globals, original_defaults = (
+        selector_record
+    )
+    if (
+        type(selector) is not FunctionType
+        or selector is not original_selector
+        or selector.__code__ is not original_code
+        or selector.__globals__ is not original_globals
+        or selector.__defaults__ is not original_defaults
+        or selector.__globals__ is not vars(source)
+        or type(selector.__defaults__) is not tuple  # noqa: E721 -- exact captured source tuple.
+        or len(selector.__defaults__) != 1
+        or source._FRESH_LIBRARY_CREATION_SOURCE is not selector.__defaults__[0]
+    ):
+        return False
+    cache, cache_source, generation = (
+        source._CONFIG_CACHE,
+        source._CONFIG_CACHE_SOURCE,
+        source._CONFIG_GENERATION,
+    )
+    if (
+        type(cache) is not dict  # noqa: E721 -- plain tagged bootstrap mapping.
+        or cache.get("_first_run") is not True
+        or cache_source != source.get_cli_config_path()
+    ):
+        return False
+    creation, eligible = source._fresh_profile_creation_content(
+        copy.deepcopy(source.DEFAULT_CONFIG_FROM_TOML)
+    )
+    if not eligible:
+        return False
+    expected = source.read_cli_config_snapshot()
+    if (
+        type(expected) is not source.ConfigFileSnapshot
+        or expected.path != cache_source
+        or expected.serialized != creation
+    ):
+        return False
+
+    # The original transaction owns the path and its interprocess write lock.
+    # Re-read the captured path explicitly: no nested write lock or selector ABA.
+    def still_untouched() -> bool:
+        current, current_eligible = source._fresh_profile_creation_content(
+            copy.deepcopy(source.DEFAULT_CONFIG_FROM_TOML)
+        )
+        return (
+            current_eligible
+            and current is creation
+            and source.first_profile_created_this_session()
+            and source._fresh_profile_creation_content is selector
+            and source._FRESH_LIBRARY_CREATION_SELECTOR is selector_record
+            and selector.__code__ is original_code
+            and selector.__globals__ is original_globals
+            and selector.__defaults__ is original_defaults
+            and source._FRESH_LIBRARY_CREATION_SOURCE is original_defaults[0]
+            and source._CONFIG_CACHE is cache
+            and source._CONFIG_CACHE_SOURCE == cache_source
+            and source._CONFIG_GENERATION == generation
+            and cache.get("_first_run") is True
+            and source.get_cli_config_path() == expected.path
+            and source._try_read_cli_config_serialized_unlocked(expected.path)
+            == creation
+        )
+
+    result = source.apply_settings_mutation_to_cli_config(
+        {"library.rail_state": {"lifecycle": "expanded"}},
+        mutation_precondition=still_untouched,
+    )
+    if result.conflict:
+        return False
+    if not result.fully_applied:
+        raise RuntimeError("test_factory_returning_lifecycle_not_saved")
+    return True
+
+
 def _build_test_app(
     configured_default: str | None = None,
     *,
     first_run_setup_completed: bool = True,
     preserve_profile_admission: bool = False,
     config_overrides: Mapping[str, Any] | None = None,
+    user_data_dir: Path | None = None,
 ) -> TldwCli:
     """Build a TldwCli instance with every real I/O seam faked out.
 
@@ -258,6 +556,11 @@ def _build_test_app(
             this app's snapshot only -- see `build_test_app_config`, and
             prefer `save_setting_to_cli_config` for anything a refreshing
             seam must also see.
+        user_data_dir: Existing caller-owned directory for native sources that
+            must match the configured profile. Defaults to a fresh factory-owned
+            sandbox. Explicit directories are resolved and validated, then their
+            exact factory-created DB/lock handles are still retired at teardown;
+            the directory and its files are never removed by this factory.
         preserve_profile_admission: Defaults to False, which clears
             ``library_new_profile_admission``. `app.py` sets that flag from
             `first_profile_created_this_session()`, and the per-test config
@@ -296,15 +599,27 @@ def _build_test_app(
         except ``get_subscriptions_db_path``, which stays patched for the
         rest of the test (see the comment where it is started, below).
     """
-    user_data_dir = Path(
-        tempfile.mkdtemp(prefix="tldw-chatbook-test-")
-        # `.resolve(strict=True)` is load-bearing, not tidiness: on macOS
-        # mkdtemp returns /var/folders/..., /var is a symlink, and the
-        # private-path guard refuses to traverse a symlinked component.
-        # Without it every test on this harness dies with
-        # `PrivatePathError: link_or_non_regular` before its first assertion.
-    ).resolve(strict=True)
-    _created_dirs.append(user_data_dir)
+    explicit_library_lifecycle = _has_explicit_library_lifecycle_override(
+        config_overrides
+    )
+    returning_lifecycle_prepared = _prepare_returning_factory_library_lifecycle(
+        preserve_profile_admission=preserve_profile_admission,
+        explicit_override=explicit_library_lifecycle,
+    )
+    if user_data_dir is None:
+        user_data_dir = Path(
+            tempfile.mkdtemp(prefix="tldw-chatbook-test-")
+            # `.resolve(strict=True)` is load-bearing, not tidiness: on macOS
+            # mkdtemp returns /var/folders/..., /var is a symlink, and the
+            # private-path guard refuses to traverse a symlinked component.
+            # Without it every test on this harness dies with
+            # `PrivatePathError: link_or_non_regular` before its first assertion.
+        ).resolve(strict=True)
+        _created_dirs.append(user_data_dir)
+    else:
+        user_data_dir = Path(user_data_dir).resolve(strict=True)
+        if not user_data_dir.is_dir():
+            raise NotADirectoryError(user_data_dir)
 
     # task-1631: started (not entered via the `with ExitStack()` below) and
     # left running -- `LocalWatchlistsService.db_factory` (wired inside
@@ -458,12 +773,17 @@ def _build_test_app(
                 return_value=user_data_dir / "workspaces.sqlite",
             ),
             patch(
+                "tldw_chatbook.config.get_evals_db_path",
+                return_value=user_data_dir / "evals.db",
+            ),
+            patch(
                 "tldw_chatbook.app_service_wiring.get_scheduled_tasks_db_path",
                 return_value=user_data_dir / "scheduled_tasks.sqlite",
             ),
         ):
             stack.enter_context(ctx)
         app = TldwCli()
+        _record_created_databases(app, user_data_dir)
         # PR-3 Task 4: the Library RAG answer worker runs a real provider
         # call automatically once a rag-mode retrieval settles -- no button
         # of its own. `LibraryScreen._library_rag_answer_chat_kwargs` treats
@@ -486,5 +806,6 @@ def _build_test_app(
             if isinstance(library_config, dict):
                 rail_state = library_config.get("rail_state")
                 if isinstance(rail_state, dict):
-                    rail_state.pop("lifecycle", None)
+                    if returning_lifecycle_prepared and not explicit_library_lifecycle:
+                        rail_state.pop("lifecycle", None)
         return app

@@ -44,6 +44,13 @@ def end_store_runtime(store: Any, *, replace_state: bool) -> None:
         else nullcontext()
     )
     with fence:
+        # A retained ordinary Send commit must physically settle before close.
+        with store._preparation_lock:
+            if (
+                store._native_commit_owners_by_preparation
+                or store._durable_commit_in_flight
+            ):
+                raise RuntimeError("Durable acceptance commit is still owned.")
         participant = store.canvas_promotion_participant
         if participant is not None:
             participant.close_runtime()

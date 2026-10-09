@@ -156,7 +156,9 @@ def _boot_parsed_css_sources() -> dict[str, bytes]:
             f"CSS_PATH member missing on disk: {path} -- the census cannot "
             "be trusted (and neither can the app boot)."
         )
-        sources[path.name] = path.read_bytes()
+        # Textual's Stylesheet.read uses text mode: universal newlines are
+        # normalized before parsing, including CRLF Windows checkouts.
+        sources[path.name] = path.read_text(encoding="utf-8").encode("utf-8")
 
     # The same directory app._get_default_css derives.
     css_dir = Path(tldw_chatbook.app.__file__).parent / "css"
@@ -248,4 +250,24 @@ def test_boot_parsed_css_bytes_stay_within_budget(
         ratchet.headroom_line(
             "boot-css-bytes", [("bytes", total, MAX_BOOT_PARSED_CSS_BYTES)]
         )
+    )
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+def test_boot_css_census_matches_textual_file_reader(tmp_path, monkeypatch, newline):
+    """Count the actual parser source, independent of checkout line endings."""
+    from textual.css.stylesheet import Stylesheet
+    from tldw_chatbook.app import TldwCli
+
+    path = tmp_path / "newline-parity.tcss"
+    path.write_bytes(
+        newline.join(["Screen {", "    color: red;", "}", ""]).encode("utf-8")
+    )
+    stylesheet = Stylesheet()
+    stylesheet.read(path)
+    (original_source,) = stylesheet.source.values()
+    monkeypatch.setattr(TldwCli, "CSS_PATH", [path])
+    assert _boot_parsed_css_sources()[path.name] == original_source.content.encode(
+        "utf-8"
     )

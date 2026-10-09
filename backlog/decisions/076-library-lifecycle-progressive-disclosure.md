@@ -111,3 +111,40 @@ Source: the [first-run setup shape spec](../../Docs/superpowers/specs/2026-10-03
 
 - [Design specification](../../Docs/superpowers/specs/2026-08-20-library-lifecycle-progressive-disclosure-design.md)
 - [ADR-067: Library Top-Level Pagination Contracts](067-library-top-level-pagination-contracts.md)
+
+
+## Creation-owned initial UNKNOWN (TASK34406 AC19)
+
+A genuinely new stock physical configuration contains Library `unknown` during
+its original exclusive config creation, before App construction or Library
+navigation. The freshly returned mapping agrees with that durable document.
+This is creation-only data, never a programmatic merge default: existing
+profiles with absent or corrupt lifecycle still derive `expanded`, and explicit
+lifecycle and independent section preferences retain their preceding behavior.
+
+Retain the original App compatibility stamp and its invocation. Its existing
+value-present return avoids a second full config save on the stock creation
+route. Customized creation templates/default-library shapes retain their
+original document and App-stamp fallback. Definition-time plain template and
+default-library source identity/shape select the creation appendix; they do
+not represent profile origin or permission authority. A future template that
+already defines rail state must be incorporated deliberately, without duplicate
+TOML headers. Fresh mapping state is published only after actual private
+creation and its posture report succeed.
+
+A test factory's returning-profile fiction is separately declared. It may
+persist explicit `expanded` through the existing conditional settings
+transaction only for positively identified, path-bound current-run creation
+and the exact untouched stock creation document. The transaction rechecks
+those facts and the selected physical document under its original write lock.
+Sticky global creation admission or `unknown` value equality alone is not
+origin evidence. Existing, edited, customized, retargeted or explicitly
+overridden profiles and preserve-admission fixtures remain untouched.
+
+Native baseline `library-creation-original-native-red-1` qualifies one original
+constructor/stamp and one subsequent lifecycle writer after original creation
+omits UNKNOWN; sources/origins, physical Runtime disposal and observer/tree
+retirement pass before the intended failure. Acceptance requires repaired fresh
+creation, a separate-process reopen without a Library visit, actual old/corrupt/
+explicit values, factory origin controls and unchanged creation refusal policy.
+This establishes one redundant writer, not whole startup performance.

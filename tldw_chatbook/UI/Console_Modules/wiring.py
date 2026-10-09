@@ -45,9 +45,12 @@ hand back the same object. Patch a controller on the module that defines it;
 do not reintroduce a re-export in `chat_screen.py` to patch through.
 """
 
+import asyncio
 import threading
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
+from types import MethodType
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -78,9 +81,6 @@ from tldw_chatbook.Widgets.Console.console_character_context import (
 )
 from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
-from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
-    ConsoleFeedbackCommentModal,
-)
 from tldw_chatbook.Widgets.Console.console_speech_controls import (
     ConsoleSpeechControls,
 )
@@ -116,6 +116,11 @@ from .review_selection import (
     ConsoleReviewSelectionController,
     ConsoleTrajectoryLaunch,
 )
+from .context_spend import (
+    ConsoleContextSpendController,
+    CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS,
+)
+from . import console_spend_projection as spend
 from .send_price import ConsoleSendPriceController
 from .session import ConsoleSessionController
 from .skill import ConsoleSkillController
@@ -143,7 +148,22 @@ async def request_console_hooks_review(
     waiting: bool,
     cancel: Callable[[], None],
 ) -> "HookReviewResult":
-    """Open the existing modal with the current screen and permission owner."""
+    """Route an initial Send to runtime custody; keep manual review local."""
+    if waiting:
+        from uuid import uuid4
+
+        from tldw_chatbook.Chat.console_hook_review import HookReviewResult
+
+        identity = screen._hooks.pending_send_identity
+        if identity is None:
+            return HookReviewResult("cancel")
+        session_id, generation = identity
+        runtime = screen._console_runtime()
+        screen._ensure_console_chat_controller()
+        return await runtime.request_initial_hook_review(
+            session_id, str(uuid4()), generation, snapshot
+        )
+
     from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
         request_hook_review,
     )
@@ -245,11 +265,19 @@ def _sync_character_context_presentation(
     sync = getattr(rail, "sync_character_context", None)
     if callable(sync):
         sync(state)
+
     # A scope may have no active character but still gain its first useful
     # context when the off-loop recent-chat read settles. Re-resolve the
     # render-only first-use default; this does not persist on read.
-    current_rail_state = screen._current_console_rail_state()
-    screen._sync_console_rail_visibility_if_changed(current_rail_state)
+    def sync_rail_visibility() -> None:
+        current_rail_state = screen._current_console_rail_state()
+        screen._sync_console_rail_visibility_if_changed(current_rail_state)
+
+    run_config_sync = getattr(screen, "_run_console_config_sync", None)
+    if callable(run_config_sync):
+        run_config_sync(sync_rail_visibility)
+    else:
+        sync_rail_visibility()
 
 
 def _displayed_console_composer_draft(screen: Any) -> str | None:
@@ -271,6 +299,280 @@ def _displayed_console_composer_draft(screen: Any) -> str | None:
     return composer.draft_text() if composer is not None else None
 
 
+def _stock_console_scratch_snapshot(screen: Any, session_id: str):
+    """Keep the original scratch callback lazy while exposing stock provenance."""
+    return screen._console_runtime().scratch_spaces.snapshot(session_id)
+
+
+_STOCK_CONSOLE_SCRATCH_SNAPSHOT = (
+    _stock_console_scratch_snapshot,
+    _stock_console_scratch_snapshot.__code__,
+)
+
+
+def receive_console_visible_intent(
+    screen: Any, draft: str, session_id: str, stash: Any
+):
+    """Receive resident stock values, including proven cold trust preparation."""
+    from collections.abc import Mapping
+    from tldw_chatbook import config
+    from tldw_chatbook.Chat.console_chat_controller import (
+        build_console_provider_selection_from_settings,
+        coerce_bool_setting,
+        coerce_int_setting,
+        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+        MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+        MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+    )
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        ConsoleTurnCaptureSelection,
+        capture_console_received_configuration_preparation,
+    )
+    from tldw_chatbook.Chat.console_received_intent import ConsoleReceivedTurnIntent
+    from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
+    from .session import (
+        ConsoleSessionController,
+        _CONSOLE_CAPTURE_POLICY_ADAPTERS,
+        _CONSOLE_TURN_CONTEXT_BUILDER,
+        _console_global_user_display_name,
+        _console_live_runtime_enabled,
+    )
+    from ..Screens.settings_library_rag_defaults import load_direct_library_tools
+    from ..Navigation.pending_handoff_store import HandoffChannel
+    from ..Screens.chat_screen import (
+        _CONSOLE_RECEIVED_SCREEN_SELECTORS,
+        _CONSOLE_RECEIVED_RAG_READERS,
+        _stock_received_rag_sources,
+        _stock_received_rag_top_k,
+    )
+
+    owner = screen._session
+    runtime = screen._console_runtime()
+    store, controller = runtime._chat_store, runtime._chat_controller
+    composer = screen._console_composer_or_none()
+    if (
+        store is None
+        or controller is None
+        or composer is None
+        or type(owner) is not ConsoleSessionController
+    ):
+        return None
+    if stash is not None:
+        live = composer.capture_draft_snapshot()
+        if live.generation != stash.generation or live.edit_serial != stash.edit_serial:
+            screen.app_instance.notify("Draft changed; Send again.", severity="warning")
+            return ""
+    if (
+        screen._console_visible_draft_session_id != session_id
+        or composer.draft_text() != draft
+    ):
+        return None
+    if getattr(composer, "_send_blocked", False):
+        return None
+    callbacks = getattr(screen, "_console_received_live_adapters", ())
+    if not callbacks or any(
+        getattr(target, name, None) is not original
+        for target, name, original in callbacks
+    ):
+        return None
+    for name, function, code in _CONSOLE_RECEIVED_SCREEN_SELECTORS:
+        method = getattr(screen, name, None)
+        if (
+            not isinstance(method, MethodType)
+            or method.__self__ is not screen
+            or method.__func__ is not function
+            or function.__code__ is not code
+        ):
+            return None
+    builder = owner._build_console_turn_execution_context
+    if (
+        not isinstance(builder, MethodType)
+        or builder.__func__ is not _CONSOLE_TURN_CONTEXT_BUILDER
+    ):
+        return None
+    for name, function, code in _CONSOLE_CAPTURE_POLICY_ADAPTERS:
+        method = getattr(owner, name, None)
+        if (
+            not isinstance(method, MethodType)
+            or method.__self__ is not owner
+            or method.__func__ is not function
+            or function.__code__ is not code
+        ):
+            return None
+    scratch = owner._scratch_snapshot_provider
+    function, code = _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+    if (
+        type(scratch) is not partial
+        or scratch.func is not function
+        or function.__code__ is not code
+        or scratch.args != (screen,)
+        or scratch.keywords
+    ):
+        return None
+    rag_source = owner._rag_source_types_accessor
+    if (
+        type(rag_source) is not partial
+        or rag_source.func is not _stock_received_rag_sources
+        or rag_source.args != (screen,)
+        or rag_source.keywords
+        or owner._rag_top_k_accessor is not _stock_received_rag_top_k
+    ):
+        return None
+    from ..Screens import chat_screen as screen_module
+
+    if any(
+        getattr(screen_module, function.__name__, None) is not function
+        or function.__code__ is not code
+        for function, code in _CONSOLE_RECEIVED_RAG_READERS
+    ):
+        return None
+    config_identity = config.current_config_identity()
+    resident = getattr(screen.app_instance, "app_config", None)
+    raw = (
+        config._CONFIG_CACHE
+        if isinstance(resident, Mapping)
+        and all(name in resident for name in ("general", "logging"))
+        else resident
+    )
+    if not isinstance(raw, Mapping):
+        return None
+    preparation = capture_console_received_configuration_preparation(
+        screen.app_instance, store, controller, session_id=session_id
+    )
+    if preparation is None:
+        return None
+    session = next((item for item in store.sessions() if item.id == session_id), None)
+    settings = store.effective_session_settings(session_id)
+    if session is None or settings is None:
+        return None
+    handoffs = getattr(screen.app_instance, "pending_handoffs", None)
+    if handoffs is not None and handoffs.has_pending(HandoffChannel.CONSOLE_LIVE_WORK):
+        return None
+    if session.persisted_conversation_id in getattr(
+        screen.app_instance, "_conversation_archive_inflight", ()
+    ):
+        return None
+    launch = getattr(screen, "_pending_console_launch_context", None)
+    if launch is not None and screen_module._source_mentions_rag(launch.source):
+        state = screen_module.build_console_evidence_display_state(launch)
+        if state is None or state.available_count == 0:
+            return None
+    if controller._chat_start.is_prepared(session_id):
+        return None
+    activity = controller.activity_for(session_id)
+    queue = controller.prompt_queue_registry.snapshot(session_id)
+    if activity.preparing_before_acceptance and queue.total_count == 0:
+        screen.app_instance.notify(
+            "Preparing the current turn. Queueing becomes available once it is accepted.",
+            severity="warning",
+        )
+        return ""
+    queue_revision = (
+        queue.revision if activity.accepted_live_turn or queue.total_count else None
+    )
+    if queue_revision is not None:
+        from tldw_chatbook.Chat.console_chat_controller import (
+            _CONSOLE_RECEIVED_QUEUE_METHOD,
+        )
+        from tldw_chatbook.Chat.console_received_dispatch import stock_native_methods
+
+        function, code = _CONSOLE_RECEIVED_QUEUE_METHOD
+        if not stock_native_methods(controller, (("queue_prompt", function, code),)):
+            return None
+    section = raw.get("console", {})
+    section = section if isinstance(section, Mapping) else {}
+    defaults = raw.get("chat_defaults", {})
+    defaults = defaults if isinstance(defaults, Mapping) else {}
+    enabled = _console_live_runtime_enabled(resident, section)
+    display_name = _console_global_user_display_name(raw)
+    selected = build_console_provider_selection_from_settings(
+        settings,
+        app_config=raw,
+        workspace_context=ConsoleWorkspaceContext(
+            active_workspace_id=store.session_workspace_id(session_id)
+        ),
+        legacy_model=settings.model
+        if getattr(settings, "source", "derived") == "user"
+        else defaults.get("model"),
+        endpoint_policy=store.session_ephemeral_endpoint_policy(session_id),
+        identity_session=session,
+        global_user_name=lambda: display_name,
+    )
+    selection = ConsoleTurnCaptureSelection(
+        selected,
+        store.presentation_context(session_id, display_name),
+        {
+            "source_types": tuple(
+                screen_module._console_library_rag_source_scope(screen)
+            )
+        },
+        {
+            "session_ephemeral": session.ephemeral,
+            "agent_runtime_enabled": enabled,
+            "native_tool_calls_enabled": coerce_bool_setting(
+                section.get("native_tool_calls", True), True
+            ),
+            "local_tools_enabled": coerce_bool_setting(
+                section.get("local_tools_enabled", False), False
+            ),
+            "direct_library_tools": load_direct_library_tools(raw),
+            "exchange_capture_enabled": coerce_bool_setting(
+                section.get("exchange_capture", True), True
+            ),
+            "project_instructions_startup_max_bytes": coerce_int_setting(
+                section.get(
+                    "project_instructions_startup_max_bytes",
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+            ),
+            "project_instructions_nested_max_bytes": coerce_int_setting(
+                section.get(
+                    "project_instructions_nested_max_bytes",
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+            ),
+        },
+        None,
+        bool(
+            enabled
+            and not store.session_one_shot_prefill(session_id)
+            and session.assistant_kind != "character"
+        ),
+        enabled,
+    )
+    composer._authored_draft_observer = screen._publish_console_authored_draft
+    if not screen._publish_console_authored_draft(
+        draft, (composer.capture_draft_snapshot().generation, composer.edit_serial)
+    ):
+        screen.app_instance.notify(
+            "Draft or chat changed; Send again.", severity="warning"
+        )
+        return ""
+    inputs = store.session_input_snapshot(session_id)
+    launch, revision, _notice = runtime.snapshot_console_staged_evidence()
+    intent = ConsoleReceivedTurnIntent(
+        str(uuid4()),
+        session_id,
+        inputs,
+        selection,
+        launch,
+        revision,
+        runtime._attached_generation or 0,
+        queue_revision,
+    )
+    if config.current_config_identity() != config_identity:
+        raise RuntimeError("Console configuration changed; Send again.")
+    return runtime.accept_received_intent(
+        intent, _configuration_preparation=preparation
+    )
+
+
 def _raw_cli_run_log_root() -> Path:
     """Resolve the app-private local-command log root at call time."""
     from tldw_chatbook.config import get_user_data_dir
@@ -278,35 +580,47 @@ def _raw_cli_run_log_root() -> Path:
     return get_user_data_dir()
 
 
-def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> str:
+def _admit_console_turn_to_runtime(
+    screen: Any,
+    draft: str,
+    session_id: str,
+    *,
+    _prepared_request: ConsoleTurnCustodyRequest | None = None,
+    _captured_runtime: Any = None,
+    _captured_store: Any = None,
+) -> str:
     """Freeze view inputs and synchronously transfer one turn to the runtime."""
     from tldw_chatbook.Chat.console_send_diagnostics import record_send_stage
 
     record_send_stage("ui_submit")
     store = None
     try:
-        store = screen._ensure_console_chat_store()
-        one_shot_prefill, one_shot_prefill_revision = (
-            store.session_one_shot_prefill_snapshot(session_id)
-        )
-        request = ConsoleTurnCustodyRequest(
-            turn_id=str(uuid4()),
-            session_id=session_id,
-            draft=draft,
-            configuration=screen._session._build_console_turn_execution_context(
-                session_id
-            ),
-            attachment_ids=tuple(
-                attachment.attachment_id
-                for attachment in store.pending_attachments(session_id)
-            ),
-            one_shot_prefill=one_shot_prefill,
-            one_shot_prefill_revision=one_shot_prefill_revision,
-            staged_evidence_launch=screen._console_runtime().snapshot_console_staged_evidence()[
-                0
-            ],
-        )
-        turn_id = screen._console_runtime().accept_turn(request)
+        if _prepared_request is not None:
+            store = _captured_store
+            turn_id = _captured_runtime.accept_turn(_prepared_request)
+        else:
+            store = screen._ensure_console_chat_store()
+            one_shot_prefill, one_shot_prefill_revision = (
+                store.session_one_shot_prefill_snapshot(session_id)
+            )
+            request = ConsoleTurnCustodyRequest(
+                turn_id=str(uuid4()),
+                session_id=session_id,
+                draft=draft,
+                configuration=screen._session._build_console_turn_execution_context(
+                    session_id
+                ),
+                attachment_ids=tuple(
+                    attachment.attachment_id
+                    for attachment in store.pending_attachments(session_id)
+                ),
+                one_shot_prefill=one_shot_prefill,
+                one_shot_prefill_revision=one_shot_prefill_revision,
+                staged_evidence_launch=screen._console_runtime().snapshot_console_staged_evidence()[
+                    0
+                ],
+            )
+            turn_id = screen._console_runtime().accept_turn(request)
     except KeyError as error:
         if store is not None:
             try:
@@ -322,6 +636,135 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> 
         raise
     record_send_stage("ui_submit", "accepted")
     return turn_id
+
+
+async def _capture_console_configuration_async(
+    screen: Any, session_id: str, expected_controller: Any = None
+) -> Any:
+    """Compose screen inputs on this loop after finite native source preparation."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    app = screen.app_instance
+    app_config = getattr(app, "app_config", None)
+    runtime = screen._console_runtime()
+    store = screen._ensure_console_chat_store()
+    controller = screen._ensure_console_chat_controller()
+    if expected_controller is not None and controller is not expected_controller:
+        raise RecoveryRequired("console_snapshot_owner_changed")
+    queue = screen._prompt_queue
+    session_controller = screen._session
+    provider = session_controller._build_console_turn_execution_context
+    context = await controller.capture_turn_configuration_snapshot(
+        session_id, context_provider=provider
+    )
+    current_provider = session_controller._build_console_turn_execution_context
+    if (
+        screen.app_instance is not app
+        or getattr(app, "app_config", None) is not app_config
+        or screen._console_runtime() is not runtime
+        or runtime._chat_store is not store
+        or runtime._chat_controller is not controller
+        or screen._session is not session_controller
+        or screen._prompt_queue is not queue
+        or not (
+            current_provider is provider
+            or (
+                isinstance(current_provider, MethodType)
+                and isinstance(provider, MethodType)
+                and current_provider.__func__ is provider.__func__
+                and current_provider.__self__ is provider.__self__
+            )
+        )
+    ):
+        raise RecoveryRequired("console_snapshot_owner_changed")
+    return context
+
+
+async def _prepare_console_turn_to_runtime(
+    screen: Any,
+    draft: str,
+    session_id: str,
+    stash: Any = None,
+    expected_controller: Any = None,
+) -> str:
+    """Prepare one exact UI turn, then transfer custody without another await."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    runtime = screen._console_runtime()
+    store = screen._ensure_console_chat_store()
+    session = next(item for item in store.sessions() if item.id == session_id)
+    visible = screen._console_visible_draft_session_id == session_id
+    composer = screen._console_composer_or_none() if visible else None
+    composer_snapshot = (
+        composer.capture_draft_snapshot() if composer is not None else None
+    )
+    if composer is not None:
+        # Button capture can precede the ordinary poll's in-memory draft mirror.
+        # Establish that mirror before waiting; subsequent edits still refuse.
+        store.set_session_draft(session_id, composer.draft_text())
+    stored_draft = store.session_draft(session_id)
+    prefill = store.session_one_shot_prefill_snapshot(session_id)
+    attachments = tuple(store.pending_attachments(session_id))
+    attachment_ids = tuple(item.attachment_id for item in attachments)
+    evidence = runtime.snapshot_console_staged_evidence()
+    stash_identity = (
+        (stash.text, stash.edit_serial, stash.generation, tuple(stash.segments))
+        if stash is not None
+        else None
+    )
+    configuration = await _capture_console_configuration_async(
+        screen, session_id, expected_controller
+    )
+    current_attachments = tuple(store.pending_attachments(session_id))
+    current_evidence = runtime.snapshot_console_staged_evidence()
+    if (
+        screen._console_runtime() is not runtime
+        or runtime._chat_store is not store
+        or next((item for item in store.sessions() if item.id == session_id), None)
+        is not session
+        or store.session_draft(session_id) != stored_draft
+        or store.session_one_shot_prefill_snapshot(session_id) != prefill
+        or tuple(item.attachment_id for item in current_attachments) != attachment_ids
+        or len(current_attachments) != len(attachments)
+        or any(
+            current is not original
+            for current, original in zip(current_attachments, attachments)
+        )
+        or current_evidence[0] is not evidence[0]
+        or current_evidence[1:] != evidence[1:]
+        or (
+            stash is not None
+            and (stash.text, stash.edit_serial, stash.generation, tuple(stash.segments))
+            != stash_identity
+        )
+        or (
+            composer is not None
+            and screen._console_visible_draft_session_id == session_id
+            and (
+                screen._console_composer_or_none() is not composer
+                or composer.capture_draft_snapshot() != composer_snapshot
+            )
+        )
+    ):
+        raise RecoveryRequired("console_snapshot_owner_changed")
+    request = ConsoleTurnCustodyRequest(
+        turn_id=str(uuid4()),
+        session_id=session_id,
+        draft=draft,
+        configuration=configuration,
+        attachment_ids=attachment_ids,
+        one_shot_prefill=prefill[0],
+        one_shot_prefill_revision=prefill[1],
+        staged_evidence_launch=evidence[0],
+    )
+    return _admit_console_turn_to_runtime(
+        screen,
+        draft,
+        session_id,
+        _prepared_request=request,
+        _captured_runtime=runtime,
+        _captured_store=store,
+    )
 
 
 async def _resend_refused_console_echo(screen: Any, echo: Any) -> str | None:
@@ -528,6 +971,10 @@ async def _show_console_feedback_comment(
     screen: Any, action: str, quote: str
 ) -> str | None:
     """Present the selection-feedback comment modal."""
+    from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
+        ConsoleFeedbackCommentModal,
+    )
+
     return await screen.app.push_screen_wait(
         ConsoleFeedbackCommentModal(action=action, quote=quote)
     )
@@ -547,6 +994,22 @@ def _present_console_trajectory(screen: Any, launch: ConsoleTrajectoryLaunch) ->
             capture_policy_bindings=launch.capture_policy_bindings,
         )
     )
+
+
+def _sync_console_character_reaction_label(screen: Any) -> None:
+    """Publish current accepted reaction text without waiting for avatar IO."""
+    from textual.css.query import NoMatches, QueryError
+    from textual.widgets import Static
+
+    try:
+        widget = screen.query_one("#console-character-reaction-state", Static)
+    except (NoMatches, QueryError):
+        return
+    label = screen._session._manual_reaction_label_for_current_actor()
+    text = f"Reaction: {label} (manual)" if label else "Reaction: Automatic"
+    if str(widget.renderable) != text:
+        widget.update(text)
+        screen._request_console_context_allocation_reconcile()
 
 
 def _raw_cli_active_session_id(screen: Any) -> str:
@@ -770,6 +1233,8 @@ def build_console_controllers(
     read_trace_recovery_state: Callable[[], Callable[..., Any]],
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
+    display_pricing_catalog: Callable[[], Any],
+    build_cost_snapshot: Callable[..., Any],
 ) -> None:
     """Construct the Console screen's controllers and coordinators.
 
@@ -805,6 +1270,43 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+
+    screen._context_spend = ConsoleContextSpendController(
+        screen,
+        ensure_chat_store=lambda: screen._ensure_console_chat_store(),
+        current_chat_store=lambda: screen._console_chat_store,
+        ensure_chat_controller=lambda: screen._ensure_console_chat_controller(),
+        current_chat_controller=lambda: screen._console_chat_controller,
+        composer=lambda: screen._console_composer_or_none(),
+        pending_launch=lambda: screen._pending_console_launch_context,
+        build_staged_context_state=lambda launch: screen._build_console_staged_context_state(
+            launch
+        ),
+        active_settings_readiness=lambda: screen._active_console_settings_readiness(),
+        provider_model_display=lambda: screen._active_console_provider_model_display(),
+        active_session_settings=lambda: screen._session._ensure_active_console_session_settings(),
+        active_native_session=lambda: screen._session._active_native_console_session(),
+        workspace_context=lambda: screen._workspace._current_console_workspace_context(),
+        fleet_token_total=lambda: screen._agent._console_agent_fleet_token_total(),
+        sync_rail_system_line=lambda: screen._sync_console_rail_system_line(),
+        sync_agent_section=lambda: screen._sync_console_agent_section(),
+        request_context_allocation_reconcile=lambda: screen._request_console_context_allocation_reconcile(),
+        record_timer_created=lambda name: screen._record_ui_timer_created(name),
+        record_timer_stopped=lambda name: screen._record_ui_timer_stopped(name),
+        push_inspector=lambda **kwargs: screen._push_console_inspector(**kwargs),
+        context_window_for_display=lambda settings: spend.cached_context_window_for_display(
+            screen, screen._ensure_console_provider_gateway(), settings
+        ),
+        context_inputs=lambda controller,
+        session_id: spend.ConsoleContextReadSnapshot.for_screen(
+            screen, max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
+        ).inputs(controller, session_id),
+        display_pricing_catalog=lambda: display_pricing_catalog(),
+        build_cost_snapshot=lambda *args, **kwargs: build_cost_snapshot(
+            *args, **kwargs
+        ),
+        refresh_checked_cost_chip=lambda: screen._sync_console_cost_chip(),
+    )
     screen._change_review_projection = ConsoleChangeReviewProjection(
         runtime_accessor=lambda: screen._console_runtime(),
         conversation_id_accessor=lambda: screen._current_console_conversation_id(),
@@ -1602,15 +2104,22 @@ def build_console_controllers(
         build_current_provider_selection=lambda: (
             screen._build_console_provider_selection()
         ),
-        build_settings_summary=lambda: screen._build_console_settings_summary_state(),
+        build_settings_summary=lambda: screen._context_spend._build_console_settings_summary_state(),
         apply_settings_summary=lambda state: (
-            screen._apply_console_settings_summary_state(state)
+            screen._context_spend._apply_console_settings_summary_state(state)
         ),
         settings_initial_draft=lambda settings, context_policy, **kwargs: (
             screen._console_settings_initial_draft(settings, context_policy, **kwargs)
         ),
         ensure_console_chat_controller=(
             lambda: screen._ensure_console_chat_controller()
+        ),
+        read_recovery_controller=lambda: (
+            screen._console_recovery_presentation_controller()
+            if callable(
+                getattr(screen, "_console_recovery_presentation_controller", None)
+            )
+            else screen._ensure_console_chat_controller()
         ),
         composer_accessor=lambda: screen._console_composer_or_none(),
         restore_banked_raw_cli_stashes=(
@@ -1625,17 +2134,14 @@ def build_console_controllers(
         build_provider_selection=(
             lambda session_id: screen._build_console_provider_selection(session_id)
         ),
-        scratch_snapshot_provider=(
-            lambda session_id: screen._console_runtime().scratch_spaces.snapshot(
-                session_id
-            )
-        ),
+        scratch_snapshot_provider=partial(_stock_console_scratch_snapshot, screen),
         rag_source_types_accessor=rag_source_types_accessor,
         rag_top_k_accessor=rag_top_k_accessor,
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         sync_chat_core_state=lambda: screen._sync_console_chat_core_state(),
         sync_temporary_chip=lambda: screen._sync_console_temporary_chip(),
         sync_settings_summary=lambda: screen._sync_console_settings_summary(),
+        sync_system_prompt_preview=lambda: screen._sync_console_rail_system_line(),
         sync_control_bar=lambda: screen._sync_console_control_bar(),
         sync_command_popup=lambda: screen._sync_console_command_popup(),
         note_follow_intent=lambda: screen._note_console_follow_intent(),
@@ -1713,6 +2219,7 @@ def build_console_controllers(
         reaction_preview_coordinator_accessor=(
             lambda: _reaction_preview_coordinator(screen)
         ),
+        sync_reaction_label=lambda: _sync_console_character_reaction_label(screen),
         refresh_character_avatar=(
             lambda **kwargs: (
                 screen._character._refresh_active_character_avatar_if_scope_changed(
@@ -2080,7 +2587,10 @@ def build_console_controllers(
             )
         ),
         issue_message_speech=(
-            lambda message_id, outcome_callback, expected_destination, retry_failed_auto: (
+            lambda message_id,
+            outcome_callback,
+            expected_destination,
+            retry_failed_auto: (
                 screen._message.request_console_message_speech(
                     message_id,
                     outcome_callback,
@@ -2356,6 +2866,19 @@ def build_console_controllers(
                 session_id
             )
         ),
+        capture_configuration_async=(
+            lambda session_id, controller=None: _capture_console_configuration_async(
+                screen, session_id, controller
+            )
+        ),
+        launch_chain_async=(
+            lambda draft,
+            session_id,
+            stash=None,
+            controller=None: _prepare_console_turn_to_runtime(
+                screen, draft, session_id, stash, controller
+            )
+        ),
         ensure_active_session=(
             lambda: screen._session._ensure_active_console_session_settings()
         ),
@@ -2452,6 +2975,51 @@ def build_console_controllers(
         start_worker=lambda continuation: screen.run_worker(
             continuation, group="console-hook-send-review"
         ),
+        # Match actual mounted host pumps; inherited worker context is
+        # not the task delivering Enter or the Send button.
+        defer_preparation=lambda: (
+            asyncio.current_task() is screen._task
+            or asyncio.current_task() is screen.app._task
+        ),
+        on_send_settled=lambda: (
+            screen.call_after_refresh(
+                lambda: screen.run_worker(
+                    screen._refresh_console_hooks,
+                    group="console-hook-refresh",
+                    exclusive=True,
+                )
+            )
+            if screen.is_mounted
+            else None
+        ),
+    )
+    screen._console_received_live_adapters = tuple(
+        (target, name, getattr(target, name))
+        for target, names in (
+            (
+                screen._session,
+                (
+                    "_provider_readiness_app_config_fn",
+                    "_build_provider_selection_fn",
+                    "_scratch_snapshot_provider",
+                    "_rag_source_types_accessor",
+                    "_rag_top_k_accessor",
+                ),
+            ),
+            (screen._hooks, ("_permissions", "_review", "_session", "_stash")),
+            (
+                screen._prompt_queue,
+                (
+                    "_capture_configuration",
+                    "_capture_configuration_async",
+                    "_launch_chain",
+                    "_launch_chain_async",
+                    "_blocked_reason_accessor",
+                    "_setup_blocked_reason_accessor",
+                ),
+            ),
+        )
+        for name in names
     )
     screen._review_selection = ConsoleReviewSelectionController(
         store_accessor=lambda: screen._ensure_console_chat_store(),
@@ -2513,3 +3081,46 @@ def build_console_controllers(
         sync_settings_summary=lambda: screen._sync_console_settings_summary(),
         sync_cost_chip=lambda: screen._sync_console_cost_chip(),
     )
+
+
+# Original scope accessor lambdas, captured at their defining module before use.
+from types import CodeType as _CharacterViewCodeType  # noqa: E402
+
+_CHARACTER_VIEW_ACCESSORS = (
+    (
+        None,
+        "build_console_controllers",
+        build_console_controllers,
+        build_console_controllers,
+        build_console_controllers.__code__,
+        globals(),
+        build_console_controllers.__defaults__,
+        build_console_controllers.__kwdefaults__,
+        tuple((build_console_controllers.__kwdefaults__ or {}).items()),
+        build_console_controllers.__closure__,
+        tuple(
+            (cell, cell.cell_contents)
+            for cell in build_console_controllers.__closure__ or ()
+        ),
+        __file__,
+        __spec__,
+        getattr(__spec__, "origin", None),
+    ),
+    tuple(
+        (
+            name,
+            tuple(
+                code
+                for code in build_console_controllers.__code__.co_consts
+                if type(code) is _CharacterViewCodeType
+                and code.co_name == "<lambda>"
+                and (marker in code.co_names or marker in code.co_consts)
+            ),
+        )
+        for name, marker in (
+            ("_database_accessor", "chachanotes_db"),
+            ("_current_character_accessor", "_current_console_rail_character_id"),
+            ("_open_conversation_accessor", "_current_console_conversation_id"),
+        )
+    ),
+)

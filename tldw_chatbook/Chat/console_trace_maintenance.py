@@ -1700,7 +1700,7 @@ class TraceGarbageCollector:
             cursor,
             request_id,
             epoch,
-            "console_trace_semantic_revisions",
+            "console_trace_payload_revisions",
             """WITH RECURSIVE seeds(revision_id) AS (
                    SELECT node.semantic_revision_id FROM console_trace_surface_nodes AS node
                     JOIN console_trace_gc_marks AS mark ON mark.entity_id = node.node_id
@@ -1733,7 +1733,7 @@ class TraceGarbageCollector:
                  FROM console_trace_revision_bindings AS binding
                  JOIN console_trace_gc_marks AS revision
                    ON revision.entity_id = binding.revision_id
-                  AND revision.entity_kind = 'console_trace_semantic_revisions'
+                  AND revision.entity_kind = 'console_trace_payload_revisions'
                  JOIN console_trace_gc_marks AS policy
                    ON policy.entity_id = binding.policy_id
                   AND policy.entity_kind = 'console_trace_policies'
@@ -1751,7 +1751,7 @@ class TraceGarbageCollector:
                   AND ((span.semantic_revision_id IS NOT NULL AND EXISTS (
                          SELECT 1 FROM console_trace_gc_marks AS revision
                           WHERE revision.request_id = ?
-                            AND revision.entity_kind = 'console_trace_semantic_revisions'
+                            AND revision.entity_kind = 'console_trace_payload_revisions'
                             AND revision.entity_id = span.semantic_revision_id))
                     OR (span.artifact_id IS NOT NULL AND EXISTS (
                          SELECT 1 FROM console_trace_gc_marks AS artifact
@@ -1802,6 +1802,30 @@ class TraceGarbageCollector:
                   AND artifact.entity_kind = 'console_trace_artifacts'
                   AND policy.entity_kind = 'console_trace_policies'""",
             (request_id, request_id),
+        )
+
+        # Canonical locators retain identity/FK ancestry, never policy bindings
+        # or archived bytes. Keep these metadata roots separate until payload
+        # reachability has closed, including when another call shares a policy.
+        self._mark_sql(
+            cursor,
+            request_id,
+            epoch,
+            "console_trace_semantic_revisions",
+            """WITH RECURSIVE seeds(revision_id) AS (
+                   SELECT revision_id FROM console_trace_semantic_revisions
+                    WHERE live_message_id IS NOT NULL
+                   UNION SELECT entity_id FROM console_trace_gc_marks
+                    WHERE request_id = ? AND entity_kind = 'console_trace_payload_revisions'
+                 ), ancestry(revision_id) AS (
+                   SELECT revision_id FROM seeds WHERE revision_id IS NOT NULL
+                   UNION
+                   SELECT revision.predecessor_revision_id
+                     FROM console_trace_semantic_revisions AS revision
+                     JOIN ancestry ON ancestry.revision_id = revision.revision_id
+                    WHERE revision.predecessor_revision_id IS NOT NULL
+                 ) SELECT revision_id AS entity_id FROM ancestry""",
+            (request_id,),
         )
 
     @staticmethod

@@ -3,11 +3,11 @@
 from pathlib import Path
 
 from . import bootstrap
-from .activation import ActivationStore, _private, _source_scope_admitted
+from .activation import ActivationStore, _private, _source_scope_admitted_from_records
 
 
 def _witnesses(path, lease):
-    """Check paired local generations against this actual admitted storage group."""
+    """Check paired generations against this actual admitted storage group."""
     from . import storage_admission as storage
 
     root, names = lease.execution_context(path)
@@ -18,20 +18,39 @@ def _witnesses(path, lease):
     reused, value = storage._derived_reuse(hold, key, before)
     if reused:
         return value
-    if path is not None and not _source_scope_admitted(root, names or (), path):
-        raise ValueError("projection_source_scope_unavailable")
-    result = _paired_witnesses(path, root, names, selected)
-    evidence = storage._metadata_evidence(hold, (() if path is None else (path,)))
+    with bootstrap._control_observation(root) as (records, registry):
+        if path is not None and not _source_scope_admitted_from_records(
+            names or (), path, records, registry
+        ):
+            raise ValueError("projection_source_scope_unavailable")
+        result = _paired_witnesses_from_records(
+            path, root, names, selected, records, registry
+        )
+        evidence = storage._metadata_evidence(
+            hold,
+            (() if path is None else (path,)),
+            registry=registry,
+            records=records,
+        )
+    # Publish only after the final ancestry and native cleanup checks succeed.
     storage._note_derived(hold, key, evidence, result, before)
     return result
 
 
 def _paired_witnesses(path, root, names, selected):
     """Read paired local control metadata; this grants no storage admission."""
-    if not bootstrap.startup_permission(selected, root)[0]:
+    with bootstrap._control_observation(root) as (records, registry):
+        return _paired_witnesses_from_records(
+            path, root, names, selected, records, registry
+        )
+
+
+def _paired_witnesses_from_records(path, root, names, selected, records, registry):
+    pending, profiles, associations = records
+    if not bootstrap._startup_permission_from_records(
+        selected, root, pending, profiles, registry
+    )[0]:
         raise ValueError("projection_generation_unavailable")
-    _, profiles, associations = bootstrap._control_records(root)
-    registry = bootstrap._registry(root)
     held = set(names or ())
     profile = next((p for p in profiles if p["selector"] == str(selected)), None)
     if profile:

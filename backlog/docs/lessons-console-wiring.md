@@ -290,6 +290,34 @@ must cover both the non-stream re-raise and the stream queue consumer
 (`_QueueItem.error` and its `item.kind == "error"` branch). Its test should drive
 the real failure through `stream_chat`, which is the path Console sends on.
 
+## Presentation refresh caches must cover independent presentation callers
+
+**TASK-34406, 2026-10-04.** A tick-scoped context memo reduced reads inside the
+general Console refresh, but the native probe still sampled spend and credential
+polls falling back through the settings summary into synchronous config reads.
+The same unchanged owner read six times across refreshes; alternating browser
+and workspace row subsets restarted twelve count workers for two distinct
+inputs. Share disposable presentation results across these callers under exact
+session, workspace, database, and revision fences. Expiry schedules one finite
+owned refresh and keeps only the same owner's last presentation. Changed owners
+use a loading state; explicit actions and sends still revalidate live authority.
+
+## Admission identity roots must retain metadata without retaining trace bytes
+
+**TASK-33621.47 and TASK-34406, 2026-10-04.** Real collection between admission
+and provider reservation deleted a live canonical revision and caused
+`trace_revision_unavailable`; mounted tests had hidden it with a GC timer delay.
+Rooting canonical revision metadata fixed that race. Review then reproduced a
+second failure with two independent owners sharing a policy: the surviving
+call's policy retained the detached owner's archived binding through canonical
+revision ancestry. Keep metadata and payload revision reachability separate.
+Check both the admission gap and a shared-policy detached payload; never use a
+timer delay as evidence that a captured send survives normal maintenance.
+
+## Read-only executor callbacks still own database connections
+
+**TASK-34406 / PR #3023, 2026-10-05.** The original Library delete/undo journey completed its assertions but sandbox cleanup found a Workspace connection and exact lease owned by an already exited executor thread. The bounded original acquisition chain identified LocalWorkspaceRegistryService.get_workspace_scope; the UI thread's own connection was already closed. Closing the factory's current-thread cache could never retire that worker handle. Put an existing finite operation-owned connection boundary around the synchronous producer so it retires on its own thread. Verify the actual connection and lease before test cleanup on success, SQLite error and waiter cancellation; retain borrowed transactions and memory/custom lifetime controls. The three reproduced leaks became six passing native controls and the unchanged Library journey then passed physical cleanup. A dead worker is not evidence that its database lease retired.
+
 ## A parent descriptor census does not survey private test children
 
 **TASK-31966 Model-row verification, 2026-10-04.** A parent-only census observed

@@ -240,3 +240,58 @@ run.
 - [ADR-010: Console conversation-local marks](010-console-conversation-local-marks.md)
 - [ADR-031: TUI keybinding and footer-hint conventions](031-tui-keybinding-and-footer-hint-conventions.md)
 - [ADR-083: Console edge rails and workspace-owned conversation Tree](083-console-edge-rails-and-workspace-tree-ownership.md)
+
+
+## Finite initial Console receipt preparation (2026-10-05)
+
+Reason: explicitly define the original receipt initializer's asynchronous startup and same-App/database publication contract. No persistent preparation service, readiness capability, storage/schema change, permission cache or new authority is introduced.
+
+Proposal before any managed production edit:
+- The original resolved initial Chat route prepares only its durable receipt store before constructing its Console screen. Other destinations and original synchronous/custom/headless Runtime APIs keep their preceding routes.
+- Only exact stock Runtime/helper/reader defining metadata qualifies the optional worker route. Preinstalled custom functions/instance shadows, subclasses and memory/custom database receivers retain their original route. After selection, queued/body/default/class drift refuses before replacement invocation; there is no custom fallback inside the selected interval.
+- Source qualification for publication is scoped only to the selected finite worker through a thread-local proof restored in its original finally; preinstalled class/instance/subclass wrappers may continue delegating to the original synchronous reader. The proof contains the exact Runtime and its captured source-current check, and is not a service, cache, authority or reusable task.
+- The original initializer captures the actual App, ChaChaNotes owner/path and marks-service owner before construction. Publication must still belong to that same owner after native construction, and every newly created refused initialization connection retires on its original source thread. Existing service/native borrowers are not adopted or closed.
+- The initial startup task holds one finite child task; repeated cancellation drains the same actual callback before propagating cancellation or releasing startup custody. Normal exception stays visible, and cancellation does not publish a screen. Runtime disposal closes admission first and serializes with the original initializer lock; no disposed Runtime publishes storage.
+- After actual callback retirement, the initial route rechecks exact App/Runtime, startup task/loop/thread, profile/source, screen stack, current tab, and shutdown/initial-push state before the original screen construction and push. A newer destination is never overwritten by a stale initial push.
+- Live first Send retains every original bridge, storage, permission, provider, capture and readiness guard. Receipt preparation makes no claim of permission readiness. All original startup, Send, heartbeat, helper and native-open limits remain unchanged.
+
+Native qualification plan: retain the original cold held-query causal RED first; then real queued reader replacement and same-function code/default drift, in-body App/DB/marks/generation drift, repeated cancellation while actual native SQL is held, disposal during the same held callback, warm borrowed original connection, preinstalled custom/instance/subclass/memory fallbacks, and normal first composition/key/Send/disposal controls. Controls observe original code/native handles; no native calls, guards, waits or budgets are replaced.
+
+Evidence-only candidate is not installed or Native-qualified. Root owns task/plan/ADR registration and serialized actual runs.
+
+Actual original-effect qualification: original-cold-receipts-native-red-6 completes31.375s with current production/test sources. The original Inspector/bridge/receipt/schema chain runs on the main Thread and actual shared loop. Holding its positively identified admitted native SQLite connection prevents the original loop callback; after release, normal Runtime disposal physically closes the exact handle and retires its original StorageLease/participant registration. Source/currentness, original five-cell close closure, global monitoring zero, no invalid observation and monitoring retirement all qualify before the responsiveness assertion. Attempts1-5 fail observer prerequisites and are excluded. Artificial hold and inclusive native spans establish this synchronous blocking site, not normal latency or whole-budget savings.
+
+Rejected alternatives: precreating a persistent store outside startup; a detached readiness service/task; moving UI bridge construction to a worker; weakening admission or changing synchronous custom/public ABI; increasing original budgets; or accepting a captured result after navigation/owner/source drift. Final acceptance requires actual native normal, drift, borrowed, custom, cancellation and disposal controls, then unchanged original whole/platform and live first-Send evidence.
+
+
+### TASK-34406: finite Character view work retires before creator close
+
+The actual shipping resume worker and supported Console host must retain their
+issued finite Character callback until native resources have physically
+retired. App or host exit cannot establish healthy creator cleanup from a
+cancelled or terminal logical Worker alone. Two original native routes reached
+exit with the exact callback, operation and lease still live; their subsequent
+settled-close correctly refused, and all final native/source cleanup controls
+passed after release.
+
+For the source-qualified standard UI resume, use the existing owned Character
+presentation facade with explicit force-fresh entry. This bypasses only its
+display memo; retain the original initial metadata pair, inner refresh, final
+owner publication checks and repeated-cancel physical callback drain. Direct
+actions and custom/subclass/memory/overridden callbacks retain their original
+ABI, TTL and fresh reads.
+
+App shutdown and the supported Console test host share only a bounded finite
+view-worker drain. Capture the exact manager, owning nodes, same-loop Tasks and
+issued workers before cancellation; include Character resume refresh alongside
+existing sync and navigation work. Close host intake through original Textual
+shutdown and drain the captured callbacks before host return or creator close.
+Do not infer physical retirement from Worker state or adopt an unrelated
+Runtime/database/worker. Runtime disposal and creator acceptance keep their
+existing owners and ordering, including borrower and foreign-source refusal.
+
+Original source, actor, actual Future/native handle/operation/lease retirement,
+error priority, repeated cancellation and timing limits remain mandatory.
+Explicit captured work references last until actual retirement; disposal
+refuses late publication. This refines existing ADR-085 view/App ownership and
+ADR-126 finite custody; no permission cache or new storage authority is added.

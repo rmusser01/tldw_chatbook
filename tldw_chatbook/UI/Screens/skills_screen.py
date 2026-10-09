@@ -245,9 +245,10 @@ class SkillRecoveryReviewModal(SafeModalDismissMixin, ModalScreen[bool]):
         current = self._is_current()
         if not current:
             self.query_one("#skills-recovery-continue", Button).disabled = True
-            self.query_one("#skills-recovery-status", Static).update(
-                "Selection changed. Cancel and capture a fresh review."
-            )
+            status = self.query_one("#skills-recovery-status", Static)
+            message = "Selection changed. Cancel and capture a fresh review."
+            if str(status.renderable) != message:
+                status.update(message)
         return current
 
     @on(Button.Pressed, "#skills-recovery-continue")

@@ -319,7 +319,7 @@ async def test_inspector_names_a_saved_folder_before_its_preview_is_ready(
             ),
         )
         preview_gate = asyncio.Event()
-        build_factories = console._console_inspector_next_send_factories
+        build_factories = console._context_spend._console_inspector_next_send_factories
 
         def held_preview(chat_controller, session_id):
             factory, *rest = build_factories(chat_controller, session_id)
@@ -331,7 +331,9 @@ async def test_inspector_names_a_saved_folder_before_its_preview_is_ready(
             return (after_gate, *rest)
 
         monkeypatch.setattr(
-            console, "_console_inspector_next_send_factories", held_preview
+            console._context_spend,
+            "_console_inspector_next_send_factories",
+            held_preview,
         )
         console._set_console_rail_preference(right_open=True)
         await _until(

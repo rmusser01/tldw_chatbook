@@ -10,6 +10,9 @@ from tldw_chatbook.Widgets.Console.console_turn_file_card import (
     ConsoleTurnFileCard,
 )
 
+# The app factory retains the private profile selected at collection.
+pytestmark = pytest.mark.bootstrap_profile
+
 MARKER = "✎ Edited 2 files  +8 −3 — review with `v`"
 
 

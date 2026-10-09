@@ -32,7 +32,7 @@ What was NOT covered, and is pinned here:
    really does skip the `Static.update()` calls), not just an internal memo.
 3. Drilling directly into a *persisted* sub-agent run by its own row id
    (PR2b Task 4 replaced the old cycling toggle with per-row click
-   routing), with `_console_agent_full_log_run_id` tracking drill-in vs
+   routing), with the owned run-log probe tracking drill-in vs
    overview against those same real records.
 4. `_console_subagent_counts_for_rows`' batching and its row-set cache
    invalidation, measured against a real DB rather than a fake bridge.
@@ -42,11 +42,16 @@ What was NOT covered, and is pinned here:
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from types import SimpleNamespace
 
 import pytest
+import pytest_asyncio
 
-from Tests.UI.test_console_fleet_panel import _real_fleet_recovery_database
+from Tests.UI.test_console_fleet_panel import (
+    _real_fleet_recovery_database as _real_fleet_recovery_database,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -64,6 +69,34 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
 #: `test_console_button_routing.py` for why there is no shared constant.
 _AGENT_SECTION_SIZE = (180, 48)
 
+pytestmark = pytest.mark.bootstrap_profile
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _retire_original_agent_fixture_owners(_real_fleet_recovery_database, request):  # noqa: F811 - explicit imported fixture dependency.
+    """Retire exact local producers before the unchanged Fleet DB teardown."""
+    from Tests.UI._agent_fixture_owners import (
+        AgentFixtureOwners,
+        FixtureCallFailure,
+        finish_owner_retirement,
+    )
+
+    owners = AgentFixtureOwners(sys.modules[__name__], pytest_config=request.config)
+    failure = FixtureCallFailure(request.node)
+    request.config.pluginmanager.register(failure)
+    try:
+        owners.install_births()
+        try:
+            yield owners
+        finally:
+            if not await finish_owner_retirement(owners, failure.error):
+                request.node.add_report_section(
+                    "teardown", "Agent fixture cleanup",
+                    "Agent fixture cleanup could not prove owned retirement",
+                )
+    finally:
+        request.config.pluginmanager.unregister(failure)
+
 
 def _bridge_over(db_path) -> ConsoleAgentBridge:
     """A real bridge over a real durable run store -- no fakes anywhere."""
@@ -77,39 +110,53 @@ def _bridge_over(db_path) -> ConsoleAgentBridge:
 def _seed_done_primary_with_subagents(db_path, *, conversation_id="conv-A", tasks=()):
     """Persist one finished primary run plus a sub-agent run per ``tasks``."""
     db = AgentRunsDB(db_path, client_id="t")
-    primary_id = db.create_run(conversation_id=conversation_id, agent_kind="primary")
-    db.append_steps(
-        primary_id,
-        [
-            {
-                "index": 0,
-                "kind": "model",
-                "summary": "final answer",
-                "tool_name": "",
-                "args": None,
-                "result": "",
-                "created_at": "",
-            },
-        ],
-    )
-    db.set_status(primary_id, "done", result="final answer")
-    sub_ids = []
-    for task in tasks:
-        sub_id = db.create_run(
-            conversation_id=conversation_id,
-            agent_kind="subagent",
-            task=task,
-            parent_run_id=primary_id,
+    try:
+        primary_id = db.create_run(conversation_id=conversation_id, agent_kind="primary")
+        db.append_steps(
+            primary_id,
+            [
+                {
+                    "index": 0,
+                    "kind": "model",
+                    "summary": "final answer",
+                    "tool_name": "",
+                    "args": None,
+                    "result": "",
+                    "created_at": "",
+                },
+            ],
         )
-        db.set_status(sub_id, "done", result=f"done {task}")
-        sub_ids.append(sub_id)
-    return primary_id, sub_ids
+        db.set_status(primary_id, "done", result="final answer")
+        sub_ids = []
+        for task in tasks:
+            sub_id = db.create_run(
+                conversation_id=conversation_id,
+                agent_kind="subagent",
+                task=task,
+                parent_run_id=primary_id,
+            )
+            db.set_status(sub_id, "done", result=f"done {task}")
+            sub_ids.append(sub_id)
+        return primary_id, sub_ids
+    finally:
+        db.close()
 
 
 def _static_text(console, widget_id: str) -> str:
     from textual.widgets import Static
 
     return str(console.query_one(widget_id, Static).renderable)
+
+
+async def _await_historical_projection(console) -> None:
+    """Await the exact owned callback before checking persisted rail copy."""
+    console._agent._console_agent_fleet_rows()
+    state = console._agent._console_historical_read
+    assert state is not None
+    if state["pending"]:
+        await state["worker"].wait()
+    assert console._agent._console_historical_read is state
+    assert state["value"] is not None
 
 
 @pytest.mark.asyncio
@@ -141,6 +188,8 @@ async def test_persisted_run_state_reaches_the_mounted_agent_rail_statics(tmp_pa
         # Precondition: nothing live -- the text below can only come from the
         # persisted run store.
         assert bridge.live_snapshot("conv-A").status == "idle"
+
+        await _await_historical_projection(console)
 
         status_line, steps_text, subagents_text = (
             console._agent._console_agent_section_lines()
@@ -218,6 +267,7 @@ async def test_agent_section_sync_skips_repainting_an_unchanged_payload(tmp_path
         console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
+        await _await_historical_projection(console)
         console._sync_console_agent_section()
         assert _static_text(console, "#console-agent-section-status") == "Agent: done"
 
@@ -266,40 +316,43 @@ async def test_drilldown_row_click_retargets_the_full_log_to_that_run(
         console._character._current_console_rail_conversation_id = lambda: "conv-A"
         console._agent._console_agent_drilldown_conversation_id = "conv-A"
 
+        async def full_log_run_id():
+            # Metadata and log availability now share the exact owned worker.
+            # Await that callback rather than a removed synchronous resolver.
+            console._agent._console_agent_full_log_available()
+            worker = console._agent._console_agent_full_log_probe_worker
+            assert worker is not None
+            await worker.wait()
+            await pilot.pause()
+            return console._agent._console_agent_full_log_cache_run_id
+
         # Overview: the affordance targets the conversation's latest primary.
-        #
-        # `_console_agent_full_log_run_id` is the ONE name in this file that
-        # had to follow the wave-4 task-3 extraction: it has no consumer
-        # outside the agent cluster, so it moved to `ConsoleAgentController`
-        # with no screen-level delegation. Every other assertion here still
-        # reads through `ChatScreen`'s own names, unchanged from the
-        # pre-move run.
-        full_log_run_id = console._agent._console_agent_full_log_run_id
-        assert full_log_run_id() == primary_id
+        assert await full_log_run_id() == primary_id
 
         # Drill into the OLDEST sub-agent's row directly -- not "the first
         # one a cycling cursor would reach".
         console._agent._drill_into_console_agent_subagent(oldest_sub)
         await pilot.pause()
         assert console._console_agent_drilldown_run_id == oldest_sub
-        assert full_log_run_id() == oldest_sub
+        assert await full_log_run_id() == oldest_sub
 
         # Click a DIFFERENT row next, out of any sequential order -- proves
         # each row resolves to its own run independently of drill history.
         console._agent._drill_into_console_agent_subagent(newest_sub)
         await pilot.pause()
         assert console._console_agent_drilldown_run_id == newest_sub
-        assert full_log_run_id() == newest_sub
+        assert await full_log_run_id() == newest_sub
 
         # Back to the overview (the dedicated Back button's own effect,
         # not a row) -- the affordance reverts to the latest primary run.
         console._console_agent_drilldown_run_id = None
-        assert full_log_run_id() == primary_id
+        assert await full_log_run_id() == primary_id
 
 
 @pytest.mark.asyncio
 async def test_subagent_badge_counts_batch_once_and_cache_until_the_row_set_changes(
     tmp_path,
+    monkeypatch,
 ):
     """One batched DB query per refresh, and no re-query while the visible
     row set is unchanged (the 0.2s poll tick calls this every time)."""
@@ -315,7 +368,17 @@ async def test_subagent_badge_counts_batch_once_and_cache_until_the_row_set_chan
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
 
+        # This cache test supplies AB/A rows directly. The mounted browser
+        # owns a separate native conversation row set; isolate only its
+        # declared display dependency so the global DB spy has one consumer.
+        monkeypatch.setattr(
+            console._workspace,
+            "_subagent_counts_for_rows_fn",
+            lambda _bridge, _rows: {},
+        )
+
         bridge = _bridge_over(db_path)
+        console._console_agent_bridge = bridge
         calls: list[list[str]] = []
         original = bridge._db.count_subagents_by_conversation
 
@@ -330,6 +393,10 @@ async def test_subagent_badge_counts_batch_once_and_cache_until_the_row_set_chan
             SimpleNamespace(conversation_id="conv-B"),
         ]
 
+        assert console._agent._console_subagent_counts_for_rows(bridge, rows_ab) == {}
+        assert calls == []
+        while console._agent._console_subagent_counts_read[frozenset({"conv-A", "conv-B"})]["pending"]:
+            await asyncio.sleep(0.01)
         counts = console._agent._console_subagent_counts_for_rows(bridge, rows_ab)
         assert counts == {"conv-A": 2, "conv-B": 1}
         assert calls == [["conv-A", "conv-B"]]
@@ -342,9 +409,10 @@ async def test_subagent_badge_counts_batch_once_and_cache_until_the_row_set_chan
         assert len(calls) == 1
 
         # The visible row set changed -- one more batched query, still one.
-        assert console._agent._console_subagent_counts_for_rows(
-            bridge, rows_ab[:1]
-        ) == {"conv-A": 2}
+        assert console._agent._console_subagent_counts_for_rows(bridge, rows_ab[:1]) == {}
+        while console._agent._console_subagent_counts_read[frozenset({"conv-A"})]["pending"]:
+            await asyncio.sleep(0.01)
+        assert console._agent._console_subagent_counts_for_rows(bridge, rows_ab[:1]) == {"conv-A": 2}
         assert calls[-1] == ["conv-A"]
         assert len(calls) == 2
 

@@ -377,6 +377,7 @@ async def test_tab_and_sidebar_show_run_markers_and_fleet_line() -> None:
         assert "1 other agents running, 0 waiting for approval." in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_transcript_sync_timer_keeps_ticking_for_background_run_while_viewed_idle() -> (
     None

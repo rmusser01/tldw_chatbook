@@ -6,6 +6,7 @@ import asyncio
 from contextlib import ExitStack, contextmanager
 from functools import wraps
 import threading
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -498,12 +499,26 @@ class SchedulerLoop:
                 except asyncio.TimeoutError:
                     pass
         finally:
+            primary = sys.exception()
+            cancellation = None
+            while self._maintenance_db_tasks:
+                owned = asyncio.gather(
+                    *tuple(self._maintenance_db_tasks), return_exceptions=True
+                )
+                while not owned.done():
+                    try:
+                        await asyncio.shield(owned)
+                    except asyncio.CancelledError as error:
+                        cancellation = cancellation or error
+                owned.result()
             self._running_since = None
             with self._reload_condition:
                 self.running = False
                 self._owner_loop = None
                 self._reload_event = None
                 self._reload_condition.notify_all()
+            if cancellation is not None and primary is None:
+                raise cancellation
 
     @_admitted_dispatch
     async def tick(self) -> None:
@@ -586,8 +601,8 @@ class SchedulerLoop:
     async def _emergency_stopped(self) -> bool:
         """Whether the global emergency stop holds new dispatches (26004).
 
-        The stop-state read is blocking file I/O, so it runs off the event
-        loop (TASK-31507). Fail-safe is preserved: an offload failure reads
+        Both configured path resolution and the stop-state read can block, so
+        they run in one owned offload (TASK-34561). Fail-safe is preserved: a failure reads
         as stopped, holding work rather than proceeding on doubt.
         """
         # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
@@ -600,10 +615,13 @@ class SchedulerLoop:
             # Config can refuse this lookup when native backup intent arrives
             # before local scheduler settlement. An unknown stop state holds
             # dispatch just like an unreadable sentinel; the next tick retries.
-            path = getattr(self, "_emergency_stop_path", None) or (
-                default_emergency_stop_path()
-            )
-            return await self._offload(is_emergency_stopped, path)
+            explicit_path = getattr(self, "_emergency_stop_path", None)
+
+            def read_stop_state() -> bool:
+                path = explicit_path or default_emergency_stop_path()
+                return is_emergency_stopped(path)
+
+            return await self._offload(read_stop_state)
         except Exception:  # noqa: BLE001 -- doubt holds work (AC#4 of 26004)
             return True
 

@@ -307,7 +307,35 @@ class _Tracer:
 
         self.active = False
         self.paths: set[str] = set()
+        self.guard_paths: set[str] = set()
+        self.relative_callers: dict[str, list[str]] = {}
         self._fcntl = fcntl
+        from Tests import real_profile_guard
+
+        guard_protected = real_profile_guard._protected.__code__
+        guard_hook = real_profile_guard._hook.__code__
+        realpath_code = os.path.realpath.__code__
+
+        def guard_probe(name: str, frame) -> bool:
+            """Recognize only a realpath probe of the guard's write-open input."""
+            saw_realpath = False
+            for _ in range(8):
+                if frame is None:
+                    return False
+                if frame.f_code is realpath_code:
+                    saw_realpath = True
+                if frame.f_code is guard_protected:
+                    caller = frame.f_back
+                    return bool(
+                        saw_realpath
+                        and frame.f_locals.get("raw") == name
+                        and frame.f_locals.get("dir_fd") is None
+                        and caller is not None
+                        and caller.f_code is guard_hook
+                        and caller.f_locals.get("event") == "open"
+                    )
+                frame = frame.f_back
+            return False
 
         def absolute(target, dir_fd=None) -> None:
             if not self.active:
@@ -318,7 +346,26 @@ class _Tracer:
                 name = os.fsdecode(target)
                 if dir_fd is not None and not os.path.isabs(name):
                     name = os.path.join(self._fd_path(dir_fd), name)
+                if not os.path.isabs(name) and guard_probe(name, sys._getframe(1)):
+                    # The open audit event omits dir_fd. The unchanged profile
+                    # guard therefore probes this leaf against cwd in realpath;
+                    # it is observer IO, not an admission dependency. Exact code
+                    # identity and input are required; leaf names grant nothing.
+                    self.guard_paths.add(name)
+                    return
                 self.paths.add(os.path.normpath(name))
+                if not os.path.isabs(name):
+                    # Source-line formatting would itself open Python files
+                    # and contaminate this dependency observer.
+                    frames = []
+                    frame = sys._getframe(1)
+                    for _ in range(8):
+                        if frame is None:
+                            break
+                        code = frame.f_code
+                        frames.append(f"{code.co_filename}:{frame.f_lineno}:{code.co_name}")
+                        frame = frame.f_back
+                    self.relative_callers.setdefault(name, frames)
 
         def wrap(original):
             def traced(target=".", *args, **kwargs):
@@ -424,8 +471,52 @@ def test_the_evidence_stamps_every_path_the_derivation_reads(
 
     assert str(root / "admission" / "registry.json") in tracer.paths, "trace saw nothing"
     unstamped = sorted(p for p in tracer.paths if not covered(p))
-    assert not unstamped, "\n".join(unstamped)
+    assert not unstamped, "\n".join(unstamped) + "\n" + repr(tracer.relative_callers)
 
+
+
+@pytest.mark.skipif(
+    sys.platform != "darwin", reason="actual macOS guard realpath probes"
+)
+def test_guard_probes_are_separate_from_descriptor_and_unknown_relative_reads(
+    tmp_path, monkeypatch
+):
+    """Attribution must not hide a real relative read with the same leaf name."""
+    monkeypatch.chdir(tmp_path)
+    tracer = _Tracer(monkeypatch)
+    descriptor = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    tracer.active = True
+    try:
+        child = os.open(
+            "observer-child", os.O_CREAT | os.O_WRONLY, 0o600, dir_fd=descriptor
+        )
+        os.close(child)
+        assert str(tmp_path / "observer-child") in tracer.paths
+        assert "observer-child" in tracer.guard_paths
+        assert "observer-child" not in tracer.paths
+        os.lstat("observer-child")
+        assert "observer-child" in tracer.paths
+        assert tracer.relative_callers["observer-child"]
+    finally:
+        tracer.active = False
+        os.close(descriptor)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="actual macOS F_GETPATH observer")
+def test_unknown_relative_read_is_never_classified_by_its_leaf_name(
+    tmp_path, monkeypatch
+):
+    """Names resembling control records do not establish observer provenance."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "registry.lock").write_bytes(b"test")
+    tracer = _Tracer(monkeypatch)
+    tracer.active = True
+    try:
+        os.lstat("registry.lock")
+    finally:
+        tracer.active = False
+    assert "registry.lock" in tracer.paths
+    assert "registry.lock" not in tracer.guard_paths
 
 def test_restoring_a_drifted_selector_is_not_served_from_unbound_evidence(
     local_scope, reuse_switch  # noqa: F811
@@ -531,10 +622,12 @@ def test_an_absence_proved_root_is_never_served_from_evidence(
 
 
 def test_a_failed_recheck_after_counting_closes_the_reused_lease(
-    local_scope, reuse_switch, monkeypatch  # noqa: F811
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
 ):
-    """An observation that raises after reuse counted its lease closes the lease,
-    as the derivation's own failure path does, so the hold can still drain
+    """An optional observation failure closes the counted lease before fallback,
+    so the unchanged full derivation can succeed and the hold can still drain
     (Qodo, #2919).
 
     Args:
@@ -552,13 +645,22 @@ def test_a_failed_recheck_after_counting_closes_the_reused_lease(
             assert _verdict(target)[0] == "allowed"
         held = sum(hold.count for hold in storage._holds.values())
 
-        def unreadable(self):
-            raise PermissionError("an admitted directory became unreadable")
+        derivations = []
+        original_scope = storage._scope
 
-        monkeypatch.setattr(storage._Evidence, "observe", unreadable)
-        with pytest.raises((PermissionError, bootstrap.RecoveryRequired)):
-            with storage.acquire_storage(target):
-                pass
+        def full_derivation(*args, **kwargs):
+            derivations.append(True)
+            return original_scope(*args, **kwargs)
+
+        def unreadable(*paths):
+            raise PermissionError("optional admission evidence became unreadable")
+
+        monkeypatch.setattr(storage, "_scope", full_derivation)
+        monkeypatch.setattr(storage, "_observe_stamps", unreadable)
+        # An unavailable optional observation falls back to full authority;
+        # it cannot fabricate a refusal while the real filesystem is unchanged.
+        assert _verdict(target)[0] == "allowed"
+        assert derivations
         assert sum(hold.count for hold in storage._holds.values()) == held
     finally:
         startup.close()

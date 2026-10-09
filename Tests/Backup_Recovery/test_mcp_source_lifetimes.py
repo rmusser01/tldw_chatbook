@@ -21,7 +21,7 @@ def mcp_sources(tmp_path, monkeypatch, local_root):
     data = tmp_path / "data"
     data.mkdir(mode=0o700)
     target = tmp_path / "config.toml"
-    target.write_text(f'[paths]\ndata_dir = "{data}"\n')
+    target.write_text(f'[paths]\ndata_dir = "{data.as_posix()}"\n', encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
     config = install_config_source(monkeypatch)
     data = config.get_user_data_dir()
@@ -50,10 +50,24 @@ def test_actual_reader_refuses_before_read_or_recovery(mcp_sources, index):
 
 
 def test_permission_rmw_admitted_before_pause_finishes(mcp_sources, monkeypatch):
+    from tldw_chatbook.MCP import recovery_activation
+
     source = mcp_sources[3]
+    # False is the absent-store default, so a no-op does not create bytes.
+    # Seed a real persisted policy before observing its admitted RMW read.
+    source.set_kill_switch(True)
     source.set_kill_switch(False)
+    assert source.path.exists()
     original = json.loads
     pauses = []
+    acquisitions = []
+    acquire = recovery_activation.acquire_storage
+
+    def admitted(*args, **kwargs):
+        acquisitions.append(bool(pauses))
+        return acquire(*args, **kwargs)
+
+    monkeypatch.setattr(recovery_activation, "acquire_storage", admitted)
 
     def loaded_then_pause(value, *args, **kwargs):
         result = original(value, *args, **kwargs)
@@ -65,6 +79,9 @@ def test_permission_rmw_admitted_before_pause_finishes(mcp_sources, monkeypatch)
     try:
         source.set_kill_switch(True)
         assert pauses
+        assert acquisitions and not any(
+            acquisitions
+        ), "accepted mutation reacquired after pause"
         assert original(source.path.read_text())["kill_switch"] is True
     finally:
         for pause in pauses:
@@ -115,7 +132,9 @@ def test_same_path_distinct_source_cannot_borrow_admitted_permission(
 ):
     source = mcp_sources[3]
     other = type(source)(source.path)
+    source.set_kill_switch(True)
     source.set_kill_switch(False)
+    assert source.path.exists()
     original = json.loads
     pauses = []
 
@@ -132,6 +151,7 @@ def test_same_path_distinct_source_cannot_borrow_admitted_permission(
     monkeypatch.setattr(json, "loads", loaded)
     try:
         source.set_kill_switch(True)
+        assert pauses, "foreign source refusal barrier was never reached"
         assert original(source.path.read_text())["kill_switch"]
     finally:
         for pause in pauses:
@@ -275,12 +295,12 @@ def test_permission_preflight_pause_has_no_payload_or_backup_effects(
 
 def _private_child(request, kind):
     import os
-    from pathlib import Path
     import subprocess
     import sys
 
     if os.environ.get("TASK10_MCP_CHILD") == kind:
         return False
+    output_root = request.getfixturevalue("tmp_path")
     result = subprocess.run(
         [
             sys.executable,
@@ -289,15 +309,15 @@ def _private_child(request, kind):
             request.node.nodeid,
             "-q",
             "-o",
-            "cache_dir=/private/tmp/task10-phase11-child-cache",
+            f"cache_dir={output_root / 'child-cache'}",
         ],
         env={**os.environ, "TASK10_MCP_CHILD": kind, "PYTHONDONTWRITEBYTECODE": "1"},
         capture_output=True,
         text=True,
         timeout=45,
     )
-    Path(f"/private/tmp/task10-phase11-child-{kind}.log").write_text(
-        result.stdout + result.stderr
+    (output_root / f"mcp-child-{kind}.log").write_text(
+        result.stdout + result.stderr, encoding="utf-8"
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return True
@@ -316,22 +336,29 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
     if _private_child(request, f"{point}-{timing}"):
         return
     import os
-    import select
+    import stat
+    from Tests.pipe_readiness import pipe_readable
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
     from tldw_chatbook.Utils import private_paths
 
     permission, history = mcp_sources[3:]
+    permission.set_kill_switch(True)
     permission.set_kill_switch(False)
     history.append(_record("before"))
+    if point == "history_read":
+        # A new actual reader naturally misses append's sanitized-byte cache.
+        history = type(history)(history.path)
     source = permission if point == "permission_parent" else history
     payload = permission.load()
-    stamp = payload.get("updated_at")
+    assert permission.path.is_file() and "updated_at" in payload
+    stamp = payload["updated_at"]
     payload["kill_switch"] = True
     history.max_records_per_file = 1
     # Test child only: retire its known quiescent startup, then prove exclusion
     # comes from actual MCP source/native holds, not startup overlap.
     storage._startups[(os.getpid(), str(local_root))].close()
     target = []
+    attempts = []
     real_close = os.close
     real_replace = raw._replace
     real_stream_close = private_paths._close_runtime_stream
@@ -347,13 +374,23 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
     def stream_close(operation, stream):
         state = raw._states[operation]
         mode = getattr(stream, "mode", "")
-        if state.source is source and (
-            point == "history_read"
-            and "r" in mode
-            or point == "history_append"
-            and "a" in mode
+        if (
+            state.source is source
+            and not target
+            and (
+                point == "history_read"
+                and "r" in mode
+                or point == "history_append"
+                and "a" in mode
+            )
         ):
-            target.append(stream.fileno())
+            descriptor = stream.fileno()
+            assert stream in state.files and descriptor in state.descriptors
+            opened = raw.os.fstat(descriptor)
+            named = raw.os.stat(source.path, follow_symlinks=False)
+            assert stat.S_ISREG(opened.st_mode)
+            assert (opened.st_dev, opened.st_ino) == (named.st_dev, named.st_ino)
+            target.append(descriptor)
         return real_stream_close(operation, stream)
 
     def native_close(fd):
@@ -377,6 +414,7 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
 
     def uncertain_close(fd):
         if target and fd == target[0]:
+            attempts.append(fd)
             if timing == "after":
                 real_close(fd)
             raise OSError("injected native close uncertainty")
@@ -396,7 +434,7 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
         else:
             history.append(_record("after"))
     monkeypatch.setattr(os, "close", real_close)
-    assert target
+    assert target and attempts == [target[0]]
     if timing == "before":
         assert os.fstat(target[0])
     assert source._mcp_persistence_error == "mcp_persistence_incomplete"
@@ -410,7 +448,7 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
     try:
         assert not participant.drain(time.monotonic() + 0.02)
         assert not pause.drain(time.monotonic() + 0.02)
-        assert not select.select([observer.stdout], [], [], 0.06)[0]
+        assert not pipe_readable(observer.stdout, 0.06)
     finally:
         observer.kill()
         observer.wait(timeout=5)
@@ -424,7 +462,7 @@ def test_independent_maintainer_enters_after_history_rotation_native_close(
     if _private_child(request, "rotation-observer"):
         return
     import os
-    import select
+    from Tests.pipe_readiness import pipe_readable
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
     from tldw_chatbook.Utils import private_paths
 
@@ -450,7 +488,7 @@ def test_independent_maintainer_enters_after_history_rotation_native_close(
                 local_root / "admission", "maintenance", ("bootstrap.unbound",)
             )
             observers.append(observer)
-            assert not select.select([observer.stdout], [], [], 0.05)[0]
+            assert not pipe_readable(observer.stdout, 0.05)
 
     monkeypatch.setattr(private_paths, "_native_close", closed)
     try:

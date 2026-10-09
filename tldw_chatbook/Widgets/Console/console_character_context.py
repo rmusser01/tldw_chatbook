@@ -95,7 +95,8 @@ class ConsoleCharacterContext(Vertical):
         self._controller = controller
         self._state = controller.state
         self._identity_state = identity_state
-        self._task: asyncio.Task[Any] | None = None
+        # Textual retains _task for its message pump and awaited DOM removal.
+        self._controller_task: asyncio.Task[Any] | None = None
         self._browse_focus: ConsoleCharacterFocusIdentity | None = None
         self._recompose_generation = 0
         self._focus_intent_generation = 0
@@ -152,7 +153,22 @@ class ConsoleCharacterContext(Vertical):
             self._pending_focus_restore = None
 
     def _start(self, coroutine: Any) -> None:
-        self._task = asyncio.create_task(coroutine)
+        worker = self.run_worker(
+            coroutine,
+            group="console-character-context-refresh",
+            exclusive=False,
+            exit_on_error=False,
+        )
+        self._controller_task = worker._task
+
+    async def on_unmount(self) -> None:
+        """Join this widget's actual readers before its DOM lifetime ends."""
+        from ...UI.Console_Modules.view_workers import (
+            capture_console_view_workers,
+            drain_console_view_workers,
+        )
+
+        await drain_console_view_workers(capture_console_view_workers(self.app, self))
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action == "clear_search":

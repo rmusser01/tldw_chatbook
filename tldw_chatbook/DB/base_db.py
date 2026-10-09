@@ -48,11 +48,13 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     close = getattr(database, "close_connection", None)
     if local is None or registry is None or not callable(close):
         from .AgentRuns_DB import AgentRunsDB
+        from .Client_Media_DB_v2 import MediaDatabase
         from .Library_Collections_DB import LibraryCollectionsDB
         from .Workspace_DB import WorkspaceDB
 
         if (
-            type(database) not in {AgentRunsDB, LibraryCollectionsDB, WorkspaceDB}
+            type(database)
+            not in {AgentRunsDB, LibraryCollectionsDB, MediaDatabase, WorkspaceDB}
             or database.is_memory_db
         ):
             yield
@@ -61,7 +63,11 @@ def operation_owned_connection(database: object) -> Iterator[None]:
 
         # A raw close can leave a stale cache. Use the same native retirement
         # evidence as the getter; a still-live borrowed handle remains owned.
-        local = database._thread_local
+        local = (
+            database._local
+            if type(database) is MediaDatabase
+            else database._thread_local
+        )
         close = database.close
         previous = _core_cached_connection(database, getattr(local, "conn", None))
         borrowed = previous is not None
@@ -85,6 +91,8 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
 ) -> _CallResult:
     """Run a finite callback and retire only its newly opened worker handle.
 
+    Qualified callbacks retain one counted repository interval through their
+    complete body. The interval exits before retiring a new native handle.
     Cancellation of the awaiting task does not close a handle still in use by
     its executor callback. Existing connections and memory/custom owners retain
     their original lifetimes.
@@ -96,8 +104,11 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
 
         if type(database) not in {AgentRunsDB, CharactersRAGDB, WorkspaceDB} or database.is_memory_db:
             return operation(*args, **kwargs)
+        from tldw_chatbook.Backup_Recovery.participants import _core_operation
+
         with operation_owned_connection(database):
-            return operation(*args, **kwargs)
+            with _core_operation(database):
+                return operation(*args, **kwargs)
 
     return await asyncio.to_thread(invoke)
 
@@ -1058,3 +1069,54 @@ class BaseDB(ABC):
         except Exception as e:
             logger.error(f"Failed to check database integrity: {e}")
             return False
+# Definition-time identities for the finite Character display reader only.
+_CHARACTER_REFRESH_READERS = tuple(
+    (
+        None,
+        name,
+        descriptor,
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        __file__,
+        __spec__,
+        getattr(__spec__, "origin", None),
+    )
+    for name in ("run_owned_db_call",)
+    for descriptor in (globals()[name],)
+    for function in (
+        descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
+    )
+)
+
+
+# Defining originals for finite Workspace connection ownership only.
+_WORKSPACE_OWNED_CONNECTION_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        )
+        for function in (
+            operation_owned_connection,
+            operation_owned_connection.__wrapped__,
+            BaseDB._get_connection,
+        )
+    ),
+    (BaseDB, BaseDB._get_connection),
+)

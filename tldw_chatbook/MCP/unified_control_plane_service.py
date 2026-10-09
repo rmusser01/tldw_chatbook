@@ -5,9 +5,10 @@ import inspect
 import json
 import math
 import secrets
+import sys
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -294,6 +295,21 @@ def _refusal_decision_for_hub_test(reason: str | None, final_gate: str | None) -
     # or crashed test): nothing resolved, so neither a person nor a setting
     # refused this.
     return UNRESOLVED_DENIED_DECISION
+
+
+def _resolve_tool_states_from_payload(
+    payload: dict[str, Any],
+    tools: Sequence[HubTool],
+    *,
+    profile_id: str,
+) -> dict[tuple[str, str], EffectiveToolState]:
+    """Project policy from one observation without source reads or mutations."""
+    return {
+        (tool.server_key, tool.name): resolve_effective_state(
+            payload, tool, profile_id=profile_id
+        )
+        for tool in tools
+    }
 
 
 class UnifiedMCPControlPlaneService:
@@ -2416,16 +2432,51 @@ class UnifiedMCPControlPlaneService:
 
     @producer_call
     async def local_external_catalog(self) -> list[dict]:
-        # Records (profile fields + discovery_snapshot + is_connected) still
-        # come from the local service so governance enforcement and
-        # is_connected (read from the live client sessions) are unchanged.
-        # `runtime_state` is merged in from a single store bundle load
-        # rather than one `get_profile_runtime_state()` load per record.
-        records = list(self.local_service.get_external_servers() or [])
-        store = getattr(self.local_service, "store", None)
-        runtime_state_by_profile: dict[str, Any] = (
-            store.get_catalog_bundle()["profile_runtime_state"] if store else {}
+        from .console_snapshot import (
+            _CapturedLocalCatalog,
+            _owned_worker,
+            standard_local_catalog_sources,
         )
+
+        local = self.local_service
+        store = getattr(local, "store", None)
+        if standard_local_catalog_sources(local, store):
+            from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+            captured = _CapturedLocalCatalog(local, store)
+
+            def require_current():
+                if self.local_service is not local:
+                    raise RecoveryRequired("mcp_source_selection_changed")
+                captured.require_current()
+
+            local._require_allowed("mcp.external_profiles.list.local")
+            require_current()
+            bundle = await _owned_worker(captured.read_bundle)
+            require_current()
+            local._require_allowed("mcp.external_profiles.list.local")
+            require_current()
+            catalog = [
+                {
+                    **profile,
+                    "discovery_snapshot": bundle["discovery_snapshots"].get(
+                        str(profile["profile_id"]).strip()
+                    ),
+                }
+                for profile in bundle["profiles"]
+            ]
+            client = local.client
+            active_sessions = (
+                getattr(client, "sessions", {}) if client is not None else {}
+            )
+            records = captured.projector(catalog, active_sessions=active_sessions)
+            require_current()
+            runtime_state_by_profile = bundle["profile_runtime_state"]
+        else:
+            records = list(local.get_external_servers() or [])
+            runtime_state_by_profile = (
+                store.get_catalog_bundle()["profile_runtime_state"] if store else {}
+            )
         for record in records:
             profile_id = str(record.get("profile_id") or "")
             record["runtime_state"] = runtime_state_by_profile.get(profile_id)
@@ -5366,7 +5417,12 @@ class UnifiedMCPControlPlaneService:
         return self._permission_store
 
     def effective_tool_states(
-        self, tools: list[HubTool], *, profile_id: str = "default"
+        self,
+        tools: list[HubTool],
+        *,
+        profile_id: str = "default",
+        _captured_permission_store: MCPPermissionStore | None = None,
+        _captured_execution_log: Callable[[], MCPExecutionLog | None] | None = None,
     ) -> dict[tuple[str, str], EffectiveToolState]:
         """Resolve the effective allow/ask/deny state for every tool in ``tools``.
 
@@ -5400,7 +5456,11 @@ class UnifiedMCPControlPlaneService:
         `EffectiveToolState(state="ask", origin="global_default")` (fail
         closed).
         """
-        store = self.permission_store
+        store = (
+            _captured_permission_store
+            if _captured_permission_store is not None
+            else self.permission_store
+        )
         if store is None:
             return {
                 (tool.server_key, tool.name): EffectiveToolState(
@@ -5412,14 +5472,31 @@ class UnifiedMCPControlPlaneService:
         payload = store.load()
         results: dict[tuple[str, str], EffectiveToolState] = {}
         for tool in tools:
-            effective = resolve_effective_state(payload, tool, profile_id=profile_id)
+            # Retain per-tool audit order for the public/custom route. Stock
+            # shared preparation projects the whole catalog from its one payload.
+            effective = _resolve_tool_states_from_payload(
+                payload, (tool,), profile_id=profile_id
+            )[(tool.server_key, tool.name)]
             results[(tool.server_key, tool.name)] = effective
             if effective.config_changed:
-                self._audit_downgrade_if_fresh(store, tool, profile_id=profile_id)
+                if _captured_execution_log is None:
+                    self._audit_downgrade_if_fresh(store, tool, profile_id=profile_id)
+                else:
+                    self._audit_downgrade_if_fresh(
+                        store,
+                        tool,
+                        profile_id=profile_id,
+                        _captured_execution_log=_captured_execution_log,
+                    )
         return results
 
     def _audit_downgrade_if_fresh(
-        self, store: MCPPermissionStore, tool: HubTool, *, profile_id: str = "default"
+        self,
+        store: MCPPermissionStore,
+        tool: HubTool,
+        *,
+        profile_id: str = "default",
+        _captured_execution_log: Callable[[], MCPExecutionLog | None] | None = None,
     ) -> None:
         # Best-effort, same never-raise contract as `_record_tool_execution`:
         # a persistence/logging failure here must never propagate out of
@@ -5431,7 +5508,11 @@ class UnifiedMCPControlPlaneService:
             )
             if not newly_marked:
                 return
-            log = self.execution_log
+            log = (
+                _captured_execution_log()
+                if _captured_execution_log is not None
+                else self.execution_log
+            )
             if log is None:
                 return
             record = build_record(
@@ -5747,3 +5828,69 @@ class UnifiedMCPControlPlaneService:
         return resolve_effective_state_by_key(
             payload, server_key, tool_name, profile_id=profile_id
         )
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_METHODS = (
+    ("permission_store", UnifiedMCPControlPlaneService.permission_store),
+    ("execution_log", UnifiedMCPControlPlaneService.execution_log),
+    ("get_kill_switch", UnifiedMCPControlPlaneService.get_kill_switch),
+    ("effective_tool_states", UnifiedMCPControlPlaneService.effective_tool_states),
+    ("local_external_catalog", UnifiedMCPControlPlaneService.local_external_catalog),
+    ("_audit_downgrade_if_fresh", UnifiedMCPControlPlaneService._audit_downgrade_if_fresh),
+)
+
+
+# TASK-34561: definition-time provenance of the omitted controller callback.
+# These are callable inputs only; the provider still reads live native policy.
+_CONSOLE_CONTROLLER_SWITCH_MODULE = sys.modules[__name__]
+_CONSOLE_CONTROLLER_SWITCH_CLASS = UnifiedMCPControlPlaneService
+
+
+def _capture_controller_inputs(function):
+    keyword_defaults = function.__kwdefaults__
+    closure = function.__closure__
+    return (
+        function.__defaults__,
+        keyword_defaults,
+        tuple(dict.items(keyword_defaults)) if keyword_defaults is not None else (),
+        closure,
+        tuple((cell, cell.cell_contents) for cell in closure or ()),
+    )
+
+
+_CONSOLE_CONTROLLER_SWITCH_METHODS = tuple(
+    (
+        name,
+        descriptor,
+        function,
+        function.__code__,
+        function.__globals__,
+        _capture_controller_inputs(function),
+    )
+    for name in ("get_kill_switch", "permission_store")
+    for descriptor in (vars(UnifiedMCPControlPlaneService)[name],)
+    for function in (descriptor.fget if type(descriptor) is property else descriptor,)
+)
+
+
+# Definition-time provenance for pure policy projection moved to the owner loop.
+# Replaced helpers keep the public worker route; this table carries no authority.
+_CONSOLE_TOOL_STATE_RESOLVER_BINDINGS = tuple(
+    (
+        function.__globals__, name, function, function.__code__,
+        _capture_controller_inputs(function),
+    )
+    for name, function in (
+        ("_resolve_tool_states_from_payload", _resolve_tool_states_from_payload),
+        *(
+            (name, vars(sys.modules[resolve_effective_state.__module__])[name])
+            for name in (
+                "resolve_effective_state", "_as_mapping", "_profile_chain",
+                "_profile_chain_ids", "_lifecycle_resolution_block",
+                "profile_lifecycle_disposition", "_has_exact_keys", "_is_sha256",
+                "_is_positive_int", "_is_nonnegative_int", "_is_utc_timestamp",
+                "definition_hash",
+            )
+        ),
+    )
+)

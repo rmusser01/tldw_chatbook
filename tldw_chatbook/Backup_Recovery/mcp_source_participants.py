@@ -53,11 +53,39 @@ class _Binding:
 def _selected(source, owner, canonical):
     if owner in {"mcp.local", "mcp.permissions", "mcp.context"}:
         from ..MCP.recovery_activation import selected_path
+        from . import raw_participants as raw
 
         if getattr(source, "_recovery_original_path", None) != canonical:
             return canonical
-        return selected_path(canonical)
+        with raw._pending_mcp_observation(source, canonical) as retained:
+            return selected_path(
+                canonical,
+                retained=(
+                    raw._mcp_observation(source, canonical)
+                    if retained is None
+                    else retained
+                ),
+            )
     return canonical
+
+
+def canonical_path(source):
+    """Name the installed canonical observer after its fresh binding proof."""
+    bound = _BINDINGS.get(source)
+    kind = _kind(source)
+    if bound is None or kind is None or type(source) is not bound.source_type:
+        raise bootstrap.RecoveryRequired("mcp_source_not_supported")
+    config = bound.config
+    data = config._CONFIG_CACHE
+    if (
+        sys.modules.get("tldw_chatbook.config") is not config
+        or profile_paths.lexical_path(config._get_effective_config_path())
+        != bound.profile
+        or config._CONFIG_CACHE_SOURCE != bound.profile
+        or data is None
+    ):
+        raise bootstrap.RecoveryRequired("mcp_source_selection_changed")
+    return profile_paths.lexical_path(profile_paths.user_data_dir(data) / kind[2])
 
 
 def _kind(source):
@@ -66,6 +94,19 @@ def _kind(source):
         if cls is not None and isinstance(source, cls):
             return cls, owner, leaf
     return None
+
+
+def _source_owner(source):
+    """Name the actual producer kind without selected-path authority."""
+    kind = _kind(source)
+    if kind is None:
+        raise bootstrap.RecoveryRequired("mcp_source_not_supported")
+    bound = _BINDINGS.get(source)
+    if bound is not None and (
+        kind[0] is not bound.source_type or type(source) is not bound.source_type
+    ):
+        raise bootstrap.RecoveryRequired("mcp_source_selection_changed")
+    return kind[1]
 
 
 def bind(source):
@@ -147,7 +188,7 @@ def selection(source):
 
 
 def members(source, selected):
-    owner = binding(source)[0]
+    owner = _source_owner(source)
     if owner == "mcp.history":
         targets = (selected, selected.with_name(selected.name + ".1"))
         temps = {p: p.parent / f".{p.name}.{secrets.token_hex(8)}.tmp" for p in targets}
@@ -173,7 +214,7 @@ def _identity(state, path):
 
 
 def preflight(state):
-    owner = binding(state.source)[0]
+    owner = _source_owner(state.source)
     targets = (state.selected,)
     if owner == "mcp.permissions":
         targets += (state.selected.with_suffix(state.selected.suffix + ".bak"),)

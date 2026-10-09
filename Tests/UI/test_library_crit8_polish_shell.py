@@ -12,7 +12,6 @@ import pytest
 from textual import events
 from textual.widgets import Button, Input, Static, TextArea
 
-from tldw_chatbook import config as app_config
 from tldw_chatbook.Library.library_content_evidence import LibraryContentEvidence
 from tldw_chatbook.Library.library_rail_state import LibraryLifecycle
 from tldw_chatbook.UI.Library_Modules.canvas_sync import _sync_library_canvas
@@ -98,6 +97,7 @@ async def test_library_landing_canvas_paints_at_wide_widths():
 # --- task-32059: Get started survives a relaunch before the first visit ---
 
 
+@pytest.mark.bootstrap_profile
 def test_get_started_survives_a_relaunch_before_the_first_library_visit(
     tmp_path, monkeypatch
 ) -> None:
@@ -108,39 +108,13 @@ def test_get_started_survives_a_relaunch_before_the_first_library_visit(
     setup and quit before ever opening Library never saw the documented compact
     Get started rail. The lifecycle is now stamped at profile creation.
     """
-    config_path = tmp_path / "relaunch-profile" / "config.toml"
-    config_path.parent.mkdir(parents=True)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
-    monkeypatch.setattr(
-        app_config, "_FIRST_PROFILE_CREATED_THIS_SESSION", False, raising=False
+    # This document is selected before the child first imports configuration.
+    # The original raw source guard and current parent profile stay installed.
+    from Tests.UI._library_profile_admission_process import (
+        run_original_library_profile_compat,
     )
-    app_config._CONFIG_CACHE = None
-    app_config._CONFIG_CACHE_SOURCE = None
-    app_config._SETTINGS_CACHE = None
-    app_config._SETTINGS_CACHE_SOURCE = None
 
-    # Run 1: the profile is created. Library is never opened.
-    app_config.load_settings(force_reload=True)
-    first_run = _build_test_app(preserve_profile_admission=True)
-    assert first_run.library_new_profile_admission is True
-
-    # Run 2: same config file, no longer created by this process.
-    monkeypatch.setattr(
-        app_config, "_FIRST_PROFILE_CREATED_THIS_SESSION", False, raising=False
-    )
-    app_config._CONFIG_CACHE = None
-    app_config._CONFIG_CACHE_SOURCE = None
-    app_config._SETTINGS_CACHE = None
-    app_config._SETTINGS_CACHE_SOURCE = None
-    app_config.load_settings(force_reload=True)
-    second_run = _build_test_app()
-    assert second_run.library_new_profile_admission is False
-
-    assert (
-        config_path.read_text(encoding="utf-8").count('lifecycle = "unknown"') == 1
-    ), "profile creation must stamp the lifecycle into [library.rail_state]"
-    screen = LibraryScreen(second_run)
-    assert screen._library_lifecycle is LibraryLifecycle.UNKNOWN
+    run_original_library_profile_compat(tmp_path, existing=False)
 
 
 # --- task-32058: a skill import updates the rail count and the list ------

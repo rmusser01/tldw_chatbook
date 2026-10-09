@@ -525,6 +525,7 @@ class ConsoleContextRepository:
         overrides: ConsoleContextPolicyOverrides,
         *,
         expected_revision: int | None,
+        _expected_database: CharactersRAGDB | None = None,
     ) -> ContextPolicyWriteResult:
         """Write one complete policy only while its owned revision matches.
 
@@ -541,8 +542,11 @@ class ConsoleContextRepository:
         ):
             raise ValueError("expected_revision must be positive or None")
 
+        if _expected_database is not None and self.db is not _expected_database:
+            raise RuntimeError("console_settings_writer_source_changed")
+        database = self.db if _expected_database is None else _expected_database
         values = overrides.to_dict()
-        with self.db.transaction(immediate=True) as cursor:
+        with database.transaction(immediate=True) as cursor:
             conversation = cursor.execute(
                 "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
                 (conversation_id,),

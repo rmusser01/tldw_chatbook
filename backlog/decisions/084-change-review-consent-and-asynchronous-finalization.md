@@ -72,6 +72,17 @@ workers, invalidates late generations, disposes the coordinator, and only then
 closes `AgentRunsDB`. A worker that outlives the bound may finish shadow-repo
 filesystem work, but its result cannot persist or touch UI state.
 
+### Transcript marker read scope (TASK-34406, 2026-10-07)
+
+The marker projection reads only primary, non-superseded run IDs and assistant
+anchors, ordered oldest first, then the existing durable change snapshots.
+It must not fetch or decode legacy step blobs, child step payloads, task text,
+results or budgets merely to render these markers. Ordinary run-history APIs
+retain their full payload contract. Custom database subclasses and adapters
+retain the existing callback route. This narrows an existing read; it grants
+no new authority, changes no storage lifetime and does not by itself move the
+remaining database work off the UI loop.
+
 ### Conservative, bounded pre-dispatch observation gate
 
 Change Review remains observation, not authorization. Existing project-context

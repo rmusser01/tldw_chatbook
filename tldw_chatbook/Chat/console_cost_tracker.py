@@ -596,6 +596,7 @@ def build_cost_snapshot(
     model: Optional[str],
     fleet_tokens: int = 0,
     estimate_cache: Optional[TokenEstimateCache] = None,
+    pricing_catalog: Any | None = None,
 ) -> ConsoleCostSnapshot:
     """Sum dollar/token totals across a Console session's transcript rows.
 
@@ -639,6 +640,8 @@ def build_cost_snapshot(
             but never dollars). Defaults to 0, byte-identical to this
             function's pre-Task-5 behavior for every caller that doesn't
             pass it.
+        pricing_catalog: Optional detached display catalog; omitted callers retain
+            the original global pricing lookup.
         estimate_cache: task-15451 -- optional :class:`TokenEstimateCache`
             memoizing the per-row local estimates, so a caller polling this
             on a timer (the Console cost chip, 5x/s while a run is active)
@@ -653,7 +656,7 @@ def build_cost_snapshot(
         failure is logged and degrades to an empty/unknown snapshot.
     """
     try:
-        catalog = get_pricing_catalog()
+        catalog = get_pricing_catalog() if pricing_catalog is None else pricing_catalog
         provider_key = provider_config_key(provider)
         total_usd_accum = 0.0
         usd_known = True
@@ -1067,3 +1070,11 @@ def build_cost_rows_totals(rows: Sequence[ConsoleCostRow]) -> ConsoleCostRowTota
 #
 # End of console_cost_tracker.py
 #######################################################################################################################
+
+
+_COST_SNAPSHOT_SOURCE = (
+    build_cost_snapshot,
+    build_cost_snapshot.__code__,
+    build_cost_snapshot.__defaults__,
+    build_cost_snapshot.__kwdefaults__,
+)

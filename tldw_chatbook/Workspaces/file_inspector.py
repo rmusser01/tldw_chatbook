@@ -10,15 +10,18 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 import codecs
 from dataclasses import dataclass
 from enum import Enum
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
 import secrets
 import stat
+import sys
 from typing import Protocol
 
 from .models import (
@@ -670,8 +673,42 @@ class WorkspaceFileInspector:
         self, workspace_id: str, binding_id: str
     ) -> tuple[BindingScope | None, str]:
         try:
-            workspace = self._registry.get_workspace(workspace_id)
-            binding = self._registry.get_runtime_binding(binding_id)
+            registry = self._registry
+            registry_module = sys.modules.get("tldw_chatbook.Workspaces.registry_service")
+            scope = nullcontext(None)
+            if (
+                registry_module is not None
+                and WorkspaceFileInspector is _WORKSPACE_COMPOSITE_INSPECTOR_OWNER
+                and type(self) is _WORKSPACE_COMPOSITE_INSPECTOR_OWNER
+                and inspect.getattr_static(WorkspaceFileInspector, "__getattribute__")
+                is _WORKSPACE_COMPOSITE_INSPECTOR_LOOKUP
+                and inspect.getattr_static(WorkspaceFileInspector, "_registry", None)
+                is _WORKSPACE_COMPOSITE_INSPECTOR_REGISTRY_DESCRIPTOR
+            ):
+                scope = registry_module._workspace_composite_context(
+                    registry,
+                    lambda: inspect.getattr_static(
+                        WorkspaceFileInspector, "__getattribute__"
+                    )
+                    is _WORKSPACE_COMPOSITE_INSPECTOR_LOOKUP
+                    and inspect.getattr_static(WorkspaceFileInspector, "_registry", None)
+                    is _WORKSPACE_COMPOSITE_INSPECTOR_REGISTRY_DESCRIPTOR
+                    and self._registry is registry
+                    and registry_module._workspace_function_current(
+                        _WORKSPACE_COMPOSITE_INSPECTOR_SOURCE
+                    )
+                    and vars(WorkspaceFileInspector).get("_current_scope")
+                    is _WORKSPACE_COMPOSITE_INSPECTOR_SOURCE[0]
+                    and "_current_scope" not in vars(self),
+                    enabled=(type(workspace_id) is str and bool(workspace_id.strip())),  # noqa: E721 -- stock input avoids custom validation callbacks
+                )
+            with scope as check:
+                workspace = self._registry.get_workspace(workspace_id)
+                if check is not None:
+                    check()
+                binding = self._registry.get_runtime_binding(binding_id)
+                if check is not None:
+                    check()
         except Exception:  # Registry errors are intentionally not surfaced verbatim.
             return None, "registry_unavailable"
         if workspace is None or workspace.archived or workspace_id == DEFAULT_WORKSPACE_ID:
@@ -1020,3 +1057,26 @@ __all__ = [
     "WorkspaceRegistry",
     "safe_filesystem_text",
 ]
+
+
+_WORKSPACE_COMPOSITE_INSPECTOR_OWNER = WorkspaceFileInspector
+_WORKSPACE_COMPOSITE_INSPECTOR_LOOKUP = inspect.getattr_static(
+    WorkspaceFileInspector, "__getattribute__"
+)
+_WORKSPACE_COMPOSITE_INSPECTOR_REGISTRY_DESCRIPTOR = inspect.getattr_static(
+    WorkspaceFileInspector, "_registry", None
+)
+_workspace_scope_function = vars(WorkspaceFileInspector)["_current_scope"]
+_WORKSPACE_COMPOSITE_INSPECTOR_SOURCE = (
+    _workspace_scope_function,
+    _workspace_scope_function.__code__,
+    _workspace_scope_function.__globals__,
+    _workspace_scope_function.__defaults__,
+    _workspace_scope_function.__kwdefaults__,
+    tuple((_workspace_scope_function.__kwdefaults__ or {}).items()),
+    _workspace_scope_function.__closure__,
+    tuple(
+        (cell, cell.cell_contents)
+        for cell in _workspace_scope_function.__closure__ or ()
+    ),
+)

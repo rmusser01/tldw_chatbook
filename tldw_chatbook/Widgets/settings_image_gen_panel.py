@@ -52,10 +52,6 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
 
-from tldw_chatbook.Media_Creation.generation_templates import (
-    BUILTIN_TEMPLATES,
-    get_all_templates,
-)
 from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     BACKEND_IDS,
     BACKEND_LABELS,
@@ -118,6 +114,11 @@ def _advanced_keys_hint(backend_id: str) -> str:
 
 
 def _template_count_line() -> str:
+    from tldw_chatbook.Media_Creation.generation_templates import (
+        BUILTIN_TEMPLATES,
+        get_all_templates,
+    )
+
     all_templates = get_all_templates(reload=True)
     builtin_count = len(BUILTIN_TEMPLATES)
     user_count = max(len(all_templates) - builtin_count, 0)

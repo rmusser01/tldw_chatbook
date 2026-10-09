@@ -1,0 +1,184 @@
+{
+  "source_production_commit": "16e5f0270e1ee02ed807abde940b25843a5b4c1d",
+  "pr_head_observed_at_completion": "b825d974d78306bc4a6d9db754fedbaac27c6985",
+  "source_difference_note": "Concurrent PR updates change only Chat/console_trace_service.py. Examined UI, storage, config, SQLite, native-file and CSS paths match the measured source. Timings remain pinned to the initial source, not a fresh whole-head run.",
+  "control_commit": "48a6d1e7cec8d9079657279f2442170c8cf67282",
+  "native_control_run": "https://github.com/rmusser01/tldw_chatbook/actions/runs/37228455116",
+  "hosts": {
+    "windows_local": {
+      "raw_evidence_sha256": "de5e1de2c0ff5c497a6660089249e1e403f98e4c8a57df4854da86b184d1796b",
+      "platform": "win32",
+      "os": "Windows-10-10.0.19045-SP0",
+      "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+      "sqlite": "3.49.1",
+      "recorded_revision": "local",
+      "complete": true,
+      "provider_calls": 3,
+      "trace_states": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "response_links": 3,
+      "dispatch_checkpoints": 0,
+      "send_phases": {
+        "send_1": {
+          "provider_entry_seconds": 56.36373000004096,
+          "main_acquisition_count": 347,
+          "main_acquisition_inclusive_seconds": 35.240082399512175,
+          "main_native_handle_opens": 307114,
+          "main_python_os_open_audit": 0,
+          "worker_helper_starts": 0,
+          "max_heartbeat_lag_seconds": 9.391490500012878
+        },
+        "send_2": {
+          "provider_entry_seconds": 56.896953999996185,
+          "main_acquisition_count": 355,
+          "main_acquisition_inclusive_seconds": 35.31010259967297,
+          "main_native_handle_opens": 307501,
+          "main_python_os_open_audit": 0,
+          "worker_helper_starts": 0,
+          "max_heartbeat_lag_seconds": 9.384497700026259
+        },
+        "send_3": {
+          "provider_entry_seconds": 48.16694079997251,
+          "main_acquisition_count": 321,
+          "main_acquisition_inclusive_seconds": 32.525449399254285,
+          "main_native_handle_opens": 250427,
+          "main_python_os_open_audit": 0,
+          "worker_helper_starts": 0,
+          "max_heartbeat_lag_seconds": 10.862031699973159
+        }
+      },
+      "unchanged_layout_8_calls_seconds": 0.6890529000083916,
+      "equality_control_8_checks_seconds": 1.810002140700817e-05,
+      "limits": "One native run per host. Call-through instrumentation overhead. Pilot/headless dispatch is included in wall time. Nested seam times overlap. Legacy trace maintenance held for send-race isolation; other normal app timers remain enabled. No real provider, OS keyring or model download."
+    },
+    "linux": {
+      "raw_evidence_sha256": "86912abac4ff766ada0cde5483210b282bca1796b0927362e996c0b592dabc2c",
+      "platform": "linux",
+      "os": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+      "python": "3.12.10 (main, Apr  8 2025, 22:38:13) [GCC 13.3.0]",
+      "sqlite": "3.45.1",
+      "recorded_revision": "48a6d1e7cec8d9079657279f2442170c8cf67282",
+      "complete": true,
+      "provider_calls": 3,
+      "trace_states": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "response_links": 3,
+      "dispatch_checkpoints": 0,
+      "send_phases": {
+        "send_1": {
+          "provider_entry_seconds": 3.6161868760000004,
+          "main_acquisition_count": 307,
+          "main_acquisition_inclusive_seconds": 0.2824312240002058,
+          "main_native_handle_opens": 0,
+          "main_python_os_open_audit": 15911,
+          "worker_helper_starts": 32,
+          "max_heartbeat_lag_seconds": 0.39686066100000517
+        },
+        "send_2": {
+          "provider_entry_seconds": 3.366636944999996,
+          "main_acquisition_count": 310,
+          "main_acquisition_inclusive_seconds": 0.20826545299996724,
+          "main_native_handle_opens": 0,
+          "main_python_os_open_audit": 13940,
+          "worker_helper_starts": 33,
+          "max_heartbeat_lag_seconds": 0.38946501499999897
+        },
+        "send_3": {
+          "provider_entry_seconds": 2.294212286000004,
+          "main_acquisition_count": 275,
+          "main_acquisition_inclusive_seconds": 0.14514023700013468,
+          "main_native_handle_opens": 0,
+          "main_python_os_open_audit": 11554,
+          "worker_helper_starts": 31,
+          "max_heartbeat_lag_seconds": 0.3089978090000045
+        }
+      },
+      "unchanged_layout_8_calls_seconds": 0.26259368899999913,
+      "equality_control_8_checks_seconds": 9.344999995164471e-06,
+      "limits": "One native run per host. Call-through instrumentation overhead. Pilot/headless dispatch is included in wall time. Nested seam times overlap. Legacy trace maintenance held for send-race isolation; other normal app timers remain enabled. No real provider, OS keyring or model download."
+    },
+    "macos": {
+      "raw_evidence_sha256": "a2f7d653619cfe6c9525551e070dbf6485aefdec35c0f371e6649bbb4a384215",
+      "platform": "darwin",
+      "os": "macOS-15.7.9-arm64-arm-64bit",
+      "python": "3.12.10 (v3.12.10:0cc81280367, Apr  8 2025, 08:46:59) [Clang 13.0.0 (clang-1300.0.29.30)]",
+      "sqlite": "3.49.1",
+      "recorded_revision": "48a6d1e7cec8d9079657279f2442170c8cf67282",
+      "complete": true,
+      "provider_calls": 3,
+      "trace_states": [
+        "complete",
+        "complete",
+        "complete"
+      ],
+      "response_links": 3,
+      "dispatch_checkpoints": 0,
+      "send_phases": {
+        "send_1": {
+          "provider_entry_seconds": 5.630750540999998,
+          "main_acquisition_count": 290,
+          "main_acquisition_inclusive_seconds": 0.3493717449999565,
+          "main_native_handle_opens": 0,
+          "main_python_os_open_audit": 18527,
+          "worker_helper_starts": 36,
+          "max_heartbeat_lag_seconds": 0.8018042499999751
+        },
+        "send_2": {
+          "provider_entry_seconds": 4.7891525,
+          "main_acquisition_count": 295,
+          "main_acquisition_inclusive_seconds": 0.4336048340001071,
+          "main_native_handle_opens": 0,
+          "main_python_os_open_audit": 26126,
+          "worker_helper_starts": 33,
+          "max_heartbeat_lag_seconds": 0.5088719999999967
+        },
+        "send_3": {
+          "provider_entry_seconds": 3.655800458000016,
+          "main_acquisition_count": 262,
+          "main_acquisition_inclusive_seconds": 0.24553471099997637,
+          "main_native_handle_opens": 0,
+          "main_python_os_open_audit": 16017,
+          "worker_helper_starts": 31,
+          "max_heartbeat_lag_seconds": 0.5930931249999958
+        }
+      },
+      "unchanged_layout_8_calls_seconds": 0.3839483749999886,
+      "equality_control_8_checks_seconds": 8.83299998122311e-06,
+      "limits": "One native run per host. Call-through instrumentation overhead. Pilot/headless dispatch is included in wall time. Nested seam times overlap. Legacy trace maintenance held for send-race isolation; other normal app timers remain enabled. No real provider, OS keyring or model download."
+    },
+    "windows_server": {
+      "raw_evidence_sha256": "b49329cee88d7a4289955ba4ee5716dda089c3e7d5dd91e2cbed839cd494195e",
+      "platform": "win32",
+      "os": "Windows-2022Server-10.0.20348-SP0",
+      "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+      "sqlite": "3.49.1",
+      "recorded_revision": "48a6d1e7cec8d9079657279f2442170c8cf67282",
+      "complete": false,
+      "provider_calls": 0,
+      "trace_states": null,
+      "response_links": null,
+      "dispatch_checkpoints": null,
+      "send_phases": {
+        "send_1": {
+          "provider_entry_seconds": null,
+          "main_acquisition_count": 116,
+          "main_acquisition_inclusive_seconds": 8.141697400003068,
+          "main_native_handle_opens": 78326,
+          "main_python_os_open_audit": 63,
+          "worker_helper_starts": 0,
+          "max_heartbeat_lag_seconds": 8.2645250999999
+        }
+      },
+      "unchanged_layout_8_calls_seconds": null,
+      "equality_control_8_checks_seconds": null,
+      "limits": "One native run per host. Call-through instrumentation overhead. Pilot/headless dispatch is included in wall time. Nested seam times overlap. Legacy trace maintenance held for send-race isolation; other normal app timers remain enabled. No real provider, OS keyring or model download."
+    }
+  },
+  "local_revision_note": "Local JSON records revision='local'. Launch commands used the managed evidence worktree at control commit 48a6d1e7ce; no production files changed during this investigation. Hosted records carry GITHUB_SHA."
+}
