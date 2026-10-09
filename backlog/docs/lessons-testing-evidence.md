@@ -19260,3 +19260,19 @@ controller's sign-off or record the survivor (file:line) in the task notes
 and the matching lessons file so the next task starts from the full list —
 a half-removed pattern reads as "handled" to every future grep that only
 checks the seam the task named.
+
+
+## Malformed-response tests can stop at the wrong guard (PR #3052, TASK-34434)
+
+**Incident.** The FlashRank missing-ID, missing-score and out-of-range-ID tests
+returned one row for three passages. They passed through the response-length
+guard without ever exercising the field validators they named. Every malformed
+case also used `top_k == len(results)`, leaving validation beyond the selected
+subset unprotected. Full-length responses with a bad tail and `top_k=1` exposed
+this: a temporary truncating validator produced three assertion failures from
+partial score/provenance mutation; the real validator passed all six cases.
+The real-library smoke also started with its expected winner already first;
+putting the irrelevant passage first made the smoke witness an actual reorder.
+
+**What to do.** Satisfy every earlier guard before testing a later one, place a
+bad item outside any selected subset, and start ordering tests out of order.

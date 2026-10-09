@@ -1,10 +1,15 @@
 ---
 id: TASK-34437
-title: Remove remaining legacy streaming no-op on ChatMessage and dangling tool-widget
-  doc sketch
+title: >-
+  Remove remaining legacy streaming no-op on ChatMessage and dangling
+  tool-widget doc sketch
 status: Done
-created_date: 2026-10-08 00:36
-updated_date: 2026-10-09 05:22
+assignee:
+  - '@codex'
+created_date: '2026-10-08 00:36'
+updated_date: '2026-10-09 14:56'
+labels: []
+dependencies: []
 ---
 
 ## Description
@@ -22,10 +27,18 @@ Follow-up from TASK-34433: sibling seam ChatMessage.update_message_chunk (chat_m
 
 <!-- SECTION:PLAN:BEGIN -->
 See Docs/superpowers/plans/2026-10-06-nonconsole-efficiency-remediation.md Task 21 review minors + task-21-report.md
+
+PR #3052 review follow-up:
+1. Narrow the superseded implementation banner to the updated tool-rendering references actually supplied by its destination.
+2. Verify the reference and record the correction.
+ADR required: no
+ADR path: N/A
+Reason: copy correction for an existing historical document.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Commit 83a3f83595 (single commit, both targets).
 
@@ -81,12 +94,13 @@ re-run: 140 passed / same single pre-existing failure (byte-identical to
 round 1 and to base). Status restored to Done.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
+PR #3052 independent review: narrowed the superseded implementation banner to updated tool-rendering references, avoiding an overclaim that the linked historical guide describes the entire current runtime. Both corrected tool-rendering references exist, and the affected widget tests pass in the fresh targeted selection. ADR required: no; copy-only clarification.
+<!-- SECTION:NOTES:END -->
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
 <!-- SECTION:FINAL_SUMMARY:END -->
 
-## Definition of Done
-<!-- DOD:BEGIN -->
-<!-- DOD:END -->
+<!-- SECTION:FINAL_SUMMARY:END -->

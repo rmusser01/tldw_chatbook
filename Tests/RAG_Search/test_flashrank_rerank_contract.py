@@ -209,7 +209,7 @@ def test_attribute_style_ranker_response_still_tolerated(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _garbage_case(monkeypatch, payload):
+def _garbage_case(monkeypatch, payload, *, top_k=3):
     def factory(**kwargs):
         return _GarbageRanker(payload, **kwargs)
 
@@ -217,22 +217,39 @@ def _garbage_case(monkeypatch, payload):
     pfs._reset_flashrank_ranker_for_tests()
     results = _results()
     snapshots = [(r.score, dict(r.metadata)) for r in results]
+    metadata_objects = [r.metadata for r in results]
 
-    fallback = pfs.rerank_results(results, "query", top_k=3)
+    fallback = pfs.rerank_results(results, "query", top_k=top_k)
 
-    assert [r.id for r in fallback] == ["m0", "m1", "m2"], "original order kept"
+    assert [r.id for r in fallback] == ["m0", "m1", "m2"][:top_k], "original order kept"
     assert [(r.score, r.metadata) for r in results] == snapshots, "no partial mutation"
+    assert all(r.metadata is original for r, original in zip(results, metadata_objects))
     assert all(FINAL_SCORE_KIND_KEY not in r.metadata for r in fallback)
 
 
-def test_garbage_missing_id_falls_back(monkeypatch):
-    # Scored dicts WITHOUT ids that are not the input objects cannot be
-    # mapped back -- refuse rather than guess.
-    _garbage_case(monkeypatch, lambda request: [{"text": "x", "score": 0.9}])
-
-
-def test_garbage_missing_score_falls_back(monkeypatch):
-    _garbage_case(monkeypatch, lambda request: [{"id": 0, "text": "x"}])
+@pytest.mark.parametrize(
+    "invalid_tail",
+    [
+        pytest.param({"text": "x", "score": 0.9}, id="missing-id"),
+        pytest.param({"id": 2, "text": "x"}, id="missing-score"),
+        pytest.param({"id": 3, "text": "x", "score": 0.5}, id="out-of-range-id"),
+    ],
+)
+@pytest.mark.parametrize("top_k", [1, 3])
+def test_garbage_trailing_fields_fall_back_without_mutation(
+    monkeypatch, invalid_tail, top_k
+):
+    # Full-length responses reach field validation; top_k=1 proves the
+    # invalid tail is checked before even the valid leading row is updated.
+    _garbage_case(
+        monkeypatch,
+        lambda request: [
+            {"id": 0, "text": "t0", "score": 0.1},
+            {"id": 1, "text": "t1", "score": 0.5},
+            invalid_tail,
+        ],
+        top_k=top_k,
+    )
 
 
 def test_garbage_fewer_items_than_passages_falls_back(monkeypatch):
@@ -252,15 +269,6 @@ def test_garbage_non_finite_score_falls_back(monkeypatch):
         lambda request: [
             {"id": p["id"], "text": p["text"], "score": math.nan}
             for p in request.passages
-        ],
-    )
-
-
-def test_garbage_out_of_range_id_falls_back(monkeypatch):
-    _garbage_case(
-        monkeypatch,
-        lambda request: [
-            {"id": len(request.passages), "text": "x", "score": 0.5}
         ],
     )
 
@@ -330,21 +338,22 @@ def test_real_flashrank_library_smoke(monkeypatch):
     monkeypatch.setattr(pfs, "_RANKER_FACTORY", real_ranker_factory)
     pfs._reset_flashrank_ranker_for_tests()
     try:
+        # Start in the wrong order so the real library must reorder results.
         results = [
-            SearchResult(
-                source="media",
-                id="paris",
-                title="Paris",
-                content="Paris is the capital and largest city of France.",
-                score=0.10,
-                metadata={"producer": "smoke"},
-            ),
             SearchResult(
                 source="media",
                 id="soup",
                 title="Soup",
                 content="Simmer the tomatoes with basil for twenty minutes.",
                 score=0.90,
+                metadata={"producer": "smoke"},
+            ),
+            SearchResult(
+                source="media",
+                id="paris",
+                title="Paris",
+                content="Paris is the capital and largest city of France.",
+                score=0.10,
                 metadata={"producer": "smoke"},
             ),
         ]

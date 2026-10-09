@@ -39,10 +39,10 @@ module-level `lru_cache` fallback for ad-hoc string lookups.
   That lock does not — and need not — synchronize with anything else: it is
   invisible to other processes (whose edits are unobserved by design, see
   Consequences), and SQLite's own transaction serialization is what bounds
-  concurrent writers at the storage layer. The one residual race is a crash
-  between a committed write and its scheduled bump: that increment is lost
-  and the cache may serve one stale generation until the next mutation
-  re-bumps the counter (self-healing). The narrow stale window is accepted.
+  concurrent writers at the storage layer. Commit and counter publication
+  are separate operations: any live commit-to-completion interval ends when
+  the callback publishes the bump. A process crash discards both the counter
+  and the cache; restart begins with an empty cache and reads committed data.
 - The bump is over-invalidation by design: a mutation to a book attached to
   conversation A also invalidates conversation B's cached processor. Correct,
   cheap, and requires no attachment tracking.

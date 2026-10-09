@@ -132,7 +132,9 @@ def _armed_controller(db, gateway):
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
-        chat_dictionary_applier=functools.partial(_apply_chat_dictionaries_for_app, app),
+        chat_dictionary_applier=functools.partial(
+            _apply_chat_dictionaries_for_app, app
+        ),
         world_info_applier=functools.partial(_apply_world_info_for_app, app),
         # Hermetic hook authority: no review pending, no hooks configured.
         hook_permissions_accessor=lambda: SimpleNamespace(
@@ -193,7 +195,9 @@ async def test_one_console_send_collects_world_books_and_dictionaries_once(
     monkeypatch.setattr(
         resolver_module, "_collect_active_world_books", spy_collect_books
     )
-    monkeypatch.setattr(cdl_module, "collect_active_chatdict_entries", spy_collect_dicts)
+    monkeypatch.setattr(
+        cdl_module, "collect_active_chatdict_entries", spy_collect_dicts
+    )
     monkeypatch.setattr(
         WorldBookManager, "get_world_books_for_conversation", spy_book_fetch
     )
