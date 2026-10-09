@@ -6424,17 +6424,32 @@ async def test_console_workspace_switch_refresh_is_not_dropped_during_inflight_s
         original_sync_tabs = console._sync_console_native_session_tabs
         blocked_once = False
 
+        first_sync_task = None
+
         async def blocking_sync_tabs():
             nonlocal blocked_once
             await original_sync_tabs()
-            if blocked_once:
+            # TASK-33620.15.1: only the test's own sync is held. A sync the
+            # screen started itself (its timer, a coalesced replay) passes.
+            if blocked_once or asyncio.current_task() is not first_sync_task:
                 return
             blocked_once = True
             first_sync_blocked.set()
             await release_first_sync.wait()
 
         console._sync_console_native_session_tabs = blocking_sync_tabs
-        first_sync_task = asyncio.create_task(console._sync_native_console_chat_ui())
+        # A sync that finds one in flight, or a whole-sync replay pending after
+        # busy config locks (TASK-34415), returns before the tabs by design;
+        # start the test's own sync again once the screen's has finished.
+        for _attempt in range(20):
+            first_sync_task = asyncio.create_task(console._sync_native_console_chat_ui())
+            for _ in range(250):
+                if first_sync_blocked.is_set() or first_sync_task.done():
+                    break
+                await pilot.pause(0.02)
+            if first_sync_blocked.is_set():
+                break
+            await pilot.pause(0.25)
         await wait_for_background_signal(
             first_sync_blocked,
             first_sync_task,
