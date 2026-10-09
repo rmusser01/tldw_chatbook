@@ -572,6 +572,22 @@ control (`.approval-row-decision` widened to full width) failed it. Before you
 call a guard "environmental", check whether any runner runs it, and make it
 reach its assertions once.
 
+**TASK-34000.23, 2026-10-09: the wall is not a `Tests/UI` wall, and the scratch
+plugin's path filter decides who gets rescued.** `Tests/Subscriptions/
+test_daily_report_demo.py` (pure: real SubscriptionsDB, faked chat and fetch) read
+12 failed / 1 passed locally -- every `run_demo` test dead at
+`RecoveryRequired: raw_source_selection_changed` from the first config read inside
+`LocalWatchlistsService.create_source` -- and so did a new pure pin that only
+creates one source. `Tests/Watchlists/test_watchlists_demo_banner.py` showed six of
+the same. The harness's `w1b_bootstrap_plugin` marks only items whose path contains
+`Tests/UI/`, so running these files "with the plugin" rescues nothing and the red
+looks like the product. A copy of the plugin that marks EVERY item (local run only,
+never committed) gave 15 passed for the pure file and the same 3 failed / 3 passed
+for the banner file on both base and head (the shared profile's persisted banner
+dismissal, not the change under test). Pair the arms on base under the SAME plugin
+before attributing anything, and read the plugin's filter before trusting its
+rescue.
+
 **TASK-33003.20 follow-up, 2026-10-04.** The guard now lives in
 `Tests/UI/test_approval_batch_geometry.py`, on the UI PR census. The supported
 `private_profile_test` wrapper selects the profile before imports, and the test

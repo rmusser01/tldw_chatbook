@@ -650,7 +650,15 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 
 # ADR-172 / TASK-32870–32872: initial exact pins for the new artifact owners.
 # PR #2754 reviews: initial pin includes finite workers, reader reveal, typed builders and normalized exports.
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 806
+# 2026-10-09, TASK-34000.23: 806 -> 876 (+70), owner decision ("expand the
+# limits, don't contort code", 2026-10-04). The Reports demo CTA now asks
+# before seeding: `DemoConsent` (the block's state), `open_demo_consent`
+# (resolves the billed provider · model through
+# `resolve_persisted_briefing_defaults`, reads `list_briefing_schedules`
+# for the reuse wording, no-provider -> disabled run button),
+# `close_demo_consent`, and `start_demo` (the old no-confirm press, now the
+# only way in). Nothing was moved out to make it fit.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 876
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 339
 
 # 2026-09-25, TASK-32954 (ruling R14): initial exact pin for the built-in

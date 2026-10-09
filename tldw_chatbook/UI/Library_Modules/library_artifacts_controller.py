@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -29,6 +29,21 @@ if TYPE_CHECKING:
 ARTIFACT_READER_PROFILE = AdaptiveReaderLayoutProfile(list_first_when_empty=True)
 
 
+@dataclass(frozen=True)
+class DemoConsent:
+    """What the Reports empty-state consent block shows (TASK-34000.23).
+
+    `lines` is the shared consequence copy (`daily_report_demo_consequences`)
+    or the no-provider sentence; `existing` selects the reuse wording for the
+    run button; `available` is False when no provider resolves, which
+    disables the run button with `lines[0]` as its reason.
+    """
+
+    lines: tuple[str, ...]
+    existing: bool = False
+    available: bool = True
+
+
 class LibraryArtifactsController:
     """Fence data by profile/scope/selection and presentation by active visit."""
 
@@ -52,6 +67,7 @@ class LibraryArtifactsController:
         self.suspended = False
         self.search_timer = None
         self.reader_open = False
+        self.demo_consent: DemoConsent | None = None
         self._views = {}
         self._restore_target = None
         self._restore_scroll = None
@@ -116,6 +132,7 @@ class LibraryArtifactsController:
         self.loading = self.detail_loading = False
         self.error = self.detail_error = ""
         self.reader_open = False
+        self.demo_consent = None
         self._restore_target = saved[1] if saved else None
         self._restore_scroll = saved[2:] if saved else None
 
@@ -521,6 +538,7 @@ class LibraryArtifactsController:
         if self.scope.view in self._views:
             self._restore_scroll = self._views[self.scope.view][2:]
         self.presentation += 1
+        self.demo_consent = None  # The pair is re-resolved on the next press.
         self.stop_timer()
 
     def dispose(self) -> None:
@@ -562,24 +580,18 @@ class LibraryArtifactsController:
             self.screen.post_message(NavigateToScreen("chatbooks"))
         elif name == "share" and self.detail and self.detail.can_share:
             self.screen._artifacts_share_controller.open_dialog(self.selected)
-        elif name == "watchlists":
+        elif name in {"watchlists", "watchlists-items"}:
             self.open_watchlists()
         elif name == "demo":
-            service = getattr(self.app_instance, "daily_report_demo_service", None)
-            if service:
-                task = service.run_demo_detached()
-                if task:
-                    task.add_done_callback(
-                        lambda _: (
-                            self.request_scope(self.scope)
-                            if not self.disposed and self.active()
-                            else None
-                        )
-                    )
-            else:
-                self.notify(
-                    "The report demo is unavailable in this runtime.", "warning"
-                )
+            self.open_demo_consent()
+        elif name == "demo-cancel":
+            self.close_demo_consent(focus="#library-artifacts-demo")
+        elif name == "demo-confirm-run":
+            if self.demo_consent is not None and self.demo_consent.available:
+                # The list is always present; the CTA block disappears once
+                # the brief lands, and a hidden focused button is a dead end.
+                self.close_demo_consent(focus="#library-artifacts-list")
+                self.start_demo()
         elif (
             name in {"keep", "export", "scripts", "play", "source", "console"}
             and self.detail
@@ -613,6 +625,79 @@ class LibraryArtifactsController:
                 WATCHLISTS_NAV_CONTEXT_BRIEFING_ID: f"local:briefing:{self.selected.native_id}",
             }
         self.screen.post_message(NavigateToScreen("watchlists_collections", context))
+
+    # -- Daily Report demo consent (TASK-34000.23) ---------------------------
+
+    def open_demo_consent(self) -> None:
+        """Show what the demo will create and bill; write and fetch nothing.
+
+        The pair comes from `resolve_persisted_briefing_defaults`, the same
+        call-time disk read the brief itself spends through, so the copy
+        names the provider · model that will actually be billed. A schedule
+        already on disk switches to the reuse wording (the service never
+        re-seeds, ADR-079 §2). No provider -- or an unreadable config --
+        leaves the run button disabled with the reason as its tooltip.
+        """
+        from ...Subscriptions.briefing_service import (
+            resolve_persisted_briefing_defaults,
+        )
+        from ...Subscriptions.daily_report_demo import (
+            NO_PROVIDER_CONSEQUENCE,
+            daily_report_demo_consequences,
+        )
+
+        if getattr(self.app_instance, "daily_report_demo_service", None) is None:
+            self.notify("The report demo is unavailable in this runtime.", "warning")
+            return
+        try:
+            provider, model = resolve_persisted_briefing_defaults()
+        except Exception as exc:  # noqa: BLE001 - a press handler must not crash the screen
+            logger.debug(f"Reports demo consent: no pair ({type(exc).__name__})")
+            self.demo_consent = DemoConsent(
+                lines=(NO_PROVIDER_CONSEQUENCE,), available=False
+            )
+        else:
+            db = getattr(self.app_instance, "subscriptions_db", None)
+            try:
+                existing = bool(db is not None and db.list_briefing_schedules())
+            except Exception as exc:  # noqa: BLE001 - unreadable schedules read as none
+                logger.warning(
+                    f"Reports demo consent: schedules unreadable ({type(exc).__name__})"
+                )
+                existing = False
+            self.demo_consent = DemoConsent(
+                lines=daily_report_demo_consequences(
+                    provider=provider, model=model, existing=existing
+                ),
+                existing=existing,
+            )
+        self.sync()
+        generation, profile = self.presentation, self.profile()
+        self.screen.call_after_refresh(
+            self._focus, "#library-artifacts-demo-cancel", generation, profile
+        )
+
+    def close_demo_consent(self, *, focus: str) -> None:
+        self.demo_consent = None
+        self.sync()
+        generation, profile = self.presentation, self.profile()
+        self.screen.call_after_refresh(self._focus, focus, generation, profile)
+
+    def start_demo(self) -> None:
+        """The one way in: the service's detached run and its double-start guard."""
+        service = getattr(self.app_instance, "daily_report_demo_service", None)
+        if service is None:
+            self.notify("The report demo is unavailable in this runtime.", "warning")
+            return
+        task = service.run_demo_detached()
+        if task:
+            task.add_done_callback(
+                lambda _: (
+                    self.request_scope(self.scope)
+                    if not self.disposed and self.active()
+                    else None
+                )
+            )
 
     async def _run_action(self, name, identity) -> None:
         profile, key, revision, presentation = identity

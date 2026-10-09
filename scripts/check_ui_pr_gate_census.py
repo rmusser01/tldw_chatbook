@@ -187,7 +187,17 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # in-flight line agreeing; 3 tests, about 13 s locally. The long-model arm
 # (a 60-character name at 80x24 stays one row and keeps the recipient) is
 # in test_library_rag_answer_names_model_extended.py, outside the lane.
-MINIMUM_FILES = 160
+# TASK-34000.23 (2026-10-09) raised it to 161:
+# Tests/UI/test_library_reports_demo_consent.py -- the Library Reports
+# empty-state CTA (`Set up a daily brief…`) sits directly under the "No
+# reports yet" sentence in the Items pane at 160x45 and 120x36, one press
+# shows the consent block (three feeds, hourly checks, every 24 h, the
+# persisted `openai · gpt-4.1-mini`, Watchlists) and starts nothing, the
+# Subscriptions DB stays at zero rows through Cancel, Confirm goes through
+# `run_demo_detached` exactly once, no provider disables the run button
+# with the reason, an existing schedule shows the reuse copy; 7 tests,
+# about 21 s locally.
+MINIMUM_FILES = 161
 
 
 def read_census(path: Path) -> list[str]:

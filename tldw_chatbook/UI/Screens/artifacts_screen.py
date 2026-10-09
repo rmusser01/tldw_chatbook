@@ -78,15 +78,15 @@ CHATBOOK_OUTCOME_TRANSIENT = "transient"
 #: named constant driving the slice, the overflow check, and the "+ N more"
 #: count -- previously three separate `5` literals that could drift).
 REPORT_DISPLAY_LIMIT = 5
-#: Shared tooltip for the Daily Report demo control -- rendered both as the
+#: The Daily Report demo control's tooltip -- rendered both as the
 #: empty-state "Create Your First Daily Report" CTA and, after a failed brief
 #: (TASK-31801), as the "Run the Daily Report demo again" retry affordance
-#: that the failure toast ("...then run the demo again") points users to.
-DAILY_REPORT_DEMO_TOOLTIP = (
-    "Seeds a 'Daily Brief' watchlist from live RSS, drafts a text brief with "
-    "your configured LLM provider, and records audio when a TTS voice profile "
-    "exists. Uses live sources and your provider's API quota."
-)
+#: that the failure toast ("...then run the demo again") points users to --
+#: is `Subscriptions.daily_report_demo.daily_report_demo_tooltip()`, the
+#: same shared consequence copy the Library Reports consent block renders
+#: (TASK-34000.23). It names the persisted provider · model, so
+#: `compose_content` resolves it where the button is yielded, never at
+#: import time (the former `DAILY_REPORT_DEMO_TOOLTIP` literal is gone).
 ARTIFACTS_EMPTY_CHATBOOK_RECOVERY = DestinationRecoveryState(
     status_label="Select an artifact",
     unavailable_what="Console launch for Chatbook artifacts",
@@ -1035,6 +1035,8 @@ class ArtifactsScreen(BaseAppScreen):
         return CHATBOOK_OUTCOME_SUCCESS, launch_kwargs
 
     def compose_content(self) -> ComposeResult:
+        from ...Subscriptions.daily_report_demo import daily_report_demo_tooltip
+
         launch_kwargs = self._latest_chatbook_console_launch
         with Vertical(id="artifacts-shell"):
             yield Static(
@@ -1148,14 +1150,14 @@ class ArtifactsScreen(BaseAppScreen):
                             yield Button(
                                 "Run the Daily Report demo again",
                                 id="artifacts-daily-report-demo",
-                                tooltip=DAILY_REPORT_DEMO_TOOLTIP,
+                                tooltip=daily_report_demo_tooltip(),
                             )
                     else:
                         yield Static("  Reports: none yet", id="artifacts-list-reports")
                         yield Button(
                             "Create Your First Daily Report",
                             id="artifacts-daily-report-demo",
-                            tooltip=DAILY_REPORT_DEMO_TOOLTIP,
+                            tooltip=daily_report_demo_tooltip(),
                         )
                     # Dreams rows reuse the Report rows' exact widget idiom
                     # (bare Statics, `artifacts-<type>-row-{id}` ids, no new

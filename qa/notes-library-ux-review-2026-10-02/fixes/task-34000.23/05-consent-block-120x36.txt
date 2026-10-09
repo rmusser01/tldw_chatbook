@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────────┐  I    ‹ Items   Preview   Details                │
+│   a  │ Reports · Local                                            │  t   Select an artifact                          │
+│   v  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  e                                               │
+│      │ ▊  Find reports by Watchlist…                            ▎ │  m   Choose an item to read it here.             │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  s                                               │
+│      │  ✓ All reports   Kept   Newest                             │                                                  │
+│      │ No reports yet. Open Watchlists, or set up a daily brief   │                                                  │
+│      │ below.                                                     │                                                  │
+│      │  Watchlists   Set up a daily brief…                        │                                                  │
+│      │ ╭────────────────────────────────────────────────────────╮ │                                                  │
+│ ---> │ │ This sets up a recurring Daily Brief -- not a one-off  │ │                                                  │
+│      │ │ demo:                                                  │ │                                                  │
+│      │ │ • Watches 3 live RSS feeds -- Hacker News (front       │ │                                                  │
+│      │ │ page), BBC World News, Ars Technica -- and checks each │ │                                                  │
+│      │ │ hourly.                                                │ │<---                                              │
+│      │ │ • Writes a brief every 24 h with openai ·              │ │                                                  │
+│      │ │ gpt-4.1-mini, using your API quota. The first one is   │ │                                                  │
+│      │ │ written now.                                           │ │                                                  │
+│ ---> │ │ • Keeps running until you remove the Daily Brief       │ │                                                  │
+│      │ │ watchlist in Watchlists (⌃5).                          │ │                                                  │
+│      │ │                                                        │ │                                                  │
+│      │ │  Set up and write today's brief   Cancel               │ │                                                  │
+│      │ ╰────────────────────────────────────────────────────────╯ │                                                  │
+│      │                                                            │                                                  │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                  │
+│      │ ▊                                                        ▎ │                                                  │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                  │
+│      │  First   Prev   Next   Last                                │                                                  │
+│      └────────────────────────────────────────────────────────────┘       Watchlists                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc items | / find | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

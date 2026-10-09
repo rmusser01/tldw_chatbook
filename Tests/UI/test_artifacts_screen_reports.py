@@ -191,6 +191,27 @@ async def test_demo_cta_starts_the_detached_demo_task():
         assert stub.started == 1
 
 
+@pytest.mark.asyncio
+async def test_demo_cta_tooltip_is_the_shared_consequence_copy():
+    """TASK-34000.23 (AC#4): the Artifacts CTA's tooltip is the same
+    consequence copy the Library confirm shows, from one shared source --
+    every seeded feed, the hourly checks and the 24 h cadence, in one line."""
+    from tldw_chatbook.Subscriptions.daily_report_demo import (
+        DEMO_SOURCES,
+        daily_report_demo_tooltip,
+    )
+
+    app = _build_test_app(configured_default="artifacts")
+    async with _open_artifacts(app) as (screen, pilot):
+        cta = screen.query_one("#artifacts-daily-report-demo", Button)
+        tooltip = str(cta.tooltip)
+        assert tooltip == daily_report_demo_tooltip()
+        for source in DEMO_SOURCES:
+            assert source["name"] in tooltip
+        assert "hourly" in tooltip and "every 24 h" in tooltip
+        assert "\n" not in tooltip
+
+
 # --- TASK-31801: a failed brief must keep a demo retry affordance -----------
 
 

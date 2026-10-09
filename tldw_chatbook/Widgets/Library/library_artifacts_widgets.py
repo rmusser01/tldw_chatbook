@@ -50,6 +50,35 @@ class ArtifactItems(Vertical):
             yield Button("Kept", id="library-artifacts-kept", compact=True)
             yield Button("Newest", id="library-artifacts-sort", compact=True)
         yield Static("Loading reports…", id="library-artifacts-count", markup=False)
+        # TASK-34000.23: the empty-state sentence above names these, so they
+        # sit directly under it in this pane. The CTA opens a consent block;
+        # nothing is seeded, fetched or billed until the run button inside it.
+        # Both start hidden so the frame before the first `sync` paints
+        # neither an orphaned CTA nor an empty framed card.
+        empty_actions = Vertical(id="library-artifacts-empty-actions")
+        empty_actions.display = False
+        confirm = Vertical(id="library-artifacts-demo-confirm")
+        confirm.display = False
+        with empty_actions:
+            with Horizontal(classes="library-artifacts-toolbar"):
+                yield Button(
+                    "Watchlists", id="library-artifacts-watchlists-items", compact=True
+                )
+                yield Button(
+                    "Set up a daily brief…", id="library-artifacts-demo", compact=True
+                )
+            with confirm:
+                yield Static("", id="library-artifacts-demo-copy", markup=False)
+                with Horizontal(classes="library-artifacts-toolbar"):
+                    yield Button(
+                        "Set up and write today's brief",
+                        id="library-artifacts-demo-confirm-run",
+                        classes="console-action-primary",
+                        compact=True,
+                    )
+                    yield Button(
+                        "Cancel", id="library-artifacts-demo-cancel", compact=True
+                    )
         yield OptionList(id="library-artifacts-list")
         with Horizontal(classes="library-artifacts-toolbar"):
             yield Button("First", id="library-artifacts-first", compact=True)
@@ -110,6 +139,13 @@ class ArtifactItems(Vertical):
                 if index is not None and rows.highlighted != index:
                     rows.highlighted = index
             status = "Loading…" if c.loading else c.error
+            no_reports_yet = bool(
+                not status
+                and page
+                and not page.items
+                and not (c.scope.query or c.scope.kept_only)
+                and c.scope.view == "reports"
+            )
             if not status and page:
                 status = (
                     f"{page.start + 1}–{page.start + len(page.items)} of {page.total} copies"
@@ -118,9 +154,24 @@ class ArtifactItems(Vertical):
                     if c.scope.query or c.scope.kept_only
                     else "No Chatbooks yet. Open Manage Chatbook packs."
                     if c.scope.view == "chatbooks"
-                    else "No reports yet. Open Watchlists or try the report demo."
+                    else "No reports yet. Open Watchlists, or set up a daily brief below."
                 )
             self.query_one("#library-artifacts-count", Static).update(status)
+            self.query_one("#library-artifacts-empty-actions").display = no_reports_yet
+            consent = c.demo_consent if no_reports_yet else None
+            self.query_one("#library-artifacts-demo-confirm").display = bool(consent)
+            if consent:
+                self.query_one("#library-artifacts-demo-copy", Static).update(
+                    "\n".join(consent.lines)
+                )
+                run = self.query_one("#library-artifacts-demo-confirm-run", Button)
+                run.label = (
+                    "Write today's brief"
+                    if consent.existing
+                    else "Set up and write today's brief"
+                )
+                run.disabled = not consent.available
+                run.tooltip = None if consent.available else consent.lines[0]
             self.query_one("#library-artifacts-retry").display = bool(
                 c.error or c.detail_error
             )
@@ -207,7 +258,6 @@ class ArtifactWork(Vertical):
             yield Button("Open source", id="library-artifacts-source", compact=True)
         with Horizontal(classes="library-artifacts-toolbar"):
             yield Button("Watchlists", id="library-artifacts-watchlists", compact=True)
-            yield Button("Try report demo", id="library-artifacts-demo", compact=True)
 
     def sync(self) -> None:
         c = self.controller
@@ -285,10 +335,6 @@ class ArtifactWork(Vertical):
             button = self.query_one(f"#library-artifacts-{name}", Button)
             button.display = bool(allowed)
             button.disabled = not ready
-        self.query_one("#library-artifacts-demo").display = (
-            c.scope.view != "chatbooks"
-            and (not c.selected or bool(row and row.status == "failed"))
-        )
         self.query_one("#library-artifacts-watchlists").display = (
             c.scope.view != "chatbooks" and not chatbook
         )
