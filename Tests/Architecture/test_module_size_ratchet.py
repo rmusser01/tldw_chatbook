@@ -147,7 +147,7 @@ _BUDGETS: dict[str, int] = {
     # required as its row does (2026-10-09) at 2,238; items 11-12 (one-row
     # Context window, -1; its assumed size, +1) leave it at 2,238 measured.
     "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2240,
-    "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 728,
+    "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 729,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.

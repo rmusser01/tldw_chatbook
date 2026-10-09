@@ -278,19 +278,14 @@ async def test_a_blank_field_says_what_it_inherits_and_from_where(request):
             )
 
         assert screen.query_one(f"#{_cid('temperature')}", Input).value == ""
-        assert row("temperature") == (
-            "Console Behavior",
-            "inherits 1.0 · Console Behavior",
-        )
-        assert row("streaming") == (
-            "Console Behavior",
-            "inherits Off · Console Behavior",
-        )
+        # The Source column names the layer once; the help names the value.
+        assert row("temperature") == ("Console Behavior", "inherits 1.0")
+        assert row("streaming") == ("Console Behavior", "inherits Off")
         assert row("max_tokens") == (
             "model default",
             MODEL_CONFIG_FIELDS["max_tokens"].help,
         )
-        assert row("top_p") == ("built-in", "inherits 0.95 · built-in")
+        assert row("top_p") == ("built-in", "inherits 0.95")
         assert row("thinking_budget_tokens") == ("provider", "blank = provider default")
         for name in (
             "temperature",

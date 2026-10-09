@@ -9,7 +9,7 @@ both surfaces name the same hidden fields in the same words.
 
 Model defaults uses the rows first: it edits the default model's
 ``model_defaults`` profile, so a blank field deletes that one override and
-says what it inherits instead ("inherits 1.0 · Console Behavior"); a
+says what it inherits instead ("inherits 1.0", its Source word naming the layer); a
 placeholder only states a range or unit.
 
 Console Behavior's global fallbacks (``chat_defaults``) use the same rows and
@@ -229,7 +229,8 @@ def row_copy(
     Returns:
         A set field: ``saved_word`` (or "edited *") and the field's help.
         A blank one: the layer it inherits from (or "edited *") and
-        "inherits <value> · <layer>", or "blank = provider default".
+        "inherits <value>" (the Source column names the layer once), or
+        "blank = provider default".
     """
     if shown:
         return (_EDITED if edited else saved_word), MODEL_CONFIG_FIELDS[name].help
@@ -237,7 +238,7 @@ def row_copy(
     help_line = (
         BLANK_FIELD_HELP
         if value is None
-        else f"inherits {format_value(value)} · {word}"
+        else f"inherits {format_value(value)}"
     )
     return (_EDITED if edited else word), help_line
 
