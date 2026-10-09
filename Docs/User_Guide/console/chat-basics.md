@@ -402,10 +402,15 @@ statistics tools.
   stays in the composer for your next message. An Enter on an empty composer
   sends nothing but a staged image, even if you start typing right after it.
   Pressing Enter again while the first message is being prepared never sends
-  it twice: a bare second Enter does nothing, and if you typed something new,
-  Console says "Not sent: your previous message is still being sent." and
-  keeps your text in the composer to send in a moment. An Enter is only ever
-  sent in the tab where you pressed it. If you switch tabs, the turn is still
+  it twice. A bare second Enter does nothing once the message has left the
+  composer; if it is still there when the first send finishes (as after
+  "Unknown command … Press Enter again to send as text"), that second Enter
+  is honoured. If you typed more while the first message was still in the
+  composer, Console says "Not sent: your previous message is still being
+  sent." and keeps your text there to send in a moment. A new message typed
+  after the first one has left the composer, then Enter, is handled once the
+  first send finishes, the way any Enter is at that moment (during a reply it
+  queues). An Enter is only ever sent in the tab where you pressed it. If you switch tabs, the turn is still
   sent from its own tab (or, in the first instant after Enter, stopped with a
   notice and its draft kept there).
 - The reply row then appears with a dim "Generating…" placeholder and streams
