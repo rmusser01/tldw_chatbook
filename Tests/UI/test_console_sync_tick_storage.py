@@ -42,45 +42,48 @@ async def _tick(console) -> None:
     await console._sync_native_console_chat_ui()
 
 
-def _count_scope_reads(console) -> list[int]:
-    """Count the Character scope's database reads; settle the projection.
+def _count_scope_reads(console) -> dict[str, int]:
+    """Count the Character scope's database reads; let the projection load.
 
     The harness's in-memory database cannot serve the browser's worker reads
     (each worker connection to ``:memory:`` is a new, empty database), so the
-    projection would never settle. The metadata read is replaced by a counted
-    constant read and the reload publishes the captured fingerprint, as a
-    successful load does: what remains is how often a tick reads.
+    projection would never load. The metadata read is replaced by a counted
+    read of a revision the test controls (live, every message write bumps
+    it), and the reload publishes the captured fingerprint, as a successful
+    load does: what remains is how often a tick reads.
     """
     from dataclasses import replace
 
     context = console._character_context
-    reads = [0]
+    state = {"reads": 0, "revision": 1}
 
     def counting(_database):
-        reads[0] += 1
-        return ("harness-authority", 1)
+        state["reads"] += 1
+        return ("harness-authority", state["revision"])
 
-    async def settled_refresh():
+    async def loading_refresh():
         snapshot = await context._capture_scope()
         context._publish(replace(context.state, scope_fingerprint=snapshot.fingerprint))
 
     context._read_database_scope_metadata = counting
-    context.refresh = settled_refresh
-    return reads
+    context.refresh = loading_refresh
+    return state
 
 
 @pytest.mark.asyncio
 async def test_sync_ticks_during_a_run_check_the_character_scope_once_a_second(
     monkeypatch,
 ):
-    """AC#2: settled ticks in a run make no DB scope reads; changes still do.
+    """AC#2: run ticks make no DB scope reads between checks; changes still load.
 
-    The recheck interval is pinned long for the settled phase (a loaded host
-    must not let a real second pass between ticks) and then zeroed to stand
-    for "a second later".
+    The send's own message writes bump the revision, so the ticks of a run
+    each reloaded the browser. The recheck interval is pinned long (a loaded
+    host must not let a real second pass between ticks) and then zeroed to
+    stand for "a second later".
     """
     from tldw_chatbook.UI.Console_Modules import character_context as module
 
+    # raising=False: the base build has no interval to pin (and fails below).
     monkeypatch.setattr(module, "SCOPE_RECHECK_DURING_RUN_SECONDS", 60.0, raising=False)
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
@@ -91,37 +94,42 @@ async def test_sync_ticks_during_a_run_check_the_character_scope_once_a_second(
             await until(gateway.validation_started.is_set, timeout=30)
             assert console._console_run_active()
             console._stop_console_transcript_sync_timer()
-            reads = _count_scope_reads(console)
+            scope = _count_scope_reads(console)
+            context = console._character_context
             try:
                 await _tick(console)
-                assert reads[0] >= 1, "the run's first sync did not check the scope"
-                await _tick(console)  # The first check after a reload settles.
-                first = reads[0]
+                assert scope["reads"] >= 1, "the run's first sync did not check"
+                first = scope["reads"]
                 for _ in range(5):
+                    scope["revision"] += 1  # The send writes a message.
                     await _tick(console)
-                assert reads[0] == first, (
-                    f"{reads[0] - first} scope reads in 5 settled run ticks"
+                assert scope["reads"] == first, (
+                    f"{scope['reads'] - first} scope reads in 5 run ticks"
                 )
                 # An ambient change (another open chat) is checked at once.
-                context = console._character_context
                 real_open = context._open_conversation_accessor
                 context._open_conversation_accessor = lambda: "another-chat"
                 await _tick(console)
-                assert reads[0] > first
+                assert scope["reads"] > first
                 context._open_conversation_accessor = real_open
                 await _tick(console)
-                settled = reads[0]
-                # A second later the run's tick checks the database again.
+                # A second later the run's tick reads and loads the change.
+                scope["revision"] += 1
+                checked = scope["reads"]
                 monkeypatch.setattr(module, "SCOPE_RECHECK_DURING_RUN_SECONDS", 0.0)
                 await _tick(console)
-                assert reads[0] > settled
+                assert scope["reads"] > checked
+                assert (
+                    context.state.scope_fingerprint.data_revision == scope["revision"]
+                )
             finally:
                 gateway.validation_release.set()
                 console._start_console_transcript_sync_timer()
             await until(lambda: REPLY in "\n".join(_painted_lines(host)), timeout=30)
             await until(lambda: not console._console_run_active(), timeout=30)
             # Outside a run every sync checks, as before.
-            idle = reads[0]
+            monkeypatch.setattr(module, "SCOPE_RECHECK_DURING_RUN_SECONDS", 60.0)
+            idle = scope["reads"]
             await _tick(console)
             await _tick(console)
-            assert reads[0] >= idle + 2
+            assert scope["reads"] >= idle + 2

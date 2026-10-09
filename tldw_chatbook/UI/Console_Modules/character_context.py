@@ -42,9 +42,9 @@ CONSOLE_CHARACTER_ROW_LIMIT = 5
 CONSOLE_CHARACTER_SEARCH_LIMIT = 8
 CONSOLE_CHARACTER_REPAIR_CANDIDATE_LIMIT = 20
 _SCOPE_CAPTURE_ATTEMPTS = 3
-#: TASK-33620.15.1: during a run, recheck a settled scope's database at most
-#: this often. Every 0.2 s tick made two worker DB calls, each worker opening a
-#: fresh connection (a private SQLite helper process) -- the busiest worker
+#: TASK-33620.15.1: during a run, check the scope's database at most this
+#: often. Every 0.2 s tick made two or more worker DB calls, each worker opening
+#: a fresh connection (a private SQLite helper process) -- the busiest worker
 #: work, live, between a send's acceptance and its provider call.
 SCOPE_RECHECK_DURING_RUN_SECONDS = 1.0
 
@@ -288,7 +288,7 @@ class ConsoleCharacterContextController:
         self.return_reveal = False
         self._browse_snapshot: ConsoleCharacterBrowseSnapshot | None = None
         self._activation_cancellation: asyncio.Event | None = None
-        self._settled_scope: tuple[float, _ConsoleCharacterScopeSnapshot] | None = None
+        self._scope_checked_at: float | None = None
         self.state = ConsoleCharacterContextState()
 
     def _publish(self, state: ConsoleCharacterContextState) -> None:
@@ -444,20 +444,23 @@ class ConsoleCharacterContextController:
         self._generation += 1
         self._publish(replace(self.state, scope_fingerprint=None))
 
-    def _settled_recently(self) -> bool:
-        """Whether a sync may skip the database scope read (TASK-33620.15.1).
+    def _checked_recently(self) -> bool:
+        """Whether a run's sync may skip the database scope check (TASK-33620.15.1).
 
-        True only during a run (the 0.2 s ticks keep coming), while the last
-        settled check is under the recheck interval old, its fingerprint is
-        still the published one, and the ambient scope (database handle,
-        current character, open chat) has not moved. Outside a run every
-        check reads, as before.
+        During a run the database scope is checked at most once per
+        ``SCOPE_RECHECK_DURING_RUN_SECONDS``: every message write bumps the
+        conversation revision, so each 0.2 s tick of a send reloaded the
+        browser. A skip needs a published projection whose ambient scope
+        (database handle, current character, open chat) has not moved.
+        Outside a run, or after any ambient change, every sync checks.
         """
-        settled = self._settled_scope
-        if settled is None or self._run_active is None or not self._run_active():
+        checked_at = self._scope_checked_at
+        fingerprint = self.state.scope_fingerprint
+        if checked_at is None or fingerprint is None or self._run_active is None:
             return False
-        checked_at, snapshot = settled
-        fingerprint = snapshot.fingerprint
+        if not self._run_active():
+            return False
+        database = self._database_accessor()
         current = (
             None
             if fingerprint.current_character_id is None
@@ -465,17 +468,17 @@ class ConsoleCharacterContextController:
         )
         return (
             time.monotonic() - checked_at < SCOPE_RECHECK_DURING_RUN_SECONDS
-            and fingerprint == self.state.scope_fingerprint
+            and id(database) == fingerprint.database_identity
             and self._ambient_scope_matches(
-                snapshot.database, current, fingerprint.open_conversation_id
+                database, current, fingerprint.open_conversation_id
             )
         )
 
     async def refresh_if_scope_changed(self, *, force: bool = False) -> bool:
         """Reload the projection when its scope changed.
 
-        During a run a settled, unmoved scope skips its database read for up
-        to ``SCOPE_RECHECK_DURING_RUN_SECONDS`` (``_settled_recently``).
+        During a run the database scope is checked at most once per
+        ``SCOPE_RECHECK_DURING_RUN_SECONDS`` (``_checked_recently``).
 
         Args:
             force: Reload even when the scope is unchanged.
@@ -483,24 +486,27 @@ class ConsoleCharacterContextController:
         Returns:
             True when a reload ran.
         """
-        if not force and self._settled_recently():
+        if not force and self._checked_recently():
             # Keep the yield the skipped worker read gave the sync tick: the
             # tick's synchronous stretch must not grow by the read's absence.
             await asyncio.sleep(0)
             return False
-        self._settled_scope = None
+        checked_at = time.monotonic()
+        self._scope_checked_at = None
         try:
             snapshot = await self._capture_scope()
         except _ConsoleCharacterScopeChanged:
             self.invalidate_scope()
         except _ConsoleCharacterScopeReadError:
             await self.refresh()
+            self._scope_checked_at = checked_at
             return True
         else:
             if not force and snapshot.fingerprint == self.state.scope_fingerprint:
-                self._settled_scope = (time.monotonic(), snapshot)
+                self._scope_checked_at = checked_at
                 return False
         await self.refresh()
+        self._scope_checked_at = checked_at
         return True
 
     @staticmethod
