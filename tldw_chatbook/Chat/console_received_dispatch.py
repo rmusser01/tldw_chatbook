@@ -198,10 +198,17 @@ async def _run_received_intent_bound(runtime, record, source):
         if source.permissions is None:
             source.permissions = owner
         require_received_source(runtime, record, source)
+        from tldw_chatbook.Agents.hook_permissions import HookPermissions
+
+        if isinstance(owner, HookPermissions):
+            # ADR-222 decision 3: the same snapshot() read, also keeping the
+            # targets it published, so this attempt's later preparation can
+            # share it instead of repeating the full read.
+            return owner.authority_read()
         return owner.snapshot()
 
     async def read_snapshot():
-        return await run_preparation_read(
+        result = await run_preparation_read(
             snapshot,
             creator=runtime,
             session_id=record.session_id,
@@ -209,8 +216,14 @@ async def _run_received_intent_bound(runtime, record, source):
             observers=(controller._preparation_reads,),
             require_current=lambda: require_received_source(runtime, record, source),
         )
+        # Imported after the worker read, so a cold owner import stays there.
+        from tldw_chatbook.Agents.hook_permissions import HookAuthorityRead
 
-    review = await read_snapshot()
+        if type(result) is HookAuthorityRead:
+            return result.snapshot, result
+        return result, None
+
+    review, authority = await read_snapshot()
     if not review.ready:
         result = await runtime.request_initial_hook_review(
             record.session_id,
@@ -223,9 +236,19 @@ async def _run_received_intent_bound(runtime, record, source):
         require_received_source(runtime, record, source)
         if result.kind != "ready":
             raise RuntimeError("Send cancelled; draft kept.")
-        review = await read_snapshot()
+        # The review answer is no authority: re-read, and share only this read.
+        review, authority = await read_snapshot()
     if not review.ready:
         raise RuntimeError("Hooks changed; Send again.")
+    from .console_hook_preparation import ConsoleHookAttemptRead
+
+    # Bound to this attempt only and passed explicitly to its own submission;
+    # each later consumer re-validates it or reads fresh (ADR-222 decision 3).
+    hook_read = (
+        ConsoleHookAttemptRead(record.session_id, authority)
+        if authority is not None
+        else None
+    )
     require_received_source(runtime, record, source)
     prepared_skills = None
     preparation = source.configuration_preparation
@@ -348,4 +371,5 @@ async def _run_received_intent_bound(runtime, record, source):
         queue_authorization=None,
         wake_authorization=None,
         raise_on_refusal=True,
+        hook_read=hook_read,
     )
