@@ -49,6 +49,30 @@ to provider call) in its own paired probe-free rounds. Split first sends from
 warm ones, because the first send is where the freed loop starts the most
 competing work. Report the first-send number even when the median is flat.
 
+**Outcome.** The hop was replaced by composing on the loop and reusing the
+catalog while nothing it read changed. Over 10 paired launches, first sends
+then reached the provider a median 88 ms sooner than the base.
+
+## The guard, not the read, was the cost: a correct cache keeps paying the guard (TASK-33620.15.1, 2026-10-09)
+
+**Incident.** Live, a Console run start spent 19-21 main-thread samples
+composing its MCP catalog. 180 of 265 sampled frames were storage admission
+working out, inside every store read, which store generation is selected and
+whether it is admitted. Reading and parsing the store files was 12. A cache
+checked by file stamps alone would have removed all of it. It would also have
+removed what the guard decides: a storage pause, a changed store selection or
+an unreviewed restored store makes the guarded read refuse or return defaults,
+and none of them changes the stamps of the files. So the check that kept the
+old semantics reads each store once through the same guard and hashes the
+bytes. Later run starts fell to 5-8 samples, not to zero, because two guard
+entries remain where the composition had six.
+
+**What to do.** Before you cache a guarded read, sample where its time goes.
+If the guard is the cost, the cache's own check must pass the same guard, so
+count guard entries, not reads, when you estimate the saving. Skipping the
+guard itself changes what the guard protects; leave that decision to the
+guard's owner.
+
 ## asyncio's task stack shows only the outer coroutine: walk `cr_await` (TASK-33620.15.1, 2026-10-09)
 
 **Incident.** A dev test timed out with `_console_sync_in_progress=True` while
