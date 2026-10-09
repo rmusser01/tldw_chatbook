@@ -3013,7 +3013,10 @@ DELETE FROM keywords
                     conn.attach_quiescence_registry(self._connection_quiescence)
                     conn.row_factory = sqlite3.Row
                     if not self.is_memory_db:
-                        conn.execute("PRAGMA journal_mode=WAL;")
+                        # Finish the statement: an active journal_mode PRAGMA is
+                        # a writer that refuses every later COMMIT on this
+                        # connection if anything retains its cursor.
+                        conn.execute("PRAGMA journal_mode=WAL;").fetchall()
                     # NORMAL is safe under WAL (app-crash-safe; only an OS/power
                     # crash can lose the last commit or two, acceptable for this
                     # local cache) and avoids an fsync on every commit -- the
