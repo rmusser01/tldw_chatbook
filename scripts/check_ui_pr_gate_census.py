@@ -216,6 +216,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # The capture review's items 9-11 (p7cf-b) raised it to 143:
 # test_settings_console_behavior_grammar.py (4 cases) pins Console
 # Behavior's one frame, one control column and its labels.
+# test_settings_console_behavior_grammar.py (5 cases) pins Console
+# Behavior's one frame, one control column, its labels and prose inset.
 MINIMUM_FILES = 171
 
 

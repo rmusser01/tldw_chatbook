@@ -162,3 +162,34 @@ async def test_config_key_prose_lives_in_the_inspector_and_lists_every_fallback(
         ]
         assert missing == [], keys
         assert "chat_defaults" in keys
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_console_behavior_prose_starts_where_its_section_headers_do(request):
+    """Self-review of note 9: with the frames gone, the help lines without a
+    class of their own started one cell left of the section headers and the
+    detail rows ("Global keeps one arrangement..." under "Rail presentation");
+    every prose line on the card now starts in the headers' column."""
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        _screen, card = await _open_card(host, pilot)
+        header_x = {
+            header.content_region.x
+            for header in card.query(".destination-section")
+            if _shown(header)
+        }
+        assert len(header_x) == 1, header_x
+        holders = (card, *card.query(".settings-instant-apply-group, Contents"))
+        prose = {
+            str(static.id or _static_text(static)[:30]): static.content_region.x
+            for holder in holders
+            for static in holder.children
+            if isinstance(static, Static)
+            and _shown(static)
+            and _static_text(static).strip()
+            and not static.has_class("destination-section")
+        }
+        assert len(prose) >= 15, prose
+        assert {name: x for name, x in prose.items() if x not in header_x} == {}
