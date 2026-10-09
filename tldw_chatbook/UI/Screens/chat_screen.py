@@ -18472,16 +18472,15 @@ class ChatScreen(BaseAppScreen):
             # staleness regression — the one-tuple-per-tick dedupe is
             # withdrawn for the visibility half).
             #
-            # TASK-22201: the workspace-context builds of one tick (the rail
-            # states here, the workspace-context push, the control bar's and
-            # agent section's inspector legs — six per tick, measured) share
-            # ONE fingerprint-validated build through this scope. The PR
-            # #660 ruling is kept by MECHANISM rather than by always
-            # rebuilding: a session created/activated across the awaits
-            # changes the store fingerprint and the later reads rebuild,
-            # while a settled tick pays for one build. Task-scoped: only
-            # THIS coroutine's task reads the cache — workers and handlers
-            # interleaving during the awaits keep building live.
+            # TASK-22201: the workspace-context builds of one tick (the rail states
+            # here, the workspace-context push, the control bar's and agent
+            # section's inspector legs — six per tick, measured) share ONE
+            # fingerprint-validated build through this scope. The PR #660 ruling
+            # is kept by MECHANISM rather than by always rebuilding: a session
+            # created/activated across the awaits changes the store fingerprint
+            # and the later reads rebuild, while a settled tick pays for one
+            # build. Task-scoped: only THIS coroutine's task reads the cache —
+            # workers and handlers interleaving during the awaits build live.
             with self._workspace.tick_workspace_build_scope():
                 if self._sync_console_rail_and_controls() is False:
                     self._console_control_bar_replay_whole_sync = True
@@ -18500,6 +18499,7 @@ class ChatScreen(BaseAppScreen):
                 self._dispatch_active_console_roleplay_refresh()
                 self._sync_console_workspace_context()
                 project_instruction_ui.sync_project_instruction_status_for_screen(self)
+                await asyncio.sleep(0)  # TASK-33628.5.1: rails, transcript: 2 turns
                 await self._sync_native_console_transcript()
                 self._sync_console_rail_visibility_if_changed(
                     self._current_console_rail_state()
