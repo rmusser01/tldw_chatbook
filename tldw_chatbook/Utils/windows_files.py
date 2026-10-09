@@ -28,6 +28,8 @@ import os as _os
 import platform
 import stat as _stat
 import struct
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 _U32 = C.c_uint32
@@ -56,6 +58,27 @@ _SHARE_ALL = 7
 _EPOCH_100NS = 116444736000000000
 # STATUS_BUFFER_TOO_SMALL / STATUS_BUFFER_OVERFLOW as signed NTSTATUS values.
 _STATUS_BUFFER_SHORT = frozenset({-1073741789, -2147483643})
+# FILE_WRITE_DATA/APPEND/EA/ATTRIBUTES, DELETE, WRITE_DAC/OWNER, GENERIC_WRITE/ALL.
+_WRITE_RIGHTS = 0x2 | 0x4 | 0x10 | 0x100 | 0x10000 | 0x40000 | 0x80000 | 0x50000000
+
+_native_mutation_lock = threading.Lock()
+_native_mutations = 0
+
+
+def _bump_native_mutation() -> None:
+    global _native_mutations
+    with _native_mutation_lock:
+        _native_mutations += 1
+
+
+def native_mutation_generation() -> int:
+    """Count of this process's write-capable by-id reopens (entry and exit).
+
+    Changes made through a by-id handle notify no watched directory; evidence
+    confirmed under one generation is never reused under another (TASK-34601).
+    """
+    with _native_mutation_lock:
+        return _native_mutations
 
 
 class _UnicodeString(C.Structure):
@@ -409,6 +432,26 @@ class _Native:
                 [_HANDLE, _U32, _P, _U32, C.POINTER(_U32)],
                 _I32,
             ),
+            (
+                self.kernel,
+                "ReadDirectoryChangesW",
+                [_HANDLE, _P, _U32, _I32, _U32, _P, C.POINTER(_Overlapped), _P],
+                _I32,
+            ),
+            (self.kernel, "CreateEventW", [_P, _I32, _I32, _P], _HANDLE),
+            (
+                self.kernel,
+                "WaitForMultipleObjects",
+                [_U32, C.POINTER(_HANDLE), _I32, _U32],
+                _U32,
+            ),
+            (self.kernel, "CancelIoEx", [_HANDLE, C.POINTER(_Overlapped)], _I32),
+            (
+                self.kernel,
+                "GetOverlappedResult",
+                [_HANDLE, C.POINTER(_Overlapped), C.POINTER(_U32), _I32],
+                _I32,
+            ),
         ]
         for dll, name, arguments, result in signatures:
             function = getattr(dll, name)
@@ -700,6 +743,11 @@ class _Native:
             0,
             (C.c_uint64 * 2)((before.index_high << 32) | before.index_low, 0),
         )
+        # Changes made through a by-id handle raise NO directory change
+        # notification; count them so watched evidence never relies on one.
+        writes = bool(access & _WRITE_RIGHTS)
+        if writes:
+            _bump_native_mutation()
         value = self.kernel.OpenFileById(
             handle,
             C.byref(descriptor),
@@ -721,6 +769,8 @@ class _Native:
             yield value
         finally:
             self.kernel.CloseHandle(value)
+            if writes:
+                _bump_native_mutation()
 
 
 @functools.lru_cache(maxsize=1)
@@ -1388,6 +1438,208 @@ def flush_file(fd: int) -> None:
     # never a reconstructed path, when a verifier holds a read-only descriptor.
     with native.reopen(handle, 0x40000000) as writable:
         native.check(native.kernel.FlushFileBuffers(writable))
+
+
+#: ReadDirectoryChangesW filters (FILE_NOTIFY_CHANGE_*).
+WATCH_POSTURE = 0x1 | 0x2 | 0x4 | 0x100  # FILE_NAME, DIR_NAME, ATTRIBUTES, SECURITY
+WATCH_CONTENT = WATCH_POSTURE | 0x8 | 0x10 | 0x40  # + SIZE, LAST_WRITE, CREATION
+_WAIT_TIMEOUT = 0x102
+_WAIT_CHUNK = 64  # MAXIMUM_WAIT_OBJECTS
+_WATCH_BUFFER = 1024
+_watch_issuer_lock = threading.Lock()
+_watch_issuer_executor = None
+
+
+def _watch_issuer() -> ThreadPoolExecutor:
+    """The one process-lifetime thread that issues every notification read.
+
+    Windows cancels a thread's pending overlapped I/O when that thread exits,
+    and completes event-based reads through an APC to the issuing thread. Arming
+    on the many short-lived Send/worker threads would cancel watches spuriously
+    and delay completions behind busy threads; one mostly idle owner avoids both.
+    """
+    global _watch_issuer_executor
+    with _watch_issuer_lock:
+        if _watch_issuer_executor is None:
+            _watch_issuer_executor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="chatbook-directory-watch"
+            )
+        return _watch_issuer_executor
+
+
+class DirectoryWatch:
+    """Pending change notifications on exact, reparse-free directory objects.
+
+    Each directory is opened by the same component-wise walk as
+    ``stat_many_for_admission`` (every component refuses reparse points), then
+    opened again by NAME under its pinned parent for overlapped I/O (NTFS
+    refuses change notification on a handle opened by file id) and verified to
+    be the very object the walk proved. One ``ReadDirectoryChangesW`` per
+    directory stays pending; ANY completion (a change, a buffer overflow, an
+    error, cancellation) signals its event and the watch is no longer
+    ``quiet()``. The watch never decides admission: it only tells callers
+    whether a full observation may be skipped. Changes made through a handle
+    opened by file id notify nothing; callers must account for them (see
+    ``native_mutation_generation``).
+
+    While open, these handles prevent renaming any ancestor of a watched
+    directory (Windows refuses to rename a directory above an open handle). The
+    owner accepted this for storage-admission evidence (TASK-34601 ADR-126
+    amendment); close the watch to release it.
+    """
+
+    def __init__(self, directories: dict) -> None:
+        """Arm notifications for ``{Path: filter}``; raise OSError on any failure."""
+        native = _native()
+        self._native = native
+        self._slots = []  # (handle, event, overlapped, buffer) per directory
+        self._closed = False
+        # Every pending read must belong to the persistent issuer thread.
+        _watch_issuer().submit(self._open_and_arm, directories).result()
+
+    def _open_and_arm(self, directories: dict) -> None:
+        native = self._native
+        nodes = sorted(
+            {Path(d) for d in directories}
+            | {p for d in directories for p in Path(d).parents},
+            key=lambda node: (len(node.parts), str(node)),
+        )
+        for node in nodes:
+            if (
+                not node.is_absolute()
+                or len(node.drive) != 2
+                or node.drive[1] != ":"
+                or not node.drive[0].isalpha()
+            ):
+                raise ValueError("local_absolute_drive_path_required")
+            if node.parent != node:
+                _component(node.name)
+        handles = {}
+        try:
+            for node in nodes:
+                if node.parent == node:
+                    handles[node] = native.open_handle(
+                        "\\??\\" + node.drive + "\\", directory=True
+                    )
+                else:
+                    handles[node] = native.open_handle(
+                        node.name, parent=handles[node.parent], directory=True
+                    )
+            for directory, notify in directories.items():
+                node = Path(directory)
+                if node.parent == node:
+                    name, parent = "\\??\\" + node.drive + "\\", None
+                else:
+                    name, parent = node.name, handles[node.parent]
+                self._arm(handles[node], name, parent, notify)
+        except BaseException:
+            self.close()
+            raise
+        finally:
+            for handle in handles.values():
+                native.kernel.CloseHandle(handle)
+
+    def _arm(self, pinned, name, parent, notify):
+        """Open ``name`` under the pinned ``parent`` for overlapped I/O and arm it.
+
+        Change notification needs a handle opened by NAME (NTFS refuses one
+        opened by file id), so the same single-component, reparse-refusing
+        relative open as the walk is repeated without synchronous I/O, and the
+        result must be the very object the walk pinned.
+        """
+        native = self._native
+        before = native.info(pinned)
+        raw = name.encode("utf-16-le")
+        text = C.create_string_buffer(raw + b"\x00\x00")
+        unicode_name = _UnicodeString(len(raw), len(raw) + 2, C.addressof(text))
+        attributes = _ObjectAttributes(
+            C.sizeof(_ObjectAttributes),
+            parent,
+            C.pointer(unicode_name),
+            0x40,
+            None,
+            None,
+        )
+        opened, status = _HANDLE(), _IOStatus()
+        native.ntcheck(
+            native.nt.NtCreateFile(
+                C.byref(opened),
+                1
+                | _READ_ATTRIBUTES
+                | _SYNCHRONIZE,  # FILE_LIST_DIRECTORY; async (no 0x20)
+                C.byref(attributes),
+                C.byref(status),
+                None,
+                0x80,
+                _SHARE_ALL,
+                1,  # FILE_OPEN
+                1 | 0x200000,  # FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT
+                None,
+                0,
+            )
+        )
+        handle = opened.value
+        event = None
+        try:
+            after = native.info(handle)
+            if (before.volume, before.index_high, before.index_low) != (
+                after.volume,
+                after.index_high,
+                after.index_low,
+            ):
+                raise OSError(errno.ESTALE, "windows_watch_identity_changed")
+            event = native.kernel.CreateEventW(None, 1, 0, None)
+            if not event:
+                raise C.WinError(C.get_last_error())
+            overlapped = _Overlapped(0, 0, 0, 0, event)
+            buffer = C.create_string_buffer(_WATCH_BUFFER)
+            if not native.kernel.ReadDirectoryChangesW(
+                handle,
+                buffer,
+                _WATCH_BUFFER,
+                0,
+                notify,
+                None,
+                C.byref(overlapped),
+                None,
+            ):
+                raise C.WinError(C.get_last_error())
+        except BaseException:
+            if event:
+                native.kernel.CloseHandle(event)
+            native.kernel.CloseHandle(handle)
+            raise
+        self._slots.append((handle, event, overlapped, buffer))
+
+    def quiet(self) -> bool:
+        """True only when no watched directory reported anything since arming."""
+        if self._closed or not self._slots:
+            return False
+        kernel = self._native.kernel
+        for start in range(0, len(self._slots), _WAIT_CHUNK):
+            chunk = self._slots[start : start + _WAIT_CHUNK]
+            events = (_HANDLE * len(chunk))(*(slot[1] for slot in chunk))
+            if kernel.WaitForMultipleObjects(len(chunk), events, 0, 0) != _WAIT_TIMEOUT:
+                return False  # signaled, abandoned or WAIT_FAILED: not quiet
+        return True
+
+    def close(self) -> None:
+        """Cancel and retire every pending notification; idempotent."""
+        if self._closed:
+            return
+        self._closed = True
+        kernel = self._native.kernel
+        slots, self._slots = self._slots, []
+        for handle, event, overlapped, _buffer in slots:
+            # The kernel may write the OVERLAPPED/buffer until the cancelled
+            # read completes: wait for it before releasing either.
+            kernel.CancelIoEx(handle, C.byref(overlapped))
+            transferred = _U32()
+            kernel.GetOverlappedResult(
+                handle, C.byref(overlapped), C.byref(transferred), 1
+            )
+            kernel.CloseHandle(handle)
+            kernel.CloseHandle(event)
 
 
 # Original callable provenance belongs to the defining module, before consumers.

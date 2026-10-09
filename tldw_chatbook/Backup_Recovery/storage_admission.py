@@ -488,8 +488,12 @@ def _begin_local_pause() -> _LocalPause:
         for attempt in _pending_acquisitions:
             if attempt.operation is None:
                 attempt.cancel.set()
+        # Change-notification handles pin their directories' ancestors against
+        # rename; maintenance owns the tree from here, so release them now.
+        retired = [w for hold in _holds.values() for w in _retire_watches(hold)]
         _changed.notify_all()
-        return pause
+    _close_retired_watches(retired)
+    return pause
 
 
 class _StartupReacquisition(_Acquisition):
@@ -582,7 +586,13 @@ class _Hold:
         # evidence, discarded with this hold. Guarded by _lock.
         self.evidence: dict[str, _Evidence] = {}
         self.path_evidence: OrderedDict[tuple, _Evidence] = OrderedDict()
-        self.derived_evidence: OrderedDict[tuple, tuple[_Evidence, object]] = OrderedDict()
+        self.derived_evidence: OrderedDict[tuple, tuple[_Evidence, object]] = (
+            OrderedDict()
+        )
+        # TASK-34601 (Windows): change notifications over evidence last
+        # confirmed by a full observation, keyed by entry identity (LRU).
+        # Guarded by _lock.
+        self.watches: OrderedDict[tuple, _EvidenceWatch] = OrderedDict()
         self.thread = threading.Thread(
             target=self._run,
             args=(authority,),
@@ -684,11 +694,14 @@ class StorageLease:
                 return
             hold = _holds[key]
             hold.count -= 1
+            watches = []
             if hold.count == 0:
                 hold.stop.set()
                 del _holds[key]
                 _retiring_holds.add(hold)
                 retired = hold
+                watches.extend(_retire_watches(hold))
+        _close_retired_watches(watches)
         if retired is not None:
             retired.thread.join()
             with _lock:
@@ -918,11 +931,12 @@ def _metadata_close_uncertain(error):
     return type(error) is _METADATA_CLOSE_ERROR  # noqa: E721 - exact defining exception.
 
 
-def _observe_stamps(posture_paths, content_paths) -> tuple:
+def _observe_stamps(posture_paths, content_paths, links=None) -> tuple:
     """Observe each named path once for one fresh evidence snapshot.
 
     Posture and content of overlapping paths come from the same native open.
-    No filesystem observation survives this call.
+    No filesystem observation survives this call. When ``links`` is a list, the
+    link count of every present content path is appended to it.
     """
     paths = tuple(dict.fromkeys((*posture_paths, *content_paths)))
     if os.name == "nt":
@@ -950,6 +964,12 @@ def _observe_stamps(posture_paths, content_paths) -> tuple:
         )
         for path in content_paths
     )
+    if links is not None:
+        links.extend(
+            observations[path][0].st_nlink
+            for path in content_paths
+            if observations[path] is not None
+        )
     return posture, content
 
 
@@ -996,7 +1016,7 @@ class _Evidence:
         )
 
 
-def _observe_evidence(entries) -> tuple:
+def _observe_evidence(entries, links=None) -> tuple:
     """Observe all derivation dependencies once within one fresh snapshot."""
     posture_paths = tuple(
         dict.fromkeys(p for entry in entries for p, _ in entry.posture)
@@ -1004,7 +1024,7 @@ def _observe_evidence(entries) -> tuple:
     content_paths = tuple(
         dict.fromkeys(p for entry in entries for p, _ in entry.content)
     )
-    posture, content = _observe_stamps(posture_paths, content_paths)
+    posture, content = _observe_stamps(posture_paths, content_paths, links)
     posture_by_path = dict(zip(posture_paths, posture, strict=True))
     content_by_path = dict(zip(content_paths, content, strict=True))
     return tuple(
@@ -1014,6 +1034,279 @@ def _observe_evidence(entries) -> tuple:
         )
         for entry in entries
     )
+
+
+# ---------------------------------------------------------------------------
+# TASK-34601 amendment to ADR-126: change-notified evidence reuse (Windows).
+#
+# A warm reuse may skip the per-call full re-observation (and the per-call
+# qualified_for walk) only while ALL hold: overlapped change notifications on
+# every directory of the evidence tree were armed BEFORE the full observation
+# that last confirmed these exact evidence objects, and are still quiet when
+# checked after the lease is counted; the drive root, which no parent directory
+# can watch, is re-stamped directly; every content file had a single link at
+# confirmation; no by-id write was made through this process's facade since
+# (such writes notify no directory); and that confirmation is younger than the
+# backstop. Anything else runs the original full observation -- still the only
+# source of refusals -- re-arming first so a change during it is never lost, and
+# a full observation that finds any change un-verifies every watch of the hold.
+# No watch is armed or used during a local pause; all are released when a pause
+# begins or their hold retires.
+# ---------------------------------------------------------------------------
+
+#: Kill switch. POSIX observation is already cheap, so Windows only.
+_EVIDENCE_WATCH = os.name == "nt"
+#: A full observation re-confirms watched evidence at least this often. This also
+#: bounds changes no watched directory reports: writes through a handle opened by
+#: file id in another process, data written through a still-open handle, a hard
+#: link created in another directory, a volume turning read-only.
+_EVIDENCE_WATCH_BACKSTOP_S = 0.5
+#: Evidence spanning more directories than this keeps per-call observation.
+_EVIDENCE_WATCH_MAX_DIRECTORIES = 128
+#: Watched evidence tuples kept per hold (a bound hold has one per admitted path).
+_EVIDENCE_WATCH_SLOTS = 8
+
+
+def _native_generation() -> int:
+    if os.name != "nt":
+        return 0
+    from tldw_chatbook.Utils.windows_files import native_mutation_generation
+
+    return native_mutation_generation()
+
+
+class _EvidenceWatch:
+    """Notifications over one exact tuple of confirmed evidence objects.
+
+    ``watch`` is None when arming failed for these entries; arming is not
+    retried until the evidence itself is replaced. ``verified_at``,
+    ``generation``, ``users`` and ``retired`` are guarded by ``_lock``.
+    """
+
+    __slots__ = ("entries", "watch", "verified_at", "generation", "users", "retired")
+
+    def __init__(self, entries, watch):
+        self.entries = entries
+        self.watch = watch
+        self.verified_at = None
+        self.generation = None
+        self.users = 0
+        self.retired = False
+
+    def covers(self, entries) -> bool:
+        return len(entries) == len(self.entries) and all(
+            mine is theirs for mine, theirs in zip(self.entries, entries)
+        )
+
+
+def _watch_key(entries) -> tuple:
+    # A watch holds strong references to its entries, so their ids stay unique.
+    return tuple(id(entry) for entry in entries)
+
+
+def _watch_directories(entries) -> dict | None:
+    """``{directory: notify filter}`` for every directory of the evidence tree.
+
+    Posture stamps hold no timestamps, so a directory whose children are only
+    posture paths watches names, attributes and security; a parent of any
+    content path also watches size and write/creation times. None when a content
+    path lies on a drive whose root is not re-stamped as posture.
+    """
+    from tldw_chatbook.Utils.windows_files import WATCH_CONTENT, WATCH_POSTURE
+
+    content = {p for entry in entries for p, _ in entry.content}
+    anchors = {p for entry in entries for p, _ in entry.posture if p.parent == p}
+    if any(Path(path.anchor) not in anchors for path in content):
+        return None
+    nodes = {
+        node
+        for entry in entries
+        for path in (*(p for p, _ in entry.posture), *content)
+        for node in (*path.parents, path)
+    }
+    directories = {}
+    for node in nodes:
+        if node.parent != node:
+            notify = WATCH_CONTENT if node in content else WATCH_POSTURE
+            directories[node.parent] = directories.get(node.parent, 0) | notify
+    return directories
+
+
+def _arm_watch(entries) -> _EvidenceWatch:
+    """Arm notifications for ``entries``; failure yields a ``watch=None`` marker."""
+    from tldw_chatbook.Utils.windows_files import DirectoryWatch
+
+    directories = _watch_directories(entries)
+    if directories is None or len(directories) > _EVIDENCE_WATCH_MAX_DIRECTORIES:
+        return _EvidenceWatch(entries, None)
+    try:
+        return _EvidenceWatch(entries, DirectoryWatch(directories))
+    except (OSError, ValueError, RuntimeError) as error:
+        if _metadata_close_uncertain(error):
+            raise
+        return _EvidenceWatch(entries, None)
+
+
+def _retire(watch):
+    """Mark one detached watch retired (caller holds ``_lock``); closable now?"""
+    watch.retired = True
+    return watch if watch.users == 0 else None
+
+
+def _retire_watches(hold) -> list:
+    """Detach every watch of ``hold`` (caller holds ``_lock``); the closable ones."""
+    watches, hold.watches = getattr(hold, "watches", None) or {}, OrderedDict()
+    return [watch for watch in map(_retire, watches.values()) if watch is not None]
+
+
+def _close_retired_watches(watches) -> None:
+    """Close detached watches outside the coordinator lock."""
+    for watch in watches:
+        if watch is not None and watch.watch is not None:
+            watch.watch.close()
+
+
+def _release_watch(watch) -> None:
+    with _lock:
+        watch.users -= 1
+        closable = watch.retired and watch.users == 0
+    if closable:
+        _close_retired_watches((watch,))
+
+
+def _invalidate_watches(hold) -> None:
+    """A full observation found a change: no watch of this hold stays verified."""
+    with _lock:
+        for watch in (getattr(hold, "watches", None) or {}).values():
+            watch.verified_at = None
+
+
+def _quiet_watch(hold, entries):
+    """Claim the hold's verified watch for ``entries`` within the backstop, or None."""
+    if not _EVIDENCE_WATCH:
+        return None
+    now, generation, key = time.monotonic(), _native_generation(), _watch_key(entries)
+    with _lock:
+        watches = getattr(hold, "watches", None) or {}
+        watch = watches.get(key)
+        if (
+            _pause is not None
+            or watch is None
+            or watch.retired
+            or watch.watch is None
+            or watch.verified_at is None
+            or now - watch.verified_at >= _EVIDENCE_WATCH_BACKSTOP_S
+            or watch.generation != generation
+            or not watch.covers(entries)
+        ):
+            return None
+        watch.users += 1
+        watches.move_to_end(key)
+        return watch
+
+
+def _anchors_unchanged(entries) -> bool:
+    """Re-stamp every drive root directly; no parent directory can watch it."""
+    expected = {}
+    for entry in entries:
+        for path, stamp in entry.posture:
+            if path.parent == path:
+                expected[path] = stamp
+    if not expected:
+        return True
+    anchors = tuple(expected)
+    posture, _ = _observe_stamps(anchors, ())
+    return posture == tuple(expected[path] for path in anchors)
+
+
+def _observe_watched(hold, entries) -> bool:
+    """The original full observation, (re)arming notifications BEFORE it.
+
+    Returns whether every stamp is unchanged. A watch becomes verified only when
+    the stamps are unchanged, every content file has a single link, no by-id
+    write happened in this process during the observation, and the watch armed
+    before the observation is still quiet after it. Any change un-verifies every
+    watch of the hold.
+    """
+    key = _watch_key(entries)
+    candidate = fresh = None
+    if _EVIDENCE_WATCH:
+        arm = False
+        with _lock:
+            current = (getattr(hold, "watches", None) or {}).get(key)
+            if _pause is None:
+                if (
+                    current is not None
+                    and not current.retired
+                    and current.covers(entries)
+                ):
+                    if current.watch is not None:
+                        current.users += 1
+                        candidate = current
+                else:
+                    arm = True
+        if candidate is not None and not candidate.watch.quiet():
+            _release_watch(candidate)
+            candidate, arm = None, True
+        if arm:
+            fresh = _arm_watch(entries)
+    generation = _native_generation()
+    links = []
+    started = time.monotonic()
+    try:
+        unchanged = _observe_evidence(entries, links) == tuple(
+            entry.stamps() for entry in entries
+        )
+        armed = candidate if candidate is not None else fresh
+        verified = (
+            unchanged
+            and all(count == 1 for count in links)
+            and armed is not None
+            and armed.watch is not None
+            and armed.watch.quiet()
+            and _native_generation() == generation
+        )
+    except BaseException:
+        if fresh is not None and fresh.watch is not None:
+            fresh.watch.close()
+        if candidate is not None:
+            _release_watch(candidate)
+        raise
+    retired = []
+    with _lock:
+        watches = getattr(hold, "watches", None)
+        if watches is not None and not unchanged:
+            for watch in watches.values():
+                watch.verified_at = None
+        if candidate is not None:
+            if (
+                verified
+                and watches is not None
+                and watches.get(key) is candidate
+                and not candidate.retired
+            ):
+                candidate.verified_at, candidate.generation = started, generation
+        elif fresh is not None and (
+            watches is not None
+            and _pause is None
+            and _holds.get(hold.key) is hold
+            and _hold_serving(hold)
+        ):
+            previous = watches.pop(key, None)
+            if previous is not None:
+                retired.append(_retire(previous))
+            watches[key] = fresh
+            if verified:
+                fresh.verified_at, fresh.generation = started, generation
+            while len(watches) > _EVIDENCE_WATCH_SLOTS:
+                retired.append(_retire(watches.popitem(last=False)[1]))
+            fresh = None
+    _close_retired_watches(retired)
+    if fresh is not None and fresh.watch is not None:
+        fresh.watch.close()  # never installed
+    if candidate is not None:
+        _release_watch(candidate)
+    return unchanged
 
 
 def _no_links(evidence: _Evidence) -> bool:
@@ -1365,62 +1658,90 @@ def _reuse_evidence(
         if entry is None:
             return None
         per_path.append(entry)
-    if _mount_read_only(root.parent):
-        return None
-    proof = check()
-    with _lock:
-        check_state(proof)
-    if getattr(_local, "admitted", False):
-        raise bootstrap.RecoveryRequired("maintenance_requires_owner_capability")
-    proof = check()
-    with _lock:
-        check_state(proof)
-        if (
-            _holds.get(key) is not hold
-            or not _hold_serving(hold)
-            or hold.evidence.get(str(selector)) is not evidence
-            or evidence.epoch != bootstrap._admission_epoch
-        ):
-            return None
-        hold.count += 1
-        token = StorageLease(key)
-        token._execution_selection = execution_selection
-    # Native filesystem observation never runs under the coordinator lock.
+    entries = (evidence, *per_path)
+    # Fresh child stamps are new objects on every call, so evidence including
+    # them is never watched; it keeps the original per-call observation.
+    watched = None if fresh_children else _quiet_watch(hold, entries)
     try:
-        entries = (evidence, *per_path)
-        unchanged = (
-            _observe_evidence(entries) == tuple(entry.stamps() for entry in entries)
-            and evidence.epoch == bootstrap._admission_epoch
-        )
+        # A quiet verified watch covers the qualification inputs as well; the
+        # backstop bounds a volume turning read-only (TASK-34601 amendment).
+        if watched is None and _mount_read_only(root.parent):
+            return None
         proof = check()
         with _lock:
             check_state(proof)
-            unchanged = (
-                unchanged
-                and token in _live_leases
-                and token._key == key
-                and _holds.get(key) is hold
-                and _hold_serving(hold)
-                and hold.evidence.get(str(selector)) is evidence
-                and evidence.epoch == epoch == bootstrap._admission_epoch
-                and evidence.names == hold.names
-                and all(
-                    hold.path_evidence.get(path_key) is entry
-                    for path_key, entry in retained_paths
+        if getattr(_local, "admitted", False):
+            raise bootstrap.RecoveryRequired("maintenance_requires_owner_capability")
+        proof = check()
+        with _lock:
+            check_state(proof)
+            if (
+                _holds.get(key) is not hold
+                or not _hold_serving(hold)
+                or hold.evidence.get(str(selector)) is not evidence
+                or evidence.epoch != bootstrap._admission_epoch
+            ):
+                return None
+            hold.count += 1
+            token = StorageLease(key)
+            token._execution_selection = execution_selection
+        # Native filesystem observation never runs under the coordinator lock.
+        # The notification check replaces the final re-observation at the same
+        # point: after the lease is counted, before the final owner checks.
+        try:
+            # The quiet check comes last, so a change reported while the drive
+            # root is re-stamped is still seen by this acquisition.
+            if (
+                watched is not None
+                and _anchors_unchanged(entries)
+                and watched.watch.quiet()
+            ):
+                observed = True
+            elif watched is not None:
+                observed = not _mount_read_only(root.parent) and _observe_watched(
+                    hold, entries
                 )
-            )
-    except (OSError, ValueError) as error:
-        token.close()
-        if _metadata_close_uncertain(error):
+            elif fresh_children:
+                observed = _observe_evidence(entries) == tuple(
+                    entry.stamps() for entry in entries
+                )
+                if not observed:
+                    _invalidate_watches(hold)  # shared selector evidence moved
+            else:
+                observed = _observe_watched(hold, entries)
+            unchanged = observed and evidence.epoch == bootstrap._admission_epoch
+            proof = check()
+            with _lock:
+                check_state(proof)
+                unchanged = (
+                    unchanged
+                    and token in _live_leases
+                    and token._key == key
+                    and _holds.get(key) is hold
+                    and _hold_serving(hold)
+                    and hold.evidence.get(str(selector)) is evidence
+                    and evidence.epoch == epoch == bootstrap._admission_epoch
+                    and evidence.names == hold.names
+                    and all(
+                        hold.path_evidence.get(path_key) is entry
+                        for path_key, entry in retained_paths
+                    )
+                )
+        except (OSError, ValueError) as error:
+            token.close()
+            if _metadata_close_uncertain(error):
+                raise
+            return None  # Only the unchanged full derivation decides refusal codes.
+        except BaseException:
+            token.close()  # as the derivation does: a counted lease never leaks
             raise
-        return None  # Only the unchanged full derivation decides refusal codes.
-    except BaseException:
-        token.close()  # as the derivation does: a counted lease never leaks
-        raise
-    if not unchanged:
-        token.close()
-        return None
-    return token
+        if not unchanged:
+            token.close()
+            return None
+        return token
+    finally:
+        if watched is not None:
+            _release_watch(watched)
 
 
 def _observe_candidates(root, selector, path, related_paths):
