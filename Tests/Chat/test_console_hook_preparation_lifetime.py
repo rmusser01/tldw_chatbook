@@ -745,13 +745,23 @@ async def test_cold_runtime_hook_preparation_needs_no_controller_or_store(hook_f
 
 @pytest.mark.parametrize("replacement", ["app", "context_provider"])
 async def test_original_v2_capture_refuses_changed_controller_input_before_context(
-    preparation_runtime, replacement
+    preparation_runtime, replacement, monkeypatch
 ):
     from tldw_chatbook.Agents.hook_permissions import HookPermissions
 
     state = preparation_runtime
     request = await _stock_request(state)
     state.runtime.ensure_hooks_v2(state.session.id, (), lambda *_: True)
+    # The stock route now shares its admission read with v2 preparation
+    # (ADR-222 decision 3; Tests/Chat/test_console_send_hook_read_sharing.py).
+    # A supported custom admission callback keeps the fresh v2 capture whose
+    # native read this control holds open.
+    original_reason = state.controller.hook_admission_reason
+
+    async def custom_reason():
+        return await original_reason()
+
+    monkeypatch.setattr(state.controller, "hook_admission_reason", custom_reason)
     probe = _OriginalVisit(state.owner)
     probe.snapshot_code = HookPermissions.v2_configuration.__code__
     original_observe = probe.observe

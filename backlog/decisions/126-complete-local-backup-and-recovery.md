@@ -2629,3 +2629,93 @@ existing finite callback lifetime; no authority cache or new storage API.
 ### Deferred Collections setup ownership (2026-10-07)
 
 The stock deferred Collections initializer owns one finite preparation callback and its newly acquired thread-local connection. It retains that callback through cancellation and shutdown, and checks its original owner and source before publication on the issuing loop. Original synchronous first use and custom/memory composition remain compatible. Database and archive operations retain their separate original admission scopes: wrapping both in a database-only operation incorrectly rejects archive access. Borrowed connections remain owned by their caller. This completes existing callback custody under ADR113/126 without adding permission or cached authority.
+
+
+### TASK-34601 amendment — cheaper native security observations (2026-10-08)
+
+Owner-directed Send-latency work. Every guarantee in the two TASK-34404 sections
+above is kept; only how the same facts are read changes.
+
+- **Descriptor acquisition.** Owner and DACL bytes come from one
+  `NtQuerySecurityObject(OWNER|DACL)` on the same freshly opened handle, into a
+  call-local buffer (re-queried at the reported size when the descriptor grew).
+  `GetSecurityInfo`, used before, also read the PARENT's descriptor to synthesize
+  INHERITED_ACE bits and a group SID for objects without SE_DACL_AUTO_INHERITED —
+  every directory this application creates — at 40–54 µs instead of 3–4 µs. The
+  owner SID, ordered ACE types/masks/trustees and every projection are identical
+  (`test_object_descriptor_projects_like_the_former_getsecurityinfo_route`); posture
+  stamps now hold the object's own stored descriptor bytes, compared only against
+  stamps read the same way. Non-self-relative bytes fail closed.
+- **TokenOwner.** TokenOwner is queried afresh for each security observation whose
+  projection can depend on it: an administrative owner (`_SYSTEM_SIDS`) other than
+  TokenUser. For every other owner the projection is identical for any TokenOwner,
+  so no token read is spent. Nothing about TokenOwner is cached. Immutable
+  descriptor decoding is cached by descriptor bytes, directory kind and TokenUser
+  and yields the owner SID, ordered ACEs and mode; the uid projection is computed
+  per observation from those and the fresh TokenOwner when it matters.
+- **Snapshot bookkeeping.** `stat_many_for_admission` builds its closed node set
+  once (case-folded keys, first spelling kept, same depth-then-name order) and
+  validates each component once. Opens, the two passes, pins, ESTALE and
+  uncertain-close custody are unchanged.
+- **Qualification.** `qualified_for` still reads `native_qualification.json` on
+  every call; the pydantic parse is memoized by the exact text read.
+
+Measured (observer-free, native Windows, interleaved): a 40-node admission
+snapshot 10.2–10.9 ms → 4.8–5.1 ms; warm Send to provider entry 6.0 s → 4.5 s.
+
+
+### TASK-34601 amendment — one path fence per acquisition; change-notified Windows evidence (2026-10-08)
+
+Owner-approved relaxations of the per-call re-observation rules above, made for
+Console Send latency. The full derivation remains the only source of refusals and
+reason codes; every in-memory gate (pause, provenance, epoch, hold, maintenance,
+lexical path, cancellation) still runs at every bracket.
+
+**One operation-path fence per acquisition.** An acquisition nested in a
+repository operation used to repeat the native operation-path fence (a
+drive-root reparse-refusing walk to the parent plus resolution) at each of its
+three or four bracket checks. It now performs that native fence once per path,
+at the first bracket, before the lease is counted; later brackets of the same
+acquisition repeat only the in-memory provenance and lexical-path checks. The
+narrowing applies only inside one `acquire_storage` call: long-lived
+`_Acquisition` reservations elsewhere never pass a path. Repository operations
+and every other `_check_operation` caller keep their own fences.
+
+**Change-notified evidence reuse (Windows).** A warm reuse may skip the full
+re-observation of confirmed evidence, and the per-call `qualified_for` walk, only
+when all of these hold:
+- overlapped `ReadDirectoryChangesW` notifications cover every directory of the
+  evidence tree (posture-only directories: names, attributes, security; parents
+  of content paths: also size and write/creation times), each opened by name under
+  its pinned parent after the same single-component reparse-refusing walk and
+  verified to be the walked object, and issued from one process-lifetime thread
+  (Windows cancels a thread's pending I/O when it exits);
+- the watch was armed BEFORE the full observation that confirmed these exact
+  evidence objects, that observation found every content file with one link, and
+  no write-capable by-id reopen ran in this process meanwhile (a native-mutation
+  generation; by-id writes notify no directory);
+- the watch is still quiet when checked after the lease is counted and after the
+  drive root (which no parent directory can watch) is re-stamped directly; a
+  content path on a drive whose root is not posture-stamped disables watching;
+- the confirmation is younger than a 0.5 s backstop.
+
+Any signal, overflow, cancelled or failed notification, arm failure, backstop
+expiry, generation change, changed evidence identity, hold or epoch runs the
+original full observation, re-arming first so a change during it is never lost;
+a full observation that finds any change un-verifies every watch of the hold.
+Each hold keeps at most eight watched evidence tuples (LRU). No watch is armed or
+used during a local pause; all are released when a pause begins and when their
+hold retires. POSIX is unchanged.
+
+Accepted consequences, each bounded by the 0.5 s backstop: changes that notify no
+watched directory -- writes, security or timestamp changes and in-place reparse
+points made by ANOTHER process through a handle opened by file id; data written
+through a still-open handle until it closes; a hard link to a content file created
+in another directory; a volume turning read-only. While watches are held, Windows
+refuses to rename any ancestor of a watched directory, including from other
+processes; the app's own maintenance releases them first.
+
+Measured (native Windows, instrumented pause probe, same scenario): native opens
+per warm Send 60,296/53,591 at the earlier receipt → 37,900/38,334 with the other
+TASK-34601 changes and L4 off → 20,285/19,623 with L4 on; the probe's native-open
+budget, failing before, passes.

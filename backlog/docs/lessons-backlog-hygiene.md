@@ -1263,3 +1263,17 @@ evidence scripts. Replaying cohesive single-line arguments through the same CLI
 and verifying both exact strings in the saved task restored the full records.
 Do not treat CLI exit0 as persistence evidence for multiline arguments through
 a Windows command wrapper; read back the complete intended plan and notes.
+
+## `git stash` is shared by every worktree of the repository (TASK-34601, 2026-10-08)
+
+**Incident.** To run a test "red" against HEAD, a session ran
+`git stash push -q <file>` in its own worktree; the push silently failed (an
+intent-to-add file was present), and the following `git stash pop` targeted the
+top of the SHARED stash list — another agent's "send-performance test preparation"
+stash from a different worktree. Git aborted the pop only because of a conflicting
+untracked file; otherwise a foreign agent's work would have been applied here and
+dropped from its stash.
+
+**What to do.** In this multi-worktree repo never use `git stash` for temporary
+reverts. Copy the file aside, write the HEAD version with `git show HEAD:<path>`,
+run, then restore the copy and `diff -q` it.

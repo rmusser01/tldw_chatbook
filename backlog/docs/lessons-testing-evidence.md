@@ -19336,3 +19336,103 @@ assumed to receive; nothing pinned what shape the shared seam accepts.
 with a contract test (full body records nothing; extracted dict records
 once) — and make the plan's live end-to-end run part of the evidence
 before shipping a user-visible surface.**
+
+## A stack sampler that kept `sys._current_frames()` refused real Sends (TASK-34601, 2026-10-08)
+
+**Incident.** To split Send latency into execution, native I/O and lock waits, an
+out-of-repo pytest plugin sampled every thread's stack at 100 Hz and kept the
+`sys._current_frames()` dict alive while sleeping until the next tick. Every
+sampled native Send run then failed: second Sends were refused with
+`Commit failed: cannot commit transaction - SQL statements in progress`, first
+Sends blocked at trace reservation with SQLITE_BUSY, and the startup FTS backfill
+failed its commit. Four runs, with and without the change under test, "proved"
+HEAD broken. The same runs without the sampler passed all three Sends every time.
+Mechanism: a retained frame keeps a returned function's locals alive.
+`CharactersRAGDB._get_thread_connection` ran `conn.execute("PRAGMA
+journal_mode=WAL;")` without fetching; the quiescent cursor stayed referenced by
+`_tracked`'s retained frame, so the journal_mode statement (a writer to SQLite)
+stayed active and every COMMIT on that connection failed, while BEGIN IMMEDIATE
+became a busy-handler-free upgrade. A frame-retaining hook reproduces it
+deterministically (`Tests/DB/test_journal_mode_statement_retention.py`; the
+statement is now fetched).
+
+**What to do.** An observer must drop every frame reference before it yields
+(`del frames`; clear the walk variable) and must never keep frames, tracebacks or
+`f_locals` between samples. Before blaming the code for a failure that appears
+only in instrumented runs, rerun the identical scenario with the observer off.
+Code that relies on a cursor being garbage collected to finish a statement is
+fragile under any frame retention (debuggers, held tracebacks, profilers): finish
+or close statements explicitly.
+
+
+## A shared consent read may only answer "nothing to do" (ADR-222 L1 hook read sharing, 2026-10-08)
+
+**Incident.** The first cut of sharing one Send attempt's hook consent read let
+the legacy UserPromptSubmit selection and v2 preparation select targets from
+that read while it was "current" by in-memory checks (store revision, section
+stamp, seals). A change made only by another process -- a hand edit of
+`config.toml` disabling the hook -- is invisible in memory. The stale target
+then reached its fresh `launch_guard`, was refused ("Captured hook is
+disabled, changed or unapproved."), and because UserPromptSubmit is a
+blocking event the whole Send was refused before commit with a persisted
+"Send blocked by hook" row; on the unchanged base the fresh selection simply
+omitted the disabled hook and the Send dispatched. Every new read-counting
+test stayed green because the shared `hook_file` fixture hook is PostToolUse,
+so the shared UserPromptSubmit selection was always empty; an adversarial
+reviewer reproduced the block with the fixture switched to UserPromptSubmit.
+
+**What to do.** When one read stands in for later reads, let it answer only
+outcomes its staleness cannot change (here: "no hook matches", "no v2 hook to
+prepare", "admission not refused"); anything that selects, builds or refuses
+reads fresh. A fresh guard downstream is not a safety net for a stale
+*selection* -- it turns "omit" into "deny". Test sharing with the event that
+is actually blocking, and with an out-of-process change (a second owner or a
+direct file edit), not only in-process review actions.
+
+**Second incident (same change, next review round).** The "no v2 hook to
+prepare" answer is a conjunction of clauses (no handler configured, no
+plugin-owned skill, no retained engine/lifecycle/signature). Each clause is a
+fail-*open* guard: drop one and the shared read silently skips preparation
+-- for plugin-owned skills, native plugin hooks (required ones included)
+would not run on any warm Send, no race needed. The plugin-owned clause had
+no test, and the existing plugin control could not see it: it counted reads
+by instance-patching `owner.v2_configuration`, and an instance-patched reader
+deliberately disables sharing (ADR-222 decision 8), so that control passes
+with or without the clause. A reviewer's one-line mutation disabling it
+left all 53 passing tests in the sharing, demand, lifetime and native-skill
+files green.
+
+**What to do.** Mutate each clause of a "nothing to do" predicate and keep a
+test that fails for each one. Count reads at the shared body
+(`HookPermissions._current`) and leave the stock reader in place -- a test
+that patches the reader is testing the unshared path.
+
+## `monkeypatch.undo()` inside a test silently dropped the fixture's patches (TASK-34601, 2026-10-08)
+
+**Incident.** New change-notification tests counted observations with
+`monkeypatch.setattr(...)` and then called `monkeypatch.undo()` to stop counting.
+The `native_scope` fixture had patched the bootstrap root, selector and settle time
+through the SAME `monkeypatch` object, so `undo()` removed those too; every later
+`_verdict` in the test ran against the real default profile. Several mutation tests
+still passed — vacuously — and only the plain fast-path test exposed it (two
+28-path observations instead of one).
+
+**What to do.** Inside a test, scope temporary patches with
+`with monkeypatch.context() as patch:`; never call `monkeypatch.undo()` when a
+fixture shares the object. A test that first proves the path under test is
+engaged (here: a one-path re-stamp and no qualification walk) catches this class
+of vacuous pass.
+
+## `ReadDirectoryChangesW` refuses handles opened by file id (TASK-34601, 2026-10-08)
+
+**Incident.** The first evidence-watch arm reopened each walked directory with
+`OpenFileById(FILE_FLAG_OVERLAPPED)` so the watch would bind the exact proven
+object. NTFS rejected every notification request with ERROR_INVALID_PARAMETER;
+the arm failure was (correctly) swallowed into the full-observation fallback, so
+the oracle suite passed while the fast path never engaged. A name-relative
+`NtCreateFile` under the pinned parent, without FILE_SYNCHRONOUS_IO_NONALERT,
+works; its identity is then compared with the walked handle.
+
+**What to do.** For directory change notification, open by name (relative to a
+pinned parent if reparse safety matters) and verify identity afterwards. Any
+fail-safe fallback needs a test that proves the fast path is actually reachable.

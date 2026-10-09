@@ -221,7 +221,7 @@ def main():
                 node = parent.f_locals['node']
                 enclosing = caller.f_back
                 admitted = outcome != 'uncertain_close_admission' or (enclosing is not None and enclosing.f_code is stamps_code)
-                chosen = node == selected.parent if outcome == 'uncertain_close_body' else node not in caller.f_locals['parents']
+                chosen = node == str(selected.parent).lower() if outcome == 'uncertain_close_body' else node not in caller.f_locals['parents']
                 if chosen and admitted:
                     if issued is not None: assert issued in storage._raw_operations
                     assert set_handle(argument, 2, 2), C.get_last_error()

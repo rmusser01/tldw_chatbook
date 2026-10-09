@@ -17815,6 +17815,7 @@ class ChatScreen(BaseAppScreen):
         if poll_record is None and type(self) is ChatScreen:
             self._console_completed_full_source = None
         self._console_sync_in_progress = True
+        started_at = time.perf_counter()  # L2 cadence: Console_Modules/poll_cadence
         self._record_ui_worker_started("console-sync")
 
         def poll_is_current() -> bool:
@@ -17995,6 +17996,12 @@ class ChatScreen(BaseAppScreen):
                 and self._console_poll_source_is_current(full_source)
             ):
                 self._console_completed_full_source = full_source
+            # Lever L2: light poll ticks are routed against this owner record;
+            # only a complete (not Preparing-narrowed) pass counts as full.
+            owner = self._console_chat_store
+            if poll_record is None and owner is not None:
+                owner_view = (owner.active_session_id, tuple(owner.sessions()))
+                self._console_full_sync_completed = (started_at, owner, owner_view)
             return True
         except _ConsolePreparingPollChanged:
             self._console_sync_requested = True
@@ -18193,6 +18200,19 @@ class ChatScreen(BaseAppScreen):
             return
 
         async def _poll_transcript() -> None:
+            # Lever L2 routing; imported here to stay off the boot leg (ADR-097).
+            from ..Console_Modules import poll_cadence
+
+            # An unchanged manual Preparing receipt keeps its own narrowed pass
+            # (_sync_console_poll_display_ui); every other routine tick of a
+            # live turn is light until the full-pass cadence is due.
+            if (
+                not poll_cadence.poll_wants_full_sync(self)
+                and self._console_preparing_poll_record() is None
+            ):
+                # A light tick publishes live progress and never stops the poll.
+                await poll_cadence.sync_console_poll_display(self)
+                return
             if await self._sync_console_poll_display_ui() is False:
                 # Deferred work still owes its final full refresh, even when
                 # no turn remains active. Keep the existing poll owner alive.

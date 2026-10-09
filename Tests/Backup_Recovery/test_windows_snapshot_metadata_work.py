@@ -121,6 +121,43 @@ def _metadata_counts(native, facade):
         assert monitor.get_tool(tool) is None
 
 
+def _independent_owner_sid(path):
+    """Owner SID text via GetFileSecurityW, independent of the facade under test."""
+    import ctypes as C
+    from ctypes import wintypes as W
+
+    advapi = C.WinDLL("advapi32", use_last_error=True)
+    kernel = C.WinDLL("kernel32", use_last_error=True)
+    advapi.GetFileSecurityW.argtypes = [
+        W.LPCWSTR,
+        W.DWORD,
+        C.c_void_p,
+        W.DWORD,
+        C.POINTER(W.DWORD),
+    ]
+    advapi.GetSecurityDescriptorOwner.argtypes = [
+        C.c_void_p,
+        C.POINTER(C.c_void_p),
+        C.POINTER(W.BOOL),
+    ]
+    advapi.ConvertSidToStringSidW.argtypes = [C.c_void_p, C.POINTER(C.c_void_p)]
+    kernel.LocalFree.argtypes = [C.c_void_p]
+    needed = W.DWORD()
+    advapi.GetFileSecurityW(str(path), 1, None, 0, C.byref(needed))
+    buffer = C.create_string_buffer(needed.value)
+    assert advapi.GetFileSecurityW(
+        str(path), 1, buffer, needed, C.byref(needed)
+    ), C.get_last_error()
+    owner, defaulted = C.c_void_p(), W.BOOL()
+    assert advapi.GetSecurityDescriptorOwner(buffer, C.byref(owner), C.byref(defaulted))
+    text = C.c_void_p()
+    assert advapi.ConvertSidToStringSidW(owner, C.byref(text))
+    try:
+        return C.wstring_at(text)
+    finally:
+        kernel.LocalFree(text)
+
+
 def test_original_tree_snapshot_counts_and_retires_actual_handles(tmp_path, request):
     directory = tmp_path / "metadata-tree"
     directory.mkdir()
@@ -158,13 +195,21 @@ def test_original_tree_snapshot_counts_and_retires_actual_handles(tmp_path, requ
             },
         )
     )
+    # TokenOwner is read fresh exactly for nodes whose projection depends on it:
+    # an administrative owner that is not the token user (independent oracle).
+    token_owner_reads = sum(
+        1
+        for node in nodes
+        if (owner := _independent_owner_sid(node)) != native.user_sid
+        and owner in windows_files._SYSTEM_SIDS
+    )
     assert counts == Counter(
         preflight_component=sum(node.parent != node for node in nodes),
         open_handle=2 * n,
         info=5 * n,
         ntfs=2 * n,
         security=n,
-        _token_sid=n,
+        _token_sid=token_owner_reads,
         stat_many_for_admission=1,
         _stat_handle=n,
     )
