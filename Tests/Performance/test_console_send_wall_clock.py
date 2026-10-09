@@ -170,8 +170,8 @@ async def test_clean_console_send_wall_clock(monkeypatch, tmp_path, request):
             monkeypatch.setattr(runtime, "accept_turn", accept)
             original_receive = runtime.accept_received_intent
 
-            def receive(intent):
-                turn_id = original_receive(intent)
+            def receive(intent, **kwargs):
+                turn_id = original_receive(intent, **kwargs)
                 observe_custody(intent, turn_id)
                 return turn_id
 
