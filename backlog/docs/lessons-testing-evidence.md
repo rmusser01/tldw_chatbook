@@ -73,6 +73,29 @@ navigation (tab switch, screen change). After any await, re-check each
 "visible"/"active"/"current" read, and each equality check against live
 widget state, or move it before the first await.
 
+## A second Console turn in the send harness ends in a recovery, not a reply (TASK-33620.15, 2026-10-09)
+
+**Incident.** A mounted test checked what a deferred second Enter sent, on
+the send harness that `build()` in `Tests/UI/test_console_send_acknowledgement.py`
+makes. On the pre-fix head the composer ended empty and the transcript held
+only the first turn, so the typed "yz" looked lost. It was not. The second
+turn logged `ui_dispatch status=sent` and then ended in the runtime with
+`RuntimeError: Local conversation storage is unavailable.`, and the runtime
+kept its draft as a turn recovery. Any turn in a chat that is already
+persisted reads its archive state through `app.local_chat_conversation_service`,
+and the factory app has none. The first turn passes because its chat is not
+persisted yet. The same log also showed a `no such table: world_books`
+traceback. That one is a red herring: the capture that raises it fails
+closed.
+
+**What to do.** Before asserting on a second turn in this harness, stub the
+service. `_allow_second_turns` in
+`Tests/UI/test_console_send_admission_off_pump.py` installs a
+`SimpleNamespace` with an in-memory `db` marker and
+`get_conversation_archive_states` returning `{}`. When a row is missing,
+read `runtime.recoveries_for_session(...)` and the `console_send_stage`
+lines before you call the text lost.
+
 ## A loguru sink added before the app mounts is gone by the time you read it (TASK-33628.5, 2026-10-05)
 
 **Incident.** The quit-mid-delete test added a loguru WARNING sink, ran the
