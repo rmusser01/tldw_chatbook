@@ -6402,6 +6402,7 @@ async def test_console_workspace_switch_refreshes_visible_session_tabs():
         assert "Workspace B Chat" in _visible_text(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_workspace_switch_refresh_is_not_dropped_during_inflight_sync():
     app = _build_test_app()
