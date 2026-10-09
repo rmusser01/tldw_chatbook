@@ -185,6 +185,21 @@ both real-profile fingerprints were unchanged.
   - Applies to reads "new chats; open chat “Chat 1” keeps OpenAI · gpt-5.6-terra." on
     one line.
 
+### Provider choice by keyboard (09a, 09b, 09c; TASK-33007.9 AC#4, AC#5)
+
+OpenAI profile, keyboard only:
+- `09a-provider-filter-typed`. **F6** focuses Provider; typing `llama` lists the
+  matches grouped Cloud, Local, then legacy aliases, with "6 found · Enter picks ·
+  Esc cancels". llama.cpp is highlighted: a provider whose name starts with the
+  typed text outranks one that only contains it (Ollama Cloud, listed first).
+- `09b-provider-chosen-llama-cpp`. **Enter**: Provider reads llama.cpp **edited \***.
+  Connect through Model follows it: API key **not required**, Endpoint
+  `http://localhost:8080` **config** "required: the server's base URL", Key check
+  "Not ready · no model", Model "Choose or search models" **edited \***, and
+  Applies to "… will use llama.cpp · no model."
+- `09c-provider-after-revert`. **Esc**, **r**, **Discard changes**: Provider shows
+  the saved OpenAI again, with no filtered list left open.
+
 ### Context window re-take (08, 08b, 08c; item 12)
 
 Taken 2026-10-09 at branch `p7cf-c` on `f7faf18906` in its own tmux server

@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │                                                                                                                            │  │  │ No unsaved changes                      │
+│  Core                        │  │  │   Connect                                                                                                                  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │  Provider                █ llama                              new-chat default 6 found · Enter picks · Esc cancels         │  │  │  Save (s) — no changes                  │
+│    > Providers & Models      │  │  │   Cloud                                                                                                                    │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │   Ollama Cloud                                                                                                             │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │   Local                                                                                                                    │  │  │ file.                                   │
+│  Interface                   │  │  │   llama.cpp                                                                                                                │  │  │  Focused setting: Provider              │
+│      Appearance              │  │  │   Llamafile                                                                                                                │  │  │  Purpose: Sets the provider new chats   │
+│      Theme                   │  │  │   Ollama                                                                                                                   │  │  │  start with; open chats nobody has      │
+│      Splash Screen           │  │  │   Custom & legacy aliases                                                                                                  │  │  │  used yet follow it.                    │
+│      Console Behavior        │  │  │   llama.cpp (legacy alias)                                                                                                 │  │  │  Save: staged - press s to save, r to ▁ │
+│  Data & Privacy              │  │  │   Ollama (legacy alias)                                                                                                    │  │  │  revert                                 │
+│      Storage                 │  │  │   Other                                                                                                              ▇▇    │  │  │  Validation: choose a catalog           │
+│      Workspaces              │  │  │  API key                 │ Paste to replace           Clear   saved in config  masked · (t) test · (ctrl+l) clear          │  │  │  provider or use Manual for custom      │
+│      Tool Profiles           │  │  │  Env var                 │ OPENAI_API_KEY                     not set          safer: keeps keys out of config.toml        │  │  │  aliases                                │
+│      Privacy & Security      │  │  │  Endpoint                │ https://api.openai.com/v1          built-in         blank uses the provider default             │  │  │  ▶ config key                           │
+│      Network                 │  │  │  Key check                Ready · not tested                                                                  Test (t)     │  │  │ Key                                     │
+│      My Profile              │  │  │                                                                                                                            │  │  │  Provider readiness: OpenAI /           │
+│  Troubleshooting             │  │  │   Default model for new chats                                                                                              │  │  │  gpt-5.6-terra                          │
+│      Diagnostics (view)      │  │  │  Model                   │ gpt-5.6-terra                      new-chat default type to search · Custom ID for others       │  │  │  Checks the settings, then lists      ▃ │
+│      About (view)            │  │  │  Applies to               new chats; open chat “Chat 1” is unused and will use OpenAI · gpt-5.6-terra.                     │  │  │  models without generating: a cloud     │
+│      Agents                  │  │  │   ▼ Model defaults · OpenAI · gpt-5.6-terra                                                                                │  │  │  provider's listing checks the API      │
+│  Expert                      │  │  │  Temperature             │ 0.0 - 2.0      Console Behavior inherits 0.6                                                    │  │  │  key, a local server's shows it         │
+│      Hooks                   │  │  │  Max tokens              │ tokens         provider         inherits 4096                                                 ▃ │  │  │  answers. Nothing is saved.             │
+│      Internal Prompts        │  │  │  Streaming               │ Inherit     ▼  provider         inherits Off                                                    │  │  │ Configuration check has not run.        │
+│      Advanced Config         │  │  │  Reasoning effort        │ Inherit     ▼  provider         blank = provider default                                        │  │  │  Runtime owner: Settings persisted      │
+│   Domain Defaults ▸ (11)     │  │  │  Reasoning summary       │ Inherit     ▼  provider         blank = provider default                                        │  │  │  defaults; Console runtime selection    │
+│                              │  │  │  Verbosity               │ Inherit     ▼  provider         blank = provider default                                        │  │  │  Writes allowed: Yes                    │
+│                              │  │  │   ▶ Sampling · all inherit · OpenAI does not accept 4 fields (open to list them)                                           │  │  │  Owns: chat_defaults.provider           │
+│                              │  │  │                                                                                                                            │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Type to filter providers by name or ID; Up/Down move, Enter chooses, Esc keeps the current provider.
+  Esc, s save category | Esc, r revert category | Esc, t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
