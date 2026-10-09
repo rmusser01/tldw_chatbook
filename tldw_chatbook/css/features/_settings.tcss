@@ -592,11 +592,12 @@ Button.settings-category-group-toggle:focus {
 /* TASK-33007.5: Model defaults rows read label | control | Source word |
    help (spec §6). Numbers and enums share one 16-cell control column, the
    enum size, so every Source word in the section lines up; the compact
-   workbench rules above still stack a row and widen its field. */
+   workbench rules above still stack a row and widen its field. Context
+   window's field (captures review note 11) takes the same column, so its
+   Source word lines up with theirs. */
 #settings-generation-defaults .settings-compact-input,
 #settings-generation-defaults .settings-compact-select,
-#settings-console-fallbacks .settings-compact-input,
-#settings-console-fallbacks .settings-compact-select {
+#settings-advanced-context-window .settings-compact-input {
     width: $ds-size-16;
 }
 
@@ -616,7 +617,7 @@ Button.settings-category-group-toggle:focus {
    first measure, so it spans its row; the builders keep it to one row and
    the ellipsis is the narrow-workbench safety net. */
 #settings-providers-models-card Collapsible,
-#settings-console-fallbacks Collapsible {
+#settings-console-behavior-card Collapsible {
     min-height: $ds-size-0;
     margin: $ds-space-0;
     padding: $ds-space-0;
@@ -625,13 +626,13 @@ Button.settings-category-group-toggle:focus {
 }
 
 #settings-providers-models-card Collapsible > Contents,
-#settings-console-fallbacks Collapsible > Contents {
+#settings-console-behavior-card Collapsible > Contents {
     padding: $ds-space-0;
     background: $ds-surface-panel;
 }
 
 #settings-providers-models-card Collapsible > CollapsibleTitle,
-#settings-console-fallbacks Collapsible > CollapsibleTitle {
+#settings-console-behavior-card Collapsible > CollapsibleTitle {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: $ds-control-height-compact;
@@ -683,7 +684,8 @@ Button.settings-category-group-toggle:focus {
 }
 
 #settings-provider-api-key-clear,
-#settings-test-provider {
+#settings-test-provider,
+#settings-model-context-window-reset {
     width: auto;
     min-width: $ds-size-0;
     height: $ds-control-height-compact;
@@ -1321,6 +1323,29 @@ Button.settings-category-group-toggle:focus {
     min-height: $ds-size-12;
 }
 
+/* Captures review note 9 (TASK-33007): Console Behavior reads with the
+   Providers & Models card's grammar. The detail pane's border is the only
+   frame -- the wrapper, the card and the instant-apply group draw none, and
+   the wrapper's inset is the only inset -- and every one-row Input and
+   Select sits in one control column instead of spanning the card. The
+   column fits the longest option ("Memory with latest exchange", 27 cells
+   plus 5 of chrome) whole. */
+#settings-console-behavior-detail,
+#settings-console-behavior-card,
+#settings-console-behavior-card .settings-instant-apply-group {
+    border: none;
+}
+
+#settings-console-behavior-card,
+#settings-console-behavior-card .settings-instant-apply-group {
+    padding: $ds-space-0;
+}
+
+#settings-console-behavior-card .settings-compact-input,
+#settings-console-behavior-card .settings-compact-select {
+    width: $ds-size-32;
+}
+
 /* Textual checkboxes measure one row. Compact borders and concise labels
    keep both the checkbox glyph and complete label inside the pane. */
 #settings-console-behavior-card Checkbox {
@@ -1339,13 +1364,6 @@ Button.settings-category-group-toggle:focus {
     max-width: $ds-width-full;
     height: auto;
     text-wrap: wrap;
-}
-
-
-/* The outer focus card already supplies the compact pane inset. A second
-   inset leaves too few columns for the full rail-label checkbox. */
-.settings-workbench-compact #settings-console-behavior-card {
-    padding: $ds-space-0;
 }
 
 .settings-action-row {

@@ -1836,15 +1836,24 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             "Advanced", id="settings-advanced-title", classes="destination-section"
         )
         with advanced_disclosure(screen, CONTEXT_WINDOW_DISCLOSURE_ID):
-            yield Static(
-                screen._provider_model_context_window_status(
-                    provider,
-                    str(values["model"]),
-                    values.get("model_context_window"),
-                ),
-                id="settings-model-context-window-status",
-                classes="settings-status-row",
+            # Captures review note 11: one Label | field | Source word | help
+            # row; Reset sits in it, as Clear does in API key's, and only
+            # while there is a window to return to.
+            word, help_line = screen._context_window_row_copy(
+                provider, str(values["model"]), values.get("model_context_window")
             )
+            reset = Button(
+                "Reset to detected",
+                id="settings-model-context-window-reset",
+                disabled=(
+                    not context_window_state.has_configured_override or registry_locked
+                ),
+                tooltip=(
+                    "Remove only the configured context-window override and "
+                    "return to the detected capability value."
+                ),
+            )
+            reset.display = context_window_state.effective_tokens is not None
             with Horizontal(classes="settings-input-row"):
                 yield Static("Context window", classes="settings-input-label")
                 yield Input(
@@ -1853,31 +1862,21 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                     ),
                     id="settings-model-context-window",
                     classes="settings-compact-input",
-                    placeholder="tokens (required when unknown)",
+                    placeholder="tokens",
                     restrict=r"^[0-9]*$",
                     disabled=registry_locked,
                 )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("", classes="settings-input-label")
-                yield Button(
-                    "Reset to detected",
-                    id="settings-model-context-window-reset",
-                    disabled=(
-                        not context_window_state.has_configured_override
-                        or registry_locked
-                    ),
-                    tooltip=(
-                        "Remove only the configured context-window override and "
-                        "return to the detected capability value."
-                    ),
+                yield reset
+                yield Static(
+                    word,
+                    id="settings-model-context-window-source",
+                    classes="settings-source-word",
                 )
-            yield Static(
-                "This is the model's total token capacity, not a conversation "
-                "length preference. Repairs update the existing model-capability "
-                "registry used by request safety checks.",
-                id="settings-model-context-window-help",
-                classes="settings-detail-row",
-            )
+                yield Static(
+                    help_line,
+                    id="settings-model-context-window-status",
+                    classes="settings-row-help",
+                )
         with advanced_disclosure(screen, SAVED_MODELS_DISCLOSURE_ID):
             yield Static(
                 screen._model_discovery_status,

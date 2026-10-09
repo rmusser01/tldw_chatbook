@@ -723,14 +723,20 @@ async def test_provider_context_window_reset_preserves_other_capabilities(
 
         context_input = screen.query_one("#settings-model-context-window", Input)
         status = screen.query_one("#settings-model-context-window-status", Static)
+        source = screen.query_one("#settings-model-context-window-source", Static)
         reset = screen.query_one("#settings-model-context-window-reset", Button)
         assert context_input.value == "256000"
-        assert "Configured override: 256,000" in _static_text(status)
-        assert reset.disabled is False
+        # Captures review note 11, rewritten on purpose: the row's Source
+        # word and one-line help replace the "Configured override" sentence.
+        assert _static_text(source) == "saved in config"
+        assert _static_text(status) == "override · detected 128,000"
+        assert reset.disabled is False and reset.display
 
         reset.press()
         await pilot.pause()
         assert context_input.value == "128000"
+        assert _static_text(source) == "edited *"
+        assert _static_text(status) == "detected 128,000"
         screen.action_settings_save_category(allow_text_entry_focus=True)
         await pilot.pause()
 

@@ -34,6 +34,7 @@ from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
+from tldw_chatbook.UI.Screens.settings_context_memory import model_context_window_state
 
 _SIZE = (211, 44)
 #: AC#1: the Advanced disclosures in the card's order.
@@ -439,3 +440,122 @@ async def test_compact_workbench_stacks_only_the_rows_it_stacked_before_the_fold
                 upper.query_one(Checkbox).id,
                 upper.styles.margin,
             )
+
+
+def _context_window_row(screen):
+    """Open Context window and return its row's parts and the body's children."""
+    field = screen.query_one("#settings-model-context-window", Input)
+    row = field.parent
+    contents = screen.query_one("#settings-advanced-context-window").query_one(
+        "Contents"
+    )
+    return field, row, [child for child in contents.children if child.display]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_unknown_context_window_opens_to_one_row_and_no_reset(request):
+    """Captures review note 11: opened for a model nothing detected, Context
+    window is one Label | field | Source word | help row in the Source-word
+    column Model defaults uses; no prose wraps, and no disabled "Reset to
+    detected" offers a detected value the title says is unknown."""
+    app = _app()
+    app.app_config["chat_defaults"]["model"] = "made-up-model-x"
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        context_id = "settings-advanced-context-window"
+        assert _title(screen, context_id).startswith("Context window · unknown")
+        screen.query_one(f"#{context_id}", Collapsible).collapsed = False
+        await pilot.pause()
+        await pilot.pause()
+        field, row, shown = _context_window_row(screen)
+        assert shown == [row], [child.id for child in shown]
+        assert row.region.height == 1
+        source = screen.query_one("#settings-model-context-window-source", Static)
+        help_line = screen.query_one("#settings-model-context-window-status", Static)
+        assert source.parent is row and help_line.parent is row
+        assert str(source.render()) == "not set"
+        assert str(help_line.render()) == "required for Automatic conversation budgets"
+        reset = screen.query_one("#settings-model-context-window-reset", Button)
+        assert not reset.display
+        temperature = screen.query_one("#settings-model-profile-temperature-source")
+        assert source.region.x == temperature.region.x
+        assert (
+            field.region.width
+            == screen.query_one("#settings-model-profile-temperature").region.width
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_detected_context_window_says_its_source_and_an_edit(request):
+    """Review note 11: a detected window reads "detected" with a one-line
+    help and keeps Reset in its row; a typed value reads "edited *" and names
+    the detected value it overrides."""
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        screen.query_one(
+            "#settings-advanced-context-window", Collapsible
+        ).collapsed = False
+        await pilot.pause()
+        await pilot.pause()
+        field, row, shown = _context_window_row(screen)
+        assert shown == [row], [child.id for child in shown]
+        detected = int(field.value)
+        source = screen.query_one("#settings-model-context-window-source", Static)
+        help_line = screen.query_one("#settings-model-context-window-status", Static)
+        reset = screen.query_one("#settings-model-context-window-reset", Button)
+        assert reset.display and reset.disabled and reset.parent is row
+        assert row.region.height == 1 and reset.region.height == 1
+        assert str(source.render()) == "detected"
+        assert str(help_line.render()) == "total token capacity, not a chat length"
+
+        field.value = "4242"
+        await pilot.pause()
+        assert str(source.render()) == "edited *"
+        assert str(help_line.render()) == f"detected {detected:,}"
+        assert row.region.height == 1
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_context_window_override_reads_saved_and_reset_stages_detected(request):
+    """Review note 11: a saved override reads "saved in config" and names the
+    detected value; Reset to detected, in the row, stages that value and the
+    row then reads "edited *"."""
+    app = _app()
+    app.app_config["model_capabilities"] = {
+        "models": {"gpt-4.1": {"context_window": 4242}}
+    }
+    detected = model_context_window_state(
+        app.app_config, "openai", "gpt-4.1"
+    ).detected_tokens
+    assert detected and detected != 4242
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        screen.query_one(
+            "#settings-advanced-context-window", Collapsible
+        ).collapsed = False
+        await pilot.pause()
+        await pilot.pause()
+        field, row, _shown = _context_window_row(screen)
+        source = screen.query_one("#settings-model-context-window-source", Static)
+        help_line = screen.query_one("#settings-model-context-window-status", Static)
+        reset = screen.query_one("#settings-model-context-window-reset", Button)
+        assert field.value == "4242"
+        assert str(source.render()) == "saved in config"
+        assert str(help_line.render()) == f"override · detected {detected:,}"
+        assert reset.display and not reset.disabled and reset.parent is row
+
+        reset.press()
+        await pilot.pause()
+        assert field.value == str(detected)
+        assert reset.disabled
+        assert str(source.render()) == "edited *"
+        assert str(help_line.render()) == f"detected {detected:,}"
