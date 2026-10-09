@@ -4,7 +4,7 @@
 
 This document provides a comprehensive review of the tool calling implementation in the tldw_chatbook chat pipeline, identifying current capabilities, gaps, and recommendations for improvement.
 
-**Last Updated**: 2025-07-16
+**Last Updated**: 2025-07-16 (tool-widget references corrected 2026-10-08)
 
 ## Quick Status Summary
 
@@ -39,6 +39,12 @@ This document provides a comprehensive review of the tool calling implementation
    - Created `ToolResultMessage` widget for execution results
    - Added `ToolExecutionWidget` container for grouping calls with results
    - Added distinct CSS styling with warning/success color coding
+
+   > Historical note (2026-10): the `tool_message_widgets` module providing
+   > these widgets was later removed. Tool activity now renders through the
+   > Console transcript's TOOL marker rows
+   > (`tldw_chatbook/Widgets/Console/console_transcript.py`), with
+   > `ConsoleToolDiffRow` inline diffs for file-write results.
 
 4. **Tool Execution Framework**
    - Abstract `Tool` base class for implementing custom tools
@@ -176,28 +182,17 @@ class Tool(ABC):
 
 ### Phase 1: Complete Core Integration (High Priority)
 
-1. **Wire Up Tool Execution in Stream Handler**
-   ```python
-   # In handle_stream_done() after detecting tool calls:
-   if tool_calls:
-       # Import tool components
-       from tldw_chatbook.Tools import get_tool_executor
-       from tldw_chatbook.Widgets.tool_message_widgets import ToolExecutionWidget
-       
-       # Create and mount tool execution widget
-       tool_widget = ToolExecutionWidget(tool_calls)
-       await chat_container.mount(tool_widget)
-       
-       # Execute tools
-       executor = get_tool_executor()
-       results = await executor.execute_tool_calls(tool_calls)
-       
-       # Update widget with results
-       tool_widget.update_results(results)
-       
-       # Save tool messages to database
-       # Continue conversation with results
-   ```
+1. **Tool Execution in the Stream Handler (as built)**
+   The original sketch here imported `ToolExecutionWidget` from
+   `tldw_chatbook.Widgets.tool_message_widgets` -- a module that has since
+   been deleted (and the `get_tool_executor` factory it referenced no longer
+   exists either). As built today, tool discovery and execution are
+   orchestrated through the tool catalog
+   (`tldw_chatbook/Agents/tool_catalog.py`, `ToolCatalogRegistry`, with the
+   built-in tools in `tldw_chatbook/Tools/`), and tool activity renders in
+   the Console transcript as TOOL marker rows
+   (`tldw_chatbook/Widgets/Console/console_transcript.py`) rather than via a
+   chat-container-mounted widget.
 
 2. **Update Non-Streaming Response Handler**
    - Add tool detection in `chat_events.py`

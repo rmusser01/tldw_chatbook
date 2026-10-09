@@ -770,7 +770,9 @@ def _install_flashrank(monkeypatch, *, ranked=None, init_error=None, run_error=N
 def test_successful_flashrank_overwrite_writes_final_score_marker(monkeypatch):
     _install_flashrank(
         monkeypatch,
-        ranked=[SimpleNamespace(index=0, score=-1.25)],
+        # Real flashrank 0.2.10 contract: the input passage dicts come
+        # back with a "score" key added (mapped through the passage "id").
+        ranked=[{"id": 0, "text": "t", "score": -1.25}],
     )
     result = _result(
         score=0.5,
@@ -788,7 +790,7 @@ def test_successful_flashrank_overwrite_writes_final_score_marker(monkeypatch):
 def test_invalid_flashrank_score_falls_back_without_marker(monkeypatch):
     _install_flashrank(
         monkeypatch,
-        ranked=[SimpleNamespace(index=0, score=math.nan)],
+        ranked=[{"id": 0, "text": "t", "score": math.nan}],
     )
     result = _result(
         score=0.5,
@@ -810,8 +812,8 @@ def test_flashrank_metadata_validation_is_atomic_across_all_results(monkeypatch)
     _install_flashrank(
         monkeypatch,
         ranked=[
-            SimpleNamespace(index=0, score=0.9),
-            SimpleNamespace(index=1, score=0.8),
+            {"id": 0, "text": "t0", "score": 0.9},
+            {"id": 1, "text": "t1", "score": 0.8},
         ],
     )
     first = _result(result_id="m1", score=0.5, metadata={"producer": "first"})
@@ -832,8 +834,8 @@ def test_flashrank_duplicate_indexes_fallback_without_mutation(monkeypatch):
     _install_flashrank(
         monkeypatch,
         ranked=[
-            SimpleNamespace(index=0, score=0.9),
-            SimpleNamespace(index=0, score=0.8),
+            {"id": 0, "text": "t0", "score": 0.9},
+            {"id": 0, "text": "t0", "score": 0.8},
         ],
     )
     first = _result(result_id="m1", score=0.5, metadata={"producer": "first"})

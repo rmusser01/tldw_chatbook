@@ -49,9 +49,11 @@ class ChatMessage(Widget):
     # widget's styling is now solely the messages family's owning sheet.
 
     # Store the raw text content
-    message_text = reactive(
-        ""
-    )  # Remove repaint=True to prevent double rendering during streaming
+    # No repaint: the Markdown body renders once at compose time from this
+    # value; nothing mutates it after mount (the watcher-less streaming
+    # append entry was dead code and has been removed, TASK-34437 -- the
+    # sibling of the ChatMessageEnhanced removal in TASK-34433).
+    message_text = reactive("")
     role = reactive("User", repaint=True)
     # Use an internal reactive to manage generation status and trigger UI updates
     _generation_complete_internal = reactive(True)
@@ -308,17 +310,6 @@ class ChatMessage(Widget):
         tts_widget_index.unregister_message_widget(self._tts_index_key, self)
         self._tts_index_key = new_value
         tts_widget_index.register_message_widget(new_value, self)
-
-    def update_message_chunk(self, chunk: str):
-        """Appends a chunk of text to an AI message during streaming."""
-        # This method is called by handle_streaming_chunk.
-        # The _generation_complete_internal should be False during streaming.
-        if self.has_class("-ai") and not self._generation_complete_internal:
-            # The markdown_widget.update is handled in handle_streaming_chunk
-            # This method primarily updates the internal message_text.
-            self.message_text += chunk
-        # If called at other times, ensure it doesn't break if markdown_widget not found.
-        # For streaming, handle_streaming_chunk updates the Markdown widget directly.
 
     def _check_for_files(self):
         """Check if the message contains extractable files."""

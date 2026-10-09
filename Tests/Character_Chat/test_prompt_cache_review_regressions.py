@@ -52,12 +52,21 @@ def _extensions(content):
 @pytest.fixture(params=["world-info", "dictionary"])
 def inject(request):
     if request.param == "world-info":
-        return lambda db, conversation, card: resolver.apply_world_info_to_message(
-            db, conversation, card, "castle", []
-        )
-    return lambda db, conversation, card: dictionaries.apply_active_chatdicts_to_text(
-        db, conversation, card, "castle"
-    )
+
+        def fn(db, conversation, card):
+            return resolver.apply_world_info_to_message(
+                db, conversation, card, "castle", []
+            )
+
+    else:
+
+        def fn(db, conversation, card):
+            return dictionaries.apply_active_chatdicts_to_text(
+                db, conversation, card, "castle"
+            )
+
+    fn.kind = request.param  # lets tests branch per cache without cross-products
+    return fn
 
 
 @pytest.mark.parametrize("writer", ["persona", "ccp"])
@@ -96,6 +105,206 @@ def test_unversioned_card_content_cannot_freeze_a_warm_prompt(db, inject):
     assert "OLD" in inject(db, conversation, card)
     card["extensions"] = _extensions("NEW")
     assert "NEW" in inject(db, conversation, card)
+
+
+def _save_card(db, monkeypatch, writer, character, card, payload):
+    """Write a card update through the named in-app seam and re-read the card."""
+    if writer == "persona":
+        LocalCharacterPersonaService(db).update_character(
+            character, payload, expected_version=card["version"]
+        )
+    else:
+        from tldw_chatbook.UI.CCP_Modules import ccp_character_handler
+
+        monkeypatch.setattr(ccp_character_handler, "_default_character_db", lambda: db)
+        assert ccp_character_handler.update_character(str(character), payload)
+    return db.get_character_card_by_id(character)
+
+
+def _spy_world_book_fetches(monkeypatch):
+    fetches = []
+    original = WorldBookManager.get_world_books_for_conversation
+
+    def count(self, *args, **kwargs):
+        fetches.append(1)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(WorldBookManager, "get_world_books_for_conversation", count)
+    return fetches
+
+
+@pytest.mark.parametrize("writer", ["persona", "ccp"])
+def test_book_bearing_card_save_refetches_conversation_books(db, monkeypatch, writer):
+    """TASK-34436 (a): the spy form — after a book-bearing card save the next
+    world-info resolve re-FETCHES the conversation books (the cached processor
+    was dropped), rather than merely re-rendering stale state."""
+    conversation = db.add_conversation({"title": "Spy"})
+    manager = WorldBookManager(db)
+    book = manager.create_world_book("SpyBook")
+    manager.create_world_book_entry(book, keys=["keep"], content="KEPT")
+    manager.associate_world_book_with_conversation(conversation, book)
+    character = db.add_character_card(
+        {"name": "Spy", "extensions": _extensions("OLD")}
+    )
+    card = db.get_character_card_by_id(character)
+    fetches = _spy_world_book_fetches(monkeypatch)
+
+    assert "OLD" in resolver.apply_world_info_to_message(
+        db, conversation, card, "castle", []
+    )
+    assert len(fetches) == 1
+    assert "OLD" in resolver.apply_world_info_to_message(
+        db, conversation, card, "castle", []
+    )
+    assert len(fetches) == 1  # warm: the cached processor skips the fetch
+
+    updated = _save_card(
+        db, monkeypatch, writer, character, card, {"extensions": _extensions("NEW")}
+    )
+    assert "NEW" in resolver.apply_world_info_to_message(
+        db, conversation, updated, "castle", []
+    )
+    assert len(fetches) == 2  # invalidated -> the manager fetch ran again
+    assert "NEW" in resolver.apply_world_info_to_message(
+        db, conversation, updated, "castle", []
+    )
+    assert len(fetches) == 2  # re-warmed under the new card version
+
+
+@pytest.mark.parametrize("writer", ["persona", "ccp"])
+def test_dictionary_bearing_card_save_refetches_the_bundle(db, monkeypatch, writer):
+    """TASK-34436 (b): the dictionary half — a card save that changes embedded
+    dictionaries drops the warm bundle; the rebuild re-loads the conversation's
+    attached dictionaries from the store."""
+    conversation = db.add_conversation({"title": "DictSpy"})
+    attached = dictionaries.save_chat_dictionary(
+        db,
+        "Attached",
+        entries=[dictionaries.ChatDictionary(key="keep", content="KEPT")],
+    )
+    LocalChatDictionaryService(db).attach_to_conversation(attached, conversation)
+    character = db.add_character_card(
+        {"name": "DictSpy", "extensions": _extensions("OLD")}
+    )
+    card = db.get_character_card_by_id(character)
+
+    loads = []
+    original = dictionaries.load_chat_dictionary
+
+    def count(*args, **kwargs):
+        loads.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(dictionaries, "load_chat_dictionary", count)
+
+    assert "OLD" in dictionaries.apply_active_chatdicts_to_text(
+        db, conversation, card, "castle"
+    )
+    assert len(loads) == 1
+    assert "OLD" in dictionaries.apply_active_chatdicts_to_text(
+        db, conversation, card, "castle"
+    )
+    assert len(loads) == 1  # warm bundle: no dictionary loads
+
+    updated = _save_card(
+        db, monkeypatch, writer, character, card, {"extensions": _extensions("NEW")}
+    )
+    assert "NEW" in dictionaries.apply_active_chatdicts_to_text(
+        db, conversation, updated, "castle"
+    )
+    assert len(loads) == 2  # invalidated -> the attached dictionary re-loaded
+    assert "NEW" in dictionaries.apply_active_chatdicts_to_text(
+        db, conversation, updated, "castle"
+    )
+    assert len(loads) == 2  # re-warmed under the new card version
+
+
+@pytest.mark.parametrize("writer", ["persona", "ccp"])
+def test_card_save_without_book_or_dictionary_fields_rebuilds_identically(
+    db, inject, monkeypatch, writer
+):
+    """TASK-34436 (c): the invalidation is unconditional by design — ANY card
+    save changes the version token, so a save that never touches book or
+    dictionary fields still rebuilds the cache (refetches) with byte-identical
+    output. Safe direction: extra work only, never stale content."""
+    conversation = db.add_conversation({"title": "Safe"})
+    character = db.add_character_card(
+        {"name": "Safe", "extensions": _extensions("KEEP")}
+    )
+    card = db.get_character_card_by_id(character)
+
+    if inject.kind == "world-info":
+        rebuilds = _spy_world_book_fetches(monkeypatch)
+    else:
+        rebuilds = []
+        original = dictionaries.load_character_dictionaries
+
+        def count(*args, **kwargs):
+            rebuilds.append(1)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(dictionaries, "load_character_dictionaries", count)
+
+    before = inject(db, conversation, card)
+    assert "KEEP" in before
+    assert inject(db, conversation, card) == before  # warm
+    assert len(rebuilds) == 1
+
+    updated = _save_card(
+        db, monkeypatch, writer, character, card, {"description": "unrelated edit"}
+    )
+    assert updated["version"] == card["version"] + 1
+    assert inject(db, conversation, updated) == before  # identical output...
+    assert len(rebuilds) == 2  # ...but the cache still rebuilt (safe direction)
+
+
+def test_card_save_invalidation_matches_store_write_invalidation(
+    db, monkeypatch
+):
+    """TASK-34436 (d): a book-bearing card save drives the cache through the
+    same state transition as a direct WorldBookManager write — exactly one
+    refetch on the next resolve, then warm again."""
+    conversation = db.add_conversation({"title": "Equiv"})
+    manager = WorldBookManager(db)
+    book = manager.create_world_book("EquivBook")
+    entry = manager.create_world_book_entry(book, keys=["castle"], content="OLD")
+    manager.associate_world_book_with_conversation(conversation, book)
+    character = db.add_character_card(
+        {"name": "Equiv", "extensions": _extensions("CARD-OLD")}
+    )
+    card = db.get_character_card_by_id(character)
+    fetches = _spy_world_book_fetches(monkeypatch)
+
+    def text(active_card):
+        return resolver.apply_world_info_to_message(
+            db, conversation, active_card, "castle", []
+        )
+
+    assert "CARD-OLD" in text(card)
+    assert len(fetches) == 1
+    assert "CARD-OLD" in text(card)
+    assert len(fetches) == 1
+
+    # Store-write invalidation (the ADR-221 baseline behavior).
+    assert manager.update_world_book_entry(entry, content="NEW")
+    assert "NEW" in text(card)
+    assert len(fetches) == 2  # refetched exactly once...
+    assert "NEW" in text(card)
+    assert len(fetches) == 2  # ...then warm again
+
+    # Card-save invalidation: the same transition, same observables.
+    updated = _save_card(
+        db,
+        monkeypatch,
+        "persona",
+        character,
+        card,
+        {"extensions": _extensions("CARD-NEW")},
+    )
+    assert "CARD-NEW" in text(updated)
+    assert len(fetches) == 3  # refetched exactly once...
+    assert "CARD-NEW" in text(updated)
+    assert len(fetches) == 3  # ...then warm again
 
 
 def _world_store(db):

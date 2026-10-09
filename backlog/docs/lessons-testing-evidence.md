@@ -589,7 +589,15 @@ reproduce the symptom live on a `git archive` export of the review's commit
 (`APP_WT=<export>`), next to the same clicks on the base and on the branch.
 What is left to do is then usually the part the earlier fix skipped -- here
 the hand-off at the widget, the guard for the class, and a test that fails
-instead of hanging.
+instead of hanging. When the pre-fix shape is a self-contained function (a
+cache-key builder, a gating predicate), the RED can be driven without
+touching source at all: a throwaway `-p` plugin that re-assigns the old
+implementation (TASK-34436, 2026-10-08: re-applying the pre-fix version-less
+cache keys this way turned 15 card-save tests red; 26/26 green without it).
+Patch from a late hook (`pytest_collection_modifyitems`), never at plugin
+import -- module import runs before the Tests/conftest.py config sandbox and
+dies on the real profile's `RecoveryRequired` instead of red-proofing
+anything.
 
 ## Compare against the branch's merge base, not whatever `origin/dev` is now
 
@@ -19252,3 +19260,19 @@ controller's sign-off or record the survivor (file:line) in the task notes
 and the matching lessons file so the next task starts from the full list —
 a half-removed pattern reads as "handled" to every future grep that only
 checks the seam the task named.
+
+
+## Malformed-response tests can stop at the wrong guard (PR #3052, TASK-34434)
+
+**Incident.** The FlashRank missing-ID, missing-score and out-of-range-ID tests
+returned one row for three passages. They passed through the response-length
+guard without ever exercising the field validators they named. Every malformed
+case also used `top_k == len(results)`, leaving validation beyond the selected
+subset unprotected. Full-length responses with a bad tail and `top_k=1` exposed
+this: a temporary truncating validator produced three assertion failures from
+partial score/provenance mutation; the real validator passed all six cases.
+The real-library smoke also started with its expected winner already first;
+putting the irrelevant passage first made the smoke witness an actual reorder.
+
+**What to do.** Satisfy every earlier guard before testing a later one, place a
+bad item outside any selected subset, and start ordering tests out of order.
