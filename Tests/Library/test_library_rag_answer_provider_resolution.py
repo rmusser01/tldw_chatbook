@@ -198,6 +198,43 @@ def test_scheduled_fallback_forwards_the_resolved_model(persisted, monkeypatch):
     assert (target["provider"], target["model"]) == ("anthropic", "claude-haiku-4-5")
 
 
+def test_scheduled_provider_without_a_model_never_borrows_another_providers_model(
+    persisted, monkeypatch
+):
+    """Review round 1, Important 1 (un-mocked): an automation that names a
+    provider but no model takes THAT provider's own remembered model --
+    never the `[chat_defaults]` model of a different provider. Before the
+    fix `[scheduling] executor_provider = "anthropic"` under an OpenAI /
+    gpt-4.1-mini `[chat_defaults]` ran Anthropic with gpt-4.1-mini on the
+    unattended, recurring path."""
+    persisted(_settings(provider="OpenAI", model="gpt-4.1-mini"))
+
+    def executor_provider_only(section, key, default=None):
+        assert section == "scheduling"
+        return {"executor_provider": "anthropic"}.get(key, default)
+
+    monkeypatch.setattr(automation_execution, "get_cli_setting", executor_provider_only)
+    target = resolve_execution_target({"input": {"question": "q"}})
+    assert target["provider"] == "anthropic"
+    assert target["model"] == "claude-sonnet-5"
+    assert target["model"] != "gpt-4.1-mini"
+
+    # A definition that names a provider the config holds no model for:
+    # the handler keeps its own default; still never gpt-4.1-mini.
+    monkeypatch.setattr(automation_execution, "get_cli_setting", lambda *a, **k: None)
+    target = resolve_execution_target(
+        {"input": {"question": "q", "provider": "deepseek"}}
+    )
+    assert (target["provider"], target["model"]) == ("deepseek", None)
+
+    # The one case the chat-defaults model IS the right answer: the named
+    # provider is the chat-defaults provider itself.
+    target = resolve_execution_target(
+        {"input": {"question": "q", "provider": "openai"}}
+    )
+    assert (target["provider"], target["model"]) == ("openai", "gpt-4.1-mini")
+
+
 def test_gate_blocks_a_configured_provider_without_a_key_and_names_no_model(
     persisted, monkeypatch
 ):
