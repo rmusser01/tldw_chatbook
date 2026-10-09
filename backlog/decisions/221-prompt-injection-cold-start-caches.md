@@ -33,7 +33,16 @@ module-level `lru_cache` fallback for ad-hoc string lookups.
   nested calls; rollback and unsuccessful writes do not bump. Borrowed native
   transactions conservatively age the cache after either completion. Their
   weak connection references suppress cache reuse while they remain active.
-  Generation cell creation and increments use one process-local lock.
+- **Counter atomicity (bounded, not absolute)**: every increment is a
+  read-modify-write on the cell, and generation cell creation and increments
+  share one process-local lock, so in-process bumps cannot lose each other.
+  That lock does not — and need not — synchronize with anything else: it is
+  invisible to other processes (whose edits are unobserved by design, see
+  Consequences), and SQLite's own transaction serialization is what bounds
+  concurrent writers at the storage layer. The one residual race is a crash
+  between a committed write and its scheduled bump: that increment is lost
+  and the cache may serve one stale generation until the next mutation
+  re-bumps the counter (self-healing). The narrow stale window is accepted.
 - The bump is over-invalidation by design: a mutation to a book attached to
   conversation A also invalidates conversation B's cached processor. Correct,
   cheap, and requires no attachment tracking.
