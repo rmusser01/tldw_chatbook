@@ -554,6 +554,9 @@ class MCPToolProvider:
         # lookup (task-201's don't-re-list-per-lookup note).
         self._entry_by_llm_name: dict[str, tuple[HubTool, EffectiveToolState]] = {}
         self._not_connected_count = 0
+        # TASK-33620.15.1: ``((profile_id, plugin_owned, is_connected), ...)``
+        # as ``compose_catalog`` last saw them; None until it has run.
+        self.composed_servers: tuple[tuple[Any, bool, bool], ...] | None = None
         self._init_decision_state()
 
     def _init_decision_state(self) -> None:
