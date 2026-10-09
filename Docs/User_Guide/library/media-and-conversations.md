@@ -566,7 +566,7 @@ still spans the pane.
 | "Note" | Opens a new note that names this document: the note is titled after the item and its first line is a `[title](media://…)` link back to it, with the caret on the line below, ready to type. `n` does the same from the keyboard (not while the Find box or the Items filter has focus — there it types an `n`). The Reader keeps your place: pressing the Media rail row brings back the same item, on the same tab, at the same scroll position, and the note stays open on your next visit to Notes. For a server item the button reads "○ Note" with the reason "Notes beside server items need server support". |
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
-| "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
+| "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line, never off the fold. The primary row itself holds five actions (Find, Note, Read later, Use in Console, More); on a Reader too narrow to fit all five side by side — counting "More ▴" so the row never reflows when More opens — the row is already two rows (Find · Note · Read later over Use in Console · More), More open or closed — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
 | "Move to trash" | Two-step, title-specific confirmation. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
 
 *Verified against fix/media-riders-o — 2026-09-07 (tasks 31958/31959: live
@@ -604,7 +604,7 @@ painted-text tests at 235x52 and 100x30, matching the Export gate's inline
 
 *Verified against fix/media-wave5-h @ a4682f17e — 2026-09-06 (task-31633
 AC#3: More opened live at 235x52 and at 100x30 over a seeded document.
-At 235x52 the four actions paint on one row and the "Read" tab row moves
+At 235x52 the five actions paint on one row and the "Read" tab row moves
 down exactly one line; at 100x30 they wrap to two rows and the body moves
 two. Before this change the disclosure was a full-height Vertical that
 displaced the tab row and body by 19 rows behind ~16 blank ones. The

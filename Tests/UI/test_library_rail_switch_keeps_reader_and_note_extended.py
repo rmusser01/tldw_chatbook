@@ -52,6 +52,7 @@ from Tests.UI.test_library_rail_switch_keeps_reader_and_note import (
     _reader_scroll_y,
     _saved,
     _scroll_reader,
+    _select_reader_mode,
     _session,
 )
 from Tests.UI.test_library_shell import _wait_for_selector
@@ -79,12 +80,7 @@ async def test_media_item_left_on_the_info_tab_comes_back_on_info(tmp_path):
     async with host.run_test(size=SIZE) as pilot:
         screen = await _library(host, pilot)
         await _open_media_item(screen, pilot)
-        screen.query_one("#library-media-reader-select-info", Button).press()
-        await _until(
-            pilot,
-            lambda: screen._media_state.reader_session.mode == "info",
-            "the Info tab",
-        )
+        await _select_reader_mode(screen, pilot, "info")
 
         await _rail(screen, pilot, "notes")
         await _wait_for_selector(screen, pilot, ".library-notes-tree-note-row")
