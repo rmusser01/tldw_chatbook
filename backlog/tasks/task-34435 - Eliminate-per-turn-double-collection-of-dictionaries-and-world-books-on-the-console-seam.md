@@ -4,7 +4,7 @@ title: Eliminate per-turn double collection of dictionaries and world books on t
   console seam
 status: Done
 created_date: 2026-10-08 00:35
-updated_date: 2026-10-09 06:15
+updated_date: 2026-10-09 06:27
 ---
 
 ## Description
