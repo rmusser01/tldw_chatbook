@@ -138,8 +138,8 @@ _BUDGETS: dict[str, int] = {
     # providers_models_card.py: the final review's ruff format (+2 reflow)
     # and fixes re-pin it at the PR head's measured 1,963; the full-screen
     # capture fixes (2026-10-09: the restored-connection row, the Applies-to
-    # line, Sign in with's row copy) at 2,176.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2176,
+    # line, Sign in with's row copy) at 2,194.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2194,
     "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 728,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
