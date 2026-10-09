@@ -454,16 +454,29 @@
     padding: $ds-space-0;
 }
 
-/* TASK-34000.25: the primary row gained "Note" (reading-desk §4.5). Its five
-   label-sized buttons need exactly 46 cells -- Find 6, Note 6, Read later 12,
-   Use in Console 16, More 6 -- and the Reader's content is 46 wide at the
-   100x30 compact size the toolbar test pins, so the row's decorative 1-cell
-   side gutter was the one cell that pushed More past the pane edge
-   (measured: More at x=95..101 inside a content region ending at x=100).
-   Both Reader rows drop the gutter so they stay aligned; the mode row fits
-   either way. */
-#library-media-reader-primary-toolbar,
-#library-media-reader-mode-toolbar {
+/* TASK-34000.25 (fix round 1): the primary row holds two label-sized groups
+   (Find · Note · Read later | Use in Console · More). Wide enough for the
+   whole row they sit side by side; narrower than the derived threshold (`is-stacked`)
+   (`LibraryMediaViewer._primary_toolbar_one_row_min_width`, applied from the
+   viewer's own `on_resize`) the second group drops under the first, so
+   "More ▴" never clips. The `.ds-toolbar` gutter is untouched. */
+#library-media-reader-primary-toolbar {
+    height: auto;
+}
+
+#library-media-reader-primary-toolbar.is-stacked {
+    layout: vertical;
+}
+
+.library-media-reader-primary-group {
+    width: auto;
+    height: auto;
+}
+
+.library-media-reader-primary-group > Button {
+    width: auto;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
     padding: $ds-space-0;
 }
 

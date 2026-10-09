@@ -700,13 +700,14 @@ def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
 # than moved: it is new screen code, not part of the extracted support layer.)
 _MEDIA_SELECT_MODE_KEY = "s"
 _MEDIA_ROW_SELECT_KEY = "space"
-#: TASK-34000.25: how many screen refreshes the Reader's reading-position
-#: restore may wait for a body that has laid out NOTHING yet (``max_scroll_y
-#: == 0``) before giving up -- separate from task-31968's eight-refresh
-#: budget for a body that is laid out but still growing. The Raw view
-#: indexes on its first Resize, which the rail-return route swap's own
-#: refreshes can outrun (measured: 8 of 8 re-applies at ``max_scroll_y == 0``).
-_MEDIA_PROGRESS_RESTORE_UNLAID_REFRESHES = 48
+#: TASK-34000.25: how many LAYOUT-SIGNAL continuations (``LibraryMediaContent
+#: Body.run_when_laid_out`` -- the Raw view's index build, the Markdown's last
+#: mounted batch, or the next refresh once something is laid out) the
+#: Reader's reading-position restore may chain while the body has laid out
+#: NOTHING yet (``max_scroll_y == 0``), before giving up on an item that
+#: never lays out. Separate from task-31968's eight-refresh budget for a
+#: body that is laid out but still growing.
+_MEDIA_PROGRESS_RESTORE_LAYOUT_SIGNALS = 48
 #: Qodo on #2378: one name for the review-set auto-resume worker group, shared
 #: by registration (_maybe_auto_resume_review_set) and cancellation.
 _REVIEW_SET_RESUME_WORKER_GROUP = "library_review_set_resume"
@@ -33895,7 +33896,7 @@ class LibraryScreen(BaseAppScreen):
             if remaining > 0:
                 self.call_after_refresh(settle, remaining - 1, unlaid)
 
-        settle(8, _MEDIA_PROGRESS_RESTORE_UNLAID_REFRESHES)
+        settle(8, _MEDIA_PROGRESS_RESTORE_LAYOUT_SIGNALS)
 
     def _close_library_media_find(self) -> None:
         """Reset the content Find bar: collapsed, no query, first match.
@@ -34017,6 +34018,14 @@ class LibraryScreen(BaseAppScreen):
         self._capture_library_media_loaded_progress()
         await self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
         if self._library_selected_row_id != LIBRARY_ROW_CREATE_NOTE:
+            # A retained note's exit flush refused (validation, conflict, a
+            # failed write). Its status lives on the Notes editor, which is
+            # not on screen here, so say why `n` did nothing (review M-2).
+            if callable(notify := getattr(self.app_instance, "notify", None)):
+                status = self._notes_controller._library_note_status_line()
+                notify(
+                    f"Finish the open note first — {status}", severity="warning"
+                )
             return
         self._notes_state.shortcut_status = f"Note from {title} — Media keeps your place"
         self._start_library_note_from_media_source(

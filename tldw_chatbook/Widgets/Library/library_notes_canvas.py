@@ -955,6 +955,54 @@ def resolve_database_note_status_channels(
 
 
 @dataclass(frozen=True)
+class _EditorSurfaceFlags:
+    """Which editor surfaces one presentation state shows (TASK-34000.25).
+
+    The one derivation both ``_compose_editor`` and ``apply_session_state``
+    read -- see ``LibraryNotesCanvas._editor_surface_flags``.
+    """
+
+    conflict: bool
+    confirming_delete: bool
+    bulk_read_only: bool
+    show_context: bool
+    show_preview: bool
+    show_editor: bool
+    locked: bool
+
+
+def _pending_widget_lookup(roots: Sequence[Any]) -> Callable[[str], Any]:
+    """Resolve ``#id`` selectors over a composed-but-unmounted widget tree.
+
+    TASK-34000.25: inside ``compose`` a child yielded under ``with
+    Container():`` is attached to that container at yield time
+    (``compose_add_child`` -> ``_pending_children``) and nothing is mounted
+    until the generator ends, so the tree is complete -- and still
+    unmounted, hence unpainted -- when ``_compose_editor`` reaches its last
+    line. Gating the surfaces there is what makes the first frame right.
+    """
+    index: dict[str, Any] = {}
+
+    def walk(widget: Any) -> None:
+        widget_id = getattr(widget, "id", None)
+        if widget_id:
+            index[f"#{widget_id}"] = widget
+        for child in getattr(widget, "_pending_children", ()):
+            walk(child)
+
+    for root in roots:
+        walk(root)
+
+    def lookup(selector: str) -> Any:
+        try:
+            return index[selector]
+        except KeyError as exc:
+            raise NoMatches(f"No composed node matches {selector!r}") from exc
+
+    return lookup
+
+
+@dataclass(frozen=True)
 class LibraryNotePresentationState:
     """Immutable presentation input for one mounted Database Note canvas.
 
@@ -2961,10 +3009,28 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         button.folder_version = row.version
 
     def _compose_editor(self) -> ComposeResult:
-        """Mount every editor-session presentation surface exactly once."""
+        """Mount every editor-session presentation surface exactly once.
+
+        TASK-34000.25 (review finding S-02's false "changed elsewhere" and
+        its siblings -- Edit, Preview and Info stacked, two Back buttons, the
+        bulk strip, the body unpainted): every display-gated surface is
+        gated from ``presentation_state`` HERE, through the same helper
+        ``apply_session_state`` runs, before any of it mounts. The mount-time
+        apply never ran (Textual sets ``is_mounted`` after the Mount
+        handler), and every later sync was a race the retained-note return
+        did not always win. ``roots`` holds the top-level nodes so the whole
+        pending tree can be gated on the last line, where it is complete and
+        still unmounted (``_pending_widget_lookup``).
+        """
         presentation_state = self.presentation_state
         if presentation_state is None:
             return
+        roots: list[Any] = []
+
+        def root(widget: Any) -> Any:
+            roots.append(widget)
+            return widget
+
         snapshot = presentation_state.snapshot
         title = snapshot.title
         content = snapshot.body
@@ -2993,7 +3059,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         heading_title = _library_note_heading_title(
             title, presentation_state.title_suffix, 72
         )
-        with Horizontal(id="library-note-heading"):
+        with root(Horizontal(id="library-note-heading")):
             yield Button(
                 back_label,
                 id="library-note-back",
@@ -3032,7 +3098,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # unconditionally so the answer is on screen in Edit, Preview and
         # Info alike; `_note_location_follows_width` re-states it against the
         # pane's measured width, like the chrome strip below the body.
-        yield Static(
+        yield root(Static(
             library_note_location_line(
                 presentation_state.location_path,
                 presentation_state.location_written,
@@ -3041,16 +3107,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             ),
             id="library-note-location",
             markup=False,
-        )
-        yield Static(
+        ))
+        yield root(Static(
             "Included in bulk selection"
             if presentation_state.bulk_included
             else "Not included in bulk selection",
             id="library-note-bulk-status",
             classes="destination-purpose",
             markup=False,
-        )
-        with Horizontal(id="library-note-header-second-row"):
+        ))
+        with root(Horizontal(id="library-note-header-second-row")):
             yield Static(
                 channels.content_recovery,
                 id="library-note-status",
@@ -3060,16 +3126,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-primary-actions", classes="ds-toolbar"
             )
             primary_actions.add_class("h-auto")
-            # TASK-34000.25 (S-02's false "changed elsewhere"): the four
-            # display-gated surfaces compose FROM the state, the same rule
-            # ``apply_session_state`` applies later. The mount-time apply
-            # never runs (``is_mounted`` is still False inside ``on_mount``),
-            # so a freshly composed editor showed every surface as composed
-            # -- the conflict callout under "Saved" -- until the next sync,
-            # which a rail return to a retained, untouched note never sent.
-            primary_actions.display = not (
-                presentation_state.conflict or presentation_state.confirming_delete
-            )
             edit_label, preview_label, info_label = _HEADER_MODE_LABELS
             save_label, use_in_console_label, _discard_label = _HEADER_TASK_LABELS
             with primary_actions:
@@ -3128,7 +3184,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     discard_new.visible = presentation_state.discard_new_note
                     discard_new.disabled = presentation_state.destructive_running
                     yield discard_new
-        with Vertical(id="library-note-editor-region"):
+        with root(Vertical(id="library-note-editor-region")):
             with Horizontal(id="library-note-title-row"):
                 yield Static("Title", id="library-note-title-label", markup=False)
                 yield NoteEditorInput(
@@ -3153,7 +3209,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             yield Static("Body", id="library-note-body-label", markup=False)
             yield NoteEditorTextArea(content, id="library-note-body")
 
-        with VerticalScroll(id="library-note-preview-region", can_focus=True):
+        with root(VerticalScroll(id="library-note-preview-region", can_focus=True)):
             # task-32142 AC#1: the shared heading row's title Static (above)
             # sits in a crowded strip with the mode buttons and Back --
             # easy to miss, and NOT part of the scrolling content, so it
@@ -3171,7 +3227,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
             )
-        with VerticalScroll(id="library-note-context-region", can_focus=True):
+        with root(VerticalScroll(id="library-note-context-region", can_focus=True)):
             yield Static("Properties", classes="destination-section", markup=False)
             with Horizontal(id="library-note-context-keywords-row"):
                 yield Static(
@@ -3277,19 +3333,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # pinned to 3 there), so relocating it means rewriting that shared
         # compact block and re-pinning five deliberate tests -- see
         # task-32143's Implementation Notes.
-        yield Static(
+        yield root(Static(
             library_note_chrome_facts(0, 0, 0),
             id="library-note-chrome-facts",
             markup=False,
-        )
-        yield Static(
+        ))
+        yield root(Static(
             presentation_state.transfer_status,
             id="library-note-transfer-status",
             markup=False,
-        )
+        ))
 
-        wide_utilities = Vertical(id="library-note-wide-utilities")
-        wide_utilities.display = False  # TASK-34000.25: as the sync always leaves it
+        wide_utilities = root(Vertical(id="library-note-wide-utilities"))
         with wide_utilities:
             # task-32642 AC#3: the Keywords label and field that used to sit
             # here are now in `#library-note-editor-region`, displayed. This
@@ -3332,8 +3387,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     compact=True,
                 )
 
-        conflict_region = Vertical(id="library-note-conflict-region")
-        conflict_region.display = presentation_state.conflict  # TASK-34000.25
+        conflict_region = root(Vertical(id="library-note-conflict-region"))
         with conflict_region:
             yield Static(
                 "This note changed elsewhere — Overwrite saves your text; "
@@ -3359,15 +3413,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-canvas-action",
                     compact=True,
                 )
+        # Every root above is composed and still unmounted: gate the whole
+        # tree from the state now, before the first frame can paint it.
+        self._apply_editor_surface_gates(
+            presentation_state, _pending_widget_lookup(roots)
+        )
 
     def _compose_delete_confirmation(self) -> ComposeResult:
         """Mount the delete prompt where task-32268 requires it: in Danger."""
-        delete_confirmation = Vertical(id="library-note-delete-confirmation")
-        presentation_state = self.presentation_state
-        delete_confirmation.display = bool(  # TASK-34000.25: composed from state
-            presentation_state is not None and presentation_state.confirming_delete
-        )
-        with delete_confirmation:
+        with Vertical(id="library-note-delete-confirmation"):
             yield Static(
                 delete_confirm_copy(synced=False),
                 id="library-note-delete-confirm-copy",
@@ -3600,6 +3654,195 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         renderable = widget.renderable
         return getattr(renderable, "plain", str(renderable))
 
+    @staticmethod
+    def _editor_surface_flags(state: LibraryNotePresentationState) -> _EditorSurfaceFlags:
+        """Derive which editor surfaces ``state`` shows (TASK-34000.25: one owner).
+
+        task-32132: Delete is only reachable from the Info Danger section
+        (the Edit pane's own Delete lives in ``library-note-wide-utilities``,
+        permanently hidden). Confirming used to force ``show_context`` off
+        unconditionally, snapping the pane to Edit -- "delete this note?"
+        painted 14 rows away, under a body editor the user never opened.
+        Info stays put while confirming; only Preview (which never hosts a
+        Delete button) still yields to Edit. task-32268: the prompt is a
+        child of Info's Danger section, so Info has to be the surface
+        whenever it is up -- stating it as a condition makes the invariant
+        the prompt's placement depends on explicit rather than incidental.
+        """
+        conflict = state.conflict
+        confirming_delete = state.confirming_delete and not conflict
+        bulk_read_only = state.bulk_read_only
+        show_context = (
+            (state.region == "context" or confirming_delete)
+            and not conflict
+            and not bulk_read_only
+        )
+        show_preview = bulk_read_only or (
+            not show_context
+            and not conflict
+            and not confirming_delete
+            and state.presentation == "preview"
+        )
+        show_editor = not show_context and not show_preview
+        locked = confirming_delete or state.destructive_running or bulk_read_only
+        return _EditorSurfaceFlags(
+            conflict=conflict,
+            confirming_delete=confirming_delete,
+            bulk_read_only=bulk_read_only,
+            show_context=show_context,
+            show_preview=show_preview,
+            show_editor=show_editor,
+            locked=locked,
+        )
+
+    def _apply_editor_surface_gates(
+        self,
+        state: LibraryNotePresentationState,
+        node: Callable[[str], Any],
+    ) -> _EditorSurfaceFlags:
+        """Set every display / disabled / is-active / can_focus gate from ``state``.
+
+        TASK-34000.25: the ONE owner of the gating rules. ``_compose_editor``
+        calls it over the unmounted tree (``node`` resolves ``#id`` through
+        ``_pending_widget_lookup``) so the first frame is right, and
+        ``apply_session_state`` calls it with ``self.query_one`` on every
+        sync. Values (labels, copy, field text) stay in the sync -- they are
+        not gates and re-assigning them echoes ``Changed`` events.
+
+        Args:
+            state: The presentation state to gate from.
+            node: ``#id`` selector -> widget.
+
+        Returns:
+            The derived flags, for the caller's own value work.
+        """
+        flags = self._editor_surface_flags(state)
+        show_editor = flags.show_editor
+        show_preview = flags.show_preview
+        show_context = flags.show_context
+        confirming_delete = flags.confirming_delete
+        bulk_read_only = flags.bulk_read_only
+        locked = flags.locked
+        for selector in (
+            "#library-note-transfer-status",
+            "#library-note-context-transfer-status",
+        ):
+            node(selector).display = bool(state.transfer_status) and not state.compact
+        back_button = node("#library-note-back")
+        back_button.display = not show_context and not bulk_read_only
+        back_button.disabled = confirming_delete
+        context_back_button = node("#library-note-context-back")
+        context_back_button.display = show_context
+        # PR #2547 review (Qodo finding 4): Back was left out of the
+        # disabled-selector loops below, so it stayed live behind the
+        # confirmation prompt. A press ran the Back handler, which clears
+        # ``_library_note_context`` without cancelling the pending
+        # admission -- displacing the prompt instead of leaving Info in
+        # place like every other Danger/Reuse & Export action.
+        context_back_button.disabled = confirming_delete
+        node("#library-note-editor-title").display = show_editor
+        node("#library-note-preview-title").display = show_preview
+        node("#library-note-context-title").display = show_context
+        node("#library-note-bulk-status").display = bulk_read_only
+        node("#library-note-editor-region").display = show_editor
+        node("#library-note-preview-region").display = show_preview
+        node("#library-note-context-region").display = show_context
+        node("#library-note-edit").set_class(show_editor, "is-active")
+        node("#library-note-preview").set_class(
+            show_preview and not bulk_read_only, "is-active"
+        )
+        node("#library-note-context").set_class(show_context, "is-active")
+        node("#library-note-primary-actions").display = (
+            not flags.conflict and not confirming_delete
+        )
+        node("#library-note-wide-utilities").display = False
+        node("#library-note-conflict-region").display = flags.conflict
+        node("#library-note-delete-confirmation").display = confirming_delete
+        # task-32106 (PR #2571 re-review, NEW-2): DISABLED, not read-only,
+        # is load-bearing while ``confirming_delete``. These four fields
+        # carry a PRIORITY tab binding (``NoteEditorInput`` /
+        # ``NoteEditorTextArea``), which ``App._check_bindings`` resolves
+        # before ``LibraryScreen.on_key`` -- and ``on_key`` is where the
+        # delete prompt's Tab trap lives. Textual blurs a widget when it
+        # becomes disabled and drops it from ``focusable``, so no note field
+        # can be in the binding chain while the prompt is open and the trap
+        # holds. Keep one of these live behind the prompt and Tab would walk
+        # straight out of it; ``test_delete_confirmation_traps_tab_between_
+        # cancel_and_delete`` asserts the disabled state for that reason.
+        node("#library-note-title").disabled = not show_editor or locked
+        node("#library-note-body").disabled = not show_editor or locked
+        # task-32642 AC#3: the same rule as the title and body above. This
+        # field used to be disabled whenever the terminal was compact --
+        # harmless while it lived undisplayed inside
+        # `#library-note-wide-utilities`, and a silent Tab hole the moment it
+        # became the editor's own Keywords stop: `focusable` was False at
+        # 100x30 and 60x20 while `display` and `visible` were both True.
+        node("#library-note-keywords").disabled = not show_editor or locked
+        node("#library-note-context-keywords").disabled = not show_context or locked
+        node("#library-note-preview-body").can_focus = False
+        node("#library-note-preview-region").can_focus = show_preview
+        node("#library-note-context-region").can_focus = show_context
+
+        for selector in (
+            "#library-note-edit",
+            "#library-note-save",
+            "#library-note-preview",
+            "#library-note-context",
+            "#library-note-use-in-console",
+            "#library-note-export-md",
+            "#library-note-export-txt",
+            "#library-note-copy",
+            "#library-note-delete",
+            "#library-note-context-use-in-console",
+            "#library-note-context-export-md",
+            "#library-note-context-export-txt",
+            "#library-note-context-copy",
+            "#library-note-context-delete",
+        ):
+            node(selector).disabled = (
+                state.destructive_running or bulk_read_only or confirming_delete
+            )
+        for selector in (
+            "#library-note-use-in-console",
+            "#library-note-export-md",
+            "#library-note-export-txt",
+            "#library-note-copy",
+            "#library-note-context-use-in-console",
+            "#library-note-context-export-md",
+            "#library-note-context-export-txt",
+            "#library-note-context-copy",
+        ):
+            node(selector).disabled = (
+                state.destructive_running
+                or state.transfer_running
+                or bulk_read_only
+                # task-32132 fix round 1 Important 5: Info stays visible
+                # while confirming (this fix's own AC#1), so its Danger/
+                # Reuse & Export buttons -- Delete, Copy, Export, Use in
+                # Console -- were still live behind the confirmation
+                # prompt; a press could navigate away (Use in Console) or
+                # mutate (Copy/Export) with the delete admission still
+                # pending.
+                or confirming_delete
+            )
+        # Visibility, not display: the cells stay reserved (see compose).
+        discard_new = node("#library-note-discard-new")
+        discard_new.visible = state.discard_new_note
+        discard_new.disabled = state.destructive_running or bulk_read_only
+        for selector in (
+            "#library-note-conflict-overwrite",
+            "#library-note-conflict-reload",
+        ):
+            node(selector).disabled = (
+                state.destructive_running or state.conflict_running
+            )
+        for selector in (
+            "#library-note-delete-confirm",
+            "#library-note-delete-cancel",
+        ):
+            node(selector).disabled = state.destructive_running
+        return flags
+
     def apply_session_state(self, state: LibraryNotePresentationState) -> None:
         """Synchronize stable editor surfaces from one immutable snapshot.
 
@@ -3650,35 +3893,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         if self._static_text(authority) != authority_copy:
             authority.update(authority_copy)
         snapshot = state.snapshot
-        conflict = state.conflict
-        confirming_delete = state.confirming_delete and not conflict
-        bulk_read_only = state.bulk_read_only
-        # task-32132: Delete is only reachable from the Info Danger section
-        # (the Edit pane's own Delete lives in ``library-note-wide-
-        # utilities``, permanently hidden below). Confirming used to force
-        # ``show_context`` off unconditionally, snapping the pane to Edit --
-        # "delete this note?" painted 14 rows away, under a body editor the
-        # user never opened. Info stays put while confirming; only Preview
-        # (which never hosts a Delete button) still yields to Edit.
-        # task-32268: the prompt is now a child of Info's Danger section, so
-        # Info has to be the surface whenever it is up -- otherwise a
-        # confirmation could be raised into a hidden pane. In production this
-        # is what already happened (Delete is Info-only), and task-32132's
-        # own rule was "Info stays put while confirming"; stating it as a
-        # condition makes the invariant the prompt's placement depends on
-        # explicit rather than incidental.
-        show_context = (
-            (state.region == "context" or confirming_delete)
-            and not conflict
-            and not bulk_read_only
-        )
-        show_preview = bulk_read_only or (
-            not show_context
-            and not conflict
-            and not confirming_delete
-            and state.presentation == "preview"
-        )
-        show_editor = not show_context and not show_preview
+        flags = self._editor_surface_flags(state)
+        confirming_delete = flags.confirming_delete
+        show_preview = flags.show_preview
 
         title_input = self.query_one("#library-note-title", Input)
         body_input = self.query_one("#library-note-body", TextArea)
@@ -3816,7 +4033,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             transfer = self.query_one(selector, Static)
             if self._static_text(transfer) != state.transfer_status:
                 transfer.update(state.transfer_status)
-            transfer.display = bool(state.transfer_status) and not state.compact
 
         self.apply_compact_presentation(state.compact)
         self.set_class(state.validation, "library-note-validation")
@@ -3826,24 +4042,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         back_button = self.query_one("#library-note-back", Button)
         if str(back_button.label) != back_label:
             back_button.label = back_label
-        back_button.display = not show_context and not bulk_read_only
-        back_button.disabled = confirming_delete
         context_back_button = self.query_one("#library-note-context-back", Button)
         if str(context_back_button.label) != back_label:
             context_back_button.label = back_label
-        context_back_button.display = show_context
-        # PR #2547 review (Qodo finding 4): Back was left out of the
-        # disabled-selector loops below, so it stayed live behind the
-        # confirmation prompt. A press ran the Back handler, which clears
-        # ``_library_note_context`` without cancelling the pending
-        # admission -- displacing the prompt instead of leaving Info in
-        # place like every other Danger/Reuse & Export action.
-        context_back_button.disabled = confirming_delete
-        self.query_one("#library-note-editor-title").display = show_editor
-        self.query_one("#library-note-preview-title").display = show_preview
-        self.query_one("#library-note-context-title").display = show_context
         bulk_status = self.query_one("#library-note-bulk-status", Static)
-        bulk_status.display = bulk_read_only
         bulk_copy = (
             "Read-only preview · Included in bulk selection"
             if state.bulk_included
@@ -3851,22 +4053,6 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         )
         if self._static_text(bulk_status) != bulk_copy:
             bulk_status.update(bulk_copy)
-        self.query_one("#library-note-editor-region").display = show_editor
-        self.query_one("#library-note-preview-region").display = show_preview
-        self.query_one("#library-note-context-region").display = show_context
-        self.query_one("#library-note-edit", Button).set_class(show_editor, "is-active")
-        self.query_one("#library-note-preview", Button).set_class(
-            show_preview and not bulk_read_only, "is-active"
-        )
-        self.query_one("#library-note-context", Button).set_class(
-            show_context, "is-active"
-        )
-        self.query_one("#library-note-primary-actions").display = (
-            not conflict and not confirming_delete
-        )
-        self.query_one("#library-note-wide-utilities").display = False
-        self.query_one("#library-note-conflict-region").display = conflict
-        self.query_one("#library-note-delete-confirmation").display = confirming_delete
         if confirming_delete:
             # TASK-32633 (N-03): a synced note's delete says what happens to
             # its file, read from the same live location the row states.
@@ -3875,90 +4061,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             if self._static_text(confirm_copy) != wanted:
                 confirm_copy.update(wanted)
 
-        locked = confirming_delete or state.destructive_running or bulk_read_only
-        # task-32106 (PR #2571 re-review, NEW-2): DISABLED, not read-only,
-        # is load-bearing while ``confirming_delete``. These four fields
-        # carry a PRIORITY tab binding (``NoteEditorInput`` /
-        # ``NoteEditorTextArea``), which ``App._check_bindings`` resolves
-        # before ``LibraryScreen.on_key`` -- and ``on_key`` is where the
-        # delete prompt's Tab trap lives. Textual blurs a widget when it
-        # becomes disabled and drops it from ``focusable``, so no note field
-        # can be in the binding chain while the prompt is open and the trap
-        # holds. Keep one of these live behind the prompt and Tab would walk
-        # straight out of it; ``test_delete_confirmation_traps_tab_between_
-        # cancel_and_delete`` asserts the disabled state for that reason.
-        title_input.disabled = not show_editor or locked
-        body_input.disabled = not show_editor or locked
-        # task-32642 AC#3: the same rule as the title and body above. This
-        # field used to be disabled whenever the terminal was compact --
-        # harmless while it lived undisplayed inside
-        # `#library-note-wide-utilities`, and a silent Tab hole the moment it
-        # became the editor's own Keywords stop: `focusable` was False at
-        # 100x30 and 60x20 while `display` and `visible` were both True.
-        wide_keywords.disabled = not show_editor or locked
-        context_keywords.disabled = not show_context or locked
-        preview_body.can_focus = False
-        self.query_one("#library-note-preview-region").can_focus = show_preview
-        self.query_one("#library-note-context-region").can_focus = show_context
-
-        for selector in (
-            "#library-note-edit",
-            "#library-note-save",
-            "#library-note-preview",
-            "#library-note-context",
-            "#library-note-use-in-console",
-            "#library-note-export-md",
-            "#library-note-export-txt",
-            "#library-note-copy",
-            "#library-note-delete",
-            "#library-note-context-use-in-console",
-            "#library-note-context-export-md",
-            "#library-note-context-export-txt",
-            "#library-note-context-copy",
-            "#library-note-context-delete",
-        ):
-            self.query_one(selector, Button).disabled = (
-                state.destructive_running or bulk_read_only or confirming_delete
-            )
-        for selector in (
-            "#library-note-use-in-console",
-            "#library-note-export-md",
-            "#library-note-export-txt",
-            "#library-note-copy",
-            "#library-note-context-use-in-console",
-            "#library-note-context-export-md",
-            "#library-note-context-export-txt",
-            "#library-note-context-copy",
-        ):
-            self.query_one(selector, Button).disabled = (
-                state.destructive_running
-                or state.transfer_running
-                or bulk_read_only
-                # task-32132 fix round 1 Important 5: Info stays visible
-                # while confirming (this fix's own AC#1), so its Danger/
-                # Reuse & Export buttons -- Delete, Copy, Export, Use in
-                # Console -- were still live behind the confirmation
-                # prompt; a press could navigate away (Use in Console) or
-                # mutate (Copy/Export) with the delete admission still
-                # pending.
-                or confirming_delete
-            )
-        discard_new = self.query_one("#library-note-discard-new", Button)
-        # Visibility, not display: the cells stay reserved (see compose).
-        discard_new.visible = state.discard_new_note
-        discard_new.disabled = state.destructive_running or bulk_read_only
-        for selector in (
-            "#library-note-conflict-overwrite",
-            "#library-note-conflict-reload",
-        ):
-            self.query_one(selector, Button).disabled = (
-                state.destructive_running or state.conflict_running
-            )
-        for selector in (
-            "#library-note-delete-confirm",
-            "#library-note-delete-cancel",
-        ):
-            self.query_one(selector, Button).disabled = state.destructive_running
+        # TASK-34000.25: every display / disabled / is-active / can_focus gate
+        # lives in ``_apply_editor_surface_gates`` -- the same helper
+        # ``_compose_editor`` runs over the unmounted tree -- so compose and
+        # sync can never disagree about which surface a state shows.
+        self._apply_editor_surface_gates(state, self.query_one)
         self.update_note_chrome_facts(state.word_count)
 
     # --- editor chrome strip (task-32143) ---------------------------------
