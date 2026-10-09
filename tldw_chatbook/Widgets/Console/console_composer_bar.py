@@ -4218,6 +4218,20 @@ class ConsoleComposerBar(Horizontal):
         self.clear_history()
         return True
 
+    def retire_captured_drafts(self) -> None:
+        """Make the shown draft a new revision, leaving its text unchanged.
+
+        Every capture taken before this call stops matching the composer, so
+        :meth:`commit_captured_draft` refuses it and a held send drops it.
+        Both the generation and the edit serial move: a capture matching
+        neither cannot pass for a reload of the same draft either.
+        TASK-33620.15.2: a sent draft the commit could not take out (it was
+        edited while sending) must not be sent again by a press captured
+        before the user was told.
+        """
+        self._advance_draft_generation()
+        self._mark_manual_draft_edit()
+
     def stash_draft_for_send(self) -> ConsoleDraftStash | None:
         """Legacy destructive wrapper around capture followed by commit."""
         stash = self.capture_draft_for_send()
