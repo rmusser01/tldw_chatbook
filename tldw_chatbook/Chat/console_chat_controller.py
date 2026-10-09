@@ -550,6 +550,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.raw_shell_tool_provider import RawShellToolProvider
     from tldw_chatbook.Agents.virtual_cli_provider import VirtualCliProvider
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Chat.console_run_start_tools import LocalKillSwitchRead
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
     from tldw_chatbook.Agents.profile_tool_provider import ProfileToolProvider
     from tldw_chatbook.Personal_Context.context_service import (
@@ -15682,16 +15683,16 @@ class ConsoleChatController:
         maximum_tool_ids: frozenset[str] | None = None,
         maximum_definition_hashes: Mapping[str, str] | None = None,
         plugin_maximum: Mapping | None = None,
+        local_kill_switch: "LocalKillSwitchRead | None" = None,
     ) -> MCPToolProvider | None:
-        """Build + compose THIS run's MCPToolProvider on the running main loop.
+        """Build + compose THIS run's MCPToolProvider for the running main loop.
 
-        MUST be awaited from an async caller with the real Textual main
-        loop running (``_run_agent_reply``, BEFORE its own
-        ``asyncio.to_thread`` call) -- never from the agent bridge's
-        worker thread. See ``MCPToolProvider``'s own module docstring:
-        ``compose_catalog()`` performs async I/O
-        (``local_external_catalog()``) that is documented to run on the
-        main loop at registration time.
+        MUST be awaited on the real Textual main loop (``_run_agent_reply``,
+        BEFORE the bridge's own ``asyncio.to_thread``): the provider is bound
+        to that loop for tool calls. TASK-33620.15.1: the kill-switch and
+        catalog reads run in one worker hop at this point
+        (``console_run_start_tools``), fresh, so the loop keeps taking input;
+        ``local_kill_switch`` also gets the local tools' read there.
 
         TASK-632: returns the provider ALONE. It used to also build and
         return a per-run `build_mcp_review_hook` closure, but TASK-545's
@@ -15749,21 +15750,10 @@ class ConsoleChatController:
         if service is None:
             publish(None, None)
             return None
-        try:
-            kill_switch = service.get_kill_switch()
-        except Exception:  # noqa: BLE001 -- fail closed to "no MCP this run"
-            logger.opt(exception=True).warning(
-                "ConsoleChatController: get_kill_switch failed; skipping MCP this run"
-            )
-            publish(None, None)
-            return None
-        if kill_switch:
-            publish(None, None)
-            return None
         bound_request_approvals = functools.partial(
             self.request_mcp_approvals, session_id=session_id
         )
-        provider = MCPToolProvider(
+        uncomposed = MCPToolProvider(
             service=service,
             main_loop=asyncio.get_running_loop(),
             approval_callback=bound_request_approvals,
@@ -15784,12 +15774,14 @@ class ConsoleChatController:
             maximum_tool_ids=maximum_tool_ids,
             maximum_definition_hashes=maximum_definition_hashes,
         )
-        try:
-            await provider.compose_catalog()
-        except Exception:  # noqa: BLE001 -- a composition failure must not abort the send
-            logger.opt(exception=True).warning(
-                "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run"
-            )
+        # TASK-33620.15.1: the kill switch and catalog reads stay at this
+        # point, fresh, in one worker hop; ``None`` = switched off or failed.
+        from .console_run_start_tools import compose_run_mcp_provider
+
+        provider = await asyncio.to_thread(
+            compose_run_mcp_provider, service, uncomposed, local_kill_switch
+        )
+        if provider is None:
             publish(None, None)
             return None
         providers = [provider]
@@ -15911,9 +15903,13 @@ class ConsoleChatController:
             )
         ):
             mcp_profile_kwargs["plugin_maximum"] = turn_context.skill_context_maximum
+        from .console_run_start_tools import LocalKillSwitchRead
+
+        local_kill_switch = LocalKillSwitchRead()  # read in the MCP hop
         mcp_provider = await self._compose_mcp_provider(
             session_id,
             publish_counts=publish_mcp_counts,
+            local_kill_switch=local_kill_switch,
             **mcp_profile_kwargs,
             maximum_tool_ids=(
                 turn_context.mcp_tool_maximum if turn_context is not None else None
@@ -15947,6 +15943,7 @@ class ConsoleChatController:
             ),
             project_root_guard=project_authority_guard,
             admitted_roots=admitted_roots,
+            local_kill_switch=local_kill_switch,
         )
         return mcp_provider, builtin_gate, local_provider, local_review_hook
 
@@ -15960,6 +15957,7 @@ class ConsoleChatController:
         project_root_identity: tuple[tuple[str, int, int, int], ...] | None = None,
         project_root_guard: Callable[[], bool] | None = None,
         admitted_roots: Sequence[Any] | None = None,
+        local_kill_switch: "LocalKillSwitchRead | None" = None,
     ) -> tuple[
         LocalToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
     ]:
@@ -16038,14 +16036,10 @@ class ConsoleChatController:
         service = getattr(self.app, "unified_mcp_service", None)
         if service is None:
             return None, None
-        try:
-            kill_switch = service.get_kill_switch()
-        except Exception:  # noqa: BLE001 -- fail closed to "no local tools this run"
-            logger.opt(exception=True).warning(
-                "ConsoleChatController: get_kill_switch failed; skipping local tools this run"
-            )
-            return None, None
-        if kill_switch:
+        from .console_run_start_tools import local_tools_kill_switch
+
+        # Fail closed: the run-start hop's read, else a read made here.
+        if local_tools_kill_switch(service, local_kill_switch):
             return None, None
 
         profile_id = (
