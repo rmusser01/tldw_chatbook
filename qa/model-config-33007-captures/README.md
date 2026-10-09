@@ -20,6 +20,20 @@ same checks held: no provider was contacted, no Save was made (only
 `console.rail_state` differed from the seeded profiles), and the real profile's two
 fingerprints below were unchanged.
 
+**Second re-take of `04` (2026-10-09).** Temperature's help was cut at 211x44 to
+"…higher is more var…". The shared field help is shorter now (`aa479f2482`), and `04`
+was captured again at both sizes from the working tree just before that commit and
+`87a1ea936d` (the Endpoint guide); the commits change nothing it shows. Same
+procedure, with tmux server `-L capD33007`, `users_name = "verify_capD33007_helpfit"`
+and fresh fake keys. The session replayed `02`, `03`, **r** and **Discard changes**
+before `04`, as above, but not `07`'s wheel steps, so at 211 the Inspector rests a few
+rows lower; the card differs from the earlier `04` only in Temperature's help. After
+`04` the session reverted the edit, chose Azure OpenAI and tabbed to Endpoint: the
+Inspector read "Validation: an http:// or https:// address; required: your resource
+host", matching the row. That was reverted too. The same checks held: no provider
+contacted, no Save, only `console.rail_state` differed from the seeded profile, and
+both real-profile fingerprints were unchanged.
+
 ## Procedure
 
 - **Isolation.** The app ran from this worktree in its own tmux server (`-L cap33007p`)
@@ -87,7 +101,8 @@ fingerprints below were unchanged.
 - `04-model-defaults-temperature-edited`. A click on the Temperature field, then `0.4`
   typed.
   - The Temperature row reads 0.4 **edited \***, with its help in place of the
-    inherits text. Provider and Model keep **new-chat default**.
+    inherits text, whole at both sizes: "Lower keeps replies focused; higher makes
+    them varied." Provider and Model keep **new-chat default**.
   - The other rows are unchanged: Max tokens "inherits 4096 · provider"; Streaming,
     Reasoning effort, Reasoning summary and Verbosity are one-row Selects.
   - The closed Sampling row reads "OpenAI does not accept 4 fields (open to list them)"
