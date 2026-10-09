@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s · 2 unsaved | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)   │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │                                                                                                                            │  │  │ Unsaved changes                         │
+│  Core                        │  │  │   Connect                                                                                                                  │  │  │  Guided edits: Save or Revert changes.  │
+│      Overview (view)         │  │  │  Provider                █ llama.cpp                          edited *         3 of 60 configured · listed first           │  │  │     Save (s)                            │
+│    > Providers & Models *    │  │  │  API key                 │ No credential required     Clear   not required     this provider needs no key                  │  │  │    Revert (r)                           │
+│      Web Search              │  │  │  Env var                 │ LLAMA_CPP_API_KEY                  not set          safer: keeps keys out of config.toml        │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │  Endpoint                │ http://localhost:8080              config           required: the server's base URL             │  │  │ file.                                   │
+│  Interface                   │  │  │  Key check                Not ready · no model                                                                Test (t)     │  │  │  (s).                                   │
+│      Appearance              │  │  │                                                                                                                            │  │  │ Focused field guide                     │
+│      Theme                   │  │  │   Default model for new chats                                                                                              │  │  │  Focused setting: Provider              │
+│      Splash Screen           │  │  │  Model                   │ Choose or search models            edited *         type to search · Custom ID for others       │  │  │  Purpose: Sets the provider new chats   │
+│      Console Behavior        │  │  │  Applies to               new chats; open chat “Chat 1” is unused and will use llama.cpp · no model.                       │  │  │  start with; open chats nobody has    ▃ │
+│  Data & Privacy              │  │  │   ▼ Model defaults · llama.cpp · no model                                                                                  │  │  │  used yet follow it.                    │
+│      Storage                 │  │  │  Temperature             │ 0.0 - 2.0      Console Behavior inherits 0.6                                                    │  │  │  Save: staged - press s to save, r to   │
+│      Workspaces              │  │  │  Max tokens              │ tokens         provider         inherits 4096                                                   │  │  │  revert                                 │
+│      Tool Profiles           │  │  │  Streaming               │ Inherit     ▼  provider         inherits On                                                     │  │  │  Validation: choose a catalog           │
+│      Privacy & Security      │  │  │  Reasoning effort        │ Inherit     ▼  provider         blank = provider default                                        │  │  │  provider or use Manual for custom      │
+│      Network                 │  │  │  Thinking budget         │ >= 1024        provider         blank = provider default                                        │  │  │  aliases                                │
+│      My Profile              │  │  │   ▶ Sampling · all inherit · llama.cpp does not accept 3 fields (open to list them)                                        │  │  │  ▶ config key                           │
+│  Troubleshooting             │  │  │                                                                                                                            │  │  │ Key                                     │
+│      Diagnostics (view)      │  │  │   Advanced                                                                                                                 │  │  │  Provider readiness: llama.cpp / not  ▇ │
+│      About (view)            │  │  │   ▶ Context window · choose a model first                                                                                  │  │  │  selected                               │
+│      Agents                  │  │  │   ▶ Saved model list · 0 saved in config · none discovered                                                                 │  │  │  Checks the settings, then lists        │
+│  Expert                      │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │  models without generating: a cloud     │
+│      Hooks                   │  │  │   ▶ Session summary on quit · applies immediately · Off                                                                    │  │  │  provider's listing checks the API      │
+│      Internal Prompts        │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  key, a local server's shows it         │
+│      Advanced Config         │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │  answers. Nothing is saved.             │
+│   Domain Defaults ▸ (11)     │  │  │                                                                                                                            │  │  │ Configuration check has not run.        │
+│                              │  │  │                                                                                                                            │  │  │  Runtime owner: Settings persisted      │
+│                              │  │  │                                                                                                                            │  │  │  defaults; Console runtime selection    │
+│                              │  │  │                                                                                                                            │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Type to filter providers by name or ID; Up/Down move, Enter chooses, Esc keeps the current provider.
+  Esc, s save category | Esc, r revert category | Esc, t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
