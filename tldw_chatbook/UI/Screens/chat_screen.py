@@ -18203,7 +18203,13 @@ class ChatScreen(BaseAppScreen):
             # Lever L2 routing; imported here to stay off the boot leg (ADR-097).
             from ..Console_Modules import poll_cadence
 
-            if not poll_cadence.poll_wants_full_sync(self):
+            # An unchanged manual Preparing receipt keeps its own narrowed pass
+            # (_sync_console_poll_display_ui); every other routine tick of a
+            # live turn is light until the full-pass cadence is due.
+            if (
+                not poll_cadence.poll_wants_full_sync(self)
+                and self._console_preparing_poll_record() is None
+            ):
                 # A light tick publishes live progress and never stops the poll.
                 await poll_cadence.sync_console_poll_display(self)
                 return

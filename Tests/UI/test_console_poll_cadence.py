@@ -487,7 +487,15 @@ async def _settled_direct_full(console) -> float:
     return console._console_full_sync_completed[0]
 
 
-async def _held_send(case):
+async def _held_send(case, *, preparing=False):
+    """Hold a live turn; by default model ticks OUTSIDE a held Preparing receipt.
+
+    An unchanged manual Preparing receipt keeps #3023's own narrowed pass
+    (``_sync_console_poll_display_ui``); lever L2's light cadence governs every
+    other routine tick of a live turn. These controls hold the Send at its
+    received record only to keep the turn live, so unless ``preparing`` is set
+    they report no Preparing receipt to measure the L2 window.
+    """
     from Tests.UI.test_console_poll_reconciliation import (
         _qualify_warm_capture_sources,
     )
@@ -502,6 +510,41 @@ async def _held_send(case):
     _send(case, "enter")
     await _held_received_record(case)
     assert case.console._console_transcript_sync_timer is not None
+    if not preparing:
+        case.console._console_preparing_poll_record = lambda: None
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_mounted_preparing_ticks_keep_the_narrowed_preparing_pass(monkeypatch):
+    """While an unchanged manual Preparing receipt is held, ticks are not light."""
+    from Tests.UI.test_console_received_intent_feedback import _received_console_case
+
+    monkeypatch.setattr(poll_cadence, "CONSOLE_POLL_FULL_SYNC_INTERVAL_SECONDS", 3600.0)
+    async with _received_console_case(
+        monkeypatch, "cadence-preparing", durable=True
+    ) as case:
+        await _held_send(case, preparing=True)
+        console = case.console
+        await _settled_direct_full(console)
+        assert console._console_preparing_poll_record() is not None
+        light, preparing = [], []
+        original_light = poll_cadence.sync_console_poll_display
+        original_preparing = console._sync_console_poll_display_ui
+
+        async def light_pass(screen):
+            light.append(screen)
+            return await original_light(screen)
+
+        async def preparing_pass():
+            preparing.append(True)
+            return await original_preparing()
+
+        monkeypatch.setattr(poll_cadence, "sync_console_poll_display", light_pass)
+        console._sync_console_poll_display_ui = preparing_pass
+        assert await _until(lambda: len(preparing) >= 2, 5), (light, preparing)
+        assert light == []
+        assert case.provider_calls == []
 
 
 @pytest.mark.bootstrap_profile
