@@ -32,7 +32,7 @@
 │      Agents                  │  │  │  Temperature             │ 0.0 - 2.0      Console Behavior inherits 0.6                                                    │  │  │  provider's listing checks the API      │
 │  Expert                      │  │  │  Max tokens              │ tokens         provider         inherits 4096                                                   │  │  │  key, a local server's shows it         │
 │      Hooks                   │  │  │  Streaming               │ Inherit     ▼  provider         inherits Off                                                    │  │  │  answers. Nothing is saved.             │
-│      Internal Prompts        │  │  │  Reasoning effort        │ Inherit     ▼  provider         blank = provider default                                        │  │  │ Configuration check has not run.        │
+│      Internal Prompts        │  │  │  Reasoning effort        │ Inherit     ▼  provider         blank = provider default                                      ▅ │  │  │ Configuration check has not run.        │
 │      Advanced Config         │  │  │  Reasoning summary       │ Inherit     ▼  provider         blank = provider default                                        │  │  │  Runtime owner: Settings persisted      │
 │   Domain Defaults ▸ (11)     │  │  │  Verbosity               │ Inherit     ▼  provider         blank = provider default                                        │  │  │  defaults; Console runtime selection    │
 │                              │  │  │   ▶ Sampling · all inherit · OpenAI does not accept 4 fields (open to list them)                                           │  │  │  Writes allowed: Yes                    │

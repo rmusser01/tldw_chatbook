@@ -34,9 +34,9 @@
 │      Hooks                   │  │  │  Context window          │ tokens         not set          unknown, 32,000 assumed · budgets use it until set              │  │  │  answers. Nothing is saved.             │
 │      Internal Prompts        │  │  │   ▶ Saved model list · 14 saved in config · none discovered                                                                │  │  │ Configuration check has not run.        │
 │      Advanced Config         │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │  Runtime owner: Settings persisted      │
-│   Domain Defaults ▸ (11)     │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  defaults; Console runtime selection    │
-│                              │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │  Writes allowed: Yes                    │
-│                              │  │  │                                                                                                                            │  │  │  Owns: chat_defaults.provider           │
+│   Domain Defaults ▸ (11)     │  │  │   ▶ Session summary on quit · applies immediately · Off                                                                    │  │  │  defaults; Console runtime selection    │
+│                              │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  Writes allowed: Yes                    │
+│                              │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │  Owns: chat_defaults.provider           │
 │                              │  │  │                                                                                                                            │  │  │ ▼ more — scroll the inspector           │
 │                              │  │  │                                                                                                                            │  │  │                                         │
 └──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘

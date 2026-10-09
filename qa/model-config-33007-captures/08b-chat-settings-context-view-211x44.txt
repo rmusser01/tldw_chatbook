@@ -37,7 +37,7 @@
                               │  Save as default for new conversations                                                                                                             │                    │
                               │                                                                                                                                                    │                    │
 ──────────────────────────────│ ▼ more — scroll for the rest                                                                                                                       │───────────────────────────────
- Status ▾   Library · Auto off│                                                                                                                                                    │   Context 0% · Current $0.00
+ Status ▾   Library · Auto off│                                                                                                                                                    │g     Context 0% · Current $0.
                               │                                                                                             Esc close   Cancel    Apply to this chat (Ctrl+Enter)  │
 █  Composer ▾  Menu  ▌Ask, com╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯     Dictate
 

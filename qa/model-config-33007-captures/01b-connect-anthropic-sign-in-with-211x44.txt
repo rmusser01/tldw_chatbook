@@ -32,9 +32,9 @@
 │      Agents                  │  │  │   ▶ Context window · 200,000 tokens · detected, no override                                                                │  │  │  Purpose: Configure the default         │
 │  Expert                      │  │  │   ▶ Saved model list · 15 saved in config · none discovered                                                                │  │  │  provider, model, endpoint, and         │
 │      Hooks                   │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │  credential source.                     │
-│      Internal Prompts        │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  Save: staged - press s to save, r to   │
-│      Advanced Config         │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │  revert                                 │
-│   Domain Defaults ▸ (11)     │  │  │                                                                                                                            │  │  │  Validation: test provider readiness    │
+│      Internal Prompts        │  │  │   ▶ Session summary on quit · applies immediately · Off                                                                    │  │  │  Save: staged - press s to save, r to   │
+│      Advanced Config         │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  revert                                 │
+│   Domain Defaults ▸ (11)     │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │  Validation: test provider readiness    │
 │                              │  │  │                                                                                                                            │  │  │  before saving these defaults           │
 │                              │  │  │                                                                                                                            │  │  │  ▶ config key                           │
 │                              │  │  │                                                                                                                            │  │  │ ▼ more — scroll the inspector           │

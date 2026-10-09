@@ -33,9 +33,9 @@
 │  Expert                      │  │  │   ▶ Context window · unknown, 32,000 assumed · enter the model's documented limit                                          │  │  │  key, a local server's shows it         │
 │      Hooks                   │  │  │   ▶ Saved model list · 14 saved in config · none discovered                                                                │  │  │  answers. Nothing is saved.             │
 │      Internal Prompts        │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │ Configuration check has not run.        │
-│      Advanced Config         │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  Runtime owner: Settings persisted      │
-│   Domain Defaults ▸ (11)     │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │  defaults; Console runtime selection    │
-│                              │  │  │                                                                                                                            │  │  │  Writes allowed: Yes                    │
+│      Advanced Config         │  │  │   ▶ Session summary on quit · applies immediately · Off                                                                    │  │  │  Runtime owner: Settings persisted      │
+│   Domain Defaults ▸ (11)     │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  defaults; Console runtime selection    │
+│                              │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │  Writes allowed: Yes                    │
 │                              │  │  │                                                                                                                            │  │  │  Owns: chat_defaults.provider           │
 │                              │  │  │                                                                                                                            │  │  │ ▼ more — scroll the inspector           │
 │                              │  │  │                                                                                                                            │  │  │                                         │

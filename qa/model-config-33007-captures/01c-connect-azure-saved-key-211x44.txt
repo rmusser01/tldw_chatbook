@@ -29,9 +29,9 @@
 │  Troubleshooting             │  │  │   ▶ Context window · unknown, 32,000 assumed · enter the model's documented limit                                          │  │  │ Focused field guide                     │
 │      Diagnostics (view)      │  │  │   ▶ Saved model list · 0 saved in config · none discovered                                                                 │  │  │  Focused setting: None — Tab to a       │
 │      About (view)            │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │  setting                                │
-│      Agents                  │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  Purpose: Configure the default         │
-│  Expert                      │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │  provider, model, endpoint, and         │
-│      Hooks                   │  │  │                                                                                                                            │  │  │  credential source.                     │
+│      Agents                  │  │  │   ▶ Session summary on quit · applies immediately · Off                                                                    │  │  │  Purpose: Configure the default         │
+│  Expert                      │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  provider, model, endpoint, and         │
+│      Hooks                   │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │  credential source.                     │
 │      Internal Prompts        │  │  │                                                                                                                            │  │  │  Save: staged - press s to save, r to   │
 │      Advanced Config         │  │  │                                                                                                                            │  │  │  revert                                 │
 │   Domain Defaults ▸ (11)     │  │  │                                                                                                                            │  │  │  Validation: test provider readiness    │
