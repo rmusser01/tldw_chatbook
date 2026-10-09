@@ -23,6 +23,9 @@ kill switch on, the whole history mounts anyway. With pruning off or
 degenerate watermarks, every reveal is near: it mounts each row between the
 window and the target, as before this task.
 
+A window built this way, and the stretch an Undo restores below a kept
+window, mounts a screenful at a time (``console_transcript_fill``).
+
 The functions take the transcript and use only its window primitives, so
 ``console_transcript.py`` imports this module lazily and boot pays nothing.
 """
@@ -30,6 +33,8 @@ The functions take the transcript and use only its window primitives, so
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
+from .console_transcript_fill import pace, paceable
 
 if TYPE_CHECKING:
     from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
@@ -142,6 +147,10 @@ def hand_off_selection(
         # kept from before the ingest. Undo of a Delete from an early row
         # mounted all 2,970 later rows this way.
         return recenter_window_on(transcript, pending_index, message_id)
+    elif paceable(transcript, pending_index, tail_start):
+        # Up to a window of new rows below it (the 60 an Undo of a whole
+        # short chat restores): a screenful at a time.
+        pace(transcript, pending_index, tail_start)
     return start
 
 
@@ -186,7 +195,8 @@ def recenter_window_on(
         )
         end = included_end
     transcript._set_hidden_prefix(start)
-    transcript._reveal_hidden_tail_through(end)
+    # The target's turn and a screen below it first; the rest a batch later.
+    pace(transcript, unit_start, end)
     transcript.release_anchor()
     transcript._reveal_scroll_target = owner_id
     # Review E: the reconcile that realizes this window transits an emptied
