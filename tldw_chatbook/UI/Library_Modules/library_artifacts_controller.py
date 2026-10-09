@@ -659,12 +659,21 @@ class LibraryArtifactsController:
         else:
             db = getattr(self.app_instance, "subscriptions_db", None)
             try:
-                existing = bool(db is not None and db.list_briefing_schedules())
+                schedules = db.list_briefing_schedules() if db is not None else []
             except Exception as exc:  # noqa: BLE001 - unreadable schedules read as none
                 logger.warning(
                     f"Reports demo consent: schedules unreadable ({type(exc).__name__})"
                 )
-                existing = False
+                schedules = []
+            existing = bool(schedules)
+            if existing:
+                # Review 1 minor 1: a reused schedule bills its default
+                # preset's own provider/model when the preset carries them
+                # (`generate_briefing`: `endpoint = provider or preset_provider`),
+                # so that is the pair the copy must name.
+                provider, model = self._reused_schedule_pair(
+                    db, int(schedules[0]["watchlist_id"]), (provider, model)
+                )
             self.demo_consent = DemoConsent(
                 lines=daily_report_demo_consequences(
                     provider=provider, model=model, existing=existing
@@ -676,6 +685,28 @@ class LibraryArtifactsController:
         self.screen.call_after_refresh(
             self._focus, "#library-artifacts-demo-cancel", generation, profile
         )
+
+    @staticmethod
+    def _reused_schedule_pair(db, watchlist_id: int, persisted: tuple[str, str]):
+        """The pair a reused schedule bills: its default preset's own
+        provider (and model) when set, else the persisted pair."""
+        try:
+            with db.transaction() as conn:
+                row = conn.execute(
+                    "SELECT default_briefing_preset_id FROM watchlists WHERE id = ?",
+                    (watchlist_id,),
+                ).fetchone()
+            preset_id = row["default_briefing_preset_id"] if row else None
+            preset = db.get_briefing_preset(int(preset_id)) if preset_id else None
+        except Exception as exc:  # noqa: BLE001 - an unreadable preset names the persisted pair
+            logger.warning(
+                f"Reports demo consent: preset unreadable ({type(exc).__name__})"
+            )
+            return persisted
+        preset_provider = str((preset or {}).get("provider") or "").strip()
+        if not preset_provider:
+            return persisted
+        return preset_provider, str((preset or {}).get("model") or "").strip()
 
     def close_demo_consent(self, *, focus: str) -> None:
         self.demo_consent = None

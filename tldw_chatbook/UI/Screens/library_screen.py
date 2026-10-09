@@ -1116,6 +1116,12 @@ class LibraryScreen(BaseAppScreen):
         # cancels behavior (``action_library_media_viewer_back``'s
         # ``_library_media_confirming_delete`` branch).
         ("escape", "library_media_bulk_delete_cancel", "Cancel delete confirmation"),
+        # TASK-34000.23 review 1 (Minor 2): Escape closes the Reports
+        # "Set up a daily brief…" consent block. Nothing is armed behind it
+        # (the demo starts only from the block's own run button), so this is
+        # a dismissal, gated on the block being open; declared before the
+        # generic rail/blur hops below for the same declaration-order reason.
+        ("escape", "library_artifacts_demo_cancel", "Cancel daily-brief setup"),
         ("escape", "library_emergency_return", "Return to Library rail"),
         # task-32225: the adaptive-reader twin of the binding above. That one
         # covers the ordinary (shell-less) routes; this one covers a route
@@ -23789,6 +23795,11 @@ class LibraryScreen(BaseAppScreen):
     def action_library_media_bulk_delete_cancel(self) -> None:
         return self._media_controller.action_library_media_bulk_delete_cancel()
 
+    def action_library_artifacts_demo_cancel(self) -> None:
+        """Escape on the Reports consent block (TASK-34000.23 review 1)."""
+        if self._artifacts_controller is not None:
+            self._artifacts_controller.action("demo-cancel")
+
     async def _delete_library_media_selection(self, media_ids: tuple[str, ...]) -> None:
         """Soft-delete every selected Library media item (task-2853 AC3).
 
@@ -26033,6 +26044,15 @@ class LibraryScreen(BaseAppScreen):
             return (
                 self._library_selected_row_id in LIBRARY_STUDY_HANDOFF_ROW_IDS
                 and not self._library_emergency_return_eligibility().enabled
+            )
+        if action == "library_artifacts_demo_cancel":
+            # TASK-34000.23 review 1: only while the Reports consent block
+            # is open on an active Artifacts destination.
+            controller = self._artifacts_controller
+            return bool(
+                controller is not None
+                and controller.demo_consent is not None
+                and controller.active()
             )
         if action == "library_media_bulk_delete_cancel":
             # task-3020 AC2: only while the bulk-delete confirmation is

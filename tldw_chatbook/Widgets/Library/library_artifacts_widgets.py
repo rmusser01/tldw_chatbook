@@ -139,12 +139,30 @@ class ArtifactItems(Vertical):
                 if index is not None and rows.highlighted != index:
                     rows.highlighted = index
             status = "Loading…" if c.loading else c.error
-            no_reports_yet = bool(
+            # Both read `status` BEFORE the block below turns it into the
+            # count sentence ("1–1 of 1 copies"): here it is only the
+            # loading/error marker.
+            unfiltered_reports = bool(
                 not status
                 and page
-                and not page.items
-                and not (c.scope.query or c.scope.kept_only)
                 and c.scope.view == "reports"
+                and not (c.scope.query or c.scope.kept_only)
+            )
+            no_reports_yet = unfiltered_reports and not page.items
+            # Review 1 #2 (mirrors `ArtifactsScreen._latest_report_failed`):
+            # a failed first run leaves a `failed` row, so the page is no
+            # longer empty, yet the failure toast says "run the demo again"
+            # and no other surface offers it (the Artifacts screen is
+            # nav-unreachable, the Watchlists banner hides once a schedule
+            # exists). Newest-first at the top of the default page means
+            # items[0] IS the newest run; the press reaches the same consent,
+            # which reads the existing schedule and shows the reuse copy.
+            newest_failed = bool(
+                unfiltered_reports
+                and page.items
+                and page.start == 0
+                and c.scope.sort == "newest"
+                and page.items[0].status == "failed"
             )
             if not status and page:
                 status = (
@@ -157,8 +175,9 @@ class ArtifactItems(Vertical):
                     else "No reports yet. Open Watchlists, or set up a daily brief below."
                 )
             self.query_one("#library-artifacts-count", Static).update(status)
-            self.query_one("#library-artifacts-empty-actions").display = no_reports_yet
-            consent = c.demo_consent if no_reports_yet else None
+            actions_visible = no_reports_yet or newest_failed
+            self.query_one("#library-artifacts-empty-actions").display = actions_visible
+            consent = c.demo_consent if actions_visible else None
             self.query_one("#library-artifacts-demo-confirm").display = bool(consent)
             if consent:
                 self.query_one("#library-artifacts-demo-copy", Static).update(

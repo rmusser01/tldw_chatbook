@@ -170,12 +170,18 @@ def test_consequences_name_every_feed_the_cadence_and_the_pair():
     assert "API quota" in text
     assert "Watchlists" in text
     assert lines[0].startswith("This sets up a recurring Daily Brief")
+    # ADR-079: "LLM + TTS; CTA copy says so" -- the cast script is a second
+    # model call and the audio spends through the TTS provider (review 1 #3).
+    assert "cast script" in text and "second openai call" in text
+    assert "TTS provider" in text
 
     existing = daily_report_demo_consequences(
         provider="openai", model="gpt-4.1-mini", existing=True
     )
     assert existing[0].startswith("You already have a Daily Brief.")
-    assert "openai · gpt-4.1-mini" in existing[0] and "one call" in existing[0]
+    assert "openai · gpt-4.1-mini" in existing[0] and "API quota" in existing[0]
+    assert "one call" not in " ".join(existing)
+    assert "cast script" in " ".join(existing) and "TTS provider" in " ".join(existing)
 
 
 @pytest.mark.asyncio

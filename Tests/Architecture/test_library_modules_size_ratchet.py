@@ -658,7 +658,13 @@ _BUDGETS["tldw_chatbook/UI/Library_Modules/library_unavailable_navigation.py"] =
 # for the reuse wording, no-provider -> disabled run button),
 # `close_demo_consent`, and `start_demo` (the old no-confirm press, now the
 # only way in). Nothing was moved out to make it fit.
-_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 876
+# 2026-10-09, TASK-34000.23 review 1: 876 -> 909 (+33), same owner decision.
+# The 876 pin was measured before the round's last two lines landed (878 at
+# the head commit, review Important #1); this round adds
+# `_reused_schedule_pair` (a reused schedule's default preset bills its own
+# provider/model, so the consent names that pair) and the schedule read it
+# hangs off. Measured with `len(read_text().splitlines())` after the edits.
+_BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_controller.py"] = 909
 _BUDGETS["tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py"] = 339
 
 # 2026-09-25, TASK-32954 (ruling R14): initial exact pin for the built-in

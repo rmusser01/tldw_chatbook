@@ -938,7 +938,14 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: model (`provider_model=provider_gate.model`, one kwarg and a
     #: three-line comment) so the quiet line names the model that will be
     #: billed. No new method.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36972, 1343),
+    #: 2026-10-09, TASK-34000.23 review 1: 36972/1343 -> 36992/1344 (+20 /
+    #: +1), same owner decision: Escape dismisses the Reports "Set up a
+    #: daily brief…" consent block -- one `check_action`-gated escape
+    #: binding (with its declaration-order comment), its `check_action`
+    #: branch, and the one-line delegating action method
+    #: (`action_library_artifacts_demo_cancel`). Re-set to the exact
+    #: measurement, never above it.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36992, 1344),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
