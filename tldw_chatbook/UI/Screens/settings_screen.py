@@ -14708,6 +14708,11 @@ class SettingsScreen(BaseAppScreen):
         first_selectable: int | None = None
         current_index: int | None = None
         exact_index: int | None = None
+        # Checkpoint review: a name or id that starts with the typed text
+        # outranks one that only contains it ("llama" means llama.cpp, not
+        # Ollama Cloud, which the Cloud group lists first).
+        prefix_index: int | None = None
+        current_is_prefix = False
         for index in range(picker.option_count):
             option = picker.get_option_at_index(index)
             if option.disabled:
@@ -14726,17 +14731,24 @@ class SettingsScreen(BaseAppScreen):
             ):
                 exact_index = index
                 break
+            starts = bool(wanted) and (
+                str(option.prompt).casefold().startswith(wanted)
+                or option_provider.casefold().startswith(wanted)
+            )
+            if prefix_index is None and starts:
+                prefix_index = index
             if current_index is None and not is_alias_id and (
                 provider_config_key(option_provider) == current_key
             ):
                 current_index = index
+                current_is_prefix = starts
+        order = (
+            (exact_index, current_index, prefix_index, first_selectable)
+            if current_is_prefix
+            else (exact_index, prefix_index, current_index, first_selectable)
+        )
         picker.highlighted = next(
-            (
-                index
-                for index in (exact_index, current_index, first_selectable)
-                if index is not None
-            ),
-            None,
+            (index for index in order if index is not None), None
         )
 
     def _refresh_provider_picker(self, query: str | None = None) -> None:
