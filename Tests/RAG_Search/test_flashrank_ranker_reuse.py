@@ -17,7 +17,6 @@
 # fake ranker, keeping these tests dependency-free.
 
 import threading
-from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -47,12 +46,14 @@ class _FakeRanker:
         type(self).last_init_kwargs = dict(kwargs)
 
     def rerank(self, request):
-        # Emulate flashrank's contract: ranked entries carry a passage
-        # ``index`` and a relevance ``score``.
-        return [
-            SimpleNamespace(index=rank, score=1.0 - rank * 0.1)
-            for rank in range(len(request.passages))
-        ]
+        # Emulate flashrank 0.2.10's real contract: the input passage
+        # dicts come back (same objects) with a "score" key added, sorted
+        # descending. Scores deliberately INVERT the producer order, so a
+        # broken id mapping (e.g. positional) yields a visibly wrong order.
+        for passage in request.passages:
+            passage["score"] = 0.1 * passage["id"]
+        request.passages.sort(key=lambda p: p["score"], reverse=True)
+        return request.passages
 
 
 @pytest.fixture(autouse=True)
@@ -174,6 +175,7 @@ async def test_execute_pipeline_rerank_step_still_reranks(monkeypatch):
 
     def fake_format(results, **kwargs):
         formatted_marker["count"] = len(results)
+        formatted_marker["ids"] = [r.id for r in results]
         formatted_marker["scores"] = [r.score for r in results]
         return "formatted"
 
@@ -197,5 +199,7 @@ async def test_execute_pipeline_rerank_step_still_reranks(monkeypatch):
     assert formatted == "formatted"
     assert _FakeRanker.instances == 1
     assert formatted_marker["count"] == len(results)
-    # Fake scores are 1.0, 0.9 for indexes 0, 1 (descending by index).
-    assert formatted_marker["scores"] == [1.0, 0.9]
+    # The fake scores passage id 1 above id 0 (inverting the producer
+    # order), so a correct id mapping must flip the result order.
+    assert formatted_marker["ids"] == ["m1", "m0"]
+    assert formatted_marker["scores"] == [0.1, 0.0]

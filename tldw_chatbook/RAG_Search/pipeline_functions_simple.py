@@ -736,6 +736,38 @@ def _reset_flashrank_ranker_for_tests() -> None:
         _CACHED_RANKER = None
 
 
+def _extract_flashrank_rank(
+    ranked: Any, identity_to_index: Dict[int, int]
+) -> tuple[Any, Any]:
+    """Return ``(passage_id, raw_score)`` for one ranked item.
+
+    Real flashrank (0.2.10) returns the *input passage dicts* with a
+    ``"score"`` key added, so the ``id`` we put in comes back as a dict
+    entry. A passage dict that lost its ``id`` still maps through object
+    identity (flashrank returns the very dicts we passed in, mutated).
+    Attribute-style items with ``index``/``score`` attributes are tolerated
+    for alternate ranker backends.
+
+    Args:
+        ranked: One entry of the ranker's response.
+        identity_to_index: Maps ``id()`` of each passage dict we built to
+            its passage id.
+
+    Returns:
+        ``(passage_id, raw_score)`` -- possibly ``None`` when unmappable or
+        missing; callers validate and reject those.
+
+    Raises:
+        AttributeError: Attribute-style item without ``index``/``score``.
+    """
+    if isinstance(ranked, Mapping):
+        pid = ranked.get("id")
+        if pid is None:
+            pid = identity_to_index.get(id(ranked))
+        return pid, ranked.get("score")
+    return ranked.index, ranked.score
+
+
 def rerank_results(
     results: List[SearchResult], query: str, model: str = "flashrank", top_k: int = 10
 ) -> List[SearchResult]:
@@ -750,11 +782,17 @@ def rerank_results(
             # Shared, constructed-once ranker (see get_flashrank_ranker).
             ranker = get_flashrank_ranker()
 
-            # Prepare passages
+            # Prepare passages. flashrank's real contract (verified against
+            # the installed flashrank 0.2.10): ``rerank`` mutates these
+            # dicts in place (adds a ``"score"`` key), sorts them descending
+            # by that score and returns the same list. Each passage carries
+            # a unique ``id`` -- passed through untouched -- which is how a
+            # ranked dict maps back to the SearchResult it belongs to.
             passages = []
-            for result in results:
+            for idx, result in enumerate(results):
                 text = f"{result.title}\n{result.content[:1000]}"
-                passages.append({"text": text})
+                passages.append({"id": idx, "text": text})
+            identity_to_index = {id(passage): passage["id"] for passage in passages}
 
             # Rerank
             rerank_req = RerankRequest(query=query, passages=passages)
@@ -763,10 +801,15 @@ def rerank_results(
             # Validate the complete reranker response before mutating any
             # producer score or provenance marker. A partial/raising fallback
             # must leave prior RRF/semantic score semantics honest.
+            if len(ranked_results) != len(results):
+                # flashrank returns every passage back; a short or long
+                # response is a broken ranker and must not silently drop
+                # or invent results.
+                raise ValueError("invalid FlashRank result")
             planned_updates = []
             seen_indexes: set[int] = set()
-            for ranked in ranked_results[:top_k]:
-                idx = ranked.index
+            for ranked in ranked_results:
+                idx, raw_score = _extract_flashrank_rank(ranked, identity_to_index)
                 if (
                     isinstance(idx, bool)
                     or not isinstance(idx, int)
@@ -774,7 +817,6 @@ def rerank_results(
                     or idx in seen_indexes
                 ):
                     raise ValueError("invalid FlashRank result")
-                raw_score = ranked.score
                 if isinstance(raw_score, bool):
                     raise ValueError("invalid FlashRank result")
                 score = float(raw_score)
@@ -790,8 +832,12 @@ def rerank_results(
                 seen_indexes.add(idx)
                 planned_updates.append((result, score, replacement_metadata))
 
+            # Order by the reranker's own scores, best first. flashrank
+            # already returns its list sorted descending; re-sorting keeps
+            # that guarantee even for rankers that return unsorted output.
+            planned_updates.sort(key=lambda update: update[1], reverse=True)
             reranked = []
-            for result, score, replacement_metadata in planned_updates:
+            for result, score, replacement_metadata in planned_updates[:top_k]:
                 result.score = score
                 result.metadata = replacement_metadata
                 reranked.append(result)
