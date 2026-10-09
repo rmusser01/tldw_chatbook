@@ -141,25 +141,31 @@ ConsoleSettingsModal .console-context-action-row {
 
 /* TASK-33003.3 (spec §6 row grammar): a Chat settings field is as wide as
    the value it holds, edge included, never a share of the viewport, so it
-   keeps its width from 211 to 235 columns. Every Input in a Model view
-   field row and in the Context view holds a number (12). An enum Select
-   is its longest option or blank prompt + 5: the edge, a padding cell each
-   side, the arrow and its gap (Keep after compaction's 27-cell option makes
-   32, so it shares the names cap). Free text keeps `1fr` so it gives way in
+   keeps its width from 211 to 235 columns. TASK-33007 #12(b): a view's
+   controls share one width, so its arrows (and the Model view's Source
+   words) form one column. An enum Select needs its widest option + 5 (the
+   edge, a padding cell each side, the arrow and its gap): "Detailed" makes
+   13, which a Model view field row's number takes too; Keep after
+   compaction's 27-cell option makes 32 in the Context view (the names cap),
+   whose Inputs hold numbers (12). Free text keeps `1fr` so it gives way in
    a narrow terminal, capped by type: names 32, model ids 48, URLs 64.
    Widths stay on the $ds-size-N scale until a second editor shares this row
    grammar (design-language.md §2.8). Bare ids, no ConsoleSettingsModal
    prefix: the boot CSS budget (ADR-097) sits bytes under its ceiling, and
    deleting dead rules for retired Console widgets paid for these.
    ponytail: the number width is by container, so a free-text Input added to
-   either container later also gets 12 columns; give it an id rule then. */
+   either container later also gets its width; give it an id rule then. */
 .console-settings-field-row Input,
+.console-settings-field-row Select {
+    width: $ds-size-13;
+}
+
 #console-settings-context-view Input {
     width: $ds-size-12;
 }
 
-#console-settings-streaming {
-    width: $ds-size-8;
+#console-settings-context-view Select {
+    width: $ds-size-32;
 }
 
 /* TASK-33006.1 (spec §6 row grammar): Label (18) | control | Source word |
@@ -184,32 +190,6 @@ ConsoleSettingsModal .console-context-action-row {
     text-overflow: ellipsis;
 }
 
-/* Final review I6: 12 fits a blank choice's "default" prompt too. */
-#console-settings-verbosity,
-#console-settings-thinking-effort,
-#console-settings-reasoning-effort,
-#console-context-thinking-history-policy {
-    width: $ds-size-12;
-}
-
-#console-settings-reasoning-summary {
-    width: $ds-size-13;
-}
-
-#console-context-budget-mode,
-#console-context-compaction-mode {
-    width: $ds-size-14;
-}
-
-#console-context-compaction-representation {
-    width: $ds-size-22;
-}
-
-#console-context-failure-behavior {
-    width: $ds-size-23;
-}
-
-#console-context-carry-forward,
 #console-settings-user-display-name {
     max-width: $ds-size-32;
 }

@@ -5041,6 +5041,11 @@ _FREE_TEXT_FIELD_IDS = (
 #: A dense-form Select paints its left edge, one padding cell on each side,
 #: and the arrow with its one-cell gap around the option text.
 _SELECT_CHROME = 5
+#: TASK-33007 #12(b): one Select width per view, its widest option + chrome,
+#: so the arrows line up: "Detailed" (Reasoning summary) in the Model view,
+#: where a field row's number takes it too, and Keep after compaction's
+#: 27-cell option in the Context view.
+_VIEW_SELECT_WIDTH = {"model": 8 + _SELECT_CHROME, "context": 27 + _SELECT_CHROME}
 
 
 def _shown_field_widths(screen) -> dict[str, int]:
@@ -5063,7 +5068,7 @@ def _shown_field_widths(screen) -> dict[str, int]:
 
 
 def _assert_enum_selects_fit_their_options(screen, view: str) -> int:
-    """Each shown Select is its longest option plus the arrow: no wider, no crop."""
+    """Each shown Select is its view's one width and never crops its options."""
     from rich.cells import cell_len
 
     checked = 0
@@ -5074,7 +5079,7 @@ def _assert_enum_selects_fit_their_options(screen, view: str) -> int:
         if select._allow_blank:
             texts.append(select.prompt)
         longest = max(cell_len(text) for text in texts)
-        assert select.region.width <= longest + _SELECT_CHROME, (
+        assert select.region.width == _VIEW_SELECT_WIDTH[view], (
             view,
             select.id,
             select.region.width,
@@ -5113,8 +5118,10 @@ async def test_console_settings_fields_are_sized_by_value_type(chat) -> None:
     """TASK-33003.3: a field is as wide as its value type, not the viewport.
 
     Under the production stylesheets, with every section expanded: numeric
-    fields are at most 12 columns (edge included), each enum Select is its
-    longest option plus the arrow, free-text fields stay within 64 columns,
+    fields are at most 13 columns (edge included; the Model view's one
+    control column, TASK-33007 #12(b)), each enum Select takes
+    its view's one width (TASK-33007 #12(b): the widest option plus the
+    arrow) and crops none, free-text fields stay within 64 columns,
     and no width changes between 211x44 and 235x52. Parametrized over three
     chats so every provider-choice Select renders in at least one.
     """
@@ -5144,11 +5151,73 @@ async def test_console_settings_fields_are_sized_by_value_type(chat) -> None:
         for field_id in shown_ids:
             assert widths.get(field_id, 0) > 0, (size, field_id)
         for field_id in _NUMERIC_FIELD_IDS:
-            assert widths.get(field_id, 0) <= 12, (size, field_id, widths.get(field_id))
+            assert widths.get(field_id, 0) <= _VIEW_SELECT_WIDTH["model"], (
+                size,
+                field_id,
+                widths.get(field_id),
+            )
         for field_id in _FREE_TEXT_FIELD_IDS:
             assert widths.get(field_id, 0) <= 64, (size, field_id, widths.get(field_id))
         widths_by_size[size] = widths
     assert widths_by_size[(211, 44)] == widths_by_size[(235, 52)]
+
+
+async def _arrow_columns(pilot, screen) -> dict[str, int]:
+    """Screen column of each shown Select's ▼, scrolling each into view."""
+    columns = {}
+    for select in screen.query(Select):
+        if not select.display or not select.parent.display:
+            continue
+        select.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+        arrow = select.query_one("SelectCurrent .down-arrow")
+        if arrow.region.area:
+            columns[select.id] = arrow.region.x
+    return columns
+
+
+@pytest.mark.asyncio
+async def test_console_settings_select_arrows_share_one_column() -> None:
+    """TASK-33007 #12(b): the ▼ of every Select in a view lines up.
+
+    Streaming (8), Reasoning effort (12) and Reasoning summary (13) each took
+    their own width, so their arrows (and the Source words after them)
+    stepped down the column. At 211x44, in the Model view of an OpenAI gpt-5
+    chat (four Selects) and in the Context view, every arrow sits in one
+    column, and every Model view field row's Source word starts in one
+    column (number and enum rows alike).
+    """
+    app = StyledModalHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(
+            _one_row_settings_modal(
+                app.app_config,
+                ConsoleSessionSettings(provider="openai", model="gpt-5"),
+            )
+        )
+        await pilot.pause()
+        screen = app.screen
+        model = await _arrow_columns(pilot, screen)
+        assert {
+            "console-settings-streaming",
+            "console-settings-reasoning-effort",
+            "console-settings-reasoning-summary",
+            "console-settings-verbosity",
+        } <= set(model), model
+        assert len(set(model.values())) == 1, model
+        rows = ".console-settings-field-row .console-settings-field-source"
+        sources = {
+            source.id: source.region.x
+            for source in screen.query(rows)
+            if source.region.area
+        }
+        assert len(sources) >= 6 and len(set(sources.values())) == 1, sources
+        screen.query_one("#console-settings-view-context", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+        context = await _arrow_columns(pilot, screen)
+        assert len(context) >= 5, context
+        assert len(set(context.values())) == 1, context
 
 
 def _field_paint(screen, field) -> tuple:
