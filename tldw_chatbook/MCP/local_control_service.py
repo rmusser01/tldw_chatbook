@@ -572,18 +572,60 @@ class LocalMCPControlService:
                 {
                     **profile.to_dict(),
                     "discovery_snapshot": snapshot,
-                    "is_connected": (
-                        self.connection_ownership.is_connected(profile.profile_id)
-                        if profile.plugin_owner is not None
-                        and self.connection_ownership is not None
-                        else profile.profile_id in active_sessions
-                        and not getattr(
-                            active_sessions[profile.profile_id], "_closed", False
-                        )
+                    "is_connected": self._profile_connected(
+                        profile.profile_id,
+                        profile.plugin_owner is not None,
+                        active_sessions,
                     ),
                 }
             )
         return servers
+
+    def _profile_connected(self, profile_id, plugin_owned, active_sessions) -> bool:
+        if plugin_owned and self.connection_ownership is not None:
+            return self.connection_ownership.is_connected(profile_id)
+        return profile_id in active_sessions and not getattr(
+            active_sessions[profile_id], "_closed", False
+        )
+
+    def connection_states(self, profiles=()) -> tuple[bool, ...]:
+        """``is_connected`` as ``get_external_servers`` reports it, per profile.
+
+        Args:
+            profiles: ``(profile_id, plugin_owned)`` pairs.
+        """
+        client = self.client
+        active_sessions = getattr(client, "sessions", {}) if client is not None else {}
+        return tuple(
+            self._profile_connected(profile_id, owned, active_sessions)
+            for profile_id, owned in profiles
+        )
+
+    def catalog_fingerprint(self, profiles=()) -> tuple:
+        """What a catalog composition reads from this service, as of now.
+
+        TASK-33620.15.1: the governance checks ``get_external_servers`` and
+        ``get_inventory`` make (a refusal raises), the store's admission-checked
+        content identity, the built-in manifest's source, and the connection
+        state of ``profiles`` (``(profile_id, plugin_owned)`` pairs).
+
+        Returns:
+            ``(store identity, manifest identity, connection states)``.
+        """
+        self._require_allowed("mcp.external_profiles.list.local")
+        self._require_allowed("mcp.inventory.list.local")
+        if self.manifest_provider is _default_manifest_provider:
+            from pathlib import Path
+
+            source = Path(__file__).with_name("server.py").read_bytes()
+            manifest: Any = ("source", hashlib.sha256(source).hexdigest())
+        else:
+            manifest = ("manifest", self.manifest_provider() or {})
+        return (
+            self.store.catalog_fingerprint(),
+            manifest,
+            self.connection_states(profiles),
+        )
 
     def save_external_profile(
         self,

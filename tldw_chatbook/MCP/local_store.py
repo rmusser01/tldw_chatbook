@@ -1084,6 +1084,35 @@ class LocalMCPStore:
         return state
 
     @mcp_sources.guarded
+    def catalog_fingerprint(self) -> tuple:
+        """Identify exactly what :meth:`load` would read now, without parsing.
+
+        TASK-33620.15.1: the same admission scope and recovery readability
+        check as ``load()`` (a refusal raises as ``load()`` would), then a hash
+        of the bytes ``load()`` would parse.
+
+        Returns:
+            ``("inactive",)`` or ``("missing",)`` when ``load()`` reads no file;
+            otherwise ``("file", sha256, stamp)``, ``stamp`` being the read
+            file's ``(st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns)``.
+        """
+        import hashlib
+        import os
+
+        from .recovery_activation import readable
+
+        if not readable(self, "mcp.local"):
+            return ("inactive",)
+        try:
+            with mcp_sources.reader(self) as handle:
+                raw = handle.buffer.read()
+                info = os.fstat(handle.fileno())
+        except FileNotFoundError:
+            return ("missing",)
+        stamp = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        return ("file", hashlib.sha256(raw).hexdigest(), stamp)
+
+    @mcp_sources.guarded
     def save(self, state: LocalMCPStoreState) -> None:
         self._write_payload(state.to_dict())
 

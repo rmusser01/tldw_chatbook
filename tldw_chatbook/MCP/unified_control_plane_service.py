@@ -2431,6 +2431,24 @@ class UnifiedMCPControlPlaneService:
             record["runtime_state"] = runtime_state_by_profile.get(profile_id)
         return records
 
+    @producer_call
+    async def run_catalog_fingerprint(self, profiles: tuple = ()) -> tuple:
+        """Everything a run's catalog composition reads, as of now (TASK-33620.15.1).
+
+        Behind the same producer fence as :meth:`local_external_catalog`: the
+        permission store's and the local service's admission-checked
+        identities (a refusal raises, as the composition's reads would).
+
+        Args:
+            profiles: ``(profile_id, plugin_owned)`` pairs whose connection
+                state to include (the servers a cached composition used).
+        """
+        store = self.permission_store
+        return (
+            None if store is None else store.catalog_fingerprint(),
+            self.local_service.catalog_fingerprint(profiles),
+        )
+
     # ---- Typed tool-execution seam (Phase 3) ---------------------------
     # Shared by the Hub Tools mode now and by the Phase 5 chat bridge /
     # agent-runtime MCPToolProvider (task-201) later. Keep this UI-free.
