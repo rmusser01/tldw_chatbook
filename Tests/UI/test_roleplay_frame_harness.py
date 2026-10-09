@@ -28,6 +28,7 @@ from Tests.UI.roleplay_frame_harness import (
     seed_mock_characters,
     settle,
     styled_tiers,
+    wait_until,
 )
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
@@ -105,6 +106,26 @@ async def test_the_full_app_loads_the_sheet_on_the_first_visit_only(
         assert type(pilot.app.screen).__name__ == "PersonasScreen"
         assert pilot.app.stylesheet.has_source(str(ROLEPLAY_SHEET), "")
     assert at_home == ([False] if entry == "ctrl+4" else [])
+
+
+@styled_tiers
+async def test_deleting_one_header_rule_turns_the_one_row_assertion_red(
+    styled_tier, mock_app_instance, one_character
+):
+    """AC#6: the discrimination check, run as an executable negative control."""
+    async with open_styled_roleplay(
+        styled_tier, mock_app_instance, size=(120, 36)
+    ) as pilot:
+        screen = pilot.app.screen
+        header = screen.query_one("#personas-header")
+        assert header.region.height == 1
+        drop_rule_from_loaded_sheet(
+            pilot.app, ROLEPLAY_SHEET, "#personas-header.personas-header-inline"
+        )
+        await settle(pilot)
+        await wait_until(
+            pilot, lambda: header.region.height > 1, what="the header to regrow"
+        )
 
 
 def test_dropping_a_rule_that_is_not_there_is_a_loud_error():
