@@ -41,10 +41,12 @@ directly under the "No reports yet" sentence. The latter is not a one-off
 demo: it first shows what it creates — a recurring "Daily Brief" watchlist
 over three live RSS feeds (Hacker News front page, BBC World News, Ars
 Technica) checked hourly, a brief written every 24 h with your persisted
-provider · model (using your API quota), and the removal path (delete the
-Daily Brief watchlist in Watchlists) — and only **Set up and write today's
-brief** starts it; **Cancel** writes and fetches nothing. The same copy is the
-Artifacts screen's **Create Your First Daily Report** tooltip.
+provider · model (using your API quota), a cast script and audio through
+your TTS provider when a voice profile exists, and the removal path (delete
+the Daily Brief watchlist in Watchlists) — and only **Set up and write
+today's brief** starts it; **Cancel** or Escape writes and fetches nothing.
+If the newest report failed, the same buttons stay under the list so you can
+run it again; the consent then says it reuses your existing Daily Brief.
 
 If a source fails, Library shows an error and Retry instead of claiming that
 its last successful count is current. Other healthy artifact views remain

@@ -11,6 +11,9 @@ Task .21 did for RAG Answer, so the copy names what the brief would bill.
 
 Data claims are asserted against the DB (row counts through
 `app.subscriptions_db.transaction()`), never against widget state alone.
+
+The 120x36 arms of the two size-parametrized tests live in the `_extended`
+sibling, outside the PR-gate lane (this file stays under its 35 s budget).
 """
 
 from __future__ import annotations
@@ -97,12 +100,17 @@ def _painted_flat(screen, region) -> str:
 
 
 @asynccontextmanager
-async def _empty_reports(tmp_path, *, size=(160, 45)):
+async def _empty_reports(tmp_path, *, size=(160, 45), seed=None):
+    """Boot Library ▸ Reports. `seed(app)` runs against the real
+    Subscriptions DB before the screen mounts (a failed first run, a
+    user-built preset); without it the page is empty."""
     app = _build_test_app(configured_default="library")
     db = CharactersRAGDB(tmp_path / "library.sqlite", client_id="demo-consent")
     app.chachanotes_db = db
     stub = _StubDemo()
     app.daily_report_demo_service = stub
+    if seed is not None:
+        seed(app)
     host = _CssTrueDestinationHarness(app, "library")
     try:
         async with host.run_test(size=size) as pilot:
@@ -117,11 +125,34 @@ async def _empty_reports(tmp_path, *, size=(160, 45)):
             assert controller is not None and controller.page is not None, (
                 "Reports never finished loading"
             )
-            assert not controller.page.items
+            if seed is None:
+                assert not controller.page.items
             await pilot.pause()
             yield app, screen, pilot, stub
     finally:
         db.close_connection()
+
+
+def _seed_daily_brief_schedule(app, *, failed_run: bool = False, preset=None) -> int:
+    """A Daily Brief watchlist with a 24 h cadence -- what one demo run
+    leaves behind -- optionally with a failed briefing row (the state the
+    failure toast's "run the demo again" is read in) and/or a user-built
+    default preset carrying its own provider/model."""
+    db = app.subscriptions_db
+    watchlist_id = int(WatchlistBundleService(db).create("Daily Brief")["id"])
+    settings = {"briefing_cadence_seconds": 86_400}
+    if preset is not None:
+        settings["default_preset_id"] = db.insert_briefing_preset(
+            "Daily Brief",
+            roster_json='[{"name": "Host", "voice_profile_id": null}]',
+            provider=preset[0],
+            model=preset[1],
+        )
+    db.set_watchlist_briefing_settings(watchlist_id, **settings)
+    if failed_run:
+        briefing_id = db.insert_briefing(watchlist_id)
+        db.update_briefing(briefing_id, status="failed", error="provider refused")
+    return watchlist_id
 
 
 async def _settle(pilot) -> None:
@@ -129,7 +160,7 @@ async def _settle(pilot) -> None:
         await pilot.pause()
 
 
-@pytest.mark.parametrize("size", [(160, 45), (120, 36)])
+@pytest.mark.parametrize("size", [(160, 45)])
 async def test_pressing_the_cta_without_confirming_writes_nothing(
     tmp_path, monkeypatch, size
 ):
@@ -184,7 +215,7 @@ async def test_confirm_runs_the_detached_demo_once(tmp_path, monkeypatch):
         assert not screen.query_one("#library-artifacts-demo-confirm").display
 
 
-@pytest.mark.parametrize("size", [(160, 45), (120, 36)])
+@pytest.mark.parametrize("size", [(160, 45)])
 async def test_cta_sits_under_the_empty_state_sentence(tmp_path, monkeypatch, size):
     """AC#1, AC#3: the CTA is painted directly under the sentence that
     mentions it, inside the same (Items) pane, with the recurring label."""
@@ -254,8 +285,102 @@ async def test_existing_schedule_discloses_reuse_not_seeding(tmp_path, monkeypat
         )
         assert text.startswith("You already have a Daily Brief.")
         assert "openai · gpt-4.1-mini" in text
-        assert "one call" in text
+        assert "API quota" in text and "one call" not in text
+        assert "cast script" in text and "TTS provider" in text
         run = screen.query_one("#library-artifacts-demo-confirm-run", Button)
         assert not run.disabled
         assert "Write today's brief" in _painted_flat(screen, run.region)
+        assert stub.started == 0
+
+
+async def test_failed_first_run_keeps_a_retry_through_the_same_consent(
+    tmp_path, monkeypatch
+):
+    """Review 1 #2: a failed first run leaves a `failed` row (page not empty)
+    and the failure toast says "run the demo again" -- the Library must still
+    offer it, through the SAME consent, with the reuse copy; nothing starts
+    until Confirm, which starts exactly one detached run."""
+    _persist_pair(monkeypatch)
+    async with _empty_reports(
+        tmp_path, seed=lambda app: _seed_daily_brief_schedule(app, failed_run=True)
+    ) as (app, screen, pilot, stub):
+        assert [row.status for row in screen._artifacts_controller.page.items] == [
+            "failed"
+        ]
+        actions = screen.query_one("#library-artifacts-empty-actions")
+        assert actions.display and actions.region.height > 0
+        cta = screen.query_one("#library-artifacts-demo", Button)
+        assert "Set up a daily brief…" in _painted_flat(screen, cta.region)
+        before = _counts(app)
+        cta.press()
+        await _settle(pilot)
+        assert stub.started == 0
+        assert _counts(app) == before
+        text = _painted_flat(
+            screen, screen.query_one("#library-artifacts-demo-copy").region
+        )
+        assert text.startswith("You already have a Daily Brief.")
+        assert "openai · gpt-4.1-mini" in text
+        run = screen.query_one("#library-artifacts-demo-confirm-run", Button)
+        assert "Write today's brief" in _painted_flat(screen, run.region)
+        run.press()
+        await _settle(pilot)
+        assert stub.started == 1
+        assert not screen.query_one("#library-artifacts-demo-confirm").display
+
+
+async def test_escape_and_leaving_the_view_dismiss_without_writing(
+    tmp_path, monkeypatch
+):
+    """Review 1 minor 2: Escape closes the block; switching the rail with
+    the block open leaves it closed on return. Both: DB untouched, nothing
+    started."""
+    _persist_pair(monkeypatch)
+    async with _empty_reports(tmp_path) as (app, screen, pilot, stub):
+        screen.query_one("#library-artifacts-demo", Button).press()
+        await _settle(pilot)
+        assert screen.query_one("#library-artifacts-demo-confirm").display
+        assert screen.focused is screen.query_one("#library-artifacts-demo-cancel")
+        await pilot.press("escape")
+        await _settle(pilot)
+        assert not screen.query_one("#library-artifacts-demo-confirm").display
+        assert screen.focused is screen.query_one("#library-artifacts-demo")
+        assert stub.started == 0 and _counts(app) == _ZERO
+
+        screen.query_one("#library-artifacts-demo", Button).press()
+        await _settle(pilot)
+        assert screen.query_one("#library-artifacts-demo-confirm").display
+        await screen._select_library_rail_row("artifacts-chatbooks")
+        await _settle(pilot)
+        assert screen._artifacts_controller.demo_consent is None
+        await screen._select_library_rail_row("artifacts-reports")
+        for _ in range(100):
+            await pilot.pause(0.03)
+            controller = screen._artifacts_controller
+            if controller.page is not None and not controller.loading:
+                break
+        await _settle(pilot)
+        assert not screen.query_one("#library-artifacts-demo-confirm").display
+        assert stub.started == 0 and _counts(app) == _ZERO
+
+
+async def test_reused_schedule_names_its_presets_own_pair(tmp_path, monkeypatch):
+    """Review 1 minor 1: a reused schedule bills its default preset's own
+    provider/model when the preset carries them, so the copy names THAT
+    pair, not the persisted one."""
+    _persist_pair(monkeypatch)
+    async with _empty_reports(
+        tmp_path,
+        seed=lambda app: _seed_daily_brief_schedule(
+            app, preset=("anthropic", "claude-haiku-4-5")
+        ),
+    ) as (app, screen, pilot, stub):
+        screen.query_one("#library-artifacts-demo", Button).press()
+        await _settle(pilot)
+        text = _painted_flat(
+            screen, screen.query_one("#library-artifacts-demo-copy").region
+        )
+        assert text.startswith("You already have a Daily Brief.")
+        assert "anthropic · claude-haiku-4-5" in text
+        assert "openai · gpt-4.1-mini" not in text
         assert stub.started == 0

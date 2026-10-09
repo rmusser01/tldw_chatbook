@@ -113,6 +113,13 @@ def daily_report_demo_consequences(
         One sentence per line; the first line is the headline.
     """
     pair = f"{provider} · {model}" if model else provider
+    # ADR-079 Consequences: "LLM + TTS; CTA copy says so". `_generate_audio`
+    # runs whenever a voice profile exists: `generate_script` is a SECOND
+    # model call and `generate_script_audio` spends through the TTS provider.
+    audio = (
+        "• With a TTS voice profile set up, also writes a cast script (a second "
+        f"{provider} call) and records audio through your TTS provider."
+    )
     stop = (
         "• Keeps running until you remove the Daily Brief watchlist in "
         "Watchlists (⌃5)."
@@ -120,7 +127,8 @@ def daily_report_demo_consequences(
     if existing:
         return (
             "You already have a Daily Brief. This checks its sources now and "
-            f"writes today's brief with {pair} (one call).",
+            f"writes today's brief with {pair}, using your API quota.",
+            audio,
             stop,
         )
     feeds = ", ".join(str(source["name"]) for source in DEMO_SOURCES)
@@ -130,6 +138,7 @@ def daily_report_demo_consequences(
         f"each {_every(DEMO_SOURCE_CHECK_SECONDS)}.",
         f"• Writes a brief {_every(DEMO_CADENCE_SECONDS)} with {pair}, using your "
         "API quota. The first one is written now.",
+        audio,
         stop,
     )
 

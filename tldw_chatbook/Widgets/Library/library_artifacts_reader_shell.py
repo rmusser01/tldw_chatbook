@@ -105,6 +105,14 @@ class LibraryArtifactsReaderShell(LibraryAdaptiveReaderShell):
                 return
             event.stop()
             event.prevent_default()
+            if self.controller.demo_consent is not None:
+                # TASK-34000.23 review 1: the open consent block owns Escape
+                # (dismissal only; nothing is armed). This handler stops the
+                # key before the screen's gated binding would see it, so the
+                # dismissal is dispatched here and the binding stays the
+                # advertised, `check_action`-gated description of it.
+                self.controller.action("demo-cancel")
+                return
             self.controller.focus_items()
         elif event.key == "/" and not isinstance(self.app.focused, Input):
             event.stop()
