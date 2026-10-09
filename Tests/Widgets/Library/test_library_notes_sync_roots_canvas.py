@@ -71,6 +71,54 @@ async def test_root_row_renders_literal_name_status_and_contextual_actions() -> 
         assert not app.query("#notes-sync-root-resume-0")
 
 
+def _named_snapshot(display_name: str):
+    return replace(
+        _snapshot(),
+        roots=(replace(_snapshot().roots[0], display_name=display_name),),
+    )
+
+
+async def test_markup_shaped_folder_name_paints_literally_and_is_inert() -> None:
+    """task-32451 name safety: a folder name is user text, never markup.
+
+    `[@click=app.quit]x` would be a live quit action on a markup-on Static
+    (backlog/docs/lessons-textual.md, "A name shaped like markup exits the
+    whole app"); the title is painted literally and clicking it does nothing.
+    """
+    name = "Notes [2026] [@click=app.quit]"
+    app = _Host(_named_snapshot(name))
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+        assert name in _frame(app)
+        title = app.query_one("#notes-sync-root-row-0").query(".destination-section").first()
+        await pilot.click(title)
+        await pilot.pause()
+        assert name in _frame(app)
+        assert app.query_one("#notes-sync-root-check-0", Button).display
+
+    assert app.messages == []
+
+
+async def test_a_160_character_folder_name_keeps_the_row_whole() -> None:
+    """task-32451 name safety: the longest legal name wraps inside its row
+    and leaves the status line and the controls in place."""
+    name = ("Vault sync " * 15).rstrip()[:160]
+    assert len(name) == 160
+    app = _Host(_named_snapshot(name))
+    async with app.run_test(size=(60, 24)) as pilot:
+        await pilot.pause()
+        painted = _frame(app)
+        assert "Vault sync" in painted
+        assert "Needs attention" in painted
+        row = app.query_one("#notes-sync-root-row-0")
+        review = app.query_one("#notes-sync-root-review-0", Button)
+        assert row.region.contains_region(review.region)
+        assert await pilot.click(review)
+        await pilot.pause()
+
+    assert [(m.root_id, m.action) for m in app.messages] == [("root-1", "review")]
+
+
 async def test_declared_review_action_is_first_and_visually_primary() -> None:
     app = _Host(_snapshot())
     async with app.run_test(size=(60, 20)) as pilot:
@@ -90,7 +138,9 @@ async def test_migration_review_is_a_physical_primary_action_at_60x20() -> None:
         roots=(
             LastingSyncRootRow(
                 "legacy-root-" + "a" * 40,
-                "Sync folder (name unavailable before cutover)",
+                # task-32451: a migrated candidate has no typed name yet; the
+                # runtime's honest fallback names what it is.
+                "Migrated notes — review to finish setup",
                 "paused",
                 "review_migration",
                 "Ⅱ Migration review required",

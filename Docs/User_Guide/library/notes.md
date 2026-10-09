@@ -792,14 +792,16 @@ this release; nothing on disk or in Notes changes." (task-32545).
 A paused folder keeps its receipts: reading them is a read, so pausing one
 folder never blanks the list for the others (task-32534).
 
-**Every root here is titled "Sync folder (name unavailable before
-cutover)"**, whatever display name you gave it and however many roots you
-have — the row's title is a hard-coded string, not the name (task-32451,
-still open). The row carries no path either, so with two roots connected
-the only things telling their rows apart are their status lines and their
-order. What still names them is the Notes list: each root's managed folder
-there is named after its display name. This is a labelling defect only —
-each row's controls act on the root they belong to.
+**Every root here is titled with its folder's name** — the display name you
+typed when you set it up, which is also the name the Notes list shows for the
+root's managed folder ("Vault sync" in both places) — so two roots are told
+apart by their titles alone. The row still carries no path. A migrated legacy
+candidate has no typed name until you activate it: its row reads "Migrated
+notes — review to finish setup", and once activated it takes its new folder's
+"Migrated notes …" name. A root still being set up reads "Sync folder (setting
+up)". (Was "Sync folder (name unavailable before cutover)" on every row,
+whatever you had named it, so two roots could only be told apart by their
+status lines and order — task-32451.)
 
 **Receipts**, under the root list, is where the writes lasting sync performs
 on its own show up: the newest 20 across every listed root, newest first, as
@@ -2270,8 +2272,9 @@ naming both, not "the same line repeated". **Preview's Escape chip** is
 "esc back to notes" wide and "esc notes" compact
 (`LIBRARY_NOTES_PREVIEW_SHORTCUTS(_COMPACT)`). Every **Manage sync folders**
 row is titled "Sync folder (name unavailable before cutover)" and carries no
-path (task-32451, open) — recorded in the body rather than left for a reader
-to discover.
+path (task-32451, open at that walk; since fixed — each row is titled with its
+folder's name, see Manage sync folders above) — recorded in the body rather
+than left for a reader to discover.
 
 Checked and TRUE, so left alone: the duplicate rows read
 "Reading list · Unfiled · 4m · #d3d7" / "#f24b" (`docs-04`); the chrome strip
