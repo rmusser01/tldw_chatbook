@@ -471,3 +471,288 @@ async def test_a_bare_second_enter_during_a_refused_send_is_not_refused_again(dr
             assert _rows(console, session_id, BLOCKED) == 1
             assert gateway.stream_calls == 0
             assert composer.draft_text() == draft
+
+
+# Checkpoint-review fixes. A clear or a replaced draft is not a send: it
+# never spends a press made before it, and never draws the "was sent"
+# notice. These pass on dev, which did both right, and failed on the first
+# cut of this task, which keyed both on any move of the draft generation.
+
+ESCAPED = r"\! hello there"
+
+
+async def _sends(console, session_id: str, count: int) -> list[str]:
+    """What the chat sent or queued, once ``count`` arrived or time ran out."""
+    try:
+        await until(lambda: len(_sent_or_queued(console, session_id)) >= count)
+    except AssertionError:
+        pass
+    return _sent_or_queued(console, session_id)
+
+
+def _clear(host, how: str) -> None:
+    if how == "ctrl+u":
+        press(host, "ctrl+u")
+        return
+    for _ in DRAFT:
+        press(host, "backspace")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["ctrl+u", "backspace"], ids=["ctrl_u", "backspaces"])
+async def test_a_draft_cleared_while_it_is_sent_draws_no_was_sent_notice(how):
+    """The notice is only for sent text the composer still shows.
+
+    Enter, then the draft cleared (Ctrl+U, or Backspace over all of it) and
+    "n" typed while the send is admitted. The commit cannot take the sent
+    text out because it is gone; the first cut still said "Your message was
+    sent, but the composer still shows it" over a composer showing "n".
+    The "n" is a new message: Enter on it later sends it (Backspace leaves
+    the draft's generation as it was, and a spent generation must not
+    swallow it).
+    """
+    host, gateway, _timeline = build()
+    _allow_second_turns(host)
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            session_id = console._console_chat_store.active_session_id
+            notices = _record_notices(host)
+            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            gateway.validation_release.set()
+            try:
+                press(host, "enter", "\r")
+                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                _clear(host, how)
+                await until(lambda: composer.draft_text() == "", timeout=10)
+                press(host, "n", "n")
+                await until(lambda: composer.draft_text() == "n", timeout=10)
+            finally:
+                hold.release.set()
+            await until(lambda: gateway.stream_calls == 1)
+            await _idle(host, console, pilot, session_id)
+            assert _sent_or_queued(console, session_id) == [DRAFT]
+            assert composer.draft_text() == "n"
+            assert not [n for n in notices if "was sent" in n], notices
+            await until(lambda: _turns_done(console, session_id, 1))
+            press(host, "enter", "\r")
+            assert await _sends(console, session_id, 2) == [DRAFT, "n"]
+            await _idle(host, console, pilot, session_id)
+            assert composer.draft_text() == ""
+
+
+@pytest.mark.asyncio
+async def test_a_hidden_chat_whose_draft_was_replaced_draws_no_was_sent_notice():
+    """The hidden-chat notice is only for a saved draft that still has it.
+
+    Enter, Ctrl+U, "n", then Alt+2 while the send is admitted: tab A saves
+    "n". The first cut said "Your message in “…” was sent, but that chat's
+    draft still shows it" for any saved draft not starting with the sent
+    text, including this one.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            session_a, session_b = await _second_tab(console, pilot, ready=True)
+            store = console._ensure_console_chat_store()
+            notices = _record_notices(host)
+            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            gateway.validation_release.set()
+            try:
+                press(host, "enter", "\r")
+                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                press(host, "ctrl+u")
+                await until(lambda: composer.draft_text() == "", timeout=10)
+                press(host, "n", "n")
+                await until(lambda: composer.draft_text() == "n", timeout=10)
+                press(host, "alt+2")
+                await until(
+                    lambda: console._console_visible_draft_session_id == session_b
+                )
+            finally:
+                hold.release.set()
+            await until(lambda: gateway.stream_calls == 1)
+            await _idle(host, console, pilot, session_a)
+            assert _sent_or_queued(console, session_a) == [DRAFT]
+            assert store.session_draft(session_a) == "n"
+            assert not [n for n in notices if "was sent" in n], notices
+
+
+@pytest.mark.asyncio
+async def test_an_escaped_bang_chat_send_leaves_the_composer():
+    """A "\\! " chat send goes out as "! …" and leaves the composer.
+
+    The send dispatches the draft with its escape removed, and the commit
+    looked for that unescaped text, which the composer never shows. On dev
+    the sent draft stayed in the composer with no cue; the first cut of this
+    task said "the draft changed while sending" when nothing had changed.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            composer.load_draft(ESCAPED)
+            await pilot.pause()
+            session_id = console._console_chat_store.active_session_id
+            store = console._ensure_console_chat_store()
+            notices = _record_notices(host)
+            gateway.validation_release.set()
+            press(host, "enter", "\r")
+            await until(lambda: gateway.stream_calls == 1, timeout=ENTRY_SECONDS)
+            await _idle(host, console, pilot, session_id)
+            assert _sent_or_queued(console, session_id) == [ESCAPED[1:]]
+            assert composer.draft_text() == ""
+            assert store.session_draft(session_id) == ""
+            assert not [n for n in notices if "was sent" in n], notices
+
+
+@pytest.mark.asyncio
+async def test_a_held_enter_is_still_sent_when_the_composer_is_cleared_after_it():
+    """Clearing the composer after a press does not cancel that press.
+
+    The first send's draft has left the composer and its send is still
+    running, so "y" plus Enter is held. Then Ctrl+U and "z". Lead ruling:
+    what is sent is what the composer held at the press, so "y" is sent and
+    "z" stays. The first cut took any move of the draft generation (a clear
+    included) for "another send took this draft" and dropped "y" silently:
+    neither sent nor left in the composer.
+    """
+    host, gateway, _timeline = build()
+    _allow_second_turns(host)
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            session_id = console._console_chat_store.active_session_id
+            notices = _record_notices(host)
+            tail = _hold_first_send_tail(console)
+            gateway.validation_release.set()
+            try:
+                press(host, "enter", "\r")
+                await until(lambda: composer.draft_text() == "", timeout=ENTRY_SECONDS)
+                press(host, "y", "y")
+                press(host, "enter", "\r")
+                await until(lambda: _held(console), timeout=10)
+                press(host, "ctrl+u")
+                await until(lambda: composer.draft_text() == "", timeout=10)
+                press(host, "z", "z")
+                await until(lambda: composer.draft_text() == "z", timeout=10)
+                await until(lambda: _first_turn_done(host, console))
+            finally:
+                tail.set()
+            assert await _sends(console, session_id, 2) == [DRAFT, "y"]
+            await _idle(host, console, pilot, session_id)
+            assert gateway.stream_calls == 2
+            assert composer.draft_text() == "z"
+            assert not [n for n in notices if "was sent" in n], notices
+
+
+@pytest.mark.asyncio
+async def test_an_enter_is_still_sent_when_the_composer_is_cleared_before_it_starts(
+    monkeypatch,
+):
+    """A clear before the Enter's send starts does not cancel it either.
+
+    Enter on "y"; its "Sending…" row is painted, and the send is started
+    once that frame is out. Ctrl+U and "z" land in between. The first cut's
+    check at the start of the send took the clear for another send and
+    dropped "y" silently.
+    """
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            composer.load_draft("y")
+            await pilot.pause()
+            session_id = console._console_chat_store.active_session_id
+            notices = _record_notices(host)
+            gateway.validation_release.set()
+            reached, release = asyncio.Event(), asyncio.Event()
+            real_start = send_acknowledgement._start_send
+
+            def held_start(screen, send):
+                async def start_when_released():
+                    reached.set()
+                    await release.wait()
+                    real_start(screen, send)
+
+                asyncio.get_running_loop().create_task(start_when_released())
+
+            monkeypatch.setattr(send_acknowledgement, "_start_send", held_start)
+            try:
+                press(host, "enter", "\r")
+                await until(reached.is_set, timeout=ENTRY_SECONDS)
+                press(host, "ctrl+u")
+                await until(lambda: composer.draft_text() == "", timeout=10)
+                press(host, "z", "z")
+                await until(lambda: composer.draft_text() == "z", timeout=10)
+            finally:
+                release.set()
+            assert await _sends(console, session_id, 1) == ["y"]
+            await _idle(host, console, pilot, session_id)
+            assert gateway.stream_calls == 1
+            assert composer.draft_text() == "z"
+            assert not [n for n in notices if "was sent" in n], notices
+
+
+@pytest.mark.asyncio
+async def test_an_enter_never_resends_a_draft_a_spoken_send_took_before_a_clear(
+    monkeypatch,
+):
+    """A sent capture is spent even when its commit cannot take it out.
+
+    A spoken send of "y" is admitted when Enter captures the same "y"; the
+    Enter's send is about to start. Ctrl+U and "z" land, so the spoken send
+    sends "y" and its commit finds nothing to take out. The Enter's capture
+    is still the text that went: it is dropped, and "z" stays. (On dev the
+    Enter sent "y" a second time.)
+    """
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement
+
+    host, gateway, _timeline = build()
+    _allow_second_turns(host)
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            composer.load_draft("y")
+            await pilot.pause()
+            session_id = console._console_chat_store.active_session_id
+            notices = _record_notices(host)
+            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            gateway.validation_release.set()
+            reached, release = asyncio.Event(), asyncio.Event()
+            real_start = send_acknowledgement._start_send
+
+            def held_start(screen, send):
+                async def start_when_released():
+                    reached.set()
+                    await release.wait()
+                    real_start(screen, send)
+
+                asyncio.get_running_loop().create_task(start_when_released())
+
+            monkeypatch.setattr(send_acknowledgement, "_start_send", held_start)
+            try:
+                spoken = _speak_send(console, session_id)
+                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                press(host, "enter", "\r")
+                await until(reached.is_set, timeout=10)
+                press(host, "ctrl+u")
+                await until(lambda: composer.draft_text() == "", timeout=10)
+                press(host, "z", "z")
+                await until(lambda: composer.draft_text() == "z", timeout=10)
+                hold.release.set()
+                await until(lambda: spoken.is_finished, timeout=ENTRY_SECONDS)
+                # Started now, the Enter's send would be a second turn.
+                await until(lambda: _turns_done(console, session_id, 1))
+            finally:
+                hold.release.set()
+                release.set()
+            await _idle(host, console, pilot, session_id)
+            await pilot.pause(0.5)
+            assert _sent_or_queued(console, session_id) == ["y"]
+            assert gateway.stream_calls == 1
+            assert composer.draft_text() == "z"
+            assert not [n for n in notices if "was sent" in n], notices

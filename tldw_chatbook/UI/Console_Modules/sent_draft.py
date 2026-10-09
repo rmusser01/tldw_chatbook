@@ -13,14 +13,19 @@ by the time a send commits its capture the draft can have changed under it:
   take the sent text out of. The draft stays, as it must, and the user is
   now told that the message was sent; captures taken before that point are
   retired, so no held press can send the text again (``take_out_sent_draft``).
+  A draft the user cleared or replaced no longer holds the sent text, so
+  nothing is said about it.
 * A tab left during admission: the commit used to touch only the visible
   composer, so the saved draft of the chat the message was sent from kept
   it, and it came back when the user returned. It now comes off that saved
   draft, with anything typed after it kept.
+* An escaped ``\\! `` chat draft is dispatched without its backslash; it is
+  taken out as typed (``as_typed``). On dev it never left the composer.
 
-A capture another send has already committed, or that a retire or a new
-draft replaced, is superseded (``capture_superseded``): a press holding it
-is dropped instead of sending the same text twice.
+A capture is spent once a send took it: committed, or sent and retired
+(``ConsoleComposerBar.captured_draft_spent``). A press holding a spent
+capture is dropped instead of sending the same text twice. A clear or a new
+draft spends nothing: a press made before it still sends what it captured.
 
 Imported on the first send only, so it adds nothing to the ADR-097 boot
 census.
@@ -77,6 +82,13 @@ def chat_label(store: Any, session_id: str) -> str:
     return escape_markup(label or "Untitled")
 
 
+def as_typed(stash: ConsoleDraftStash | None) -> ConsoleDraftStash | None:
+    """``stash`` as the composer shows it: an escaped chat send keeps its ``\\``."""
+    if stash is None or not stash.escape_removed:
+        return stash
+    return replace(stash, text="\\" + stash.text, escape_removed=False)
+
+
 def _reloaded(composer: Any, stash: ConsoleDraftStash) -> bool:
     """Whether the composer shows ``stash`` again after a reload.
 
@@ -90,27 +102,6 @@ def _reloaded(composer: Any, stash: ConsoleDraftStash) -> bool:
         and live.edit_serial == stash.edit_serial
         and composer.draft_text().startswith(stash.text)
     )
-
-
-def capture_superseded(composer: Any, stash: ConsoleDraftStash | None) -> bool:
-    """Whether ``stash`` no longer describes the composer's draft.
-
-    A commit, clear, retire or a different draft moved the draft generation
-    on; a reload with nothing typed did not supersede it. An edit within the
-    same generation does not either: under the lead ruling the capture is
-    still what its press sends.
-
-    Args:
-        composer: The Console composer, showing the capture's chat.
-        stash: A press's capture; ``None`` (nothing typed) is never stale.
-
-    Returns:
-        True when sending ``stash`` could repeat text that already left.
-    """
-    if stash is None:
-        return False
-    live = composer.capture_draft_snapshot()
-    return live.generation != stash.generation and not _reloaded(composer, stash)
 
 
 def commit_capture(composer: Any, stash: ConsoleDraftStash | None) -> bool:
@@ -131,24 +122,22 @@ def commit_capture(composer: Any, stash: ConsoleDraftStash | None) -> bool:
     return composer.commit_captured_draft(replace(stash, generation=live.generation))
 
 
-def superseded(screen: Any, session_id: str, stash: ConsoleDraftStash | None) -> bool:
-    """Whether a press's capture can no longer be sent: its draft already left.
+def superseded(screen: Any, stash: ConsoleDraftStash | None) -> bool:
+    """Whether another send already took a press's capture.
 
-    Judged only while the capture's chat is on screen; elsewhere the send's
-    own chat check refuses it.
+    Generations are never reused, so this holds in any chat. A capture the
+    user cleared or replaced after the press is not superseded: under the
+    lead ruling it is still what that press sends.
 
     Args:
         screen: The Console ``ChatScreen``.
-        session_id: The chat the press was made in.
-        stash: The press's capture.
+        stash: The press's capture; ``None`` (nothing typed) never is.
 
     Returns:
-        True when another send took the draft, or a new draft replaced it.
+        True when sending ``stash`` would send text that already left.
     """
     composer = screen._console_composer_or_none()
-    if composer is None or screen._console_visible_draft_session_id != session_id:
-        return False
-    return capture_superseded(composer, stash)
+    return composer is not None and composer.captured_draft_spent(stash)
 
 
 def asked_again(screen: Any, stash: ConsoleDraftStash | None) -> bool:
@@ -181,6 +170,10 @@ def take_out_sent_draft(
 ) -> None:
     """Take a dispatched capture out of the draft of the chat it came from.
 
+    The capture is spent either way. If the draft still holds the sent text
+    and cannot lose it (a non-append edit), the user is told it was sent; if
+    the user cleared or replaced it, the draft is simply kept.
+
     Args:
         session_id: The chat the capture was sent (or queued) from.
         stash: The dispatched capture; ``None`` for an image-only send.
@@ -191,12 +184,20 @@ def take_out_sent_draft(
         notify: Shows a warning to the user.
         verb: "sent" or "queued", for the notice.
     """
+    stash = as_typed(stash)
+    if composer is not None:
+        composer.spend_captured_draft(stash)
     if composer is not None and visible_session_id == session_id:
-        if not commit_capture(composer, stash):
-            # The user's edit stays; the text in it already went. Retire
-            # every capture of it, so no held press sends it a second time.
-            composer.retire_captured_drafts()
-            notify(SENT_DRAFT_KEPT.format(verb=verb))
+        if not commit_capture(composer, stash) and stash is not None:
+            live = composer.capture_draft_snapshot()
+            if stash.text in composer.draft_text():
+                # The user's edit stays; the text in it already went. Retire
+                # every capture of it, so no held press sends it again.
+                composer.retire_captured_drafts()
+                notify(SENT_DRAFT_KEPT.format(verb=verb))
+            elif live.generation == stash.generation:
+                # Edited in place: a later press on it is a new capture.
+                composer.retire_captured_drafts()
         _save_draft(store, session_id, composer.draft_text())
         return
     if stash is None:
@@ -205,11 +206,11 @@ def take_out_sent_draft(
         draft = store.session_draft(session_id)
     except KeyError:
         return
-    if draft.startswith(stash.text) or not draft:
+    if draft.startswith(stash.text):
         undo_histories.pop(session_id, None)
         _save_draft(store, session_id, draft[len(stash.text) :])
-        return
-    notify(SENT_DRAFT_KEPT_IN.format(verb=verb, chat=chat_label(store, session_id)))
+    elif stash.text in draft:
+        notify(SENT_DRAFT_KEPT_IN.format(verb=verb, chat=chat_label(store, session_id)))
 
 
 def _save_draft(store: Any, session_id: str, text: str) -> None:

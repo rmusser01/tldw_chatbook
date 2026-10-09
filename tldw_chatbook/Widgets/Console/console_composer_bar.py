@@ -18,6 +18,7 @@ import json
 import re
 import secrets
 from bisect import bisect_right
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Literal
@@ -245,6 +246,9 @@ class ConsoleDraftStash:
     raw_cli_prefix_typed: bool = False
     edit_serial: int = 0
     generation: int = 0
+    #: The dispatched form of an escaped ``\! `` chat draft: the composer
+    #: shows ``text`` behind one backslash (TASK-33620.15.2).
+    escape_removed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +286,7 @@ def unescape_console_raw_chat_stash(stash: ConsoleDraftStash) -> ConsoleDraftSta
         segments=segments,
         text=escaped_text,
         raw_cli_prefix_typed=False,
+        escape_removed=True,
     )
 
 
@@ -719,6 +724,10 @@ class ConsoleComposerBar(Horizontal):
         # even when its text/edit serial are byte-identical. The value remains
         # monotonic for this owner as scope replacements advance it.
         self._draft_generation = secrets.randbits(63)
+        # TASK-33620.15.2: generations a send took (committed, or sent and
+        # retired). A capture of one is never sent again; a clear or a new
+        # draft spends nothing, so a press made before it is still sent.
+        self._spent_generations: deque[int] = deque(maxlen=16)
         # Per-composer authentication key for opaque protected placeholders.
         # Tokens reveal neither inline-file metadata nor this key, so edited or
         # user-authored lookalikes cannot be accepted as protected segments.
@@ -4206,6 +4215,7 @@ class ConsoleComposerBar(Horizontal):
                 kept.append(replace(segment))
         if remaining:
             return False
+        self._spent_generations.append(stash.generation)
         self._advance_draft_generation()
         self._clear_draft_selection()
         self._segments = kept
@@ -4219,18 +4229,25 @@ class ConsoleComposerBar(Horizontal):
         return True
 
     def retire_captured_drafts(self) -> None:
-        """Make the shown draft a new revision, leaving its text unchanged.
+        """Spend every capture of the shown draft; keep its text as a new one.
 
-        Every capture taken before this call stops matching the composer, so
-        :meth:`commit_captured_draft` refuses it and a held send drops it.
-        Both the generation and the edit serial move: a capture matching
-        neither cannot pass for a reload of the same draft either.
-        TASK-33620.15.2: a sent draft the commit could not take out (it was
-        edited while sending) must not be sent again by a press captured
-        before the user was told.
+        TASK-33620.15.2: a sent draft the commit could not take out must not
+        be sent again by a press captured before it. Both the generation and
+        the edit serial move, so a later press is a new capture and no older
+        capture can pass for a reload of this draft.
         """
+        self._spent_generations.append(self._draft_generation)
         self._advance_draft_generation()
         self._mark_manual_draft_edit()
+
+    def spend_captured_draft(self, stash: ConsoleDraftStash | None) -> None:
+        """Record that a send took ``stash``, whether or not it left."""
+        if stash is not None:
+            self._spent_generations.append(stash.generation)
+
+    def captured_draft_spent(self, stash: ConsoleDraftStash | None) -> bool:
+        """Whether a send already took a capture of ``stash``'s draft."""
+        return stash is not None and stash.generation in self._spent_generations
 
     def stash_draft_for_send(self) -> ConsoleDraftStash | None:
         """Legacy destructive wrapper around capture followed by commit."""

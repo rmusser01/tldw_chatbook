@@ -411,7 +411,7 @@ def schedule_acknowledged_send(screen: Any, pending_send: Any) -> None:
 
     async def observed_send() -> bool:
         try:
-            if superseded(screen, pending_send.session_id, pending_send.stash):
+            if superseded(screen, pending_send.stash):
                 # Another send took this draft meanwhile (TASK-33620.15.2).
                 if screen._console_pending_send is pending_send:
                     screen._console_pending_send = None
@@ -552,7 +552,7 @@ def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
         return
     held = flight.deferred
     if held is not None and not _replayable(screen, held):
-        held = flight.deferred = None  # Its draft was sent or replaced.
+        held = flight.deferred = None  # Sent, or a repeat no longer shown.
     if held is not None and _same(held.stash, stash):
         return
     running = flight.running
@@ -573,7 +573,7 @@ def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
 def _replayable(screen: Any, request: _Request) -> bool:
     if request.repeat:
         return _still_shown(screen, request.stash)
-    return not superseded(screen, request.session_id, request.stash)
+    return not superseded(screen, request.stash)
 
 
 def _same(held: ConsoleDraftStash | None, stash: ConsoleDraftStash) -> bool:
@@ -619,7 +619,7 @@ def _replay(screen: Any, flight: _SendFlight) -> None:
         _still_shown(screen, request.stash) and asked_again(screen, request.stash)
     ):
         return  # Sent, refused or under review once: never twice.
-    if superseded(screen, request.session_id, request.stash):
+    if superseded(screen, request.stash):
         return  # Another send took its draft meanwhile (TASK-33620.15.2).
     _schedule(screen, flight, request)
 
