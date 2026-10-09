@@ -54,8 +54,10 @@ _BASE_TIME = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _cited_message(conversation_index: int, message_index: int) -> dict:
-    timestamp = (_BASE_TIME + timedelta(minutes=message_index)).isoformat().replace(
-        "+00:00", "Z"
+    timestamp = (
+        (_BASE_TIME + timedelta(minutes=message_index))
+        .isoformat()
+        .replace("+00:00", "Z")
     )
     return {
         "role": "user" if message_index % 2 == 0 else "assistant",
@@ -99,9 +101,7 @@ def _build_cited_chatbook(tmp_path: Path) -> tuple[Path, list[list[dict]]]:
                 "file_path": f"content/conversations/conversation_{i}.json",
             }
         )
-        messages = [
-            _cited_message(i, j) for j in range(MESSAGES_PER_CONVERSATION)
-        ]
+        messages = [_cited_message(i, j) for j in range(MESSAGES_PER_CONVERSATION)]
         payloads.append(messages)
         conversation_files[f"content/conversations/conversation_{i}.json"] = {
             "id": conv_id,
@@ -236,9 +236,7 @@ def test_batched_store_content_is_byte_identical_to_per_message_writes(
     """The single batched flush must produce the same file the old per-message
     path produced (frozen clock so ``last_modified`` stamps are comparable)."""
     frozen = "2026-10-06T00:00:00Z"
-    monkeypatch.setattr(
-        ChatConversationService, "_now", staticmethod(lambda: frozen)
-    )
+    monkeypatch.setattr(ChatConversationService, "_now", staticmethod(lambda: frozen))
 
     archive_path, payloads = _build_cited_chatbook(tmp_path)
     db_path = tmp_path / "databases" / "ChaChaNotes.db"
@@ -307,9 +305,7 @@ def test_record_message_rag_context_still_flushes_immediately(
             }
         )
         store_path = tmp_path / "one_off_rag_context.json"
-        service = ChatConversationService(
-            db, rag_context_store_path=store_path
-        )
+        service = ChatConversationService(db, rag_context_store_path=store_path)
 
         record = service.record_message_rag_context(
             str(conv_id),
@@ -322,10 +318,9 @@ def test_record_message_rag_context_still_flushes_immediately(
         assert store_write_spy["n"] == 1
         assert store_path.exists()
         stored = json.loads(store_path.read_text())
-        assert (
-            stored["conversations"][str(conv_id)][str(msg_id)]["rag_context"]
-            == {"search_query": "alpha"}
-        )
+        assert stored["conversations"][str(conv_id)][str(msg_id)]["rag_context"] == {
+            "search_query": "alpha"
+        }
         assert service._staged_rag_context_records == {}
     finally:
         db.close_connection()
@@ -352,9 +347,7 @@ def test_stage_and_flush_write_store_exactly_once(
             for i in range(3)
         ]
         store_path = tmp_path / "staged_rag_context.json"
-        service = ChatConversationService(
-            db, rag_context_store_path=store_path
-        )
+        service = ChatConversationService(db, rag_context_store_path=store_path)
 
         for i, msg_id in enumerate(msg_ids):
             record = service.record_message_rag_context(

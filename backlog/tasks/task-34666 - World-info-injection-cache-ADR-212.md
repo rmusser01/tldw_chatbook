@@ -1,5 +1,5 @@
 ---
-id: TASK-34415
+id: TASK-34666
 title: World-info injection cache ADR-212
 status: Done
 assignee: []
@@ -17,13 +17,16 @@ Wave 2 / F3+F12: every user message re-fetches all attached world books from SQL
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 ADR-212 written before code,WorldBookManager generation counter added,Second send with unchanged books performs zero book queries,Keyword patterns compiled once per entry,Double _process_entry eliminated,Recursion dedup uses id set,Golden activation fixtures unchanged
+- [x] #1 ADR-221 governs the cache contract; unchanged nonempty books reuse their processor without book queries; keyword patterns compile once per entry; each entry is processed once; recursive value-equal entries retain their prior single-injection behavior.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
 See Docs/superpowers/plans/2026-10-06-nonconsole-efficiency-remediation.md Task 3 (T3)
+ADR required: yes
+ADR path: backlog/decisions/221-prompt-injection-cold-start-caches.md
+Reason: the existing ADR defines this long-lived prompt cache and its invalidation contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -34,16 +37,22 @@ ADR written first as ADR-221 (backlog/decisions/221-prompt-injection-cold-start-
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 <!-- SECTION:NOTES:END -->
 
+PR3045 review qualification (TASK-34665): cache slots now include the native
+card version, and unversioned embedded content bypasses reuse. Store generation
+publication waits for managed transaction completion; native borrowers suppress
+reuse until completion. The cap is eight slots per process. Recursive dedup
+retains value equality after a regression showed identity dedup emitted duplicate
+lore. ADR-221 records the final contract and linked regression evidence.
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-<!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
-<!-- SECTION:FINAL_SUMMARY:END -->
-<!-- SECTION:FINAL_SUMMARY:END -->
-
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+Renumbered from TASK-34415 during PR3045 latest-dev integration. The older Console control-refresh task was introduced by 58af133eb1 on 2026-10-06 at 09:12 PDT; this world-info task arrived in 265344ad37 at 19:46 PDT. The older owner keeps TASK-34415 under the TASK-19601 rule. TASK-34666 was checked free across fetched refs and all registered worktrees.

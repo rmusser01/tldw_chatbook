@@ -42,6 +42,7 @@ from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import lexical_path
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 from tldw_chatbook.Backup_Recovery.participants import (
     _core_access,
     _core_cached_connection,
@@ -72,6 +73,10 @@ EMBEDDING_CACHE_MAX_ROWS = 200_000
 #: IN-clause chunk for cache lookups: SQLite's default host-parameter
 #: ceiling is 999, so 500 placeholders stays under it with headroom.
 EMBEDDING_CACHE_LOOKUP_CHUNK = 500
+
+# Tracking reads are bounded to the current ingestion batch, with one extra
+# parameter for item_type inside SQLite's conservative 999-parameter limit.
+INDEXED_ITEMS_LOOKUP_CHUNK = 500
 
 #: Shared by the cache write path (one executemany, one transaction).
 _STORE_EMBEDDINGS_SQL = """
@@ -703,9 +708,7 @@ class RAGIndexingDB:
                         vector = _decode_embedding_vector(row["vector"])
                         if vector is None:
                             logger.warning(
-                                "embedding_cache: corrupt vector blob for "
-                                f"model={model_id} hash={row['content_hash']}; "
-                                "treating as a miss"
+                                "embedding_cache: corrupt vector blob; treating as a miss"
                             )
                             continue
                         found[row["content_hash"]] = vector
@@ -765,7 +768,7 @@ class RAGIndexingDB:
         if not by_hash:
             return
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = utc_now_iso()
         payload = [
             (model_id, content_hash, _encode_embedding_vector(vector), now)
             for content_hash, vector in by_hash.items()
@@ -813,6 +816,35 @@ class RAGIndexingDB:
                 "batch_size": str(len(payload)),
             },
         )
+
+    def get_indexed_items_by_ids(
+        self, item_type: str, item_ids: Sequence[str]
+    ) -> Dict[str, datetime]:
+        """Read modification timestamps for only the requested tracking IDs.
+
+        Args:
+            item_type: Type of the requested items.
+            item_ids: Incoming batch IDs; duplicate IDs are read once.
+
+        Returns:
+            Existing IDs mapped to their stored timestamps, retaining offsets.
+        """
+        unique_ids = list(dict.fromkeys(item_ids))
+        if not unique_ids:
+            return {}
+        found: Dict[str, datetime] = {}
+        with self.connection() as conn:
+            for start in range(0, len(unique_ids), INDEXED_ITEMS_LOOKUP_CHUNK):
+                chunk = unique_ids[start : start + INDEXED_ITEMS_LOOKUP_CHUNK]
+                placeholders = ",".join("?" * len(chunk))
+                cursor = conn.execute(
+                    "SELECT item_id, last_modified FROM indexed_items "
+                    f"WHERE item_type = ? AND item_id IN ({placeholders})",
+                    (item_type, *chunk),
+                )
+                for row in cursor:
+                    found[row["item_id"]] = datetime.fromisoformat(row["last_modified"])
+        return found
 
     def get_indexed_items_by_type(self, item_type: str) -> Dict[str, datetime]:
         """

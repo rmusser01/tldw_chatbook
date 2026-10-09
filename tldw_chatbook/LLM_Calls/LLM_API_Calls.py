@@ -63,11 +63,6 @@ from tldw_chatbook.config import (
     resolve_provider_api_key,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
-from tldw_chatbook.LLM_Calls.provider_sessions import (
-    default_timeout_fragment,
-    get_session,
-    trust_setting_fragment,
-)
 from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.LLM_Calls.moonshot import (
@@ -493,6 +488,12 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
     }
     try:
         logger.debug("OpenAI Embeddings: Posting request to embeddings API")
+        from tldw_chatbook.LLM_Calls.provider_sessions import (
+            default_timeout_fragment,
+            get_session,
+            trust_setting_fragment,
+        )
+
         # ADR-222 (TASK-34418): registry session per thread; the default
         # timeout and TLS trust are key fragments because this call relies
         # on both being baked into the session at factory time.
@@ -1956,6 +1957,11 @@ def chat_with_anthropic(
 
         # ADR-222: nullcontext so leaving the block does NOT close the
         # registry-owned session (retries below stay on one session).
+        from tldw_chatbook.LLM_Calls.provider_sessions import (
+            get_session,
+            trust_setting_fragment,
+        )
+
         with nullcontext(
             get_session(
                 "anthropic:"
@@ -2985,6 +2991,11 @@ def chat_with_cohere(
 
     # ADR-222: one registry session per thread; the effective retry budget
     # and TLS trust are key fragments (settings changes get a new session).
+    from tldw_chatbook.LLM_Calls.provider_sessions import (
+        get_session,
+        trust_setting_fragment,
+    )
+
     session = get_session(
         "cohere:"
         f"{COHERE_CHAT_URL}:{retry_strategy.total}:{retry_strategy.backoff_factor}:"
@@ -3835,6 +3846,11 @@ def chat_with_google(
         # ADR-222: nullcontext so leaving the block does NOT close the
         # registry-owned session; retry budget + TLS trust are key
         # fragments so settings changes get a new session.
+        from tldw_chatbook.LLM_Calls.provider_sessions import (
+            get_session,
+            trust_setting_fragment,
+        )
+
         with nullcontext(
             get_session(
                 "google:"
@@ -4593,6 +4609,11 @@ def chat_with_huggingface(
     # Consider a tuple timeout (connect_timeout, read_timeout) for more control if needed.
 
     try:
+        from tldw_chatbook.LLM_Calls.provider_sessions import (
+            get_session,
+            trust_setting_fragment,
+        )
+
         if final_streaming_payload_val:  # Check the boolean intended for payload
             logger.debug(
                 "HuggingFace: Posting streaming request to "

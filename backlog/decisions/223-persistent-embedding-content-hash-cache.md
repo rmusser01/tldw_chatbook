@@ -13,7 +13,8 @@ Chunk embeddings become content-addressed and persistent: the text's
 provider/model embed call is needed, and the answer survives process
 restarts in the same SQLite database that already tracks RAG indexing
 state. Alongside, the per-item "is it unchanged?" skip check stops doing
-N+1 primary-key lookups per batch and does one batched read instead.
+N+1 primary-key lookups per batch and reads only the incoming IDs in bounded
+batches instead.
 
 ### 1. Cache key: `(model_id, sha256(text))`
 
@@ -31,6 +32,11 @@ N+1 primary-key lookups per batch and does one batched read instead.
   also re-fingerprints the Chroma collection, which re-indexes
   everything — this cache is what keeps that re-index from re-paying
   the provider for texts it has already seen under the new model).
+- For `openai/*` models, the key also includes a SHA-256 digest of the
+  effective normalized endpoint. Two compatible servers can expose the
+  same model name with different vectors; their caches must remain separate.
+  Endpoint credentials/query values are not persisted or logged in the key.
+  Local model keys retain their existing names.
 - Collisions: for a local cache, sha256 collision risk is negligible
   (≈ 2^-128 birthday bound at realistic corpus sizes); the worst case is
   one wrong cached vector, self-healing on the next text change.
@@ -66,8 +72,8 @@ ON embedding_cache(created_at);
   binary reading a new file ignores the table; a new binary reading an
   old file creates the table on open — so no migration or backfill is
   possible or needed (a cache is derivable, never authoritative).
-- `created_at` is an ISO-8601 UTC string, matching how `indexed_items`
-  stores its datetimes.
+- `created_at` uses `Utils.timestamps.utc_now_iso()` and the canonical
+  millisecond UTC `Z` format, allowing deterministic oldest-first ordering.
 
 ### 3. Vector serialization
 
@@ -127,8 +133,15 @@ same flow:
 3. embed ONLY the misses, through the existing circuit-breaker path
    (sync `factory.embed` / async `_async_factory_embed` unchanged);
 4. merge hits + fresh vectors back into the caller's original order
-   (duplicate texts within a batch share one lookup and one embed);
+   (duplicate texts share one lookup; duplicate misses still reach the
+   factory in their original order);
 5. one `store_cached_embeddings` write for the misses after success.
+
+Async calls offload file-backed cache operations through the existing
+retained native-worker path. Cancellation waits for that finite operation
+to settle; the worker closes only handles it opened, leaving borrowed
+connections with their caller. Explicit in-memory test databases retain
+their constructing thread's connection.
 
 Cache failures (lookup or store) are logged and degraded to
 "no cache for this call" — a cache can never fail an embed. The store
@@ -179,10 +192,11 @@ its own correctness argument.
 ### 9. Batched skip-check (`ingestion_indexing.index_entries`)
 
 The per-entry loop calling `indexing_db.needs_reindexing(...)` — one
-PK SELECT (plus metrics logging) per entry — is replaced by ONE
-`get_indexed_items_by_type(item_type)` read per distinct `item_type`
-in the batch (the read `reconcile_media_index` already uses), then an
-in-memory comparison. Semantics are preserved exactly:
+PK SELECT (plus metrics logging) per entry — is replaced by
+`get_indexed_items_by_ids(item_type, item_ids)` for each distinct type in
+the incoming batch. The helper deduplicates IDs, chunks reads at 500 IDs,
+and uses the existing `(item_id, item_type)` primary key. It never reads
+unrelated corpus rows. Semantics are preserved exactly:
 
 - item not in the tracking table → index (as `needs_reindexing`
   returned True for unknown items);

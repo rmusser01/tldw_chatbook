@@ -101,9 +101,7 @@ def _best_effort_close(session: requests.Session) -> None:
         pass
 
 
-def get_session(
-    key: str, factory: Callable[[], requests.Session]
-) -> requests.Session:
+def get_session(key: str, factory: Callable[[], requests.Session]) -> requests.Session:
     """Return this thread's session for ``key``, building it once.
 
     Args:

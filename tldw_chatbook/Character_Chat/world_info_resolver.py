@@ -7,7 +7,7 @@ character-attached snapshots ∪ a native character_book) — so the native Cons
 Never raises: any problem returns the message text unchanged.
 
 Cold-start caching (ADR-221): the built ``WorldInfoProcessor`` is cached per
-``(conversation_id, character_id)`` and validated against the store's
+``(conversation_id, character_id, card_version)`` and validated against the store's
 monotonic ``WorldBookManager.generation`` — an unchanged book set means the
 second and later sends perform no book queries, no entry JSON parsing, no
 entry processing and no pattern compilation.
@@ -61,9 +61,15 @@ def _clear_world_info_cache() -> None:
         _processor_cache.clear()
 
 
-def _cache_key(conversation_id: Any, char_data: Any) -> Tuple[Any, ...]:
+def _cache_key(conversation_id: Any, char_data: Any) -> Optional[Tuple[Any, ...]]:
     character_id = char_data.get("id") if isinstance(char_data, dict) else None
-    return (str(conversation_id), character_id)
+    version = char_data.get("version") if isinstance(char_data, dict) else None
+    if not isinstance(version, int):
+        version = None
+    if isinstance(char_data, dict) and char_data.get("extensions") and version is None:
+        # Imported/ad-hoc cards without a revision have no safe reuse token.
+        return None
+    return (str(conversation_id), character_id, version)
 
 
 def _cache_get(db: Any, key: Tuple[Any, ...], generation: int) -> Optional[Any]:
@@ -105,7 +111,7 @@ def _store_generation(db: Any) -> Optional[int]:
     try:
         from .world_book_manager import WorldBookManager
 
-        return WorldBookManager(db).generation
+        return WorldBookManager(db).cache_generation
     except Exception:
         return None
 
@@ -181,7 +187,7 @@ def resolve_world_info_injection(
     but also reports how many world-info entries matched (for the legacy
     ``[World Info: N entries]`` indicator).
 
-    Cold starts are cached per ``(conversation_id, character_id)`` and
+    Cold starts are cached per ``(conversation_id, character_id, card_version)`` and
     invalidated by the store generation (ADR-221): with an unchanged book set,
     repeated sends in one conversation reuse one built ``WorldInfoProcessor``.
     The cache is only used on the self-fetch path; passing ``books`` (the
@@ -214,7 +220,7 @@ def resolve_world_info_injection(
         if books is None and conversation_id and db is not None:
             key = _cache_key(conversation_id, char_data)
             generation = _store_generation(db)
-            if generation is not None:
+            if generation is not None and key is not None:
                 processor = _cache_get(db, key, generation)
                 if processor is None:
                     world_books, has_character_book = _collect_active_world_books(

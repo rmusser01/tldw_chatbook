@@ -20,6 +20,9 @@ history per POST attempt.
   thread; first request for a key builds via `factory()` (which **is**
   `create_default_session()` or a thin closure over it), later requests on
   the same thread return the cached session object.
+- Provider call sites import the registry when making a request. Importing
+  provider modules during application startup does not load this registry,
+  preserving the ADR-097 boot-module budget.
 - `close_all_for_current_thread()` closes and drops every session in the
   calling thread's registry; `close_session(key)` does surgical cleanup of
   one key (for a future auth-change or endpoint-change path).

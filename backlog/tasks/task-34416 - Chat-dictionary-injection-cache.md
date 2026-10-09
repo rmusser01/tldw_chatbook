@@ -4,7 +4,7 @@ title: Chat-dictionary injection cache
 status: Done
 created_date: 2026-10-07 02:40
 dependencies:
-- TASK-34415
+- TASK-34666
 updated_date: 2026-10-07 05:47
 ---
 

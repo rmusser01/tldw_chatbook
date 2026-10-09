@@ -31,8 +31,8 @@ from typing import Any
 
 import pytest
 
-import tldw_chatbook.LLM_Calls.hosted_chat as hosted_chat
 import tldw_chatbook.LLM_Calls.hosted_provider_engine as hosted_engine
+from tldw_chatbook.LLM_Calls import hosted_chat
 from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatStream
 from tldw_chatbook.LLM_Calls.hosted_chat_streaming import SSERecord
 from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
@@ -88,11 +88,7 @@ _TEXT_LINES: tuple[dict[str, Any] | str, ...] = (
         "choices": [{"index": 0, "delta": {"content": "lo"}}],
     },
     {"choices": [{"index": 0, "delta": {"reasoning_content": "thinking"}}]},
-    {
-        "choices": [
-            {"index": 0, "delta": {}, "finish_reason": "stop", "usage": _USAGE}
-        ]
-    },
+    {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop", "usage": _USAGE}]},
     {
         "id": "chatcmpl-1",
         "object": "chat.completion.chunk",
@@ -146,7 +142,7 @@ _TOOL_LINES: tuple[dict[str, Any] | str, ...] = (
                 "index": 0,
                 "delta": {
                     "tool_calls": [
-                        {"index": 0, "function": {"arguments": "{\"timezone\":"}}
+                        {"index": 0, "function": {"arguments": '{"timezone":'}}
                     ]
                 },
             }
@@ -157,9 +153,7 @@ _TOOL_LINES: tuple[dict[str, Any] | str, ...] = (
             {
                 "index": 0,
                 "delta": {
-                    "tool_calls": [
-                        {"index": 0, "function": {"arguments": "\"UTC\"}"}}
-                    ]
+                    "tool_calls": [{"index": 0, "function": {"arguments": '"UTC"}'}}]
                 },
             }
         ]
@@ -495,7 +489,7 @@ def test_normalize_messages_survives_caller_mutation() -> None:
                     "type": "function",
                     "function": {
                         "name": "get_time",
-                        "arguments": "{\"timezone\": \"UTC\"}",
+                        "arguments": '{"timezone": "UTC"}',
                     },
                 }
             ],
@@ -515,7 +509,7 @@ def test_normalize_messages_survives_caller_mutation() -> None:
                     "type": "function",
                     "function": {
                         "name": "get_time",
-                        "arguments": "{\"timezone\": \"UTC\"}",
+                        "arguments": '{"timezone": "UTC"}',
                     },
                 }
             ],

@@ -1659,9 +1659,9 @@ class FileNotesService:
         move is still pending, the second lstat/read pass, the
         ``list_active_files`` read, the diff, and the sort are all skipped
         and the cached projection is replayed with empty change sets. A
-        pass that ends with ``replica_warning`` is a degraded projection
-        -- rows it should have written may be missing -- so it never arms
-        the gate: the next tick re-runs the full pass and self-heals the
+        pass with a warning, uncertain file read, or incomplete walk is a
+        degraded projection -- rows it should have written may be missing --
+        so it never arms the gate: the next tick re-runs the full pass and self-heals the
         moment the replica recovers, exactly as the pre-gate code's
         every-tick re-diff did. Pending replica moves always force the
         full pass -- their retry can make progress without any disk
@@ -1679,6 +1679,8 @@ class FileNotesService:
             signature == self._last_walk_signature
             and self._last_reconcile_result is not None
             and not self._pending_replica_moves
+            and not uncertain_paths
+            and not had_walk_error
         ):
             previous = self._last_reconcile_result
             return replace(
@@ -1856,14 +1858,21 @@ class FileNotesService:
         )
         # task-11: cache the full pass's projection next to the signature
         # it was computed from, so an unchanged next tick can replay it.
-        # Review I1: only a CLEAN result may arm the gate -- a pass that
-        # carries ``replica_warning`` is degraded (its ``list_active_files``
-        # read or per-file upserts may have failed), and freezing it would
-        # keep the replica missing rows until the next real vault change.
+        # Only a complete, certain result may arm the gate. A failed replica
+        # read, unreadable file, or truncated walk is degraded. Freezing it
+        # would keep the replica missing rows until the next real vault change.
         # Dropping the cache forces the full pass again, which self-heals
         # on the first healthy tick just as the pre-gate every-tick
         # re-diff did.
-        self._last_reconcile_result = result if result.replica_warning is None else None
+        self._last_reconcile_result = (
+            result
+            if (
+                result.replica_warning is None
+                and not uncertain_paths
+                and not had_walk_error
+            )
+            else None
+        )
         return result
 
     @_serialized
@@ -1982,10 +1991,9 @@ class FileNotesService:
                 if not self._walk_truncation_logged:
                     self._walk_truncation_logged = True
                     logger.warning(
-                        "File Notes walk bounded at {} entries under {}; "
+                        "File Notes walk bounded at {} entries; "
                         "the vault is truncated for this pass",
                         WALK_MAX_ENTRIES,
-                        self.root,
                     )
                 break
             current_path = Path(current)
@@ -2001,7 +2009,19 @@ class FileNotesService:
             # task-11: depth bound -- children of a directory already at
             # WALK_MAX_DEPTH relative parts would exceed the watcher's
             # discovery depth, so they are not descended into.
-            if len(current_path.relative_to(self.root).parts) >= WALK_MAX_DEPTH:
+            if (
+                directory_names
+                and len(current_path.relative_to(self.root).parts) >= WALK_MAX_DEPTH
+            ):
+                had_walk_error = True
+                truncated = True
+                if not self._walk_truncation_logged:
+                    self._walk_truncation_logged = True
+                    logger.warning(
+                        "File Notes walk bounded at depth {}; "
+                        "the vault is truncated for this pass",
+                        WALK_MAX_DEPTH,
+                    )
                 directory_names[:] = []
             for name in sorted(file_names):
                 # A flat folder is ONE walk yield, so the check above never
@@ -2036,10 +2056,9 @@ class FileNotesService:
                     if not self._walk_truncation_logged:
                         self._walk_truncation_logged = True
                         logger.warning(
-                            "File Notes walk bounded at {} files under {}; "
+                            "File Notes walk bounded at {} files; "
                             "the vault is truncated for this pass",
                             WALK_MAX_FILES,
-                            self.root,
                         )
                     break
             else:

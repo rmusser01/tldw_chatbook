@@ -425,22 +425,61 @@ class EmbeddingsServiceWrapper:
         """
         self._embedding_cache_db = store
 
+    def _embedding_cache_model_id(self) -> str:
+        """Keep local model keys stable and isolate effective hosted endpoints."""
+        if not self.model_name.startswith("openai/"):
+            return self.model_name
+        config = self.factory.config
+        model = config.models[config.default_model_id]
+        base_url = str(model.base_url) if model.base_url else "https://api.openai.com/v1"
+        endpoint = base_url.rstrip("/") + "/embeddings"
+        # The validated factory config supplies the exact effective endpoint.
+        # Persist only its digest: URLs can contain credentials or query secrets.
+        digest = hashlib.sha256(endpoint.encode("utf-8")).hexdigest()
+        return f"{self.model_name}@endpoint:{digest}"
+
+    async def _async_cache_call(self, operation, store, *args):
+        """Retain finite SQLite work and retire only its new worker connection."""
+        if store is None:
+            return operation(*args, store)
+        from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
+
+        # Each thread gets a separate :memory: database, so these explicitly
+        # single-threaded test owners must stay on their constructing thread.
+        if isinstance(store, RAGIndexingDB) and store.is_memory_db:
+            return operation(*args, store)
+
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+        from tldw_chatbook.TTS._async_lifecycle import join_retained_task
+
+        from ..activation import native_worker
+
+        def invoke():
+            with operation_owned_connection(store):
+                return operation(*args, store)
+
+        completion = asyncio.create_task(asyncio.to_thread(native_worker(self, invoke)))
+        await join_retained_task(completion)
+        return completion.result()
+
     def _lookup_cached_embeddings(
-        self, content_hashes: List[str]
+        self, content_hashes: List[str], store: Optional[Any]
     ) -> Dict[str, List[float]]:
         """Batch-lookup cached vectors; never raises (a cache cannot fail an embed)."""
-        store = self._embedding_cache_db
         if store is None:
             return {}
         try:
-            return store.get_cached_embeddings(self.model_name, content_hashes) or {}
+            return store.get_cached_embeddings(
+                self._embedding_cache_model_id(), content_hashes
+            ) or {}
         except Exception as e:
             log_counter(
                 "embeddings_persistent_cache_error",
                 labels={"operation": "lookup", "error_type": type(e).__name__},
             )
             logger.warning(
-                f"Persistent embedding-cache lookup failed; embedding without cache: {e}"
+                "Persistent embedding-cache lookup failed; embedding without cache "
+                f"(error_type={type(e).__name__})"
             )
             return {}
 
@@ -449,14 +488,14 @@ class EmbeddingsServiceWrapper:
         content_hashes: List[str],
         miss_indices: List[int],
         fresh_rows: List[List[float]],
+        store: Optional[Any],
     ) -> None:
         """Persist freshly embedded vectors; never raises (best-effort cache fill)."""
-        store = self._embedding_cache_db
         if store is None:
             return
         try:
             store.store_cached_embeddings(
-                self.model_name,
+                self._embedding_cache_model_id(),
                 [
                     (content_hashes[index], row)
                     for index, row in zip(miss_indices, fresh_rows)
@@ -468,7 +507,8 @@ class EmbeddingsServiceWrapper:
                 labels={"operation": "store", "error_type": type(e).__name__},
             )
             logger.warning(
-                f"Persistent embedding-cache store failed; cache not updated: {e}"
+                "Persistent embedding-cache store failed; cache not updated "
+                f"(error_type={type(e).__name__})"
             )
 
     @staticmethod
@@ -619,7 +659,9 @@ class EmbeddingsServiceWrapper:
             # -- so it could never hit and fed a permanently-0% hit-rate
             # metric.
             content_hashes = self._content_hashes(texts)
-            cached_rows = self._lookup_cached_embeddings(content_hashes)
+            cached_rows = self._lookup_cached_embeddings(
+                content_hashes, self._embedding_cache_db
+            )
             miss_indices = [
                 index
                 for index, digest in enumerate(content_hashes)
@@ -669,7 +711,9 @@ class EmbeddingsServiceWrapper:
                 fresh_rows: List[List[float]] = fresh_embeddings.tolist()
                 for position, index in enumerate(miss_indices):
                     rows[index] = fresh_rows[position]
-                self._store_cached_embeddings(content_hashes, miss_indices, fresh_rows)
+                self._store_cached_embeddings(
+                    content_hashes, miss_indices, fresh_rows, self._embedding_cache_db
+                )
 
             embeddings = np.asarray(rows, dtype=np.float32)
             self._record_cache_counters(len(texts), len(miss_indices))
@@ -772,7 +816,10 @@ class EmbeddingsServiceWrapper:
             # these are the two choke points every chunk and query
             # embedding already flows through.
             content_hashes = self._content_hashes(texts)
-            cached_rows = self._lookup_cached_embeddings(content_hashes)
+            cache_store = self._embedding_cache_db
+            cached_rows = await self._async_cache_call(
+                self._lookup_cached_embeddings, cache_store, content_hashes
+            )
             miss_indices = [
                 index
                 for index, digest in enumerate(content_hashes)
@@ -805,7 +852,13 @@ class EmbeddingsServiceWrapper:
                 fresh_rows: List[List[float]] = fresh_embeddings.tolist()
                 for position, index in enumerate(miss_indices):
                     rows[index] = fresh_rows[position]
-                self._store_cached_embeddings(content_hashes, miss_indices, fresh_rows)
+                await self._async_cache_call(
+                    self._store_cached_embeddings,
+                    cache_store,
+                    content_hashes,
+                    miss_indices,
+                    fresh_rows,
+                )
 
             embeddings = np.asarray(rows, dtype=np.float32)
             self._record_cache_counters(len(texts), len(miss_indices))

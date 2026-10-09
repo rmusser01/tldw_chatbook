@@ -227,13 +227,11 @@ async def test_poll_interval_decays_when_idle_and_tightens_when_active():
 
 
 async def test_transcript_rendering_matches_legacy_projection():
-    messages = (
-        [_message("user", f"Question {n}\nline {n}") for n in range(45)]
-        + [_message("assistant", f"Answer {n}") for n in range(35)]
-    )
+    messages = [_message("user", f"Question {n}\nline {n}") for n in range(45)] + [
+        _message("assistant", f"Answer {n}") for n in range(35)
+    ]
     expected = "\n\n".join(
-        f"{message.role.value.title()}: {message.content}"
-        for message in messages[-60:]
+        f"{message.role.value.title()}: {message.content}" for message in messages[-60:]
     )[-64000:]
     app = ModalShellApp(messages)
     async with app.run_test(size=(80, 24)) as pilot:
@@ -330,9 +328,7 @@ def test_session_fingerprint_tracks_count_and_streamed_length():
     session = store.create_session()
     assert store.session_fingerprint(session.id) == (0, 0)
 
-    store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="hello"
-    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
     assert store.session_fingerprint(session.id) == (1, 5)
 
     assistant = store.append_message(

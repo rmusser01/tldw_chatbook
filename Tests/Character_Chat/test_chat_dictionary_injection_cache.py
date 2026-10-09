@@ -20,7 +20,6 @@ Three layers of evidence, mirroring the world-info cache tests:
 """
 
 import asyncio
-import json
 import re
 from datetime import datetime, timedelta
 
@@ -29,12 +28,12 @@ import pytest
 import tldw_chatbook.Character_Chat.Chat_Dictionary_Lib as cdl
 from tldw_chatbook.Character_Chat.Chat_Dictionary_Lib import (
     ChatDictionary,
+    _resolve_active_dictionaries,
     apply_active_chatdicts_to_text,
     apply_replacement_once,
     collect_active_chatdict_entries,
     match_whole_words,
     process_user_input_with_diagnostics,
-    _resolve_active_dictionaries,
 )
 from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
     LocalChatDictionaryService,
@@ -42,7 +41,7 @@ from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
 from tldw_chatbook.Character_Chat.server_chat_dictionary_service import (
     ServerChatDictionaryService,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, ConflictError
 
 
 @pytest.fixture
@@ -117,7 +116,9 @@ def _golden_fixture(db):
             ],
         }
     )
-    db.update_character_card(char_id, {"extensions": ext}, expected_version=rec["version"])
+    db.update_character_card(
+        char_id, {"extensions": ext}, expected_version=rec["version"]
+    )
     char_data = db.get_character_card_by_id(char_id)
 
     service.attach_to_conversation(med_id, conv_id)
@@ -213,9 +214,7 @@ def test_golden_pipeline_and_union_order_byte_identical(dict_db):
     assert [e.raw_key for e in flat] == GOLDEN_COLLECTED_KEYS
     for message, expected in zip(GOLDEN_MESSAGES, GOLDEN_SEND_PATH):
         assert (
-            process_user_input_with_diagnostics(
-                message, flat, max_tokens=5000
-            )[0]
+            process_user_input_with_diagnostics(message, flat, max_tokens=5000)[0]
             == expected
         )
 
@@ -344,7 +343,7 @@ def test_generation_stable_on_reads_and_failed_writes(dict_db):
     assert cdl.update_chat_dictionary(dict_db, dict_id) is True  # no fields -> no write
     assert cdl.update_chat_dictionary(dict_db, 999999, description="x") is False
     assert cdl.delete_chat_dictionary(dict_db, 999999) is False
-    with pytest.raises(Exception):
+    with pytest.raises(ConflictError):
         cdl.save_chat_dictionary(dict_db, "R")  # duplicate name -> IntegrityError path
     assert service.generation == g
 
@@ -464,9 +463,7 @@ def _embed_char_dict(db, char_id, name, entries=None):
     )
 
 
-def test_second_resolve_with_no_edits_loads_and_instantiates_once(
-    dict_db, monkeypatch
-):
+def test_second_resolve_with_no_edits_loads_and_instantiates_once(dict_db, monkeypatch):
     conv_id = dict_db.add_conversation({"title": "cache-1"})
     _attach(dict_db, conv_id, "dragon", "grim", name="Dict1")
     char_id = dict_db.add_character_card({"name": "Noir"})
@@ -562,7 +559,10 @@ def test_cache_lru_evicts_beyond_8_conversations(dict_db, monkeypatch):
     conv_ids = [dict_db.add_conversation({"title": f"lru-{i}"}) for i in range(1, 10)]
     for i in range(1, 10):
         dict_id = service.create_dictionary(
-            {"name": f"Dict{i}", "entries": [{"pattern": f"kw{i}", "replacement": f"v{i}"}]}
+            {
+                "name": f"Dict{i}",
+                "entries": [{"pattern": f"kw{i}", "replacement": f"v{i}"}],
+            }
         )["id"]
         service.attach_to_conversation(dict_id, conv_ids[i - 1])
     load = _spy_load(monkeypatch)
@@ -683,7 +683,9 @@ def test_construction_compiles_nothing_but_still_classifies(monkeypatch):
     assert regex_entry.key_flags == re.IGNORECASE
     assert bad_entry._is_regex is True
     assert literal_entry._is_regex is False
-    assert plain_slash._is_regex is False and plain_slash.key_pattern_str == "/not-a-regex"
+    assert (
+        plain_slash._is_regex is False and plain_slash.key_pattern_str == "/not-a-regex"
+    )
     assert literal_entry.to_dict()["is_regex"] is False  # literal: still no compile
     assert compiles == []
 
@@ -953,7 +955,8 @@ def test_timed_effect_cooldown_persists_across_sends_and_resets_on_generation_bu
         pipeline's ``current_time = datetime.now()``); no sleeping."""
 
         def __init__(self):
-            self.value = datetime(2026, 1, 1, 12, 0, 0)
+            # Match the send path's legacy naive local clock.
+            self.value = datetime(2026, 1, 1, 12, 0, 0)  # noqa: DTZ001
 
         def now(self):
             return self.value

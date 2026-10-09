@@ -32,7 +32,6 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat_streaming import OwnedSSEStream, SSERecord
-from tldw_chatbook.LLM_Calls.provider_sessions import get_session, trust_setting_fragment
 from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
 
@@ -816,6 +815,11 @@ def owned_json_post(
             "Content-Type": "application/json",
             **config.extra_headers,
         }
+    from tldw_chatbook.LLM_Calls.provider_sessions import (
+        get_session,
+        trust_setting_fragment,
+    )
+
     # ADR-222 (TASK-34418): one registry session per (provider, base_url)
     # per thread; the TLS-trust value is part of the key because this call
     # relies on the session's `verify` set at factory time. The zero-retry

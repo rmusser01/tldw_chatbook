@@ -429,7 +429,9 @@ def test_owned_json_post_streaming_keeps_session_reusable(
         SSERecord(event=None, data="[DONE]"),
     ]
     assert len(sessions) == 1
-    assert sessions[0].close_calls == 0, "the stream closes its response, not the session"
+    assert sessions[0].close_calls == 0, (
+        "the stream closes its response, not the session"
+    )
 
 
 # ---------------------------------------------------------------------------

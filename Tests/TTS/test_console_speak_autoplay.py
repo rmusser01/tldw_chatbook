@@ -2487,6 +2487,7 @@ def test_auto_speak_outcome_callback_must_be_callable() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_effective_openai_destination_is_versioned_and_sanitized() -> None:
     app_tts = {
         "default_provider": "openai",

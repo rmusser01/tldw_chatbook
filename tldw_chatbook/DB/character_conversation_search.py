@@ -846,7 +846,7 @@ class CharacterConversationSearchRepository:
                 UPDATE conversations
                    SET character_id = ?, assistant_id = ?,
                        assistant_authority_id = ?, version = version + 1,
-                       last_modified = CURRENT_TIMESTAMP, client_id = ?
+                       last_modified = ?, client_id = ?
                  WHERE id = ? AND version = ? AND deleted = 0
                    AND runtime_backend = 'local'
                    AND assistant_kind = 'character'
@@ -855,6 +855,7 @@ class CharacterConversationSearchRepository:
                     request.replacement.character_id,
                     str(request.replacement.character_id),
                     self._authority,
+                    self._database._get_current_utc_timestamp_iso(),
                     self._database.client_id,
                     request.unresolved.conversation_id,
                     request.expected_conversation_version,

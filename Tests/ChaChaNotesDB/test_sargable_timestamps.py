@@ -31,17 +31,18 @@ import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 from tldw_chatbook.DB import ChaChaNotes_DB as _chachanotes_module
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     _split_sql_statements,
 )
-from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 
 #: The v78→v79 migration file under test (ADR-224).
 MIGRATION_V79_PATH = (
@@ -253,9 +254,7 @@ class TestFormatAuditV78:
         """Writer audit: ``add_conversation`` stamps the canonical shape, so
         new rows cannot regress the mix from the write side."""
         with v78_db(tmp_path, "audit-writer.db") as db:
-            conv_id = db.add_conversation(
-                {"character_id": 1, "title": "Audit"}
-            )
+            conv_id = db.add_conversation({"character_id": 1, "title": "Audit"})
             with db.transaction() as cursor:
                 stored = cursor.execute(
                     "SELECT CAST(last_modified AS TEXT) FROM conversations WHERE id = ?",
@@ -357,9 +356,7 @@ class TestV78ToV79Migration:
         # The +00:00-offset legacy shape keeps its millisecond instant.
         assert stored["due-iso-earlier"] == "2026-10-01T09:30:00.350Z"
         assert stored["future-space"] == "2027-01-01T00:00:00.000Z"
-        assert all(
-            v is None or CANONICAL_RE.match(v) for v in stored.values()
-        ), stored
+        assert all(v is None or CANONICAL_RE.match(v) for v in stored.values()), stored
 
     def test_schema_version_is_79_after_migration(self, tmp_path: Path) -> None:
         facts = seed_mixed_v78_db(tmp_path)
@@ -451,9 +448,9 @@ class TestV78ToV79Migration:
         finally:
             db.close_connection()
         assert [r["id"] for r in second] == [r["id"] for r in offset_pages[1]]
-        assert [
-            r["id"] for r in third_via_datetime
-        ] == [r["id"] for r in offset_pages[2]]
+        assert [r["id"] for r in third_via_datetime] == [
+            r["id"] for r in offset_pages[2]
+        ]
 
     def test_migration_is_idempotent(self, tmp_path: Path) -> None:
         facts = seed_mixed_v78_db(tmp_path)
@@ -564,12 +561,12 @@ class TestV78ToV79Migration:
     ) -> None:
         """The docstring contract: naive/aware datetime cursors are adapted
         as UTC to the canonical shape before the raw comparison."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         facts = seed_mixed_v78_db(tmp_path)
         db = reopen_migrated(facts)
         try:
-            aware = datetime(2026, 10, 3, 23, 0, 0, tzinfo=timezone.utc)
+            aware = datetime(2026, 10, 3, 23, 0, 0, tzinfo=UTC)
             rows = db.get_conversations_for_character(
                 1, limit=10, before_last_modified=aware, before_id="c-space-later"
             )
@@ -642,10 +639,14 @@ class TestCharacterCardsBrowseIndex:
         exists with exactly that predicate."""
         db = CharactersRAGDB(":memory:", "cards-index-shape")
         try:
-            row = db.get_connection().execute(
-                "SELECT sql FROM sqlite_master WHERE type = 'index' "
-                "AND name = 'idx_character_cards_visible_name'"
-            ).fetchone()
+            row = (
+                db.get_connection()
+                .execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'index' "
+                    "AND name = 'idx_character_cards_visible_name'"
+                )
+                .fetchone()
+            )
         finally:
             db.close_connection()
         assert row is not None, (
@@ -665,9 +666,7 @@ class TestCharacterCardsBrowseIndex:
 
 def _plan(db: CharactersRAGDB, sql: str, params: tuple = ()) -> str:
     """EXPLAIN QUERY PLAN detail lines joined for substring assertions."""
-    rows = db.get_connection().execute(
-        "EXPLAIN QUERY PLAN " + sql, params
-    ).fetchall()
+    rows = db.get_connection().execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
     return "\n".join(str(row[3]) for row in rows)
 
 
@@ -701,6 +700,12 @@ class TestExplainQueryPlans:
         seed_mixed_conversations(database)
         seed_mixed_flashcards(database)
         database.add_character_card({"name": "explain", "description": "d"})
+        assert (
+            database.get_connection()
+            .execute("SELECT 1 FROM sqlite_schema WHERE name = 'sqlite_stat1'")
+            .fetchone()
+            is None
+        )
         yield database
         database.close_connection()
 
@@ -716,9 +721,7 @@ class TestExplainQueryPlans:
         # archived/deleted equality prefix leaves last_modified DESC,
         # id DESC serving the order) -- the (last_modified, id) order is
         # delivered by the index, never a sorter.
-        assert (
-            "idx_conv_char_lm" in plan or "idx_conversations_archive" in plan
-        ), plan
+        assert "idx_conv_char_lm" in plan or "idx_conversations_archive" in plan, plan
         assert "USE TEMP B-TREE" not in plan
 
     def test_conversation_first_page_all_scope_uses_char_composite(self, db) -> None:

@@ -37,13 +37,13 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import pytest
 
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-
 
 # ---------------------------------------------------------------------------
 # fixtures
@@ -311,7 +311,9 @@ def test_paged_tree_reads_match_legacy_full_fetch(db, tree, offset, limit, order
     assert [r["id"] for r in new_roots] == [r["id"] for r in expected_page]
     # Every non-root row's parent is inside the fetched subtree.
     subtree_ids = {r["id"] for r in rows}
-    assert all(r["parent_message_id"] in subtree_ids for r in rows if r["parent_message_id"])
+    assert all(
+        r["parent_message_id"] in subtree_ids for r in rows if r["parent_message_id"]
+    )
     # Per-parent buckets identical in order and in full column values.
     old_by_id = {r["id"]: r for r in all_rows}
     new_buckets: dict[Any, list[Mapping[str, Any]]] = defaultdict(list)
@@ -342,7 +344,9 @@ def test_paged_tree_reads_match_legacy_full_fetch(db, tree, offset, limit, order
         (500, 50, 50),  # far overflow
     ],
 )
-def test_paged_service_render_matches_legacy_render(db, tree, offset, limit, depth_cap, order):
+def test_paged_service_render_matches_legacy_render(
+    db, tree, offset, limit, depth_cap, order
+):
     service = ChatConversationService(db)
     result = service.get_conversation_tree(
         tree.conversation_id,

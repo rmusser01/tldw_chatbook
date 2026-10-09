@@ -65,11 +65,14 @@ def test_recovery_migration_to_v79_normalizes_and_validates(tmp_path, seed):
                 )
             ]
             assert all(CANONICAL_RE.match(v) for v in values + cards)
-            assert [row[0] for row in connection.execute(
-                "SELECT id FROM conversations WHERE character_id = 1 "
-                "AND deleted = 0 AND scope_type = 'global' AND archived = 0 "
-                "ORDER BY last_modified DESC, id DESC"
-            )] == [
+            assert [
+                row[0]
+                for row in connection.execute(
+                    "SELECT id FROM conversations WHERE character_id = 1 "
+                    "AND deleted = 0 AND scope_type = 'global' AND archived = 0 "
+                    "ORDER BY last_modified DESC, id DESC"
+                )
+            ] == [
                 "c-new",
                 "c-space-later",
                 "a-canon-earlier",
@@ -92,9 +95,7 @@ def test_installed_sargable_migration_refuses_foreign_ddl_and_rolls_back(
 
     def foreign_ddl(file, *args, **kwargs):
         source = read(file, *args, **kwargs)
-        if file.name == (
-            "chachanotes_v78_to_v79_sargable_timestamp_normalization.sql"
-        ):
+        if file.name == ("chachanotes_v78_to_v79_sargable_timestamp_normalization.sql"):
             source += "\nCREATE TABLE foreign_sargable(secret TEXT);\n"
         return source
 
@@ -108,8 +109,8 @@ def test_installed_sargable_migration_refuses_foreign_ddl_and_rolls_back(
 @pytest.mark.parametrize("shared", [False, True])
 @pytest.mark.parametrize("stamp", [77, 78, 79])
 def test_current_sargable_catalog_accepts_only_its_stamp(tmp_path, shared, stamp):
-    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
     from tldw_chatbook.DB.recovery_operations import recovery_adapters
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 
     path = tmp_path / "catalog.sqlite"
     if shared:

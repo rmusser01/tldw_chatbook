@@ -18,19 +18,20 @@
 
 import threading
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 
 from tldw_chatbook.RAG_Search import pipeline_functions_simple as pfs
+from tldw_chatbook.RAG_Search.local_citation_capture import (
+    FINAL_SCORE_KIND_KEY,
+    FINAL_SCORE_KIND_RERANKER,
+)
 from tldw_chatbook.RAG_Search.pipeline_builder_simple import (
     _execute_process_step,
     execute_pipeline,
 )
 from tldw_chatbook.RAG_Search.pipeline_types import SearchResult
-from tldw_chatbook.RAG_Search.local_citation_capture import (
-    FINAL_SCORE_KIND_KEY,
-    FINAL_SCORE_KIND_RERANKER,
-)
 
 pytestmark = pytest.mark.unit
 
@@ -39,7 +40,7 @@ class _FakeRanker:
     """Stands in for flashrank.Ranker via the ``_RANKER_FACTORY`` seam."""
 
     instances = 0
-    last_init_kwargs: dict = {}
+    last_init_kwargs: ClassVar[dict] = {}
 
     def __init__(self, *args, **kwargs):
         type(self).instances += 1

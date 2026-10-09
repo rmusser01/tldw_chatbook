@@ -51,10 +51,12 @@ def operation_owned_connection(database: object) -> Iterator[None]:
         from .Library_Collections_DB import LibraryCollectionsDB
         from .Workspace_DB import WorkspaceDB
 
-        if (
-            type(database) not in {AgentRunsDB, LibraryCollectionsDB, WorkspaceDB}
-            or database.is_memory_db
-        ):
+        owned_types = {AgentRunsDB, LibraryCollectionsDB, WorkspaceDB}
+        if type(database) not in owned_types:
+            from .RAG_Indexing_DB import RAGIndexingDB
+
+            owned_types.add(RAGIndexingDB)
+        if type(database) not in owned_types or database.is_memory_db:
             yield
             return
         from tldw_chatbook.Backup_Recovery.participants import _core_cached_connection

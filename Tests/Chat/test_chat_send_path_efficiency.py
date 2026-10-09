@@ -7,6 +7,7 @@
 """
 
 import logging
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
@@ -121,11 +122,32 @@ import os
 
 
 @pytest.fixture
-def isolated_post_gen_dict_cache(monkeypatch):
-    """Give each test a private module-level dictionary cache."""
+def isolated_post_gen_dict_cache(monkeypatch, tmp_path):
+    """Count real admitted parser file reads with a fresh cache per test."""
+    from Tests.Backup_Recovery.test_compound_chat_source_lifetimes import (
+        fresh_dictionary_library,
+    )
 
-    monkeypatch.setattr(chat_functions_module, "_POST_GEN_DICT_CACHE", {})
-    return chat_functions_module._POST_GEN_DICT_CACHE
+    library = fresh_dictionary_library(monkeypatch)
+    monkeypatch.setattr(
+        library, "_default_dictionary_import_directory", lambda: tmp_path
+    )
+    monkeypatch.setattr(
+        chat_functions_module,
+        "parse_user_dict_markdown_file",
+        library.parse_user_dict_markdown_file,
+    )
+    reads = []
+    original = library._dictionary_files.opened
+
+    @contextmanager
+    def observed_open(path, *args, **kwargs):
+        reads.append(str(path))
+        with original(path, *args, **kwargs) as source:
+            yield source
+
+    monkeypatch.setattr(library._dictionary_files, "opened", observed_open)
+    return reads
 
 
 def _write_dict_file(path, content: str):
@@ -136,6 +158,7 @@ def _write_dict_file(path, content: str):
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
 
 
+@pytest.mark.bootstrap_profile
 class TestPostGenDictionaryCache:
     @pytest.mark.unit
     def test_two_responses_parse_dictionary_once_with_identical_replacement(
@@ -143,11 +166,7 @@ class TestPostGenDictionaryCache:
     ):
         dict_file = tmp_path / "post_gen.md"
         _write_dict_file(dict_file, "llm: large language model\n")
-        parse_calls = []
-
-        def fake_parse(path, *args, **kwargs):
-            parse_calls.append(path)
-            return {"llm": "large language model"}
+        parse_calls = isolated_post_gen_dict_cache
 
         settings = {
             "chat_dictionaries": {
@@ -156,9 +175,6 @@ class TestPostGenDictionaryCache:
             }
         }
         with (
-            patch.object(
-                chat_functions_module, "parse_user_dict_markdown_file", fake_parse
-            ),
             patch.object(
                 chat_functions_module, "chat_api_call", return_value="the llm says hi"
             ),
@@ -200,15 +216,7 @@ class TestPostGenDictionaryCache:
     ):
         dict_file = tmp_path / "post_gen.md"
         _write_dict_file(dict_file, "llm: large language model\n")
-        entries_by_call = [
-            {"llm": "large language model"},
-            {"llm": "rewritten replacement"},
-        ]
-        parse_calls = []
-
-        def fake_parse(path, *args, **kwargs):
-            parse_calls.append(path)
-            return entries_by_call[len(parse_calls) - 1]
+        parse_calls = isolated_post_gen_dict_cache
 
         settings = {
             "chat_dictionaries": {
@@ -217,9 +225,6 @@ class TestPostGenDictionaryCache:
             }
         }
         with (
-            patch.object(
-                chat_functions_module, "parse_user_dict_markdown_file", fake_parse
-            ),
             patch.object(
                 chat_functions_module, "chat_api_call", return_value="the llm says hi"
             ),
@@ -263,11 +268,7 @@ class TestPostGenDictionaryCache:
         second_file = tmp_path / "post_gen_b.md"
         _write_dict_file(first_file, "llm: large language model\n")
         _write_dict_file(second_file, "llm: other dictionary\n")
-        parse_calls = []
-
-        def fake_parse(path, *args, **kwargs):
-            parse_calls.append(str(path))
-            return {"llm": f"parsed {len(parse_calls)}"}
+        parse_calls = isolated_post_gen_dict_cache
 
         def settings_for(path):
             return {
@@ -279,9 +280,6 @@ class TestPostGenDictionaryCache:
 
         current_settings = settings_for(first_file)
         with (
-            patch.object(
-                chat_functions_module, "parse_user_dict_markdown_file", fake_parse
-            ),
             patch.object(
                 chat_functions_module, "chat_api_call", return_value="the llm says hi"
             ),

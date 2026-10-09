@@ -86,9 +86,7 @@ def _seed_library_corpus(db):
             )
         for keyword in keywords:
             existing = db.get_keyword_by_text(keyword)
-            keyword_id = (
-                existing["id"] if existing else db.add_keyword(keyword)
-            )
+            keyword_id = existing["id"] if existing else db.add_keyword(keyword)
             db.link_conversation_to_keyword(conv_id, keyword_id)
         _pin_last_modified(db, conv_id, last_modified)
         return conv_id
@@ -206,9 +204,7 @@ class TestSearchLibraryConversationsGolden:
             ids["fts"],
         ]
 
-    def test_midword_substring_matches_via_message_branch_only(
-        self, mem_db_instance
-    ):
+    def test_midword_substring_matches_via_message_branch_only(self, mem_db_instance):
         ids = _seed_library_corpus(mem_db_instance)
 
         page = mem_db_instance.search_library_conversations_page(

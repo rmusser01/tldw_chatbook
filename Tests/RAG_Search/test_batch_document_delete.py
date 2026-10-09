@@ -24,7 +24,7 @@ never aborts ingestion).
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from loguru import logger
@@ -75,7 +75,9 @@ class FakeChromaCollection:
     @property
     def in_attempts(self) -> list[dict]:
         """Successful ``$in``-shaped delete attempts."""
-        return [a for a in self.attempts if self._in_ids(a) is not None and not a["raised"]]
+        return [
+            a for a in self.attempts if self._in_ids(a) is not None and not a["raised"]
+        ]
 
     @property
     def scalar_attempts(self) -> list[dict]:
@@ -140,9 +142,7 @@ class TestDeleteDocumentsBatching:
 
         store.delete_documents(_ids(501))
 
-        sizes = [
-            len(FakeChromaCollection._in_ids(a)) for a in fake.attempts
-        ]
+        sizes = [len(FakeChromaCollection._in_ids(a)) for a in fake.attempts]
         assert sizes == [500, 1]
 
     def test_empty_input_makes_zero_calls(self, tmp_path):
@@ -215,9 +215,7 @@ class TestDeleteDocumentsBatchFailureFallback:
         # Chunks 1 and 3: successful $in batch deletes of 500 ids each.
         in_attempts = fake.in_attempts
         assert len(in_attempts) == 2
-        batched_ids = [
-            i for a in in_attempts for i in FakeChromaCollection._in_ids(a)
-        ]
+        batched_ids = [i for a in in_attempts for i in FakeChromaCollection._in_ids(a)]
         chunk3 = _ids(1500)[1000:]
         assert set(batched_ids) == set(_ids(500)) | set(chunk3), (
             "chunks before and after the failed one stay fully batched"
@@ -242,9 +240,7 @@ class TestDeleteDocumentsBatchFailureFallback:
 
         # ... one warning for the batch failure, one debug for the poison id.
         warnings = [
-            m.record["message"]
-            for m in records
-            if m.record["level"].name == "WARNING"
+            m.record["message"] for m in records if m.record["level"].name == "WARNING"
         ]
         assert len(warnings) == 1
         debug_failures = [
@@ -261,9 +257,7 @@ class TestDeleteDocumentsBatchFailureFallback:
         fake.attempts.clear()
         store.delete_documents(["media_9", "media_10"])
         assert len(fake.attempts) == 1
-        assert fake.attempts[0]["where"] == {
-            "doc_id": {"$in": ["media_9", "media_10"]}
-        }
+        assert fake.attempts[0]["where"] == {"doc_id": {"$in": ["media_9", "media_10"]}}
 
 
 # =============================================================================
@@ -311,7 +305,9 @@ class FakeService:
     async def index_batch_optimized(self, documents, show_progress=True, batch_size=32):
         self.indexed.extend(documents)
         return [
-            IndexingResult(doc_id=d["id"], chunks_created=2, time_taken=0.0, success=True)
+            IndexingResult(
+                doc_id=d["id"], chunks_created=2, time_taken=0.0, success=True
+            )
             for d in documents
         ]
 
@@ -320,7 +316,7 @@ def _entry(item_id: str) -> IndexEntry:
     return IndexEntry(
         item_id=item_id,
         item_type="media",
-        last_modified=datetime.now(timezone.utc),
+        last_modified=datetime.now(UTC),
         document={
             "id": f"media_{item_id}",
             "content": "content",
@@ -345,7 +341,9 @@ class TestIngestionWiring:
         assert summary["indexed"] == 3
         assert len(store.batch_calls) == 1, "one delete_documents call per batch"
         assert store.batch_calls[0] == ["media_1", "media_2", "media_3"]
-        assert store.per_doc_calls == [], "per-doc API must not be used when batch exists"
+        assert store.per_doc_calls == [], (
+            "per-doc API must not be used when batch exists"
+        )
 
     def test_batches_do_not_accumulate_across_index_entries_calls(self):
         from tldw_chatbook.RAG_Search.ingestion_indexing import index_entries
@@ -354,9 +352,7 @@ class TestIngestionWiring:
         service = FakeService(store)
 
         asyncio.run(index_entries(service, None, [_entry("1")]))
-        asyncio.run(
-            index_entries(service, None, [_entry(e) for e in ("2", "3")])
-        )
+        asyncio.run(index_entries(service, None, [_entry(e) for e in ("2", "3")]))
 
         assert store.batch_calls == [["media_1"], ["media_2", "media_3"]]
 

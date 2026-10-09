@@ -27,7 +27,7 @@ from tldw_chatbook.Character_Chat.world_info_resolver import (
     apply_world_info_to_message,
     resolve_world_info_injection,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, InputError
 
 
 @pytest.fixture
@@ -230,7 +230,7 @@ def test_golden_duplicate_entries_and_recursive_dedup_equivalence():
 def test_generation_starts_at_zero_and_is_shared_across_manager_instances(wb_db):
     assert WorldBookManager(wb_db).generation == 0
     wb = WorldBookManager(wb_db)
-    book_id = wb.create_world_book("B")
+    wb.create_world_book("B")
     assert wb.generation == 1
     # The send path constructs a fresh manager per call: it must see the bump.
     assert WorldBookManager(wb_db).generation == 1
@@ -257,7 +257,9 @@ def test_generation_bumps_on_every_write_path(wb_db):
 
     # Import path bumps through its underlying creates.
     before = wb.generation
-    wb.import_world_book({"name": "Imported", "entries": [{"keys": ["x"], "content": "y"}]})
+    wb.import_world_book(
+        {"name": "Imported", "entries": [{"keys": ["x"], "content": "y"}]}
+    )
     assert wb.generation > before
 
 
@@ -265,7 +267,7 @@ def test_generation_stable_on_reads_and_failed_writes(wb_db):
     wb = WorldBookManager(wb_db)
     wb_db.add_conversation({"id": "gen-ro", "title": "C"})
     book_id = wb.create_world_book("R")
-    entry_id = wb.create_world_book_entry(book_id, keys=["k"], content="c")
+    wb.create_world_book_entry(book_id, keys=["k"], content="c")
     g = wb.generation
 
     wb.get_world_book(book_id)
@@ -282,7 +284,7 @@ def test_generation_stable_on_reads_and_failed_writes(wb_db):
     assert wb.update_world_book_entry(999999, content="x") is False
     assert wb.delete_world_book_entry(999999) is False
     assert wb.disassociate_world_book_from_conversation("gen-ro", book_id) is False
-    with pytest.raises(Exception):
+    with pytest.raises(InputError):
         wb.attach_world_book_to_character(book_id, 999999)  # unknown character
     assert wb.generation == g  # failed writes never bump
 
@@ -322,7 +324,7 @@ def _spy_processor_init(monkeypatch):
 
 
 def test_second_resolve_with_no_edits_fetches_and_builds_once(wb_db, monkeypatch):
-    wb, book_id = _attach(wb_db, "cache-1", "dragon", "Dragons breathe fire.")
+    _attach(wb_db, "cache-1", "dragon", "Dragons breathe fire.")
     fetch = _spy_manager_fetch(monkeypatch)
     builds = _spy_processor_init(monkeypatch)
 
@@ -399,7 +401,9 @@ def test_cache_lru_evicts_beyond_8_conversations(wb_db, monkeypatch):
         )
         assert count == 1
     assert fetch.count == 9  # all hits so far
-    text, count = resolve_world_info_injection(wb_db, "lru-1", None, "a key appears", [])
+    text, count = resolve_world_info_injection(
+        wb_db, "lru-1", None, "a key appears", []
+    )
     assert fetch.count == 10  # exactly one rebuild after eviction
     assert "lore-1" in text and count == 1
 
@@ -414,9 +418,7 @@ def test_cache_never_serves_one_db_instance_to_another(wb_db, tmp_path, monkeypa
     db2 = CharactersRAGDB(tmp_path / "wi_cache.db", "test-client-2")
     try:
         wb2 = WorldBookManager(db2)
-        entry_id = wb2.get_world_book_entries(
-            wb2.list_world_books()[0]["id"]
-        )[0]["id"]
+        entry_id = wb2.get_world_book_entries(wb2.list_world_books()[0]["id"])[0]["id"]
         wb2.delete_world_book_entry(entry_id)  # bumps db2's own counter
         # db1's cached entry has the same generation number but belongs to a
         # different db object: the identity check must force a rebuild.
@@ -632,8 +634,20 @@ def test_candidates_keep_metadata_after_single_process_refactor():
         "enabled": True,
         "priority": 2,  # priority_offset 2000
         "entries": [
-            {"id": 5, "keys": ["a"], "content": "on", "enabled": True, "insertion_order": 10},
-            {"id": 6, "keys": ["b"], "content": "off", "enabled": False, "insertion_order": 20},
+            {
+                "id": 5,
+                "keys": ["a"],
+                "content": "on",
+                "enabled": True,
+                "insertion_order": 10,
+            },
+            {
+                "id": 6,
+                "keys": ["b"],
+                "content": "off",
+                "enabled": False,
+                "insertion_order": 20,
+            },
         ],
     }
     proc = WorldInfoProcessor(world_books=[book])
@@ -653,7 +667,7 @@ def test_candidates_keep_metadata_after_single_process_refactor():
 
 
 def test_resolve_accepts_precaptured_books_without_fetching(wb_db, monkeypatch):
-    wb, book_id = _attach(wb_db, "books-1", "dragon", "Dragons breathe fire.")
+    _attach(wb_db, "books-1", "dragon", "Dragons breathe fire.")
     precaptured = WorldBookManager(wb_db).get_world_books_for_conversation("books-1")
     fetch = _spy_manager_fetch(monkeypatch)  # spy AFTER the pre-collection
 
@@ -665,7 +679,9 @@ def test_resolve_accepts_precaptured_books_without_fetching(wb_db, monkeypatch):
 
     # The books= path bypasses the cache: a later self-fetch resolve still
     # queries (the cache was not populated by the pre-collected call).
-    text2, _ = resolve_world_info_injection(wb_db, "books-1", None, "a dragon appears", [])
+    text2, _ = resolve_world_info_injection(
+        wb_db, "books-1", None, "a dragon appears", []
+    )
     assert fetch.count == 1 and text2 == text
 
 
@@ -698,17 +714,12 @@ def _build_1000_entry_book(db, conv_id):
     wb = WorldBookManager(db)
     book_id = wb.create_world_book("Big")
     for i in range(1000):
-        wb.create_world_book_entry(
-            book_id, keys=[f"kw-{i:04d}"], content=f"lore {i}"
-        )
+        wb.create_world_book_entry(book_id, keys=[f"kw-{i:04d}"], content=f"lore {i}")
     wb.associate_world_book_with_conversation(conv_id, book_id)
     return wb, book_id
 
 
-
-def test_second_send_on_1000_entry_book_zero_queries_zero_compiles(
-    wb_db, monkeypatch
-):
+def test_second_send_on_1000_entry_book_zero_queries_zero_compiles(wb_db, monkeypatch):
     _build_1000_entry_book(wb_db, "big-1")
     fetch = _spy_manager_fetch(monkeypatch)
 

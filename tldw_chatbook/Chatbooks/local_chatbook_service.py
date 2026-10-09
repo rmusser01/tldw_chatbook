@@ -94,15 +94,8 @@ class LocalChatbookService:
         # read-modify-writes from concurrent OS threads (e.g. two overlapping
         # `asyncio.run(...)` exports on separate `@work(thread=True)` workers).
         self._registry_lock = _registry_lock(self.registry_path)
-        # Parsed-registry cache (task-20a): the parsed payload plus the stat
-        # signature it was parsed under. Read paths (list/get) run without the
-        # registry lock, so cache access relies on GIL-atomic attribute
-        # assignment; a racy interleaving can only store a (key, payload) pair
-        # whose key no longer matches the file, which forces a re-parse on the
-        # next load. Never returns stale data unless a writer rewrites the
-        # file with the identical (size, mtime_ns) signature, which the
-        # atomic-write temp-file + rename path used by every writer here does
-        # not produce.
+        # Keep the parsed payload and its stat signature under the same lock
+        # as writers so a concurrent reader cannot publish an outdated pair.
         self._registry_cache_key: tuple[Path, int, int] | None = None
         self._registry_cache: dict[str, Any] | None = None
         self._citation_ownership_coordinator: (
@@ -199,13 +192,14 @@ class LocalChatbookService:
         }
 
     def _load_registry(self) -> dict[str, Any]:
-        key = self._registry_stat_key()
-        if self._registry_cache is not None and self._registry_cache_key == key:
-            return self._copy_registry_payload(self._registry_cache)
-        registry = self._parse_registry()
-        self._registry_cache = registry
-        self._registry_cache_key = key
-        return self._copy_registry_payload(registry)
+        with self._registry_lock:
+            key = self._registry_stat_key()
+            if self._registry_cache is not None and self._registry_cache_key == key:
+                return self._copy_registry_payload(self._registry_cache)
+            registry = self._parse_registry()
+            self._registry_cache = registry
+            self._registry_cache_key = key
+            return self._copy_registry_payload(registry)
 
     def _parse_registry(self) -> dict[str, Any]:
         """Read, json-parse, and validate the registry file (uncached)."""

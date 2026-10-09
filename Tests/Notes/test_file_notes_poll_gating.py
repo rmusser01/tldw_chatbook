@@ -28,16 +28,16 @@ import pytest
 # Avoid importing the unrelated optional MLX stack during focused Notes tests.
 sys.modules.setdefault("parakeet_mlx", types.ModuleType("parakeet_mlx"))
 
-import tldw_chatbook.Notes.file_notes_service as service_module  # noqa: E402
-import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module  # noqa: E402
-from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica  # noqa: E402
-from tldw_chatbook.Notes.file_notes_session_owner import (  # noqa: E402
+import tldw_chatbook.Notes.file_notes_service as service_module
+import tldw_chatbook.Widgets.Library.library_file_notes_workspace as workspace_module
+from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
+from tldw_chatbook.Notes.file_notes_service import FileNotesService
+from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
     SessionChange,
     coalesce_session_changes,
 )
-from tldw_chatbook.Notes.file_notes_service import FileNotesService  # noqa: E402
-from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (  # noqa: E402
+from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
     LibraryFileNotesWorkspace,
 )
 
@@ -252,9 +252,10 @@ def test_walk_is_bounded_at_the_file_cap_without_crashing(
     assert result.entries[-1].relative_path == (
         f"note-{service_module.WALK_MAX_FILES - 1:04d}.md"
     )
-    # A second reconcile is signature-stable despite the invisible tail.
+    # The invisible tail makes this incomplete even when its prefix is stable;
+    # another poll must retry rather than certify the entire vault unchanged.
     repeat = service.reconcile()
-    assert repeat.vault_unchanged is True
+    assert repeat.vault_unchanged is False
 
 
 def test_walk_entries_cap_stops_the_walk_early(

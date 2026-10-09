@@ -785,12 +785,14 @@ class ChromaVectorStore:
                     self._batch_delete_supported = False
                     logger.warning(
                         "Chroma rejected $in on delete; stale-chunk removal "
-                        f"falls back to per-document deletes: {e}"
+                        "falls back to per-document deletes "
+                        f"(error_type={type(e).__name__})"
                     )
                 else:
                     logger.warning(
                         f"Batched stale-chunk delete failed for {len(chunk)} "
-                        f"documents; retrying them one by one: {e}"
+                        "documents; retrying them one by one "
+                        f"(error_type={type(e).__name__})"
                     )
                 self._delete_documents_one_by_one(chunk)
                 continue
@@ -813,7 +815,8 @@ class ChromaVectorStore:
             except Exception as e:
                 logger.debug(
                     f"Stale-chunk delete failed for document {doc_id} "
-                    f"in collection {self.collection_name}: {e}"
+                    f"in collection {self.collection_name} "
+                    f"(error_type={type(e).__name__})"
                 )
 
     @store_operation

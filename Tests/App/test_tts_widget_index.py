@@ -155,9 +155,7 @@ async def test_mounted_registered_widget_receives_its_tts_state_update(
 
         await TldwCli.handle_tts_progress_event(
             host,
-            TTSProgressEvent(
-                message_id="legacy-msg-1", progress=0.5, status="mid"
-            ),
+            TTSProgressEvent(message_id="legacy-msg-1", progress=0.5, status="mid"),
         )
         assert widget.tts_progress == 0.5
 

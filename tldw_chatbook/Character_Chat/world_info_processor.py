@@ -571,15 +571,10 @@ class WorldInfoProcessor:
                 additional_text, _recursion_depth + 1
             )
 
-            # Add new matches that aren't already in the list. Dedup keys on
-            # the entry dict's identity (ADR-221): the recursion returns
-            # references to the same self.entries objects, never copies, so
-            # identity membership is exact — and O(1) per check instead of
-            # the old list-of-dicts equality scan (O(matched^2)).
-            seen = {id(e) for e in matched}
+            # Preserve value equality: distinct imported rows can describe
+            # exactly the same lore and must not be injected twice by recursion.
             for match in additional_matches:
-                if id(match) not in seen:
-                    seen.add(id(match))
+                if match not in matched:
                     matched.append(match)
 
         return matched

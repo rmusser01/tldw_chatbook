@@ -25,13 +25,13 @@ from tldw_chatbook.Character_Chat import (
     persona_visual_identity,
     visual_identity,
 )
-from tldw_chatbook.Chat import character_expression_playback as playback
 from tldw_chatbook.Character_Chat.persona_visual_identity import (
     capture_local_persona_visual_identity,
     local_persona_visual_identity_is_current,
     resolve_persona_visual_identity,
 )
 from tldw_chatbook.Character_Chat.visual_identity import resolve_visual_identity
+from tldw_chatbook.Chat import character_expression_playback as playback
 from tldw_chatbook.Chat.character_expression_playback import prepare_expression
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
@@ -128,9 +128,7 @@ class _DecodeSpy:
         inspect_original = visual_identity._image_duration_ms
         playback_original = playback._decode_frame
 
-        def inspect_wrapper(
-            image: Any, frame_count: int, retention: Any = None
-        ) -> int:
+        def inspect_wrapper(image: Any, frame_count: int, retention: Any = None) -> int:
             self.inspect_passes += 1
             return inspect_original(image, frame_count, retention=retention)
 
@@ -253,7 +251,10 @@ def test_repeated_preparations_of_one_resolution_never_redecode(
     resolution = _resolve_anim(env)
     for size in ((12, 8), (6, 4), (24, 16), (48, 32)):
         prepared = prepare_expression(
-            resolution.image_bytes, size, animate=True, identity=resolution.decode_identity
+            resolution.image_bytes,
+            size,
+            animate=True,
+            identity=resolution.decode_identity,
         )
         try:
             assert len(prepared.frames) == 3
@@ -261,7 +262,10 @@ def test_repeated_preparations_of_one_resolution_never_redecode(
         finally:
             prepared.close()
     static = prepare_expression(
-        resolution.image_bytes, (5, 5), animate=False, identity=resolution.decode_identity
+        resolution.image_bytes,
+        (5, 5),
+        animate=False,
+        identity=resolution.decode_identity,
     )
     try:
         assert len(static.frames) == 1
@@ -318,12 +322,18 @@ def test_shared_prepare_is_pixel_identical_to_full_decode(
     # Force the full-decode path with a key that can never hit the store.
     golden_animated = snapshot(
         prepare_expression(
-            data, (10, 6), animate=True, identity=("vi-decode-v1", "content", "golden-a")
+            data,
+            (10, 6),
+            animate=True,
+            identity=("vi-decode-v1", "content", "golden-a"),
         )
     )
     golden_static = snapshot(
         prepare_expression(
-            data, (7, 3), animate=False, identity=("vi-decode-v1", "content", "golden-s")
+            data,
+            (7, 3),
+            animate=False,
+            identity=("vi-decode-v1", "content", "golden-s"),
         )
     )
 
@@ -451,7 +461,10 @@ def test_inspection_memo_is_bounded_and_lru(tmp_path: Path, monkeypatch) -> None
             )
             assert resolution.image_bytes is not None
         assert spy.inspect_passes == total
-        assert len(visual_identity._inspection_memo) <= visual_identity._INSPECTION_MEMO_LIMIT
+        assert (
+            len(visual_identity._inspection_memo)
+            <= visual_identity._INSPECTION_MEMO_LIMIT
+        )
 
         # k01 is still resident (LRU keeps the newest 32 of 33).
         resolve_visual_identity(

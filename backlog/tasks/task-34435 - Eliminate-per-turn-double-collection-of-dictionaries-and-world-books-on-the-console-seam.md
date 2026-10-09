@@ -9,7 +9,7 @@ created_date: 2026-10-08 00:35
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Follow-up (deferred T3e/T4d during console maintenance): capture_prompt_transform_inputs collects the same books/entries the resolver collects, so every console send pays the collection twice. The interface seams (books=/entries=) landed in TASK-34415/34416 - wire the pre-collected bundles through the console controller appliers. Coordinate with console pipeline maintenance.
+Follow-up (deferred T3e/T4d during console maintenance): capture_prompt_transform_inputs collects the same books/entries the resolver collects, so every console send pays the collection twice. The interface seams (books=/entries=) landed in TASK-34666/34416 - wire the pre-collected bundles through the console controller appliers. Coordinate with console pipeline maintenance.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

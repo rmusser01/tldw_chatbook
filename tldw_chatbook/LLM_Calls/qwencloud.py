@@ -45,10 +45,6 @@ from tldw_chatbook.config import (
     provider_settings_for_key,
     resolve_provider_api_key,
 )
-from tldw_chatbook.LLM_Calls.provider_sessions import (
-    get_session,
-    trust_setting_fragment,
-)
 from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
 
@@ -1192,6 +1188,11 @@ def chat_with_qwencloud(
         "Authorization": f"Bearer {final_api_key}",
         "Content-Type": "application/json",
     }
+
+    from tldw_chatbook.LLM_Calls.provider_sessions import (
+        get_session,
+        trust_setting_fragment,
+    )
 
     # ADR-222 (TASK-34418): one registry session per (base_url, thread);
     # the TLS-trust value is part of the key because this call relies on

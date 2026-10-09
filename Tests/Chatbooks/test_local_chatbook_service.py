@@ -1,5 +1,8 @@
+import asyncio
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event, local
 
 import pytest
 
@@ -186,6 +189,85 @@ async def test_registry_cache_reflects_writes_from_another_service_instance(
         "service_b's write changes the stat signature, so service_a's next read "
         "re-parses exactly once and observes the new record"
     )
+
+
+def test_registry_reader_cannot_overwrite_concurrent_created_chatbooks(
+    tmp_path, monkeypatch
+):
+    registry_path = tmp_path / "chatbooks.json"
+    seed = LocalChatbookService(registry_path=registry_path)
+    asyncio.run(seed.create_chatbook(name="Alpha"))
+    service = LocalChatbookService(registry_path=registry_path)
+    reader_parsed = Event()
+    resume_reader = Event()
+    overlapping_writer = Event()
+    stale_payload_published = Event()
+    finish_publication = Event()
+    worker = local()
+    parse = LocalChatbookService._parse_registry
+    assign = LocalChatbookService.__setattr__
+
+    def paused_parse(source):
+        payload = parse(source)
+        if source is service and getattr(worker, "reader", False):
+            reader_parsed.set()
+            assert resume_reader.wait(5)
+        return payload
+
+    def paused_publication(source, name, value):
+        assign(source, name, value)
+        if (
+            source is service
+            and name == "_registry_cache"
+            and getattr(worker, "reader", False)
+            and overlapping_writer.is_set()
+        ):
+            stale_payload_published.set()
+            assert finish_publication.wait(5)
+
+    monkeypatch.setattr(LocalChatbookService, "_parse_registry", paused_parse)
+    monkeypatch.setattr(LocalChatbookService, "__setattr__", paused_publication)
+
+    def read():
+        worker.reader = True
+        return asyncio.run(service.list_chatbooks())
+
+    def create():
+        # If the reader owns the lock, let it finish before creating. Otherwise
+        # force the old-payload/new-signature interleaving between two writes.
+        acquired = service._registry_lock.acquire(blocking=False)
+        try:
+            if acquired:
+                overlapping_writer.set()
+                asyncio.run(service.create_chatbook(name="Beta"))
+                resume_reader.set()
+                assert stale_payload_published.wait(5)
+            else:
+                resume_reader.set()
+                asyncio.run(service.create_chatbook(name="Beta"))
+            asyncio.run(service.create_chatbook(name="Gamma"))
+        finally:
+            finish_publication.set()
+            if acquired:
+                service._registry_lock.release()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        reader = executor.submit(read)
+        try:
+            assert reader_parsed.wait(5)
+            executor.submit(create).result(timeout=10)
+            reader.result(timeout=10)
+        finally:
+            resume_reader.set()
+            finish_publication.set()
+
+    reloaded = LocalChatbookService(registry_path=registry_path)
+    records = asyncio.run(reloaded.list_chatbooks())
+    assert [(record["chatbook_id"], record["name"]) for record in records] == [
+        (1, "Alpha"),
+        (2, "Beta"),
+        (3, "Gamma"),
+    ]
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,11 @@ from loguru import logger
 # Local Imports
 from ..Backup_Recovery import dictionary_file_participants as _dictionary_files
 from .world_info_regex import validate_regex_pattern
+from .world_book_manager import (
+    _bump_store_generation,
+    _cache_store_generation,
+    _store_generation,
+)
 from ..Utils.input_validation import validate_text_input
 from ..Utils.path_validation import validate_path
 from ..DB.ChaChaNotes_DB import CharactersRAGDB, InputError, ConflictError
@@ -38,35 +43,25 @@ from ..config import get_cli_config_path
 # db handle and constructs no service; a per-service counter would be
 # invisible across sends and could never invalidate anything.
 _CHAT_DICTIONARY_GENERATION_ATTR = "_chat_dictionary_store_generation_cell"
-
-
-def _generation_cell(db: Any) -> List[int]:
-    """Return the db's mutable dictionary-store generation cell (0 at start).
-
-    A one-element list keeps reads and bumps single attribute lookups; the
-    cell is per-db-object so the send path, the local service, and the lib's
-    own write functions all observe the same monotonic counter over the same
-    connection (mirrors ``world_book_manager._generation_cell``).
-    """
-    cell = getattr(db, _CHAT_DICTIONARY_GENERATION_ATTR, None)
-    if cell is None:
-        cell = [0]
-        setattr(db, _CHAT_DICTIONARY_GENERATION_ATTR, cell)
-    return cell
+_CHAT_DICTIONARY_PENDING_NATIVE_ATTR = "_chat_dictionary_pending_native_generations"
 
 
 def dictionary_store_generation(db: Any) -> int:
     """Monotonic dictionary-store generation for ``db``; 0 until the first
-    successful write (ADR-221). Every dictionary mutation — row writes in
+    committed write (ADR-221). Every dictionary mutation — row writes in
     this module, conversation attachments and character embedded-snapshot
     writes in ``LocalChatDictionaryService`` — bumps the shared counter
-    exactly once on success; reads and failed writes never bump."""
-    return _generation_cell(db)[0]
+    after managed commit; borrowed native completion conservatively ages it."""
+    return _store_generation(
+        db, _CHAT_DICTIONARY_GENERATION_ATTR, _CHAT_DICTIONARY_PENDING_NATIVE_ATTR
+    )
 
 
 def _bump_generation(db: Any) -> None:
     """Record that this store's chat-dictionary content or attachments changed."""
-    _generation_cell(db)[0] += 1
+    _bump_store_generation(
+        db, _CHAT_DICTIONARY_GENERATION_ATTR, _CHAT_DICTIONARY_PENDING_NATIVE_ATTR
+    )
 
 
 # --- Resolved-bundle cache (ADR-221, dictionary half) -----------------------
@@ -97,7 +92,7 @@ class _DictionaryBundleCacheEntry:
 # Module-level because the send path reaches this library as free functions
 # from asyncio.to_thread workers (Console) and Textual workers -- lock-guarded,
 # with the lock held only for dict access, never during the DB fetch or build.
-_dictionary_bundle_cache: "OrderedDict[Tuple[str, Any], _DictionaryBundleCacheEntry]" = (
+_dictionary_bundle_cache: "OrderedDict[Tuple[Any, ...], _DictionaryBundleCacheEntry]" = (
     OrderedDict()
 )
 _dictionary_bundle_cache_lock = threading.Lock()
@@ -110,13 +105,19 @@ def _clear_dictionary_bundle_cache() -> None:
         _dictionary_bundle_cache.clear()
 
 
-def _bundle_cache_key(conversation_id: Any, char_data: Any) -> Tuple[str, Any]:
+def _bundle_cache_key(conversation_id: Any, char_data: Any) -> Optional[Tuple[Any, ...]]:
     character_id = char_data.get("id") if isinstance(char_data, dict) else None
-    return (str(conversation_id), character_id)
+    version = char_data.get("version") if isinstance(char_data, dict) else None
+    if not isinstance(version, int):
+        version = None
+    if isinstance(char_data, dict) and char_data.get("extensions") and version is None:
+        # Imported/ad-hoc cards without a revision have no safe reuse token.
+        return None
+    return (str(conversation_id), character_id, version)
 
 
 def _bundle_cache_get(
-    db: Any, key: Tuple[str, Any], generation: int
+    db: Any, key: Tuple[Any, ...], generation: int
 ) -> Optional[List[Dict[str, Any]]]:
     try:
         with _dictionary_bundle_cache_lock:
@@ -134,7 +135,7 @@ def _bundle_cache_get(
 
 
 def _bundle_cache_put(
-    db: Any, key: Tuple[str, Any], generation: int, rows: List[Dict[str, Any]]
+    db: Any, key: Tuple[Any, ...], generation: int, rows: List[Dict[str, Any]]
 ) -> None:
     try:
         entry = _DictionaryBundleCacheEntry(generation, weakref.ref(db), rows)
@@ -472,6 +473,14 @@ class ChatDictionary:
         )
 
 
+# File parsing stays inside the admitted parser even on warm post-generation
+# reads. Values contain no source handles; each caller receives its own dict.
+_PARSED_DICTIONARY_FILE_CACHE: Dict[
+    str, Tuple[Tuple[int, int, int, int, int], Dict[str, str]]
+] = {}
+_parsed_dictionary_file_cache_lock = threading.Lock()
+
+
 @_dictionary_files.parser
 def parse_user_dict_markdown_file(
     file_path: str, base_directory: Optional[str] = None
@@ -515,6 +524,24 @@ def parse_user_dict_markdown_file(
     except ValueError as e:
         logger.error(f"Invalid file path '{file_path}': {e}")
         return {}
+
+    cache_path = str(validated_path)
+    try:
+        info = validated_path.stat()
+    except OSError:
+        cache_key = None
+    else:
+        cache_key = (
+            info.st_dev,
+            info.st_ino,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
+        with _parsed_dictionary_file_cache_lock:
+            cached = _PARSED_DICTIONARY_FILE_CACHE.get(cache_path)
+        if cached is not None and cached[0] == cache_key:
+            return dict(cached[1])
 
     replacement_dict: Dict[str, str] = {}
     current_key: Optional[str] = None
@@ -596,6 +623,12 @@ def parse_user_dict_markdown_file(
     logger.debug(
         f"Finished parsing chat dictionary. Keys: {list(replacement_dict.keys())}"
     )
+    if cache_key is not None:
+        with _parsed_dictionary_file_cache_lock:
+            # Only the current parsed file is retained, even when multiple
+            # chat workers race to load different dictionary paths.
+            _PARSED_DICTIONARY_FILE_CACHE.clear()
+            _PARSED_DICTIONARY_FILE_CACHE[cache_path] = (cache_key, dict(replacement_dict))
     return replacement_dict
 
 
@@ -1522,14 +1555,13 @@ def _resolve_active_dictionaries(
     for both :func:`collect_active_chatdict_entries` (send path) and
     :func:`summarize_active_dictionaries` (read model).
 
-    Cold starts are cached per ``(conversation_id, character_id)`` and
+    Cold starts are cached per ``(conversation_id, character_id, card_version)`` and
     invalidated by the store generation (ADR-221): with an unchanged
     dictionary set, repeated sends reuse one resolved bundle -- the same
     ``ChatDictionary`` instances, with no per-dictionary DB loads, no entry
-    JSON parsing and no ``from_dict`` re-instantiation. Character-card
-    content is keyed by ``character_id`` only (same residual class as the
-    world-info resolver): card edits that bypass the dictionary write paths
-    do not invalidate until the next dictionary-store bump.
+    JSON parsing and no ``from_dict`` re-instantiation. Native character-card
+    saves change their version token; unversioned embedded content bypasses
+    the cache rather than freezing imported/ad-hoc card edits.
 
     Cached instances persist ``last_triggered`` across sends within a
     generation, so :func:`apply_timed_effects` cooldowns/delays are
@@ -1539,17 +1571,20 @@ def _resolve_active_dictionaries(
     """
     cacheable = bool(conversation_id) and db is not None
     generation: Optional[int] = None
-    key: Optional[Tuple[str, Any]] = None
+    key: tuple[Any, ...] | None = None
     if cacheable:
         try:
-            generation = dictionary_store_generation(db)
+            generation = _cache_store_generation(
+                db, _CHAT_DICTIONARY_GENERATION_ATTR, _CHAT_DICTIONARY_PENDING_NATIVE_ATTR
+            )
         except Exception:
             generation = None
         if generation is not None:
             key = _bundle_cache_key(conversation_id, char_data)
-            cached = _bundle_cache_get(db, key, generation)
-            if cached is not None:
-                return cached
+            if key is not None:
+                cached = _bundle_cache_get(db, key, generation)
+                if cached is not None:
+                    return cached
 
     rows: List[Dict[str, Any]] = []
     enabled_conversation_names: set = set()
@@ -1598,7 +1633,7 @@ def _resolve_active_dictionaries(
                 "shadowed": block.get("name") in enabled_conversation_names,
             }
         )
-    if cacheable and generation is not None and rows:
+    if cacheable and generation is not None and key is not None and rows:
         # An empty bundle is not cached -- the next resolve repeats only the
         # (cheap) empty fetch, same as the world-info resolver.
         _bundle_cache_put(db, key, generation, rows)

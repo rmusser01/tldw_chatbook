@@ -45,7 +45,11 @@ def _row(index: int, *, status: str = "new") -> dict[str, Any]:
 
 
 def _page(
-    indexes: list[int], *, watermark: int, count: int | None = None, has_more: bool = True
+    indexes: list[int],
+    *,
+    watermark: int,
+    count: int | None = None,
+    has_more: bool = True,
 ) -> WatchlistItemPage:
     rows = tuple(_row(index) for index in indexes)
     last = rows[-1] if rows else None
@@ -63,7 +67,9 @@ def _page(
     )
 
 
-def _browse(pages: list[WatchlistItemPage], *, page_size: int | None = None) -> ReaderItemSnapshot:
+def _browse(
+    pages: list[WatchlistItemPage], *, page_size: int | None = None
+) -> ReaderItemSnapshot:
     query = ReaderItemQuery.freeze(("local", "all", "all", ""), {})
     snapshot = ReaderItemSnapshot.start(query, pages[0])
     for page in pages[1:]:
@@ -117,12 +123,12 @@ def test_paging_performs_zero_deepcopies(monkeypatch: pytest.MonkeyPatch) -> Non
     def counting(value: Any, memo: Any = None) -> Any:
         if memo is None:
             calls["copy"] += 1
-        return original_deepcopy(value) if memo is None else original_deepcopy(value, memo)
+        return (
+            original_deepcopy(value) if memo is None else original_deepcopy(value, memo)
+        )
 
     monkeypatch.setattr(copy, "deepcopy", counting)
-    monkeypatch.setattr(
-        reader_snapshot, "deepcopy", counting, raising=False
-    )
+    monkeypatch.setattr(reader_snapshot, "deepcopy", counting, raising=False)
     snapshot = _browse(pages)
     assert snapshot.page_count == 6
     assert calls["module"] == 0

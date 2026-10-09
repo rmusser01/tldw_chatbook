@@ -7,6 +7,8 @@ independently of characters, allowing shared lorebooks across conversations.
 
 import json
 import sqlite3
+import threading
+import weakref
 from typing import List, Dict, Any, Optional, Set
 
 from loguru import logger
@@ -16,6 +18,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     InputError,
     ConflictError,
     CharactersRAGDBError,
+)
+from tldw_chatbook.DB.transaction_observer import (
+    current_managed_transaction,
+    register_transaction_completion,
 )
 
 # Shared key for the embedded-snapshot list under a character's
@@ -28,20 +34,93 @@ CHARACTER_WORLD_BOOKS_KEY = "character_world_books"
 # send path constructs a ``WorldBookManager`` per call; a per-instance counter
 # would be invisible across calls and could never invalidate anything.
 _WORLD_BOOK_GENERATION_ATTR = "_world_book_store_generation_cell"
+_WORLD_BOOK_PENDING_NATIVE_ATTR = "_world_book_pending_native_generations"
+_generation_lock = threading.RLock()
 
 
-def _generation_cell(db: Any) -> List[int]:
+def _generation_cell(db: Any, attribute: str = _WORLD_BOOK_GENERATION_ATTR) -> List[int]:
     """Return the db's mutable generation counter cell, creating it at 0.
 
     A one-element list keeps reads and bumps single attribute lookups; the
     cell is per-db-object so every ``WorldBookManager`` over the same
     connection observes the same monotonic counter.
     """
-    cell = getattr(db, _WORLD_BOOK_GENERATION_ATTR, None)
-    if cell is None:
-        cell = [0]
-        setattr(db, _WORLD_BOOK_GENERATION_ATTR, cell)
-    return cell
+    with _generation_lock:
+        cell = getattr(db, attribute, None)
+        if cell is None:
+            cell = [0]
+            setattr(db, attribute, cell)
+        return cell
+
+
+def _settle_native_generations(
+    db: Any, generation_attribute: str, pending_attribute: str
+) -> bool:
+    """Under the generation lock, retire completed borrowed transactions.
+
+    The DB observer owns managed transactions only. Native borrowers keep
+    their own commit/rollback authority, so their weak handles suppress cache
+    reuse while active. Either completion conservatively ages the cache.
+    """
+    pending = getattr(db, pending_attribute, None)
+    if not pending:
+        return True
+    for connection_ref, writes in tuple(pending.items()):
+        connection = connection_ref()
+        try:
+            active = connection is not None and connection.in_transaction
+        except sqlite3.ProgrammingError:  # closed; no transaction survives
+            active = False
+        if not active:
+            _generation_cell(db, generation_attribute)[0] += writes
+            del pending[connection_ref]
+    return not pending
+
+
+def _store_generation(db: Any, generation_attribute: str, pending_attribute: str) -> int:
+    """Read a store revision, retiring native transactions that have ended."""
+    with _generation_lock:
+        _settle_native_generations(db, generation_attribute, pending_attribute)
+        return _generation_cell(db, generation_attribute)[0]
+
+
+def _cache_store_generation(
+    db: Any, generation_attribute: str, pending_attribute: str
+) -> int | None:
+    """Only committed views are eligible for caching."""
+    connection = db.get_connection()
+    with _generation_lock:
+        ready = _settle_native_generations(db, generation_attribute, pending_attribute)
+        if not ready or connection.in_transaction:
+            return None
+        return _generation_cell(db, generation_attribute)[0]
+
+
+def _bump_store_generation(
+    db: Any, generation_attribute: str, pending_attribute: str
+) -> None:
+    """Share the DB's managed commit observer and retain native completion authority."""
+    connection = db.get_connection()
+    transaction = current_managed_transaction(connection)
+    cell = _generation_cell(db, generation_attribute)
+
+    def complete(committed: bool | None) -> None:
+        if committed is not False:
+            with _generation_lock:
+                cell[0] += 1
+
+    if transaction is not None:
+        register_transaction_completion(connection, transaction, complete)
+    elif connection.in_transaction:
+        with _generation_lock:
+            pending = getattr(db, pending_attribute, None)
+            if pending is None:
+                pending = {}
+                setattr(db, pending_attribute, pending)
+            connection_ref = weakref.ref(connection)
+            pending[connection_ref] = pending.get(connection_ref, 0) + 1
+    else:
+        complete(True)
 
 
 def _coerce_int(value: Any, default: int = 0) -> int:
@@ -169,20 +248,32 @@ class WorldBookManager:
 
     @property
     def generation(self) -> int:
-        """Monotonic store generation; 0 until the first successful write.
+        """Monotonic store generation; 0 until the first committed write.
 
         Every mutating method of this manager (book/entry CRUD, conversation
         and character associations, imports through their underlying creates)
-        bumps the shared per-db counter exactly once on a successful write.
-        Reads and failed writes never bump. The send path keys its
+        bumps the shared per-db counter after its outer transaction commits.
+        Borrowed native writes age it conservatively when their transaction
+        ends, since the caller owns completion. The send path keys its
         prompt-injection processor cache on this value, so any bump
         invalidates every cached processor for this store.
         """
-        return _generation_cell(self.db)[0]
+        return _store_generation(
+            self.db, _WORLD_BOOK_GENERATION_ATTR, _WORLD_BOOK_PENDING_NATIVE_ATTR
+        )
+
+    @property
+    def cache_generation(self) -> int | None:
+        """Return a reusable committed generation, or None during native work."""
+        return _cache_store_generation(
+            self.db, _WORLD_BOOK_GENERATION_ATTR, _WORLD_BOOK_PENDING_NATIVE_ATTR
+        )
 
     def _bump_generation(self) -> None:
-        """Record that this store's world-book content changed."""
-        _generation_cell(self.db)[0] += 1
+        """Publish invalidation only after the write's transaction completes."""
+        _bump_store_generation(
+            self.db, _WORLD_BOOK_GENERATION_ATTR, _WORLD_BOOK_PENDING_NATIVE_ATTR
+        )
 
     # --- World Book CRUD Operations ---
 

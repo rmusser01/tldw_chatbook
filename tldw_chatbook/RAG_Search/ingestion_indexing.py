@@ -728,7 +728,10 @@ def _attach_embedding_cache_store(service: Any, indexing_db: Optional[Any]) -> N
         try:
             attach(indexing_db)
         except Exception as e:
-            logger.debug(f"Could not attach persistent embedding cache: {e}")
+            logger.debug(
+                "Could not attach persistent embedding cache "
+                f"(error_type={type(e).__name__})"
+            )
 
 
 @projection_lifetime.async_operation
@@ -770,24 +773,27 @@ async def index_entries(
     if indexing_db is None:
         to_index.extend(entries)
     else:
-        # ADR-223 / TASK-34420: ONE batched tracking-table read per distinct
-        # item type replaces the per-entry ``needs_reindexing`` PK lookup
+        # ADR-223 / TASK-34420: bounded batched tracking-table reads per distinct
+        # item type replace the per-entry ``needs_reindexing`` PK lookup
         # (an N+1 -- one SELECT plus its metric logging per entry). Skip
         # semantics are identical to that method: unknown item -> index;
         # strictly newer ``last_modified`` -> index; anything else -> skip;
         # a naive caller timestamp is stamped UTC before comparing; any
         # read/comparison failure indexes anyway (fail open to re-indexing,
         # exactly as the per-entry except did -- indexing is idempotent).
+        ids_by_type: Dict[str, List[str]] = {}
+        for entry in entries:
+            ids_by_type.setdefault(entry.item_type, []).append(entry.item_id)
         last_modified_by_type: Dict[str, Optional[Dict[str, datetime]]] = {}
-        for item_type in {entry.item_type for entry in entries}:
+        for item_type, item_ids in ids_by_type.items():
             try:
                 last_modified_by_type[item_type] = (
-                    indexing_db.get_indexed_items_by_type(item_type)
+                    indexing_db.get_indexed_items_by_ids(item_type, item_ids)
                 )
             except Exception as e:
                 logger.warning(
-                    f"Indexing-state batch read failed for {item_type}; "
-                    f"indexing all entries of that type: {e}"
+                    "Indexing-state batch read failed; indexing batch "
+                    f"(error_type={type(e).__name__})"
                 )
                 last_modified_by_type[item_type] = None
         for entry in entries:
@@ -806,8 +812,8 @@ async def index_entries(
                             continue
                     except Exception as e:
                         logger.warning(
-                            f"Indexing-state comparison failed for "
-                            f"{entry.item_type} {entry.item_id}; indexing anyway: {e}"
+                            "Indexing-state comparison failed; indexing item "
+                            f"(error_type={type(e).__name__})"
                         )
             to_index.append(entry)
 
@@ -826,7 +832,9 @@ async def index_entries(
         try:
             delete_documents([entry.document["id"] for entry in to_index])
         except Exception as e:
-            logger.debug(f"Batched stale-chunk delete failed: {e}")
+            logger.debug(
+                f"Batched stale-chunk delete failed (error_type={type(e).__name__})"
+            )
     else:
         delete_document = getattr(vector_store, "delete_document", None)
         if callable(delete_document):
@@ -835,7 +843,7 @@ async def index_entries(
                     delete_document(entry.document["id"])
                 except Exception as e:
                     logger.debug(
-                        f"Stale-chunk delete failed for {entry.document['id']}: {e}"
+                        f"Stale-chunk delete failed (error_type={type(e).__name__})"
                     )
 
     try:

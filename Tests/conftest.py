@@ -1204,6 +1204,18 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
         # unit tests but contain real-app mounts (the runtime-ownership
         # suite): mark only the mounting tests.
         or request.node.get_closest_marker("bootstrap_profile") is not None
+        # PR3045 qualification: these mounted harnesses import the real guarded
+        # config readers (Personas' AppFooterStatus and Library's app_factory).
+        # Three exact representative nodes fail on dev and the PR when the
+        # per-test redirect changes their collection-bound config selection.
+        # Retain that private bootstrap source, as traversal_t22207 does below.
+        # The legacy-human cases explicitly reselect config in their fixture;
+        # keep their distinct per-case isolation rather than sharing its writes.
+        or (
+            request.node.path.name
+            in {"test_personas_workbench.py", "test_library_media_reader_flow.py"}
+            and "legacy_human_config" not in request.fixturenames
+        )
         or request.node.path.name
         in {
             "test_mcp_workbench.py",

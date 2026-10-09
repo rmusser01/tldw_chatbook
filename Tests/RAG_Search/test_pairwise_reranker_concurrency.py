@@ -39,7 +39,7 @@ config bootstrap -- no provider, no credential, no network.
 import asyncio
 import re
 import time
-from typing import Callable, List, Tuple
+from collections.abc import Callable
 
 import pytest
 
@@ -52,7 +52,9 @@ from tldw_chatbook.RAG_Search.simplified.vector_store import SearchResult
 
 #: Minimal template exercising every placeholder `_compare_pair` substitutes,
 #: with the two titles on parseable lines of their own.
-_TEMPLATE = "T1={title1}\nT2={title2}\nQ={query}\nC1={content1}\nC2={content2}\n{reasoning}"
+_TEMPLATE = (
+    "T1={title1}\nT2={title2}\nQ={query}\nC1={content1}\nC2={content2}\n{reasoning}"
+)
 _PAIR_RE = re.compile(r"^T1=(\S+)\nT2=(\S+)\n", re.MULTILINE)
 
 #: Lower index wins -- a total order, so the golden output is the id sort.
@@ -71,7 +73,7 @@ def _cyclic(n: int) -> Callable[[int, int], bool]:
     return prefer
 
 
-def _mk_results(indices: List[int]) -> List[SearchResult]:
+def _mk_results(indices: list[int]) -> list[SearchResult]:
     return [
         SearchResult(
             id=f"item-{i}",
@@ -97,7 +99,7 @@ class _RecordingComparator:
         self.in_flight = 0
         self.max_in_flight = 0
 
-    async def __call__(self, prompt: str, system_prompt: str = None) -> str:
+    async def __call__(self, prompt: str, system_prompt: str | None = None) -> str:
         m = _PAIR_RE.search(prompt)
         assert m, f"unparseable comparison prompt: {prompt!r}"
         i1 = int(m.group(1).split("-")[1])
@@ -114,11 +116,11 @@ class _RecordingComparator:
 
 
 async def _run(
-    indices: List[int],
+    indices: list[int],
     prefer: Callable[[int, int], bool],
     max_concurrent: int,
     delay: float = 0.0,
-) -> Tuple[_RecordingComparator, RerankOutcome, float]:
+) -> tuple[_RecordingComparator, RerankOutcome, float]:
     """Rerank `indices` with a recording fake comparator; return the recorder,
     the outcome, and the wall-clock seconds the rerank took."""
     recorder = _RecordingComparator(prefer, delay=delay)
@@ -180,7 +182,9 @@ async def test_comparator_concurrency_never_exceeds_the_cap_and_saturates_it(cap
     comparisons, so a working bound both LIMITS observed in-flight comparisons
     to the cap and lets them REACH it -- a semaphore that serialized
     everything would hold the <= cap half and fail the == cap half."""
-    recorder, outcome, _ = await _run([7, 6, 5, 4, 3, 2, 1, 0], _BY_ID, cap, delay=0.025)
+    recorder, _outcome, _ = await _run(
+        [7, 6, 5, 4, 3, 2, 1, 0], _BY_ID, cap, delay=0.025
+    )
 
     assert recorder.max_in_flight <= cap, (
         f"{recorder.max_in_flight} comparisons ran at once under a cap of {cap}"
@@ -211,7 +215,7 @@ async def test_wall_clock_follows_the_critical_path_not_the_sum():
     serial_rec, serial_out, serial_wall = await _run(
         [7, 6, 5, 4, 3, 2, 1, 0], _BY_ID, max_concurrent=1, delay=delay
     )
-    conc_rec, conc_out, conc_wall = await _run(
+    _conc_rec, conc_out, conc_wall = await _run(
         [7, 6, 5, 4, 3, 2, 1, 0], _BY_ID, max_concurrent=4, delay=delay
     )
 
@@ -238,7 +242,16 @@ _GOLDENS = [
     pytest.param(
         [7, 6, 5, 4, 3, 2, 1, 0],
         _BY_ID,
-        ["item-0", "item-1", "item-2", "item-3", "item-4", "item-5", "item-6", "item-7"],
+        [
+            "item-0",
+            "item-1",
+            "item-2",
+            "item-3",
+            "item-4",
+            "item-5",
+            "item-6",
+            "item-7",
+        ],
         12,
         id="transitive-by-id",
     ),
@@ -271,8 +284,8 @@ async def test_output_identical_to_prechange_golden_and_to_serial(
     captured from the PRE-change sequential code, and (2) a post-change
     max_concurrent=1 run (which reproduces the sequential semantics exactly)
     -- the default-cap run must agree with both, comparison count included."""
-    serial_rec, serial_out, _ = await _run(indices, prefer, max_concurrent=1)
-    conc_rec, conc_out, _ = await _run(indices, prefer, max_concurrent=4)
+    _serial_rec, serial_out, _ = await _run(indices, prefer, max_concurrent=1)
+    _conc_rec, conc_out, _ = await _run(indices, prefer, max_concurrent=4)
 
     serial_ids = [r.id for r in serial_out.results]
     conc_ids = [r.id for r in conc_out.results]
