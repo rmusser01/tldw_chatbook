@@ -1133,6 +1133,21 @@ def test_row_shape_measures_the_glyph_RESOLVED_text_in_ascii_mode():
         set_ascii_glyph_mode(False)
 
 
+def test_inspect_row_user_text_keeps_frame_characters_in_ascii_mode():
+    """Owner decision 2026-10-09 (TASK-33910.2): B1's frame characters are
+    not rewritten inside Inspect row text; dev paints them unchanged."""
+    from tldw_chatbook.Widgets.glyph_fallback import set_ascii_glyph_mode
+
+    text = "a→b… · 2×3"
+    row = InspectorSectionRow(row_id="r", primary_text=text)
+    set_ascii_glyph_mode(True)
+    try:
+        widget = ConsoleInspectorSectionRow(row, section_id="fleet", index=0)
+        assert widget._primary_text == text
+    finally:
+        set_ascii_glyph_mode(False)
+
+
 def test_structural_key_tracks_the_ascii_mode_row_shape():
     """Q4, second half: the shape decision is also a RECOMPOSE key, so it has
     to be measured the same way in both places. A key computed from the

@@ -55,10 +55,17 @@ ASCII_GLYPH_FALLBACKS: dict[str, str] = {
     # Composer furniture.
     "▌": "|",  # draft caret
     "📎": "[+]",  # staged attachment indicator
-    # Roleplay frame vocabulary (spec section 4.12; frame slice B1): breadcrumb
-    # and return arrows, the truncation ellipsis, separators, the indent key
-    # and arrow-key names, and the multiplication sign ("✕" above is the
-    # close glyph, a different character).
+}
+
+#: Roleplay frame vocabulary (spec section 4.12; frame slice B1). Resolved
+#: glyph-by-glyph through ``resolve_glyph`` ONLY. Deliberately not part of
+#: ``ASCII_GLYPH_FALLBACKS``: ``resolve_glyph_text`` rewrites every character
+#: of Console user text (staged file names, Inspect rows), and these are
+#: ordinary punctuation users type (owner decision 2026-10-09, TASK-33910.2).
+FRAME_GLYPH_FALLBACKS: dict[str, str] = {
+    # Breadcrumb and return arrows, the truncation ellipsis, separators, the
+    # indent key and arrow-key names, and the multiplication sign ("✕" in
+    # ASCII_GLYPH_FALLBACKS is the close glyph, a different character).
     "›": ">",  # breadcrumb / "go there" (Settings ›)
     "‹": "<",  # return crumb (‹ Library)
     "…": "...",  # truncation ellipsis
@@ -102,6 +109,7 @@ def ascii_glyph_mode() -> bool:
 def resolve_glyph(glyph: str) -> str:
     """Return the ASCII substitute for ``glyph`` in ASCII mode, else ``glyph``.
 
+    Consults ``ASCII_GLYPH_FALLBACKS`` then ``FRAME_GLYPH_FALLBACKS``.
     Unknown glyphs pass through untouched in both modes, so a glyph with no
     assigned fallback can never be swallowed by the resolver.
 
@@ -114,7 +122,9 @@ def resolve_glyph(glyph: str) -> str:
     """
     if not _ASCII_MODE:
         return glyph
-    return ASCII_GLYPH_FALLBACKS.get(glyph, glyph)
+    if glyph in ASCII_GLYPH_FALLBACKS:
+        return ASCII_GLYPH_FALLBACKS[glyph]
+    return FRAME_GLYPH_FALLBACKS.get(glyph, glyph)
 
 
 def resolve_glyph_text(text: str) -> str:
@@ -122,7 +132,10 @@ def resolve_glyph_text(text: str) -> str:
 
     Identity when ASCII mode is off. Used for composed labels that embed a
     marker next to words ("◐ Transcribing…", "📎 2 files", "Composer ▾");
-    ordinary ASCII text passes through unchanged in both modes.
+    ordinary ASCII text passes through unchanged in both modes. Uses
+    ``ASCII_GLYPH_FALLBACKS`` only: ``FRAME_GLYPH_FALLBACKS`` is excluded
+    because callers pass user text (file names, Inspect rows) and the frame
+    characters are ordinary punctuation there.
 
     Args:
         text: The label text to resolve character by character.
