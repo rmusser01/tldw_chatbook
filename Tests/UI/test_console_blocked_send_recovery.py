@@ -401,6 +401,11 @@ async def _assert_reads_blocked(h) -> None:
     chip = h.console.query_one("#console-run-chip", Static)
     assert chip.display
     assert str(chip.render()) == f"Run: Blocked — {BLOCKED_REASON}"
+    # TASK-33620.5: the hidden compat mode bar reads the chip's copy first, so
+    # it says Blocked too. On dev it repeated the run state's own copy ("Trace
+    # provenance could not be saved. ...") while the chip said Blocked.
+    mode_bar = str(h.console.query_one("#console-mode-bar", Static).renderable)
+    assert mode_bar.endswith(f"| Run: Blocked — {BLOCKED_REASON}"), mode_bar
     inspector = h.console._build_console_inspector_state(None)
     assert project_console_send_authority(inspector).run == (
         f"Blocked — {BLOCKED_REASON}"

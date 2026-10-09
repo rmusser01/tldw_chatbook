@@ -14805,6 +14805,9 @@ class ChatScreen(BaseAppScreen):
         """
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
+        send_ack = getattr(self, "_console_send_ack", None)  # TASK-33620.5
+        if send_ack is not None and send_ack.active_for(session_id):
+            return True  # An acknowledged Enter; a Blocked turn never is.
         image_edit_active = (
             session_id is not None
             and self._image._h3_image_edit_registry().active(session_id) is not None
@@ -18036,6 +18039,10 @@ class ChatScreen(BaseAppScreen):
 
         active_messages = self._message._native_console_messages()
         messages = self._change_review_projection.project(active_messages)
+        if send_ack := getattr(self, "_console_send_ack", None):  # TASK-33620.5
+            messages = send_ack.project(
+                self._console_chat_store.active_session_id, messages
+            )
         if region := self._console_transcript_region_or_none():
             region.sync_recovery()
         if transcript is not None:
@@ -18258,32 +18265,18 @@ class ChatScreen(BaseAppScreen):
     def _native_run_status_copy(self) -> str:
         """Return the viewed session's run-status copy for the hidden compat mode bar.
 
-        task-32345: kept in agreement with ``_console_active_run_copy``'s
-        (the VISIBLE run chip's) pending-approval override -- two copies of
-        the same fact must never disagree, even though only one of them is
-        ever seen.
+        task-32345: kept in agreement with ``_console_active_run_copy`` (the
+        VISIBLE run chip, with its pending-approval override and TASK-33620.5
+        "Sending…") by reading it first -- two copies of the same fact must
+        never disagree, even though only one of them is ever seen. Only the
+        lingering terminal copy is added here.
         """
-        store = self._console_chat_store
-        session_id = store.active_session_id if store is not None else None
-        image_edit = (
-            self._image._h3_image_edit_registry().active(session_id)
-            if session_id is not None
-            else None
-        )
-        if image_edit is not None:
-            return (
-                "Stopping image edit…"
-                if image_edit.cancel_event.is_set()
-                else "Editing image…"
-            )
+        if active_copy := self._console_active_run_copy():
+            return active_copy
         controller = self._console_chat_controller
-        if controller is None:
+        run_state = controller.run_state if controller is not None else None
+        if run_state is None or run_state.status is ConsoleRunStatus.IDLE:
             return ""
-        run_state = controller.run_state
-        if run_state.status is ConsoleRunStatus.IDLE:
-            return ""
-        if controller.has_pending_approval_round(session_id or ""):
-            return f"{console_pending_round_copy_for(controller, session_id or '')}."
         return run_state.visible_copy or run_state.status.value
 
     def _console_active_run_copy(self) -> str:
@@ -18318,8 +18311,10 @@ class ChatScreen(BaseAppScreen):
         controller = self._console_chat_controller
         run_state = controller.run_state if controller is not None else None
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
-            reason = blocked_turn_reason(controller)  # TASK-33621.2: a stuck turn
-            return f"Blocked — {reason}" if reason else ""
+            if reason := blocked_turn_reason(controller):  # TASK-33621.2: stuck
+                return f"Blocked — {reason}"
+            send_ack = getattr(self, "_console_send_ack", None)  # TASK-33620.5
+            return send_ack.run_copy(session_id) if send_ack is not None else ""
         # Every interrupt kind owns its waiting copy; approval takes priority.
         # The Inspector counts approval rounds from the same session registry.
         if controller.has_pending_approval_round(session_id or ""):
@@ -18583,6 +18578,8 @@ class ChatScreen(BaseAppScreen):
             tuple(sessions),
             store.active_session_id,
         )
+        if send_ack := getattr(self, "_console_send_ack", None):  # TASK-33620.5
+            run_markers = send_ack.overlay_run_markers(run_markers)
         queue_counts = (
             {
                 session.id: controller.activity_for(session.id).queued_count
@@ -22531,16 +22528,15 @@ class ChatScreen(BaseAppScreen):
                 )
                 self._console_pending_send = None
                 return
-            # Enter and Send converge on the same visible-action handler, run
-            # here on the APP pump to keep the keypress snapshot; nothing may
-            # park it: runtime custody owns accepted work, and a hook review
-            # or slash command goes on in a worker (TASK-33621.28, -33622.16).
-            self.app.call_later(
-                partial(
-                    self._send_console_message_from_visible_action,
-                    pending_send_token=pending_send.token,
-                )
-            )
+            # Enter and Send converge on the same visible-action handler.
+            # Scheduling it on the app pump preserves the keypress snapshot;
+            # app-owned runtime custody owns accepted work, except that a Send
+            # held for hook review or a slash command goes on in a worker
+            # (TASK-33621.28, TASK-33622.16). TASK-33620.5: an idle chat send
+            # is painted "Sending…" first; commands dispatch unchanged.
+            from ..Console_Modules import send_acknowledgement
+
+            send_acknowledgement.schedule_acknowledged_send(self, pending_send)
             return
         if event.key in {"pageup", "pagedown"}:
             # TASK-348: scrollback must be keyboard-reachable. The composer

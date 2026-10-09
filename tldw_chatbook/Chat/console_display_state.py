@@ -242,6 +242,8 @@ def _mcp_inspector_row(
 #: presentation's vocabulary). While a run owns the slot the reason strip
 #: names these states instead of blaming provider setup or saying "Send".
 SEND_LABEL_PREPARING = "Preparing..."
+#: TASK-33620.5: an Enter acknowledged on screen before its admission ran.
+SEND_LABEL_SENDING = "Sending..."
 SEND_LABEL_QUEUE_FULL = "Queue full"
 SEND_LABEL_QUEUE = "Queue"
 

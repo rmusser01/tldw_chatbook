@@ -132,7 +132,17 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Tests/UI/test_backup_restore_setup_entry.py -- setup's Restore entry opens
 # on Inspect, names the format, and explains a settings file, a folder and a
 # disabled Create.
-MINIMUM_FILES = 151
+# TASK-33620.5 raised it to 155: dev's census held 154 files (three above the
+# 151 floor) and Tests/UI/test_console_send_acknowledgement.py joins it. It is
+# the lean core -- Enter's "Sending..." frame ordering at 80x24 plus the
+# acknowledgement's own rules, 9 tests, about 10 s locally. The mounted
+# variants stay in test_console_send_acknowledgement_extended.py, outside the
+# lane: the whole set ran 58-110 s serially, over the 60 s per-file rule. An
+# earlier cut of that PR kept the file out, saying it pushed shard 3 past the
+# 20-minute cap. It did not: shard 3 timed out again with the file removed,
+# and none of that shard's 581 tests ran the acknowledgement. The shard was
+# at capacity, which the fourth shard (TASK-34353, a920bfe149) fixed.
+MINIMUM_FILES = 155
 
 
 def read_census(path: Path) -> list[str]:

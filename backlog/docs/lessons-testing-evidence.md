@@ -98,6 +98,28 @@ remember that if no full run has completed since a suspect commit landed, CI has
 never exercised it: a "hang was fixed" verdict from an old artifact says nothing
 about regressions newer than the last completing run.
 
+## Before blaming a PR for a slow shard, count whether its code runs there (TASK-33620.5, 2026-10-08)
+
+**Incident.** PR #3022 added one test file to the UI PR-gate census, and UI
+Fast Lane shard 3 was cancelled at its 20-minute cap. The branch took the file
+back out (8d5f7c6760). Its census checker comment and task notes said the file
+had pushed the shard over. The run on that head, with the file gone, was
+cancelled in shard 3 again at 20m19s (run 37481437649). A passing PR on the
+same base had run the same 50-file shard in 18m51s, 69 s under the cap. Local
+A/B timing of those 50 files took hours of alternating reps and came out
++0.5%. A counter settled it in one pass. The PR's new entry point
+(`schedule_acknowledged_send`) ran 0 times across shard 3's 581 tests, and 11
+times in the send-acknowledgement file, so the counter did see sends when there
+were any. Code that never runs in a shard cannot slow it. The shard was at
+capacity, and dev added a fourth one (a920bfe149).
+
+**What to do.** Before timing a slow shard against its base, wrap the PR's
+changed entry points in call counters and run the shard once. Run the same
+counters over a test that does exercise the path, so that a zero means
+something. If the count is zero, the cause is the runner or the lane's
+capacity. Compare the shard with a passing run on the same base, using each
+job's start and end times. Do not move or drop tests because of it.
+
 ## A screen leaving the stack is not its result arriving (TASK-33622.15, 2026-10-04)
 
 **Incident.** A new test waited for a review dialog's kept close with
@@ -112,6 +134,39 @@ quit-prompt tests that flake under load to the same pattern.
 **What to do.** When a test checks what a dismissed screen returned, wait for the
 result itself (the callback's list is non-empty, or the opener's state changed), not
 for the screen to leave `screen_stack`.
+
+## A hold placed before the step you time makes every hand-off pass (TASK-33620.5, 2026-10-04)
+
+**Incident.** Enter had to put a "Sending…" row on screen before ~0.5 s of
+synchronous admission blocked the loop. The first cut waited for the row and
+Run chip to be laid out before handing the send off (frame-length timer hops),
+and its ordering test said that wait was needed. The checkpoint review ran
+other hand-offs against that test (dispatch right after the paint; one
+`call_after_refresh` hop; no loop yields at all): all passed 5/5. The test held
+the send's hook-permission snapshot inside `asyncio.to_thread` BEFORE
+admission, which gave the screen unlimited time to paint whatever the
+hand-off did. Rewritten to hold nothing and to read, from inside the
+synchronous admission, the last frame actually written (wrap `App._display`),
+the test still passed every hand-off: the harness send's own awaits before
+admission gave the screen its refresh. The no-wait hand-off went live on that
+evidence and lost the tab dot for the whole admission block (80x24, first and
+warm sends, tmux frame polling). Reading the frame when the SEND starts, not
+when admission starts, made the no-wait hand-off red 6/6 in the harness; one
+hop and the timer hops stayed indistinguishable there, and only live polling
+separated them (a new-tab send lost the dot with one hop; a warm send lost it
+with the hops until the tabs were relabelled before the row mounted).
+
+**Why it slipped through.** The first test's hold guaranteed "a frame precedes
+admission" for every implementation. The second test modelled production's
+yields with the harness's yields, which are longer. A green ordering test is
+evidence only if a plausible wrong implementation turns it red.
+
+**What to do.** For "X is on screen before blocking work", read the frame at
+the earliest point the blocking work could begin (here: the send starting),
+with no hold in front of it, and run the candidate implementations against the
+test. Where the harness cannot separate two candidates, poll the live terminal
+for the deciding case instead of keeping or deleting code on the test alone.
+
 ## A prompt that tells the model where things are must be tested by doing what it says
 
 **TASK-33940.1, 2026-10-02.** The workspace system-prompt note listed bound folders "relative

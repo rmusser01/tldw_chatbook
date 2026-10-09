@@ -582,17 +582,15 @@ _MESSAGE_STATUS_LINES = {
     "stopped": "Stopped",
     "failed": "Failed",
 }
+#: A USER row is "pending" only as an Enter acknowledged ahead of its echo.
+_USER_SENDING_LINE = "Sending…"
 
 
 def _message_status_line(message: ConsoleChatMessage) -> str:
-    """Return the status line for an in-flight/terminal response row, or "".
-
-    Same role gate as the old "[status]" suffix: a USER row only carries
-    "failed" via the TASK-457(a) send-blocked echo, where the SYSTEM
-    block-row already explains it -- so user text never grows a status line.
-    """
+    """Return a row's dim status line, or "" (a failed USER echo's SYSTEM
+    block-row explains it; TASK-33620.5's pending send reads "Sending…")."""
     if message.role is ConsoleMessageRole.USER:
-        return ""
+        return _USER_SENDING_LINE if message.status == "pending" else ""
     return _MESSAGE_STATUS_LINES.get(message.status, "")
 
 
