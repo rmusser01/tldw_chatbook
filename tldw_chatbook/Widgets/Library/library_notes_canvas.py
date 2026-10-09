@@ -3180,9 +3180,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # place of the 61-cell `min-width` that pushed Save off
                     # a 48-cell pane). Textual 8.2.8 leaves an invisible
                     # node out of `focus_chain` and `get_widget_at`, so it
-                    # is neither Tab-reachable nor clickable.
-                    discard_new.visible = presentation_state.discard_new_note
-                    discard_new.disabled = presentation_state.destructive_running
+                    # is neither Tab-reachable nor clickable. Its visibility
+                    # and disabled state are gates, set by
+                    # ``_apply_editor_surface_gates`` on the last line of
+                    # this compose like every other (fix round 2).
                     yield discard_new
         with root(Vertical(id="library-note-editor-region")):
             with Horizontal(id="library-note-title-row"):

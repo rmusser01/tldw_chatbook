@@ -137,6 +137,33 @@ async def _open_media_item(screen, pilot) -> LibraryMediaContentBody:
     return screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
 
 
+async def _select_reader_mode(screen, pilot, mode: str) -> None:
+    """Press a Reader tab and wait for the REBUILT children, not the session.
+
+    Fix round 2 (review 2 §4): ``handle_library_media_reader_mode`` sets
+    ``reader_session.mode`` synchronously and then recomposes the viewer
+    (remove, then mount_all under ``batch()``); a wait on the session alone
+    is satisfied mid-flight, so the next DOM read missed the tab button
+    (``NoMatches``) or scrolled the OUTGOING body ("max 287" that never
+    reached y=10). The "(selected)" label exists only on the rebuilt
+    children, so it is the signal that the new tree is mounted.
+    """
+    screen.query_one(f"#library-media-reader-select-{mode}", Button).press()
+    await _until(
+        pilot,
+        lambda: screen._media_state.reader_session.mode == mode,
+        f"the {mode} tab in the session",
+    )
+    selector = f"#library-media-reader-select-{mode}"
+    await _wait_for_selector(screen, pilot, selector)
+    await _until(
+        pilot,
+        lambda: "(selected)" in str(screen.query_one(selector, Button).label),
+        f"the rebuilt {mode} tab to be the selected one",
+    )
+    await pilot.pause()
+
+
 async def _scroll_reader(screen, pilot, body: LibraryMediaContentBody, y: int) -> None:
     """Scroll the Read body to ``y`` once it has laid out enough to get there.
 
@@ -207,19 +234,11 @@ async def test_media_item_survives_a_rail_round_trip(tmp_path):
     host, profile = _host(tmp_path)
     async with host.run_test(size=SIZE) as pilot:
         screen = await _library(host, pilot)
-        body = await _open_media_item(screen, pilot)
-        screen.query_one("#library-media-reader-select-info", Button).press()
-        await _until(
-            pilot,
-            lambda: screen._media_state.reader_session.mode == "info",
-            "the Info tab",
-        )
-        screen.query_one("#library-media-reader-select-read", Button).press()
-        await _until(
-            pilot,
-            lambda: screen._media_state.reader_session.mode == "read",
-            "the Read tab",
-        )
+        await _open_media_item(screen, pilot)
+        await _select_reader_mode(screen, pilot, "info")
+        await _select_reader_mode(screen, pilot, "read")
+        # Re-queried AFTER the rebuilt tree is in: the body from before the
+        # mode presses is the outgoing one.
         body = screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
         await _scroll_reader(screen, pilot, body, SCROLL_Y)
 

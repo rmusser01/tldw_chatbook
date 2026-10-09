@@ -58,6 +58,10 @@ FAST_LANE_TARGETS = (
     # takes from a Media item is pure and refuses anything but a uuid
     # (under a second).
     "Tests/Library/test_library_media_source_link.py",
+    # TASK-34000.25 fix round 2: the compose-time gate lookup reads Textual's
+    # ``_pending_children``; a Textual change fails here by name (one bare
+    # ``run_test``, about a second).
+    "Tests/Library/test_library_notes_canvas_pending_lookup.py",
     # TASK-34000.48: every file-profile comparison and binding commit goes
     # through the newline rule (AST scan of the three sync modules, seconds).
     "Tests/Architecture/test_notes_sync_binding_profile_commits.py",
