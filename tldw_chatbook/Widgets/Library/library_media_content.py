@@ -1,9 +1,11 @@
 """Persistent content widgets for the Library media viewer."""
 
 import asyncio
+from collections.abc import Callable
 
 from typing import Any
 
+from textual import on
 from textual.app import ComposeResult
 from textual.css.query import NoMatches
 from textual.containers import (
@@ -92,6 +94,10 @@ class LibraryMediaContentBody(ScrollableContainer):
         self._markdown_widget: Markdown | None = None
         self._desired_mode = self._normalize_mode(mode)
         self._mount_lock = asyncio.Lock()
+        # TASK-34000.25: one deferred continuation waiting for the current
+        # scroller to have laid out (``run_when_laid_out``); a later call
+        # replaces an earlier one, as ``queue_after_recompose`` does.
+        self._laid_out_callback: Callable[[], object] | None = None
         self._query = query
         self._match_index = match_index
         # task-22500 FIX 1: the match-LINE memo for the CURRENTLY displayed
@@ -163,6 +169,54 @@ class LibraryMediaContentBody(ScrollableContainer):
         # the Markdown is a direct child, exactly as it was when this body
         # still was a VerticalScroll.
         return self
+
+    def run_when_laid_out(self, callback: Callable[[], object]) -> None:
+        """Run ``callback`` once the current scroller has a real height.
+
+        TASK-34000.25: the Reader's reading-position restore (the ONE owner,
+        ``LibraryScreen._restore_library_media_loaded_progress``) used to
+        re-apply after ``call_after_refresh`` -- which is two message hops,
+        not a layout pass -- so on the rail-return path every re-apply ran
+        before the Raw view's first ``Resize`` built its wrap index, and the
+        offset clamped to the top (measured: 48 of 48 at
+        ``max_scroll_y == 0``). This hands the continuation to the layout
+        signal instead: the Raw view's :class:`VirtualizedRawContent.Indexed`
+        when its index is still unbuilt, or the ``Markdown`` widget's
+        ``TableOfContentsUpdated`` (posted after its last batch of blocks is
+        mounted) -- and, when the scroller is already laid out, the next
+        refresh, so a short document still ends the caller's chain.
+
+        Args:
+            callback: Zero-argument continuation; replaces a pending one.
+        """
+        self._laid_out_callback = callback
+        raw = self._raw_widget
+        if self._desired_mode == "raw" and raw is not None and raw.wrap_index is None:
+            return  # ``Indexed`` fires it
+        self.call_after_refresh(self._fire_laid_out)
+
+    def _fire_laid_out(self) -> None:
+        callback = self._laid_out_callback
+        self._laid_out_callback = None
+        if callback is not None:
+            callback()
+
+    @on(VirtualizedRawContent.Indexed)
+    def _handle_raw_view_indexed(self, event: VirtualizedRawContent.Indexed) -> None:
+        """The Raw view has its real height: run the deferred continuation."""
+        event.stop()
+        self._fire_laid_out()
+
+    @on(Markdown.TableOfContentsUpdated)
+    def _handle_markdown_blocks_mounted(
+        self, event: Markdown.TableOfContentsUpdated
+    ) -> None:
+        """Every Markdown block is mounted: run the deferred continuation.
+
+        Not stopped: nothing else in this canvas listens today, but the
+        message is Textual's own and a future outline could.
+        """
+        self.call_after_refresh(self._fire_laid_out)
 
     def compose(self) -> ComposeResult:
         """Construct only the selected initial content view."""

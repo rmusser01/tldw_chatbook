@@ -437,7 +437,17 @@ _BUDGETS: dict[str, int] = {
     # (8a8970dd2e, "blank line before _reveal_library_note_delete_prompt")
     # added one line after the 6337 pin was measured, so the row was red on
     # the base. Re-set to the exact measurement.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6338,
+    #
+    # 2026-10-09, TASK-34000.25: 6338 -> 6383 (+45), owner decision (same
+    # 2026-10-04 ruling: a fix over a size ratchet raises the row to the
+    # measured value; never move or reflow code to make it fit). This task's
+    # code: the Media Reader's Note action creates its note through the one
+    # create seam (`_start_library_note_from_media_source`, beside
+    # `_start_library_blank_note`) and the caret lands where the latest
+    # create asked (`_focus_library_note_caret_for_create`, read by both the
+    # create projection and the editor-ready hook). Re-set to the exact
+    # measurement.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6383,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

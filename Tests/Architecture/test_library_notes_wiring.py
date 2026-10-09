@@ -105,7 +105,10 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: tree row and list status say so (107 + 1 = 108). **109**: TASK-34000.50
 #: fix round 1 adds ``tree_unwatched_folder_ids``, the healthy sync folders
 #: nothing is watching, whose tree row reads "⚠ Sync stopped" (108 + 1 = 109).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 109
+#: **110**: TASK-34000.25 -- ``create_caret``, where the caret lands once a
+#: just-created note's editor is ready ("title" for every create today,
+#: "body-end" for the Media Reader's Note action) (109 + 1 = 110).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 110
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_

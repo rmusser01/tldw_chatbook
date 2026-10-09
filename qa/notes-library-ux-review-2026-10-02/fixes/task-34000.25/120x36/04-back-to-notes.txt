@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌───────────────────────────┐  N    N  Saved 04:38 · Next: Keep editing; changes save automatically.                 │
+│ │ Navigation                │  a    o    ‹ Notes     ‹ Notes   A field guide to Markdown tables                      │
+│ │     Import…               │  v    t                                                                                │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       e                                                                                │
+│ │ ▊ Search Library…   ▎▊x▎  │       s   In the Library database only — no file on disk                               │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │          Not included in bulk selection                                                │
+│ │                           │          Saved                                                                         │
+│ │ ────────────────────────  │              Edit     Preview     Info                                                 │
+│ │ Browse               ▾    │              Save     Use in Console                                                   │
+│ │    Media (23)             │<---      Title                                                                         │
+│ │    Conversations (0)      │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │  ▸ Notes (123)            │          ▊ A field guide to Markdown tables                                          ▎ │
+│ │    Prompts (0) — reuse    │          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ │    Skills (1)             │     --->                                                                               │
+│ │    Collections (0)        │          ┌───────────────────────────────────────────────────────────────────────────┐ │
+│ │    Search / RAG           │          │A field guide to Markdown tables                                           │ │
+│ │ ────────────────────────  │          │ A field guide to Markdown tables                                          │ │
+│ │ Artifacts            ▾    │          │                                                                           │ │
+│ │    All artifacts          │<---      │ Retrieval practice held across cohorts in study 6.                       ▆│ │
+│ │    Chatbooks            ▅ │          └───────────────────────────────────────────────────────────────────────────┘ │
+│ │    Reports                │                                                                                        │
+│ │ ────────────────────────  │          ┌───────────────────────────────────────────────────────────────────────────┐ │
+│ │ Create               ▾    │          │Properties                                                                 │ │
+│ │    New note               │          │Keywords                                                                   │ │
+│ │    New prompt             │          │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │
+│ │    New skill              │          └───────────────────────────────────────────────────────────────────────────┘ │
+│ │  ▾ scroll for more        │                                                                         0 words · 1:1  │
+│ └───────────────────────────┘                                                                                        │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc back to list | after esc: / focus search | F6 next pane | F1 · Ctrl+P · Ctrl+Q

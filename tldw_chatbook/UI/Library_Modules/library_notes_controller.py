@@ -3575,7 +3575,52 @@ class LibraryNotesController:
             return
         self._arm_library_note_editor()
         if self._library_note_session.untouched_create_token is not None:
+            self._focus_library_note_caret_for_create()
+    def _focus_library_note_caret_for_create(self) -> None:
+        """Land the caret where the latest create asked (TASK-34000.25).
+
+        Every create landed on the title: it is the seed, so it is the
+        first thing to type. The Media Reader's Note action already has
+        the document's title and opens the body with the source line, so
+        it asks for the END of the body instead (``create_caret ==
+        "body-end"``). Called from both the create projection and the
+        editor-ready hook, which race to focus a control; reading one
+        state field keeps them in agreement whichever runs last.
+        """
+        if self._library_notes_create_caret != "body-end":
             self._focus_library_note_control("#library-note-title")
+            return
+        try:
+            body = self.query_one("#library-note-body", TextArea)
+        except (NoMatches, QueryError):
+            return
+        body.move_cursor(body.document.end)
+        body.focus()
+    def _start_library_note_from_media_source(
+        self, *, title: str, content: str
+    ) -> None:
+        """Commit and open one note that names a Media item (TASK-34000.25).
+
+        The Media Reader's Note action: the same create seam as Blank note
+        and the templates (``_create_library_note`` -- one create token,
+        one mutation interlock), with the document's title, the source
+        line as the body and the caret after it. NOT a session blank
+        (``blank=False``): like a template, the note already carries text
+        the user asked for, so an untouched one is kept, not GC'd.
+        """
+        create_token = self._begin_library_note_create()
+        if create_token is None:
+            return
+        self.run_worker(
+            self._create_library_note(
+                title=title,
+                content=content,
+                create_token=create_token,
+                caret_at_end=True,
+            ),
+            exclusive=True,
+            group="library_note_mutation",
+        )
     def _reset_library_note_editor_state(self) -> None:
         """Clear all in-canvas Library note editor/save state.
 

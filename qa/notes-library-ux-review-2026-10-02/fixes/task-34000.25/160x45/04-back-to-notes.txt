@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌───────────────────────────────────────────────────────┐  N  Saved 04:36 · Next: Keep editing; changes save          │
+│ │ Navigation                     │  a  │ Library notes · Ready                                 │  o  automatically.                                          │
+│ │     Import…                    │  v  │ Notes (124)                                           │  t    ‹ Notes     ‹ Notes   A field guide to Markdown table │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ These notes live in the Library's own database — for  │  e                                                          │
+│ │ ▊ Search Library…        ▎▊x▎  │     │ notes that live in a folder on disk, switch to Folder │  s                                                          │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │ files. To copy or keep a folder synced, choose Add    │      In the Library database only — no file on disk         │
+│ │                                │     │ from files.                                           │     Not included in bulk selection                          │
+│ │ ─────────────────────────────  │     │                                                       │     Saved                                                   │
+│ │ Browse                    ▾    │     │ Filter                                                │         Edit     Preview     Info                           │
+│ │    Media (23) — your files     │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │         Save     Use in Console                             │
+│ │    Conversations (0)           │     │ ▊ Filter notes… (Enter)                             ▎ │     Title                                                   │
+│ │  ▸ Notes (124)                 │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │    Prompts (0) — reuse         │     │                                                       │     ▊ A field guide to Markdown tables                    ▎ │
+│ │    Skills (1) — AI add-ons     │<--- │    New     Sort: Newest     Select                    │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ │    Collections (0)             │     │    Add from files…     Export                         │                                                             │
+│ │    Search / RAG — find all     │     │ Folders & placement                                   │     Keywords                                                │
+│ │ ─────────────────────────────  │     │    New folder     Add to folder     Move note         │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │ Artifacts                 ▾    │     │    ○ Remove placement                                 │     ▊ Comma-separated keywords                            ▎ │
+│ │    All artifacts               │     │                                                       │<--- ┌─────────────────────────────────────────────────────┐ │
+│ │    Chatbooks                   │     │                                                       │     │A field guide to Markdown tables                     │ │
+│ │    Reports                     │     │  ▸ Agent_Lessons                                      │     │ A field guide to Markdown tables                    │ │
+│ │ ─────────────────────────────  │     │  ▸ Journal                                            │     │                                                     │ │
+│ │ Create                    ▾    │     │  ▸ Meetings                                           │     │ Retrieval practice held across cohorts in study 6.  │ │
+│ │    New note                    │<--- │  ▸ Projects                                           │     │                                                     │ │
+│ │    New prompt                  │     │  ▸ Recipes                                            │     │                                                     │ │
+│ │    New skill                   │     │  ▸ Research                                           │     └─────────────────────────────────────────────────────┘ │
+│ │ ─────────────────────────────  │     │  ▸ Study                                              │                                                             │
+│ │ Study                     ▾    │     │  ▾ Unfiled                                            │     ┌─────────────────────────────────────────────────────┐ │
+│ │    Study decks (0)             │     │    A field guide to Markdown tables · Unfiled · now   │     │Properties                                           │ │
+│ │    Flashcards due: 0           │     │    A field guide to Markdown tables · Unfiled · 1h    │     │Keywords                                             │ │
+│ │    Quizzes (0)                 │     │    Quotes · 1h                                        │     │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │
+│ │ ─────────────────────────────  │     │    Scratch · 1h                                       │     │▊ Comma-separated keywords                         ▎ │ │
+│ │ Import / Export           ▾    │     │    Untitled · 1h                                    ▁ │     │▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │
+│ │    Import…                     │     │    A very long note title that keeps going so we c…   │     │                                                     │ │
+│ │    Export                    ▇ │     │    📚 Reading queue 2026 ✨ · 1h                      │     └─────────────────────────────────────────────────────┘ │
+│ │  ▾ scroll for more             │     │    Gardening log · 1h                                 │                                              0 words · 1:1  │
+│ └────────────────────────────────┘     └───────────────────────────────────────────────────────┘                                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc back to list | after esc: / focus search | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

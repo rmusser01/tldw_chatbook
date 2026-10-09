@@ -262,7 +262,26 @@ class LibraryBrowseReaderShell(LibraryAdaptiveReaderShell):
         work.styles.min_width = 0
         work.add_class("h-full")
         if previous is not None and previous.parent is self:
-            await previous.remove()
+            # TASK-34000.25: a focus inside the outgoing pane (the note
+            # body on a Notes -> Media return, the Raw view on the way out
+            # of Media) must be cleared BEFORE the removal, or Textual picks
+            # an implicit successor -- the first Items row -- and the Media
+            # canvas reads that foreign focus as arrow traversal and LOADS
+            # it (measured: the retained item was replaced by the newest
+            # row). Same rule ``_exit_library_media_viewer`` applies before
+            # its own child swap. A focus outside the pane (the pressed rail
+            # row, the search box) is untouched.
+            focused = self.screen.focused if self.is_attached else None
+            if focused is not None and previous in focused.ancestors_with_self:
+                self.screen.set_focus(None)
+            # Removed under ``batch_update`` so no compositor tick renders the
+            # outgoing pane's TextArea after its component styles are gone
+            # (``KeyError: text-area--gutter``; the TASK-32114 teardown rule,
+            # lessons-testing-evidence "Observe pending repaint during widget
+            # teardown"). Seen once in eight runs of the Notes -> Media ->
+            # Notes round trip before this.
+            with self.app.batch_update():
+                await previous.remove()
 
     def on_mount(self) -> None:
         """Hide the rail's legacy collapse control beside the grips.

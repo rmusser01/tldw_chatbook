@@ -322,7 +322,12 @@ async def swap_library_browse_route(
     route = library_browse_route_for_canvas_kind(screen, shell.canvas_kind)
     if route is None:
         return False
-    if route == LIBRARY_BROWSE_ROUTE_MEDIA and screen._media_state.view != "list":
+    if route == LIBRARY_BROWSE_ROUTE_MEDIA and screen._media_state.view == "trash":
+        # Trash is a different Items child with its own updater; the list
+        # and the viewer views share the resident list canvas, and the
+        # permanent Reader is rebuilt from the retained detail by
+        # ``swap_work`` below (TASK-34000.25: a rail press no longer resets
+        # an open Reader, so ``view == "viewer"`` is an ordinary return).
         return False
     if route == LIBRARY_BROWSE_ROUTE_NOTES and screen._notes_state.view != "list":
         return False

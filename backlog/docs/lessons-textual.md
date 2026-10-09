@@ -203,6 +203,27 @@ passes `layout=` nor carries a stated exemption. Two things that census taught:
 
 ---
 
+## `call_after_refresh` is two message hops, not a layout pass — a refresh-counted wait can never see a widget's first `Resize` (TASK-34000.25, 2026-10-09)
+
+`MessagePump.call_after_refresh` posts `InvokeLater` to itself and then `call_later`s
+the callback on the app: it runs after the pending messages, with no real time and no
+compositor reflow in between. A chain that re-arms itself through it therefore burns
+its whole budget inside one frame. Incident: the Media Reader's reading-position
+restore (task-31968's `settle(8)`, one `scroll_to(immediate=True)` per hop, re-armed
+while the offset clamped short) was moved onto the rail-return path. The Raw view
+builds its wrap index on its FIRST `Resize` — delivered by the compositor after a
+layout, i.e. a frame later — so all eight re-applies ran on the same unindexed view at
+`max_scroll_y == 0`, and raising the budget to 48 changed nothing (the probe recorded 48
+of 48 at 0, then 287 rows one `pilot.pause()` later). Routing the hop through
+`call_later` was no better: same reason. The fix was a layout SIGNAL, not a count: the
+Raw view posts `Indexed` after `_build_index_now`, Textual's `Markdown` posts
+`TableOfContentsUpdated` after its last block batch mounts, and
+`LibraryMediaContentBody.run_when_laid_out` hands the continuation to whichever applies.
+Rule: `call_after_refresh` orders you after *messages already queued*; it says nothing
+about layout. To wait for geometry, wait for the event that produces it (`Resize`, a
+widget's own "built" message), and keep a refresh-count only as the bound on a body that
+is already laid out and merely growing.
+
 ## `set_timer(0.0)` never fires — silently
 
 **TASK-21110, 2026-08-23.** The splash/initial-screen overlap is armed with
@@ -391,6 +412,25 @@ the no-super convention with an AST scan that fails if any screen/modal/widget
 re-introduces a `super().on_*()` call to a dispatched handler.
 
 ---
+
+## `is_mounted` is still False inside `on_mount` — a guard on it makes the mount-time apply a silent no-op (TASK-34000.25, 2026-10-09)
+
+Textual sets `_is_mounted = True` in the `finally` AFTER `_dispatch_message(events.Mount())`
+returns (`message_pump.py`, `_pre_process`), so any method called from an `on_mount` handler
+that early-returns on `not self.is_mounted` stores its input and applies nothing. Incident:
+`LibraryNotesCanvas.apply_session_state` guards on `is_mounted`; `on_mount` →
+`_apply_post_compose_state` called it to set the editor's `display` flags, and the call never
+passed the guard — a freshly composed editor kept every surface as composed, with the "This
+note changed elsewhere — Overwrite / Reload" callout visible under "Saved". Every other open
+path re-synced a moment later and masked it; the rail return to a retained, untouched note did
+not, which is the review's "false conflict render" (S-02), reproduced live at 160x45 and in a
+Pilot probe that logged `is_mounted=False` at both calls. Widening the guard to `is_attached`
+was NOT the fix: the dead apply had been dead since the canvas was written, and two pinned
+behaviours (the emptied-blank GC on Back, the compact Preview scroll memory) went red once it
+ran. The fix composes the display-gated surfaces from the state in `_compose_editor` itself.
+Rule: inside `on_mount`, `is_mounted` is False; a compose must not rely on a later apply to
+hide what it composed, and before "repairing" a dead mount-time call, run the pinned suite —
+code has grown around its absence.
 
 ## A cached widget reference cannot be validated by `is_mounted` — it lags detachment, and `_pruning` marks the corpse first
 
