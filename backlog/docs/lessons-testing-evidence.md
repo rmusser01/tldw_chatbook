@@ -1,5 +1,26 @@
 # Lessons: what counts as evidence a change works
 
+## A counter that a reload also bumps calls the same draft new (TASK-33620.15.2, 2026-10-09)
+
+**Incident.** TASK-33620.15 decided whether a held Enter repeated the
+running send, and whether a sent capture could be committed out of the
+composer, by the composer's draft generation. A tab round-trip reloads the
+chat's saved draft, which bumps the generation and leaves the text as it
+was. So Enter, Alt+2, Alt+1, Enter during admission sent the draft twice:
+the first send's commit failed closed (generation mismatch) and left the
+sent text in the composer, and the second Enter, held, looked like a new
+draft. Live on dev 46c3959526, Enter, a click on tab 2, a click on tab 1 and
+Enter queued the same prompt twice (there the second Enter landed after the
+first send settled and simply sent the text the commit had left). Every
+mounted test of the dedupe passed: none of them reloaded the draft.
+
+**What to do.** When a fence keys on a revision counter, list every
+operation that bumps it (here: load, commit, clear, stashed-draft restore,
+snapshot restore, the improve rewrite) and mark the ones that leave the
+content unchanged. Test the fence across each of those, not only across
+typing. `Tests/UI/test_console_send_resend_guard.py` (the round-trip cases)
+is the worked example.
+
 ## Moving blocking work to a thread frees nothing if a pump awaits the caller (TASK-33620.15, 2026-10-05)
 
 **Incident.** A Console send's admission read MCP, skill and project

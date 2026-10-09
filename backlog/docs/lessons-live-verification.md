@@ -1,5 +1,19 @@
 # Lessons: verifying against the real thing
 
+## `tmux send-keys M-1` types a character into the composer (TASK-33620.15.2, 2026-10-09)
+
+**Incident.** To switch Console tabs live (Alt+1, Alt+2), `tmux -L <name>
+send-keys M-1` was sent to a launch.sh session. The tab did not change; the
+composer showed "¡". (The recipe already warns that Ctrl+digit cannot be
+sent; Alt+digit cannot be relied on either.) The stray character then had
+to be cleared before the run could start.
+
+**What to do.** Switch tabs by clicking the tab labels with the SGR mouse
+sequences from the recipe. Take the column from the `.txt` capture with a
+character index (Python `str.index`), not awk, which counts the box-drawing
+characters as several bytes. Capture after the switch and check the
+`Conversation | <title>` header before typing.
+
 ## A stack sampler that holds frames breaks SQLite commits in the app it samples (TASK-33620.15, 2026-10-05)
 
 **Incident.** To see what worker threads did during a send, a `sitecustomize`
