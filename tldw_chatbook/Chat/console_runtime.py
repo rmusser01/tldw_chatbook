@@ -1181,6 +1181,10 @@ class ConsoleRuntime:
         self._last_known_terminal_marks: tuple[tuple[str, str], ...] | None = None
         self._notified_terminal_receipts: set[str] = set()
         self._notifying_terminal_receipts: set[str] = set()
+        #: TASK-33620.15.1: rendered receipts whose acknowledgement completed.
+        #: A transcript refresh skips them while the last mark read does not
+        #: list them (it re-acknowledged every one, every refresh, on the loop).
+        self._acknowledged_receipt_pairs: set[tuple[str, str]] = set()
         #: Bumped by every `dispose()` -- i.e. once per app run, not once
         #: per navigation. `Tests/UI/test_console_runtime_ownership.py`
         #: reads it to prove the runtime survived a visit.
@@ -1743,8 +1747,18 @@ class ConsoleRuntime:
                 return ()
             acknowledged: list[str] = []
             removed_pairs: set[tuple[str, str]] = set()
+            with self._attention_lock:
+                known = self._last_known_terminal_marks
+            known_marks = None if known is None else frozenset(known)
             for conversation_id, receipt_id in rendered:
                 if not conversation_id or not receipt_id:
+                    continue
+                pair = (conversation_id, receipt_id)
+                if (
+                    known_marks is not None
+                    and pair not in known_marks
+                    and pair in self._acknowledged_receipt_pairs
+                ):
                     continue
                 try:
                     removed = acknowledge(conversation_id, receipt_id) is True
@@ -1755,6 +1769,7 @@ class ConsoleRuntime:
                         type(exc).__name__,
                     )
                     continue
+                self._acknowledged_receipt_pairs.add(pair)
                 if removed:
                     acknowledged.append(receipt_id)
                     removed_pairs.add((conversation_id, receipt_id))
