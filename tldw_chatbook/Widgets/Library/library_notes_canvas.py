@@ -176,6 +176,82 @@ def _toolbar_shape(pane_width: int, compact: bool) -> tuple[bool, bool]:
     )
 
 
+#: The editor header's two action groups, in the order they are composed
+#: (``compose`` reads these tuples, so the derived width below cannot drift
+#: from the labels on screen). Discard new note is the WIDE wording; a
+#: one-line task row (compact or stacked) shortens it to "Discard".
+_HEADER_MODE_LABELS = ("Edit", "Preview", "Info")
+_HEADER_TASK_LABELS = ("Save", "Use in Console", "Discard new note")
+_HEADER_DISCARD_SHORT_LABEL = "Discard"
+
+#: Cells one wide-stage header Button costs beyond its label: its
+#: ``padding: 0 1`` (2), Textual's ``line-pad: 1`` on both sides (2) and the
+#: toolbar's 1-cell trailing margin. MEASURED at 235x52 with content-sized
+#: buttons: "Edit" resolved 8 cells, "Preview" 11, "Use in Console" 18 --
+#: label + 4 each -- a cell apart.
+_HEADER_ACTION_CHROME = 5
+
+#: Discard new note's ``.library-media-action-danger`` margin is ``0 0 0 4``:
+#: the 4-cell gap collapses the preceding button's 1-cell margin, so it
+#: costs 3 more cells than a plain action would (measured: the task row
+#: resolved 53 cells for 8 + 18 + 20 cells of buttons, 2 of gutter and 4 of
+#: gaps).
+_HEADER_DANGER_ACTION_GAP = 3
+
+#: ``padding: 0 1`` on each of the three ``.ds-toolbar`` boxes the header
+#: nests: ``#library-note-primary-actions`` and its two rows.
+_HEADER_TOOLBAR_GUTTER = 3 * 2
+
+#: The save state's floor on a shared row (TASK-34000.8 AC#4): "Saved" plus
+#: its separator is readable, a one-column "S" is not. TASK-32513/32514 own
+#: its home and wording; this is only its minimum width on this row.
+_HEADER_STATUS_MIN_WIDTH = 12
+
+#: Columns the editor pane needs for the header to be ONE row: the save
+#: state at its floor, then [Edit · Preview · Info] and [Save · Use in
+#: Console · Discard new note] content-sized, with Discard's space reserved
+#: whether or not it applies (TASK-32623: the mode controls never move).
+#: Derived from the labels, not a per-size threshold: 12 + 6 + 49 + 30 + 3
+#: = 100 for the labels above, one cell over the 99 measured (Discard has
+#: no trailing margin). Below it the header stacks -- the compact shape's
+#: machinery, three rows either way, so stacking costs the body nothing.
+_HEADER_ONE_ROW_MIN_WIDTH = (
+    _HEADER_STATUS_MIN_WIDTH
+    + _HEADER_TOOLBAR_GUTTER
+    + sum(
+        len(label) + _HEADER_ACTION_CHROME
+        for label in _HEADER_MODE_LABELS + _HEADER_TASK_LABELS
+    )
+    + _HEADER_DANGER_ACTION_GAP
+)
+
+
+def _header_shape(work_width: int, compact: bool) -> bool:
+    """Whether the editor header stacks its save state and two action rows.
+
+    TASK-34000.8 (review N-05): from the shell's 120-column breakpoint up
+    the header was one horizontal strip regardless of how wide the EDITOR
+    pane was -- 48 cells at 120x36, 82 at 160x45 with the rail open --
+    so Save and Use in Console were painted past the pane edge and the save
+    state was squeezed to one column. The shape is now decided from the
+    pane the header lives in, the way ``_toolbar_shape`` decides the list
+    toolbar's from the Items width.
+
+    Args:
+        work_width: Columns the editor pane has (the shell's
+            ``reader_width``), or 0 when unmeasured -- which takes the
+            one-row shape, exactly as ``_toolbar_shape`` treats 0.
+        compact: Whether the compact shell is in force; it has its own
+            stacked shape, so this answers False there.
+
+    Returns:
+        True when the header should be the stacked shape: the save state
+        on its own row, then [Edit · Preview · Info], then [Save · Use in
+        Console · Discard].
+    """
+    return 0 < work_width < _HEADER_ONE_ROW_MIN_WIDTH and not compact
+
+
 #: Cells a compact toolbar Button costs beyond its own label: the compact
 #: sheet's ``padding: 0 1`` (2) plus its ``margin: 0 1 0 0`` (1), plus the
 #: cell Textual's Button reserves for its own edge. MEASURED at 60x24, where
@@ -1060,6 +1136,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self._browse_row_needed = 0
         self._browse_overflow = False
         self._measured_width = 0
+        #: TASK-34000.8: the EDITOR pane's resolved width (the shell's
+        #: ``reader_width``), handed over by ``apply_work_width``; 0 until
+        #: the shell has resolved one. ``pane_width`` above is the ITEMS
+        #: width contract and must not be confused with it -- the location
+        #: row's use of the list width is TASK-32811.4's open defect.
+        self._work_width = 0
         self._tree_action_labels: tuple[str, ...] = ()
         self._rendered_tree_action_rows: tuple[tuple[int, ...], ...] = ()
         #: task-32356: create mode's template disclosure. Canvas-local on
@@ -1482,6 +1564,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """
         if self.mode != "list":
             self._keep_delete_prompt_in_view()
+            self._measure_work_width(event.size.width)
             return
         width = event.size.width
         if width <= 0 or width == self._measured_width:
@@ -1561,6 +1644,52 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             or self._tree_actions_need_repack()
         ):
             self.refresh(recompose=True)
+
+    def _effective_work_width(self) -> int:
+        """The width the editor header shapes itself to.
+
+        ``_work_width`` is the screen's contract -- the shell's resolved
+        ``reader_width`` -- and wins whenever it has arrived; this widget's
+        own measured width is the fallback for a canvas no sync has reached
+        yet (the same priority ``_effective_pane_width`` gives the Items
+        contract, for the reason given there).
+        """
+        return self._work_width or self._measured_width
+
+    def _measure_work_width(self, width: int) -> None:
+        """Record this pane's own width in editor mode; re-shape in place on a flip."""
+        if width <= 0 or width == self._measured_width:
+            return
+        before = _header_shape(self._effective_work_width(), self.compact)
+        self._measured_width = width
+        if before != _header_shape(self._effective_work_width(), self.compact):
+            self.apply_compact_presentation(self.compact)
+
+    def apply_work_width(self, work_width: int) -> None:
+        """Take the editor pane's freshly resolved width; re-shape the header.
+
+        TASK-34000.8: the screen hands the shell's ``reader_width`` over
+        beside ``apply_pane_width`` (the Items width), so the header's shape
+        follows the pane it lives in rather than the shell's breakpoint. The
+        shape is applied IN PLACE by ``apply_compact_presentation`` -- the
+        same machinery the compact crossing uses, so growth and shrink both
+        re-shape without a recompose and widget identity survives
+        (``test_library_note_compact_labels_round_trip_without_recompose``).
+        Nothing happens unless the answer flips, which keeps a run of
+        mid-layout widths from doing any work.
+
+        Args:
+            work_width: The work (Reader) width the reader layout just
+                resolved; 0 means unmeasured and is ignored.
+        """
+        if work_width <= 0:
+            return
+        before = _header_shape(self._effective_work_width(), self.compact)
+        self._work_width = work_width
+        if self.is_mounted and before != _header_shape(
+            self._effective_work_width(), self.compact
+        ):
+            self.apply_compact_presentation(self.compact)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Refuse row/action presses while this canvas is resident but hidden.
@@ -2915,46 +3044,57 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-primary-actions", classes="ds-toolbar"
             )
             primary_actions.add_class("h-auto")
+            edit_label, preview_label, info_label = _HEADER_MODE_LABELS
+            save_label, use_in_console_label, _discard_label = _HEADER_TASK_LABELS
             with primary_actions:
                 with Horizontal(id="library-note-mode-controls", classes="ds-toolbar"):
                     yield Button(
-                        "Edit",
+                        edit_label,
                         id="library-note-edit",
                         classes="library-canvas-action",
                         compact=True,
                     )
                     yield Button(
-                        "Preview",
+                        preview_label,
                         id="library-note-preview",
                         classes="library-canvas-action",
                         compact=True,
                     )
                     yield Button(
-                        "Info",
+                        info_label,
                         id="library-note-context",
                         classes="library-canvas-action",
                         compact=True,
                     )
                 with Horizontal(id="library-note-task-actions", classes="ds-toolbar"):
                     yield Button(
-                        "Save",
+                        save_label,
                         id="library-note-save",
                         classes="library-canvas-action",
                         compact=True,
                     )
                     yield Button(
-                        "Use in Console",
+                        use_in_console_label,
                         id="library-note-use-in-console",
                         classes="library-canvas-action",
                         compact=True,
                     )
                     discard_new = Button(
-                        "Discard" if self.compact else "Discard new note",
+                        self._discard_new_label(self.compact),
                         id="library-note-discard-new",
                         classes="library-canvas-action library-media-action-danger",
                         compact=True,
                     )
-                    discard_new.display = presentation_state.discard_new_note
+                    # TASK-34000.8: hidden by VISIBILITY, never by display.
+                    # An invisible Button keeps its cells, so the task row
+                    # is always its Discard-shown width and the mode
+                    # controls beside it never move when Discard comes and
+                    # goes (TASK-32623's guarantee, by construction, in
+                    # place of the 61-cell `min-width` that pushed Save off
+                    # a 48-cell pane). Textual 8.2.8 leaves an invisible
+                    # node out of `focus_chain` and `get_widget_at`, so it
+                    # is neither Tab-reachable nor clickable.
+                    discard_new.visible = presentation_state.discard_new_note
                     discard_new.disabled = presentation_state.destructive_running
                     yield discard_new
         with Vertical(id="library-note-editor-region"):
@@ -3250,6 +3390,20 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             return
         self.apply_session_state(self.presentation_state)
 
+    @staticmethod
+    def _discard_new_label(one_line: bool) -> str:
+        """Discard new note's wording for a one-line (compact or stacked) task row.
+
+        Measured at 120x36 (TASK-34000.8): the stacked task row has the
+        48-cell pane, and "Save · Use in Console · Discard new note" needs
+        53 cells there (2 of gutter, 8 + 18 + 20 of buttons, 4 of gaps) --
+        the wide wording cannot fit the very pane the stacked shape exists
+        for, so a one-line row takes the compact wording the AC allows
+        ("Discard"), which needs 44. The three-row strip keeps the full
+        wording.
+        """
+        return _HEADER_DISCARD_SHORT_LABEL if one_line else _HEADER_TASK_LABELS[2]
+
     def apply_compact_presentation(self, compact: bool) -> None:
         """Update responsive copy without remounting the canvas."""
         self.compact = compact
@@ -3303,6 +3457,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             second_row = self.query_one("#library-note-header-second-row", Horizontal)
         except NoMatches:
             second_row = None
+        # TASK-34000.8: the second row has three shapes. Wide (one 3-row
+        # strip: save state, mode controls, task actions side by side),
+        # STACKED (the editor pane is narrower than the strip needs: the
+        # save state on its own full-width row, then the mode row, then the
+        # task row -- three rows, one each) and compact (the shell's own
+        # stacked sheet, where the save state may wrap to three lines).
+        # Stacked reuses the compact shape's machinery, in place, so the
+        # widgets keep their identity across every crossing.
+        stacked = _header_shape(self._effective_work_width(), compact)
+        rows = compact or stacked
         if second_row is not None:
             heading = self.query_one("#library-note-heading")
             status = self.query_one("#library-note-status", Static)
@@ -3315,32 +3479,37 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             heading.set_class(not compact, "h-3")
             heading.styles.min_height = 1 if compact else 3
             heading.styles.max_height = 1 if compact else 3
-            second_row.styles.layout = "vertical" if compact else "horizontal"
-            second_row.set_class(compact, "h-auto")
-            second_row.set_class(not compact, "h-3")
+            second_row.styles.layout = "vertical" if rows else "horizontal"
+            second_row.set_class(rows, "h-auto")
+            second_row.set_class(not rows, "h-3")
             second_row.styles.min_height = 3
             second_row.styles.max_height = 5 if compact else 3
             status.add_class("w-fill")
             status.set_class(compact, "h-auto")
-            status.set_class(not compact, "h-3")
-            status.styles.min_height = 1 if compact else 3
-            status.styles.max_height = 3
-            status.styles.text_wrap = "wrap"
-            status.styles.text_overflow = "clip"
-            primary.styles.layout = "vertical" if compact else "horizontal"
-            primary.set_class(compact, "w-full")
-            primary.set_class(not compact, "w-auto")
-            primary.set_class(compact, "h-2")
-            primary.set_class(not compact, "h-3")
-            primary.styles.min_height = 2 if compact else 3
-            primary.styles.max_height = 2 if compact else 3
+            status.set_class(stacked, "h-1")
+            status.set_class(not rows, "h-3")
+            status.styles.min_height = 1 if rows else 3
+            status.styles.max_height = 1 if stacked else 3
+            # AC#4: on the shared row the save state is never squeezed to
+            # one column -- the one-row shape is only chosen when the pane
+            # has room for this floor beside both action groups.
+            status.styles.min_width = 0 if rows else _HEADER_STATUS_MIN_WIDTH
+            status.styles.text_wrap = "nowrap" if stacked else "wrap"
+            status.styles.text_overflow = "ellipsis" if stacked else "clip"
+            primary.styles.layout = "vertical" if rows else "horizontal"
+            primary.set_class(rows, "w-full")
+            primary.set_class(not rows, "w-auto")
+            primary.set_class(rows, "h-2")
+            primary.set_class(not rows, "h-3")
+            primary.styles.min_height = 2 if rows else 3
+            primary.styles.max_height = 2 if rows else 3
             for actions in (mode_controls, task_actions):
-                actions.set_class(compact, "w-full")
-                actions.set_class(not compact, "w-auto")
-                actions.set_class(compact, "h-1")
-                actions.set_class(not compact, "h-3")
-                actions.styles.min_height = 1 if compact else 3
-                actions.styles.max_height = 1 if compact else 3
+                actions.set_class(rows, "w-full")
+                actions.set_class(not rows, "w-auto")
+                actions.set_class(rows, "h-1")
+                actions.set_class(not rows, "h-3")
+                actions.styles.min_height = 1 if rows else 3
+                actions.styles.max_height = 1 if rows else 3
             authority.set_class(compact, "w-18")
             authority.set_class(not compact, "w-auto")
             authority.styles.min_width = 12 if compact else 0
@@ -3351,13 +3520,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             authority.styles.text_overflow = "ellipsis" if compact else "clip"
             for button in primary.query(Button):
                 button.add_class("w-auto")
-                button.set_class(compact, "h-1")
-                button.set_class(not compact, "h-3")
-                button.styles.min_height = 1 if compact else 3
-                button.styles.max_height = 1 if compact else 3
+                button.set_class(rows, "h-1")
+                button.set_class(not rows, "h-3")
+                button.styles.min_height = 1 if rows else 3
+                button.styles.max_height = 1 if rows else 3
         try:
             self.query_one("#library-note-discard-new", Button).label = (
-                "Discard" if compact else "Discard new note"
+                self._discard_new_label(rows)
             )
         except NoMatches:
             pass
@@ -3716,7 +3885,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 or confirming_delete
             )
         discard_new = self.query_one("#library-note-discard-new", Button)
-        discard_new.display = state.discard_new_note
+        # Visibility, not display: the cells stay reserved (see compose).
+        discard_new.visible = state.discard_new_note
         discard_new.disabled = state.destructive_running or bulk_read_only
         for selector in (
             "#library-note-conflict-overwrite",

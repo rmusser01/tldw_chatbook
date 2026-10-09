@@ -89,6 +89,7 @@ Tests/UI/test_library_export_replace_confirm.py
 Tests/UI/test_library_footer_focus.py
 Tests/UI/test_library_grip_capture.py
 Tests/UI/test_library_note_delete_prompt_visible.py
+Tests/UI/test_library_note_header_fits_pane.py
 Tests/UI/test_library_notes_sync_attention.py
 Tests/UI/test_library_notes_sync_delete_restore.py
 Tests/UI/test_library_notes_tree_scrolls_wide.py

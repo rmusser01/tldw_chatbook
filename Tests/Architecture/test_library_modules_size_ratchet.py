@@ -431,7 +431,13 @@ _BUDGETS: dict[str, int] = {
     # `handle_library_note_delete` schedules
     # `_reveal_library_note_delete_prompt` (scroll the whole prompt into
     # Info, focus Cancel in place) via `call_after_refresh`.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6337,
+    #
+    # 2026-10-09, TASK-34000.8: 6337 -> 6338 (+1), owner decision (same
+    # ruling). Not this task's code: the TASK-34000.13 review commit
+    # (8a8970dd2e, "blank line before _reveal_library_note_delete_prompt")
+    # added one line after the 6337 pin was measured, so the row was red on
+    # the base. Re-set to the exact measurement.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6338,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

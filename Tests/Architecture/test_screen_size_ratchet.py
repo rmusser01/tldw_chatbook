@@ -906,7 +906,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: between decomposition moves. Re-set to the exact measurement (never
     #: above it); decomposition tracked in TASK-32809.3. 33204/1276 ->
     #: 35793/1330.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35855, 1330),
+    #: 2026-10-09, TASK-34000.8: 35855/1330 -> 36726/1337, owner decision
+    #: (2026-10-04 ruling: a fix over a size ratchet raises the row to the
+    #: measured value; never move or reflow code to make it fit). The row
+    #: was already red on the base on BOTH counts (36701 lines and 1337
+    #: methods of feature work landed since the 35855/1330 pin); this task
+    #: adds 25 lines and no method: the work pane receives the shell's
+    #: resolved reader width (`apply_work_width`) and the footer's Enter
+    #: chip is withheld for a task-row control with no visible region.
+    #: Re-set to the exact measurement, never above it.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36726, 1337),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard
