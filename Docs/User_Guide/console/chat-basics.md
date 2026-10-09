@@ -402,17 +402,27 @@ statistics tools.
   stays in the composer for your next message. An Enter on an empty composer
   sends nothing but a staged image, even if you start typing right after it.
   Pressing Enter again while the first message is being prepared never sends
-  it twice. A bare second Enter does nothing once the message has left the
-  composer; if it is still there when the first send finishes (as after
-  "Unknown command … Press Enter again to send as text"), that second Enter
-  is honoured. If you typed more while the first message was still in the
-  composer, Console says "Not sent: your previous message is still being
-  sent." and keeps your text there to send in a moment. A new message typed
-  after the first one has left the composer, then Enter, is handled once the
-  first send finishes, the way any Enter is at that moment (during a reply it
-  queues). An Enter is only ever sent in the tab where you pressed it. If you switch tabs, the turn is still
-  sent from its own tab (or, in the first instant after Enter, stopped with a
-  notice and its draft kept there).
+  it twice. A bare second Enter (nothing new typed, or the same image still
+  staged) counts only when the first send asks for one, as "Unknown command …
+  Press Enter again to send as text" does; after a send, a refusal or a hook
+  review it does nothing, so a refusal is not shown twice. If you typed more
+  while the first message was still in the composer, Console says "Not sent:
+  your previous message is still being sent." and keeps your text there to
+  send in a moment; when that message is in another tab, the notice names the
+  tab. A new message typed after the first one has left the composer, then
+  Enter, is handled once the first send finishes, the way any Enter is at
+  that moment (during a reply it queues), unless something else (a spoken
+  "Console, send.") has sent that text by then: nothing you typed is sent
+  twice. If you change the message itself while it is being sent (not just
+  add to its end), it is still sent as it was when you pressed Enter; the
+  composer keeps your changed text and Console says "Your message was sent,
+  but the composer still shows it …", so you do not send it again by
+  accident. An Enter is only ever sent in the tab where you pressed it. If
+  you switch tabs, the turn is still sent from its own tab (or, in the first
+  instant after Enter, stopped with a notice and its draft kept there), and
+  the sent text leaves that tab's draft; anything you typed after it stays.
+  Switching away and straight back while it is being sent does not bring it
+  back either.
 - The reply row then appears with a dim "Generating…" placeholder and streams
   in with a "[streaming]" suffix until it completes.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's
