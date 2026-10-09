@@ -17,13 +17,17 @@ new costs 6-7 ms.
 What these tests pin is that work, not wall-clock time: every transcript
 mount during select, Delete and Undo adds about a screenful of rows, each
 later batch of a window mounts only once the layout of the rows before it
-has settled, and the window still ends up whole. The timings above come
-from the scratch probe recorded in the task notes.
+has settled, and the window still ends up whole. Three smaller pins hold
+the pieces that keep it so: a batch reads the window under the lock it
+reveals under, Textual's own re-attach waits while a window is filling,
+and the Console sync yields between its rails and its transcript. The
+timings above come from the scratch probe recorded in the task notes.
 """
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+import asyncio
+from contextlib import contextmanager, suppress
 from typing import Any, Iterator
 
 import pytest
@@ -49,6 +53,7 @@ from tldw_chatbook.UI.Console_Modules.message_delete import (
     handle_console_delete_action,
 )
 from tldw_chatbook.Widgets.Console import ConsoleTranscript
+from tldw_chatbook.Widgets.Console.console_transcript_fill import _ready, fill_window
 
 # The real ChatScreen/store goes through config-participant admission, which
 # the per-test sandbox refuses (RecoveryRequired); keep the collection-time
@@ -282,6 +287,15 @@ async def test_undo_of_the_last_turns_keeps_following_and_mounts_a_screenful_at_
                     lambda: not host.screen.query("#console-delete-receipt-box"),
                     "the receipt to close after Undo",
                 )
+                # The receipt can close before a coalesced sync ingests what
+                # came back; a window sampled then holds none of it.
+                await _until(
+                    lambda: (
+                        transcript.selected_message_id == root
+                        and root in transcript.mounted_message_content_ids()
+                    ),
+                    "Undo to reselect and mount the restored root",
+                )
                 mounted = await _settled_rows(transcript, heartbeat)
 
             sizes = [len(batch["messages"]) for batch in batches]
@@ -302,3 +316,188 @@ async def test_undo_of_the_last_turns_keeps_following_and_mounts_a_screenful_at_
             await _until_painted(host, f"{rows[-1][0]} text")
         finally:
             await heartbeat.stop()
+
+
+async def _undo_into_a_fill(
+    host: ConsoleHarness,
+    pilot: Any,
+    db: CharactersRAGDB,
+    conversation_id: str,
+    rows: list,
+) -> tuple[Any, ConsoleTranscript]:
+    """Delete and Undo the first of 60 messages; return once the fill starts."""
+    console, _store, native, transcript = await _open(
+        host, pilot, db, conversation_id, rows[-1][0]
+    )
+    first = native[rows[0][0]]
+    heartbeat = _Heartbeat()
+    heartbeat.start()
+    try:
+        await _settled_rows(transcript, heartbeat)
+        transcript.select_message(first)
+        await _settled_rows(transcript, heartbeat)
+        await handle_console_delete_action(console._message, "delete", first)
+        confirm = f"#console-message-action-delete-confirm-{first}"
+        await _wait_for_selector(console, pilot, confirm, timeout=30.0)
+        console.query_one(confirm, Button).press()
+        await _until(
+            lambda: bool(host.screen.query("#console-delete-receipt-undo")),
+            "Undo to be offered",
+        )
+        await heartbeat.quiet()
+        host.screen.query_one("#console-delete-receipt-undo", Button).press()
+        await _until(
+            lambda: transcript._window_fill is not None,
+            "Undo to restore its window a batch at a time",
+        )
+    finally:
+        await heartbeat.stop()
+    return console, transcript
+
+
+def _sixty(tmp_path: Any) -> tuple[ConsoleHarness, CharactersRAGDB, str, list]:
+    """A Console harness over a file-backed 60-message chain."""
+    db = CharactersRAGDB(tmp_path / "long-chat.db", "long-chat")
+    rows = _chain(60)
+    conversation_id = _seed(db, rows)
+    app = _build_test_app()
+    app.chachanotes_db = db
+    app.notify = lambda *args, **kwargs: None
+    return ConsoleHarness(app), db, conversation_id, rows
+
+
+@pytest.mark.asyncio
+async def test_reaching_the_bottom_mid_fill_does_not_reattach_the_detached_follower(
+    tmp_path,
+):
+    """5.1 AC#3: Textual's own re-attach waits until the window is whole.
+
+    Textual re-attaches a released tail-follow whenever the view reaches the
+    bottom (a scroll clamp, a scrollbar release). Mid-fill that bottom is the
+    last batch so far: a reader re-attached there follows a window that is
+    still filling, which ends the fill, and the next sync's ghost-follow heal
+    mounts the rest of the window in one batch.
+    """
+    host, db, conversation_id, rows = _sixty(tmp_path)
+    async with host.run_test(size=_SIZE) as pilot:
+        _console, transcript = await _undo_into_a_fill(
+            host, pilot, db, conversation_id, rows
+        )
+        assert not transcript._raw_anchor_engaged(), "the fill starts detached"
+        transcript.scroll_y = transcript.max_scroll_y
+        transcript._check_anchor()
+        assert not transcript._raw_anchor_engaged(), (
+            "the reader re-attached at the bottom of a window still filling"
+        )
+        await _until(lambda: transcript._window_fill is None, "the fill to end")
+
+
+@pytest.mark.asyncio
+async def test_a_console_sync_runs_its_rails_and_its_transcript_in_separate_loop_turns(
+    tmp_path,
+):
+    """5.1 AC#3: the post-action sync yields between its two halves.
+
+    Live sampling of the Undo found the longest remaining blocks were whole
+    Console syncs: the rails (with storage admission) and then the store
+    projection and transcript ingest, in one loop turn. A callback queued
+    as the rails half ends must run before the transcript half starts.
+    """
+    host, db, conversation_id, rows = _sixty(tmp_path)
+    async with host.run_test(size=_SIZE) as pilot:
+        console, _store, _native, _transcript = await _open(
+            host, pilot, db, conversation_id, rows[-1][0]
+        )
+        queued: list[list[bool]] = []
+        observed: list[bool] = []
+        real_rails_end = console._sync_console_workspace_context
+        real_transcript = console._sync_native_console_transcript
+
+        def rails_end(*args: Any, **kwargs: Any) -> Any:
+            result = real_rails_end(*args, **kwargs)
+            ran = [False]
+            queued.append(ran)
+            asyncio.get_running_loop().call_soon(ran.__setitem__, 0, True)
+            return result
+
+        async def transcript_half(*args: Any, **kwargs: Any) -> Any:
+            if queued:
+                observed.append(queued.pop()[0])
+            return await real_transcript(*args, **kwargs)
+
+        console._sync_console_workspace_context = rails_end
+        console._sync_native_console_transcript = transcript_half
+        try:
+            for _attempt in range(50):
+                await console._sync_native_console_chat_ui()  # coalesces if busy
+                if observed:
+                    break
+                await asyncio.sleep(0.1)
+        finally:
+            del console._sync_console_workspace_context
+            del console._sync_native_console_transcript
+        assert observed, "no Console sync reached its transcript half"
+        assert all(observed), (
+            f"the transcript half ran in the rails half's loop turn: {observed}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_batch_that_waited_for_the_refresh_lock_keeps_what_the_holder_revealed(
+    tmp_path,
+):
+    """5.1 AC#3: a batch reads the window under the lock it reveals under.
+
+    A batch read where the hidden tail started before it took the refresh
+    lock. Queued behind scroll hydration, which revealed a chunk of that
+    same tail, it then re-hid those rows: revealing through a stale batch end
+    replaces the hidden tail rather than extending it.
+    """
+    host, db, conversation_id, rows = _sixty(tmp_path)
+    async with host.run_test(size=_SIZE) as pilot:
+        _console, transcript = await _undo_into_a_fill(
+            host, pilot, db, conversation_id, rows
+        )
+        # Take the fill over: the running chain stops once its fill is replaced.
+        running = transcript._window_fill
+        fill = (running[0], running[1])
+        transcript._window_fill = fill
+        lock = transcript._refresh_lock
+        revealed: list[int] = []
+
+        async def hydrate() -> None:
+            await transcript._hydrate_tailward()
+            revealed.append(transcript._hidden_tail_start_index())
+
+        for _attempt in range(50):
+            await _until(lambda: _ready(transcript), "the last batch to settle")
+            await lock.acquire()
+            tail_before = transcript._hidden_tail_start_index()
+            holder = asyncio.get_running_loop().create_task(hydrate())
+            await asyncio.sleep(0)
+            assert not holder.done(), "scroll hydration must queue on the lock"
+            lock.release()
+            # Unlocked, the holder woken but not yet run: what a batch whose
+            # turn comes up just then sees. A sync tick's relayout can slip
+            # into that turn; cancel the holder before it reveals, retry.
+            if _ready(transcript):
+                break
+            holder.cancel()
+            with suppress(asyncio.CancelledError):
+                await holder
+        else:
+            raise AssertionError("the window was never ready as the lock came free")
+        await fill_window(transcript, fill)
+        await holder
+
+        assert revealed and revealed[0] > tail_before, (
+            f"scroll hydration revealed nothing past {tail_before}: {revealed}"
+        )
+        hidden_from = transcript._hidden_tail_start_index()
+        assert hidden_from >= revealed[0], (
+            f"the batch re-hid rows the hydration ahead of it had revealed: "
+            f"hidden from {hidden_from}, revealed through {revealed[0]}"
+        )
+        mounted = set(transcript.mounted_message_content_ids())
+        kept = {message.id for message in transcript._messages[: revealed[0]]}
+        assert kept <= mounted, sorted(kept - mounted)[:4]
