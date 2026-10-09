@@ -4,7 +4,7 @@ title: Remove remaining legacy streaming no-op on ChatMessage and dangling tool-
   doc sketch
 status: Done
 created_date: 2026-10-08 00:36
-updated_date: 2026-10-09 05:13
+updated_date: 2026-10-09 05:22
 ---
 
 ## Description
@@ -71,6 +71,14 @@ Workspace/Remote variants) left as history.
 
 ADR required: no -- mechanical dead-code removal + doc correction;
 follows TASK-34433 precedent.
+
+Fix round 1 (review Important item + rider, commit e3eec65887):
+AGENTS.md "Key Widgets" bullet for the deleted `tool_message_widgets.py`
+replaced with the Console-transcript tool-rendering home
+(`Console/console_transcript.py`); superseded banner added atop
+TOOL-CALLING-IMPLEMENTATION.md. Docs-only -- 6-file targeted suite
+re-run: 140 passed / same single pre-existing failure (byte-identical to
+round 1 and to base). Status restored to Done.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary
