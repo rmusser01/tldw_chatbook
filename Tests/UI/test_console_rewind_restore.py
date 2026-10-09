@@ -1236,6 +1236,7 @@ async def test_console_rewind_memory_lookup_error_warns_conservatively_without_l
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_keyboard_rewind_cancel_consumes_command_and_preserves_late_draft():
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -1254,11 +1255,13 @@ async def test_keyboard_rewind_cancel_consumes_command_and_preserves_late_draft(
         assert console._dismiss_console_command_popup()
         _press_enter_synchronously(console)
         composer.insert_text("next draft")
-        assert composer.draft_text() == "next draft"
 
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, ConsoleRewindModal)
+        # The captured command leaves the composer once the menu opens
+        # (TASK-33620.15); text typed after the capture stays.
+        assert composer.draft_text() == "next draft"
 
         await pilot.press("escape")
         await pilot.pause()

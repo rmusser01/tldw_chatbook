@@ -334,6 +334,15 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> 
     return turn_id
 
 
+async def _precapture_turn_authority(screen: Any, session_id: str) -> Any:
+    """TASK-33620.15: read a send's service-owned authority off the UI pump."""
+    from functools import partial
+
+    from .turn_admission import applied, precapture
+
+    return partial(applied, await precapture(screen._session, session_id))
+
+
 async def _resend_refused_console_echo(screen: Any, echo: Any) -> str | None:
     """TASK-33661: re-send a refused echo through the normal send path."""
     from tldw_chatbook.Chat.console_turn_resend import resend_refused_echo
@@ -2384,6 +2393,7 @@ def build_console_controllers(
                 screen, draft, session_id
             )
         ),
+        precapture=lambda session_id: _precapture_turn_authority(screen, session_id),
         commit_captured_draft=(
             lambda session_id, stash: _commit_captured_console_draft(
                 screen, session_id, stash

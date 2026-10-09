@@ -169,11 +169,6 @@ from ...Chat.console_chat_store import (
 )
 from ...Chat.console_chat_controller import (
     ProjectInstructionBindingRecovery,
-    capture_character_authority,
-    capture_mcp_definition_maximum,
-    capture_prompt_transform_inputs,
-    capture_project_instruction_authority,
-    capture_skill_context_maximum,
     resolve_project_instruction_binding,
 )
 from ...Chat.console_context_policy import (
@@ -235,12 +230,7 @@ from ...Chat.console_switcher_state import (
 )
 from ...Chat.thinking_blocks import normalize_thinking_history_policy
 from ...Chat.console_scratch_space import ConsoleScratchSnapshot
-from ...Chat.console_turn_context import (
-    ConsoleTurnConfigurationSnapshot,
-    capture_change_review_admission,
-    resolve_turn_persona_policy_rules,
-    resolve_turn_tool_policy_profile_id,
-)
+from ...Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
 from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import provider_config_key
 from ...Character_Chat.visual_identity import (
@@ -312,8 +302,9 @@ if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
 
 # NOTE (boot budget, ADR-097): `Workspaces.assistant_defaults` is imported
-# lazily at its per-turn use site (`_resolve_turn_persona_policy_rules`
-# helpers) so it stays out of the UI-ready module census.
+# lazily at its use site (`console_assistant_defaults`, reached from
+# `_workspace_default_for_new_session`) so it stays out of the UI-ready
+# module census.
 
 logger = logger.bind(module="ChatScreen")
 
@@ -4303,49 +4294,6 @@ class ConsoleSessionController:
         except KeyError:
             return None
 
-    def _resolve_turn_tool_policy_profile_id(self, workspace_id: str | None) -> str:
-        """Resolve the workspace's named tool-permission profile id.
-
-        Workspace assistant defaults (Task 7): the owning session's
-        workspace may pin a ``tool_policy_profile_id`` in its assistant
-        defaults; that profile is what THIS turn's tool gates resolve
-        under. Any absence -- no workspace, no registry, no workspace
-        record, no defaults, empty id -- degrades to ``"default"``, the
-        single-profile behavior. Never raises.
-        """
-        return resolve_turn_tool_policy_profile_id(
-            getattr(self, "app_instance", None), workspace_id
-        )
-
-    def _resolve_turn_persona_policy_rules(
-        self, session_id: str
-    ) -> tuple[Mapping[str, Any], ...]:
-        """Resolve the owning session's persona policy rules.
-
-        Workspace assistant defaults (Task 7): only a session whose durable
-        assistant identity is a persona carries rules -- the session record's
-        ``assistant_kind == "persona"`` resolves ``assistant_id`` through the
-        app's local persona service (``get_persona_profile``), whose view
-        already normalizes ``policy_rules``. Every failure (no store, no
-        session, non-persona assistant, unknown persona, malformed rules)
-        degrades to ``()`` -- the identity posture. Never raises.
-        """
-        try:
-            store = self._console_chat_store
-            if store is None:
-                return ()
-            session = next(
-                (item for item in store.sessions() if item.id == session_id), None
-            )
-            return resolve_turn_persona_policy_rules(self.app_instance, session)
-        except Exception as exc:  # noqa: BLE001 -- posture degrades, never blocks
-            logger.warning(
-                "Console turn context: persona policy rules resolution failed; "
-                "running with no persona rules; error_type={}",
-                type(exc).__name__,
-            )
-        return ()
-
     def _workspace_default_for_new_session(
         self, workspace_id: str | None = None
     ) -> tuple[str, str, str, str] | None:
@@ -4394,46 +4342,37 @@ class ConsoleSessionController:
     def _build_console_turn_execution_context(
         self, session_id: str
     ) -> ConsoleTurnConfigurationSnapshot:
-        """Capture one detached configuration snapshot for an owning session."""
+        """Capture one detached configuration snapshot for an owning session.
+
+        TASK-33620.15: the service-owned values (MCP, skills, project and
+        review roots, scratch space, RAG depth, ...) come from
+        ``turn_admission``: precaptured on a worker for the send being
+        launched when its inputs still match, otherwise read here.
+        """
         from ...Chat.attachment_core import max_history_images
         from ...model_capabilities import is_vision_capable
         from ...Chat.console_agent_bridge import console_run_budget
         from ..Screens.settings_library_rag_defaults import (
             load_direct_library_tools,
         )
+        from .turn_admission import authority_for, authority_inputs
 
         app_config = self._provider_readiness_app_config()
         selection = self._build_provider_selection_fn(session_id)
-        settings = self._ensure_console_chat_store().effective_session_settings(
-            session_id
-        )
+        store = self._ensure_console_chat_store()
+        settings = store.effective_session_settings(session_id)
         model = selection.explicit_model or selection.configured_model
         console_config = (
             app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
         )
         if not isinstance(console_config, Mapping):
             console_config = {}
-        store = self._ensure_console_chat_store()
-        workspace_id = store.session_workspace_id(session_id)
         presentation_context = store.presentation_context(
             session_id,
             _console_global_user_display_name(app_config),
         )
         session = next(item for item in store.sessions() if item.id == session_id)
-        app_instance = getattr(self, "app_instance", None)
-        agent_dispatch_eligible = bool(
-            coerce_bool_setting(
-                console_config.get("agent_runtime", True),
-                True,
-            )
-            and not store.session_one_shot_prefill(session_id)
-            and session.assistant_kind != "character"
-        )
-        project_authority = capture_project_instruction_authority(
-            session,
-            getattr(app_instance, "workspace_registry_service", None),
-            include_bindings=agent_dispatch_eligible,
-        )
+        authority = authority_for(self, authority_inputs(self, session_id))
         held_scope = session.rag_scope_holder.scope
         library_scope = ConsoleLibraryItemScopeSnapshot(
             note_ids=tuple(
@@ -4452,52 +4391,29 @@ class ConsoleSessionController:
             else (),
             conversations_allowed=held_scope is None,
         )
-        workspace_roots, ready_review_aliases, skipped_review_roots = (
-            capture_change_review_admission(app_instance, workspace_id)
-        )
-        # Workspace assistant defaults (Task 7): this turn's tool posture --
-        # the workspace's named permission profile (absent/Default/global
-        # defaults degrade to "default") and the owning session's persona
-        # policy rules. Every failure degrades to the identity posture
-        # rather than blocking the send; posture is narrowing-only, so a
-        # degraded read can never widen access.
-        tool_policy_profile_id = self._resolve_turn_tool_policy_profile_id(workspace_id)
-        persona_policy_rules = self._resolve_turn_persona_policy_rules(session_id)
-
-        mcp_definition_maximum = capture_mcp_definition_maximum(app_instance)
+        # Workspace assistant defaults (Task 7): the tool posture -- the
+        # workspace's named permission profile and the persona policy rules
+        # -- degrades to the identity posture on any failure; posture is
+        # narrowing-only, so a degraded read can never widen access.
         return ConsoleTurnConfigurationSnapshot.capture(
             session_id=session_id,
             provider_selection=selection,
-            scratch_space=self._scratch_snapshot_provider(session_id),
+            scratch_space=authority.scratch_space,
             session_settings=settings,
-            workspace_roots=workspace_roots,
-            change_review_root_aliases=ready_review_aliases,
-            change_review_skipped_roots=skipped_review_roots,
-            persona_policy_rules=persona_policy_rules,
-            tool_policy_profile_id=tool_policy_profile_id,
+            workspace_roots=authority.workspace_roots,
+            change_review_root_aliases=authority.change_review_root_aliases,
+            change_review_skipped_roots=authority.change_review_skipped_roots,
+            persona_policy_rules=authority.persona_policy_rules,
+            tool_policy_profile_id=authority.tool_policy_profile_id,
             presentation_context=presentation_context,
             library_policy_maximum=session.library_policy_holder.snapshot,
             library_scope_maximum=library_scope,
-            project_authority=project_authority,
-            character_authority=capture_character_authority(
-                session,
-                getattr(
-                    (
-                        self._ensure_console_chat_controller()
-                        if hasattr(self, "_ensure_console_chat_controller_fn")
-                        else None
-                    ),
-                    "_visual_identity_repository",
-                    None,
-                ),
-            ),
-            prompt_transform_inputs=capture_prompt_transform_inputs(
-                app_instance,
-                session,
-            ),
-            skill_context_maximum=capture_skill_context_maximum(app_instance),
-            mcp_tool_maximum=mcp_definition_maximum,
-            mcp_definition_maximum=mcp_definition_maximum,
+            project_authority=authority.project_authority,
+            character_authority=authority.character_authority,
+            prompt_transform_inputs=authority.prompt_transform_inputs,
+            skill_context_maximum=authority.skill_context_maximum,
+            mcp_tool_maximum=authority.mcp_definition_maximum,
+            mcp_definition_maximum=authority.mcp_definition_maximum,
             capabilities={
                 "vision": bool(model)
                 and is_vision_capable(selection.provider, model or ""),
@@ -4505,7 +4421,7 @@ class ConsoleSessionController:
             },
             rag_defaults={
                 "source_types": tuple(self._rag_source_types_accessor()),
-                "top_k": self._rag_top_k_accessor(),
+                "top_k": authority.rag_top_k,
             },
             tool_configuration={
                 "session_ephemeral": bool(session.ephemeral),

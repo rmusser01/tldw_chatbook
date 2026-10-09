@@ -4286,6 +4286,25 @@ async def _wait_for_text(screen, pilot, expected: str, *, attempts: int = 80) ->
     )
 
 
+async def _wait_for_reply(screen, pilot, reply: str = "accepted") -> None:
+    """Wait for the streamed reply text, not the Sending acknowledgement.
+
+    TASK-33620.15: a Send button press now shows Enter's acknowledgement,
+    whose strip reads "Queue opens once this turn is accepted" before the
+    provider is called, so a bare ``"accepted"`` match no longer means the
+    reply arrived.
+    """
+    from tldw_chatbook.Chat.console_display_state import QUEUE_REASON_PREPARING
+
+    for _ in range(80):
+        if reply in _visible_text(screen).replace(QUEUE_REASON_PREPARING, ""):
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"Reply not found: {reply!r}. Visible text: {_visible_text(screen)!r}"
+    )
+
+
 async def _wait_for_focus(app, pilot, widget, *, attempts: int = 40) -> None:
     for _ in range(attempts):
         if getattr(app, "focused", None) is widget:
@@ -6011,7 +6030,7 @@ async def test_console_collapsed_paste_sends_full_payload_not_visible_token():
 
         assert "Pasted text | 80 characters | Expand" in _visible_text(console)
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
     assert gateway.sent_messages[-1][-1]["content"] == long_text
     assert (
@@ -6037,7 +6056,7 @@ async def test_console_native_send_preserves_expanded_payload_whitespace():
         composer.load_draft("  padded payload  ")
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
     assert gateway.sent_messages[-1][-1]["content"] == "  padded payload  "
 
@@ -6075,7 +6094,7 @@ async def test_console_configured_model_reaches_gateway_when_ui_model_is_unset()
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
     assert gateway.selections[-1].explicit_model is None
     assert gateway.selections[-1].configured_model == "configured-model"
@@ -6210,7 +6229,7 @@ async def test_console_send_refreshes_workspace_conversation_rail_after_persiste
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
         await _wait_for_selector(console, pilot, "#console-workspace-conversation-0")
 
         row = console.query_one("#console-workspace-conversation-0")
@@ -6296,7 +6315,7 @@ async def test_console_send_after_workspace_switch_persists_to_selected_workspac
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello from b")
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
         workspace_a_conversations = service.list_workspace_conversations("ws-a")
         workspace_b_conversations = service.list_workspace_conversations("ws-b")
@@ -7223,7 +7242,7 @@ async def test_console_accepted_send_records_first_send_flag():
         composer.load_draft("hello")
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
         onboarding = app.app_config.get("console", {}).get("onboarding", {})
         assert onboarding.get("first_send_completed") is True

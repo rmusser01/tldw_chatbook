@@ -360,7 +360,9 @@ select raw mode; this prevents a pasted prompt from silently turning into host
 execution. A physically typed prefix may be followed by pasted command text.
 Start with `\! ` to send an ordinary chat message beginning with literal `! `.
 When raw mode is recognized, the composer turns red and identifies host access
-before you send.
+before you send. Enter, **Send** and the Workbench's send all take the command
+out of the composer; if Console refuses it (raw CLI locked or not armed, for
+example), the exact draft comes back once.
 
 Console raw commands use automatic shell selection. The shared executor
 supports **Bash**, **PowerShell**, and **CMD**, invokes them with fixed
@@ -384,7 +386,8 @@ statistics tools.
 
 ### Sending, streaming, and stopping
 
-- Enter sends the draft. Your message appears in the transcript at once,
+- Enter, the **Send** button and the Workbench's send all send the draft the
+  same way. Your message appears in the transcript at once,
   marked **Sending…**, while Console prepares the turn: the header reads
   **Running**, the tab shows **●**, the status row shows **Run: Sending…** and
   Send reads **Sending...** (its strip: "Queue opens once this turn is
@@ -394,6 +397,22 @@ statistics tools.
   with **Restore**.
   Slash commands, typed `! ` commands, Enter during a run (which queues) and
   a send behind a **Blocked** turn (which is refused) skip this step.
+- Console stays responsive while it prepares the turn. Enter sends exactly
+  what the composer held when you pressed it; anything you type afterwards
+  stays in the composer for your next message. An Enter on an empty composer
+  sends nothing but a staged image, even if you start typing right after it.
+  Pressing Enter again while the first message is being prepared never sends
+  it twice. A bare second Enter does nothing once the message has left the
+  composer; if it is still there when the first send finishes (as after
+  "Unknown command … Press Enter again to send as text"), that second Enter
+  is honoured. If you typed more while the first message was still in the
+  composer, Console says "Not sent: your previous message is still being
+  sent." and keeps your text there to send in a moment. A new message typed
+  after the first one has left the composer, then Enter, is handled once the
+  first send finishes, the way any Enter is at that moment (during a reply it
+  queues). An Enter is only ever sent in the tab where you pressed it. If you switch tabs, the turn is still
+  sent from its own tab (or, in the first instant after Enter, stopped with a
+  notice and its draft kept there).
 - The reply row then appears with a dim "Generating…" placeholder and streams
   in with a "[streaming]" suffix until it completes.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's

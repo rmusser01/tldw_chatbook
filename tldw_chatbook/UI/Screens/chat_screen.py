@@ -161,7 +161,10 @@ from ..Console_Modules.retrieval import (
 )
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules import console_spend_projection as spend
-from ..Console_Modules.wiring import build_console_controllers
+from ..Console_Modules.wiring import (
+    _commit_captured_console_draft,
+    build_console_controllers,
+)
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules import composer_run_controls as run_controls
 from ..Console_Modules.session import (
@@ -1552,6 +1555,13 @@ def _console_library_rag_profile_top_k() -> int:
         inside a send.
     """
     return library_rag_profile_top_k()
+
+
+def _send_acknowledgement() -> Any:
+    """The send-acknowledgement module, imported on the first send (ADR-097)."""
+    from ..Console_Modules import send_acknowledgement
+
+    return send_acknowledgement
 
 
 def _console_screen_is_torn_down(screen: Any) -> bool:
@@ -4835,8 +4845,8 @@ class ChatScreen(BaseAppScreen):
             )
         elif action_id == "run-library-rag":
             self._open_console_library_search()
-        elif action_id == "send":
-            await self._send_console_message_from_visible_action()
+        elif action_id == "send":  # TASK-33620.15: acknowledged, as Enter
+            _send_acknowledgement().request_visible_send(self)
         elif action_id == "stop":
             await self._stop_console_generation_from_visible_action()
         elif action_id == "help":
@@ -18865,13 +18875,14 @@ class ChatScreen(BaseAppScreen):
             )
             return False
         stash, composer, draft, raw_cli_handled = raw_cli_ui.prepare_visible_send(
-            stash, self._console_composer_or_none, self._raw_cli.start_user_command
+            stash,
+            self._console_composer_or_none,
+            self._raw_cli.start_user_command,
+            commit_captured=partial(_commit_captured_console_draft, self, session_id),
+            captured=pending_send_token is not None,
         )
         if raw_cli_handled:
             return False
-        if pending_send_token is None and composer is not None:
-            stash = composer.capture_draft_for_send()
-            draft = stash.text if stash is not None else draft
         if not draft.strip() and self._console_pending_image_attachment() is None:
             self._focus_console_composer_if_needed(force=True)
             return False
@@ -18911,6 +18922,9 @@ class ChatScreen(BaseAppScreen):
                     draft,
                 )
             opened = await self._console_command_rewind(parse)
+            if opened and pending_send_token is not None:  # TASK-33620.15
+                _commit_captured_console_draft(self, session_id, stash)
+                self._sync_console_command_popup()
             if opened and opening_composer is not None and opening_revision is not None:
                 current = self._console_composer_or_none()
                 current_snapshot = (
@@ -19010,7 +19024,7 @@ class ChatScreen(BaseAppScreen):
         ) as diagnostic:
             if session_id is None:
                 session_id = self._console_visible_send_session_id()
-            if stash is None:
+            if stash is None and draft:  # An image-only send has no draft.
                 composer = self._console_composer_or_none()
                 stash = composer.capture_draft_for_send() if composer else None
             result = await self._hooks.dispatch(
@@ -22474,57 +22488,33 @@ class ChatScreen(BaseAppScreen):
                 return
             event.stop()
             event.prevent_default()
-            if self._console_pending_send is not None:
-                # A send keypress is already scheduled on the app pump; a
-                # second Enter in that window must not enqueue it twice.
-                return
-            session_id = self._console_visible_send_session_id()
-            if session_id is None:
-                self.app_instance.notify(
-                    "Console send is unavailable.", severity="error"
-                )
-                return
-            # TASK-340: capture the payload now so printable keys handled
-            # before the scheduled callback belong to the next draft.
-            stash = composer.capture_draft_for_send()
-            pending_send = _ConsolePendingSend(session_id, stash, object())
-            self._console_pending_send = pending_send
-            if stash is not None:
-                try:
-                    self._ensure_console_chat_store().set_session_draft(
-                        session_id, stash.text
-                    )
-                except KeyError:
-                    self._console_pending_send = None
-                    return
-            try:
-                send_button = self.query_one("#console-send-message", Button)
-            except QueryError:
-                self._console_pending_send = None
-                self.app_instance.notify(
-                    "Console send is unavailable.", severity="error"
-                )
-                return
-            if not send_button.display:
-                # A hidden/pruned action is unavailable. The capture was
-                # non-destructive, so releasing the duplicate gate is enough.
-                logger.warning(
-                    "Console send Enter: no-op press guard tripped "
-                    "(disabled={}, display={}) -- keeping the live draft.",
-                    send_button.disabled,
-                    send_button.display,
-                )
-                self._console_pending_send = None
-                return
-            # Enter and Send converge on the same visible-action handler.
-            # Scheduling it on the app pump preserves the keypress snapshot;
-            # app-owned runtime custody owns accepted work, except that a Send
-            # held for hook review or a slash command goes on in a worker
-            # (TASK-33621.28, TASK-33622.16). TASK-33620.5: an idle chat send
-            # is painted "Sending…" first; commands dispatch unchanged.
-            from ..Console_Modules import send_acknowledgement
 
-            send_acknowledgement.schedule_acknowledged_send(self, pending_send)
+            def send_action_ready() -> bool:
+                try:
+                    send_button = self.query_one("#console-send-message", Button)
+                except QueryError:
+                    self.app_instance.notify(
+                        "Console send is unavailable.", severity="error"
+                    )
+                    return False
+                if not send_button.display:
+                    # A hidden/pruned action is unavailable. The capture was
+                    # non-destructive, so releasing the duplicate gate is enough.
+                    logger.warning(
+                        "Console send Enter: no-op press guard tripped "
+                        "(disabled={}, display={}) -- keeping the live draft.",
+                        send_button.disabled,
+                        send_button.display,
+                    )
+                    return False
+                return True
+
+            # Enter, Send and the Workbench send converge here (TASK-33620.15):
+            # an idle chat send is painted "Sending…" first (TASK-33620.5;
+            # commands dispatch unchanged), then sent in a task no pump
+            # awaits; a hook review or a slash command still goes on in a
+            # worker (TASK-33621.28, TASK-33622.16).
+            _send_acknowledgement().request_visible_send(self, guard=send_action_ready)
             return
         if event.key in {"pageup", "pagedown"}:
             # TASK-348: scrollback must be keyboard-reachable. The composer
@@ -24450,8 +24440,9 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             await self._open_console_composer_menu()
             return
-        if button_id == "console-send-message":
-            await self.handle_console_send_message(event)
+        if button_id == "console-send-message":  # TASK-33620.15: as Enter
+            event.stop()
+            _send_acknowledgement().request_visible_send(self)
             return
         if button_id == "console-dictation":
             event.stop()
@@ -24899,8 +24890,9 @@ class ChatScreen(BaseAppScreen):
             event.stop()
             self._open_console_prompt_comparison()
             return
-        if button_id == "console-send-message":
-            await self.handle_console_send_message(event)
+        if button_id == "console-send-message":  # TASK-33620.15: as Enter
+            event.stop()
+            _send_acknowledgement().request_visible_send(self)
             return
         if button_id == "console-dictation":
             event.stop()

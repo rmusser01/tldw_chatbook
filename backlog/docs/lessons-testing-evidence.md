@@ -1,5 +1,101 @@
 # Lessons: what counts as evidence a change works
 
+## Moving blocking work to a thread frees nothing if a pump awaits the caller (TASK-33620.15, 2026-10-05)
+
+**Incident.** A Console send's admission read MCP, skill and project
+authority on the UI thread (531 ms cold in the harness, 613 ms live). The
+reads moved into `asyncio.to_thread`, and the mounted test -- hold the read,
+type a key, require the key to land before the read returns -- was still red,
+with the held read now on `asyncio_3`. The send ran inside
+`app.call_later(observed_send)`, and Textual's `on_callback` awaits the
+callback: while the send awaited its worker, the app pump delivered no keys.
+Only starting the send as its own task, which no pump awaits, turned the
+test green. A second trap came from the same harness: 200-400 ms "blocks"
+in which a 1 ms stack sampler took zero samples. Those were generation-2
+garbage collections. The app avoids them by freezing its heap at UI-ready
+(ADR-198), but `ConsoleHarness` does not freeze it.
+
+**Why it slipped through.** "Off the UI thread" was checked by where the work
+ran (the worker's thread name), not by whether input was handled meanwhile.
+
+**What to do.** Pin a responsiveness fix with the user-visible effect (a key
+handled while the work is held), and run the negative control that keeps the
+work on a thread but awaits it from the pump. When a harness block has no
+stack samples, measure again with `gc.collect(1); gc.freeze()` after mount
+before you attribute it to product code.
+
+## An input probe slows the arm whose UI loop it frees (TASK-33620.15, 2026-10-06)
+
+**Incident.** The live check for a non-blocking Console send moved the
+pointer between two header buttons and timed each hover redraw. The same
+runs also gave time to the provider call. With the poller running, the fix
+looked like a latency regression: its provider call came at a median 4.25 s,
+against 3.39 s on the parent build (9 sends each, Anthropic haiku, 160x45).
+An earlier variant had moved five MCP permission-store reads into
+`asyncio.to_thread`, and it was reverted on the same kind of run (provider
+call 0.45-1.27 s later; a trace showed the composition at 299 ms inline and
+1,113 ms in five hops). Then came eight paired Enter sends with no poller.
+The fix's provider call came at a median 2.30 s, against 2.72 s on the
+parent, and acceptance came about 100 ms later.
+
+The poller loaded only the fix arm. On the parent build, admission held the
+loop, so hover events waited and cost nothing. On the fix the loop was free,
+so it redrew hovers while the worker's syscall-heavy storage-admission
+checks waited for the GIL.
+
+**What to do.** Measure input blocking and latency in separate rounds: the
+poller for blocking, and probe-free sends for latency. Probe-free sends get
+their stage times from the app's own `console_send_stage` lines and the
+provider-call time from a timing proxy. Re-measure any "moving it off the
+loop made it slower" result from a run with an input probe before you act on
+it. The five-hop variant has not been re-measured without the poller.
+
+## Freeing a pump opens every await on the path to input (TASK-33620.15, 2026-10-08)
+
+**Incident.** The off-pump Console send was pinned by one test: type a key
+while admission's MCP read is held, then require the key to land and the send
+to finish. That passed, but it typed in only one of the send's three awaits.
+The review switched tabs at that same await and found two defects:
+- The screen's send gate, which reads the VISIBLE chat, was read after the
+  await. A switch to an unconfigured tab refused the send with that tab's
+  reason.
+- A deferred second Enter replayed in whichever chat was visible when the
+  send settled. It sent the other tab's unsent draft.
+
+A key typed at the first await (the hook-snapshot read) failed differently:
+the hook gate compared the live composer with the captured draft, so
+type-ahead refused the send. That check had never run with keys flowing.
+Typing straight after Enter refused the send on origin/dev too, unnoticed.
+
+**What to do.** When you stop a pump awaiting a path, list every await on it
+and probe each one with both kinds of concurrent input: typing, and
+navigation (tab switch, screen change). After any await, re-check each
+"visible"/"active"/"current" read, and each equality check against live
+widget state, or move it before the first await.
+
+## A second Console turn in the send harness ends in a recovery, not a reply (TASK-33620.15, 2026-10-09)
+
+**Incident.** A mounted test checked what a deferred second Enter sent, on
+the send harness that `build()` in `Tests/UI/test_console_send_acknowledgement.py`
+makes. On the pre-fix head the composer ended empty and the transcript held
+only the first turn, so the typed "yz" looked lost. It was not. The second
+turn logged `ui_dispatch status=sent` and then ended in the runtime with
+`RuntimeError: Local conversation storage is unavailable.`, and the runtime
+kept its draft as a turn recovery. Any turn in a chat that is already
+persisted reads its archive state through `app.local_chat_conversation_service`,
+and the factory app has none. The first turn passes because its chat is not
+persisted yet. The same log also showed a `no such table: world_books`
+traceback. That one is a red herring: the capture that raises it fails
+closed.
+
+**What to do.** Before asserting on a second turn in this harness, stub the
+service. `_allow_second_turns` in
+`Tests/UI/test_console_send_admission_off_pump.py` installs a
+`SimpleNamespace` with an in-memory `db` marker and
+`get_conversation_archive_states` returning `{}`. When a row is missing,
+read `runtime.recoveries_for_session(...)` and the `console_send_stage`
+lines before you call the text lost.
+
 ## A loguru sink added before the app mounts is gone by the time you read it (TASK-33628.5, 2026-10-05)
 
 **Incident.** The quit-mid-delete test added a loguru WARNING sink, ran the

@@ -142,7 +142,9 @@ Select one of **your** messages and press `e` (or click **Edit**) to open the
 
 ### The /rewind menu
 
-Type `/rewind` in the composer and press Enter. The **Rewind** menu (see
+Type `/rewind` in the composer and press Enter (or click **Send**). Opening
+the menu takes `/rewind` out of the composer, however you sent it; anything
+you typed after pressing Enter stays. The **Rewind** menu (see
 the capture in the Layout tour) lists your earlier prompts newest-first as
 "#1 …" rows; pick one to reveal three buttons:
 

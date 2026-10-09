@@ -13,7 +13,9 @@ session switches are observed at call time rather than frozen at construction.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, TYPE_CHECKING
@@ -580,7 +582,20 @@ class ConsolePromptQueueUIController:
         sync_ui: Callable[[], Awaitable[None]],
         turn_recovery_reason: Callable[[str], str] = lambda _session_id: "",
         sending_accessor: Callable[[str], bool] | None = None,
+        precapture: (
+            Callable[[str], Awaitable[Callable[[], AbstractContextManager[None]]]]
+            | None
+        ) = None,
     ) -> None:
+        """Wire the dispatcher to its owners.
+
+        Args:
+            precapture: TASK-33620.15. Reads a send's service-owned turn
+                authority off the UI pump and returns the context in which
+                ``capture_configuration``/``launch_chain`` use it. ``None``
+                captures everything inline, as before.
+        """
+        self._precapture = precapture
         self._chat_controller_accessor = chat_controller_accessor
         self._capture_configuration = capture_configuration
         self._ensure_active_session = ensure_active_session
@@ -1053,8 +1068,13 @@ class ConsolePromptQueueUIController:
 
         ``session_id`` pins visible composer sends to the chat that owned the
         captured draft. Other callers retain the active-session fallback.
-        """
 
+        TASK-33620.15: a pinned send that will build a turn reads its
+        service-owned turn authority on a worker thread, after the send gate
+        and before the session-pinned gates. Keys flow during that await, so
+        the gate, which reads the VISIBLE chat, is read first: in the stretch
+        where the hook gate checked that this send's chat is the visible one.
+        """
         blocked_reason = self._blocked_reason_accessor().strip()
         if blocked_reason:
             setup_reason = self._setup_blocked_reason_accessor().strip()
@@ -1074,6 +1094,13 @@ class ConsolePromptQueueUIController:
                 ConsolePromptDispatchStatus.REFUSED, detail=visible
             )
 
+        prepared: Callable[[], AbstractContextManager[None]] = contextlib.nullcontext
+        if (
+            session_id is not None
+            and self._precapture is not None
+            and self._dispatch_builds_turn(session_id)
+        ):
+            prepared = await self._precapture(session_id)
         if session_id is None:
             self._ensure_active_session()
         controller = self._chat_controller_accessor()
@@ -1095,15 +1122,17 @@ class ConsolePromptQueueUIController:
             )
 
         if activity.accepted_live_turn or snapshot.total_count > 0:
+            with prepared():
+                configuration = self._capture_configuration(session_id)
             queued = await controller.queue_prompt(
                 session_id,
                 text=draft,
                 expected_revision=snapshot.revision,
-                configuration=self._capture_configuration(session_id),
+                configuration=configuration,
             )
             if queued.status is QueueMutationStatus.REROUTE_NORMAL_SEND:
                 return await self._stage_normal_chain(
-                    controller, session_id, draft, stash
+                    controller, session_id, draft, stash, prepared
                 )
             if queued.applied:
                 self._commit_queued_draft(session_id, stash)
@@ -1121,7 +1150,22 @@ class ConsolePromptQueueUIController:
                 session_id=session_id,
                 detail=refusal,
             )
-        return await self._stage_normal_chain(controller, session_id, draft, stash)
+        return await self._stage_normal_chain(
+            controller, session_id, draft, stash, prepared
+        )
+
+    def _dispatch_builds_turn(self, session_id: str) -> bool:
+        """Whether ``dispatch`` would now capture a turn rather than refuse it.
+
+        TASK-33620.15: the preparing gate, read-only, so a send it refuses
+        is refused at once. The rarer refusal copy (emergency stop, the
+        parallel-run cap, recovery) is evaluated once, after the read, where
+        ``dispatch`` always did.
+        """
+        controller = self._chat_controller_accessor()
+        snapshot = controller.prompt_queue_registry.snapshot(session_id)
+        activity = controller.activity_for(session_id)
+        return not (activity.preparing_before_acceptance and snapshot.total_count == 0)
 
     async def _stage_normal_chain(
         self,
@@ -1129,6 +1173,7 @@ class ConsolePromptQueueUIController:
         session_id: str,
         draft: str,
         stash: "ConsoleDraftStash | None",
+        prepared: Callable[[], AbstractContextManager[None]] = contextlib.nullcontext,
     ) -> ConsolePromptDispatchResult:
         # Re-check the controller gate at the exact manual/queue boundary.
         # An accepted-turn race is retried as queue admission once, while a
@@ -1147,11 +1192,13 @@ class ConsolePromptQueueUIController:
             )
         if activity.accepted_live_turn:
             snapshot = controller.prompt_queue_registry.snapshot(session_id)
+            with prepared():
+                configuration = self._capture_configuration(session_id)
             queued = await controller.queue_prompt(
                 session_id,
                 text=draft,
                 expected_revision=snapshot.revision,
-                configuration=self._capture_configuration(session_id),
+                configuration=configuration,
             )
             if queued.applied:
                 self._commit_queued_draft(session_id, stash)
@@ -1163,7 +1210,8 @@ class ConsolePromptQueueUIController:
                 return self._refuse_queue_mutation(queued, session_id, stash)
         self._note_follow_intent()
         try:
-            self._launch_chain(draft, session_id)
+            with prepared():
+                self._launch_chain(draft, session_id)
         except (RuntimeError, ValueError) as exc:
             detail = str(exc) or "Console runtime refused this turn."
             self._notify(detail, "warning")

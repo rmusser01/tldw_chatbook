@@ -2061,9 +2061,63 @@ def _settings_cache_hit(active_config_path: Path) -> dict | None:
         posture = _SETTINGS_CACHE_POSTURE
     if cached is None or source != active_config_path:
         return None
-    if _config_file_posture(active_config_path) != posture:
+    if not _posture_unchanged(active_config_path, cached, posture):
         return None
     return cached
+
+
+#: Per-thread record of the last UI-loop stretch that re-checked the posture.
+_POSTURE_STRETCH = None
+
+
+def _posture_unchanged(active_config_path: Path, cached: dict, posture: tuple) -> bool:
+    """Whether the config path still has ``posture``; one check per loop stretch.
+
+    TASK-33620.15: a warm hit ``lstat``s every path component, and one Console
+    send made 114-243 warm hits on the UI loop (53-251 ms in the mounted
+    harness; a 294 ms live stall in the 0.2 s sync tick, where each ``lstat``
+    gives up the GIL to busy workers). On the thread running an event loop,
+    one check now covers the callbacks the loop runs before its next batch,
+    which no other code on that thread can interleave with; a rebuild or a
+    write installs a new settings object, which is never matched. Every
+    caller off a loop -- workers, tests, scripts -- still checks every hit.
+
+    Args:
+        active_config_path: The config path the warm hit is for.
+        cached: The installed settings object that hit.
+        posture: The identity stamped when ``cached`` was read.
+
+    Returns:
+        True while the path's identity is the stamped one.
+    """
+    global _POSTURE_STRETCH
+    import asyncio
+
+    loop = asyncio._get_running_loop()
+    if loop is None:
+        return _config_file_posture(active_config_path) == posture
+    if _POSTURE_STRETCH is None:
+        _POSTURE_STRETCH = _threading.local()
+    stretch = _POSTURE_STRETCH
+    seen = getattr(stretch, "seen", None)
+    if (
+        seen is not None
+        and seen[0] is loop
+        and seen[1] is cached
+        and seen[2] is posture
+        and seen[3] == active_config_path
+    ):
+        return True
+    if _config_file_posture(active_config_path) != posture:
+        return False
+    stretch.seen = (loop, cached, posture, active_config_path)
+    loop.call_soon(_end_posture_stretch, stretch)
+    return True
+
+
+def _end_posture_stretch(stretch: Any) -> None:
+    """Make the next loop batch re-check the config path's identity."""
+    stretch.seen = None
 
 
 def load_settings(

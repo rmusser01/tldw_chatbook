@@ -164,13 +164,13 @@ class ConsoleHooksController:
     ) -> ConsolePromptDispatchResult:
         """Review hooks if the Send needs it, then run the captured dispatch.
 
-        Called anywhere but a worker's own task -- a Send button or Workbench
-        handler on the Console's pump, or Enter's ``app.call_later`` callback
-        on the APP pump -- a Send that needs review returns
-        ``AWAITING_REVIEW`` at once and its review-then-dispatch continuation
-        runs in a worker. That caller's pump must stay free: the app pump
-        delivers every key and click the review needs, so awaiting the review
-        there froze the whole app, Ctrl+Q included (TASK-33621.28). A worker
+        Called anywhere but a worker's own task -- the task Enter, Send and
+        the Workbench's send run in (TASK-33620.15), or a handler on a pump
+        -- a Send that needs review returns ``AWAITING_REVIEW`` at once and
+        its review-then-dispatch continuation runs in a worker. The app pump
+        must stay free: it delivers every key and click the review needs, so
+        awaiting the review there froze the whole app, Ctrl+Q included
+        (TASK-33621.28). A worker
         caller (spoken "send") awaits the whole continuation and gets its
         settled outcome. ``in_worker_task`` decides which, by task identity.
         """
@@ -242,17 +242,22 @@ class ConsoleHooksController:
         stash: ConsoleDraftStash | None,
         dispatch: Callable[[], Awaitable[ConsolePromptDispatchResult]],
     ) -> ConsolePromptDispatchResult:
-        if not snapshot.ready:
+        reviewed = not snapshot.ready
+        if reviewed:
             result = await self._request_review(snapshot, True)
             if result.kind != "ready":
                 return self._refused(session_id, "Send cancelled; draft kept.")
             snapshot = await asyncio.to_thread(self._permissions().snapshot)
             self._on_state(snapshot)
+        # The chat is always re-checked: the dispatcher reads the visible
+        # chat's send gate next. The draft only after a review: keys flow
+        # during the snapshot read, and text typed after the capture belongs
+        # to the next draft (TASK-340), not a reason to refuse this send.
         if (
             not snapshot.ready
             or generation != self._generation
             or self._session() != session_id
-            or not same_captured_draft(self._stash(), stash)
+            or (reviewed and not same_captured_draft(self._stash(), stash))
         ):
             return self._refused(
                 session_id, "Draft, chat or hooks changed; Send again."
