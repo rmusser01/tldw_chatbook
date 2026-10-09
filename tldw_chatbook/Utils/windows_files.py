@@ -54,6 +54,8 @@ _REPARSE = 0x400
 _DIRECTORY = 0x10
 _SHARE_ALL = 7
 _EPOCH_100NS = 116444736000000000
+# STATUS_BUFFER_TOO_SMALL / STATUS_BUFFER_OVERFLOW as signed NTSTATUS values.
+_STATUS_BUFFER_SHORT = frozenset({-1073741789, -2147483643})
 
 
 class _UnicodeString(C.Structure):
@@ -123,6 +125,10 @@ class _Overlapped(C.Structure):
     ]
 
 
+#: Separators, NT namespace/ADS punctuation, wildcards and every control code.
+_COMPONENT_FORBIDDEN = frozenset('/\\:\x00<>|?*"').union(map(chr, range(32)))
+
+
 def _component(name: str) -> str:
     """Require one unambiguous ordinary filename; reject NT namespaces and ADS."""
     # Kept explicit for Python 3.11/3.12, which lack ntpath.isreserved.
@@ -130,8 +136,7 @@ def _component(name: str) -> str:
         not isinstance(name, str)
         or not name
         or name in {".", ".."}
-        or any(char in name for char in '/\\:\x00<>|?*"')
-        or any(ord(char) < 32 for char in name)
+        or not _COMPONENT_FORBIDDEN.isdisjoint(name)
         or name[-1] in " ."
     ):
         raise ValueError("invalid_windows_component")
@@ -398,6 +403,12 @@ class _Native:
                 _I32,
             ),
             (self.nt, "RtlNtStatusToDosError", [_I32], _U32),
+            (
+                self.nt,
+                "NtQuerySecurityObject",
+                [_HANDLE, _U32, _P, _U32, C.POINTER(_U32)],
+                _I32,
+            ),
         ]
         for dll, name, arguments, result in signatures:
             function = getattr(dll, name)
@@ -493,39 +504,74 @@ class _Native:
         if device[1] & 0x10:
             raise OSError(errno.ENOTSUP, "remote_filesystem_refused")
 
-    def security(self, handle, is_directory, *, with_descriptor=False):
-        """Read fresh security; reuse only decoding of byte-identical descriptors."""
-        owner, dacl, descriptor = _P(), _P(), _P()
-        result = self.advapi.GetSecurityInfo(
-            handle, 1, 5, C.byref(owner), None, C.byref(dacl), None, C.byref(descriptor)
-        )
-        if result:
-            raise C.WinError(result)
-        try:
-            token_owner_sid = self._token_sid(4)
-            # GetSecurityInfo owns a complete valid descriptor. Self-relative
-            # descriptors are contiguous; never retain its native pointers.
-            # 128 entries of at most 4096 bytes bound retained descriptor data.
-            control = struct.unpack_from("<H", C.string_at(descriptor, 4), 2)[0]
-            if control & 0x8000:  # SE_SELF_RELATIVE
-                size = self.advapi.GetSecurityDescriptorLength(descriptor)
-                if 20 <= size <= 4096:
-                    data = C.string_at(descriptor, size)
-                    projected = self._decoded_security(
-                        data, is_directory, self.user_sid, token_owner_sid
-                    )
-                    return (*projected, data) if with_descriptor else projected
-            if with_descriptor:
-                raise OSError(errno.ENOTSUP, "windows_security_stamp_unavailable")
-            return self._decode_security(
-                owner, dacl, is_directory, self.user_sid, token_owner_sid
+    def security_descriptor(self, handle):
+        """Fresh self-relative OWNER|DACL bytes of the object behind ``handle``.
+
+        One NtQuerySecurityObject reads the object's own stored descriptor into
+        a call-local buffer; no native allocation or pointer outlives the call.
+        GetSecurityInfo, used before, issued the same query through advapi's
+        provider and, for objects without SE_DACL_AUTO_INHERITED (every
+        directory this app creates), also re-read the PARENT's descriptor to
+        synthesize INHERITED_ACE bits and an unrequested group SID: 5-15x the
+        cost, and neither affects the owner/DACL projection below.
+        """
+        size = 512
+        for _ in range(4):
+            buffer, needed = C.create_string_buffer(size), _U32()
+            status = self.nt.NtQuerySecurityObject(
+                handle, 5, buffer, size, C.byref(needed)
             )
-        finally:
-            self.kernel.LocalFree(descriptor)
+            if status in _STATUS_BUFFER_SHORT and size < needed.value <= 0x10000:
+                size = needed.value  # the descriptor grew; query again
+                continue
+            self.ntcheck(status)
+            length = self.advapi.GetSecurityDescriptorLength(buffer)
+            control = struct.unpack_from("<H", buffer, 2)[0]
+            # Only contiguous SE_SELF_RELATIVE bytes are decodable copies; an
+            # absolute descriptor would hold process pointers. Fail closed.
+            if not control & 0x8000 or not 20 <= length <= size:
+                raise OSError(errno.EIO, "windows_security_descriptor_invalid")
+            return C.string_at(buffer, length)
+        raise OSError(errno.EIO, "windows_security_descriptor_unstable")
+
+    def security(self, handle, is_directory, *, with_descriptor=False):
+        """Read fresh security; reuse only decoding of byte-identical descriptors.
+
+        TokenOwner is queried afresh, never cached, for every observation whose
+        projection can depend on it: an administrative owner other than the
+        token user (``_owner_uid``'s custody branch). Other owners project
+        identically for every TokenOwner, so no token read is spent on them.
+        """
+        data = self.security_descriptor(handle)
+        # 128 entries of at most 4096 bytes bound retained descriptor data.
+        if len(data) <= 4096:
+            owner_sid, aces, mode = self._decoded_security(
+                data, is_directory, self.user_sid
+            )
+        elif with_descriptor:
+            raise OSError(errno.ENOTSUP, "windows_security_stamp_unavailable")
+        else:
+            owner_sid, aces, mode = self._decode_descriptor(
+                data, is_directory, self.user_sid
+            )
+        token_owner_sid = (
+            self._token_sid(4)
+            if owner_sid != self.user_sid and owner_sid in _SYSTEM_SIDS
+            else None
+        )
+        projected = (
+            _owner_uid(owner_sid, self.user_sid, token_owner_sid, aces, mode),
+            mode,
+        )
+        return (*projected, data) if with_descriptor else projected
 
     @functools.lru_cache(maxsize=128)  # noqa: B019 - _native already retains this process-lifetime singleton.
-    def _decoded_security(self, data, is_directory, user_sid, token_owner_sid):
-        """Decode immutable bytes, never a cached handle or filesystem decision."""
+    def _decoded_security(self, data, is_directory, user_sid):
+        """Decode immutable bytes, never a handle, TokenOwner or filesystem decision."""
+        return self._decode_descriptor(data, is_directory, user_sid)
+
+    def _decode_descriptor(self, data, is_directory, user_sid):
+        """Owner SID, ordered ACEs and conservative mode of descriptor bytes."""
         descriptor = C.create_string_buffer(data)
         owner, dacl = _P(), _P()
         defaulted, present = _I32(), _I32()
@@ -539,15 +585,13 @@ class _Native:
                 descriptor, C.byref(present), C.byref(dacl), C.byref(defaulted)
             )
         )
-        return self._decode_security(
-            owner, dacl, is_directory, user_sid, token_owner_sid
-        )
+        return self._decode_security(owner, dacl, is_directory, user_sid)
 
-    def _decode_security(self, owner, dacl, is_directory, user_sid, token_owner_sid):
+    def _decode_security(self, owner, dacl, is_directory, user_sid):
         """Conservatively project the native owner and ordered ACL entries."""
         sid = self.sid_string(owner)
         if not dacl.value:
-            return _owner_uid(sid, user_sid, token_owner_sid, [], 0o777), 0o777
+            return sid, (), 0o777
         header = C.string_at(dacl, 8)
         count = struct.unpack_from("<H", header, 4)[0]
         aces = []
@@ -561,7 +605,7 @@ class _Native:
             trustee = self.sid_string(ace.value + 8) if kind in {0, 1} else ""
             aces.append((kind, flags, mask, trustee))
         mode = _acl_mode(aces, user_sid, is_directory=is_directory, owner_sid=sid)
-        return _owner_uid(sid, user_sid, token_owner_sid, aces, mode), mode
+        return sid, tuple(aces), mode
 
     def open_handle(
         self,
@@ -824,43 +868,63 @@ class WindowsOS:
         exact handle incarnation in the defining exception; it is never retried.
         """
         selected = tuple(Path(path) for path in paths)
-        nodes = sorted(
-            {node for path in selected for node in (*path.parents, path)},
-            key=lambda node: (len(node.parts), str(node)),
-        )
-        for node in nodes:
+        # Close the selection under parents once, as plain strings. A node key
+        # is its case-folded text (WindowsPath equality); the first spelling
+        # seen is kept, as the former Path set did. Every component is some
+        # node's own name, so validating each node's name once covers them all.
+        spelling, parent_of, name_of, depth_of = {}, {}, {}, {}
+        selected_keys = []
+        for path in selected:
             if (
-                not node.is_absolute()
-                or len(node.drive) != 2
-                or node.drive[1] != ":"
-                or not node.drive[0].isalpha()
+                not path.is_absolute()
+                or len(path.drive) != 2
+                or path.drive[1] != ":"
+                or not path.drive[0].isalpha()
             ):
                 raise ValueError("local_absolute_drive_path_required")
-            # The node set includes every ancestor; validate each name once.
-            if node.parent != node:
-                _component(node.name)
-        parents = {node.parent for node in nodes if node.parent != node}
+            parts = path.parts
+            texts = [parts[0]]
+            for part in parts[1:]:
+                texts.append(
+                    texts[-1] + part if len(texts) == 1 else texts[-1] + "\\" + part
+                )
+            # The former set inserted each path's parents nearest-first, then
+            # the path itself; keep that first-spelling order exactly.
+            for depth in (*range(len(texts) - 2, -1, -1), len(texts) - 1):
+                text = texts[depth]
+                key = text.lower()
+                if key not in spelling:
+                    spelling[key] = text
+                    parent_of[key] = texts[depth - 1].lower() if depth else None
+                    name_of[key] = parts[depth] if depth else None
+                    depth_of[key] = depth + 1
+            selected_keys.append(texts[-1].lower())
+        nodes = sorted(spelling, key=lambda key: (depth_of[key], spelling[key]))
+        for key in nodes:
+            if name_of[key] is not None:
+                _component(name_of[key])
+        parents = {parent_of[key] for key in nodes if parent_of[key] is not None}
         native = _native()
         handles, identities, observations = {}, {}, {}
         opened, failed = {}, []
 
         def named_handle(node):
             try:
-                if node.parent == node:
+                if parent_of[node] is None:
                     handle = native.open_handle(
-                        "\\??\\" + node.drive + "\\", directory=True
+                        "\\??\\" + spelling[node][:2] + "\\", directory=True
                     )
                 else:
                     handle = native.open_handle(
-                        node.name,
-                        parent=handles[node.parent],
+                        name_of[node],
+                        parent=handles[parent_of[node]],
                         metadata=True,
                         directory=node in parents,
                     )
             except _AdmissionMetadataCloseError as error:
                 failed.extend(error.failed_handles)
                 raise
-            record = _AdmissionMetadataHandle(native, handle, node)
+            record = _AdmissionMetadataHandle(native, handle, Path(spelling[node]))
             opened[handle] = record
             info = native.info(handle)
             record.identity = (info.volume, (info.index_high << 32) | info.index_low)
@@ -880,7 +944,7 @@ class WindowsOS:
 
         try:
             for node in nodes:
-                if node.parent != node and handles[node.parent] is None:
+                if parent_of[node] is not None and handles[parent_of[node]] is None:
                     handles[node] = None
                     continue
                 try:
@@ -896,7 +960,7 @@ class WindowsOS:
                     if failed:
                         raise _AdmissionMetadataCloseError(failed)
             for node in reversed(nodes):
-                if node.parent != node and handles[node.parent] is None:
+                if parent_of[node] is not None and handles[parent_of[node]] is None:
                     observations[node] = None
                     continue
                 try:
@@ -923,7 +987,9 @@ class WindowsOS:
                 if identity != identities.get(node):
                     raise OSError(errno.ESTALE, "windows_admission_snapshot_changed")
                 observations[node] = observed
-            return {path: observations[path] for path in selected}
+            return {
+                path: observations[key] for path, key in zip(selected, selected_keys)
+            }
         finally:
             for handle in reversed(tuple(opened)):
                 close_handle(handle)
