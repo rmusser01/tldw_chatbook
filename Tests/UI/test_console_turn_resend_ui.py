@@ -299,7 +299,16 @@ async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
     """The fast-lane failure, made deterministic: on a slow runner the 0.2s
     transcript poll ticked while the runtime held the accepted turn but the
     controller had not started it, saw an idle run, stopped, and never
-    rendered the turn."""
+    rendered the turn.
+
+    Poll decisions are counted from the moment the stalled start is entered,
+    not from the Send press. A Send reaches custody on its own schedule (the
+    hook snapshot and the turn authority are read off the UI pump,
+    TASK-33620.15): 0.3-0.7 s on a dev machine, longer on a loaded runner. A
+    fixed 0.6 s pause after the press asserted before the poll had even been
+    started (UI Fast Lane, TASK-33628.5.1; red on dev too under
+    ``taskpolicy -b``).
+    """
     host = _console_app(FailThenRecoverGateway())
 
     async with host.run_test(size=(211, 44)) as pilot:
@@ -307,19 +316,42 @@ async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
         await _wait_for_selector(console, pilot, "#console-native-composer")
         _select_llamacpp_console(console)
         controller = console._ensure_console_chat_controller()
+        entered = asyncio.Event()
         started = asyncio.Event()
         submit_draft = controller.submit_draft
 
         async def slow_start(*args, **kwargs):
+            entered.set()
             await started.wait()
             return await submit_draft(*args, **kwargs)
 
+        decisions: list[bool] = []
+        poll_needed = console._console_transcript_poll_needed
+
+        def counted_poll_needed() -> bool:
+            needed = poll_needed()
+            decisions.append(needed)
+            return needed
+
         monkeypatch.setattr(controller, "submit_draft", slow_start)
+        monkeypatch.setattr(
+            console, "_console_transcript_poll_needed", counted_poll_needed
+        )
         console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
             "hello"
         )
         console.query_one("#console-send-message", Button).press()
-        await pilot.pause(0.6)  # several poll ticks before the turn starts
+        await asyncio.wait_for(entered.wait(), 10)
+        assert console._console_runtime().has_custodied_turns()
+        held = len(decisions)
+        for _ in range(100):  # three poll decisions while the start is held
+            if (
+                len(decisions) >= held + 3
+                or console._console_transcript_sync_timer is None
+            ):
+                break
+            await pilot.pause(0.05)
+        assert decisions[held:][:3] == [True, True, True]
         assert console._console_transcript_sync_timer is not None
         started.set()
         await _wait_for_text(console, pilot, "llama.cpp stream failed")
