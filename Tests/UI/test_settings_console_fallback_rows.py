@@ -336,11 +336,12 @@ async def test_a_value_chat_defaults_does_not_hold_reads_built_in_like_model_def
             for name in ("streaming", "temperature", "top_p")
         }
         # The provider's Off outranks the built-in On; where nothing is set
-        # both surfaces show the same built-in value.
+        # both surfaces show the same built-in value. The help names only the
+        # value: the Source column already names the layer (checkpoint review).
         assert inherits == {
-            "streaming": "inherits Off · provider",
-            "temperature": "inherits 0.7 · built-in",
-            "top_p": "inherits 0.95 · built-in",
+            "streaming": "inherits Off",
+            "temperature": "inherits 0.7",
+            "top_p": "inherits 0.95",
         }
 
 
@@ -740,7 +741,7 @@ async def test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults
 ):
     """AC#3/AC#6: the whole app on a private profile -- the real Settings save
     writer sets chat_defaults.streaming = false, a model default left at
-    Inherit then says "inherits Off · Console Behavior", and Ctrl+T's new chat
+    Inherit then says "inherits Off" from Console Behavior, and Ctrl+T's new chat
     resolves streaming Off."""
     from Tests.UI.test_console_session_settings import (
         _build_live_config_test_app,
@@ -805,7 +806,7 @@ async def test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults
         inherit = screen.query_one("#settings-model-profile-streaming", Select)
         assert inherit.value is Select.NULL
         assert _text(screen, "#settings-model-profile-streaming-help") == (
-            "inherits Off · Console Behavior"
+            "inherits Off"
         )
 
         app.post_message(NavigateToScreen("chat"))
