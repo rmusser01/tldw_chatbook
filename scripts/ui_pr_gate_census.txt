@@ -196,3 +196,9 @@ Tests/UI/test_backup_restore_setup_entry.py
 # test_console_send_acknowledgement_extended.py, outside the lane. Appended,
 # so no other file changes shard.
 Tests/UI/test_console_send_acknowledgement.py
+
+# Roleplay frame B1 (TASK-33910.2): pure header state, the lazy sheet, FittedText, and TASK-34400's widget-level hostile-text sinks.
+Tests/UI/test_roleplay_frame_state.py
+Tests/UI/test_roleplay_stylesheet.py
+Tests/UI/test_workbench_fitted_text.py
+Tests/UI/test_roleplay_hostile_text_surfaces.py
