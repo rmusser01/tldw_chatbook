@@ -15,7 +15,7 @@
           Archived chats      │  Model and generation · Selected  Context and memory                                                                                               │                    │
         Search all chats…     │ Applies to this chat only · saved with the conversation · defaults live in Settings ▸ Providers & Models (F4)                                      │                    │
    Chat 1                     │ Model             gpt-5.6-terra · OpenAI                                          this chat  Ready · not tested · context unknown   Change Alt+M   │                    │
-                              │ Temperature       █ 0.6         Console Behavior   How varied replies are: lower is focused, higher is more varied.                                │                    │
+                              │ Temperature       █ 0.6         Console Behavior   Lower keeps replies focused; higher makes them varied.                                          │                    │
   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│ Max tokens        │ 4096        provider           Longest reply the model may write, in tokens.                                                   │                    │
   ▊  Filter visible     ▎     │ Streaming         │ Off      ▼  provider           Show the reply as it is generated.                                                              │                    │
   ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Reasoning effort  │ default  ▼  provider           Support not verified for this model. blank = provider default · How much a reasoning model thi… │                    │
