@@ -254,6 +254,7 @@ async def test_new_note_with_saved_content_survives_a_rail_round_trip(
 ):
     """Capture 28: the note created from New note stays open with its text."""
     _scaled_autosave(monkeypatch)
+    mounted = _record_surface_flags_at_mount(monkeypatch)
     host, profile = _host(tmp_path)
     async with host.run_test(size=SIZE) as pilot:
         screen = await _library(host, pilot)
@@ -273,6 +274,18 @@ async def test_new_note_with_saved_content_survives_a_rail_round_trip(
             "the note editor to be open again after the round trip",
             timeout=5.0,
         )
+        # Fix round 1: the pane exists and nothing has synced it yet -- its
+        # ``display`` flags are exactly what compose gave them. On the base
+        # they were composed True and flipped only by a later sync (a race
+        # the live captures at both sizes never won), so this is the
+        # deterministic half; the paint checks below are the user's half.
+        _assert_editor_surfaces_composed(screen, "edit")
+        # ...and as sampled at the rebuilt pane's own mount, before ANY sync
+        # could run: deterministic by construction (5 of 5 on the base).
+        assert mounted, "the work pane never mounted an editor"
+        assert mounted[-1] == EXPECTED_EDIT_FLAGS_AT_MOUNT, mounted[-1]
+        # One pause: the first painted frame of the rebuilt pane.
+        await pilot.pause()
         assert screen._notes_state.view == "editor"
         assert _session(screen).note_id == note_id
         assert screen.query_one(NOTE_BODY, TextArea).text == "s02 paper notes"
@@ -281,11 +294,108 @@ async def test_new_note_with_saved_content_survives_a_rail_round_trip(
         # review's false "changed elsewhere" render was the rebuilt work
         # pane's conflict callout, composed visible and hidden only by a
         # later presentation sync that an untouched note never triggered.
-        await pilot.pause()
-        await pilot.pause()
+        # Fix round 1: the SAME cause showed Edit, Preview and Info stacked,
+        # two Back buttons and the bulk strip with the body unpainted --
+        # asserted on the compositor, immediately, before any later sync.
+        _assert_editor_surfaces_painted(screen, "edit")
         _assert_no_conflict_rendered(screen)
         assert _session(screen).in_conflict is False
     profile.db.close_connection()
+
+
+EDITOR_SURFACES = {
+    "edit": {"painted": ("#library-note-body", "#library-note-editor-region"), "hidden": ("#library-note-preview-region", "#library-note-context-region")},
+    "preview": {"painted": ("#library-note-preview-region",), "hidden": ("#library-note-body", "#library-note-context-region")},
+    "context": {"painted": ("#library-note-context-region",), "hidden": ("#library-note-body", "#library-note-preview-region")},
+}
+
+
+#: ``display`` of the gated surfaces a retained Edit-mode note must carry the
+#: instant its rebuilt pane mounts (the first frame paints from these).
+EXPECTED_EDIT_FLAGS_AT_MOUNT = {
+    "#library-note-editor-region": True,
+    "#library-note-preview-region": False,
+    "#library-note-context-region": False,
+    "#library-note-back": True,
+    "#library-note-context-back": False,
+    "#library-note-bulk-status": False,
+    "#library-note-conflict-region": False,
+    "#library-note-wide-utilities": False,
+    "#library-note-delete-confirmation": False,
+}
+
+
+def _record_surface_flags_at_mount(monkeypatch) -> list[dict[str, bool]]:
+    """Sample the gated surfaces' ``display`` at every editor pane's mount.
+
+    ``LibraryNotesCanvas._apply_post_compose_state`` runs from ``on_mount``,
+    after the children exist and before any later presentation sync can
+    land, so what it sees is exactly what compose produced. Recording there
+    makes the base's race a certainty: on ``02b60c5e38`` the rebuilt pane
+    composed every surface visible and a later sync hid them only
+    sometimes (the live captures at both sizes caught the wrong frame).
+    """
+    from tldw_chatbook.Widgets.Library.library_notes_canvas import LibraryNotesCanvas
+
+    samples: list[dict[str, bool]] = []
+    real = LibraryNotesCanvas._apply_post_compose_state
+
+    def sampled(self):
+        if self.mode == "editor" and self.query("#library-note-body"):
+            samples.append(
+                {
+                    selector: bool(self.query_one(selector).display)
+                    for selector in EXPECTED_EDIT_FLAGS_AT_MOUNT
+                }
+            )
+        return real(self)
+
+    monkeypatch.setattr(LibraryNotesCanvas, "_apply_post_compose_state", sampled)
+    return samples
+
+
+def _assert_editor_surfaces_composed(screen, mode: str) -> None:
+    """The gated surfaces' ``display`` flags as composed, before any sync."""
+    for selector in EDITOR_SURFACES[mode]["painted"]:
+        assert screen.query_one(selector).display is True, f"{selector} composed hidden"
+    for selector in EDITOR_SURFACES[mode]["hidden"]:
+        assert screen.query_one(selector).display is False, f"{selector} composed shown"
+    assert screen.query_one("#library-note-bulk-status").display is False
+    assert screen.query_one("#library-note-conflict-region").display is False
+    assert screen.query_one("#library-note-wide-utilities").display is False
+    assert screen.query_one("#library-note-delete-confirmation").display is False
+    backs = [
+        selector
+        for selector in ("#library-note-back", "#library-note-context-back")
+        if screen.query_one(selector).display
+    ]
+    assert len(backs) == 1, f"back buttons composed shown: {backs}"
+
+
+def _painted(screen, selector) -> bool:
+    widget = screen.query_one(selector)
+    return widget in screen._compositor.visible_widgets and widget.region.height > 0
+
+
+def _assert_editor_surfaces_painted(screen, mode: str) -> None:
+    """Exactly the surfaces of ``mode`` are painted: one region, one Back,
+    no bulk strip -- the retained editor as the user left it, in the first
+    frame after the return (no later sync may be relied on)."""
+    for selector in EDITOR_SURFACES[mode]["painted"]:
+        assert _painted(screen, selector), f"{selector} is not painted in {mode}"
+    if mode == "edit":
+        assert screen.query_one("#library-note-body").region.height >= 6
+    for selector in EDITOR_SURFACES[mode]["hidden"]:
+        assert not _painted(screen, selector), f"{selector} is painted in {mode}"
+    backs = [
+        selector
+        for selector in ("#library-note-back", "#library-note-context-back")
+        if _painted(screen, selector)
+    ]
+    assert len(backs) == 1, f"back buttons painted: {backs}"
+    assert not _painted(screen, "#library-note-bulk-status")
+    assert not _painted(screen, "#library-note-wide-utilities")
+    assert not _painted(screen, "#library-note-delete-confirmation")
 
 
 # --- AC#3 / Review Focus 5: unsaved text survives, and no false conflict ------

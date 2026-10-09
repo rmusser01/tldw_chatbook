@@ -37,6 +37,7 @@ from Tests.UI.library_quit_guard_support import (
 from Tests.UI.test_library_media_reader_flow import _reader_key_fake
 from Tests.UI.test_library_rail_switch_keeps_reader_and_note import (
     LOADED_ID,
+    _assert_editor_surfaces_painted,
     MEDIA_ROW,
     NOTE_BODY,
     NOTE_TITLE,
@@ -401,3 +402,107 @@ async def test_n_note_round_trip_at_120x36_restores_the_scroll(tmp_path):
             LibraryMediaContentBody,
         )
     profile.db.close_connection()
+
+
+# --- fix round 1: the retained editor keeps the mode it was left on ---------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("button", "mode"),
+    [("#library-note-preview", "preview"), ("#library-note-context", "context")],
+)
+async def test_a_retained_note_comes_back_on_the_mode_it_was_left_on(
+    tmp_path, monkeypatch, button, mode
+):
+    """Preview and Info survive the round trip with exactly their surfaces
+    painted in the first frame (the gated file pins Edit)."""
+    _scaled_autosave(monkeypatch)
+    host, profile = _host(tmp_path)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = await _library(host, pilot)
+        await _new_blank_note(screen, pilot)
+        await _type_at_end(pilot, screen.query_one(NOTE_BODY, TextArea), "s02 paper notes")
+        await _until(pilot, lambda: _saved(screen), "the autosave to land")
+        screen.query_one(button, Button).press()
+        await _until(
+            pilot,
+            lambda: _painted_region(screen, mode),
+            f"the {mode} region to paint",
+        )
+        _assert_editor_surfaces_painted(screen, mode)
+
+        await _rail(screen, pilot, "media")
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+        await _rail(screen, pilot, "notes")
+        await _until(
+            pilot,
+            lambda: bool(screen.query("#library-note-title")),
+            "the note editor to be open again after the round trip",
+            timeout=5.0,
+        )
+        await pilot.pause()
+        _assert_editor_surfaces_painted(screen, mode)
+    profile.db.close_connection()
+
+
+def _painted_region(screen, mode: str) -> bool:
+    selector = {"preview": "#library-note-preview-region", "context": "#library-note-context-region"}[mode]
+    try:
+        widget = screen.query_one(selector)
+    except Exception:  # noqa: BLE001 -- not composed yet
+        return False
+    return widget in screen._compositor.visible_widgets and widget.region.height > 0
+
+
+# --- fix round 1: the primary toolbar with five buttons ----------------------
+
+
+def _primary_buttons(reader):
+    return [
+        reader.query_one(selector, Button)
+        for selector in (
+            "#library-media-reader-find",
+            "#library-media-take-note",
+            "#library-media-read-later",
+            "#library-media-use-in-chat",
+            "#library-media-reader-more",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_more_open_cue_fits_the_narrowest_reader_and_wide_readers_keep_one_row(
+    tmp_path,
+):
+    """100x30: the five actions stack into two rows so ``More ▴`` is whole
+    inside the Reader; 120x36 and 160x45: one row, as before the fifth
+    button (the threshold is derived from the labels, not a size)."""
+    from Tests.UI.test_library_media_reader_shell import _painted_text_in_region
+
+    for size, stacked in (((100, 30), True), ((120, 36), False), ((160, 45), False)):
+        size_dir = tmp_path / f"{size[0]}x{size[1]}"
+        size_dir.mkdir()
+        host, profile = _host(size_dir)
+        async with host.run_test(size=size) as pilot:
+            screen = await _library(host, pilot)
+            await _open_media_item(screen, pilot)
+            reader = screen.query_one("#library-media-viewer")
+            buttons = _primary_buttons(reader)
+            rows = {button.region.y for button in buttons}
+            assert (len(rows) == 2) is stacked, (size, [(b.id, b.region) for b in buttons])
+            for button in buttons:
+                assert reader.content_region.contains_region(button.region), (size, button.id, button.region)
+            screen.query_one("#library-media-reader-more", Button).press()
+            await _until(
+                pilot,
+                lambda: "\u25b4" in str(screen.query_one("#library-media-reader-more", Button).label),
+                "More to open",
+            )
+            await pilot.pause()
+            more = screen.query_one("#library-media-reader-more", Button)
+            assert reader.content_region.contains_region(more.region), (size, more.region, reader.content_region)
+            painted = _painted_text_in_region(host, more.region)
+            assert "More \u25b4" in painted, (size, painted)
+            assert screen.query_one("#library-media-reader-more-actions")
+        profile.db.close_connection()
