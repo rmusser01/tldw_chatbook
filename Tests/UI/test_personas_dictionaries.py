@@ -1,7 +1,6 @@
 """Mounted tests for the Roleplay Dictionaries mode (P1a)."""
 
 import copy
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,8 +10,7 @@ import pytest
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, DataTable, Input, ListView, Static, Switch, TextArea
 
-from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
-from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from Tests.UI.roleplay_frame_harness import PersonasTestApp, StyledPersonasTestApp
 from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryEntryAddRequested,
     DictionarySettingsSaveRequested,
@@ -685,47 +683,6 @@ def stub_characters(monkeypatch):
         character_handler_module, "fetch_character_by_id", lambda character_id: None
     )
     patch_character_paging(monkeypatch)
-
-
-class PersonasTestApp(ConsolidatedCSSApp):
-    """Same harness as test_personas_workbench.py (delegating App)."""
-
-    def __init__(self, mock_app_instance):
-        super().__init__()
-        self._mock = mock_app_instance
-        self.character_persona_scope_service = (
-            mock_app_instance.character_persona_scope_service
-        )
-
-    _NON_DELEGATED_PREFIXES = (
-        "_",
-        "watch_",
-        "compute_",
-        "validate_",
-        "action_",
-        "key_",
-        "on_",
-    )
-
-    def __getattr__(self, name):
-        if name.startswith(self._NON_DELEGATED_PREFIXES):
-            raise AttributeError(name)
-        return getattr(self.__dict__["_mock"], name)
-
-    def compose(self):
-        yield AppFooterStatus(id="app-footer-status")
-
-    def on_mount(self) -> None:
-        self.push_screen(PersonasScreen(self))
-
-
-class StyledPersonasTestApp(PersonasTestApp):
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
 
 
 async def _mounted(pilot):

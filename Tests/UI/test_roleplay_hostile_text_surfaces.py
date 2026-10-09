@@ -25,11 +25,8 @@ from textual.app import ComposeResult
 from textual.widgets import Select, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from Tests.UI.test_roleplay_hostile_names import (
-    HOSTILE_NAMES,
-    click_meta_cells,
-    painted_rows,
-)
+from Tests.UI.roleplay_frame_harness import click_meta_cells, painted_rows
+from Tests.UI.test_roleplay_hostile_names import HOSTILE_NAMES
 from tldw_chatbook.UI.CCP_Modules.ccp_character_handler import CCPCharacterHandler
 from tldw_chatbook.UI.CCP_Modules.ccp_loading_indicators import (
     LoadingManager,

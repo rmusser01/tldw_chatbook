@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 import inspect
 import json
 import os
-from pathlib import Path
 import threading
 from types import SimpleNamespace
 from typing import Any
@@ -25,6 +24,11 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, Input, ListView, Select, Static, TextArea
 
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
+
+# Roleplay frame B1: the delegating harness apps moved to
+# Tests/UI/roleplay_frame_harness.py (spec 5.7.1); these names stay importable
+# from here for the modules that import them.
+from Tests.UI.roleplay_frame_harness import PersonasTestApp, StyledPersonasTestApp
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
@@ -213,66 +217,6 @@ def stub_characters(monkeypatch):
     # Task 4: the library pages from the DB seam now; mirror fetch_all_characters
     # (read live so tests that swap it mid-run for create/delete stay consistent).
     patch_character_paging(monkeypatch)
-
-
-class PersonasTestApp(ConsolidatedCSSApp):
-    def __init__(self, mock_app_instance):
-        super().__init__()
-        self._mock = mock_app_instance
-        self.character_persona_scope_service = (
-            mock_app_instance.character_persona_scope_service
-        )
-
-    # Delegating these to a MagicMock would make Textual see phantom dynamic
-    # hooks (``compute_*``/``watch_*``/...) on the App and crash at mount.
-    _NON_DELEGATED_PREFIXES = (
-        "_",
-        "watch_",
-        "compute_",
-        "validate_",
-        "action_",
-        "key_",
-        "on_",
-    )
-
-    def __getattr__(self, name):
-        if name.startswith(self._NON_DELEGATED_PREFIXES):
-            raise AttributeError(name)
-        return getattr(self.__dict__["_mock"], name)
-
-    def compose(self):
-        # Mirrors the real app: an `AppFooterStatus` composed directly on
-        # the app's own default screen (see app.py's `compose()`).
-        # Task-264: `PersonasScreen` (via `BaseAppScreen.compose()`) now
-        # mounts its OWN `AppFooterStatus` too, and
-        # `PersonasScreen._register_footer_shortcuts()` resolves that
-        # screen-owned instance via ``self.query_one("AppFooterStatus")`` --
-        # so this default-screen widget is only kept around as a foil (the
-        # tests below assert the registration does NOT land here).
-        yield AppFooterStatus(id="app-footer-status")
-
-    async def _ensure_tts_profile_service(self):
-        """Delegate the real app's private lazy loader when a test provides it."""
-
-        loader = self.__dict__["_mock"].__dict__.get("_ensure_tts_profile_service")
-        if not callable(loader):
-            return None
-        result = loader()
-        if inspect.isawaitable(result):
-            result = await result
-        return result
-
-    def on_mount(self) -> None:
-        self.push_screen(PersonasScreen(self))
-
-
-class StyledPersonasTestApp(PersonasTestApp):
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
 
 
 class PersonaBuddyWorkbenchApp(PersonasTestApp):

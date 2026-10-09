@@ -12,24 +12,29 @@ copy of the name runs nothing. ``[/`` and ``[TODO] y`` pin the escaper choice:
 
 from __future__ import annotations
 
-import asyncio
-import time
-from collections.abc import Callable
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.pilot import Pilot
-from textual.screen import Screen
 from textual.widgets import ListView
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (bootstrap profile)
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
+
+# Roleplay frame B1: the paint helpers and the character seam live in the
+# frame harness, their one home (test_roleplay_hostile_text_surfaces.py
+# imports them from there too).
+from Tests.UI.roleplay_frame_harness import (
+    click_meta_cells,
+    painted_rows,
+    seed_mock_characters,
+    settle,
+    wait_until,
+)
 from Tests.UI.test_personas_dictionaries import (
     FakeDictScopeService,
     make_dict_record,
-    patch_character_paging,
 )
 from Tests.UI.test_personas_workbench import (
     PersonasTestApp,
@@ -65,106 +70,6 @@ class _RecordingApp(PersonasTestApp):
 
     def action_record(self, value: str) -> None:
         self.recorded.append(value)
-
-
-def _seed_characters(monkeypatch, records: list[dict]) -> None:
-    """Route the screen's character seams over ``records``."""
-    monkeypatch.setattr(
-        character_handler_module,
-        "fetch_all_characters",
-        lambda: [dict(record) for record in records],
-    )
-    monkeypatch.setattr(
-        character_handler_module,
-        "fetch_character_by_id",
-        lambda character_id: next(
-            (dict(r) for r in records if str(r["id"]) == str(character_id)), None
-        ),
-    )
-    patch_character_paging(monkeypatch)
-
-
-def painted_rows(screen: Screen) -> list[str]:
-    """Every compositor row as plain text: what the terminal shows.
-
-    Args:
-        screen: The mounted screen whose compositor output is read.
-
-    Returns:
-        One string per terminal row, top to bottom, as currently painted.
-    """
-    return [strip.text for strip in screen._compositor.render_strips()]
-
-
-def click_meta_cells(screen: Screen) -> list[tuple[int, int, str, str]]:
-    """Every painted cell run that carries an ``@click`` action.
-
-    Args:
-        screen: The mounted screen whose compositor output is scanned.
-
-    Returns:
-        ``(x, y, text, action)`` for each painted segment whose style meta
-        holds ``@click``; empty when no painted text is clickable markup.
-    """
-    hits = []
-    for y, strip in enumerate(screen._compositor.render_strips()):
-        x = 0
-        for segment in strip:
-            meta = segment.style.meta if segment.style is not None else {}
-            if meta and "@click" in meta:
-                hits.append((x, y, segment.text, meta["@click"]))
-            x += segment.cell_length
-    return hits
-
-
-async def settle(pilot: Pilot) -> None:
-    """Let the screen's own workers finish, then repaint twice.
-
-    Only workers owned by the current screen: the full app runs app-wide
-    workers that never finish, so ``app.workers.wait_for_complete()`` would
-    wait forever there.
-
-    Args:
-        pilot: The running test pilot.
-    """
-    await pilot.pause()
-    screen = pilot.app.screen
-    unfinished = [
-        worker
-        for worker in pilot.app.workers
-        if screen in worker.node.ancestors_with_self and not worker.is_finished
-    ]
-    if unfinished:
-        await pilot.app.workers.wait_for_complete(unfinished)
-    await pilot.pause()
-    await asyncio.sleep(0)
-    await pilot.pause()
-
-
-async def wait_until(
-    pilot: Pilot,
-    predicate: Callable[[], bool],
-    *,
-    timeout: float = 20.0,
-    what: str = "",
-) -> None:
-    """Poll ``predicate`` with a monotonic deadline.
-
-    Args:
-        pilot: The running test pilot.
-        predicate: Returns True once the awaited state holds.
-        timeout: Seconds to wait before failing.
-        what: Names the awaited state in the failure message.
-
-    Raises:
-        AssertionError: ``predicate`` stayed False for ``timeout`` seconds.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        await pilot.pause(0.02)
-    raise AssertionError(f"timed out after {timeout}s waiting for {what or predicate}")
 
 
 def _painted(screen) -> str:
@@ -219,7 +124,7 @@ async def test_the_real_app_keeps_running_with_a_character_named_like_markup(
     """The user-visible failure: on dev the whole app exited when Roleplay
     showed a character named ``[/]`` (a render-time ``MarkupError`` from the
     Inspector's ``Selected:`` line, which the keep-alive does not cover)."""
-    _seed_characters(
+    seed_mock_characters(
         monkeypatch, [{"id": 1, "name": "[/]", "description": "d", "version": 1}]
     )
     app = _build_test_app(configured_default="personas")
@@ -247,7 +152,7 @@ async def test_a_character_name_tag_and_conversation_title(
 ):
     """Library row, card, Inspector, conversation row, the Tag filter button,
     a toast and the header's ``Editing`` subtitle."""
-    _seed_characters(
+    seed_mock_characters(
         monkeypatch,
         [{"id": 1, "name": name, "description": "d", "tags": [name], "version": 1}],
     )
@@ -285,7 +190,7 @@ async def test_a_character_name_tag_and_conversation_title(
 
 @pytest.mark.parametrize("name", HOSTILE_NAMES)
 async def test_a_persona_name(name, mock_app_instance, monkeypatch):
-    _seed_characters(monkeypatch, [])
+    seed_mock_characters(monkeypatch, [])
     record = {
         "id": "p-1",
         "name": name,
@@ -312,7 +217,7 @@ async def test_a_persona_name(name, mock_app_instance, monkeypatch):
 async def test_a_chat_dictionary_and_its_entry_key(
     name, mock_app_instance, monkeypatch
 ):
-    _seed_characters(monkeypatch, [])
+    seed_mock_characters(monkeypatch, [])
     entry = {
         "pattern": name,
         "replacement": "replacement",
@@ -342,7 +247,7 @@ async def test_a_chat_dictionary_and_its_entry_key(
 async def test_a_lore_book_and_its_entry_key(
     name, mock_app_instance, monkeypatch, tmp_path
 ):
-    _seed_characters(monkeypatch, [])
+    seed_mock_characters(monkeypatch, [])
     db = CharactersRAGDB(tmp_path / "hostile_lore.db", "test-client")
     try:
         manager = WorldBookManager(db)
@@ -367,7 +272,7 @@ async def test_a_persona_save_that_fails_validation_keeps_the_app_running(
     """TASK-33790's crash: a 205-character name fails the model's 200-character
     limit, and the validation text (``[type=string_too_long, ...]``) reached a
     markup-parsing toast."""
-    _seed_characters(monkeypatch, [])
+    seed_mock_characters(monkeypatch, [])
     service = Mock()
     service.list_persona_profiles = AsyncMock(return_value={"items": [], "total": 0})
     service.create_persona_profile = AsyncMock(return_value={"id": "p-9"})
