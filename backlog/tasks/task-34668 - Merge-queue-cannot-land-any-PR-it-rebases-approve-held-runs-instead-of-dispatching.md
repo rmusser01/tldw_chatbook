@@ -103,4 +103,13 @@ Independent review round 6: one major finding and five minor ones, all fixed:
 5. A failed rebase whose head moved anyway (the response lost) woke nothing, so the new head's held runs had no approver. It wakes a tick.
 6. Tests: the strike boundary is pinned (exactly 10 minutes evicts), the second-strike test uses a real createdAt, and a failed re-read after a failed disarm fails the run.
 Mutation check: 43 mutants of the round-2 to round-6 guards, all killed (after the dead catch was removed).
+Independent review round 7: no critical or major findings; four minor, two plausible-minor and nits, all fixed:
+1. _rerun_error still read any error without '(HTTP ' as transient, so gh's bodiless 'gh: HTTP 404' re-raised forever. The clause is gone (_transient covers network errors); refusals match 'HTTP 409/422' with or without parentheses.
+2. Round 6's head-moved wake sat on the wrong branch: a lost rebase response arrives as a transient error. The transient branch now re-reads and wakes only if the head moved; the non-transient head-moved branch (a racing run losing) no longer kicks, saving a run per merge.
+3. 'locked' matched GitHub's 'temporarily blocked from content creation' rate limit. CommentRefused now needs 'is locked', with that rate-limit message pinned as a test.
+4. A gh warning line printed before the 'gh: ' message would have read as a network error; any line starting 'gh: ' now counts as a server answer.
+5. The rerun-error cap had no time gap, so one odd answer seen by two runs a minute apart evicted. It now uses STRIKE_GAP like rebase strikes.
+6. An Actions incident delaying run creation past the young window evicted on first sight (evict-no-run). No-run is now a strike too: warn first, evict 10 minutes later. Documented: an incident longer than that, seen twice, still evicts.
+7. Nits: ADR-218 now names the locked-PR rule and the strike kinds; bare 'HTTP 429' tested; a stale comment removed; ISC004 string concatenations parenthesised.
+Mutation check: 41 mutants of the round-2 to round-7 guards, all killed.
 <!-- SECTION:NOTES:END -->

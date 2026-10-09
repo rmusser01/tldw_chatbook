@@ -47,7 +47,6 @@ MAX_PAGES = 10
 PASSING = frozenset({"success", "neutral", "skipped"})
 LIVE_RUN_STATUSES = frozenset({"queued", "in_progress", "waiting", "requested", "pending"})
 BROKEN_RUN_CONCLUSIONS = frozenset({"failure", "startup_failure", "timed_out"})
-# gh reports API errors as `gh: <message> (HTTP NNN)` (verified live).
 # A queue rebase (GITHUB_TOKEN) makes GitHub create the PR's pull_request runs held for approval
 # (spec F4). Those are the runs whose checks count toward mergeability; a workflow_dispatch run's
 # check does not appear in the PR's status rollup at all (spec V4, 2026-10-06). So the queue
@@ -63,7 +62,7 @@ HELD_RUN_POLL_S = 3
 # - unknown, anything else (GitHub answers a re-run of a broken workflow file with a 403, as does a
 #   permission error): the first one re-raises with a `rerun-error` comment, and the second on the
 #   same head counts as refused, so a lasting error cannot fail every queue run forever.
-RERUN_REFUSALS = ("(HTTP 409)", "(HTTP 422)")
+RERUN_REFUSALS = ("HTTP 409", "HTTP 422")  # gh prints `(HTTP 409)`, or `HTTP 409` for a body-less answer
 RERUN_REFUSAL_403_TEXT = "month ago"
 # How long a woken queue run waits for a run to complete before deciding: well past the seconds the
 # waited run's queue-tick needs to finish. Kept to 3 minutes because the first front is decided
@@ -610,7 +609,7 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool
     try:
         gh.rest("POST", f"repos/{REPO}/issues/{number}/comments", {"body": f"{marker}\n{body}"})
     except GhError as exc:
-        if "locked" in str(exc).lower() and not _transient(exc):
+        if "is locked" in str(exc).lower():
             raise CommentRefused(str(exc)) from exc
         raise
     return True
@@ -777,8 +776,11 @@ def _transient(exc: GhError) -> bool:
     """
     message = str(exc).split(" failed: ", 1)[-1]
     lowered = message.lower()
+    # ponytail: "no `gh: ` line" = network. Should gh ever drop that prefix, every error reads as
+    # transient: queue runs fail visibly and nothing is disarmed; match the new shape then.
+    server_answered = any(line.startswith("gh: ") for line in message.splitlines())
     return ("HTTP 5" in message or "HTTP 429" in message or "rate limit" in lowered or "abuse detection" in lowered
-            or "something went wrong while executing your query" in lowered or not message.startswith("gh: "))
+            or "something went wrong while executing your query" in lowered or not server_answered)
 
 
 def _rerun_error(exc: GhError) -> str:
@@ -792,15 +794,15 @@ def _rerun_error(exc: GhError) -> str:
     """
     text = str(exc)
     lowered = text.lower()
-    if any(code in text for code in RERUN_REFUSALS) or ("(HTTP 403)" in text and RERUN_REFUSAL_403_TEXT in lowered):
+    if any(code in text for code in RERUN_REFUSALS) or ("HTTP 403" in text and RERUN_REFUSAL_403_TEXT in lowered):
         return "refused"
-    if _transient(exc) or "(HTTP " not in text:  # a REST call with no HTTP status is a network error
+    if _transient(exc):
         return "transient"
     return "unknown"
 
 
 def _rerun(gh: GhApi, pr: PrState, run: dict, failed_only: bool, log: Callable[[str], None],
-           sleep: Callable[[float], None]) -> str:
+           sleep: Callable[[float], None], now: Callable[[], datetime]) -> str:
     """Re-run a required-workflow run in place, then approve the re-run if GitHub holds it.
 
     A re-run adds a new attempt to the same check suite, so it replaces the old result for branch
@@ -813,6 +815,7 @@ def _rerun(gh: GhApi, pr: PrState, run: dict, failed_only: bool, log: Callable[[
         failed_only: Re-run only the failed jobs (`rerun-failed-jobs`) instead of the whole run.
         log: Receives one line per notable step.
         sleep: Waits between polls (injected by tests).
+        now: The clock.
 
     Returns:
         `started` (by this run, or by a racing queue run whose re-run made GitHub refuse this
@@ -820,7 +823,8 @@ def _rerun(gh: GhApi, pr: PrState, run: dict, failed_only: bool, log: Callable[[
         once it has recorded the attempt), or `refused` (GitHub will not re-run it).
 
     Raises:
-        GhError: A transient error, or the first unknown one on this head (see RERUN_REFUSALS).
+        GhError: A transient error, or an unknown one before its warning is STRIKE_GAP old (see
+            RERUN_REFUSALS).
     """
     path = f"repos/{REPO}/actions/runs/{run['id']}/{'rerun-failed-jobs' if failed_only else 'rerun'}"
     try:
@@ -833,12 +837,19 @@ def _rerun(gh: GhApi, pr: PrState, run: dict, failed_only: bool, log: Callable[[
         if _going_again(gh, run["id"]):
             log(f"  #{pr.number}: run {run['id']} was re-run by a racing queue run; standing down")
             return "started"
-        if kind == "unknown" and comment_once(
-            gh, pr.number, "rerun-error", pr.head_sha,
-            f"Merge queue: re-running the required check failed ({str(exc)[:200]}); will try once more, "
-            "then remove from the line.",
-        ):
-            raise
+        if kind == "unknown":
+            # Counted like a rebase strike: one odd answer during an incident, seen by two queue
+            # runs a minute apart, must not disarm the PR.
+            age = marker_age(gh, pr.number, "rerun-error", pr.head_sha, now())
+            if age is None:
+                comment_once(
+                    gh, pr.number, "rerun-error", pr.head_sha,
+                    f"Merge queue: re-running the required check failed ({str(exc)[:200]}); will try again, and "
+                    "remove it from the line if it still fails 10 minutes from now.",
+                )
+                raise
+            if age < STRIKE_GAP:
+                raise
         log(f"  #{pr.number}: re-run of run {run['id']} refused: {exc}")
         return "refused"
     # The re-run's actor is the queue's token, so GitHub may hold it for approval again.
@@ -895,14 +906,14 @@ def _disarm(gh: GhApi, pr: PrState, log: Callable[[str], None]) -> None:
         log(f"  #{pr.number} was already disarmed ({exc})")
 
 
-def _rebase_strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Action, wake_first: bool,
-                   log: Callable[[str], None], now: Callable[[], datetime]) -> bool:
-    """Count one rebase that did not take effect on this head (see STRIKE_GAP).
+def _strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Action, wake_first: bool,
+            log: Callable[[str], None], now: Callable[[], datetime]) -> bool:
+    """Count one failure to get this head going: a rebase that did not take effect, or no run (see STRIKE_GAP).
 
     Args:
         gh: The GitHub client.
         pr: The front PR.
-        kind: The warning comment's kind (`rebase-failed`, `rebase-unmoved`).
+        kind: The warning comment's kind (`rebase-failed`, `rebase-unmoved`, `no-run`).
         warning: The warning's text.
         eviction: The eviction for a strike at least STRIKE_GAP after the warning.
         wake_first: Wake a tick after the warning, to look again soon.
@@ -927,13 +938,22 @@ def _rebase_strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Ac
     return _evict(gh, pr, eviction, log)
 
 
+def _wake_if_moved(gh: GhApi, pr: PrState, log: Callable[[str], None]) -> None:
+    if read_pr(gh, pr.number).head_sha != pr.head_sha:
+        _wake_best_effort(gh, log)
+
+
 def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None],
             now: Callable[[], datetime]) -> bool:
     try:
         gh.graphql(REBASE_MUTATION, id=pr.node_id, oid=pr.head_sha)
     except GhError as exc:
         if _transient(exc):
-            raise  # GitHub's error, not the branch's: the next event retries (spec section 8)
+            # A lost response can hide a rebase that went through, leaving its head's runs held with
+            # nothing to approve them: wake a tick if the head moved. Then fail the run; the next
+            # event retries, and the error never counts (spec section 8).
+            _best_effort(log, "re-read after a failed rebase", lambda: _wake_if_moved(gh, pr, log))
+            raise
         fresh = read_pr(gh, pr.number)
         if fresh.head_sha == pr.head_sha and fresh.merge_state != "DIRTY":
             # A racing run's rebase may have been accepted with its ref update still landing
@@ -941,16 +961,15 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
             sleep(REBASE_POLL_S)
             fresh = read_pr(gh, pr.number)
         if fresh.head_sha != pr.head_sha:
+            # Someone else acted, almost always a racing queue run, which approves (or wakes for)
+            # its own rebase.
             log(f"  rebase skipped: head moved to {fresh.head_sha[:10]}")
-            # It may be this rebase, accepted with its response lost: its head's runs would then
-            # be held with nothing to approve them.
-            _wake_best_effort(gh, log)
             return False
         if fresh.merge_state == "DIRTY":
             return _evict(gh, fresh, Action("evict", "conflicts with dev (rebase refused)", slug="conflict"), log)
         error = str(exc)[:200]
         log(f"  rebase failed: {exc}")
-        return _rebase_strike(
+        return _strike(
             gh, fresh, "rebase-failed",
             f"Merge queue: rebasing onto dev failed ({error}); will retry, and remove it from the line if "
             "rebasing still fails 10 minutes from now.",
@@ -970,7 +989,7 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
         # If the branch moves later, its new head's runs are held and nothing would wake the queue
         # to approve them: the warning wakes a tick. A later unmoved rebase evicts, or every event
         # would rebase again and the line would never move.
-        return _rebase_strike(
+        return _strike(
             gh, pr, "rebase-unmoved",
             "Merge queue: the rebase onto dev was accepted, but the branch has not moved yet; a queue run will "
             "look again shortly, and remove it from the line if the branch still does not move 10 minutes from now.",
@@ -1004,20 +1023,23 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
     return False
 
 
-def _start(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None]) -> bool:
+def _start(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None],
+           now: Callable[[], datetime]) -> bool:
     """Get a counted required-check run going on an up-to-date head that has none.
 
     Approve a held run, else re-run a cancelled one. A dispatched run would not count (spec V4),
-    so with neither the PR is evicted: a push, or closing and reopening it, starts its CI. Before
-    evicting it looks again for up to HELD_RUN_POLLS x HELD_RUN_POLL_S: the head's age comes from
-    its commit date, not its push, so a commit made well before it was pushed can reach this
-    while GitHub has yet to list its run.
+    so with neither the PR gets a `no-run` strike (`_strike`): a push, or closing and reopening it,
+    starts its CI. Before that it looks again for up to HELD_RUN_POLLS x HELD_RUN_POLL_S: the
+    head's age comes from its commit date, not its push, so a commit made well before it was
+    pushed can reach this while GitHub has yet to list its run. The strike gap keeps an Actions
+    incident that delays run creation by a few minutes from disarming the PR.
 
     Args:
         gh: The GitHub client.
         pr: The front PR.
         log: Receives one line per notable step.
         sleep: Waits between polls (injected by tests).
+        now: The clock.
 
     Returns:
         True if the PR was evicted.
@@ -1040,18 +1062,23 @@ def _start(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[
             return False
         cancelled = next((r for r in runs if r.get("conclusion") == "cancelled"), None)
         if cancelled is not None:
-            outcome = _rerun(gh, pr, cancelled, False, log, sleep)
+            outcome = _rerun(gh, pr, cancelled, False, log, sleep, now)
             if outcome == "refused":
                 break
             if outcome == "pending":
                 _wake_best_effort(gh, log)
             return False
-    return _evict(gh, pr, Action(
-        "evict", "no CI run on this head that the queue can start; push a commit, or close and reopen the PR",
-        slug="no-run"), log)
+    return _strike(
+        gh, pr, "no-run",
+        "Merge queue: found no CI run on this head that the queue can start. It will look again, and remove it from "
+        "the line if there is still none 10 minutes from now. A push, or closing and reopening the PR, starts its CI.",
+        Action("evict", "no CI run on this head that the queue can start; push a commit, or close and reopen the PR",
+               slug="no-run"), False, log, now,
+    )
 
 
-def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], sleep: Callable[[float], None]) -> bool:
+def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], sleep: Callable[[float], None],
+           now: Callable[[], datetime]) -> bool:
     """Re-run the run whose required check failed once, in its own check suite (spec V3).
 
     The retry is usually decided by the failed run's own queue-tick while that run is still in
@@ -1068,6 +1095,7 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
         action: The retry decision, carrying the failed check's suite and run URL.
         log: Receives one line per notable step.
         sleep: Waits between polls (injected by tests).
+        now: The clock.
 
     Returns:
         True if the PR was evicted.
@@ -1099,7 +1127,7 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
             return False
         return _evict(gh, pr, Action("evict", "required check failed again after its retry", action.links,
                                      "failed-twice"), log)
-    outcome = _rerun(gh, pr, run, action.suite_id is not None and not cancelled, log, sleep)
+    outcome = _rerun(gh, pr, run, action.suite_id is not None and not cancelled, log, sleep, now)
     if outcome == "refused":
         return _evict(gh, pr, Action("evict", "required check failed once and GitHub refused to re-run it",
                                      action.links, "rerun"), log)
@@ -1143,7 +1171,9 @@ def apply(
             if any(c.status != "completed" for c in required_run_stand_ins(gh, pr.head_sha, ())):
                 log(f"  #{pr.number}: a required run is live on {pr.head_sha[:10]}; standing down")
                 return False
-            return _start(gh, pr, log, sleep) if action.kind == "start" else _retry(gh, pr, action, log, sleep)
+            if action.kind == "start":
+                return _start(gh, pr, log, sleep, now)
+            return _retry(gh, pr, action, log, sleep, now)
         if action.kind == "evict":
             return _evict(gh, pr, action, log)
         return False

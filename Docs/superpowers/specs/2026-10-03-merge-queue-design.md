@@ -164,10 +164,10 @@ seconds apart (after each merge the next front is routinely `UNKNOWN` for a whil
 |---|---|
 | `BEHIND` | **Rebase** (section 7). On success it approves the new head's held `pull_request` runs (waiting up to 10 x 3 s for the required workflow's to appear), cancels the old head's runs, and comments "rebased onto dev at `<sha>`" |
 | `DIRTY` | **Evict:** conflicts with `dev` |
-| Up to date, no required-check run on the head, or only cancelled ones; head commit older than 3 minutes | **Start:** approve a held run, else re-run a cancelled one. With neither, look again for up to 10 x 3 s (the head's age is its commit date, not its push, so its run may not be listed yet), standing down if a run appears; then evict ("push a commit, or close and reopen the PR"), since a dispatch would not count (V4) |
+| Up to date, no required-check run on the head, or only cancelled ones; head commit older than 3 minutes | **Start:** approve a held run, else re-run a cancelled one. With neither, look again for up to 10 x 3 s (the head's age is its commit date, not its push, so its run may not be listed yet), standing down if a run appears. Then a `no-run` strike: the first warns and holds the line; one at least 10 minutes after that warning evicts (`evict-no-run`, "push a commit, or close and reopen the PR"), since a dispatch would not count (V4). The gap keeps an Actions incident that delays run creation from disarming the PR |
 | Up to date, no run yet, head commit dated within 3 minutes of now, either side (the commit date comes from the author's clock: one a little ahead is young, one further ahead is treated as old and `start` looks for its run) | Wait (the author's own `pull_request` run may not be visible yet). In `on` mode the queue run waits out the window once (at most 3 minutes) and decides again, unless the PR was disarmed or re-armed meanwhile; a head that still looks young after that is started instead of waited on again: a tick woken after a rebase whose held runs had not appeared may be the last event for that head. If that wait would not end within the run's 4-minute budget, the queue wakes a fresh run to wait instead |
 | Up to date, required check queued or in progress | Wait (in flight) |
-| Up to date, required check failed, first failure on this head | **Retry:** re-run the failed run in its own check suite (V3) and comment linking it. If the deciding run *is* the failed run (its queue-tick, while it is still in progress), wake a queue tick: a queue kick, `derived-artifacts.yml` dispatched on `dev` without `pr` and with input `wait_run`, whose tick waits for the run to complete, then re-runs it. (`derived-artifacts.yml`, because GitHub only dispatches a workflow whose file is on `main`; `merge-queue.yml` is not.) A run already live again is left alone, and one held again (its re-run's approval failed) is approved strictly. One retry per head: a second retry decision evicts (`evict-failed-twice`) once a re-read shows the run is not going again, because a re-run keeps its run id and a run that never reports the check stays a single stand-in. A retry attempt that was cancelled, not failed, is re-run in full without counting against the cap. Re-run errors: a transient error (5xx, 429, rate limit, network) re-raises. Any other error is followed by one re-read of the run, and the queue stands down if it is live or held again (a racing queue run re-ran it). Otherwise a refusal (HTTP 409/422, or a 403 saying the run was created over a month ago) evicts (`evict-rerun`), and any other error re-raises once with a `rerun-error` comment and counts as a refusal the second time on the same head. A re-run still not live after its approval polls wakes a queue tick, because a held run never runs its own queue-tick; the wake comes after the retry comment, so a failed comment cannot chain wakes |
+| Up to date, required check failed, first failure on this head | **Retry:** re-run the failed run in its own check suite (V3) and comment linking it. If the deciding run *is* the failed run (its queue-tick, while it is still in progress), wake a queue tick: a queue kick, `derived-artifacts.yml` dispatched on `dev` without `pr` and with input `wait_run`, whose tick waits for the run to complete, then re-runs it. (`derived-artifacts.yml`, because GitHub only dispatches a workflow whose file is on `main`; `merge-queue.yml` is not.) A run already live again is left alone, and one held again (its re-run's approval failed) is approved strictly. One retry per head: a second retry decision evicts (`evict-failed-twice`) once a re-read shows the run is not going again, because a re-run keeps its run id and a run that never reports the check stays a single stand-in. A retry attempt that was cancelled, not failed, is re-run in full without counting against the cap. Re-run errors: a transient error (5xx, 429, rate limit, network) re-raises. Any other error is followed by one re-read of the run, and the queue stands down if it is live or held again (a racing queue run re-ran it). Otherwise a refusal (HTTP 409/422, or a 403 saying the run was created over a month ago) evicts (`evict-rerun`), and any other error re-raises with a `rerun-error` comment, and counts as a refusal only once that comment is at least 10 minutes old. A re-run still not live after its approval polls wakes a queue tick, because a held run never runs its own queue-tick; the wake comes after the retry comment, so a failed comment cannot chain wakes |
 | Up to date, required check failed, second failure on this head | **Evict:** CI failed twice, linking both runs |
 | `CLEAN` or `UNSTABLE` (or `BLOCKED` with no unresolved review threads, usually the state lagging the check), required check green, completed 15 minutes ago or less | Wait (auto-merge is about to fire) |
 | `CLEAN` or `UNSTABLE` (or `BLOCKED` with no unresolved review threads), required check green, completed more than 15 minutes ago | **Evict:** auto-merge did not fire, re-arm to retry |
@@ -193,8 +193,8 @@ never rebased, dispatched or commented on.
   queue re-reads the PR. If that shows the same head and not `DIRTY`, it waits 3 seconds and re-reads once more: a racing
   run's accepted rebase moves the branch about a second after its mutation returns, and a refusal inside that window must
   not count as this run's own failure. Then:
-  - head moved: someone else acted, or this rebase went through with its response lost; wake a queue tick (in the second
-    case the new head's runs are held and nothing else would approve them) and do nothing more;
+  - head moved: someone else acted, almost always a racing queue run, which approves (or wakes for) its own rebase; do
+    nothing;
   - now `DIRTY`: evict;
   - anything else (same head, still not `DIRTY`): the first time, post a `rebase-failed` comment quoting the error (first
     200 characters). A later failure on the same head evicts ("rebase onto dev keeps failing", `evict-rebase`) only if
@@ -204,7 +204,9 @@ never rebased, dispatched or commented on.
   - A transient error re-raises before any of this and never counts (section 8). Transient means what gh actually prints
     for an outage or throttling (captured from gh 2.90.0): `HTTP 5xx` or `HTTP 429` with or without parentheses, a rate
     limit or abuse-detection message, GraphQL's "Something went wrong while executing your query", or a network failure,
-    where gh prints no `gh: ` server message at all. Only an answer GitHub actually gave about the PR counts as a strike.
+    where gh prints no line starting `gh: ` (a server message) at all. Only an answer GitHub actually gave about the PR
+    counts as a strike. A transient error can hide a rebase that went through with its response lost: the queue re-reads
+    the PR first and wakes a tick if the head moved, since that head's runs are held with nothing else to approve them.
 - The mutation returns the pre-rebase head, and the branch moves about a second later. After a successful rebase the queue
   re-reads the PR up to 10 times, 3 seconds apart, until the head moves, and uses that new head for the comment. If it never
   moves, the queue posts a `rebase-unmoved` comment and wakes a queue tick, once per head: if the branch moves later,
@@ -222,8 +224,8 @@ never rebased, dispatched or commented on.
   re-raises, so an outage fails the run instead of falling through to an eviction. A re-run refusal (HTTP 409/422, or a
   403 for a run over a month old) evicts, after one re-read of the run: if it is live or held again, a racing queue run
   re-ran it and this one stands down. A transient error (5xx, 429, rate limit, network) re-raises (section 8), so an
-  outage never disarms the fronts it touches. Any other error re-raises once with a `rerun-error` comment, then counts as
-  a refusal on the same head. The re-read comes before both: whatever code GitHub refused with, a run that is live or
+  outage never disarms the fronts it touches. Any other error re-raises with a `rerun-error` comment, and counts as a
+  refusal only once that comment is at least 10 minutes old (as for rebase strikes). The re-read comes before both: whatever code GitHub refused with, a run that is live or
   held again means a racing queue run re-ran it. A re-run's actor is the queue's token, so GitHub may hold it again; the queue then
   approves it.
 - Only held runs that pass one predicate are ever approved, on every path: event `pull_request`, triggering actor
@@ -274,9 +276,11 @@ never rebased, dispatched or commented on.
     exists on `main` (F1).
   - Known gap: a stall during a stretch with no activity waits for the next event or a manual kick. There is no periodic
     timer, because `schedule` reads `main`.
-  - The same gap after a rebase strike: a strike inside its 10-minute gap stands down and wakes nothing, so on a quiet repo
-    the front (and the line behind it) waits for the next event after the gap. Rebase failures are rare, and evicting
-    sooner would let one GitHub slowdown disarm the PR.
+  - The same gap after a strike (rebase, no-run, or an unclassified re-run error): a strike inside its 10-minute gap
+    stands down and wakes nothing, so on a quiet repo the front (and the line behind it) waits for the next event after
+    the gap. These failures are rare, and evicting sooner would let one GitHub slowdown disarm the PR.
+  - An Actions incident that keeps a head's runs from being created for more than 10 minutes, seen by two events that
+    far apart, still evicts it (`evict-no-run`); re-arm it after the incident.
 - **Owner or agent merges by hand while a PR is in flight:** `dev` moves, the front PR becomes behind, and the queue rebases
   it again and cancels the superseded run.
 
@@ -354,7 +358,10 @@ The rules depend on the mode, checked with `gh variable get MERGE_QUEUE`. A roll
     evicts;
   - a held re-run whose approval failed is approved strictly, never evicted; a cancelled retry attempt is re-run without
     counting against the cap;
-  - start looks again before a no-run eviction and approves only held runs the queue caused; a young head with no run is
+  - start looks again, then warns before a no-run eviction (evicting only 10 minutes after the warning), and approves
+    only held runs the queue caused; an unclassified re-run error counts only 10 minutes after its warning; a bodiless
+    `gh: HTTP 404` is an answer, not a network error; a refusal after a warning line is still a refusal; "blocked" is not
+    "locked"; a transient rebase error wakes a tick only if the head moved; a young head with no run is
     decided again after the window (`on` mode only, not after a disarm or re-arm, and only within the run budget), and
     started if it still looks young; a head dated a little ahead is young, one far ahead is not; a `wait_run` read error is retried within the bound; a rebase whose branch never
     moves wakes one tick; a second rebase strike evicts only 10 minutes after the first, and a transient rebase error

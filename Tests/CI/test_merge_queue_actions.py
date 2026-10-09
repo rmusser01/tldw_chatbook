@@ -273,11 +273,28 @@ def test_on_mode_rebases_front_only():
 
 
 def test_rebase_failure_with_moved_head_never_evicts():
-    """The head moved: someone else acted, or this rebase went through with its response lost. Never
-    an eviction; one wake, because in the second case the new head's runs are held (review round 6)."""
+    """GitHub refused the rebase and the head moved: someone else acted (a racing queue run, which
+    approves or wakes for its own rebase). Never an eviction, and no extra kick (review round 7)."""
     gh = FakeGh([_node(1)], rebase_error=True, reread={1: _node(1, head=NEW, state="BEHIND")})
     _run(gh)
-    assert gh.calls == [("rebase", "PR_1", OLD), ("dispatch", "derived-artifacts.yml", {"ref": "dev"})]
+    assert gh.calls == [("rebase", "PR_1", OLD)]
+
+
+@pytest.mark.parametrize("moved", [True, False], ids=["head-moved", "head-same"])
+def test_a_rebase_lost_to_an_outage_wakes_a_tick_only_if_the_head_moved(moved):
+    """Review rounds 6-7 of #3039: a lost response shows up as a transient error, and can hide a rebase
+    that went through, whose head's runs are then held with nothing to approve them. The run still
+    fails (an outage never counts); it wakes a tick first only if the head actually moved.
+
+    Args:
+        moved: Whether a re-read after the error shows a new head.
+    """
+    gh = FakeGh([_node(1)], rebase_error='gh api graphql -f failed: Post "https://api.github.com/graphql": EOF',
+                reread={1: _node(1, head=NEW if moved else OLD, state="BLOCKED" if moved else "BEHIND")})
+    with pytest.raises(mq.GhError, match="EOF"):
+        _run(gh)
+    expected = [("rebase", "PR_1", OLD)] + ([("dispatch", "derived-artifacts.yml", {"ref": "dev"})] if moved else [])
+    assert gh.calls == expected
 
 
 def test_rebase_refused_on_conflict_evicts():
@@ -376,8 +393,8 @@ def test_an_eviction_the_queue_may_not_comment_on_still_disarms():
     "gh: Server Error (HTTP 502)",
     "gh: API rate limit exceeded (HTTP 403)",
     # What gh 2.90.0 printed for a GraphQL mutation against a failing server (review round 6):
-    "gh api graphql -f failed: gh: Something went wrong while executing your query. This may be the result of a "
-    "timeout, or it could be a GitHub bug.",
+    ("gh api graphql -f failed: gh: Something went wrong while executing your query. This may be the result of a "
+     "timeout, or it could be a GitHub bug."),
     "gh api graphql -f failed: gh: HTTP 502",
     'gh api graphql -f failed: Post "https://api.github.com/graphql": EOF',
     "gh api graphql -f failed: gh: You have triggered an abuse detection mechanism. Please wait a few minutes.",
@@ -705,14 +722,27 @@ def test_a_refused_rerun_evicts_and_the_line_moves_on(status):
 
 
 def test_start_with_nothing_to_approve_or_rerun_evicts_and_the_line_moves_on():
-    """No held run and no cancelled run on an up-to-date head: nothing the queue can start counts,
-    so evict with how to start CI, and move on."""
-    gh = FakeGh([_node(1, state="BLOCKED"), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")])
+    """No held run and no cancelled run on an up-to-date head: nothing the queue can start counts.
+    Once its no-run warning is STRIKE_GAP old, evict with how to start CI, and move on."""
+    warned = (NOW - mq.STRIKE_GAP).strftime("%Y-%m-%dT%H:%M:%SZ")
+    gh = FakeGh([_node(1, state="BLOCKED"), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")],
+                comments={1: [(f"<!-- merge-queue:no-run:{OLD} -->\nwarned", warned)]})
     decisions = _run(gh)
     assert [(n, a.kind) for n, a in decisions] == [(1, "start"), (2, "evict")]
     comment = next(c for c in gh.calls if c[0] == "comment" and c[1] == 1)
     assert f"<!-- merge-queue:evict-no-run:{OLD} -->" in comment[2] and "close and reopen" in comment[2]
     assert not any(c[0] == "dispatch" for c in gh.calls)
+
+
+def test_a_head_with_no_run_is_warned_first_and_never_evicted_on_first_sight():
+    """Review round 7 of #3039: GitHub can take minutes to create a rebased head's runs during an Actions
+    incident. The first no-run finding warns and holds the line; only one STRIKE_GAP later does it evict."""
+    gh = FakeGh([_node(1, state="BLOCKED"), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")])
+    decisions = _run(gh)
+    assert [(n, a.kind) for n, a in decisions] == [(1, "start")]
+    assert not any(c[0] == "disarm" for c in gh.calls)
+    comment = next(c for c in gh.calls if c[0] == "comment")
+    assert f"<!-- merge-queue:no-run:{OLD} -->" in comment[2] and "10 minutes from now" in comment[2]
 
 
 def test_start_reruns_a_cancelled_run_in_full():
@@ -727,7 +757,7 @@ def test_start_approves_a_held_run_strictly():
     """Reached when the tick's best-effort approval pass did not get there first."""
     gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_held(31)]})
     pr = mq.read_prs(gh)[0]
-    assert mq._start(gh, pr, lambda m: None, lambda s: None) is False
+    assert mq._start(gh, pr, lambda m: None, lambda s: None, lambda: NOW) is False
     assert ("approve", "31") in gh.calls and not any(c[0] == "disarm" for c in gh.calls)
 
 
@@ -785,7 +815,7 @@ def test_refused_rebase_rereads_once_more_before_counting_it_as_a_failure():
     gh = FakeGh([_node(1)], rebase_error=True,
                 reread={1: [_node(1, state="BEHIND"), _node(1, head=NEW, state="BLOCKED")]})
     mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
-    assert [c[0] for c in gh.calls] == ["rebase", "dispatch"]
+    assert [c[0] for c in gh.calls] == ["rebase"]
     assert sleeps == [mq.REBASE_POLL_S]
 
 
@@ -880,7 +910,7 @@ def test_a_run_that_is_live_again_is_left_to_finish():
     gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_pr_run(70, 700, conclusion=None, status="queued")]})
     pr = mq.read_prs(gh)[0]
     action = mq.Action("retry", "required check failed once; retrying", ("https://run/70",), suite_id=700)
-    assert mq._retry(gh, pr, action, lambda m: None, lambda s: None) is False
+    assert mq._retry(gh, pr, action, lambda m: None, lambda s: None, lambda: NOW) is False
     assert not any(c[0] in ("rerun", "dispatch", "comment", "disarm") for c in gh.calls)
 
 
@@ -950,9 +980,11 @@ def test_a_failed_rerun_still_counts_as_the_second_failure():
     "gh: API rate limit exceeded for installation ID 123. (HTTP 403)",
     "gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. (HTTP 403)",
     "gh: Too Many Requests (HTTP 429)",
-    'gh api -X POST failed: Post "https://api.github.com/repos/o/r/actions/runs/70/rerun-failed-jobs": dial tcp: '
-    'lookup api.github.com: no such host',
-], ids=["primary-rate-limit", "secondary-rate-limit", "429", "network"])
+    ('gh api -X POST failed: Post "https://api.github.com/repos/o/r/actions/runs/70/rerun-failed-jobs": dial tcp: '
+     'lookup api.github.com: no such host'),
+    "gh: HTTP 429",
+    "gh api -X POST failed: warning: a newer gh is available\ngh: Server Error (HTTP 503)",
+], ids=["primary-rate-limit", "secondary-rate-limit", "429", "network", "bare-429", "warning-line-first"])
 def test_a_transient_rerun_error_fails_the_run_and_disarms_nobody(message):
     """Review of #3039: rate limits answer 403 too. Reading one as a refused re-run, or counting it
     toward an eviction, would evict every front an incident touches (spec section 8).
@@ -981,7 +1013,8 @@ def test_an_unclassified_rerun_error_fails_once_then_evicts():
     assert not any(c[0] == "disarm" for c in gh.calls)
 
     again = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_pr_run(31, 531, conclusion="startup_failure")]},
-                   rerun_error=message, comments={1: [comments[0][2]]})
+                   rerun_error=message,
+                   comments={1: [(comments[0][2], (NOW - mq.STRIKE_GAP).strftime("%Y-%m-%dT%H:%M:%SZ"))]})
     _run(again)
     assert ("disarm", "PR_1") in again.calls
     assert any(f"<!-- merge-queue:evict-rerun:{OLD} -->" in c[2] for c in again.calls if c[0] == "comment")
@@ -1076,7 +1109,7 @@ def test_a_held_rerun_whose_approval_fails_never_evicts():
     gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_held_attempt(70, 700)]}, comments=marker)
     pr = mq.read_prs(gh)[0]
     action = mq.Action("retry", "required check failed once; retrying", ("https://run/70",), suite_id=700)
-    assert mq._retry(gh, pr, action, lambda m: None, lambda s: None) is False
+    assert mq._retry(gh, pr, action, lambda m: None, lambda s: None, lambda: NOW) is False
     assert gh.calls == [("approve", "70")]
 
 
@@ -1141,7 +1174,7 @@ def test_start_looks_again_before_evicting_a_head_with_no_run():
     gh = FakeGh([_node(1, state="BLOCKED")], late_runs={OLD: [_required_run(88)]})
     pr = mq.read_prs(gh)[0]
     slept = []
-    assert mq._start(gh, pr, lambda m: None, slept.append) is False
+    assert mq._start(gh, pr, lambda m: None, slept.append, lambda: NOW) is False
     assert slept == [mq.HELD_RUN_POLL_S]
     assert gh.calls == []
 
@@ -1160,8 +1193,9 @@ def test_start_never_approves_a_held_run_the_queue_did_not_cause(held):
     """
     gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [held]})
     pr = mq.read_prs(gh)[0]
-    assert mq._start(gh, pr, lambda m: None, lambda s: None) is True
+    assert mq._start(gh, pr, lambda m: None, lambda s: None, lambda: NOW) is False
     assert not any(c[0] == "approve" for c in gh.calls)
+    assert any(c[0] == "comment" and f"merge-queue:no-run:{OLD}" in c[2] for c in gh.calls)
 
 
 def test_start_never_reruns_a_cancelled_dispatched_run():
@@ -1171,7 +1205,7 @@ def test_start_never_reruns_a_cancelled_dispatched_run():
     gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [dispatched]})
     _run(gh)
     assert not any(c[0] == "rerun" for c in gh.calls)
-    assert ("disarm", "PR_1") in gh.calls
+    assert any(c[0] == "comment" and f"merge-queue:no-run:{OLD}" in c[2] for c in gh.calls)
 
 
 def test_a_young_head_without_a_run_is_decided_again_after_the_window():
@@ -1463,3 +1497,65 @@ def test_a_new_head_after_the_young_wait_is_not_started_early():
     decisions = mq.run(gh, "on", now=lambda: clock[0], sleep=sleep, log=lambda m: None)
     assert decisions[0][1].kind == "wait" and decisions[0][1].slug == "young"
     assert gh.calls == []
+
+
+def test_a_bodiless_4xx_rerun_answer_is_counted_not_retried_forever():
+    """Review round 7 of #3039: gh prints a 4xx without a JSON message as `gh: HTTP 404`. Reading that
+    as a network error re-raised it on every event and wedged the line; it is an answer GitHub gave."""
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_pr_run(70, 700)]}, rerun_error="gh api -X POST failed: gh: HTTP 404")
+    with pytest.raises(mq.GhError, match="HTTP 404"):
+        _run(gh)
+    assert any(c[0] == "comment" and f"merge-queue:rerun-error:{OLD}" in c[2] for c in gh.calls)
+    assert mq._rerun_error(mq.GhError("gh api -X POST failed: gh: HTTP 409")) == "refused"
+
+
+def test_a_warning_line_before_a_refusal_is_still_a_refusal():
+    """A refusal stays a refusal when gh prints another line first: only a missing `gh: ` line means
+    the network failed."""
+    exc = mq.GhError("gh api graphql -f failed: warning: a newer gh is available\ngh: Head sha didn't match")
+    assert mq._transient(exc) is False
+
+
+@pytest.mark.parametrize(("minutes_ago", "evicts"), [(None, False), (5, False), (10, True)],
+                         ids=["first", "within-gap", "at-gap"])
+def test_an_unclassified_rerun_error_counts_like_a_strike(minutes_ago, evicts):
+    """Review round 7 of #3039: two queue runs a minute apart hitting one odd answer during an Actions
+    incident must not evict. The rerun-error warning has to be STRIKE_GAP old first.
+
+    Args:
+        minutes_ago: The warning's age in minutes; None if there is none yet.
+        evicts: Whether this attempt evicts.
+    """
+    comments = {}
+    if minutes_ago is not None:
+        posted = (NOW - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        comments = {1: [(f"<!-- merge-queue:rerun-error:{OLD} -->\nwarned", posted)]}
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_pr_run(70, 700)]}, comments=comments,
+                rerun_error="gh api -X POST failed: gh: Resource not accessible by integration (HTTP 403)")
+    if evicts:
+        _run(gh)
+        assert ("disarm", "PR_1") in gh.calls
+    else:
+        with pytest.raises(mq.GhError, match="403"):
+            _run(gh)
+        assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_a_content_creation_block_is_a_rate_limit_not_a_locked_pr():
+    """Review round 7 of #3039: 'blocked' contains 'locked'. GitHub's secondary rate limit on comments
+    must fail the run, never take the PR out of the line."""
+    gh = FakeGh([_node(1, state="DIRTY")])
+    original = gh.rest
+
+    def rest(method, path, fields=None):
+        if method == "POST" and path.endswith("/comments"):
+            raise mq.GhError("gh api -X POST failed: gh: You have exceeded a secondary rate limit and have been "
+                             "temporarily blocked from content creation. Please retry your request again later. (HTTP 403)")
+        return original(method, path, fields)
+
+    gh.rest = rest
+    with pytest.raises(mq.GhError, match="secondary rate limit"):
+        _run(gh)
+    assert not any(c[0] == "disarm" for c in gh.calls)
