@@ -1,44 +1,46 @@
 ---
 id: TASK-33007
-title: 'Phase 7: Reorder Settings ▸ Providers & Models into Connect / Default model / Model defaults / Advanced'
-status: To Do
+title: 'Phase 7: Reorder Settings ▸ Providers & Models into Connect / Default model
+  / Model defaults / Advanced'
+status: Done
 assignee: []
-created_date: '2026-09-26 11:47'
+created_date: 2026-09-26 11:47
 labels:
-  - model-config-redesign
-  - phase-7
-  - settings
-  - ux
-  - a11y
-  - css
+- model-config-redesign
+- phase-7
+- settings
+- ux
+- a11y
+- css
 dependencies:
-  - TASK-33001
-  - TASK-33002
-  - TASK-33003
-  - TASK-33004
-  - TASK-33005
+- TASK-33001
+- TASK-33002
+- TASK-33003
+- TASK-33004
+- TASK-33005
 references:
-  - 'tldw_chatbook/UI/Screens/settings_screen.py'
-  - 'tldw_chatbook/UI/Screens/settings_provider_view_model.py'
-  - 'tldw_chatbook/Widgets/model_search_picker.py'
-  - 'tldw_chatbook/css/features/_settings.tcss'
-  - 'tldw_chatbook/css/core/_variables.tcss'
-  - 'Tests/UI/test_settings_configuration_hub.py'
-  - 'Tests/UI/test_settings_provider_test_draft.py'
-  - 'Tests/Architecture/test_module_size_ratchet.py'
-  - 'Docs/User_Guide/settings.md'
-  - 'DESIGN.md'
-  - 'backlog/decisions/002-openai-compatible-model-discovery.md'
-  - 'backlog/decisions/020-automatic-model-catalog-refresh.md'
-  - 'backlog/decisions/033-settings-commit-models-three-honestly-labeled.md'
-  - 'backlog/decisions/095-conversation-owned-console-generation-settings.md'
-  - 'backlog/decisions/012-provider-credential-settings-boundary.md'
-  - 'backlog/decisions/066-local-provider-thinking-controls.md'
-  - 'backlog/decisions/161-component-pattern-library.md'
-  - 'backlog/decisions/097-boot-budget-ratchets.md'
-  - 'qa/model-config-ux-review-2026-09-26/judge-synthesis.md'
-  - 'qa/model-config-ux-review-2026-09-26/verified-claims.md'
+- tldw_chatbook/UI/Screens/settings_screen.py
+- tldw_chatbook/UI/Screens/settings_provider_view_model.py
+- tldw_chatbook/Widgets/model_search_picker.py
+- tldw_chatbook/css/features/_settings.tcss
+- tldw_chatbook/css/core/_variables.tcss
+- Tests/UI/test_settings_configuration_hub.py
+- Tests/UI/test_settings_provider_test_draft.py
+- Tests/Architecture/test_module_size_ratchet.py
+- Docs/User_Guide/settings.md
+- DESIGN.md
+- backlog/decisions/002-openai-compatible-model-discovery.md
+- backlog/decisions/020-automatic-model-catalog-refresh.md
+- backlog/decisions/033-settings-commit-models-three-honestly-labeled.md
+- backlog/decisions/095-conversation-owned-console-generation-settings.md
+- backlog/decisions/012-provider-credential-settings-boundary.md
+- backlog/decisions/066-local-provider-thinking-controls.md
+- backlog/decisions/161-component-pattern-library.md
+- backlog/decisions/097-boot-budget-ratchets.md
+- qa/model-config-ux-review-2026-09-26/judge-synthesis.md
+- qa/model-config-ux-review-2026-09-26/verified-claims.md
 priority: high
+updated_date: 2026-10-09 21:53
 ---
 
 ## Description
@@ -88,23 +90,23 @@ Baseline reds: task-15512 lists Settings provider-default contract tests that ar
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 At 211x44 the Providers & Models card reads top to bottom Connect, Default model for new chats, Model defaults, Advanced. With every Advanced disclosure closed, the whole card is visible in the detail pane without scrolling (today it is about 115 rows).
-- [ ] #2 For a cloud provider, the default Model control is reached in at most 5 Tab presses from the card's first control (today it is about the 23rd stop).
-- [ ] #3 A discovered model can be made the default for new chats with one selection even when a default model is already set (closes C4), and doing so does not append it to the saved model list.
-- [ ] #4 The card and the Inspector both say who a save reaches: new chats; an untouched open chat, which converges (D1); and an open chat with messages or edits, which keeps its own settings and can switch with Alt+M.
-- [ ] #5 For a provider that does not accept a sampler, Settings neither shows nor saves that field and names it as hidden (Settings side of C8(1)).
-- [ ] #6 Streaming uses one Select family everywhere in Settings: Inherit/On/Off per model and On/Off for the global fallback.
-- [ ] #7 Every Input and Select row in Providers & Models and Console Behavior renders one row tall at 211x44 (the Settings select-row inversion ends on these cards).
-- [ ] #8 Inside the detail pane the card draws no frame of its own: the pane border is the only frame, and each section starts with a one-row header.
-- [ ] #9 Discover, Save selected and Clear behave as before under Advanced (ADR-002, ADR-020).
-- [ ] #10 Legacy provider aliases stay selectable and are listed last (ADR-066).
-- [ ] #11 The State badge and each control's commit model are unchanged and labelled (ADR-033).
-- [ ] #12 No raw numeric dimension appears outside css/core/_variables.tcss, and there are no new Python style writes.
-- [ ] #13 The boot CSS bytes, ui-ready module census and screen pre-import payload ratchets are not raised (ADR-097).
-- [ ] #14 Keyboard-only live captures are attached to the PR at 211x44 and 235x52, using the real stylesheet and a scratch TLDW_CONFIG_PATH. They cover the card at rest, the model picker open, one Advanced disclosure open, and Console Behavior's fallback section.
-- [ ] #15 Every existing test this phase rewrites on purpose is named in the PR description with the reason. Failing Settings test names match dev's baseline reds (task-15512), and no new test fails.
-- [ ] #16 Docs/User_Guide pages updated: settings.md Providers & Models and Console Behavior sections (content only; verification is recorded in the task notes, never as a "Verified against" paragraph, per CLAUDE.md).
-- [ ] #17 ./scripts/preflight.sh passes.
+- [x] #1 At 211x44 the Providers & Models card reads top to bottom Connect, Default model for new chats, Model defaults, Advanced. With every Advanced disclosure closed, the whole card is visible in the detail pane without scrolling (today it is about 115 rows).
+- [x] #2 For a cloud provider, the default Model control is reached in at most 5 Tab presses from the card's first control (today it is about the 23rd stop).
+- [x] #3 A discovered model can be made the default for new chats with one selection even when a default model is already set (closes C4), and doing so does not append it to the saved model list.
+- [x] #4 The card and the Inspector both say who a save reaches: new chats; an untouched open chat, which converges (D1); and an open chat with messages or edits, which keeps its own settings and can switch with Alt+M.
+- [x] #5 For a provider that does not accept a sampler, Settings neither shows nor saves that field and names it as hidden (Settings side of C8(1)).
+- [x] #6 Streaming uses one Select family everywhere in Settings: Inherit/On/Off per model and On/Off for the global fallback.
+- [x] #7 Every Input and Select row in Providers & Models and Console Behavior renders one row tall at 211x44 (the Settings select-row inversion ends on these cards).
+- [x] #8 Inside the detail pane the card draws no frame of its own: the pane border is the only frame, and each section starts with a one-row header.
+- [x] #9 Discover, Save selected and Clear behave as before under Advanced (ADR-002, ADR-020).
+- [x] #10 Legacy provider aliases stay selectable and are listed last (ADR-066).
+- [x] #11 The State badge and each control's commit model are unchanged and labelled (ADR-033).
+- [x] #12 No raw numeric dimension appears outside css/core/_variables.tcss, and there are no new Python style writes.
+- [x] #13 The boot CSS bytes, ui-ready module census and screen pre-import payload ratchets are not raised (ADR-097).
+- [x] #14 Keyboard-only live captures are attached to the PR at 211x44 and 235x52, using the real stylesheet and a scratch TLDW_CONFIG_PATH. They cover the card at rest, the model picker open, one Advanced disclosure open, and Console Behavior's fallback section.
+- [x] #15 Every existing test this phase rewrites on purpose is named in the PR description with the reason. Failing Settings test names match dev's baseline reds (task-15512), and no new test fails.
+- [x] #16 Docs/User_Guide pages updated: settings.md Providers & Models and Console Behavior sections (content only; verification is recorded in the task notes, never as a "Verified against" paragraph, per CLAUDE.md).
+- [x] #17 ./scripts/preflight.sh passes.
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -158,3 +160,9 @@ The full-screen captures' review notes 1-8 (`qa/model-config-33007-captures/READ
 - p7cf-b (items 9-11) and p7cf-c (item 12) cherry-picked onto the Providers & Models fixes (notes 1-8 and their follow-ups). Settings.md keeps every side: the new Connect, Default model and Model defaults copy, B's one-row Context window and C's assumed title. The UI PR gate floor stays 143, the true count. The size ratchet re-pins `settings_screen.py` at the integrated head's measured 33,645 and `providers_models_card.py` at 2,238 (B's 33,635 / 1,962 and C's 1,964 were measured on the older base).
 - Follow-up (a): Context window's unknown row read **not set** with "required for Automatic conversation budgets", though under the item 12 ruling Automatic budgets use the assumed size. Its help now names that size in the title's words, "unknown, 32,000 assumed · budgets use it until set" (200,000 for an unlisted Anthropic model), from `ModelContextWindowState.assumed_tokens`; an emptied known window still reads "required …". `test_an_unknown_context_window_opens_to_one_row_and_no_reset` is rewritten on purpose (OpenAI and Anthropic).
 - Follow-up (b): the dead `ConsoleContextControlState.request_row` (no caller or test in tldw_chatbook or Tests; it still said "estimated input; model unverified") is deleted.
+
+## Implementation Notes
+
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Rebased onto dev 2f37c1a478 (862 commits) on 2026-10-09. Dev's task-34384 Session summary on quit, added inside the card compose this phase moved, is ported into Advanced as a sixth one-row disclosure (0cd360a642). After the rebase: the 50 test files this branch changes show 3 head-only failures, all renamed-on-purpose tests that fail with ADR-126 RecoveryRequired exactly as the tests they replace; size ratchets fail the same 11 rows as dev; boot CSS, ui-ready census and pre-import payload ratchets pass (19 passed); preflight passes. Checkpoint review fixes: SettingsResultLine (no at-rest 'not saved' row), a blank row names its layer once, and a typed name prefix highlights the provider it starts. Captures re-taken on the rebased head (qa/model-config-33007-captures/).
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
