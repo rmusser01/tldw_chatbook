@@ -27,7 +27,6 @@ from tldw_chatbook.Library.library_rag_state import LibraryRagResultRow
 from tldw_chatbook.Scheduling import automation_execution
 from tldw_chatbook.Scheduling.automation_execution import (
     RESULT_SUMMARY_MAX_CHARS,
-    ExecutionOutcome,
     execute_recurring_question,
     resolve_execution_target,
 )

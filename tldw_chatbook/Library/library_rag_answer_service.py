@@ -186,6 +186,15 @@ def resolve_library_rag_answer_provider() -> tuple[str | None, str | None]:
        the very next call; its model is resolved the same way, and stays
        `None` for an endpoint the provider registry does not know (a local
        endpoint name), where the handler keeps picking its own default.
+       This arm is reached ONLY when `[chat_defaults]` names no supported
+       provider -- and the merged config always carries the template's
+       `provider = "OpenAI"` / `model = "gpt-5.6-terra"` unless the user
+       blanks or mis-spells it -- so in practice step 1 decides. That is a
+       precedence change from before this task: a user with
+       `[llm_api_settings] default_api = "anthropic"` and an untouched
+       `[chat_defaults]` now bills the chat-defaults pair (what Console
+       shows), no longer `default_api`. `default_api` does not steer RAG
+       Answer; the persisted pair does.
     3. `(None, None)` only when nothing names a provider.
 
     The settings are the SAME cached `load_settings()` mapping the gate
@@ -203,21 +212,9 @@ def resolve_library_rag_answer_provider() -> tuple[str | None, str | None]:
         nor the provider's own table names one.
     """
     from .. import config as app_config
-    from ..Chat.provider_setup_persistence import (
-        canonical_provider_key,
-        resolve_remembered_provider_model,
-    )
+    from ..Chat.provider_setup_persistence import canonical_provider_key
 
-    try:
-        settings = app_config.load_settings()
-    except Exception as exc:  # noqa: BLE001 - any settings failure is "names nothing"
-        # Class name only: an admission or config error can carry a path in
-        # its message, and this sink persists.
-        logger.debug(
-            "library rag answer: settings unreadable, no persisted pair "
-            f"({type(exc).__name__})"
-        )
-        settings = {}
+    settings = _persisted_settings()
     provider: str | None = None
     chat_defaults = settings.get("chat_defaults") if isinstance(settings, Mapping) else None
     if isinstance(chat_defaults, Mapping):
@@ -230,13 +227,61 @@ def resolve_library_rag_answer_provider() -> tuple[str | None, str | None]:
         if not endpoint:
             return None, None
         provider = endpoint
+    return provider, _remembered_model(settings, provider)
+
+
+def resolve_library_rag_answer_model(provider: str) -> str | None:
+    """The model `provider` itself remembers, from the same persisted settings.
+
+    Review round 1 of TASK-34000.21: the scheduler's `resolve_execution_
+    target` used to take `resolve_library_rag_answer_provider`'s model half
+    whenever an automation named a provider but no model -- harmless while
+    that half was always `None`, a cross-provider borrow once it was not
+    (`[scheduling] executor_provider = "anthropic"` under an OpenAI /
+    gpt-4.1-mini `[chat_defaults]` ran Anthropic with gpt-4.1-mini). This is
+    the one-provider half of the rule, for a caller that already knows WHICH
+    provider it will bill: `[chat_defaults] model` only when that names the
+    same provider, else the provider's own table, else `None` (the handler's
+    default). Same cached, guarded settings read as the pair resolver, so
+    the two cannot disagree about where the model comes from.
+
+    Args:
+        provider: A provider key or alias the caller will bill.
+
+    Returns:
+        That provider's remembered model, or `None` when nothing names one
+        or the provider registry does not know the endpoint.
+    """
+    return _remembered_model(_persisted_settings(), provider)
+
+
+def _persisted_settings() -> Mapping[str, Any]:
+    """The cached `load_settings()` mapping, or `{}` when the read raises."""
+    from .. import config as app_config
+
     try:
-        model = resolve_remembered_provider_model(settings, provider)
+        settings = app_config.load_settings()
+    except Exception as exc:  # noqa: BLE001 - any settings failure is "names nothing"
+        # Class name only: an admission or config error can carry a path in
+        # its message, and this sink persists.
+        logger.debug(
+            "library rag answer: settings unreadable, no persisted pair "
+            f"({type(exc).__name__})"
+        )
+        return {}
+    return settings if isinstance(settings, Mapping) else {}
+
+
+def _remembered_model(settings: Mapping[str, Any], provider: str) -> str | None:
+    """`resolve_remembered_provider_model`, with an unknown endpoint as `None`."""
+    from ..Chat.provider_setup_persistence import resolve_remembered_provider_model
+
+    try:
+        return resolve_remembered_provider_model(settings, provider)
     except (TypeError, ValueError):
         # An endpoint the provider registry does not own (a local server
         # name): the handler picks its own default, as before this task.
-        model = None
-    return provider, model
+        return None
 
 
 @dataclass(frozen=True)
