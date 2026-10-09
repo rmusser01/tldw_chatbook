@@ -215,6 +215,9 @@ async def _apply_library_notes_source_strip(
     screen: "LibraryScreen", canvas_kind: str
 ) -> None:
     """Mount or remove the Notes source strip to match the destination."""
+    # Deferred import (ADR-097 boot census and pre-import payload have no headroom).
+    from ..Navigation.surface_swap_guard import ensure_surface_swap_not_self_awaited
+
     mounted = screen.query("#library-notes-source-strip")
     needed = canvas_kind in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS
     if needed and not mounted:
@@ -223,7 +226,11 @@ async def _apply_library_notes_source_strip(
             before=screen.query_one("#library-shell-grid", Widget),
         )
     elif mounted and not needed:
-        await mounted.first(Widget).remove()
+        strip = mounted.first(Widget)
+        ensure_surface_swap_not_self_awaited(
+            (strip,), seam="LibraryScreen notes source strip removal"
+        )
+        await strip.remove()
 
 
 async def _adopt_library_browse_canvas(
@@ -250,6 +257,9 @@ async def _adopt_library_browse_canvas(
         the ONLY signal that the caller must. Swallowing it (Qodo #7) let a
         failed return-switch report success and keep showing stale content.
     """
+    # Deferred import (ADR-097 boot census and pre-import payload have no headroom).
+    from ..Navigation.surface_swap_guard import ensure_surface_swap_not_self_awaited
+
     list_canvas_id = _ROUTE_LIST_CANVAS_ID[route]
     resident = next(
         (child for child in canvas_host.children if child.id == list_canvas_id),
@@ -267,6 +277,11 @@ async def _adopt_library_browse_canvas(
         if child is not destination and child.id not in LIBRARY_RESIDENT_CANVAS_IDS
     ]
     if stale:
+        # TASK-34000.4: refused, before anything is hidden or torn down, when
+        # awaited on the pump of a widget inside a stale child.
+        ensure_surface_swap_not_self_awaited(
+            stale, seam="LibraryScreen browse route canvas swap"
+        )
         for child in stale:
             child.display = False
         await canvas_host.remove_children(stale)

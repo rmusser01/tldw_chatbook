@@ -3178,17 +3178,17 @@ class LibraryMediaController:
         return note
 
     @on(Button.Pressed, "#library-media-export")
-    async def handle_library_media_export(self, event: Button.Pressed) -> None:
-        """Open the export canvas scoped to the media list's current type filter.
+    def handle_library_media_export(self, event: Button.Pressed) -> None:
+        """Open Export scoped to the list's type filter -- on the SCREEN's pump.
+
+        Never awaited here: the open removes the pressing canvas (TASK-34000.4).
 
         Args:
-            event: Button press event emitted by the media canvas's
-                "Export…" action.
+            event: Press of the media canvas's "Export…" action.
         """
         event.stop()
-        await self._open_library_export_canvas(
-            ExportScope(kind="media", media_type=self._library_media_type_filter)
-        )
+        scope = ExportScope(kind="media", media_type=self._library_media_type_filter)
+        self.call_next(self._open_library_export_canvas, scope)
 
     @on(Button.Pressed, "#library-media-back")
     def handle_library_media_back(self, event: Button.Pressed) -> None:

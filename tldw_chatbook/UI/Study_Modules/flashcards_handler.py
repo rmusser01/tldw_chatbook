@@ -646,9 +646,15 @@ class StudyFlashcardsController:
             return
 
         search_value = self.window.query_one("#flashcard-search-input", Input).value
+        # TASK-34000.6 (S-05): no scope keywords here. A card list is scoped by
+        # its deck on both backends (`LocalStudyService.list_flashcards(deck_id=
+        # ...)`, `ServerStudyService.list_flashcards(deck_id=...)`), and the deck
+        # came from the scope-filtered `list_decks` above; `StudyScopeService.
+        # list_flashcards` has no `scope_type`/`workspace_id` and spreading
+        # `_scope_arguments()` into it raised TypeError the moment a deck was
+        # selected -- an unhandled exception that exited the app.
         cards = await service.list_flashcards(
             mode=self._current_mode(),
-            **self._scope_arguments(),
             deck_id=deck_id,
             q=search_value,
             limit=100,
@@ -746,9 +752,11 @@ class StudyFlashcardsController:
 
         tags = self._parse_tags(tags_widget.value)
         try:
+            # TASK-34000.6: same contract as `refresh_cards` -- the card is
+            # scoped by its deck; `StudyScopeService.create_flashcard` accepts
+            # no scope keywords.
             await service.create_flashcard(
                 mode=self._current_mode(),
-                **self._scope_arguments(),
                 deck_id=deck_id,
                 front=front,
                 back=back,

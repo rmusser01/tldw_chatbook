@@ -1,0 +1,42 @@
+# Real-CSS geometry probe (full TldwCli, app bundle loaded), 160x45, TASK-34000.6
+# AFTER the fix (this branch), captured 2026-10-05 19:34. The BEFORE run on the unfixed tree is quoted in the task report.
+== dashboard (160, 45)  columns-row region=Region(x=2, y=15, width=156, height=4) height-style=auto
+== dashboard
+#study-shell                       region=Region(x=0, y=3, width=160, height=41)       height-style=1fr overflow_y=hidden
+StudyDashboard                     region=Region(x=0, y=9, width=160, height=16)       height-style=auto overflow_y=hidden
+#study-dashboard                   region=Region(x=0, y=9, width=160, height=16)       height-style=auto overflow_y=hidden
+.study-dashboard-column            region=Region(x=2, y=15, width=51, height=4)        height-style=auto overflow_y=hidden
+.study-dashboard-column            region=Region(x=54, y=15, width=51, height=4)       height-style=auto overflow_y=hidden
+.study-dashboard-column            region=Region(x=106, y=15, width=51, height=4)      height-style=auto overflow_y=hidden
+.study-dashboard-actions           region=Region(x=2, y=20, width=156, height=1)       height-style=auto overflow_y=hidden
+#study-resume-last                 region=Region(x=2, y=20, width=21, height=1)        height-style=auto overflow_y=hidden
+#study-generate-source-pack        region=Region(x=56, y=20, width=22, height=1)       height-style=auto overflow_y=hidden
+#study-source-generation-status    region=Region(x=2, y=21, width=156, height=1)       height-style=auto overflow_y=hidden
+== flashcards
+AnkiFlashcardsWidget               region=Region(x=0, y=9, width=160, height=35)       height-style=100h overflow_y=hidden
+.flashcards-container              region=Region(x=0, y=9, width=160, height=35)       height-style=100h overflow_y=auto
+.card-editor                       region=Region(x=1, y=13, width=156, height=55)      height-style=auto overflow_y=hidden
+.deck-controls                     region=Region(x=3, y=19, width=152, height=3)       height-style=auto overflow_y=hidden
+.deck-controls                     region=Region(x=3, y=23, width=152, height=3)       height-style=auto overflow_y=hidden
+.deck-controls                     region=Region(x=3, y=31, width=152, height=3)       height-style=auto overflow_y=hidden
+#deck-select                       region=Region(x=18, y=19, width=137, height=3)      height-style=auto overflow_y=hidden
+#new-deck-name-input               region=Region(x=3, y=23, width=136, height=3)       height-style=3 overflow_y=auto
+#create-deck-button                region=Region(x=139, y=23, width=16, height=1)      height-style=auto overflow_y=hidden
+.deck-lifecycle-controls           region=Region(x=3, y=27, width=152, height=9)       height-style=auto overflow_y=hidden
+#move-card-target-select           region=Region(x=3, y=31, width=110, height=3)       height-style=auto overflow_y=hidden
+#move-selected-card-button         region=Region(x=113, y=31, width=20, height=1)      height-style=auto overflow_y=hidden
+#delete-selected-card-button       region=Region(x=133, y=31, width=22, height=1)      height-style=auto overflow_y=hidden
+#delete-deck-button                region=Region(x=3, y=35, width=16, height=1)        height-style=auto overflow_y=hidden
+.search-row                        region=Region(x=3, y=40, width=152, height=3)       height-style=auto overflow_y=hidden
+#flashcard-search-input            region=Region(x=3, y=40, width=136, height=3)       height-style=3 overflow_y=auto
+#flashcard-refresh-button          region=Region(x=139, y=40, width=16, height=1)      height-style=auto overflow_y=hidden
+#card-front                        region=Region(x=3, y=48, width=152, height=5)       height-style=5 overflow_y=auto
+#card-back                         region=Region(x=3, y=55, width=152, height=5)       height-style=5 overflow_y=auto
+.form-row                          region=Region(x=3, y=61, width=152, height=3)       height-style=auto overflow_y=hidden
+#card-tags                         region=Region(x=18, y=61, width=137, height=3)      height-style=3 overflow_y=auto
+#create-card-btn                   region=Region(x=3, y=65, width=16, height=1)        height-style=auto overflow_y=hidden
+#card-list                         region=Region(x=1, y=72, width=156, height=10)      height-style=10 overflow_y=auto
+.review-area                       region=Region(x=1, y=83, width=156, height=15)      height-style=auto overflow_y=hidden
+#start-review-btn                  region=Region(x=3, y=93, width=16, height=1)        height-style=auto overflow_y=hidden
+============================= slowest 25 durations =============================
+1 passed in 8.91s

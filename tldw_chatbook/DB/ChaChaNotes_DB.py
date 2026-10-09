@@ -15944,11 +15944,10 @@ DELETE FROM keywords
         if not pairs:
             return []
         now = self._get_current_utc_timestamp_iso()
+        unique_ids = list(dict.fromkeys(message_id for message_id, _version in pairs))
         with self.transaction(immediate=True) as conn:
             current: dict[str, sqlite3.Row] = {}
-            for batch in self._bounded_id_batches(
-                conn, list(dict.fromkeys(message_id for message_id, _version in pairs))
-            ):
+            for batch in self._bounded_id_batches(conn, unique_ids):
                 placeholders = ",".join("?" for _ in batch)
                 current.update(
                     (row["id"], row)
@@ -15966,13 +15965,25 @@ DELETE FROM keywords
                         entity="messages",
                         entity_id=message_id,
                     )
-            for message_id, version in pairs:
-                conn.execute(
+            # TASK-33628.5: one UPDATE per id batch, not per row (2,999 rows
+            # took 1.0-1.8 s one by one). The IMMEDIATE transaction has held
+            # the write lock since before the version check above, so every
+            # row is still the tombstone it was just checked to be; the
+            # rowcount proves it.
+            for batch in self._bounded_id_batches(conn, unique_ids, reserved=2):
+                placeholders = ",".join("?" for _ in batch)
+                cursor = conn.execute(
                     "UPDATE messages SET deleted = 0, last_modified = ?, "
                     "version = version + 1, client_id = ? "
-                    "WHERE id = ? AND version = ? AND deleted = 1",
-                    (now, self.client_id, message_id, version),
+                    f"WHERE deleted = 1 AND id IN ({placeholders})",  # nosec B608 - placeholders only
+                    (now, self.client_id, *batch),
                 )
+                if cursor.rowcount != len(batch):
+                    raise ConflictError(
+                        "Messages changed after they were deleted.",
+                        entity="messages",
+                        entity_id=batch[0],
+                    )
             self._advance_semantic_graph_epoch(conn)
         return [
             {
@@ -16033,8 +16044,12 @@ DELETE FROM keywords
 
     @staticmethod
     def _bounded_id_batches(
-        conn: sqlite3.Connection | sqlite3.Cursor, ids: Sequence[str]
-    ) -> Iterator[Sequence[str]]:
+        conn: sqlite3.Connection | sqlite3.Cursor,
+        ids: Sequence[Any],
+        *,
+        reserved: int = 0,
+        per_id: int = 1,
+    ) -> Iterator[Sequence[Any]]:
         """Yield ``ids`` in slices one ``IN (?, ...)`` list can bind.
 
         A subtree delete reaches as many rows as the conversation holds, but
@@ -16047,17 +16062,22 @@ DELETE FROM keywords
             conn: The connection, or the ``transaction()`` cursor, the
                 statements will run on; its connection's live limit bounds
                 the batch.
-            ids: The ids to bind, one variable each.
+            ids: The items to bind, ``per_id`` variables each.
+            reserved: Variables the statement binds besides the batch (a
+                timestamp, a client id), taken off the limit first.
+            per_id: Variables each item binds (TASK-33628.5: a batched
+                write keyed by id binds the id again for each value it sets).
 
         Yields:
-            Consecutive slices of at most ``min(500, limit)`` ids.
+            Consecutive slices of at most ``min(500, (limit - reserved) //
+            per_id)`` items, and never fewer than one.
         """
         connection = getattr(conn, "connection", conn)
         try:
             limit = connection.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
         except (AttributeError, sqlite3.Error):
             limit = _SQLITE_DEFAULT_VARIABLE_LIMIT
-        size = max(1, min(_ID_LIST_BATCH_CAP, limit))
+        size = max(1, min(_ID_LIST_BATCH_CAP, (limit - reserved) // max(1, per_id)))
         for start in range(0, len(ids), size):
             yield ids[start : start + size]
 
@@ -16107,21 +16127,52 @@ DELETE FROM keywords
     def _attach_chat_delete_base_hashes(
         conn: sqlite3.Connection, proofs: Mapping[str, tuple[int, str]]
     ) -> None:
-        """Attach each hash to exactly one trigger-authored delete intent."""
-        for message_id, (version, base_payload_hash) in proofs.items():
+        """Attach each hash to exactly one trigger-authored delete intent.
+
+        TASK-33628.5: one read and one write per id batch, where a subtree
+        delete used to issue an ``UPDATE`` per tombstone. The read finds each
+        row's delete intents; exactly one must sit at the tombstone's version,
+        as the per-row ``rowcount == 1`` check required.
+
+        Raises:
+            CharactersRAGDBError: A tombstone has no delete intent at its
+                version, or more than one.
+        """
+        unattached = CharactersRAGDBError(
+            "Chat delete intent proof was not uniquely attached."
+        )
+        # The write binds three variables per row: CASE's id and hash, IN's id.
+        for batch in CharactersRAGDB._bounded_id_batches(conn, list(proofs), per_id=3):
+            placeholders = ",".join("?" for _ in batch)
+            intents: dict[str, int] = {}
+            for row in conn.execute(
+                "SELECT change_id, entity_id, version FROM sync_log "
+                "WHERE entity = 'messages' AND operation = 'delete' "
+                f"AND entity_id IN ({placeholders})",  # nosec B608 - placeholders only
+                tuple(batch),
+            ).fetchall():
+                if row["version"] != proofs[row["entity_id"]][0]:
+                    continue
+                if row["entity_id"] in intents:
+                    raise unattached
+                intents[row["entity_id"]] = row["change_id"]
+            if len(intents) != len(batch):
+                raise unattached
+            change_ids = [intents[message_id] for message_id in batch]
+            hashes = [
+                value
+                for message_id, change_id in zip(batch, change_ids)
+                for value in (change_id, proofs[message_id][1])
+            ]
             cursor = conn.execute(
-                """
-                UPDATE sync_log
-                   SET payload = json_set(payload, '$.base_payload_hash', ?)
-                 WHERE entity = 'messages' AND entity_id = ?
-                   AND version = ? AND operation = 'delete'
-                """,
-                (base_payload_hash, message_id, version),
+                "UPDATE sync_log SET payload = json_set(payload, "
+                "'$.base_payload_hash', CASE change_id "
+                f"{' '.join('WHEN ? THEN ?' for _ in batch)} END) "
+                f"WHERE change_id IN ({placeholders})",  # nosec B608 - placeholders only
+                (*hashes, *change_ids),
             )
-            if cursor.rowcount != 1:
-                raise CharactersRAGDBError(
-                    "Chat delete intent proof was not uniquely attached."
-                )
+            if cursor.rowcount != len(batch):
+                raise unattached
 
     def get_message_tombstones(
         self, message_ids: Sequence[str]

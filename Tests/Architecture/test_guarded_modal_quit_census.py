@@ -65,6 +65,10 @@ GUARDED_CLOSE_DECISIONS: dict[str, str] = {
     # working" and stays (refuse_quit_while_working, TASK-33622.15).
     "tldw_chatbook/Widgets/Console/console_fork_chat_modal.py:"
     "ConsoleForkChatModal._perform_safe_cancel": CONFIRM_QUIT,
+    # TASK-33628.5: the message-Delete receipt while the delete or its Undo
+    # is still being saved off the event loop.
+    "tldw_chatbook/Widgets/Console/console_message_delete_receipt.py:"
+    "ConsoleMessageDeleteReceiptModal._perform_safe_cancel": CONFIRM_QUIT,
     "tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py:"
     "ConsoleCapturePolicyDialog._perform_safe_cancel": CONFIRM_QUIT,
     "tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py:"

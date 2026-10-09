@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌───────────────────────────┐┌─────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Navigat…    Collapse      ││ Export bundle (.zip)                                                                │ │
+│ │     Import…               ││ Media · 23 items                                                                    │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │
+│ │ ▊ Search Library…   ▎▊x▎  ││ ▊ Library export 2026-10-05                                                       ▎ │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │
+│ │                           ││                                                                                     │ │
+│ │ ────────────────────────  ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │ │
+│ │ Browse               ▾    ││ ▊ Description (optional)                                                          ▎ │ │
+│ │    Media (23)             ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │ │
+│ │    Chats (12)             ││                                                                                     │ │
+│ │    Notes (122)            ││   quality: original                                                                 │ │
+│ │    Prompts (10)           ││ copies full media files into the zip                                                │ │
+│ │    Skills (4)             ││                                                                                     │ │
+│ │    Collections (6)        ││   Choose destination…                                                               │ │
+│ │    Search / RAG           ││ No destination chosen                                                               │ │
+│ │ ────────────────────────  ││ Bundle: 23 media items · text only · about 117 KB before compression                │ │
+│ │ Artifacts            ▾    ││                                                                                     │ │
+│ │    All artifacts          ││ Q3 planning memo                                                                    │ │
+│ │    Chatbooks              ││ API design guidelines                                                               │ │
+│ │    Reports              ▂ ││ Employee handbook — remote work policy                                              │ │
+│ │ ────────────────────────  ││ How SQLite FTS5 ranks results                                                       │ │
+│ │ Create               ▾    ││ The case for local-first software                                                   │ │
+│ │    New note               ││ Spaced repetition, explained                                                        │ │
+│ │    New prompt             ││ Why your sourdough is flat                                                          │ │
+│ │    New skill              ││ A field guide to Markdown tables                                                    │ │
+│ │ ────────────────────────  ││ Podcast: Deep Work revisited (ep. 112) — transcript                                 │ │
+│ │  ▾ scroll for more        ││ Podcast: Learning languages as an adult — transcript                                │ │
+│ └───────────────────────────┘└─────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to Media | F1 help · Ctrl+P palette · Ctrl+Q quit

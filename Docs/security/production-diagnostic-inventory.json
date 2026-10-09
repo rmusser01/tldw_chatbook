@@ -442,6 +442,13 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "524831d84ebe6f171a4b",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/console_durable_writes.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
       "call_count": 11,
       "diagnostic_digest": "aab30496184400f10ca1",
       "owner": "TASK-492",
@@ -499,7 +506,7 @@
     },
     {
       "call_count": 2,
-      "diagnostic_digest": "cd79423a2b17167bf5b1",
+      "diagnostic_digest": "f45d4b6aae0852b9c922",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_message_delete.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -2787,8 +2794,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "d1f0c2ea9165c1c5eefe",
+      "call_count": 2,
+      "diagnostic_digest": "a6efbb623aa66bc60789",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/message_delete.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3169,6 +3176,13 @@
       "diagnostic_digest": "0c3d1d25098f69b745e3",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Navigation/screen_registry.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "05833597d4bcd1f30771",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Navigation/surface_swap_guard.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
@@ -4072,6 +4086,13 @@
       "diagnostic_digest": "afdfeb12c955f14fded2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/Console/console_hooks_review_modal.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "2a076a8c2e7f4546576e",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/Console/console_message_delete_receipt.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {

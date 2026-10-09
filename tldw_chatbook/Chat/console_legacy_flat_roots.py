@@ -284,18 +284,57 @@ def delete_seeds(
         The subtree's saved ids (``None`` for unsaved nodes, which the
         database ignores), then the hidden flat rows later in its chain.
     """
+    seeds, scan_conversation_id = delete_seed_plan(store, session_id, subtree_ids)
+    database = getattr(store.persistence, "db", None) if store.persistence else None
+    return seeds + hidden_seeds(database, scan_conversation_id, seeds)
+
+
+def delete_seed_plan(
+    store: Any, session_id: str, subtree_ids: Sequence[str]
+) -> tuple[list[str | None], str | None]:
+    """The in-memory half of :func:`delete_seeds`: no database read.
+
+    TASK-33628.5: the Console reads its tree on the UI thread and runs the
+    durable delete -- this lookup's database half included, inside that
+    delete's transaction -- off the event loop.
+
+    Args:
+        store: The Console store about to delete the subtree.
+        session_id: The session holding it.
+        subtree_ids: The native ids the delete removes, selected row first.
+
+    Returns:
+        The subtree's saved ids, and the conversation whose parentless rows
+        :func:`hidden_seeds` must read -- ``None`` when the delete removes no
+        chained flat root, so nothing is read.
+    """
     nodes = store._nodes_by_session.get(session_id, {})
     seeds = [nodes[n].persisted_message_id for n in subtree_ids if n in nodes]
     if not any(_was_chained(store, nodes, node_id) for node_id in subtree_ids):
-        return seeds
+        return seeds, None
     session = store._sessions.get(session_id)
-    conversation_id = getattr(session, "persisted_conversation_id", None)
-    database = getattr(store.persistence, "db", None) if store.persistence else None
+    return seeds, getattr(session, "persisted_conversation_id", None)
+
+
+def hidden_seeds(
+    database: Any, conversation_id: str | None, seeds: Sequence[str | None]
+) -> list[str]:
+    """The database half of :func:`delete_seeds`; reads no store state.
+
+    Args:
+        database: The ChaChaNotes database the delete writes.
+        conversation_id: What :func:`delete_seed_plan` returned; ``None``
+            reads nothing.
+        seeds: The subtree's saved ids.
+
+    Returns:
+        The hidden flat rows later in the deleted chain.
+    """
     reader = getattr(database, "get_root_message_rows_page", None)
     if conversation_id is None or not callable(reader):
-        return seeds
+        return []
     roots = _root_rows(reader, conversation_id)
-    return seeds + hidden_rows_after(roots, {seed for seed in seeds if seed})
+    return hidden_rows_after(roots, {seed for seed in seeds if seed})
 
 
 def _root_rows(

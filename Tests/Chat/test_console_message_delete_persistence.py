@@ -374,12 +374,15 @@ def test_undo_accounts_for_every_per_message_registry_delete_purges():
     import re
 
     from tldw_chatbook.Chat import console_message_delete as undo
+    from tldw_chatbook.Chat import console_subtree_delete as subtree
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
+    # TASK-33628.5: the delete purge moved out of the store's _delete_message
+    # into the apply phase both the store and the off-loop Delete run.
     purged = set(
         re.findall(
-            r"self\.(_\w+)\.(?:pop|discard)\(node_id",
-            inspect.getsource(ConsoleChatStore._delete_message),
+            r"store\.(_\w+)\.(?:pop|discard)\(node_id",
+            inspect.getsource(subtree.apply_subtree_delete),
         )
     ) | set(
         re.findall(

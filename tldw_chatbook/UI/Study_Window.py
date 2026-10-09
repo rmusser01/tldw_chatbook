@@ -118,6 +118,18 @@ class AnkiFlashcardsWidget(Widget):
         border: round $surface;
         padding: 1;
         margin-bottom: 1;
+        /* TASK-34000.6 (S-05): without this the editor took Textual's default
+           `1fr` (8 rows of the scroll container at 160x45, measured) and
+           `overflow: hidden` dropped every control after "Decks:". */
+        height: auto;
+    }
+
+    /* An Input defaults to `width: 100%`, which left its row-mate button
+       (Create Deck, Refresh) starting at the screen's right edge. Class-keyed
+       on the subject, not `.deck-controls Input` (lessons-textual: ancestor-
+       scoped bare-type rules are a ratcheted cost). */
+    Input.flashcard-row-input {
+        width: 1fr;
     }
 
     .deck-controls {
@@ -140,7 +152,12 @@ class AnkiFlashcardsWidget(Widget):
         margin-bottom: 1;
     }
     
-    .card-list {
+    /* TASK-34000.6 (S-05): keyed off the app-wide `.card-list` class, whose
+       app-tier `height: $ds-height-fill` (1fr) beat this widget-tier rule
+       regardless of specificity and collapsed the list to its two border
+       rows inside the auto-height scroll container, so a created card was
+       never visible (160x45 live capture 07 before the re-key). */
+    .flashcard-list {
         height: 10;
         border: round $surface;
         margin-bottom: 1;
@@ -182,7 +199,9 @@ class AnkiFlashcardsWidget(Widget):
                     )
                 with Horizontal(classes="deck-controls"):
                     yield Input(
-                        placeholder="New deck name...", id="new-deck-name-input"
+                        placeholder="New deck name...",
+                        id="new-deck-name-input",
+                        classes="flashcard-row-input",
                     )
                     yield Button(
                         "Create Deck", id="create-deck-button", variant="primary"
@@ -224,6 +243,7 @@ class AnkiFlashcardsWidget(Widget):
                     yield Input(
                         placeholder="Search selected deck...",
                         id="flashcard-search-input",
+                        classes="flashcard-row-input",
                     )
                     yield Button("Refresh", id="flashcard-refresh-button")
 
@@ -237,13 +257,17 @@ class AnkiFlashcardsWidget(Widget):
 
                 with Horizontal(classes="form-row"):
                     yield Label("Tags:", classes="form-label")
-                    yield Input(placeholder="space-separated tags", id="card-tags")
+                    yield Input(
+                        placeholder="space-separated tags",
+                        id="card-tags",
+                        classes="flashcard-row-input",
+                    )
 
                 yield Button("Create Card", id="create-card-btn", variant="primary")
 
             # Card list
             yield Label("Your Cards:", classes="subsection-title")
-            yield ListView(id="card-list", classes="card-list")
+            yield ListView(id="card-list", classes="flashcard-list")
 
             # Review section
             with Vertical(classes="review-area"):
@@ -593,7 +617,11 @@ class StudyWindow(Container):
     DEFAULT_CSS = """
     StudyWindow {
         layout: horizontal;
-        height: 100%;
+        /* TASK-34000.6 (S-05): `100%` of the Study shell, placed under the
+           shell's header and section bar, overflowed the shell by 6 rows at
+           160x45 (measured), so the last rows of every section's scroll
+           container could never be shown. `1fr` is the remaining space. */
+        height: 1fr;
     }
     
     .study-sidebar {

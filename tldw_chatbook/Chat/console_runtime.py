@@ -373,6 +373,9 @@ _PROJECT_INSTRUCTION_NOTICE_POLL_SECONDS = 0.1
 _PROJECT_INSTRUCTION_PROJECTION_RETRY_DELAYS = (0.05, 0.1, 0.2)
 CONSOLE_SESSION_CLOSE_GRACE_SECONDS = 2.0
 CONSOLE_RUNTIME_SHUTDOWN_GRACE_SECONDS = 3.0
+#: How long app exit waits for a message Delete or Undo still saving before
+#: it ends the store (TASK-33628.5). A 3,000-message save takes ~0.2-0.3 s.
+CONSOLE_DURABLE_WRITE_TEARDOWN_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -6639,7 +6642,15 @@ class ConsoleRuntime:
             end_app_runtime = getattr(self._chat_store, "end_app_runtime", None)
             if callable(end_app_runtime):
                 try:
-                    await asyncio.to_thread(end_app_runtime)
+                    from .console_durable_writes import end_store_after_writes
+
+                    # A Delete/Undo saving off the loop holds the store's
+                    # voice admission until applied: settle it first.
+                    await end_store_after_writes(
+                        self._chat_store,
+                        end_app_runtime,
+                        CONSOLE_DURABLE_WRITE_TEARDOWN_SECONDS,
+                    )
                 except Exception:  # noqa: BLE001 - quit must continue cleanup
                     logger.opt(exception=True).warning(
                         "Console runtime: trace settlement shutdown failed at dispose."

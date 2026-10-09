@@ -32,14 +32,13 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from tldw_chatbook.Utils.input_validation import escape_markup
 
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...STT.transcribe_cpp_config import is_gguf_file
 from ...Third_Party.textual_fspicker import Filters
+from ..Screens.study_scope_models import summarize_carried_titles
 from .screen_constants import (
     LIBRARY_NOTE_BLANK_SEED_TITLE,
-    LIBRARY_STUDY_HANDOFF_TITLES_CAP,
 )
 
 
@@ -116,15 +115,14 @@ def _library_carries_forward_line(titles: Sequence[str]) -> str:
     Returns:
         ``"Carries forward: a, b, c"`` when there are at most
         ``LIBRARY_STUDY_HANDOFF_TITLES_CAP`` titles, else ``"Carries
-        forward: a, b, c and N more."`` with the remaining count appended.
+        forward: a, b, c and N more."`` where N counts the rest of what Study
+        keeps -- the same ``summarize_carried_titles`` rule Study's banner
+        renders (TASK-34000.6), so the two descriptions cannot disagree.
     """
-    escaped_titles = [escape_markup(title) for title in titles]
-    capped = escaped_titles[:LIBRARY_STUDY_HANDOFF_TITLES_CAP]
-    joined = ", ".join(capped)
-    remaining = len(escaped_titles) - len(capped)
-    if remaining > 0:
-        return f"Carries forward: {joined} and {remaining} more."
-    return f"Carries forward: {joined}"
+    summary = summarize_carried_titles(titles)  # cleans + escapes (one rule)
+    if summary.remaining > 0:
+        return f"Carries forward: {summary.text}."
+    return f"Carries forward: {summary.text}"
 
 
 def _unbreakable_size_text(size_text: str) -> str:

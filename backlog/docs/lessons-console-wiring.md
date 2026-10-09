@@ -567,3 +567,28 @@ to the actual transcript before selection, retaining its bounds and assertions.
 The same delayed original node and thirteen affected cases pass; no production
 selection semantics or timeout change is needed. This controlled proof does
 not attribute unrecorded hosted ordering or certify full qualification.
+
+## A fence held across an await is visible to app exit
+
+**TASK-33628.5, 2026-10-05.** Moving Console Delete/Undo's durable write off
+the event loop meant holding the store's fork-source and voice-promotion
+admissions across an `await`, from before the write starts until its result
+is applied. On dev the delete ran inline, so nothing else on the loop could
+run inside that window. On the branch, app exit could: Ctrl+Q, Ctrl+Q,
+**Quit anyway** during a 3,002-message save reached `ConsoleRuntime.dispose`,
+whose `ConsoleChatStore.end_app_runtime` takes the voice-promotion
+*replacement* fence. That fence refuses while any admission is held
+("Voice promotion state prevents store replacement."), and dispose logged the
+refusal and skipped the whole store teardown: the trace-settlement drain, both
+executor shutdowns and the teardown retries. The delete itself still
+committed, so nothing looked wrong in the chat; only the app log showed it.
+The suite was green; the branch's own final gate found it by reading which
+other code takes the same fence. **What to do:** when a change adds an `await`
+inside a section that holds a lock, fence or admission, list every path that
+takes the same fence -- app exit and store replacement especially -- and
+decide what each does when it arrives mid-window. Here app exit now closes
+admission, waits a bounded time for the writes in flight
+(`Chat/console_durable_writes.py`), and past the bound still runs every step
+that does not replace state. Pin it with the real app: press the real
+Ctrl+Q twice with the write held (`Tests/UI/test_console_message_delete_quit.py`),
+and assert the teardown steps ran, not only that the data landed.

@@ -19,6 +19,23 @@ fast. Before calling a field's value wrong from a text capture, check whether
 the shown text equals the Input's placeholder. Use an `-e` (ANSI) capture to
 see its dim placeholder style, or change one character and re-capture.
 
+## A held SQLite lock must be released inside the app's 15 s busy timeout (TASK-33628.5, 2026-10-04)
+
+**Incident.** To see a large Delete's "Deleting N messages…" state live, the
+write was held behind `BEGIN IMMEDIATE` in a separate `sqlite3` session (the
+TASK-33622.15 recipe). The first run held it 23 s while captures, Escape and
+Ctrl+Q were taken one at a time. ChaChaNotes connections open with
+`timeout=15`, so at 16 s the app logged `Console message delete failed:
+OperationalError`. The receipt closed with "Delete could not complete", and
+nothing was deleted. The transaction had rolled back cleanly, but this was
+not the run being verified. The second run scripted every step and committed
+at 3.7 s.
+
+**What to do.** Script the whole held window: take the lock, trigger, capture,
+send the keys and commit, all in one command, and record how long the lock was
+held. Keep the hold well under 15 s. A hold past the timeout tests the failure
+path instead, which is evidence of something else.
+
 ## An isolated (`python -I`) worker ignores cwd, so a stale editable install breaks it alone
 
 **TASK-33940, 2026-10-02.** Every Console fs_*/git_* call on the owner's machine failed with

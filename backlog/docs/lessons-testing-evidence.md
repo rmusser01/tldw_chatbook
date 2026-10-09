@@ -1,5 +1,59 @@
 # Lessons: what counts as evidence a change works
 
+## A loguru sink added before the app mounts is gone by the time you read it (TASK-33628.5, 2026-10-05)
+
+**Incident.** The quit-mid-delete test added a loguru WARNING sink, ran the
+real app, and then asserted that no "shutdown failed at dispose" warning had
+been logged. It passed on the branch only because the shared test profile still
+had the splash enabled. Without a splash, `TldwCli.on_mount` sets logging up at
+once (`configure_application_logging`), and that calls `logger.remove()`,
+which deletes every sink. dev had just changed the shared Console readiness
+helper to save `splash_screen.enabled = false`, so on a merge with dev the
+sink was dead before the delete started. The "no such warning" checks then
+read an empty list. The only thing that failed was the `finally`, with
+`ValueError: There is no existing handler with id N`. Had that cleanup been
+wrapped in `suppress(ValueError)`, the test would have passed without checking
+anything.
+
+**What to do.** In a test that runs the real app, add a log sink only after the
+app has mounted. Before reading what the sink caught, log a unique probe
+through it and assert the probe arrived. A sink the app removed then fails
+loudly, instead of making every absence check pass on nothing. Mutation-check
+this: moving the attach back before `run_test` must fail on the probe
+(`Tests/UI/test_console_message_delete_quit.py`, `_WarningSink`).
+
+## The function a review timed is not what the user waits for (TASK-33628.5, 2026-10-04)
+
+**Incident.** The task said Console Delete blocks the UI because the subtree
+delete issues one UPDATE per row (0.67 s at 1,000 messages, 7.4 s at 3,000).
+Timing the whole interaction on the event loop told a different story. On dev
+7d155170dc with a file-backed database, the durable delete was 0.15-1.1 s and
+the durable Undo 0.1-1.8 s at 3,000 messages. Selecting the first message of
+a 3,000-message chain to delete it mounted all 3,000 rows: 24,085 widgets, and
+183 s before the loop went quiet. With those rows mounted, one focus-paint
+class toggle cost 29-37 s. The first probe also measured too early: it started
+its delete timer while that selection was still mounting rows, and charged the
+delete with 31-56 s blocks. Batching the writes and moving them off the loop
+was still the right fix for the task. Most of what a user of a long chat
+waits for is elsewhere (TASK-33628.5.1, .5.2).
+
+**What to do.** Before optimising the function a finding names, measure the
+whole interaction on the loop. Run a heartbeat task (`await asyncio.sleep`
+in a loop, recording each overshoot) through the action, with timing spans on
+the named function, and wait until the loop is quiet (no gap over ~50 ms for
+a second or more) before starting the clock. Put a control action beside it:
+arming the same Delete, which writes nothing, blocked the loop for 0.2-0.8 s.
+That marks the floor no change to the write can go below.
+
+**Then compare like with like.** The same task's notes first reported a
+single-probe "1.1 s -> 0.26 s" for the 3k delete; re-run as n=6 on both arms
+on one machine, the durable delete was 0.16-0.20 s on dev and 0.13-0.17 s on
+the branch, and the headline was withdrawn. Its live timing looked like an
+Undo regression (dev 0.54 s, branch 1.44 s "Undo to receipt closed"), but
+dev closes the receipt *before* it restores, so the two numbers timed
+different things. Time both arms to the same user-visible end state (rows
+back and the receipt gone), n>=3 each, and report ranges for both.
+
 ## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
 
 **TASK-14876 audit, 2026-09-30.** Checking whether the 2026-08-09 xdist
@@ -365,6 +419,27 @@ reaches the unchanged geometry assertions; restoring the actual retired bare
 the compact-height assertion fail. A plugin-assisted pass is useful diagnosis,
 not the final qualification of a guard intended to run in CI.
 
+## A finding verified on the review's commit may already be fixed on your base -- diff the two before designing the RED (TASK-34000.4, 2026-10-04)
+
+**Incident.** The task said a regression test for the Library Media "Export…"
+freeze "fails on current dev (by timing out)", and the plan asked for that RED
+on the wave's base, 8c4dfe59a2. The review had run on 2d34cbf80d. Between the
+two, 3cee32b3d0 (task-31249, landed the evening of the review) had already
+moved the Export projection off the press dispatch. On the base the new test
+passed 4/4 and a live click opened Export -- the P0 was gone before the fix
+task started, and a RED "on base" could only have been faked.
+
+**What to do.** Before writing the first test, run `git log
+<review-commit>..<base> -- <the files the task names>` and try the symptom
+live on the base. If it no longer reproduces, say so first in the report, and
+show the test's teeth where the defect still exists: restore the old line
+(Edit-based, restored the same way) and show the bounded failure, and
+reproduce the symptom live on a `git archive` export of the review's commit
+(`APP_WT=<export>`), next to the same clicks on the base and on the branch.
+What is left to do is then usually the part the earlier fix skipped -- here
+the hand-off at the widget, the guard for the class, and a test that fails
+instead of hanging.
+
 ## Compare against the branch's merge base, not whatever `origin/dev` is now
 
 **TASK-33005 final fix wave, 2026-10-02.** The branch was rebased onto
@@ -651,6 +726,23 @@ service export crashed before filename selection despite passing policy-count
 tests. Construct the actual validated payload in presentation fixtures and
 retain at least one real capture → review → publication journey. Fixing only
 the fixture's field spelling would still leave its contract unvalidated.
+
+**TASK-34000.6, 2026-10-05 -- the same shape, five and a half months wide.**
+`flashcards_handler.py` spread `**self._scope_arguments()` (`scope_type`,
+`workspace_id`) into `StudyScopeService.list_flashcards` and
+`create_flashcard`, which take neither. Every fake in
+`test_study_flashcards_screen.py` (three classes) and `test_study_dashboard.py`
+declared those keywords on its own `list_flashcards`, so 40+ Flashcards Pilot
+tests stayed green from the parity merge (54b9ca6a17, 2026-04-20) to the
+2026-10-02 UX review, while selecting or creating a deck in the real app raised
+an unhandled `TypeError` and exited it. What caught it: a Pilot test that wires
+the PRODUCTION `StudyScopeService` over a real in-memory DB
+(`test_study_flashcards_real_service_contract.py`), and a guard that derives
+every handler keyword by AST and checks it against `inspect.signature` of the
+real class (`Tests/Architecture/test_study_handler_service_keywords.py`). A
+fake's signature is a claim about the real one; when you write a fake for a
+seam, copy the real signature (or assert it with `inspect.signature`) rather
+than the consumer's call.
 
 ## A reused widget ID cannot identify the action that was pressed
 
@@ -17182,6 +17274,23 @@ about screens or widgets. Then check whether your PR touches
 clean `dev` before touching your feature. Two green runs -- feature commit
 alone green, dummy section on `dev` red -- settle it in about five minutes and
 stop you from redesigning something that was never broken.
+
+**Addendum (2026-10-05, TASK-34000.5).** The same admission refusal is not a
+Tests/UI-only shape. The root-level config suites that `monkeypatch.setenv
+("TLDW_CONFIG_PATH", <tmp file>)` and then call the SHARED module's
+`load_settings(force_reload=True)` -- `test_config_mcp_defaults.py` (4 of 5),
+`test_config_library_defaults.py`, `test_config_console_defaults.py`, and
+`Tests/App/test_submit_library_ingest_job.py` (38 of 146) -- were red on wave
+base 3027850197 with `raw_source_selection_changed` at fixture setup, before
+any assertion; it took three recipe probes to establish that the file's
+content (a `[database]` sentinel table was the first suspect) had nothing to
+do with it. A new config-loader test must use the fresh-module recipe from
+the start: `Tests/Backup_Recovery/config_test_support.install_config_source
+(monkeypatch)` after the `setenv`, then `fresh.load_settings(force_reload=
+True)` -- `Tests/test_config_model_catalog_defaults.py` is the worked example
+and runs in ~3 s. `Tests/test_config_load_settings_table_guard.py` and
+`Tests/Library/test_ingest_analysis_load_settings.py` are written that way.
+
 ### An AST guard that greps a dumped statement list passes on an unawaited call (PR #2813)
 
 **What happened.** `test_every_replacement_progress_timer_retires_its_predecessor`
