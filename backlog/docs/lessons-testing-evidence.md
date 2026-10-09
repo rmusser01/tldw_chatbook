@@ -11840,6 +11840,25 @@ did not know about are exactly the ones a threading fix misses.
 
 ---
 
+## `screen._library_notes_<field>` is silently None -- the Notes controller's flat names live on the controller, not the screen
+
+**TASK-34000.13, 2026-10-08.** The extended delete-prompt test waited on
+`getattr(screen, "_library_notes_backlinks_status", None) == "ready"` (the names
+`library_notes_controller.py` itself spells, e.g. `self._library_notes_backlinks_status = status`)
+and timed out three runs in a row with `status=None, view=None, selected=None` while the editor
+was plainly open (`#library-note-body` mounted, rows painted). Those `_library_notes_<field>`
+names are generated shim properties on the CONTROLLER object (`screen._notes_controller`, the
+"wave-8 task 3" loop at the bottom of that file), each reading `self._notes_state.<field>`; the
+screen never had them, and `getattr(..., None)` turned "wrong object" into a quiet timeout. The
+first attempt without the default raised `AttributeError` inside the predicate, which is the more
+honest failure.
+
+**What to do.** From a test, read the Notes cluster's state through the object both receivers
+share: `screen._notes_state.backlinks_status`, `._notes_state.view`, `._notes_state.selected_note_id`
+(`LibraryNotesState` in `UI/Library_Modules/library_notes_state.py` lists every field). Do not
+wrap a wait predicate's attribute read in `getattr(..., None)`: let a missing name raise, so a
+mis-addressed object fails in one run instead of masquerading as a slow worker.
+
 ## A programmatic `.focus()` is not the user's keystroke — Library focus semantics gate on the INPUT that moved focus
 
 **TASK-22207, 2026-08-25.** The red-first probe for "arrow-keying the Media

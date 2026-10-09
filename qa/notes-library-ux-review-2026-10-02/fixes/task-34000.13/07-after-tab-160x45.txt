@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save automatically.                            │
+│   a  │ Library notes · Ready                                        │  o      ‹ Notes      Advisor meeting 2026-09-24                                        │
+│   v  │ Notes (122)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In the Library database only — no file on disk                                    │
+│      │ copy or keep a folder synced, choose Add from files.         │     Saved                                                                              │
+│      │                                                              │                                                                                        │
+│      │ Filter                                                       │                                                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┌────────────────────────────────────────────────────────────────────────────────┐ │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     │Properties                                                                      │ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │Keywords                                                                        │ │
+│      │                                                              │     │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│ │
+│      │    New     Sort: Newest     Select                           │     │▊ meeting, thesis                                                              ▎│ │
+│ ---> │    Add from files…     Export                                │     │▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│ │
+│      │ Folders & placement                                          │     │                                                                                │ │
+│      │    New folder     Add to folder     Move note                │     │Created   2026-10-08 23:52 · just now                                           │ │
+│      │    Remove placement                                          │     │Modified  2026-10-08 23:52 · just now                                           │ │
+│      │                                                              │     │Version   v2                                                                    │ │
+│      │                                                              │<--- │Words     60 words                                                              │ │
+│      │  ▸ Agent_Lessons                                             │     │Linked from (1)                                                                 │ │
+│      │  ▸ Journal                                                   │     │  Thesis outline — retrieval-augmented tutoring                                 │ │
+│      │  ▾ Meetings                                                  │     │Reuse & Export                                                                  │ │
+│      │    Advisor meeting 2026-09-24 · now                          │     │      Copy                                                                      │ │
+│ ---> │    Standup 2026-09-29 · now                                  │     │  Export Markdown                                                               │ │
+│      │    Advisor meeting 2026-09-10 · now                          │     │  Export text                                                                   │ │
+│      │    ملاحظات الاجتماع — مراجعة المشروع · now                   │     │Danger                                                                          │ │
+│      │    Meeting: design critique — Library rail · now             │     │         Delete                                                                 │ │
+│      │    Meeting notes 2026-09-30 · now                            │     │Delete this note? Undo will be available in the Notes list.                     │ │
+│      │  ▸ Projects                                                  │     │                                                                                │ │
+│      │  ▸ Recipes                                                   │     │      Cancel         ┃    Delete    ┃                                           │ │
+│      │  ▸ Research                                                  │     │                                                                                │ │
+│      │  ▸ Study                                                   ▇ │     │                                                                                │ │
+│      │  ▾ Unfiled                                                   │     │                                                                                │ │
+│      │    Quotes · now                                              │     │                                                                                │ │
+│      │    Scratch · now                                             │     │                                                                                │ │
+│      │    Untitled · now                                            │     │                                                                                │ │
+│      └──────────────────────────────────────────────────────────────┘     └────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter delete | tab switch button | esc cancel | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

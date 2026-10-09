@@ -868,6 +868,25 @@ reachable). A `max_scroll_y > 0` sanity assertion first turns "fits" into a read
 instead of a false RED. And re-resolve the list after any reload: the pager press replaces
 `#library-notes-list` (see the recompose entry above), so the pre-press handle has no children.
 
+## A reveal-on-open is not a reveal-on-resize -- Textual never re-scrolls the focused widget
+
+**TASK-34000.13, 2026-10-08.** The Library Notes delete prompt got its fix in two halves: an
+app-tier `height: auto` (it had been a `1fr` child squeezed to the one leftover row inside Info's
+`VerticalScroll`) and a `call_after_refresh` reveal that scrolls the whole prompt into Info and
+focuses Cancel in place. The gated arms were green. The extended arm that opened the prompt at
+160x45 and resized to 120x36 was RED on the FIXED tree: `max_scroll_y=3`, `scroll_y=0`, both
+buttons below Info's fold, Tab still trapped inside the prompt -- the review's blind-Enter shape
+again, one resize later. Textual re-lays out on resize but does not scroll a focused widget back
+into view; `focus()`'s `scroll_visible` happens once, at focus time.
+
+**What to do.** A "scroll X into view when it appears" fix needs a second owner for "keep X in view
+while it is open". The cheapest durable one here was the destination widget's own `on_resize`
+(`LibraryNotesCanvas._keep_delete_prompt_in_view`: if the prompt is displayed,
+`call_after_refresh(prompt.scroll_visible, immediate=True, force=True)`, no focus change -- the
+user may be on Delete by then), which also keeps the screen's already-breached size ratchet
+untouched. And put the resize-while-open arm in the extended sibling of any reveal fix: it is the
+one arm the open-time test cannot stand in for.
+
 ## A one-edge `margin-bottom` rule replaces the whole margin, not just its edge
 
 **TASK-33003.1, Chat settings disclosures, 2026-09-28.** A collapsed Chat
