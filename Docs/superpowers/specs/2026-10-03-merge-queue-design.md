@@ -38,7 +38,8 @@ Goals:
 Non-goals:
 - Raising the one-merge-per-CI-cycle ceiling. Strict protection already imposes it, and only GitHub's native merge queue
   (organization-owned repos only) can batch.
-- Fork PRs (rare, for example #2826). GitHub cannot dispatch workflows on a fork's branch, so they stay manual.
+- Fork PRs (rare, for example #2826). Approving a fork's held runs would bypass GitHub's approval gate for outside
+  contributors' workflows, so they stay manual.
 - Priority lanes. Add them if FIFO proves wrong in practice.
 - The nightly (sub-project 3), which resumes after this ships.
 
@@ -114,10 +115,11 @@ Everything lives on `dev` and runs on the built-in token.
    - An action layer that performs the decided actions with the guards in section 7.
 
 3. **`.github/workflows/derived-artifacts.yml` (changed).**
-   - Add `workflow_dispatch` with a string input `pr`.
+   - Add `workflow_dispatch` with a string input `pr`, and (2026-10-06 revision) a string input `wait_run`, the run a
+     queue kick's tick waits for before deciding.
    - Define one condition for when the lanes run: `github.event_name == 'pull_request'`, or `workflow_dispatch` with a
      non-empty `pr`, or `workflow_dispatch` with no `pr` on any ref other than `refs/heads/dev`. Use it for both lanes and
-     both verdict steps, so a queue dispatch runs the full fast lanes, and so does a manual dispatch on a PR branch.
+     both verdict steps, so a manual dispatch with `pr`, or on a PR branch, runs the full fast lanes.
    - A dispatch with no `pr` on `dev` is a manual queue kick: the lanes and verdicts are skipped, and the required check is
      not reported red on `dev`. A dispatch with no `pr` on any other branch (the Actions UI "Run workflow" default, or
      `gh workflow run derived-artifacts.yml --ref <branch>`) runs the full gate instead, so the required check can never be
@@ -134,7 +136,8 @@ Everything lives on `dev` and runs on the built-in token.
      check red. Pushes to `dev` do not run `queue-tick`; `merge-queue.yml` handles them.
 
 4. **Other PR workflows (changed).** Each workflow that runs on `pull_request` must also run correctly from
-   `workflow_dispatch`, so the queue can re-run it on the rebased head.
+   `workflow_dispatch`. The first version needed this so the queue could re-run them on the rebased head. Since the
+   2026-10-06 revision the queue approves their held `pull_request` runs instead, and the rule keeps manual dispatches safe.
    - 8 of the 11 other PR workflows read PR-only context (`github.event.pull_request`, `head_ref`, or
      `event_name == 'pull_request'`).
    - perf-guard, task-19642 and task-32011 have no `workflow_dispatch` trigger yet.
@@ -161,10 +164,10 @@ seconds apart (after each merge the next front is routinely `UNKNOWN` for a whil
 |---|---|
 | `BEHIND` | **Rebase** (section 7). On success it approves the new head's held `pull_request` runs (waiting up to 10 x 3 s for the required workflow's to appear), cancels the old head's runs, and comments "rebased onto dev at `<sha>`" |
 | `DIRTY` | **Evict:** conflicts with `dev` |
-| Up to date, no required-check run on the head, or only cancelled ones; head commit older than 3 minutes | **Start:** approve a held run, else re-run a cancelled one; with neither, evict ("push a commit, or close and reopen the PR"), since a dispatch would not count (V4) |
-| Up to date, no run yet, head commit 3 minutes old or less | Wait (the author's own `pull_request` run may not be visible yet) |
+| Up to date, no required-check run on the head, or only cancelled ones; head commit older than 3 minutes | **Start:** approve a held run, else re-run a cancelled one. With neither, look again for up to 10 x 3 s (the head's age is its commit date, not its push, so its run may not be listed yet), standing down if a run appears; then evict ("push a commit, or close and reopen the PR"), since a dispatch would not count (V4) |
+| Up to date, no run yet, head commit 3 minutes old or less | Wait (the author's own `pull_request` run may not be visible yet). In `on` mode the queue run waits out the 3 minutes once and decides again: a tick woken after a rebase whose held runs had not appeared may be the last event for that head |
 | Up to date, required check queued or in progress | Wait (in flight) |
-| Up to date, required check failed, first failure on this head | **Retry:** re-run the failed run in its own check suite (V3) and comment linking it. If the deciding run *is* the failed run (its queue-tick, while it is still in progress), wake a queue tick: a queue kick, `derived-artifacts.yml` dispatched on `dev` without `pr` and with input `wait_run`, whose tick waits for the run to complete, then re-runs it. (`derived-artifacts.yml`, because GitHub only dispatches a workflow whose file is on `main`; `merge-queue.yml` is not.) A run already live again is left alone. One retry per head: a second retry decision evicts (`evict-failed-twice`), because a re-run keeps its run id and a run that never reports the check stays a single stand-in. A refused re-run (HTTP 409/422, or a 403 for a run over a month old) evicts; a 403 rate limit or permission error re-raises |
+| Up to date, required check failed, first failure on this head | **Retry:** re-run the failed run in its own check suite (V3) and comment linking it. If the deciding run *is* the failed run (its queue-tick, while it is still in progress), wake a queue tick: a queue kick, `derived-artifacts.yml` dispatched on `dev` without `pr` and with input `wait_run`, whose tick waits for the run to complete, then re-runs it. (`derived-artifacts.yml`, because GitHub only dispatches a workflow whose file is on `main`; `merge-queue.yml` is not.) A run already live again is left alone, and one held again (its re-run's approval failed) is approved strictly. One retry per head: a second retry decision evicts (`evict-failed-twice`) once a re-read shows the run is not going again, because a re-run keeps its run id and a run that never reports the check stays a single stand-in. A retry attempt that was cancelled, not failed, is re-run in full without counting against the cap. Re-run errors: a refusal (HTTP 409/422, or a 403 for a run over a month old) evicts (`evict-rerun`) unless a re-read shows a racing run re-ran it; a transient error (5xx, 429, rate limit, network) re-raises; any other error re-raises once with a `rerun-error` comment and counts as a refusal the second time on the same head |
 | Up to date, required check failed, second failure on this head | **Evict:** CI failed twice, linking both runs |
 | `CLEAN` or `UNSTABLE` (or `BLOCKED` with no unresolved review threads, usually the state lagging the check), required check green, completed 15 minutes ago or less | Wait (auto-merge is about to fire) |
 | `CLEAN` or `UNSTABLE` (or `BLOCKED` with no unresolved review threads), required check green, completed more than 15 minutes ago | **Evict:** auto-merge did not fire, re-arm to retry |
@@ -172,7 +175,9 @@ seconds apart (after each merge the next front is routinely `UNKNOWN` for a whil
 
 A completed `derived-artifacts.yml` run on the head that failed (`failure`, `startup_failure` or `timed_out`) without
 reporting the required check in its check suite counts as a failed required check. A startup failure (for example a broken
-workflow file on the branch) is therefore retried once and then evicted, instead of re-dispatched forever.
+workflow file on the branch) is therefore retried once and then evicted. GitHub may answer that re-run with a 403 the queue
+cannot classify; the first one fails the queue run with a `rerun-error` comment and the second evicts (`evict-rerun`), so a
+broken branch can never fail every queue run forever.
 
 After an eviction the queue re-evaluates the new front PR in the same run, at most 10 times. PRs behind the front are
 never rebased, dispatched or commented on.
@@ -203,10 +208,15 @@ never rebased, dispatched or commented on.
   `github-actions[bot]` (the queue's own token) are approved, and only for the front PR, which is same-repo, user-authored
   and armed by someone with write access. The queue never dispatches the required check (V4).
 - **Start and retry** re-read the head's live `derived-artifacts.yml` runs first; if one is live (a racing queue run acted
-  first), they do nothing. On the start row, approving a held run is not best-effort: a GitHub error re-raises, so an
-  outage fails the run instead of falling through to the no-run eviction. Only a re-run refusal (HTTP 409/422, or a 403 for a run over a month old) evicts;
-  any other error (5xx, rate limit, network) re-raises (section 8), so an outage never disarms the fronts it touches. A
-  re-run's actor is the queue's token, so GitHub may hold it again; the queue then approves it.
+  first), they do nothing. On the start and retry rows, approving a held run is not best-effort: a GitHub error
+  re-raises, so an outage fails the run instead of falling through to an eviction. A re-run refusal (HTTP 409/422, or a
+  403 for a run over a month old) evicts, after one re-read of the run: if it is live or held again, a racing queue run
+  re-ran it and this one stands down. A transient error (5xx, 429, rate limit, network) re-raises (section 8), so an
+  outage never disarms the fronts it touches. Any other error re-raises once with a `rerun-error` comment, then counts as
+  a refusal on the same head. A re-run's actor is the queue's token, so GitHub may hold it again; the queue then
+  approves it.
+- Only held runs that pass one predicate are ever approved, on every path: event `pull_request`, triggering actor
+  `github-actions[bot]`, head repository this repository.
 - **Evict** means `disablePullRequestAutoMerge` plus one comment. The disarm is best-effort: two racing runs (a merge fires
   both `push` to `dev` and `closed`) can evict the same PR, and the second disarm hits an already-disarmed PR. Re-arming
   puts the PR at the back of the line.
@@ -223,15 +233,18 @@ never rebased, dispatched or commented on.
   queue and dev's post-merge checks.
 - Every action is safe to repeat. Two queue runs racing produce at most one rebase: the pinned head makes the second
   mutation fail, and the post-failure re-read (above) makes the losing run see the moved head and do nothing, instead of
-  counting the refusal as its own failure. Approving a run another queue run already approved is refused and logged
-  (best-effort). Two runs re-running the same run: the second sees it live and stands down, or GitHub refuses the second
-  re-run. Evictions are idempotent.
+  counting the refusal as its own failure. Approving a run another queue run already approved is refused: the approval
+  pass logs it (best-effort), and a start or retry approval re-raises, so that queue run fails and the next event decides
+  afresh. Two runs re-running the same run: the second sees it live and stands down, or GitHub refuses its re-run and its
+  re-read finds the run going again, so it stands down too. Evictions are idempotent.
 
 ## 8. Failure handling
 
 - **API error or rate limit:** the queue run fails as a non-required job. The next event retries it.
 - **A held run left unapproved** (the post-rebase wait ran out, or an approval failed): the next queue run's approval pass
-  approves it.
+  approves it, and a retry decision on that head approves it strictly instead of counting it as a second failure.
+- **A woken tick's wait** (`wait_run`) is bounded at 5 minutes, inside queue-tick's 10-minute timeout; a run that cannot be
+  read, or is still live after that (a GitHub fault), is decided on anyway, and the next event recovers it.
 - **A queue run interrupted between rebase and approval:** the same pass recovers it.
 - **Runner starvation:** the front PR simply waits in flight, as it does today.
 - **Liveness:** the queue wakes on arm, disarm and close events, pushes to `dev`, and finished CI runs for same-repo PRs.
@@ -309,7 +322,14 @@ The rules depend on the mode, checked with `gh variable get MERGE_QUEUE`. A roll
   - `dry` makes zero mutating calls;
   - a retry re-runs the failed run in place; the failed run's own tick wakes a tick instead; a live run is left alone;
     a second retry on the same head evicts;
-  - a refused re-run evicts and the line moves on; a 5xx, rate limit or permission error fails the run and disarms nobody;
+  - a refused re-run evicts and the line moves on, unless a re-read shows a racing run re-ran it; a 5xx, 429, rate
+    limit or network error fails the run and disarms nobody; an unclassified error fails once with a comment, then
+    evicts;
+  - a held re-run whose approval failed is approved strictly, never evicted; a cancelled retry attempt is re-run without
+    counting against the cap;
+  - start looks again before a no-run eviction and approves only held runs the queue caused; a young head with no run is
+    decided again after the window (`on` mode only); a `wait_run` that cannot be read is decided on anyway;
+  - `main()` passes `WAIT_RUN` through;
   - dispatched required checks never count, and a live dispatched run is not waited on;
   - a live run that appeared after the decision stops the action;
   - a refused rebase is re-read once more before it counts as a failure.

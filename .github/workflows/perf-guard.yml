@@ -38,7 +38,7 @@ on:
       - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
-  # Merge queue re-runs this on the rebased head (spec 2026-10-03, section 5.4).
+  # For manual runs; the merge queue approves the held pull_request run instead (ADR-218 amendment 2026-10-06).
   workflow_dispatch:
 
 # One run per workflow per ref (obsolete runs must not queue up competing

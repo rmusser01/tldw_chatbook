@@ -1,8 +1,8 @@
 """Every pull_request workflow must also run correctly from workflow_dispatch.
 
-The merge queue re-runs, on the rebased head, every workflow that ran on the old head.
-A rebase made with GITHUB_TOKEN gets only approval-pending pull_request runs (spec F4),
-so dispatch is the only way they run again (spec section 5.4).
+A maintainer can then run any of them by hand (for example on a fork or bot PR, which the
+merge queue skips). The queue itself no longer dispatches: since the 2026-10-06 revision it
+approves the held pull_request runs after its rebase (ADR-218 amendment, spec V4).
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ import pytest
 yaml = pytest.importorskip("yaml")
 
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
-# The queue's own entry point reacts to PR events but is never re-dispatched (it is not on
-# main, so it cannot be dispatched, and scripts/merge_queue.py excludes it by design).
+# The queue's own entry point reacts to PR events and is never dispatched (it is not on main,
+# so it cannot be).
 QUEUE = "merge-queue.yml"
 
 

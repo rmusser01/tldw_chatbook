@@ -39,8 +39,8 @@ scripts/merge_queue.py no longer dispatches the required check, which never coun
 - Every on-mode tick approves the front PR's held pull_request runs triggered by github-actions[bot] (approve_held_runs, best-effort), before deciding.
 - After a rebase the queue waits, bounded at 10 x 3 s, for the new head's held required run and approves it (_approve_until_required), then cancels old-head runs. The re-dispatch of other workflows and the deletion of held runs (cleanup_approval_runs) are gone.
 - 'dispatch' becomes 'start' (_start): approve a held run strictly, so a GitHub error re-raises and an outage never falls through to an eviction; else re-run a cancelled run in full; else evict (evict-no-run).
-- 'retry' (_retry): re-run the failed run in its own check suite (rerun-failed-jobs; a broken run's stand-in is re-run in full). If the run is the tick's own (still in progress), wake merge-queue.yml with wait_run; a live run is left alone; a refused re-run (403/409/422) evicts (evict-rerun); 5xx re-raises. A re-run held for approval is approved.
-- merge-queue.yml gains a workflow_dispatch trigger with a wait_run input, and run()/main() wait (bounded at 40 x 6 s) for it.
+- 'retry' (_retry): re-run the failed run in its own check suite (rerun-failed-jobs; a broken run's stand-in is re-run in full), once per head (retry marker). If the run is the tick's own (still in progress), send a queue kick (derived-artifacts.yml dispatched on dev, input wait_run); a live run is left alone and a held one approved. Re-run errors: refused (409/422, month-old 403) evicts (evict-rerun); transient (5xx, 429, rate limit, network) re-raises; anything else re-raises once with a rerun-error comment, then evicts.
+- derived-artifacts.yml gains a wait_run workflow_dispatch input, passed to queue-tick as WAIT_RUN; run()/main() wait for that run, bounded at 50 x 6 s. merge-queue.yml is unchanged (not on main, so never dispatchable).
 
 Evidence: live probe #3033 on 2026-10-06. The queue's GITHUB_TOKEN approved a held run (APPROVE_OK), and the approved run's required check appeared in the PR rollup as SUCCESS/pull_request, merge state UNSTABLE (mergeable).
 
@@ -58,4 +58,14 @@ Independent review round 1 (Qodo out of credits). Fixed:
 5. When the post-rebase approval wait ended with nothing approved, nothing woke the queue. It now sends a kick.
 Nits fixed: Args sections; stale comments in merge_queue.py and derived-artifacts.yml; the spec's V1 row, sections 9-11 and its 'Approve and run' rule; the pre-decide approval pass skips BEHIND/DIRTY fronts; approval also requires head_repository == this repo.
 New tests: 403 rate limit (primary, secondary) and permission errors raise; a month-old 403 refuses; a broken run retried twice evicts; a refused wake fails without a disarm; dispatched checks never count; a live dispatched run is not waited on; a bot PR's and a foreign repo's held runs are never approved; a BEHIND front is not pre-approved; the post-rebase timeout wakes a tick. Tests/CI 475 passed; seven new guards mutation-checked; no new lint versus dev.
+
+Independent review round 2 (Qodo still out of credits). Fixed:
+1. A held re-run whose approval failed was evicted as failed twice. _retry now approves a queue-held run strictly (an outage fails the run).
+2. A re-run error the queue could not classify (GitHub answers a broken workflow file with a 403) re-raised forever and stalled the line. It now fails once with a rerun-error comment, then evicts (evict-rerun).
+3. Two queue runs racing on one re-run: the loser's refusal evicted. A refusal, and the retry-cap check, now re-read the run and stand down if it is live or held again.
+4. A cancelled (not failed) retry attempt hit the retry cap. It is re-run in full without counting.
+5. A head whose commit predates its push could reach start before its run was listed, and was evicted (evict-no-run). _start now looks again for up to 10 x 3 s first.
+6. Wake-path stalls: in on mode a young-head wait now sleeps out the window once and decides again; the wait_run bound is 5 minutes (inside queue-tick's 10-minute timeout); a wait_run that cannot be read is decided on anyway.
+7. Mutants that survived: _start's own copy of the held-run filter (now one shared predicate, _queue_held), _required_runs' pull_request filter, main() reading WAIT_RUN, the rate-limit classification. Each now has a test; all 17 code mutants of the round-2 guards are killed.
+8. Doc drift: spec sections 2, 5, 6, 7, 8 and 11; the fork note (UNQUEUED_NOTES and spec: approving a fork's held runs would bypass GitHub's outside-contributor gate); stale 'merge queue re-runs this' comments in perf-guard.yml, task-19642 and task-32011 workflows; test_pr_workflows_dispatch_safe docstring; required_run_stand_ins docstring; this task's bullets above.
 <!-- SECTION:NOTES:END -->

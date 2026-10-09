@@ -7,7 +7,7 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -841,20 +841,41 @@ def test_a_failed_rerun_still_counts_as_the_second_failure():
 @pytest.mark.parametrize("message", [
     "gh: API rate limit exceeded for installation ID 123. (HTTP 403)",
     "gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. (HTTP 403)",
-    "gh: Resource not accessible by integration (HTTP 403)",
-], ids=["primary-rate-limit", "secondary-rate-limit", "permission"])
-def test_a_403_that_is_not_a_refusal_fails_the_run_and_disarms_nobody(message):
-    """Review of #3039: rate limits and permission errors answer 403 too. Reading them as a refused
-    re-run would evict every front an incident touches (spec section 8).
+    "gh: Too Many Requests (HTTP 429)",
+    "gh: dial tcp: lookup api.github.com: no such host",
+], ids=["primary-rate-limit", "secondary-rate-limit", "429", "network"])
+def test_a_transient_rerun_error_fails_the_run_and_disarms_nobody(message):
+    """Review of #3039: rate limits answer 403 too. Reading one as a refused re-run, or counting it
+    toward an eviction, would evict every front an incident touches (spec section 8).
 
     Args:
         message: The gh error text.
     """
     gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
                 runs={OLD: [_pr_run(70, 700)]}, rerun_error=message)
-    with pytest.raises(mq.GhError, match="403"):
+    with pytest.raises(mq.GhError):
         _run(gh)
     assert not any(c[0] in ("disarm", "comment") for c in gh.calls)
+
+
+def test_an_unclassified_rerun_error_fails_once_then_evicts():
+    """Review round 2 of #3039: GitHub answers a re-run of a broken workflow file with a 403 the
+    queue cannot classify. Re-raising it every time would fail every queue run on this front and
+    stall the line; the first one re-raises with a comment, the second evicts."""
+    message = "gh: Resource not accessible by integration (HTTP 403)"
+    broken = _pr_run(31, 531, conclusion="startup_failure")
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [broken]}, rerun_error=message)
+    with pytest.raises(mq.GhError, match="403"):
+        _run(gh)
+    comments = [c for c in gh.calls if c[0] == "comment"]
+    assert len(comments) == 1 and f"<!-- merge-queue:rerun-error:{OLD} -->" in comments[0][2]
+    assert not any(c[0] == "disarm" for c in gh.calls)
+
+    again = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_pr_run(31, 531, conclusion="startup_failure")]},
+                   rerun_error=message, comments={1: [comments[0][2]]})
+    _run(again)
+    assert ("disarm", "PR_1") in again.calls
+    assert any(f"<!-- merge-queue:evict-rerun:{OLD} -->" in c[2] for c in again.calls if c[0] == "comment")
 
 
 def test_a_403_for_a_run_too_old_to_rerun_is_a_refusal():
@@ -924,3 +945,160 @@ def test_a_behind_front_is_not_approved_before_its_rebase():
     gh = FakeGh([_node(1)], runs={OLD: [_held(43)]})
     _run(gh)
     assert ("approve", "43") not in gh.calls
+
+
+def _held_attempt(rid, suite):
+    """A required pull_request run whose re-run GitHub holds for approval (the queue's token re-ran it)."""
+    return dict(_pr_run(rid, suite, conclusion="action_required"), triggering_actor={"login": mq.QUEUE_ACTOR},
+                head_repository={"full_name": mq.REPO})
+
+
+def test_a_held_rerun_whose_approval_fails_never_evicts():
+    """Review round 2 of #3039: the re-run went out but GitHub held it, and the approval pass failed.
+    The next tick decides retry again; with the retry marker already posted it used to evict as
+    "failed again" over a GitHub-side error. It now approves strictly, so the outage fails the run."""
+    marker = {1: [f"<!-- merge-queue:retry:{OLD} -->\nre-running"]}
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_held_attempt(70, 700)]}, comments=marker, approve_error="gh: Server Error (HTTP 502)")
+    with pytest.raises(mq.GhError, match="502"):
+        _run(gh)
+    assert not any(c[0] in ("disarm", "comment", "rerun") for c in gh.calls)
+
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_held_attempt(70, 700)]}, comments=marker)
+    pr = mq.read_prs(gh)[0]
+    action = mq.Action("retry", "required check failed once; retrying", ("https://run/70",), suite_id=700)
+    assert mq._retry(gh, pr, action, lambda m: None, lambda s: None) is False
+    assert gh.calls == [("approve", "70")]
+
+
+@pytest.mark.parametrize("path", ["start", "retry"])
+def test_a_rerun_refused_because_a_racing_run_got_there_first_stands_down(path):
+    """Review round 2 of #3039: two queue runs re-run the same run, and GitHub refuses the second.
+    That refusal is not the branch's fault: the run is live again, so stand down, never evict.
+
+    Args:
+        path: Re-running a cancelled run (start) or a failed one (retry).
+    """
+    if path == "start":
+        checks, run = [_check("cancelled", suite=800)], _pr_run(80, 800, conclusion="cancelled")
+    else:
+        checks, run = [_check("failure", suite=800)], _pr_run(80, 800)
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, runs={OLD: [run]},
+                rerun_error="gh: This workflow is already running (HTTP 409)", run_status={80: ["queued"]})
+    _run(gh)
+    assert ("rerun", "80", "all" if path == "start" else "failed") in gh.calls
+    assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_a_retry_marker_with_the_run_going_again_stands_down():
+    """The racing run's re-run and its retry comment landed between this run's read and its marker check."""
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_pr_run(70, 700)]}, comments={1: [f"<!-- merge-queue:retry:{OLD} -->\nre-running"]},
+                run_status={70: ["in_progress"]})
+    _run(gh)
+    assert not any(c[0] in ("disarm", "rerun", "comment") for c in gh.calls)
+
+
+def test_a_cancelled_retry_attempt_is_rerun_not_evicted():
+    """Review round 2 of #3039: the retry attempt was cancelled, not failed (a human cancel, or a
+    pending run replaced in its concurrency group). It does not count against the one-retry cap."""
+    checks = [_check("failure", completed="2026-10-03T11:00:00Z", url="https://run/a", suite=700),
+              _check("cancelled", completed="2026-10-03T11:40:00Z", url="https://run/b", suite=700)]
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, runs={OLD: [_pr_run(70, 700, conclusion="cancelled")]},
+                comments={1: [f"<!-- merge-queue:retry:{OLD} -->\nre-running"]})
+    _run(gh)
+    assert ("rerun", "70", "all") in gh.calls
+    assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_start_looks_again_before_evicting_a_head_with_no_run():
+    """Review round 2 of #3039: a head's age comes from its commit date, so a commit made well before
+    its push can reach `start` before GitHub lists its run. The queue looks again before evicting."""
+    gh = FakeGh([_node(1, state="BLOCKED")], late_runs={OLD: [_required_run(88)]})
+    pr = mq.read_prs(gh)[0]
+    slept = []
+    assert mq._start(gh, pr, lambda m: None, slept.append) is False
+    assert slept == [mq.HELD_RUN_POLL_S]
+    assert gh.calls == []
+
+
+@pytest.mark.parametrize("held", [
+    _held(31, actor="Copilot"),
+    _held(31, event="workflow_dispatch"),
+    dict(_held(31), head_repository={"full_name": "someone/fork"}),
+], ids=["other-actor", "dispatch", "other-repo"])
+def test_start_never_approves_a_held_run_the_queue_did_not_cause(held):
+    """Review round 2 of #3039: `_start`'s strict approval path had its own copy of the filter, and no
+    test pinned it. An agent's push waiting for a human's approval must stay waiting (spec section 9).
+
+    Args:
+        held: A held run the queue must not approve.
+    """
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [held]})
+    pr = mq.read_prs(gh)[0]
+    assert mq._start(gh, pr, lambda m: None, lambda s: None) is True
+    assert not any(c[0] == "approve" for c in gh.calls)
+
+
+def test_start_never_reruns_a_cancelled_dispatched_run():
+    """A dispatched run never counts (spec V4); re-running a cancelled one would start nothing that counts."""
+    dispatched = {"id": 92, "path": ".github/workflows/derived-artifacts.yml", "event": "workflow_dispatch",
+                  "status": "completed", "conclusion": "cancelled", "check_suite_id": 920}
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [dispatched]})
+    _run(gh)
+    assert not any(c[0] == "rerun" for c in gh.calls)
+    assert ("disarm", "PR_1") in gh.calls
+
+
+def test_a_young_head_without_a_run_is_decided_again_after_the_window():
+    """Review round 2 of #3039: a tick woken after a rebase whose held runs had not appeared can find
+    a young head with no run yet, and nothing may wake the queue again for it. In `on` mode it
+    waits out the window once and decides again; dry mode never sleeps."""
+    clock = [NOW]
+    slept = []
+
+    def sleep(seconds):
+        slept.append(seconds)
+        clock[0] += timedelta(seconds=seconds)
+
+    young = _node(1, state="BLOCKED", committed="2026-10-03T11:59:00Z")
+    gh = FakeGh([young], late_runs={OLD: [_required_run(88)]})
+    decisions = mq.run(gh, "on", now=lambda: clock[0], sleep=sleep, log=lambda m: None)
+    assert slept == [121.0]
+    assert [(a.kind, a.reason) for _, a in decisions] == [("wait", "required check running")]
+
+    dry = FakeGh([young])
+    assert mq.run(dry, "dry", now=lambda: NOW, sleep=slept.append, log=lambda m: None)[0][1].slug == "young"
+    assert slept == [121.0]
+
+
+def test_a_wait_run_that_cannot_be_read_decides_anyway():
+    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check()]})
+    original = gh.rest
+
+    def rest(method, path, fields=None):
+        if method == "GET" and path.endswith("/actions/runs/70"):
+            raise mq.GhError("gh: Not Found (HTTP 404)")
+        return original(method, path, fields)
+
+    gh.rest = rest
+    lines = []
+    decisions = mq.run(gh, "on", now=lambda: NOW, sleep=lambda s: None, log=lines.append, wait_run=70)
+    assert decisions[0][1].kind == "wait"
+    assert any("cannot read run 70" in line for line in lines)
+
+
+@pytest.mark.parametrize(("value", "expected"), [("70", 70), (" 71 ", 71), ("", None), ("x", None)])
+def test_main_passes_the_wait_run_input_to_the_pass(monkeypatch, value, expected):
+    """The kick's `wait_run` input reaches the script as WAIT_RUN; only a run id is used.
+
+    Args:
+        value: The WAIT_RUN environment value.
+        expected: The wait_run the pass receives.
+    """
+    seen = []
+    monkeypatch.setattr(mq, "run", lambda gh, mode, wait_run=None: seen.append(wait_run) or [])
+    monkeypatch.setenv("WAIT_RUN", value)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    assert mq.main() == 0
+    assert seen == [expected]
