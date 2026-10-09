@@ -128,8 +128,8 @@ _BUDGETS: dict[str, int] = {
     # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the
     # split; its new code goes in UI/Settings_Modules/, never in this row.
     # The Phase 7 final review's fixes, still inside the PR that adds this
-    # row, re-pin it at the PR head's measured size (R4): 33,622.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33622,
+    # row, re-pin it at the PR head's measured size (R4): 33,638.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33638,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

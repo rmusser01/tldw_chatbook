@@ -603,6 +603,15 @@ async def test_an_emptied_api_key_field_keeps_the_saved_key_and_only_clear_remov
         await pilot.pause()
         assert _text(screen, "#settings-provider-key-status") == "cleared *"
 
+        # Checkpoint review: typing after Clear and deleting it again returns
+        # to Clear's removal; the emptied-field rule must not undo a Clear.
+        await pilot.press("x")
+        await pilot.pause()
+        assert _text(screen, "#settings-provider-key-status") == "edited *"
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert _text(screen, "#settings-provider-key-status") == "cleared *"
+
 
 @pytest.mark.asyncio
 @private_profile_test
