@@ -42,8 +42,9 @@ GitHub's native merge queue needs an organization-owned repository, and this one
 - Eviction causes: "branch refuses the CI dispatch" is replaced by a refused re-run on a retry (`evict-rerun`, whether
   the run failed or its retry attempt was cancelled) and "no CI run the queue can start" (`evict-no-run`, also what a
   refused re-run of a cancelled run gives on the start path). An unclassified
-  re-run error counts as a refusal the second time on one head. A transient error (5xx, 429, rate limit, network) never
-  evicts.
+  re-run error counts as a refusal the second time on one head. A rebase that did not take effect is warned about once
+  per head and evicts (`evict-rebase`, or `evict-rebase-unmoved` when the branch never moved) only 10 minutes after the
+  warning. A transient error (5xx, 429, rate limit, network) never evicts, on a re-run or a rebase.
 - The dispatch-safe rule above no longer serves the queue. It still keeps manual dispatches safe.
 - The bot and fork rule is unchanged: approving a bot PR's held runs would skip the same actor-based gates. Only held runs
   triggered by the queue's own actor, on the front PR, from this repository, are approved.

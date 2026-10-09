@@ -66,16 +66,21 @@ HELD_RUN_POLL_S = 3
 RERUN_REFUSALS = ("(HTTP 409)", "(HTTP 422)")
 RERUN_REFUSAL_403_TEXT = "month ago"
 # How long a woken queue run waits for a run to complete before deciding: well past the seconds the
-# waited run's queue-tick needs to finish, and inside queue-tick's own 10-minute timeout with room
-# left to act.
+# waited run's queue-tick needs to finish. Kept to 3 minutes because the first front is decided
+# after it whatever the budget below says, and its worst case (an UNKNOWN settle of 2 minutes, a
+# rebase's polls and held-run wait of a minute, about 90 API calls) must still fit queue-tick's
+# 10-minute timeout.
 # ponytail: a run still live after this is a GitHub fault; the tick decides anyway and the next event recovers.
-WAIT_RUN_TRIES = 50
+WAIT_RUN_TRIES = 30
 WAIT_RUN_DELAY_S = 6.0
 # Both queue jobs time out at 10 minutes, and a job killed mid-action can leave a held run nobody
 # approves. A queue run takes on no further front, and starts no young-head wait that would end,
-# past this; it wakes a fresh run instead. One front's worst case after it (an UNKNOWN settle of
-# 2 minutes, then about a minute of start and re-run polls) still fits.
+# past this; it wakes a fresh run instead.
 RUN_BUDGET = timedelta(minutes=4)
+# A rebase that did not take effect (refused, or accepted with the branch never moving) is warned
+# about once per head; the next one evicts only if the warning is at least this old, so one GitHub
+# slowdown failing two attempts a minute apart cannot disarm the PR (spec section 8).
+STRIKE_GAP = timedelta(minutes=10)
 
 
 @dataclass(frozen=True)
@@ -190,9 +195,10 @@ def decide_front(pr: PrState, now: datetime) -> Action:
         key=lambda c: c.completed_at or now,
     )
     if not finished:
-        # A commit dated in the future (the author's clock) is not young: waiting for it would
-        # stall the line until that clock's time. `start` looks again for the run anyway.
-        if timedelta(0) <= now - pr.head_committed_at <= YOUNG_HEAD:
+        # The commit date comes from the author's clock: one a little ahead counts as young too,
+        # one further ahead does not, or the line would wait for that clock. `start` looks again
+        # for the run anyway.
+        if abs(now - pr.head_committed_at) <= YOUNG_HEAD:
             return Action("wait", "head is under 3 minutes old; its own run may not be visible yet", slug="young")
         return Action("start", "no required-check run on the up-to-date head")
     latest = finished[-1]
@@ -309,7 +315,7 @@ PR_QUERY = (
 )
 COMMENTS_QUERY = (
     "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {"
-    " pullRequest(number: $number) { comments(last: 100) { nodes { body } } } } }"
+    " pullRequest(number: $number) { comments(last: 100) { nodes { body createdAt } } } } }"
 )
 REBASE_MUTATION = (
     "mutation($id: ID!, $oid: GitObjectID!) { updatePullRequestBranch(input: "
@@ -548,6 +554,32 @@ def has_comment(gh: GhApi, number: int, kind: str, sha: str) -> bool:
     return any(marker in (n.get("body") or "") for n in nodes)
 
 
+def marker_age(gh: GhApi, number: int, kind: str, sha: str, now: datetime) -> timedelta | None:
+    """How long ago the queue posted a comment of this kind for this head.
+
+    Args:
+        gh: The GitHub client.
+        number: The PR number.
+        kind: The comment's kind, part of its hidden marker.
+        sha: The head, part of its hidden marker.
+        now: The current time (UTC).
+
+    Returns:
+        Its age, `timedelta.max` if it has no timestamp, or None if there is no such comment.
+
+    Raises:
+        GhError: The read failed.
+    """
+    marker = f"<!-- merge-queue:{kind}:{sha} -->"
+    owner, name = _owner_name()
+    data = gh.graphql(COMMENTS_QUERY, owner=owner, name=name, number=number)
+    for node in data["data"]["repository"]["pullRequest"]["comments"]["nodes"]:
+        if marker in (node.get("body") or ""):
+            posted = _ts(node.get("createdAt"))
+            return timedelta.max if posted is None else now - posted
+    return None
+
+
 def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool:
     """Post a comment unless one of this kind already exists for this head.
 
@@ -718,6 +750,12 @@ def _going_again(gh: GhApi, run_id: int) -> bool:
     return fresh.get("status") in LIVE_RUN_STATUSES or _is_held(fresh)
 
 
+def _transient(exc: GhError) -> bool:
+    """Whether an error is GitHub's, saying nothing about the PR: a 5xx, a 429 or a rate limit."""
+    text = str(exc)
+    return "(HTTP 5" in text or "(HTTP 429)" in text or "rate limit" in text.lower()
+
+
 def _rerun_error(exc: GhError) -> str:
     """Classify a re-run error as `refused`, `transient` or `unknown` (see RERUN_REFUSALS).
 
@@ -731,7 +769,7 @@ def _rerun_error(exc: GhError) -> str:
     lowered = text.lower()
     if any(code in text for code in RERUN_REFUSALS) or ("(HTTP 403)" in text and RERUN_REFUSAL_403_TEXT in lowered):
         return "refused"
-    if "(HTTP 5" in text or "(HTTP 429)" in text or "rate limit" in lowered or "(HTTP " not in text:
+    if _transient(exc) or "(HTTP " not in text:  # a REST call with no HTTP status is a network error
         return "transient"
     return "unknown"
 
@@ -801,22 +839,71 @@ def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -
     # Comment first: if the job dies between the two calls the PR stays armed and the next run
     # evicts it again (the comment is deduplicated), instead of being disarmed with no reason given.
     links = "".join(f"\n- {u}" for u in action.links)
-    comment_once(
-        gh, pr.number, f"evict-{action.slug}", pr.head_sha,
-        f"Merge queue: removed from the line ({action.reason}). Auto-merge is now off. Fix the cause, then "
-        f"re-arm with `gh pr merge {pr.number} --auto --merge` to rejoin at the back.{links}",
-    )
-    # Best-effort: a merge fires both push:dev and pull_request:closed, so two racing runs can
-    # evict the same PR and the second disarm hits an already-disarmed PR.
-    _best_effort(log, f"disarm #{pr.number}", lambda: gh.graphql(DISARM_MUTATION, id=pr.node_id))
+    try:
+        comment_once(
+            gh, pr.number, f"evict-{action.slug}", pr.head_sha,
+            f"Merge queue: removed from the line ({action.reason}). Auto-merge is now off. Fix the cause, then "
+            f"re-arm with `gh pr merge {pr.number} --auto --merge` to rejoin at the back.{links}",
+        )
+    except GhError as exc:
+        if _transient(exc) or "(HTTP 4" not in str(exc):
+            raise
+        # GitHub refuses the queue's comment here (e.g. a locked conversation): evicting without
+        # it beats stalling the line on this PR forever.
+        log(f"  cannot comment on #{pr.number} ({exc}); evicting without the comment")
+    try:
+        gh.graphql(DISARM_MUTATION, id=pr.node_id)
+    except GhError as exc:
+        # Two racing runs can evict the same PR (a merge fires both push:dev and
+        # pull_request:closed), and the second disarm hits an already-disarmed PR. Any other
+        # failure must not leave the PR armed under a "removed" comment: fail the run, and the
+        # next one evicts it again.
+        if read_pr(gh, pr.number).armed_at is not None:
+            raise
+        log(f"  #{pr.number} was already disarmed ({exc})")
     log(f"  evicted #{pr.number}: {action.reason}")
     return True
 
 
-def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None]) -> bool:
+def _rebase_strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Action, wake_first: bool,
+                   log: Callable[[str], None], now: Callable[[], datetime]) -> bool:
+    """Count one rebase that did not take effect on this head (see STRIKE_GAP).
+
+    Args:
+        gh: The GitHub client.
+        pr: The front PR.
+        kind: The warning comment's kind (`rebase-failed`, `rebase-unmoved`).
+        warning: The warning's text.
+        eviction: The eviction for a strike at least STRIKE_GAP after the warning.
+        wake_first: Wake a tick after the warning, to look again soon.
+        log: Receives one line per notable step.
+        now: The clock.
+
+    Returns:
+        True if the PR was evicted.
+
+    Raises:
+        GhError: A call failed.
+    """
+    age = marker_age(gh, pr.number, kind, pr.head_sha, now())
+    if age is None:
+        comment_once(gh, pr.number, kind, pr.head_sha, warning)
+        if wake_first:
+            _wake_best_effort(gh, log)
+        return False
+    if age < STRIKE_GAP:
+        log(f"  #{pr.number}: {kind} again within {STRIKE_GAP}; a later event decides")
+        return False
+    return _evict(gh, pr, eviction, log)
+
+
+def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None],
+            now: Callable[[], datetime]) -> bool:
     try:
         gh.graphql(REBASE_MUTATION, id=pr.node_id, oid=pr.head_sha)
     except GhError as exc:
+        if _transient(exc):
+            raise  # GitHub's error, not the branch's: the next event retries (spec section 8)
         fresh = read_pr(gh, pr.number)
         if fresh.head_sha == pr.head_sha and fresh.merge_state != "DIRTY":
             # A racing run's rebase may have been accepted with its ref update still landing
@@ -829,14 +916,13 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
         if fresh.merge_state == "DIRTY":
             return _evict(gh, fresh, Action("evict", "conflicts with dev (rebase refused)", slug="conflict"), log)
         error = str(exc)[:200]
-        posted = comment_once(
-            gh, pr.number, "rebase-failed", pr.head_sha,
-            f"Merge queue: rebasing onto dev failed ({error}); will retry once, then remove from the line.",
+        log(f"  rebase failed: {exc}")
+        return _rebase_strike(
+            gh, fresh, "rebase-failed",
+            f"Merge queue: rebasing onto dev failed ({error}); will retry, and remove it from the line if "
+            "rebasing still fails 10 minutes from now.",
+            Action("evict", f"rebase onto dev keeps failing: {error}", slug="rebase"), False, log, now,
         )
-        if posted:
-            log(f"  rebase failed, will retry once: {exc}")
-            return False
-        return _evict(gh, fresh, Action("evict", f"rebase onto dev keeps failing: {error}", slug="rebase"), log)
     # The mutation returns the PRE-rebase headRefOid and the branch moves about 1 s later, so
     # wait for the new head to appear before approving its CI.
     new_head = None
@@ -848,16 +934,16 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
             break
     if new_head is None:
         log(f"  rebase of #{pr.number} accepted but the head never moved")
-        # If the branch moves later, its new head's runs are held and nothing would wake the
-        # queue to approve them: one kick per head. A second unmoved rebase evicts, or every
-        # later event would rebase again and the line would never move.
-        if comment_once(gh, pr.number, "rebase-unmoved", pr.head_sha,
-                        "Merge queue: the rebase onto dev was accepted, but the branch has not moved yet; "
-                        "a queue run will look again shortly, then remove it from the line if it still has not."):
-            _wake_best_effort(gh, log)
-            return False
-        return _evict(gh, pr, Action("evict", "rebase onto dev was accepted twice but the branch never moved",
-                                     slug="rebase"), log)
+        # If the branch moves later, its new head's runs are held and nothing would wake the queue
+        # to approve them: the warning wakes a tick. A later unmoved rebase evicts, or every event
+        # would rebase again and the line would never move.
+        return _rebase_strike(
+            gh, pr, "rebase-unmoved",
+            "Merge queue: the rebase onto dev was accepted, but the branch has not moved yet; a queue run will "
+            "look again shortly, and remove it from the line if the branch still does not move 10 minutes from now.",
+            Action("evict", "rebase onto dev was accepted but the branch never moved, twice at least 10 minutes apart",
+                   slug="rebase-unmoved"), True, log, now,
+        )
     old_runs = runs_on(gh, pr.head_sha)
     # The new head's pull_request runs arrive held for approval (spec F4); approving them is what
     # makes its required check count (V4). Approve before cancelling anything on the old head:
@@ -996,6 +1082,7 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
 
 def apply(
     gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], sleep: Callable[[float], None],
+    now: Callable[[], datetime],
 ) -> bool:
     """Perform one decided action (spec section 7).
 
@@ -1005,6 +1092,7 @@ def apply(
         action: The decided action.
         log: Receives one line per notable step.
         sleep: Waits between rereads (injected by tests).
+        now: The clock.
 
     Returns:
         True if the PR left the line (evicted, by decision or because an action failed), so
@@ -1014,7 +1102,7 @@ def apply(
         GhError: A read or a non-best-effort call failed.
     """
     if action.kind == "rebase":
-        return _rebase(gh, pr, log, sleep)
+        return _rebase(gh, pr, log, sleep, now)
     if action.kind in ("start", "retry"):
         # Two queue runs (merge-queue.yml and a queue-tick) can decide the same action for the same
         # head. Once the first one's run is live, the other sees it here and stands down.
@@ -1159,7 +1247,9 @@ def run(
             # A tick woken right after a rebase whose held runs had not appeared, or an arm right
             # after a push, can land before GitHub lists the head's run, and nothing may wake the
             # queue again for this head. Wait out the window once and decide again.
-            pause = max(0.0, (pr.head_committed_at + YOUNG_HEAD - now()).total_seconds()) + 1
+            # Capped: a head dated a little ahead would otherwise wait up to two windows.
+            left = (pr.head_committed_at + YOUNG_HEAD - now()).total_seconds()
+            pause = min(max(0.0, left), YOUNG_HEAD.total_seconds()) + 1
             if now() - started + timedelta(seconds=pause) > RUN_BUDGET:
                 log(f"#{pr.number}: no budget left to wait out its young head; a fresh queue run will")
                 _wake_best_effort(gh, log)
@@ -1171,11 +1261,15 @@ def run(
                     # fresh queue run, which reads the line again.
                     break
                 pr, action = _decide(gh, fresh, mode, now, log)
+                if action.slug == "young":
+                    # Waited a full window and it still looks young: its commit clock runs ahead.
+                    # Waiting more would stall the line; look for its run instead.
+                    action = Action("start", "no run after waiting out the young-head window")
         decisions.append((pr.number, action))
         log(f"#{pr.number}: {action.kind} - {action.reason}")
         left_line = action.kind == "evict"
         if mode == "on":
-            left_line = apply(gh, pr, action, log, sleep)
+            left_line = apply(gh, pr, action, log, sleep, now)
         if not left_line:
             break
     return decisions

@@ -165,7 +165,7 @@ seconds apart (after each merge the next front is routinely `UNKNOWN` for a whil
 | `BEHIND` | **Rebase** (section 7). On success it approves the new head's held `pull_request` runs (waiting up to 10 x 3 s for the required workflow's to appear), cancels the old head's runs, and comments "rebased onto dev at `<sha>`" |
 | `DIRTY` | **Evict:** conflicts with `dev` |
 | Up to date, no required-check run on the head, or only cancelled ones; head commit older than 3 minutes | **Start:** approve a held run, else re-run a cancelled one. With neither, look again for up to 10 x 3 s (the head's age is its commit date, not its push, so its run may not be listed yet), standing down if a run appears; then evict ("push a commit, or close and reopen the PR"), since a dispatch would not count (V4) |
-| Up to date, no run yet, head commit 3 minutes old or less (not dated in the future: the commit date comes from the author's clock, so a future one is treated as old and `start` looks for its run) | Wait (the author's own `pull_request` run may not be visible yet). In `on` mode the queue run waits out the 3 minutes once and decides again, unless the PR was disarmed or re-armed meanwhile: a tick woken after a rebase whose held runs had not appeared may be the last event for that head. If that wait would not end within the run's 4-minute budget, the queue wakes a fresh run to wait instead |
+| Up to date, no run yet, head commit dated within 3 minutes of now, either side (the commit date comes from the author's clock: one a little ahead is young, one further ahead is treated as old and `start` looks for its run) | Wait (the author's own `pull_request` run may not be visible yet). In `on` mode the queue run waits out the window once (at most 3 minutes) and decides again, unless the PR was disarmed or re-armed meanwhile; a head that still looks young after that is started instead of waited on again: a tick woken after a rebase whose held runs had not appeared may be the last event for that head. If that wait would not end within the run's 4-minute budget, the queue wakes a fresh run to wait instead |
 | Up to date, required check queued or in progress | Wait (in flight) |
 | Up to date, required check failed, first failure on this head | **Retry:** re-run the failed run in its own check suite (V3) and comment linking it. If the deciding run *is* the failed run (its queue-tick, while it is still in progress), wake a queue tick: a queue kick, `derived-artifacts.yml` dispatched on `dev` without `pr` and with input `wait_run`, whose tick waits for the run to complete, then re-runs it. (`derived-artifacts.yml`, because GitHub only dispatches a workflow whose file is on `main`; `merge-queue.yml` is not.) A run already live again is left alone, and one held again (its re-run's approval failed) is approved strictly. One retry per head: a second retry decision evicts (`evict-failed-twice`) once a re-read shows the run is not going again, because a re-run keeps its run id and a run that never reports the check stays a single stand-in. A retry attempt that was cancelled, not failed, is re-run in full without counting against the cap. Re-run errors: a transient error (5xx, 429, rate limit, network) re-raises. Any other error is followed by one re-read of the run, and the queue stands down if it is live or held again (a racing queue run re-ran it). Otherwise a refusal (HTTP 409/422, or a 403 saying the run was created over a month ago) evicts (`evict-rerun`), and any other error re-raises once with a `rerun-error` comment and counts as a refusal the second time on the same head. A re-run still not live after its approval polls wakes a queue tick, because a held run never runs its own queue-tick; the wake comes after the retry comment, so a failed comment cannot chain wakes |
 | Up to date, required check failed, second failure on this head | **Evict:** CI failed twice, linking both runs |
@@ -196,13 +196,17 @@ never rebased, dispatched or commented on.
   - head moved: do nothing (someone else acted);
   - now `DIRTY`: evict;
   - anything else (same head, still not `DIRTY`): the first time, post a `rebase-failed` comment quoting the error (first
-    200 characters) and saying the queue will retry once; if that comment already exists for this head, evict ("rebase
-    onto dev keeps failing"). A rebase that keeps failing while the PR stays `BEHIND` would otherwise stall the line.
+    200 characters). A later failure on the same head evicts ("rebase onto dev keeps failing", `evict-rebase`) only if
+    that comment is at least 10 minutes old (its `createdAt`); sooner, the queue leaves it for a later event. A rebase that
+    keeps failing while the PR stays `BEHIND` would otherwise stall the line, and the gap keeps one GitHub slowdown that
+    fails two attempts a minute apart from disarming the PR.
+  - A transient error (5xx, 429, rate limit) re-raises before any of this and never counts (section 8).
 - The mutation returns the pre-rebase head, and the branch moves about a second later. After a successful rebase the queue
   re-reads the PR up to 10 times, 3 seconds apart, until the head moves, and uses that new head for the comment. If it never
   moves, the queue posts a `rebase-unmoved` comment and wakes a queue tick, once per head: if the branch moves later,
-  its new head's runs are held and nothing else would wake the queue to approve them. A second unmoved rebase on the same
-  head evicts (`evict-rebase`); otherwise every later event would rebase it again and the line would never move.
+  its new head's runs are held and nothing else would wake the queue to approve them. A later unmoved rebase on the same
+  head evicts (`evict-rebase-unmoved`) under the same 10-minute rule; otherwise every event would rebase it again and the
+  line would never move.
 - Once the new head appears, the queue approves its held runs first, then cancels the old head's live runs except its own
   run and any merge-queue.yml run.
 - **Approve.** Every queue run, in `on` mode, first approves the front PR's held runs (best-effort per run), so the decision
@@ -221,12 +225,14 @@ never rebased, dispatched or commented on.
 - Only held runs that pass one predicate are ever approved, on every path: event `pull_request`, triggering actor
   `github-actions[bot]`, head repository this repository.
 - **Evict** means one comment, then `disablePullRequestAutoMerge`, in that order: a job killed between the two leaves the
-  PR armed, and the next run evicts it again, instead of a PR disarmed with no reason given. The disarm is best-effort: two racing runs (a merge fires
-  both `push` to `dev` and `closed`) can evict the same PR, and the second disarm hits an already-disarmed PR. Re-arming
+  PR armed, and the next run evicts it again, instead of a PR disarmed with no reason given. A comment GitHub refuses for good
+  (an HTTP 4xx other than a rate limit, e.g. a locked conversation) does not stop the disarm; a transient one fails the run.
+  A failed disarm re-reads the PR: already disarmed (two racing runs evicting the same PR, since a merge fires both `push`
+  to `dev` and `closed`) is fine; still armed fails the run, so no PR stays armed under a "removed" comment. Re-arming
   puts the PR at the back of the line.
 - **Comments** carry a hidden marker `<!-- merge-queue:<kind>:<head-sha> -->`. The queue never posts a kind twice for the same
   head. An eviction's kind names its cause (`evict-conflict`, `evict-failed-twice`, `evict-blocked`, `evict-stuck`,
-  `evict-rebase`, `evict-rerun`, `evict-no-run`), so a re-armed PR evicted again on the same head for a different reason is still told
+  `evict-rebase`, `evict-rebase-unmoved`, `evict-rerun`, `evict-no-run`), so a re-armed PR evicted again on the same head for a different reason is still told
   why.
 - **Forbidden**, and enforced by a guard test:
   - enabling auto-merge;
@@ -245,15 +251,16 @@ never rebased, dispatched or commented on.
 ## 8. Failure handling
 
 - **API error or rate limit:** the queue run fails as a non-required job. The next event retries it.
-- **A held run left unapproved:** when the post-rebase wait or a re-run's approval polls run out, the queue wakes a tick,
-  whose approval pass approves it. When an approval fails, nothing is woken: the best-effort pass logs it and the strict
-  approval raises, so the run fails and the next event retries. Either way a retry decision on that head approves the held
+- **A held run left unapproved:** when the post-rebase wait or a re-run's approval polls run out (best-effort approvals
+  that failed included), the queue wakes a tick, whose approval pass approves it. When a strict approval (start or retry)
+  fails, nothing is woken: it raises, so the run fails and the next event retries. Either way a retry decision on that head approves the held
   run strictly instead of counting it as a second failure.
-- **A woken tick's wait** (`wait_run`) is bounded at 5 minutes; failed reads are retried within it. A run still live or
+- **A woken tick's wait** (`wait_run`) is bounded at 3 minutes; failed reads are retried within it. A run still live or
   unreadable after that (a GitHub fault) is decided on anyway, and the next event recovers it.
 - **Job timeouts** (both queue jobs: 10 minutes): a queue run takes on no further front, and starts no young-head wait
-  that would end, more than 4 minutes after it started; it wakes a fresh run instead. One front's worst case after that
-  still fits.
+  that would end, more than 4 minutes after it started; it wakes a fresh run instead. The first front is decided whatever
+  the budget; the 3-minute `wait_run` bound keeps its worst case (an UNKNOWN settle, a rebase's polls, about 90 API calls)
+  inside the timeout.
 - **A queue run interrupted between rebase and approval:** the same pass recovers it.
 - **Runner starvation:** the front PR simply waits in flight, as it does today.
 - **Liveness:** the queue wakes on arm, disarm and close events, pushes to `dev`, and finished CI runs for same-repo PRs.
@@ -339,10 +346,12 @@ The rules depend on the mode, checked with `gh variable get MERGE_QUEUE`. A roll
   - a held re-run whose approval failed is approved strictly, never evicted; a cancelled retry attempt is re-run without
     counting against the cap;
   - start looks again before a no-run eviction and approves only held runs the queue caused; a young head with no run is
-    decided again after the window (`on` mode only, not after a disarm or re-arm, and only within the run budget); a head
-    dated in the future is not young; a `wait_run` read error is retried within the bound; a rebase whose branch never
-    moves wakes one tick, then evicts the second time; an eviction comments before it disarms; a run past its budget
-    hands the next front to a fresh run;
+    decided again after the window (`on` mode only, not after a disarm or re-arm, and only within the run budget), and
+    started if it still looks young; a head dated a little ahead is young, one far ahead is not; a `wait_run` read error is retried within the bound; a rebase whose branch never
+    moves wakes one tick; a second rebase strike evicts only 10 minutes after the first, and a transient rebase error
+    never counts; an eviction comments before it disarms, disarms anyway when GitHub refuses the comment for good, and
+    fails the run when the PR is still armed after a failed disarm; a run past its budget hands the next front to a
+    fresh run;
   - `main()` passes `WAIT_RUN` through;
   - dispatched required checks never count, and a live dispatched run is not waited on;
   - a live run that appeared after the decision stops the action;

@@ -118,7 +118,7 @@ class FakeGh:
         if "updatePullRequestBranch" in query:
             self._record(("rebase", v["id"], v["oid"]))
             if self.rebase_error:
-                raise mq.GhError("rebase refused")
+                raise mq.GhError(self.rebase_error if isinstance(self.rebase_error, str) else "rebase refused")
             self.rereads_since_rebase = 0
             return {"data": {"updatePullRequestBranch": {"pullRequest": {"headRefOid": v["oid"]}}}}
         if "disablePullRequestAutoMerge" in query:
@@ -128,8 +128,10 @@ class FakeGh:
             return {"data": {}}
         self.reads += 1
         if "comments(last" in query:
-            bodies = self.comments.get(v["number"], [])
-            return {"data": {"repository": {"pullRequest": {"comments": {"nodes": [{"body": b} for b in bodies]}}}}}
+            # An entry is a body, or (body, createdAt); a bare body has no timestamp (reads as old).
+            nodes = [{"body": c[0], "createdAt": c[1]} if isinstance(c, tuple) else {"body": c}
+                     for c in self.comments.get(v["number"], [])]
+            return {"data": {"repository": {"pullRequest": {"comments": {"nodes": nodes}}}}}
         if "pullRequest(number" in query:
             node = self.reread.get(v["number"], self.nodes[v["number"]])
             if isinstance(node, list):
@@ -337,10 +339,73 @@ def test_eviction_for_a_new_reason_on_the_same_head_still_comments():
 def test_disarm_failure_still_comments():
     """A merge fires push:dev and pull_request:closed; the losing run's disarm hits an
     already-disarmed PR. That must not crash the run or skip the comment."""
-    gh = FakeGh([_node(1, state="DIRTY")], disarm_error=True)
+    gh = FakeGh([_node(1, state="DIRTY")], disarm_error=True, reread={1: _node(1, state="DIRTY", armed=None)})
     _run(gh)
     assert ("disarm", "PR_1") in gh.calls
     assert any(c[0] == "comment" and "conflicts with dev" in c[2] for c in gh.calls)
+
+
+def test_a_disarm_failure_on_a_still_armed_pr_fails_the_run():
+    """Review round 5 of #3039: the comment says auto-merge is off. A PR left armed under it could
+    auto-merge work its author pushed believing that, so the run fails and the next one evicts again."""
+    gh = FakeGh([_node(1, state="DIRTY"), _node(2, armed="2026-10-03T11:00:00Z")], disarm_error=True)
+    with pytest.raises(mq.GhError, match="disable auto-merge"):
+        _run(gh)
+    assert not any(c[0] == "rebase" for c in gh.calls), "no hand-over past a PR still armed"
+
+
+def test_an_eviction_the_queue_may_not_comment_on_still_disarms():
+    """Review round 5 of #3039: GitHub can refuse the queue's comment for good (e.g. a locked
+    conversation). With the comment first, that would stall the line on this PR forever."""
+    gh = FakeGh([_node(1, state="DIRTY")])
+    original = gh.rest
+
+    def rest(method, path, fields=None):
+        if method == "POST" and path.endswith("/comments"):
+            raise mq.GhError("gh: Unable to create comment because issue is locked. (HTTP 403)")
+        return original(method, path, fields)
+
+    gh.rest = rest
+    _run(gh)
+    assert ("disarm", "PR_1") in gh.calls
+
+
+@pytest.mark.parametrize("error", ["gh: Server Error (HTTP 502)", "gh: API rate limit exceeded (HTTP 403)"])
+def test_a_transient_rebase_error_never_counts_toward_an_eviction(error):
+    """Review round 5 of #3039 (predates the PR): two 5xx answers to the rebase mutation, days apart,
+    evicted the PR. An outage must never disarm one (spec section 8).
+
+    Args:
+        error: GitHub's transient error.
+    """
+    gh = FakeGh([_node(1)], rebase_error=error, comments={1: [f"<!-- merge-queue:rebase-failed:{OLD} -->\nfirst"]})
+    with pytest.raises(mq.GhError):
+        _run(gh)
+    assert [c[0] for c in gh.calls] == ["rebase"]
+
+
+@pytest.mark.parametrize("kind", ["rebase-failed", "rebase-unmoved"])
+@pytest.mark.parametrize(("minutes_ago", "evicts"), [(5, False), (11, True)], ids=["within-gap", "after-gap"])
+def test_a_second_rebase_strike_evicts_only_after_the_gap(kind, minutes_ago, evicts):
+    """Review round 5 of #3039: the first strike wakes a tick (unmoved) or waits for the next event,
+    so a second could land a minute later. One GitHub slowdown must not disarm the PR: a strike
+    within STRIKE_GAP of the warning is left for a later event, with no comment and no wake.
+
+    Args:
+        kind: The warning's kind.
+        minutes_ago: How old the warning is.
+        evicts: Whether this strike evicts.
+    """
+    posted = (NOW - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    comments = {1: [(f"<!-- merge-queue:{kind}:{OLD} -->\nwarned", posted)]}
+    if kind == "rebase-failed":
+        gh = FakeGh([_node(1)], rebase_error=True, reread={1: _node(1, state="BEHIND")}, comments=comments)
+    else:
+        gh = FakeGh([_node(1)], rebase_lag=None, comments=comments)
+    _run(gh)
+    assert (("disarm", "PR_1") in gh.calls) is evicts
+    assert not any(c[0] == "dispatch" for c in gh.calls)
+    assert sum(c[0] == "comment" for c in gh.calls) == (1 if evicts else 0)
 
 
 def test_first_failure_reruns_the_failed_run_in_its_own_check_suite():
@@ -496,7 +561,7 @@ def test_first_rebase_failure_warns_without_evicting():
     assert [c[0] for c in gh.calls] == ["rebase", "comment"]
     body = gh.calls[1][2]
     assert f"<!-- merge-queue:rebase-failed:{OLD} -->" in body
-    assert "rebasing onto dev failed (rebase refused); will retry once" in body
+    assert "rebasing onto dev failed (rebase refused); will retry, and remove it from the line if" in body
 
 
 def test_repeated_rebase_failure_evicts():
@@ -539,7 +604,7 @@ def test_rebase_whose_head_never_moves_wakes_one_tick_then_evicts():
     again = FakeGh([_node(1)], rebase_lag=None, comments={1: [gh.calls[1][2]]})
     _run(again)
     assert [c[0] for c in again.calls] == ["rebase", "comment", "disarm"]
-    assert f"<!-- merge-queue:evict-rebase:{OLD} -->" in again.calls[1][2]
+    assert f"<!-- merge-queue:evict-rebase-unmoved:{OLD} -->" in again.calls[1][2], "its own slug, not evict-rebase"
     assert not any(c[0] == "dispatch" for c in again.calls)
 
 
@@ -1117,7 +1182,7 @@ def test_a_young_head_without_a_run_is_decided_again_after_the_window():
     assert slept == [121.0]
 
 
-def test_a_head_dated_in_the_future_is_not_young():
+def test_a_head_dated_far_in_the_future_is_not_young():
     """Review rounds 3-4 of #3039: the commit date comes from the author's clock. A head dated hours
     ahead must neither sleep the queue job into its timeout nor stall the line until that time;
     `start` looks again for its run instead."""
@@ -1285,3 +1350,20 @@ def test_a_cancelled_run_rerun_that_is_not_live_wakes_a_tick():
     _run(gh)
     assert gh.calls.index(("rerun", "80", "all")) < gh.calls.index(("dispatch", "derived-artifacts.yml", {"ref": "dev"}))
     assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_a_head_still_young_after_the_window_is_started_not_left_waiting():
+    """Review round 5 of #3039: a head dated a little ahead counts as young, so after one full window
+    it can still look young. Waiting again would stall the line; the queue looks for its run instead."""
+    clock = [NOW]
+    slept = []
+
+    def sleep(seconds):
+        slept.append(seconds)
+        clock[0] += timedelta(seconds=seconds)
+
+    ahead = _node(1, state="BLOCKED", committed="2026-10-03T12:02:00Z")
+    gh = FakeGh([ahead])
+    decisions = mq.run(gh, "on", now=lambda: clock[0], sleep=sleep, log=lambda m: None)
+    assert slept[0] == mq.YOUNG_HEAD.total_seconds() + 1, "capped at one window"
+    assert (decisions[0][1].kind, decisions[0][1].reason) == ("start", "no run after waiting out the young-head window")

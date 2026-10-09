@@ -60,6 +60,7 @@ def test_rearmed_pr_rejoins_at_the_back():
         (_pr(merge_state="BLOCKED", checks=(_check("cancelled"),)), "start"),
         (_pr(merge_state="BLOCKED", checks=(), head_committed_at=NOW - timedelta(minutes=2)), "wait"),
         (_pr(merge_state="BLOCKED", checks=(), head_committed_at=NOW + timedelta(minutes=5)), "start"),
+        (_pr(merge_state="BLOCKED", checks=(), head_committed_at=NOW + timedelta(seconds=30)), "wait"),
         (_pr(merge_state="BLOCKED", checks=(_check("failure"),)), "retry"),
         (_pr(merge_state="BLOCKED", checks=(_check("failure", minutes_ago=30), _check("failure", minutes_ago=2))), "evict"),
         (_pr(merge_state="CLEAN", checks=(_check(minutes_ago=5),)), "wait"),
@@ -71,7 +72,7 @@ def test_rearmed_pr_rejoins_at_the_back():
     ],
     ids=[
         "unknown-waits", "behind-rebases", "dirty-evicts", "running-waits", "no-run-starts",
-        "only-cancelled-starts", "young-head-waits", "future-dated-head-starts", "first-failure-retries", "second-failure-evicts",
+        "only-cancelled-starts", "young-head-waits", "future-dated-head-starts", "slightly-ahead-head-waits", "first-failure-retries", "second-failure-evicts",
         "green-clean-waits", "green-unstable-waits", "stuck-green-evicts", "green-blocked-unresolved-evicts",
         "green-blocked-nothing-unresolved-waits", "retry-that-passed-waits",
     ],

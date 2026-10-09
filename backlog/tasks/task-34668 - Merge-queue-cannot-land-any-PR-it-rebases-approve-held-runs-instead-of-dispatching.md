@@ -87,4 +87,12 @@ Independent review round 4: no critical or major findings. Fixed all seven minor
 5-6. wait_for_run: the sleep after a failed read is pinned, and a later good read clears the remembered error from the log line.
 7. Doc drift: ADR-218 eviction causes per path; spec section 8 on what wakes after an approval failure.
 Mutation check: 32 mutants of the round-2 to round-4 guards, all killed.
+Independent review round 5: one major finding (predating this PR) and five minor ones, all fixed:
+1. Major, already on dev: two 5xx answers to the rebase mutation, even days apart, evicted the PR, against the outage rule and this PR's own ADR line. Transient rebase errors now re-raise and never count.
+2. A second rebase strike (refused or unmoved) could land a minute after the first, so one GitHub slowdown disarmed. A strike evicts only if the warning comment is at least 10 minutes old (STRIKE_GAP, read from the comment's createdAt). The unmoved eviction gets its own slug (evict-rebase-unmoved).
+3. The first front is decided whatever the budget, after a wait_run of up to 5 minutes, which could hit the job timeout. The wait_run bound is now 3 minutes (30 x 6 s).
+4. A head dated 30 s ahead got 27 s of start polls, then evict-no-run. Heads dated within 3 minutes either side are young again (round 3's capped sleep is back), and a head still young after the window is started rather than waited on.
+5. _evict's disarm was best-effort, so a failure left an armed PR under a 'removed, auto-merge is off' comment and, with the budget wake, could repeat forever. A failed disarm re-reads the PR and raises if it is still armed. A comment GitHub refuses for good (4xx, e.g. a locked conversation) no longer blocks the disarm.
+6. Spec section 8 now says which approval failures wake a tick.
+Mutation check: 42 mutants of the round-2 to round-5 guards, all killed.
 <!-- SECTION:NOTES:END -->
