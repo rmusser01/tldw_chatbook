@@ -142,7 +142,14 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # 20-minute cap. It did not: shard 3 timed out again with the file removed,
 # and none of that shard's 581 tests ran the acknowledgement. The shard was
 # at capacity, which the fourth shard (TASK-34353, a920bfe149) fixed.
-MINIMUM_FILES = 155
+# TASK-34000.7 (2026-10-08) raised it to 156:
+# Tests/UI/test_library_notes_tree_scrolls_wide.py -- the wide Library Notes
+# tree is a scroll owner and a Down walk keeps the focused row in view
+# (120x36/160x45 plus the 80x24/100x30 compact pins), 6 tests, about
+# 26 s locally. The slower variants (200x50/235x52, wheel events, the
+# breakpoint round trip, the Trash opener) stay in
+# test_library_notes_tree_scrolls_wide_extended.py, outside the lane.
+MINIMUM_FILES = 156
 
 
 def read_census(path: Path) -> list[str]:

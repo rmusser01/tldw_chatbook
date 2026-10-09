@@ -90,6 +90,7 @@ Tests/UI/test_library_footer_focus.py
 Tests/UI/test_library_grip_capture.py
 Tests/UI/test_library_notes_sync_attention.py
 Tests/UI/test_library_notes_sync_delete_restore.py
+Tests/UI/test_library_notes_tree_scrolls_wide.py
 Tests/UI/test_library_notes_work_session.py
 Tests/UI/test_library_prompt_history_controller.py
 Tests/UI/test_library_quit_guard.py
