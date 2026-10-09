@@ -589,7 +589,15 @@ reproduce the symptom live on a `git archive` export of the review's commit
 (`APP_WT=<export>`), next to the same clicks on the base and on the branch.
 What is left to do is then usually the part the earlier fix skipped -- here
 the hand-off at the widget, the guard for the class, and a test that fails
-instead of hanging.
+instead of hanging. When the pre-fix shape is a self-contained function (a
+cache-key builder, a gating predicate), the RED can be driven without
+touching source at all: a throwaway `-p` plugin that re-assigns the old
+implementation (TASK-34436, 2026-10-08: re-applying the pre-fix version-less
+cache keys this way turned 15 card-save tests red; 26/26 green without it).
+Patch from a late hook (`pytest_collection_modifyitems`), never at plugin
+import -- module import runs before the Tests/conftest.py config sandbox and
+dies on the real profile's `RecoveryRequired` instead of red-proofing
+anything.
 
 ## Compare against the branch's merge base, not whatever `origin/dev` is now
 
