@@ -31,6 +31,7 @@ import pytest
 
 from Tests.UI.test_console_send_acknowledgement import (
     DRAFT,
+    HeldAdmission,
     build,
     eager_tasks,
     press,
@@ -421,3 +422,52 @@ async def test_a_send_refused_while_another_tab_sends_names_that_tab():
             assert _sent_or_queued(console, session_a) == [DRAFT]
             assert _sent_or_queued(console, session_b) == []
             assert composer.draft_text() == B_DRAFT
+
+
+BLOCKED = "Console send blocked: refused for this test."
+
+
+def _rows(console, session_id: str, text: str) -> int:
+    store = console._ensure_console_chat_store()
+    return sum(
+        text in (message.content or "")
+        for message in store.messages_for_session(session_id)
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("draft", ["", DRAFT], ids=["image_only", "text"])
+async def test_a_bare_second_enter_during_a_refused_send_is_not_refused_again(draft):
+    """AC#4: a bare repeat press is one press, image-only or text.
+
+    The first send is held at its hook read while Enter is pressed again with
+    nothing new typed; the send is then refused. A bare text repeat is held
+    and replayed only while its capture still shows; an image-only press was
+    never treated as a repeat, so its replay was refused a second time and
+    wrote the refusal twice.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            composer.load_draft(draft)
+            await pilot.pause()
+            session_id = console._console_chat_store.active_session_id
+            if not draft:
+                image = object()
+                console._console_pending_image_attachment = lambda: image
+            console._console_send_blocked_reason = lambda: BLOCKED
+            gate = HeldAdmission(console)
+            try:
+                press(host, "enter", "\r")
+                await until(gate.entered.is_set, timeout=ENTRY_SECONDS)
+                press(host, "enter", "\r")
+                await pilot.pause(0.2)
+            finally:
+                gate.release.set()
+            await until(lambda: _rows(console, session_id, BLOCKED) >= 1)
+            await _settled(console, pilot)
+            await pilot.pause(0.5)
+            assert _rows(console, session_id, BLOCKED) == 1
+            assert gateway.stream_calls == 0
+            assert composer.draft_text() == draft

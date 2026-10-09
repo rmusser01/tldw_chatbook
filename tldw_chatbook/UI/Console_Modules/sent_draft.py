@@ -34,7 +34,10 @@ from typing import Any
 
 from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 from tldw_chatbook.Utils.input_validation import escape_markup
-from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
+from tldw_chatbook.Widgets.Console.console_composer_bar import (
+    ConsoleDraftStash,
+    classify_console_raw_draft,
+)
 
 #: A dispatched draft the composer still shows after its commit.
 SENT_DRAFT_KEPT = (
@@ -146,6 +149,17 @@ def superseded(screen: Any, session_id: str, stash: ConsoleDraftStash | None) ->
     if composer is None or screen._console_visible_draft_session_id != session_id:
         return False
     return capture_superseded(composer, stash)
+
+
+def asked_again(screen: Any, stash: ConsoleDraftStash | None) -> bool:
+    """Whether the last send asked for another Enter on exactly this draft.
+
+    Only an unknown command does ("Press Enter again to send as text"). A
+    bare repeat of a draft that was sent, refused or put under review is a
+    second press on one message, not a second message.
+    """
+    armed = getattr(screen, "_console_unknown_send_armed", None)
+    return stash is not None and armed == classify_console_raw_draft(stash).text
 
 
 def refused_for(screen: Any, session_id: str) -> str:
