@@ -2344,8 +2344,8 @@ def build_console_context_estimate(
         )
 
     label = f"{used_tokens:,} / {token_limit:,} tokens"
-    if not token_limit_verified:
-        label = f"{label} (estimated; model unverified)"
+    if not token_limit_verified:  # TASK-33007 #12: Settings' words for a fallback
+        label = f"{label} (assumed; window unknown)"
     if max_tokens_response is not None:
         label = f"{label}; {max_tokens_response:,} response tokens reserved"
     if staged_source_count:

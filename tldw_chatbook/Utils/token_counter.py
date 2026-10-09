@@ -6,7 +6,10 @@ import re
 import threading
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
-from typing import List, Dict, Any, Union, Optional, Tuple
+from typing import TYPE_CHECKING, List, Dict, Any, Union, Optional, Tuple
+
+if TYPE_CHECKING:
+    from tldw_chatbook.model_capabilities import ModelCapabilities
 
 #
 # 3rd-Party Imports
@@ -530,14 +533,25 @@ class ContextWindowResolution:
 
 
 def resolve_context_window(
-    provider: str, model: str, *, server_tokens: object = None
+    provider: str,
+    model: str,
+    *,
+    server_tokens: object = None,
+    capabilities: "ModelCapabilities | None" = None,
 ) -> ContextWindowResolution:
     """Resolve server, model/API default, then the estimated system default.
+
+    The one context-window answer: Chat settings and Settings ▸ Advanced both
+    read it, and an unverified result is a fallback the UI calls "unknown"
+    (TASK-33007 #12).
 
     Args:
         provider: Provider or API family used for the fallback catalog.
         model: Selected model identifier.
         server_tokens: Optional serving capacity obtained from metadata.
+        capabilities: The ``ModelCapabilities`` catalog to read; the global
+            one by default. Settings passes its own config without the saved
+            override, to say what is detected beneath it.
 
     Returns:
         The selected capacity with its source and verification status.
@@ -550,7 +564,7 @@ def resolve_context_window(
     provider = provider.lower().strip()
     try:
         window = positive_window(
-            get_model_capabilities()
+            (capabilities if capabilities is not None else get_model_capabilities())
             .get_model_capabilities(provider, model)
             .get("context_window")
         )
@@ -562,7 +576,9 @@ def resolve_context_window(
         return ContextWindowResolution(window, "model catalog", True)
     if provider == "openrouter" and "/" in model:
         upstream, upstream_model = model.split("/", 1)
-        return resolve_context_window(upstream, upstream_model)
+        return resolve_context_window(
+            upstream, upstream_model, capabilities=capabilities
+        )
     window = PROVIDER_CONTEXT_WINDOWS.get(provider)
     if window is not None:
         return ContextWindowResolution(window, "provider fallback", False)

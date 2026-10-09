@@ -576,8 +576,14 @@ class ConsoleSettingsFieldRowsMixin:
         estimate = self._context_estimate
         context = ""
         if estimate.token_limit:
-            size = context_copy(estimate.token_limit, bool(estimate.token_limit_verified))
-            context = f" · {size} context"
+            # TASK-33007 #12: a fallback is not a known size; say "unknown" as
+            # Settings ▸ Advanced does. The size it assumes is in Request
+            # estimate below, so a long id keeps its width here.
+            context = (
+                f" · {context_copy(estimate.token_limit, True)} context"
+                if estimate.token_limit_verified
+                else " · context unknown"
+            )
         status = self.query_one("#console-settings-model-status", Static)
         _show(status, f"{self._model_row_word}{context}")
 

@@ -974,8 +974,8 @@ def context_window_summary(screen: SettingsScreen) -> str:
         screen: The Settings screen that owns the card.
 
     Returns:
-        E.g. "200,000 tokens · detected, no override", "131,072 tokens ·
-        override set", "... · edited *" before a save, or "unknown".
+        E.g. "200,000 tokens · detected, no override", "... · override set",
+        "... · edited *" before a save, or "unknown, 32,000 assumed · ...".
     """
     values = screen._provider_display_setting_values()
     model = str(values.get("model") or "").strip()
@@ -989,11 +989,12 @@ def context_window_summary(screen: SettingsScreen) -> str:
         tokens = int(str(shown).strip())
     except ValueError:
         tokens = 0
-    if tokens <= 0:
-        return "unknown · enter the model's documented limit"
     state = model_context_window_state(
         screen._app_config_mapping(), str(values.get("provider") or ""), model
     )
+    if tokens <= 0:
+        assumed = f", {state.assumed_tokens:,} assumed" if state.assumed_tokens else ""
+        return f"unknown{assumed} · enter the model's documented limit"
     if tokens != state.effective_tokens:
         return f"{tokens:,} tokens · {SELECTION_SOURCE_WORDS['settings_draft']}"
     if state.has_configured_override:

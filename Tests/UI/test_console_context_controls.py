@@ -1028,12 +1028,12 @@ async def test_quick_popover_keeps_actions_visible_and_marks_the_narrow_fold() -
 
 
 @pytest.mark.asyncio
-async def test_unverified_model_capacity_is_labeled_as_estimated() -> None:
+async def test_unverified_model_capacity_is_labeled_unknown() -> None:
     """Never present the 8,001-token fallback as model-verified capacity."""
     estimate = ConsoleSettingsContextEstimate(
         10,
         8001,
-        "10 / 8,001 tokens (estimated; model unverified)",
+        "10 / 8,001 tokens (assumed; window unknown)",
         token_limit_verified=False,
         token_limit_source="provider fallback",
     )
@@ -1062,8 +1062,10 @@ async def test_unverified_model_capacity_is_labeled_as_estimated() -> None:
         status = str(
             app.screen.query_one("#console-context-capacity-status", Static).renderable
         )
-        assert "Model window (est.)" in window
-        assert "model capacity is unverified" in status
+        # TASK-33007 #12: one word with Settings ▸ Advanced -- "unknown",
+        # with the fallback named as assumed.
+        assert window.endswith("unknown, 8,001 assumed"), window
+        assert "Context window unknown" in status
         assert "Providers & Models" in status
 
 

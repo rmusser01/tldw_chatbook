@@ -480,7 +480,11 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
 - **Model**: the chat's model and its provider's name, where the pair comes
   from (*this chat*, or *edited \** once you change it here), the readiness
   word and the context window (e.g. "claude-sonnet-4-5 · Anthropic  this chat
-  Ready · not tested · 200k context"), then **Change  Alt+M**. A long model
+  Ready · not tested · 200k context"), then **Change  Alt+M**. When no
+  catalog knows the model's window, the row says so in the words Settings ▸
+  Providers & Models ▸ Advanced uses: "context unknown, 32k assumed", the
+  fallback size budgets use until you enter the real limit there; Request
+  estimate ends "(assumed; window unknown)". A long model
   id shows whole; only an id wider than the row is shortened in the middle,
   keeping its start and its end (a GGUF file's quant), and the provider's
   name is never cut. Below 100 columns the row shows only the pair and

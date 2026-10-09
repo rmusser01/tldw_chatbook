@@ -338,6 +338,37 @@ async def test_advanced_titles_follow_the_context_window_and_snapshot_drafts(req
         ).collapsed
 
 
+#: TASK-33007 #12: one fact, one word. The Settings title for a known and an
+#: unknown model; Chat settings' MODEL row says the same
+#: (test_console_settings_model_change.CONTEXT_WINDOW_WORDS).
+CONTEXT_WINDOW_TITLES = {
+    "gpt-4o": "Context window · 128,000 tokens · detected, no override",
+    "gpt-5.6-terra": (
+        "Context window · unknown, 32,000 assumed · enter the model's documented limit"
+    ),
+}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("model", sorted(CONTEXT_WINDOW_TITLES))
+async def test_context_window_title_says_what_chat_settings_says(request, model):
+    """TASK-33007 #12: Settings read "unknown" where Chat settings read "~32k
+    context" for the same model. Both now read the shared resolver: a known
+    window shows its size, and a fallback is "unknown" with the size the
+    Console assumes. The field stays blank, so nothing assumed is saved."""
+    app = _app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": model}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        context_id = "settings-advanced-context-window"
+        assert _title(screen, context_id) == CONTEXT_WINDOW_TITLES[model]
+        field = screen.query_one("#settings-model-context-window", Input)
+        assert field.value == ("128000" if model == "gpt-4o" else "")
+
+
 @pytest.mark.asyncio
 @private_profile_test
 @pytest.mark.parametrize(

@@ -242,7 +242,8 @@ that built the payload, never a separate estimate — so they always sum to
 the request total. Categories big enough to act on name their lever (e.g.
 Conversation → summarize older turns via `/rewind`; Attachments →
 `[agents] retire_stale_images`). Viewing the breakdown never triggers a
-model call, and an unverified model window keeps its "estimated" label.
+model call, and a model window no catalog knows still reads "unknown" with
+the size it assumes.
 
 
 ### Reading long Context and Inspector sections
