@@ -13562,7 +13562,8 @@ class SettingsScreen(BaseAppScreen):
 
         Returns:
             ``(Source word, help)``: "detected", "saved in config" (an
-            override), "edited *" (staged) or "not set" (unknown).
+            override), "edited *" (staged) or "not set" (unknown, with the
+            size the Console assumes, e.g. "unknown, 32,000 assumed · ...").
         """
         model_id = str(model or "").strip()
         if not model_id:
@@ -13576,6 +13577,10 @@ class SettingsScreen(BaseAppScreen):
         except (TypeError, ValueError):
             tokens = 0
         edited = tokens != (state.effective_tokens or 0)
+        if tokens <= 0 and not edited and state.assumed_tokens:
+            # Finding 12: the Console's fallback, in the title's words.
+            assumed = f"unknown, {state.assumed_tokens:,} assumed"
+            return "not set", f"{assumed} · budgets use it until set"
         if tokens <= 0:
             return ("edited *" if edited else "not set"), CONTEXT_WINDOW_REQUIRED_HELP
         detected = (
