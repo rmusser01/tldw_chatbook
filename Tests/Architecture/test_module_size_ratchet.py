@@ -114,7 +114,11 @@ _BUDGETS: dict[str, int] = {
     # raise the row rather than squeeze unrelated code to fit.
     "tldw_chatbook/UI/Screens/personas_screen.py": 16528,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
-    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 369,
+    # Roleplay frame B1 (TASK-33910.2), owner decision 2026-10-04 ("expand the
+    # limits"), applied 2026-10-09: the final-review fix that puts a name and a
+    # server label on one header row adds 15 lines; the row rises 369 -> 384,
+    # never squeezed code.
+    "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 384,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.

@@ -1,7 +1,7 @@
 {
   "_comment": "Screen pre-importer payload census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
   "pass_added_modules": 558,
-  "pass_added_loc": 416782,
+  "pass_added_loc": 416797,
   "routes": {
     "acp": {
       "loc": 520,
@@ -10,7 +10,7 @@
       ]
     },
     "ccp": {
-      "loc": 55233,
+      "loc": 55248,
       "modules": [
         "tldw_chatbook.Backup_Recovery.persona_visual_participants",
         "tldw_chatbook.Character_Chat.Character_Chat_Lib",

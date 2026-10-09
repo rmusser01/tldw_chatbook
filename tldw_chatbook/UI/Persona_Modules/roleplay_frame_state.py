@@ -141,6 +141,16 @@ def ellipsize_cells(text: str, budget: int) -> str:
     return f"{head}{ellipsis}" if head else ""
 
 
+def _one_line(text: str) -> str:
+    """``text`` with each whitespace run (newline, tab, spaces) as one space.
+
+    The header is one row: a ``Static`` paints only a text's first line and
+    ``cell_len`` measures a newline as 0 cells, so a server label
+    ``"home\\nevil"`` would paint ``Server: home`` without its ``read-only``.
+    """
+    return " ".join(text.split())
+
+
 def runtime_server_label(app_instance: object) -> str:
     """The active server's display label, read the way the Library reads it.
 
@@ -149,14 +159,15 @@ def runtime_server_label(app_instance: object) -> str:
 
     Returns:
         ``runtime_policy.state.last_known_server_label``, else its
-        ``active_server_id``, else ``""``. Non-string values count as absent.
+        ``active_server_id``, else ``""``, on one line (each whitespace
+        run as one space). Non-string values count as absent.
     """
     runtime_policy = getattr(app_instance, "runtime_policy", None)
     state = getattr(runtime_policy, "state", None)
     for name in ("last_known_server_label", "active_server_id"):
         value = getattr(state, name, None)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            return _one_line(value)
     return ""
 
 
@@ -235,10 +246,14 @@ def header_kind(mode: str) -> str:
 
 
 def header_item(inputs: RoleplayHeaderInputs) -> str:
-    """The interim item text (spec 5.3): the new item's noun while creating."""
+    """The interim item text (spec 5.3): the new item's noun while creating.
+
+    The name is put on one line (each whitespace run as one space), so all
+    of it paints on the one-row header.
+    """
     if inputs.edit_mode == "create":
         return "New persona" if inputs.mode == "personas" else "New character"
-    return inputs.item_name
+    return _one_line(inputs.item_name)
 
 
 def initial_header_state(mode: str, runtime_source: str) -> WorkbenchHeaderState:

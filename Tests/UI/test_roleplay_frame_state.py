@@ -281,6 +281,45 @@ def test_runtime_server_label_reads_the_label_then_the_id():
     assert fs.runtime_server_label(object()) == ""
 
 
+def test_a_server_label_with_a_line_break_keeps_read_only_on_the_one_row():
+    """The label can come from the server. On the one-row header a Static
+    paints only its first line, so ``"home\\nevil"`` would paint
+    ``Server: home`` and lose the ``· read-only`` authority word
+    (DESIGN.md:115): every whitespace run reads as one space."""
+
+    def app(**state):
+        return SimpleNamespace(
+            runtime_policy=SimpleNamespace(state=SimpleNamespace(**state))
+        )
+
+    label = fs.runtime_server_label(
+        app(last_known_server_label=" home\nevil\t\r\nbox ")
+    )
+    inputs = fs.RoleplayHeaderInputs(
+        mode="characters", runtime_source="server", server_label=label
+    )
+    view = fs.build_header_view(inputs, 160)
+    assert view.status_plain.splitlines() == ["Server: home evil box · read-only"]
+    assert label == "home evil box"
+    assert fs.runtime_server_label(app(active_server_id="t\n7")) == "t 7"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Line one\nLine two", "Line one\tLine two", " Line one\r\n\t Line two "],
+    ids=["newline", "tab", "mixed"],
+)
+def test_a_name_with_a_line_break_or_tab_paints_on_one_row(name):
+    """A Static paints only a name's first line, and ``cell_len`` measures a
+    newline as 0 cells: the header item reads every whitespace run as one
+    space, so the whole name paints on the one row and fits by its cells."""
+    inputs = fs.RoleplayHeaderInputs(mode="characters", item_name=name)
+    assert fs.header_item(inputs) == "Line one Line two"
+    item = fs.build_header_view(inputs, 160).item
+    assert fs.fit_header_item(item, 40) == "› Line one Line two"
+    assert fs.fit_header_item(item, 12) == "› Line one…"
+
+
 def test_purpose_line_keeps_the_pre_move_copy():
     """Moved verbatim from the screen in B1 (F-033); B6 retires it."""
     assert fs.purpose_line("characters", 2) == "Characters — who the AI plays · 2"
