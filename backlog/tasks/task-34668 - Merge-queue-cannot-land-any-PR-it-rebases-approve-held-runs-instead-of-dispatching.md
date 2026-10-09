@@ -95,4 +95,12 @@ Independent review round 5: one major finding (predating this PR) and five minor
 5. _evict's disarm was best-effort, so a failure left an armed PR under a 'removed, auto-merge is off' comment and, with the budget wake, could repeat forever. A failed disarm re-reads the PR and raises if it is still armed. A comment GitHub refuses for good (4xx, e.g. a locked conversation) no longer blocks the disarm.
 6. Spec section 8 now says which approval failures wake a tick.
 Mutation check: 42 mutants of the round-2 to round-5 guards, all killed.
+Independent review round 6: one major finding and five minor ones, all fixed:
+1. Major: _transient matched only REST-shaped errors. gh 2.90.0, captured against a fake server, prints a GraphQL timeout as 'gh: Something went wrong while executing your query', a non-JSON 502 as 'gh: HTTP 502', and a dropped connection with no 'gh: ' prefix. So an outage on the rebase mutation still counted as strikes and could evict. _transient now matches those shapes and abuse detection; only answers GitHub gave about the PR count.
+2. The still-young-to-start step fired on a head that changed during the wait (a push or a racing rebase), evicting a genuinely new head. It now applies only to the head the queue waited on.
+3. A strike inside its 10-minute gap holds the line on a quiet repo until the next event. Kept deliberately and documented as a known gap in spec section 8 (evicting sooner lets one slowdown disarm the PR).
+4. Only _evict tolerated a locked conversation; a locked PR whose rebase failed raised forever. comment_once now raises CommentRefused for a locked PR, and apply() takes the PR out of the line without a comment (the 'rebased' comment is just skipped). Any other comment refusal fails the run. _evict's own catch was dead code (every _evict call runs under apply) and was deleted, found by a surviving mutant.
+5. A failed rebase whose head moved anyway (the response lost) woke nothing, so the new head's held runs had no approver. It wakes a tick.
+6. Tests: the strike boundary is pinned (exactly 10 minutes evicts), the second-strike test uses a real createdAt, and a failed re-read after a failed disarm fails the run.
+Mutation check: 43 mutants of the round-2 to round-6 guards, all killed (after the dead catch was removed).
 <!-- SECTION:NOTES:END -->

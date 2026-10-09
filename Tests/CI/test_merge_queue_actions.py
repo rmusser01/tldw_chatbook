@@ -118,7 +118,7 @@ class FakeGh:
         if "updatePullRequestBranch" in query:
             self._record(("rebase", v["id"], v["oid"]))
             if self.rebase_error:
-                raise mq.GhError(self.rebase_error if isinstance(self.rebase_error, str) else "rebase refused")
+                raise mq.GhError(self.rebase_error if isinstance(self.rebase_error, str) else "gh: rebase refused")
             self.rereads_since_rebase = 0
             return {"data": {"updatePullRequestBranch": {"pullRequest": {"headRefOid": v["oid"]}}}}
         if "disablePullRequestAutoMerge" in query:
@@ -273,9 +273,11 @@ def test_on_mode_rebases_front_only():
 
 
 def test_rebase_failure_with_moved_head_never_evicts():
+    """The head moved: someone else acted, or this rebase went through with its response lost. Never
+    an eviction; one wake, because in the second case the new head's runs are held (review round 6)."""
     gh = FakeGh([_node(1)], rebase_error=True, reread={1: _node(1, head=NEW, state="BEHIND")})
     _run(gh)
-    assert [c[0] for c in gh.calls] == ["rebase"]
+    assert gh.calls == [("rebase", "PR_1", OLD), ("dispatch", "derived-artifacts.yml", {"ref": "dev"})]
 
 
 def test_rebase_refused_on_conflict_evicts():
@@ -370,7 +372,16 @@ def test_an_eviction_the_queue_may_not_comment_on_still_disarms():
     assert ("disarm", "PR_1") in gh.calls
 
 
-@pytest.mark.parametrize("error", ["gh: Server Error (HTTP 502)", "gh: API rate limit exceeded (HTTP 403)"])
+@pytest.mark.parametrize("error", [
+    "gh: Server Error (HTTP 502)",
+    "gh: API rate limit exceeded (HTTP 403)",
+    # What gh 2.90.0 printed for a GraphQL mutation against a failing server (review round 6):
+    "gh api graphql -f failed: gh: Something went wrong while executing your query. This may be the result of a "
+    "timeout, or it could be a GitHub bug.",
+    "gh api graphql -f failed: gh: HTTP 502",
+    'gh api graphql -f failed: Post "https://api.github.com/graphql": EOF',
+    "gh api graphql -f failed: gh: You have triggered an abuse detection mechanism. Please wait a few minutes.",
+], ids=["rest-502", "rate-limit", "graphql-timeout", "html-502", "network-eof", "abuse"])
 def test_a_transient_rebase_error_never_counts_toward_an_eviction(error):
     """Review round 5 of #3039 (predates the PR): two 5xx answers to the rebase mutation, days apart,
     evicted the PR. An outage must never disarm one (spec section 8).
@@ -385,7 +396,8 @@ def test_a_transient_rebase_error_never_counts_toward_an_eviction(error):
 
 
 @pytest.mark.parametrize("kind", ["rebase-failed", "rebase-unmoved"])
-@pytest.mark.parametrize(("minutes_ago", "evicts"), [(5, False), (11, True)], ids=["within-gap", "after-gap"])
+@pytest.mark.parametrize(("minutes_ago", "evicts"), [(5, False), (10, True), (11, True)],
+                         ids=["within-gap", "at-gap", "after-gap"])
 def test_a_second_rebase_strike_evicts_only_after_the_gap(kind, minutes_ago, evicts):
     """Review round 5 of #3039: the first strike wakes a tick (unmoved) or waits for the next event,
     so a second could land a minute later. One GitHub slowdown must not disarm the PR: a strike
@@ -561,7 +573,7 @@ def test_first_rebase_failure_warns_without_evicting():
     assert [c[0] for c in gh.calls] == ["rebase", "comment"]
     body = gh.calls[1][2]
     assert f"<!-- merge-queue:rebase-failed:{OLD} -->" in body
-    assert "rebasing onto dev failed (rebase refused); will retry, and remove it from the line if" in body
+    assert "rebasing onto dev failed (gh: rebase refused); will retry, and remove it from the line if" in body
 
 
 def test_repeated_rebase_failure_evicts():
@@ -572,7 +584,7 @@ def test_repeated_rebase_failure_evicts():
     assert ("disarm", "PR_1") in gh.calls
     comment = next(c for c in gh.calls if c[0] == "comment")
     assert f"<!-- merge-queue:evict-rebase:{OLD} -->" in comment[2]
-    assert "rebase onto dev keeps failing: rebase refused" in comment[2]
+    assert "rebase onto dev keeps failing: gh: rebase refused" in comment[2]
 
 
 def test_rebase_approves_only_after_the_new_head_appears():
@@ -601,7 +613,8 @@ def test_rebase_whose_head_never_moves_wakes_one_tick_then_evicts():
     assert gh.calls[2] == ("dispatch", "derived-artifacts.yml", {"ref": "dev"})
     assert sleeps == [mq.REBASE_POLL_S] * mq.REBASE_POLLS
 
-    again = FakeGh([_node(1)], rebase_lag=None, comments={1: [gh.calls[1][2]]})
+    eleven_minutes_ago = (NOW - timedelta(minutes=11)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    again = FakeGh([_node(1)], rebase_lag=None, comments={1: [(gh.calls[1][2], eleven_minutes_ago)]})
     _run(again)
     assert [c[0] for c in again.calls] == ["rebase", "comment", "disarm"]
     assert f"<!-- merge-queue:evict-rebase-unmoved:{OLD} -->" in again.calls[1][2], "its own slug, not evict-rebase"
@@ -772,7 +785,7 @@ def test_refused_rebase_rereads_once_more_before_counting_it_as_a_failure():
     gh = FakeGh([_node(1)], rebase_error=True,
                 reread={1: [_node(1, state="BEHIND"), _node(1, head=NEW, state="BLOCKED")]})
     mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
-    assert [c[0] for c in gh.calls] == ["rebase"]
+    assert [c[0] for c in gh.calls] == ["rebase", "dispatch"]
     assert sleeps == [mq.REBASE_POLL_S]
 
 
@@ -937,7 +950,8 @@ def test_a_failed_rerun_still_counts_as_the_second_failure():
     "gh: API rate limit exceeded for installation ID 123. (HTTP 403)",
     "gh: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. (HTTP 403)",
     "gh: Too Many Requests (HTTP 429)",
-    "gh: dial tcp: lookup api.github.com: no such host",
+    'gh api -X POST failed: Post "https://api.github.com/repos/o/r/actions/runs/70/rerun-failed-jobs": dial tcp: '
+    'lookup api.github.com: no such host',
 ], ids=["primary-rate-limit", "secondary-rate-limit", "429", "network"])
 def test_a_transient_rerun_error_fails_the_run_and_disarms_nobody(message):
     """Review of #3039: rate limits answer 403 too. Reading one as a refused re-run, or counting it
@@ -1367,3 +1381,85 @@ def test_a_head_still_young_after_the_window_is_started_not_left_waiting():
     decisions = mq.run(gh, "on", now=lambda: clock[0], sleep=sleep, log=lambda m: None)
     assert slept[0] == mq.YOUNG_HEAD.total_seconds() + 1, "capped at one window"
     assert (decisions[0][1].kind, decisions[0][1].reason) == ("start", "no run after waiting out the young-head window")
+
+
+def test_a_locked_pr_leaves_the_line_without_a_comment():
+    """Review round 6 of #3039: the queue keeps its strike and retry counts in comments. On a locked PR
+    every warning is refused, so nothing ever counts and the line would stall on it forever; the
+    queue takes it out of the line instead, and the line moves on."""
+    gh = FakeGh([_node(1), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")], rebase_error=True,
+                reread={1: _node(1, state="BEHIND")})
+    original = gh.rest
+
+    def rest(method, path, fields=None):
+        if method == "POST" and path.endswith("/issues/1/comments"):
+            raise mq.GhError("gh api -X POST failed: gh: Unable to create comment because issue is locked. (HTTP 403)")
+        return original(method, path, fields)
+
+    gh.rest = rest
+    decisions = _run(gh)
+    assert ("disarm", "PR_1") in gh.calls and ("disarm", "PR_2") in gh.calls
+    assert [n for n, _ in decisions] == [1, 2]
+
+
+def test_a_locked_pr_is_still_rebased_without_its_rebased_comment():
+    """The 'this PR is next' comment is only news; a refusal there is no reason to evict."""
+    gh = FakeGh([_node(1)], runs={NEW: [_held(31)]})
+    original = gh.rest
+
+    def rest(method, path, fields=None):
+        if method == "POST" and path.endswith("/comments"):
+            raise mq.GhError("gh api -X POST failed: gh: Unable to create comment because issue is locked. (HTTP 403)")
+        return original(method, path, fields)
+
+    gh.rest = rest
+    _run(gh)
+    assert ("approve", "31") in gh.calls and not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_a_comment_refused_for_another_reason_fails_the_run():
+    """Only a locked conversation counts as a lasting refusal; anything else fails the run, disarming nothing."""
+    gh = FakeGh([_node(1, state="DIRTY")])
+    original = gh.rest
+
+    def rest(method, path, fields=None):
+        if method == "POST" and path.endswith("/comments"):
+            raise mq.GhError("gh api -X POST failed: gh: Validation Failed (HTTP 422)")
+        return original(method, path, fields)
+
+    gh.rest = rest
+    with pytest.raises(mq.GhError, match="422"):
+        _run(gh)
+    assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_a_disarm_whose_reread_fails_fails_the_run():
+    """After a failed disarm the queue must know the PR is disarmed before it moves on."""
+    gh = FakeGh([_node(1, state="DIRTY"), _node(2, armed="2026-10-03T11:00:00Z")], disarm_error=True)
+    original = gh.graphql
+
+    def graphql(query, **v):
+        if "pullRequest(number" in query and "comments(last" not in query:
+            raise mq.GhError("gh api graphql -f failed: gh: HTTP 502")
+        return original(query, **v)
+
+    gh.graphql = graphql
+    with pytest.raises(mq.GhError, match="502"):
+        _run(gh)
+    assert not any(c[0] == "rebase" for c in gh.calls)
+
+
+def test_a_new_head_after_the_young_wait_is_not_started_early():
+    """Review round 6 of #3039: the still-young-to-start step is for a head whose clock runs ahead. If
+    the head changed during the wait (a push, or a racing rebase), it is genuinely new: keep waiting."""
+    clock = [NOW]
+
+    def sleep(seconds):
+        clock[0] += timedelta(seconds=seconds)
+
+    young = _node(1, state="BLOCKED", committed="2026-10-03T11:59:00Z")
+    pushed = _node(1, head=NEW, state="BLOCKED", committed="2026-10-03T12:02:01Z")
+    gh = FakeGh([young], reread={1: pushed})
+    decisions = mq.run(gh, "on", now=lambda: clock[0], sleep=sleep, log=lambda m: None)
+    assert decisions[0][1].kind == "wait" and decisions[0][1].slug == "young"
+    assert gh.calls == []

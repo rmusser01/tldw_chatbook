@@ -223,6 +223,10 @@ class GhError(RuntimeError):
     """A gh CLI call failed, or a list read was longer than the queue will page through."""
 
 
+class CommentRefused(GhError):
+    """GitHub will never take the queue's comment on this PR (its conversation is locked)."""
+
+
 class GhApi(Protocol):
     """What the queue needs from GitHub; `Gh` in production, a fake in tests."""
 
@@ -594,6 +598,7 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool
         True if it posted, False if the marker was already there.
 
     Raises:
+        CommentRefused: The PR's conversation is locked.
         GhError: A call failed.
     """
     marker = f"<!-- merge-queue:{kind}:{sha} -->"
@@ -602,7 +607,12 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool
     bodies = [n.get("body") or "" for n in data["data"]["repository"]["pullRequest"]["comments"]["nodes"]]
     if any(marker in b for b in bodies):
         return False
-    gh.rest("POST", f"repos/{REPO}/issues/{number}/comments", {"body": f"{marker}\n{body}"})
+    try:
+        gh.rest("POST", f"repos/{REPO}/issues/{number}/comments", {"body": f"{marker}\n{body}"})
+    except GhError as exc:
+        if "locked" in str(exc).lower() and not _transient(exc):
+            raise CommentRefused(str(exc)) from exc
+        raise
     return True
 
 
@@ -751,9 +761,24 @@ def _going_again(gh: GhApi, run_id: int) -> bool:
 
 
 def _transient(exc: GhError) -> bool:
-    """Whether an error is GitHub's, saying nothing about the PR: a 5xx, a 429 or a rate limit."""
-    text = str(exc)
-    return "(HTTP 5" in text or "(HTTP 429)" in text or "rate limit" in text.lower()
+    """Whether an error is GitHub's or the network's, saying nothing about the PR.
+
+    Matches what gh actually prints (captured from gh 2.90.0 against a fake server): a REST
+    error `gh: <message> (HTTP 502)`, a non-JSON one `gh: HTTP 502`, a GraphQL timeout
+    `gh: Something went wrong while executing your query...`, rate limits and abuse detection,
+    and a network failure, where gh prints no `gh: ` server message at all (e.g.
+    `Post "https://api.github.com/graphql": EOF`).
+
+    Args:
+        exc: The error a call raised.
+
+    Returns:
+        True for an outage or throttling error; False for GitHub's answer about this PR.
+    """
+    message = str(exc).split(" failed: ", 1)[-1]
+    lowered = message.lower()
+    return ("HTTP 5" in message or "HTTP 429" in message or "rate limit" in lowered or "abuse detection" in lowered
+            or "something went wrong while executing your query" in lowered or not message.startswith("gh: "))
 
 
 def _rerun_error(exc: GhError) -> str:
@@ -839,18 +864,25 @@ def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -
     # Comment first: if the job dies between the two calls the PR stays armed and the next run
     # evicts it again (the comment is deduplicated), instead of being disarmed with no reason given.
     links = "".join(f"\n- {u}" for u in action.links)
+    # A locked PR refuses the comment (CommentRefused); apply() then disarms it without one.
+    comment_once(
+        gh, pr.number, f"evict-{action.slug}", pr.head_sha,
+        f"Merge queue: removed from the line ({action.reason}). Auto-merge is now off. Fix the cause, then "
+        f"re-arm with `gh pr merge {pr.number} --auto --merge` to rejoin at the back.{links}",
+    )
+    _disarm(gh, pr, log)
+    log(f"  evicted #{pr.number}: {action.reason}")
+    return True
+
+
+def _comment_if_allowed(gh: GhApi, number: int, kind: str, sha: str, log: Callable[[str], None], body: str) -> None:
     try:
-        comment_once(
-            gh, pr.number, f"evict-{action.slug}", pr.head_sha,
-            f"Merge queue: removed from the line ({action.reason}). Auto-merge is now off. Fix the cause, then "
-            f"re-arm with `gh pr merge {pr.number} --auto --merge` to rejoin at the back.{links}",
-        )
-    except GhError as exc:
-        if _transient(exc) or "(HTTP 4" not in str(exc):
-            raise
-        # GitHub refuses the queue's comment here (e.g. a locked conversation): evicting without
-        # it beats stalling the line on this PR forever.
-        log(f"  cannot comment on #{pr.number} ({exc}); evicting without the comment")
+        comment_once(gh, number, kind, sha, body)
+    except CommentRefused as exc:
+        log(f"  cannot comment on #{number} ({exc}); skipped")
+
+
+def _disarm(gh: GhApi, pr: PrState, log: Callable[[str], None]) -> None:
     try:
         gh.graphql(DISARM_MUTATION, id=pr.node_id)
     except GhError as exc:
@@ -861,8 +893,6 @@ def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -
         if read_pr(gh, pr.number).armed_at is not None:
             raise
         log(f"  #{pr.number} was already disarmed ({exc})")
-    log(f"  evicted #{pr.number}: {action.reason}")
-    return True
 
 
 def _rebase_strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Action, wake_first: bool,
@@ -912,6 +942,9 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
             fresh = read_pr(gh, pr.number)
         if fresh.head_sha != pr.head_sha:
             log(f"  rebase skipped: head moved to {fresh.head_sha[:10]}")
+            # It may be this rebase, accepted with its response lost: its head's runs would then
+            # be held with nothing to approve them.
+            _wake_best_effort(gh, log)
             return False
         if fresh.merge_state == "DIRTY":
             return _evict(gh, fresh, Action("evict", "conflicts with dev (rebase refused)", slug="conflict"), log)
@@ -963,8 +996,8 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
         # The PR's own runs stay held, so no queue-tick will run for it: wake one.
         _wake_best_effort(gh, log)
     started = "approved its CI" if approved else "its CI is not approved yet; a woken tick approves it"
-    comment_once(
-        gh, pr.number, "rebased", new_head,
+    _comment_if_allowed(
+        gh, pr.number, "rebased", new_head, log,
         f"Merge queue: this PR is next. Rebased onto `{BASE}` (head `{new_head[:10]}`); {started}.",
     )
     log(f"  rebased #{pr.number} {pr.head_sha[:10]} -> {new_head[:10]}")
@@ -1101,18 +1134,25 @@ def apply(
     Raises:
         GhError: A read or a non-best-effort call failed.
     """
-    if action.kind == "rebase":
-        return _rebase(gh, pr, log, sleep, now)
-    if action.kind in ("start", "retry"):
-        # Two queue runs (merge-queue.yml and a queue-tick) can decide the same action for the same
-        # head. Once the first one's run is live, the other sees it here and stands down.
-        if any(c.status != "completed" for c in required_run_stand_ins(gh, pr.head_sha, ())):
-            log(f"  #{pr.number}: a required run is live on {pr.head_sha[:10]}; standing down")
-            return False
-        return _start(gh, pr, log, sleep) if action.kind == "start" else _retry(gh, pr, action, log, sleep)
-    if action.kind == "evict":
-        return _evict(gh, pr, action, log)
-    return False
+    try:
+        if action.kind == "rebase":
+            return _rebase(gh, pr, log, sleep, now)
+        if action.kind in ("start", "retry"):
+            # Two queue runs (merge-queue.yml and a queue-tick) can decide the same action for the
+            # same head. Once the first one's run is live, the other sees it here and stands down.
+            if any(c.status != "completed" for c in required_run_stand_ins(gh, pr.head_sha, ())):
+                log(f"  #{pr.number}: a required run is live on {pr.head_sha[:10]}; standing down")
+                return False
+            return _start(gh, pr, log, sleep) if action.kind == "start" else _retry(gh, pr, action, log, sleep)
+        if action.kind == "evict":
+            return _evict(gh, pr, action, log)
+        return False
+    except CommentRefused as exc:
+        # The queue keeps its retry and strike counts in comments; on a locked PR it can neither
+        # count nor explain, so it takes the PR out of the line rather than stall the line on it.
+        log(f"  cannot comment on #{pr.number} ({exc}); removing it from the line without a comment")
+        _disarm(gh, pr, log)
+        return True
 
 
 UNQUEUED_NOTES = {
@@ -1256,12 +1296,13 @@ def run(
             else:
                 sleep(pause)
                 fresh = settle_unknown(gh, read_pr(gh, pr.number), sleep)
+                same_head = fresh.head_sha == pr.head_sha
                 if fresh.armed_at != pr.armed_at:
                     # Disarmed, or re-armed at the back of the line, meanwhile; that event wakes a
                     # fresh queue run, which reads the line again.
                     break
                 pr, action = _decide(gh, fresh, mode, now, log)
-                if action.slug == "young":
+                if action.slug == "young" and same_head:
                     # Waited a full window and it still looks young: its commit clock runs ahead.
                     # Waiting more would stall the line; look for its run instead.
                     action = Action("start", "no run after waiting out the young-head window")

@@ -193,14 +193,18 @@ never rebased, dispatched or commented on.
   queue re-reads the PR. If that shows the same head and not `DIRTY`, it waits 3 seconds and re-reads once more: a racing
   run's accepted rebase moves the branch about a second after its mutation returns, and a refusal inside that window must
   not count as this run's own failure. Then:
-  - head moved: do nothing (someone else acted);
+  - head moved: someone else acted, or this rebase went through with its response lost; wake a queue tick (in the second
+    case the new head's runs are held and nothing else would approve them) and do nothing more;
   - now `DIRTY`: evict;
   - anything else (same head, still not `DIRTY`): the first time, post a `rebase-failed` comment quoting the error (first
     200 characters). A later failure on the same head evicts ("rebase onto dev keeps failing", `evict-rebase`) only if
     that comment is at least 10 minutes old (its `createdAt`); sooner, the queue leaves it for a later event. A rebase that
     keeps failing while the PR stays `BEHIND` would otherwise stall the line, and the gap keeps one GitHub slowdown that
     fails two attempts a minute apart from disarming the PR.
-  - A transient error (5xx, 429, rate limit) re-raises before any of this and never counts (section 8).
+  - A transient error re-raises before any of this and never counts (section 8). Transient means what gh actually prints
+    for an outage or throttling (captured from gh 2.90.0): `HTTP 5xx` or `HTTP 429` with or without parentheses, a rate
+    limit or abuse-detection message, GraphQL's "Something went wrong while executing your query", or a network failure,
+    where gh prints no `gh: ` server message at all. Only an answer GitHub actually gave about the PR counts as a strike.
 - The mutation returns the pre-rebase head, and the branch moves about a second later. After a successful rebase the queue
   re-reads the PR up to 10 times, 3 seconds apart, until the head moves, and uses that new head for the comment. If it never
   moves, the queue posts a `rebase-unmoved` comment and wakes a queue tick, once per head: if the branch moves later,
@@ -225,8 +229,10 @@ never rebased, dispatched or commented on.
 - Only held runs that pass one predicate are ever approved, on every path: event `pull_request`, triggering actor
   `github-actions[bot]`, head repository this repository.
 - **Evict** means one comment, then `disablePullRequestAutoMerge`, in that order: a job killed between the two leaves the
-  PR armed, and the next run evicts it again, instead of a PR disarmed with no reason given. A comment GitHub refuses for good
-  (an HTTP 4xx other than a rate limit, e.g. a locked conversation) does not stop the disarm; a transient one fails the run.
+  PR armed, and the next run evicts it again, instead of a PR disarmed with no reason given. If GitHub refuses a queue comment
+  because the PR's conversation is locked, the queue cannot keep its retry or strike counts there, or explain anything, so it
+  takes the PR out of the line without a comment rather than stall the line on it (the "rebased" comment, being only news,
+  is just skipped). Any other comment error fails the run.
   A failed disarm re-reads the PR: already disarmed (two racing runs evicting the same PR, since a merge fires both `push`
   to `dev` and `closed`) is fine; still armed fails the run, so no PR stays armed under a "removed" comment. Re-arming
   puts the PR at the back of the line.
@@ -268,6 +274,9 @@ never rebased, dispatched or commented on.
     exists on `main` (F1).
   - Known gap: a stall during a stretch with no activity waits for the next event or a manual kick. There is no periodic
     timer, because `schedule` reads `main`.
+  - The same gap after a rebase strike: a strike inside its 10-minute gap stands down and wakes nothing, so on a quiet repo
+    the front (and the line behind it) waits for the next event after the gap. Rebase failures are rare, and evicting
+    sooner would let one GitHub slowdown disarm the PR.
 - **Owner or agent merges by hand while a PR is in flight:** `dev` moves, the front PR becomes behind, and the queue rebases
   it again and cancels the superseded run.
 
@@ -349,8 +358,11 @@ The rules depend on the mode, checked with `gh variable get MERGE_QUEUE`. A roll
     decided again after the window (`on` mode only, not after a disarm or re-arm, and only within the run budget), and
     started if it still looks young; a head dated a little ahead is young, one far ahead is not; a `wait_run` read error is retried within the bound; a rebase whose branch never
     moves wakes one tick; a second rebase strike evicts only 10 minutes after the first, and a transient rebase error
-    never counts; an eviction comments before it disarms, disarms anyway when GitHub refuses the comment for good, and
-    fails the run when the PR is still armed after a failed disarm; a run past its budget hands the next front to a
+    never counts (REST, GraphQL, HTML and network shapes as gh prints them), with the gap boundary pinned; a rebase
+    whose head moved anyway wakes one tick; an eviction comments before it disarms and fails the run when the PR is
+    still armed (or unreadable) after a failed disarm; a locked PR leaves the line without a comment, while its
+    "rebased" comment is just skipped; any other comment refusal fails the run; a head that changed during the young
+    wait is not started early; a run past its budget hands the next front to a
     fresh run;
   - `main()` passes `WAIT_RUN` through;
   - dispatched required checks never count, and a live dispatched run is not waited on;
