@@ -1701,7 +1701,9 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             # is not a Tab stop between Endpoint and Model; a click still runs it.
             test_button.can_focus = False
             yield test_button
-        yield Static(
+        from ..Screens.settings_screen import SettingsResultLine
+
+        yield SettingsResultLine(
             screen._provider_save_result,
             id="settings-provider-save-result",
             classes="settings-status-row",

@@ -3074,6 +3074,29 @@ def _settings_ssh_advisory_probe(
             _record_unreached(f"probe failed ({code})")
 
 
+class SettingsResultLine(Static):
+    """A card's last save or revert result, taking no row until it has one.
+
+    Each card used to open with "… have not been saved this session.": a row
+    saying nothing happened, while the Inspector already says "Save (s) — no
+    changes" (spec: each fact appears once).
+    """
+
+    def __init__(self, text: str = "", **kwargs: object) -> None:
+        super().__init__(text, **kwargs)  # type: ignore[arg-type]
+        self.display = bool(text.strip())
+
+    def update(self, content: object = "", *, layout: bool = True) -> None:
+        """Show the line only while it has something to report.
+
+        Args:
+            content: The new result text.
+            layout: Whether the update may change the layout.
+        """
+        super().update(content, layout=layout)  # type: ignore[arg-type]
+        self.display = bool(str(content).strip())
+
+
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, storage, and app behavior."""
 
@@ -3346,9 +3369,8 @@ class SettingsScreen(BaseAppScreen):
         #: TASK-33007.2: providers with a credential or their own endpoint,
         #: read when the unfiltered provider list is built.
         self._provider_configured_keys: frozenset[str] | None = None
-        self._provider_save_result = (
-            "Provider settings have not been saved this session."
-        )
+        # Empty until a save or revert has a result (SettingsResultLine).
+        self._provider_save_result = ""
         self._vllm_default_claim: (
             HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent] | None
         ) = None
@@ -3650,13 +3672,9 @@ class SettingsScreen(BaseAppScreen):
             "Privacy check: not run",
             "Run Check Privacy or press t to verify redacted secret status.",
         )
-        self._console_behavior_result = (
-            "Console behavior settings have not been saved this session."
-        )
+        self._console_behavior_result = ""
         self._console_behavior_saved_this_session = False
-        self._library_rag_result = (
-            "Library/RAG defaults have not been saved this session."
-        )
+        self._library_rag_result = ""
         self._library_rag_profile_result = "No RAG profile action taken this session."
         # Task 4 (SP3): index status readout + Backfill. The Static renders
         # this placeholder text at compose time -- the real state is fetched
@@ -3704,10 +3722,8 @@ class SettingsScreen(BaseAppScreen):
         #: cold): the entering-first-run transition then fires correctly
         #: the first time a genuinely first-run status lands.
         self._rag_first_run_active = False
-        self._appearance_result = (
-            "Appearance defaults have not been saved this session."
-        )
-        self._storage_result = "Storage defaults have not been saved this session."
+        self._appearance_result = ""
+        self._storage_result = ""
         #: Task 9 (workspace lifecycle card): the workspace row currently
         #: selected in the list, or None when nothing is selected -- the
         #: card renders nothing in that case. Reset whenever the user
@@ -7217,7 +7233,7 @@ class SettingsScreen(BaseAppScreen):
             and not has_unsaved_changes
             and self._console_behavior_result
             in {
-                "Console behavior settings have not been saved this session.",
+                "",
                 "Console behavior settings staged.",
                 "Console behavior settings saved.",
             }
@@ -7234,7 +7250,7 @@ class SettingsScreen(BaseAppScreen):
         ):
             if self._console_behavior_saved_this_session:
                 return "Console behavior settings saved."
-            return "Console behavior settings have not been saved this session."
+            return ""
         return self._console_behavior_result
 
     def _console_behavior_value(self, key: str) -> object:
@@ -19271,7 +19287,7 @@ class SettingsScreen(BaseAppScreen):
                         f"{MAX_CONSOLE_BACKGROUND_FPS} FPS."
                     ),
                 )
-            yield Static(
+            yield SettingsResultLine(
                 self._console_behavior_result_text(),
                 id="settings-console-behavior-result",
                 classes="settings-status-row",
@@ -20699,7 +20715,7 @@ class SettingsScreen(BaseAppScreen):
             "Profile", "the active RAG profile (rag_profiles/<id>.json)"
         )
         yield self._detail_row("Pointer", "the [rag.service].profile pointer")
-        yield Static(
+        yield SettingsResultLine(
             self._library_rag_result,
             id="settings-library-rag-save-result",
             classes="settings-status-row",
@@ -22160,7 +22176,7 @@ class SettingsScreen(BaseAppScreen):
                         id="settings-preview-appearance",
                         tooltip="Check the Appearance draft; nothing is applied or saved.",
                     )
-                yield Static(
+                yield SettingsResultLine(
                     self._appearance_result,
                     id="settings-appearance-save-result",
                     classes="settings-status-row",
@@ -22256,7 +22272,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-storage-check-result",
                     classes="settings-status-row settings-storage-check-result",
                 )
-                yield Static(
+                yield SettingsResultLine(
                     self._storage_result,
                     id="settings-storage-save-result",
                     classes="settings-status-row",

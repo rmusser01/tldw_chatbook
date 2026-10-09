@@ -1472,3 +1472,45 @@ async def test_sign_in_with_is_one_row_with_a_source_word_and_help(request, size
         assert _squeezed(_text(screen, "#settings-provider-field-guide-1")) == (
             _squeezed(f"Purpose: {ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY}")
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_the_card_result_line_takes_no_row_until_there_is_a_result(
+    request, monkeypatch
+):
+    """Checkpoint review (captures): every card opened with "… have not been
+    saved this session." -- a row saying nothing happened, while the Inspector
+    already says "Save (s) — no changes". The line now shows only once a save
+    or revert has something to report."""
+    from Tests.UI.test_settings_configuration_hub import (
+        _capture_provider_settings_mutations,
+    )
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _capture_provider_settings_mutations(monkeypatch)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": dict(_SAVED_KEY)}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        result = screen.query_one("#settings-provider-save-result", Static)
+        assert result.display is False
+        assert result.region.height == 0
+
+        screen.query_one("#settings-provider-api-key", Input).focus()
+        await pilot.pause()
+        from tldw_chatbook.UI.Screens.settings_config_models import (
+            SettingsCategoryId,
+        )
+
+        await pilot.press("x")
+        await pilot.pause()
+        # What "r" then "Discard changes" runs once confirmed.
+        screen._revert_category(SettingsCategoryId.PROVIDERS_MODELS)
+        await pilot.pause()
+        await pilot.pause()
+        assert result.display is True
+        assert "reverted" in _text(screen, "#settings-provider-save-result")
