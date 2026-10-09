@@ -5,9 +5,9 @@ root an Undo reselects) and the stretch an Undo restores below a kept window
 were mounted in one batch: 64 short rows, about 520 widgets, at 160x48.
 Textual lays a batch of new widgets out three times -- its first layout, the
 relayout their new virtual sizes ask for, and another once the transcript's
-scrollbar changes its width -- and each pass re-arranged every new widget.
-One screen update then held the event loop for 196-316 ms with 3,000
-messages and 211-229 ms with 60 (dev 46c3959526, ConsoleHarness 160x48).
+scrollbar changes its width -- and each pass re-arranged every new widget,
+so one screen update held the event loop for the longest block of the Undo
+whatever the chat's length. The task's notes keep the measurements.
 
 ``pace`` now mounts the target's turn and the screen below it first
 (``fill_line_budget``: one viewport of estimated lines, which runs short of
@@ -15,11 +15,8 @@ real row heights, so the screen fills) and remembers where the planned
 window ends. Everything past the batch waits in the hidden tail, and
 ``fill_window`` reveals it one batch at a time, each only once the layout of
 the batch before it has settled; mounted any earlier, its first layout lands
-in the same pass as that batch's relayout (measured: a 158 ms pass
-re-arranging 44 rows' widgets). The window ends up the same shape it always
-had. Interleaved with dev under the same load (n=5 each), the worst Undo
-block fell from 191-308 ms to 122-158 ms at 3,000 messages; two-viewport
-batches left it at 143-205 ms.
+in the same pass as that batch's relayout. The window ends up the same shape
+it always had.
 
 Pacing needs two-sided windowing (windowing and pruning on, sane
 watermarks), like the far-reveal bound it extends. A reader following the
@@ -210,29 +207,36 @@ async def fill_window(
     if not _ready(transcript):
         _schedule(transcript)
         return
-    messages = transcript._messages
-    tail_start = transcript._hidden_tail_start_index()
-    target = next(
-        (
-            index
-            for index in range(tail_start, len(messages))
-            if messages[index].id == end_id
-        ),
-        None,
-    )
-    if target is None or tail_start < transcript._first_visible_message_index():
-        transcript._window_fill = None
-        return
     async with transcript._refresh_lock:
-        # The hydration latch: boundary hydration waits while the batch lands.
-        transcript._hydrating_scrollback = True
-        transcript._reveal_hidden_tail_through(
-            _batch_end(transcript, tail_start, target + 1)
+        # Read the window under the lock: a holder this batch queued behind
+        # (scroll hydration, say) may have moved it or revealed part of it,
+        # and revealing through a stale end would hide those rows again.
+        if transcript._window_fill is not fill:
+            return
+        messages = transcript._messages
+        first = transcript._first_visible_message_index()
+        tail_start = transcript._hidden_tail_start_index()
+        target = next(
+            (
+                index
+                for index in range(first, len(messages))
+                if messages[index].id == end_id
+            ),
+            None,
         )
-        try:
-            await transcript._reconcile_rows(transcript._transcript_rows())
-        finally:
-            transcript._hydrating_scrollback = False
+        if target is None or tail_start < first:
+            transcript._window_fill = None
+            return
+        if tail_start <= target:
+            # The hydration latch: boundary hydration waits while it lands.
+            transcript._hydrating_scrollback = True
+            transcript._reveal_hidden_tail_through(
+                _batch_end(transcript, tail_start, target + 1)
+            )
+            try:
+                await transcript._reconcile_rows(transcript._transcript_rows())
+            finally:
+                transcript._hydrating_scrollback = False
     transcript._schedule_prune_check()
     if transcript._window_fill is not fill:
         return
