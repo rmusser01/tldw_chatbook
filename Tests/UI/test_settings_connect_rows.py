@@ -1228,6 +1228,49 @@ async def test_an_endpoint_with_no_shipped_default_reads_required(
 
 @pytest.mark.asyncio
 @private_profile_test
+@pytest.mark.parametrize(
+    ("provider", "settings", "required"),
+    [
+        ("azure", dict(_SAVED_KEY), "your resource host"),
+        ("llama_cpp", {}, "the server's base URL"),
+        ("openai", dict(_SAVED_KEY), None),
+    ],
+)
+async def test_the_focused_endpoint_guide_says_required_as_its_row_does(
+    request, provider, settings, required
+):
+    """TASK-33007 follow-up to fix 1: the Endpoint row reads "required: ..."
+    for providers that ship no URL, yet its Inspector guide still said the
+    address applies "when set". It says required, in the row's words; a
+    provider with a default URL keeps "when set"."""
+    from tldw_chatbook.Chat.console_provider_support import MODEL_CONFIG_FIELDS
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": provider, "model": "m-1"}
+    app.app_config["api_settings"] = {provider: settings}
+    host = _SettingsCssHarness(app, "settings")
+    address = MODEL_CONFIG_FIELDS["endpoint"].valid_range
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        screen.query_one("#settings-provider-endpoint-value", Input).focus()
+        await pilot.pause()
+
+        assert _text(screen, "#settings-provider-field-guide-0") == (
+            "Focused setting: Endpoint"
+        )
+        guide = _squeezed(_text(screen, "#settings-provider-field-guide-3"))
+        if required is None:
+            assert guide == _squeezed(f"Validation: {address} when set")
+            return
+        assert _text(screen, "#settings-provider-endpoint-help") == (
+            f"required: {required}"
+        )
+        assert guide == _squeezed(f"Validation: {address}; required: {required}")
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_provider_and_model_read_edited_only_when_their_own_value_is(request):
     """Captures 03 and 04 (fix 2): the draft pins provider and model beside
     any edit, so staging only a Temperature made both rows read edited *,

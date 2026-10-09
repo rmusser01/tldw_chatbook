@@ -42,7 +42,7 @@ from ...Chat.console_provider_endpoints import (
     first_configured_endpoint,
     safe_endpoint_display,
 )
-from ...Chat.console_provider_support import MODEL_FIELD_LABELS
+from ...Chat.console_provider_support import MODEL_CONFIG_FIELDS, MODEL_FIELD_LABELS
 from ...Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
     load_custom_endpoints,
@@ -655,6 +655,54 @@ def env_var_source_word(screen: SettingsScreen, provider: str, env_var: str) -> 
     return "set in shell" if os.environ.get(name, "").strip() else "not set"
 
 
+def endpoint_requirement(provider: str) -> str | None:
+    """Name the address a provider that ships no URL needs in Endpoint.
+
+    The Endpoint row's help and its Inspector guide both say it.
+
+    Args:
+        provider: The provider the form holds.
+
+    Returns:
+        "the server's base URL" for a local server, e.g. "your resource
+        host" for Azure, or None when the provider ships a default URL.
+    """
+    if provider_config_key(provider) in API_URL_PROVIDER_KEYS:
+        return "the server's base URL"
+    # Capture 01c: Azure, Cloudflare and Databricks ship no URL either.
+    target = required_base_url_target(provider)
+    return f"your {target}" if target else None
+
+
+def endpoint_field_guide(
+    provider: str, endpoint_key: str
+) -> tuple[tuple[str, str], ...]:
+    """The Inspector's guide for a focused Endpoint field.
+
+    It says the address is required where the Endpoint row does.
+
+    Args:
+        provider: The provider the form holds.
+        endpoint_key: The config key the endpoint is saved as.
+
+    Returns:
+        The guide's (label, value) rows.
+    """
+    endpoint = MODEL_CONFIG_FIELDS["endpoint"]
+    required = endpoint_requirement(provider)
+    return (
+        ("Focused setting", endpoint.label),
+        ("Purpose", endpoint.help),
+        ("Saved as", endpoint_key),
+        (
+            "Validation",
+            f"{endpoint.valid_range}; required: {required}"
+            if required
+            else f"{endpoint.valid_range} when set",
+        ),
+    )
+
+
 def endpoint_row_copy(
     screen: SettingsScreen, provider: str, endpoint: str
 ) -> tuple[str, str]:
@@ -672,22 +720,18 @@ def endpoint_row_copy(
     if registry is not None:
         url = registry[1] or "endpoint not found"
         return "this endpoint", f"{url} · edit in Custom endpoints"
-    local_server = provider_config_key(provider) in API_URL_PROVIDER_KEYS
-    # Capture 01c: Azure, Cloudflare and Databricks ship no URL either.
-    target = required_base_url_target(provider)
+    required = endpoint_requirement(provider)
     draft = screen._provider_draft()
     if draft is not None and "endpoint" in draft.dirty_keys:
         word = "edited *"
     elif endpoint.strip():
         word = "config"
-    elif local_server or target:
+    elif required:
         word = "not set"
     else:
         word = "built-in"
-    if local_server:
-        return word, "required: the server's base URL"
-    if target:
-        return word, f"required: your {target}"
+    if required:
+        return word, f"required: {required}"
     return word, "blank uses the provider default"
 
 

@@ -11269,7 +11269,12 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
         # so the key spans two lines in visible text.
         assert "Saved as: api_settings.ollama." in text
         assert "api_url" in text
-        assert "Validation: an http:// or https:// address when set" in text
+        # TASK-33007, rewritten on purpose: Ollama's Endpoint row reads
+        # "required: the server's base URL", and the guide now says so too.
+        assert (
+            "Validation: an http:// or https:// address; "
+            "required: the server's base URL" in text
+        )
 
 
 @pytest.mark.asyncio

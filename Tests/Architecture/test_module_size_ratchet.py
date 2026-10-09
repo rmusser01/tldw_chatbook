@@ -130,16 +130,18 @@ _BUDGETS: dict[str, int] = {
     # The Phase 7 final review's fixes, still inside the PR that adds this
     # row, re-pin it at the PR head's measured size (R4): 33,638. The
     # full-screen capture fixes (2026-10-09) put their new code in the card
-    # module and re-pin it at 33,647.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33647,
+    # module and re-pin it at 33,647. Moving the Endpoint guide there too
+    # (2026-10-09, it says required as the row does) lowers it to 33,643.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33643,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
     # providers_models_card.py: the final review's ruff format (+2 reflow)
     # and fixes re-pin it at the PR head's measured 1,963; the full-screen
     # capture fixes (2026-10-09: the restored-connection row, the Applies-to
-    # line, Sign in with's row copy) at 2,194.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2194,
+    # line, Sign in with's row copy) at 2,194; the Endpoint guide that says
+    # required as its row does (2026-10-09) at 2,238.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2238,
     "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 728,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved

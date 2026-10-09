@@ -17276,13 +17276,9 @@ class SettingsScreen(BaseAppScreen):
                 ),
             )
         if field_id == "settings-provider-endpoint-value":
-            endpoint = MODEL_CONFIG_FIELDS["endpoint"]
-            return (
-                ("Focused setting", endpoint.label),
-                ("Purpose", endpoint.help),
-                ("Saved as", endpoint_key),
-                ("Validation", f"{endpoint.valid_range} when set"),
-            )
+            from ..Settings_Modules.providers_models_card import endpoint_field_guide
+
+            return endpoint_field_guide(provider, endpoint_key)
         from ..Settings_Modules.providers_models_card import connect_field_guide
 
         if (guide := connect_field_guide(self, field_id)) is not None:
