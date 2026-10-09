@@ -58,6 +58,11 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
     blocked_turn_reason,
 )
+from tldw_chatbook.UI.Console_Modules.sent_draft import (
+    asked_again,
+    refused_for,
+    superseded,
+)
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
     ConsoleDraftStash,
     classify_console_raw_draft,
@@ -406,6 +411,11 @@ def schedule_acknowledged_send(screen: Any, pending_send: Any) -> None:
 
     async def observed_send() -> bool:
         try:
+            if superseded(screen, pending_send.stash):
+                # Another send took this draft meanwhile (TASK-33620.15.2).
+                if screen._console_pending_send is pending_send:
+                    screen._console_pending_send = None
+                return False
             with ack.dispatching(token):
                 return await send()
         finally:
@@ -474,6 +484,8 @@ class _SendFlight:
     #: The capture of the send scheduled or running; the composer keeps
     #: showing it until that send commits it.
     running: ConsoleDraftStash | None = None
+    #: The staged image an image-only send scheduled or running carries.
+    running_image: object | None = None
     deferred: _Request | None = None
 
 
@@ -507,6 +519,9 @@ def _schedule(screen: Any, flight: _SendFlight, request: _Request) -> None:
         screen._console_pending_send = None
         return
     flight.running = request.stash
+    flight.running_image = (
+        screen._console_pending_image_attachment() if request.stash is None else None
+    )
     schedule_acknowledged_send(screen, pending_send)
 
 
@@ -520,21 +535,24 @@ def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
 
     A capture leaves the composer only when its send commits it. A repeat
     press (nothing new typed since the running send's capture) is held, and
-    sent only if that send did not commit the draft: an unknown command's
-    "Press Enter again to send as text" leaves it in the composer. While the
-    composer still shows a capture, a press with new text cannot be told
-    apart from it, so it is refused with a notice and its text stays. Only
-    one press is held at a time, so it is never overwritten.
+    sent only if that send left the draft and asked for a second press: an
+    unknown command's "Press Enter again to send as text". A bare image-only
+    repeat never is (TASK-33620.15.2). While the composer still shows a
+    capture, a press with new text cannot be told apart from it, so it is
+    refused with a notice and its text stays. Only one press is held at a
+    time, so it is never overwritten; a held press that can no longer be
+    sent is discarded first.
     """
     stash = request.stash
     if stash is None:  # Nothing typed: only a staged image is worth sending.
-        image = screen._console_pending_image_attachment() is not None
-        if image and flight.deferred is None:
+        image = screen._console_pending_image_attachment()
+        repeat = image is flight.running_image  # The running send's image.
+        if image is not None and not repeat and flight.deferred is None:
             flight.deferred = request
         return
     held = flight.deferred
-    if held is not None and held.repeat and not _still_shown(screen, held.stash):
-        held = flight.deferred = None  # Its draft was sent: nothing to repeat.
+    if held is not None and not _replayable(screen, held):
+        held = flight.deferred = None  # Sent, or a repeat no longer shown.
     if held is not None and _same(held.stash, stash):
         return
     running = flight.running
@@ -543,10 +561,19 @@ def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
         return
     still_shows_running = running is not None and running.generation == stash.generation
     if held is not None or still_shows_running:
-        screen.app_instance.notify(DEFERRED_PRESS_REFUSED, severity="warning")
+        text = DEFERRED_PRESS_REFUSED
+        if held is not None and held.session_id != request.session_id:
+            text = refused_for(screen, held.session_id)  # Name the other tab.
+        screen.app_instance.notify(text, severity="warning")
         return
     if _record_draft(screen, request):
         flight.deferred = request
+
+
+def _replayable(screen: Any, request: _Request) -> bool:
+    if request.repeat:
+        return _still_shown(screen, request.stash)
+    return not superseded(screen, request.stash)
 
 
 def _same(held: ConsoleDraftStash | None, stash: ConsoleDraftStash) -> bool:
@@ -588,8 +615,12 @@ def _replay(screen: Any, flight: _SendFlight) -> None:
         if not request.repeat:
             screen.app_instance.notify(CHAT_CHANGED_COPY, severity="warning")
         return
-    if request.repeat and not _still_shown(screen, request.stash):
-        return  # The send it repeats committed (sent) that draft.
+    if request.repeat and not (
+        _still_shown(screen, request.stash) and asked_again(screen, request.stash)
+    ):
+        return  # Sent, refused or under review once: never twice.
+    if superseded(screen, request.stash):
+        return  # Another send took its draft meanwhile (TASK-33620.15.2).
     _schedule(screen, flight, request)
 
 
@@ -613,7 +644,7 @@ def _send_settled(screen: Any, flight: _SendFlight, task: asyncio.Task[Any]) -> 
         screen.app.call_later(_raise, error)
     if flight.tasks or screen._console_pending_send is not None:
         return
-    flight.running = None
+    flight.running = flight.running_image = None
     if flight.deferred is not None and not _torn_down(screen):
         screen.call_later(_replay, screen, flight)
 

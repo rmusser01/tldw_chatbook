@@ -374,6 +374,28 @@ def _commit_captured_console_draft(screen: Any, session_id: str, stash: Any) -> 
     screen._start_console_transcript_sync_timer()
 
 
+def _commit_sent_console_draft(screen: Any, session_id: str, stash: Any) -> None:
+    """Take a sent draft out of the chat it was sent from (TASK-33620.15.2)."""
+    from .sent_draft import take_out_sent_draft
+
+    take_out_sent_draft(
+        session_id,
+        stash,
+        composer=screen._console_composer_or_none(),
+        visible_session_id=screen._console_visible_draft_session_id,
+        store=screen._ensure_console_chat_store(),
+        undo_histories=screen._console_undo_histories,
+        notify=lambda text: screen.app_instance.notify(text, severity="warning"),
+    )
+    screen._start_console_transcript_sync_timer()
+
+
+def _console_chat_label(screen: Any, session_id: str) -> str:
+    from .sent_draft import chat_label
+
+    return chat_label(screen._ensure_console_chat_store(), session_id)
+
+
 def _load_console_turn_recovery(screen: Any, session_id: str) -> None:
     """Load a restored draft into its matching active composer."""
 
@@ -2395,7 +2417,7 @@ def build_console_controllers(
         ),
         precapture=lambda session_id: _precapture_turn_authority(screen, session_id),
         commit_captured_draft=(
-            lambda session_id, stash: _commit_captured_console_draft(
+            lambda session_id, stash: _commit_sent_console_draft(
                 screen, session_id, stash
             )
         ),
@@ -2408,6 +2430,9 @@ def build_console_controllers(
                 undo_histories=screen._console_undo_histories,
                 store=screen._ensure_console_chat_store(),
                 sync_command_popup=screen._sync_console_command_popup,
+                notify=lambda text: screen.app_instance.notify(
+                    text, severity="warning"
+                ),
             )
         ),
         turn_recovery_ids=(
@@ -2476,6 +2501,7 @@ def build_console_controllers(
         start_worker=lambda continuation: screen.run_worker(
             continuation, group="console-hook-send-review"
         ),
+        session_label=lambda session_id: _console_chat_label(screen, session_id),
     )
     screen._review_selection = ConsoleReviewSelectionController(
         store_accessor=lambda: screen._ensure_console_chat_store(),

@@ -63,19 +63,29 @@ def commit_queued_draft_transaction(
     undo_histories: dict[str, Any],
     store: Any,
     sync_command_popup: Callable[[], None],
+    notify: Callable[[str], None] | None = None,
 ) -> None:
-    """Clear only the admitted draft while keeping unsent text out of history."""
+    """Clear only the admitted draft while keeping unsent text out of history.
 
-    remaining = ""
-    if visible_session_id == session_id and composer is not None:
-        composer.commit_captured_draft(stash)
-        remaining = composer.draft_text()
-        sync_command_popup()
+    TASK-33620.15.2: the sent-draft commit takes it out, so a hidden chat
+    keeps what was typed after it, and a draft that cannot leave is
+    announced as queued instead of left there silently.
+    """
+    from .sent_draft import take_out_sent_draft
+
     undo_histories.pop(session_id, None)
-    try:
-        store.set_session_draft(session_id, remaining)
-    except KeyError:
-        pass
+    take_out_sent_draft(
+        session_id,
+        stash,
+        composer=composer,
+        visible_session_id=visible_session_id,
+        store=store,
+        undo_histories=undo_histories,
+        notify=notify or (lambda _text: None),
+        verb="queued",
+    )
+    if visible_session_id == session_id and composer is not None:
+        sync_command_popup()
 
 
 #: Assistant-message statuses each typed queue retry action can re-run.
