@@ -24000,8 +24000,8 @@ class ConsoleChatController:
             return None
 
     def _global_context_policy_overrides(self):
-        from tldw_chatbook import config
-        from tldw_chatbook.Backup_Recovery.config_participants import operation
+        # TASK-33620.15.1: one checked config operation per installed config.
+        from .console_global_policy import read_global_context_policy_overrides
 
         keys = (
             "conversation_budget_mode",
@@ -24014,9 +24014,9 @@ class ConsoleChatController:
             "compaction_failure_behavior",
             "compaction_carry_forward_mode",
         )
-        with operation(config):
-            values = {key: get_cli_setting("console", key, None) for key in keys}
-        return context_policy_overrides_from_console_config(values)
+        return read_global_context_policy_overrides(
+            get_cli_setting, context_policy_overrides_from_console_config, keys
+        )
 
     def _validated_legacy_memory(
         self,
