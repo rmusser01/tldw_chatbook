@@ -641,7 +641,10 @@ class _ExecuteOutcome:
     ``replan`` is set when an automatic ``update_file`` was fenced only
     because its note moved on and the entry was settled (or needed no
     settle): the plan is stale, nothing was published, the root is not
-    blocked, and the caller re-plans inside the same lock.
+    blocked, and the caller re-plans inside the same lock. A ``replan``
+    outcome returns BEFORE the plan's remaining actions run (the other
+    bindings' writes, in a multi-binding plan); the re-plan re-selects them,
+    and at the bound they wait for the scheduled hint like the moved note.
     """
 
     results: tuple[object, ...]
@@ -2266,6 +2269,17 @@ class NotesSyncRuntimeOwner:
             self._admission_open = False
             return
         self._start_watcher()
+        # Final review 1 (Important 1): a root whose startup pass hit the
+        # ``_SOURCE_MOVED_REPLANS`` bound set its dirty mark and handed the
+        # rest to :meth:`schedule_hint`, which refused it -- admission was
+        # closed and the runtime still ``starting`` -- and every save's own
+        # ``note_changed`` was refused the same way, so nothing carried the
+        # newest text until the user's next save. Re-schedule every root
+        # still marked, now that admission is open and the watcher runs. The
+        # method's own gates skip a root that is blocked, paused or unleased;
+        # its mark stays for whichever pass next runs for it.
+        for root_id in tuple(self._dirty_hints):
+            self.schedule_hint(root_id)
 
     def _watch_lease(self, root_id: str, *, persisted: bool) -> None:
         """Start the watcher for a lease taken after start (TASK-34000.50).

@@ -356,6 +356,104 @@ async def test_the_re_plan_is_bounded_and_the_hint_loop_carries_the_rest(
         await owner.shutdown()
 
 
+#: What the paused folder's note says: a change a pass WOULD carry, if one ran.
+OTHER_TYPED = OTHER_TEXT + "typed while the folder was paused\n"
+
+
+async def test_a_bound_hit_by_the_startup_pass_is_carried_without_a_save(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The same burst, inside the STARTUP pass (final review 1, Important 1).
+
+    A launch's first pass runs before admission opens and while the runtime
+    is still ``starting``, so the bound's own ``schedule_hint`` is refused and
+    so is each save's ``note_changed`` signal: the dirty mark was the only
+    record that the newest text had not reached the file, and nothing read it
+    until the user's next save. Once admission is open and the watcher runs,
+    every root still marked dirty is hinted, so the file catches up with no
+    further save. The negative control is a PAUSED root carrying the same
+    mark and a pending note change: it is not leased, so no pass runs for it
+    and its file keeps its bytes.
+    """
+
+    bound = notes_sync_runtime._SOURCE_MOVED_REPLANS
+    moves = bound + 2
+    moved: list[str] = []
+    seen: set[str] = set()
+    #: (runtime status, admission open, roots ``note_changed`` hinted) per move.
+    at_move: list[tuple[str, bool, tuple[str, ...]]] = []
+    reconciled: list[str] = []
+    real_desired = NotesSyncExecutor._require_desired
+    real_reconcile = NotesSyncRuntimeOwner._reconcile_locked
+    other_file = _add_second_root(vault, tmp_path)
+    store = NotesDeviceStateStore(vault.state_path)
+    try:
+        store.transition_root("root-2", NotesSyncRootState.PAUSED)
+    finally:
+        store.close()
+    other = vault.database.get_note_by_id("note-2")
+    assert other is not None
+    assert vault.database.update_note(
+        "note-2",
+        {"title": other["title"], "content": OTHER_TYPED},
+        int(other["version"]),
+    )
+    owner = build_owner(vault)
+
+    async def moving(executor, request):
+        # The first postcondition of each new write: the user typed meanwhile.
+        if request.root_id == "root-1" and request.operation_id not in seen:
+            seen.add(request.operation_id)
+            if len(moved) < moves:
+                text = f"{FIRST_SAVE} + key {len(moved) + 1}"
+                moved.append(text)
+                vault.edit_note(text)
+                hinted = await owner.note_changed("note-1")
+                at_move.append((owner._status, owner._admission_open, hinted))
+        return await real_desired(executor, request)
+
+    async def counted_reconcile(runtime, root, *, automatic):
+        reconciled.append(root.root_id)
+        return await real_reconcile(runtime, root, automatic=automatic)
+
+    monkeypatch.setattr(NotesSyncExecutor, "_require_desired", moving)
+    monkeypatch.setattr(NotesSyncRuntimeOwner, "_reconcile_locked", counted_reconcile)
+    published = _recorded(owner)
+    # The save the startup pass carries, and the mark on the paused root.
+    vault.edit_note(FIRST_SAVE)
+    owner._dirty_hints.add("root-2")
+    await owner.start()
+    try:
+        # The burst landed inside the startup pass -- admission closed, the
+        # runtime still starting -- and every save's own signal was refused.
+        assert at_move[: bound + 1] == [("starting", False, ())] * (bound + 1), at_move
+        await asyncio.wait_for(owner.settle(), 60)
+
+        latest = vault.note()["content"]
+        assert vault.file.read_bytes() == _file_bytes(latest), (
+            "the startup pass's dirty mark was never carried: "
+            "the file did not catch up with the note"
+        )
+        assert len(moved) == moves
+        _healthy_at(vault, owner, moved[-1])
+        binding = _binding(vault)
+        assert binding.content_digest == _digest(_file_bytes(moved[-1]))
+        assert binding.note_version == int(vault.note()["version"])
+        held = [entry for entry in published if entry[1] in HELD]
+        assert held == [], f"typing held the folder: {held}"
+        # The paused root: its mark produced no pass, and its file is untouched.
+        assert "root-2" not in reconciled, reconciled
+        assert "root-2" not in owner._hint_tasks
+        assert other_file.read_bytes() == OTHER_TEXT.encode("utf-8")
+        assert vault.database.get_note_by_id("note-2")["content"] == OTHER_TYPED
+        assert (_root(owner, "root-2").status, _root(owner, "root-2").next_action) == (
+            "paused",
+            "resume_sync",
+        )
+    finally:
+        await owner.shutdown()
+
+
 # --- The third raise site: ``_advance`` RECOVERY_ADMITTED (fix round 1) ----------
 
 

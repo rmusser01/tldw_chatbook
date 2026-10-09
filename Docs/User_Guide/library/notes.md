@@ -482,7 +482,8 @@ two-second pause, it still saves at least every ten seconds, so a long
 burst of steady typing is never held back until you stop. A note in a synced
 folder saves on the same timings: a save never waits for the folder's previous
 sync, and a save that lands while that sync is still writing the file settles
-on its own (see "Typing in a synced note" under Lasting sync). If an autosave is
+on its own (see "Add from files and lasting sync" below: typing in a synced
+note never holds its folder). If an autosave is
 refused — a title with a leading or trailing space, unsafe markup, a
 duplicate keyword — or the write fails, the status line says why, and your
 cursor stays in the field you are typing in. Nothing jumps to another field

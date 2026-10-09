@@ -4428,8 +4428,11 @@ class NotesSyncExecutor:
                 if not source or target == "stale":
                     # Nothing is written from a stale source. TASK-34000.51:
                     # with the target intact ("original" or "desired") the
-                    # fence is the note's alone, and the settle keeps the
-                    # reviewed baseline (nothing was written by this entry).
+                    # fence is the note's alone. The settle then proves the
+                    # post-write baseline when the target is already
+                    # "desired" (a previous attempt crashed between its write
+                    # and the stage transition, so the write IS on disk), and
+                    # otherwise keeps the reviewed baseline.
                     raise RuntimeError(
                         "source_moved_on"
                         if self._source_moved_only(
