@@ -115,7 +115,8 @@ def test_the_sheet_has_no_bare_type_subject():
 
 def test_the_boot_bundle_carries_no_roleplay_rule():
     """Every Roleplay rule moved: the bundle keeps only the module banner, and
-    no header or shell token B1 adds is left in boot."""
+    no header or shell token B1 styles (nor the retired task-523
+    ``#personas-header.status-blocked`` rule) is left in boot."""
     bundle = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
     banner = "/* ===== MODULE: features/_roleplay.tcss ===== */"
     section = bundle.split(banner, 1)[1].split("/* ===== MODULE:", 1)[0]
@@ -123,7 +124,7 @@ def test_the_boot_bundle_carries_no_roleplay_rule():
     frame_tokens = {
         token
         for token in _TOKEN.findall(bundle)
-        if token.startswith(("personas-header-", *ROLEPLAY_PANE_CLASS_NAMES))
+        if token.startswith(("personas-header", *ROLEPLAY_PANE_CLASS_NAMES))
     }
     assert frame_tokens == set()
 

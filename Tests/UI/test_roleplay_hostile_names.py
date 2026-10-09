@@ -15,7 +15,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.widgets import ListView
+from textual.widgets import ListView, Static
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (bootstrap profile)
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
@@ -43,6 +43,7 @@ from Tests.UI.test_personas_workbench import (
 )
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Workbench.workbench_widgets import FittedText
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     EditCharacterRequested,
     PersonaProfileSaveRequested,
@@ -151,7 +152,7 @@ async def test_a_character_name_tag_and_conversation_title(
     name, mock_app_instance, monkeypatch
 ):
     """Library row, card, Inspector, conversation row, the Tag filter button,
-    a toast and the header's ``Editing`` subtitle."""
+    a toast and the header's item label while editing."""
     seed_mock_characters(
         monkeypatch,
         [{"id": 1, "name": name, "description": "d", "tags": [name], "version": 1}],
@@ -180,11 +181,18 @@ async def test_a_character_name_tag_and_conversation_title(
         assert f"Imported '{name}'." in _painted(screen)
         # Row, card name, card tags, Inspector, conversation row and toast.
         await _assert_literal_and_inert(pilot, name, at_least=6)
-        # Editing puts the name in the shared header's subtitle.
+        # Roleplay frame B1: editing names the item in the header's literal
+        # item label, never in the shared markup-on subtitle (the kind). This
+        # unstyled tier gives the label no row to paint on, so the painted
+        # and clicked copy is pinned under styled tier 1 by
+        # test_the_header_item_label_and_server_label.
         screen.post_message(EditCharacterRequested("1"))
         await settle(pilot)
         assert screen._edit_mode == "edit"
-        assert f"Editing {name}" in _painted(screen)
+        item = screen.query_one("#personas-header-item", FittedText)
+        assert item.value == (name, True)
+        subtitle = screen.query_one("#workbench-header-subtitle", Static)
+        assert str(subtitle.render()) == "Characters"
         assert click_meta_cells(screen) == []
 
 

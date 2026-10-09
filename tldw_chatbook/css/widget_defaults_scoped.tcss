@@ -1457,8 +1457,6 @@
 
 
 
-
-
     PersonasScreen #personas-mode-strip {
         height: 1;
         min-height: 1;

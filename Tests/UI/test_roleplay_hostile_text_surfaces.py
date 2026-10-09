@@ -510,18 +510,27 @@ def test_the_preview_provider_label_is_plain_text(text):
 
 
 @pytest.mark.parametrize("text", HOSTILE_TEXT)
-def test_the_header_subtitle_names_an_unsaved_item_literally(text):
-    """View mode with unsaved edits puts the bare name in the shared header's
-    markup-parsing subtitle; ``Editing`` mode is covered by the flow test."""
+def test_the_header_view_keeps_an_unsaved_item_out_of_markup(text):
+    """Roleplay frame B1 replaced the subtitle that named an unsaved item: the
+    shared header's markup-parsing subtitle names only the kind, the item goes
+    to the literal item label as plain text, and a server label reaches the
+    markup-parsing status chip only escaped (it parses back to what it shows)."""
     from textual.content import Content
 
-    screen = object.__new__(PersonasScreen)
-    screen._edit_mode = "view"
-    screen.state = SimpleNamespace(
-        has_unsaved_changes=True,
-        selected_entity_name=text,
-        active_mode="characters",
+    from tldw_chatbook.UI.Persona_Modules import roleplay_frame_state as fs
+
+    view = fs.build_header_view(
+        fs.RoleplayHeaderInputs(
+            mode="characters",
+            item_name=text,
+            unsaved=True,
+            runtime_source="server",
+            server_label=text,
+        ),
+        220,
     )
-    assert Content.from_markup(screen._header_subtitle_text()).plain == (
-        f"{text} - unsaved"
-    )
+    assert Content.from_markup(view.state.subtitle).plain == "Characters"
+    assert view.item == (text, False)
+    assert view.unsaved_chip == "Unsaved changes"
+    assert Content.from_markup(view.state.status_label).plain == view.status_plain
+    assert view.status_plain.startswith(f"Server: {text}")

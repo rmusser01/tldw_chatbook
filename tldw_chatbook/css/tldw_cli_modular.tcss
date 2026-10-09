@@ -4589,11 +4589,6 @@ ChatApprovalCard Collapsible.deny-reason>CollapsibleTitle,ChatApprovalCard Colla
 }
 
 
-#personas-header.status-blocked .workbench-header-status {
-    color: $ds-status-blocked;
-}
-
-
 #personas-conversation-resume:disabled {
     opacity: 100%;
     text-opacity: 100%;

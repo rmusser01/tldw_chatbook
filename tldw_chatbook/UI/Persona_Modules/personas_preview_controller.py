@@ -386,11 +386,24 @@ class PersonasPreviewController:
             return True, None
         return False, readiness.user_message
 
-    def open_provider_settings(self) -> None:
-        """Deep-link to Settings > Providers & Models for the readout provider."""
+    def open_provider_settings(self, *, defaults_key: str | None = None) -> None:
+        """Deep-link to Settings > Providers & Models.
+
+        Args:
+            defaults_key: ``None`` names the preview readout's provider (the
+                preview pane's link). ``"chat_defaults"`` names the provider
+                ``console_handoff_readiness`` checks (the header's blocked
+                chip, Roleplay frame B1), so the link lands on the provider
+                the block is about.
+        """
+        provider = self._readout_nav_provider
+        if defaults_key is not None:
+            raw_config = getattr(self.screen.app_instance, "app_config", {}) or {}
+            config = raw_config if isinstance(raw_config, Mapping) else {}
+            provider = self._selection_from_defaults(config, defaults_key).provider
         context: dict[str, Any] = {"category": SettingsCategoryId.PROVIDERS_MODELS}
-        if self._readout_nav_provider:
-            context["provider"] = self._readout_nav_provider
+        if provider:
+            context["provider"] = provider
         self.screen.post_message(NavigateToScreen("settings", context))
 
     async def handle_character_loaded(

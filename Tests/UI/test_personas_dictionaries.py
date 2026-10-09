@@ -1312,10 +1312,8 @@ class TestDictionarySettings:
             screen.query_one("#personas-dict-name", Input).value = "Half-renamed"
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
-            subtitle = screen.query_one(
-                "#personas-header #workbench-header-subtitle", Static
-            )
-            assert "- unsaved" in str(subtitle.renderable)
+            # Roleplay frame B1: the header's unsaved chip (spec R24).
+            assert screen.query_one("#personas-header-unsaved").display is True
 
     async def test_reverting_edit_clears_dirty_flag(
         self, mock_app_instance, stub_characters, fake_dict_service
@@ -1336,17 +1334,12 @@ class TestDictionarySettings:
             name_input.value = "Half-renamed"
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
-            subtitle = screen.query_one(
-                "#personas-header #workbench-header-subtitle", Static
-            )
-            assert "- unsaved" in str(subtitle.renderable)
+            chip = screen.query_one("#personas-header-unsaved")
+            assert chip.display is True
             name_input.value = original
             await pilot.pause()
             assert screen.state.has_unsaved_changes is False
-            subtitle = screen.query_one(
-                "#personas-header #workbench-header-subtitle", Static
-            )
-            assert "- unsaved" not in str(subtitle.renderable)
+            assert chip.display is False
 
     async def test_conflict_surfaces_status_not_crash(
         self, mock_app_instance, stub_characters, fake_dict_service

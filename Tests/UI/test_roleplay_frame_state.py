@@ -299,6 +299,32 @@ def test_the_pane_class_names_are_the_shell_parts_in_field_order():
     )
 
 
+async def test_the_leave_and_quit_guard_decides_on_the_same_predicate(monkeypatch):
+    """R24/G4: TASK-33622.14's guard (leaving Roleplay, Ctrl+Q) asks the one
+    predicate, never ``is_clean`` itself: with the predicate answering
+    "nothing unsaved", a dirty aggregate passes without a prompt. Positive
+    control: unpatched, the same aggregate asks, and Stay keeps the screen."""
+    from tldw_chatbook.UI.Persona_Modules import roleplay_draft_guard as guard
+
+    dirty = _snapshot(form_dirty=True)
+    screen = SimpleNamespace(
+        _aggregate_roleplay_draft_snapshot=lambda: dirty,
+        state=SimpleNamespace(active_mode="characters"),
+    )
+    asked = []
+
+    async def ask(prompt):
+        asked.append(type(prompt).__name__)
+        return None  # Stay
+
+    assert await guard.confirm_roleplay_drafts(screen, ask) is False
+    assert asked == ["RoleplayDraftNavigationDialog"]
+    asked.clear()
+    monkeypatch.setattr(guard, "roleplay_has_unsaved_work", lambda snapshot: False)
+    assert await guard.confirm_roleplay_drafts(screen, ask) is True
+    assert asked == []
+
+
 def test_b1_production_modules_carry_no_python_style_violation():
     violations = {
         module: [
