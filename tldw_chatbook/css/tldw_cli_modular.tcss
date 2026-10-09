@@ -8631,12 +8631,16 @@ ConsoleSettingsModal .console-context-action-row {
 
 
 .console-settings-field-row Input,
+.console-settings-field-row Select {
+    width: $ds-size-13;
+}
+
 #console-settings-context-view Input {
     width: $ds-size-12;
 }
 
-#console-settings-streaming {
-    width: $ds-size-8;
+#console-settings-context-view Select {
+    width: $ds-size-32;
 }
 
 
@@ -8657,32 +8661,6 @@ ConsoleSettingsModal .console-context-action-row {
     text-overflow: ellipsis;
 }
 
-
-#console-settings-verbosity,
-#console-settings-thinking-effort,
-#console-settings-reasoning-effort,
-#console-context-thinking-history-policy {
-    width: $ds-size-12;
-}
-
-#console-settings-reasoning-summary {
-    width: $ds-size-13;
-}
-
-#console-context-budget-mode,
-#console-context-compaction-mode {
-    width: $ds-size-14;
-}
-
-#console-context-compaction-representation {
-    width: $ds-size-22;
-}
-
-#console-context-failure-behavior {
-    width: $ds-size-23;
-}
-
-#console-context-carry-forward,
 #console-settings-user-display-name {
     max-width: $ds-size-32;
 }
