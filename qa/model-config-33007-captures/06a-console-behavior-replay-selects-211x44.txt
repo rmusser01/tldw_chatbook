@@ -21,8 +21,8 @@
 │    > Console Behavior        │  │  │   available sends every compatible field, but the server template can still omit older reasoning.                          │  │  │  literal                                │
 │  Data & Privacy              │  │  │   ▼ Reasoning replay override                                                                                              │  │  │  Threshold: Minimum pasted chunk size   │
 │      Storage                 │  │  │   Select a local model in Console to set a remembered override.                                                            │  │  │  before collapse                        │
-│      Workspaces              │  │  │  This model's replay     │ Use default                 ▼                                                                   │  │  │ Focused field guide                     │
-│      Tool Profiles           │  │  │  ▐X▌ Native tool support                                                                                                   │  │  │  Purpose: Focus a Console Behavior    ▆ │
+│      Workspaces              │  │  │  This model's replay     │ Use default                 ▼                                                                   │  │  │ Focused field guide                   ▅ │
+│      Tool Profiles           │  │  │  ▐X▌ Native tool support                                                                                                   │  │  │  Purpose: Focus a Console Behavior      │
 │      Privacy & Security      │  │  │   Remembered for this normalized endpoint and model. Native tool support is configured separately from reasoning           │  │  │  field for setting-specific guidance.   │
 │      Network                 │  │  │   replay.                                                                                                                  │  │  │  Consequences: No field-specific        │
 │      My Profile              │  │  │   Conversation Auto: template checked on next send                                                                         │  │  │  guidance is active right now.          │

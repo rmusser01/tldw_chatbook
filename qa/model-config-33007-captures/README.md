@@ -1,10 +1,29 @@
-# Phase 7 (TASK-33007) full-screen captures (2026-10-06)
+# Phase 7 (TASK-33007) full-screen captures (final set, 2026-10-09)
 
 The surfaces Phase 7 changed in Settings ▸ Providers & Models and Console Behavior,
-captured from the real app at branch head `8a3d3395ec`. Every moment was captured at
+plus the Console's Chat settings context fields. **Every capture in this directory was
+re-taken together on the final integrated branch head `47c3999481`**: all review
+notes 1-12 and the checkpoint review's fixes are in. Every moment was captured at
 211x44. The tmux window was then resized to 235x52, captured again, and resized back.
 `.txt` is `tmux capture-pane -p`; `.ansi.txt` is the same moment with `-e` colour
 escapes.
+
+**Final re-take (2026-10-09, `47c3999481`).** One run per profile, under the procedure
+below with tmux server `-L capM33007` and `users_name = "verify_capI33007_explore"`.
+It shows two checkpoint-review fixes made after the earlier re-takes:
+- A card's result line ("Provider settings reverted…") takes no row until a save or
+  revert has something to report. At rest the cards no longer open with "… have not
+  been saved this session."
+- A blank row names its layer once, in its Source word, with only the value in the
+  help: **Console Behavior** "inherits 0.6", not "Console Behavior | inherits 0.6 ·
+  Console Behavior".
+
+After a revert, the "Settings category changes reverted." toast is dismissed with a
+click before the next capture. Same checks: no provider was contacted, no Save was
+made, and the real profile's fingerprints were unchanged.
+
+The notes below record how the earlier re-takes went. The files they describe have
+since been replaced by the final set.
 
 **Re-take (2026-10-09).** After review notes 1-8 were fixed (commit `f80fdc05e4`),
 `01`, `01b`, `01c`, `02`, `03`, `03b`, `04`, `05a` and `07` were captured again the
@@ -103,7 +122,7 @@ both real-profile fingerprints were unchanged.
   - The Temperature row reads 0.4 **edited \***, with its help in place of the
     inherits text, whole at both sizes: "Lower keeps replies focused; higher makes
     them varied." Provider and Model keep **new-chat default**.
-  - The other rows are unchanged: Max tokens "inherits 4096 · provider"; Streaming,
+  - The other rows are unchanged: Max tokens **provider** "inherits 4096"; Streaming,
     Reasoning effort, Reasoning summary and Verbosity are one-row Selects.
   - The closed Sampling row reads "OpenAI does not accept 4 fields (open to list them)"
     at 211 and names the four fields at 235.
