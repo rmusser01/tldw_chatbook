@@ -851,6 +851,23 @@ loads. **What to do:** give a widget added to a shared row geometry that holds w
 bundle: the widget type's own `DEFAULT_CSS`, or the owning class's `DEFAULT_CSS`. Then
 probe `region` once under a bare harness as well as under `TldwCli.CSS_PATH`.
 
+## `allow_vertical_scroll` is False whenever the content fits -- a scroll-owner test needs overflow
+
+**TASK-34000.7, 2026-10-08.** The fix gave the wide `#library-notes-list` `overflow-y: auto`,
+and the gated test pinned it with `lst.allow_vertical_scroll is True` at 120x36 and 160x45
+(green). The extended sibling asserted the same at 200x50, 235x52, 100x50 and 119x40 and all
+four failed on the FIXED tree with `allow_vertical_scroll` False, `overflow_y=auto`. Textual's
+property is `is_scrollable and show_vertical_scrollbar`, and the scrollbar is shown only when
+`virtual_size` exceeds the container -- the 22-row first page simply fit those panes, so there
+was nothing to scroll. The assertion was measuring the fixture, not the rule.
+
+**What to do.** Assert the rule's intent (`styles.overflow_y == "auto"`) separately from the
+geometry, and make the content overflow before asserting `allow_vertical_scroll`, `scroll_y` or
+a reveal -- here by pressing the real "More notes" pager twice (which also proved the pager
+reachable). A `max_scroll_y > 0` sanity assertion first turns "fits" into a readable failure
+instead of a false RED. And re-resolve the list after any reload: the pager press replaces
+`#library-notes-list` (see the recompose entry above), so the pre-press handle has no children.
+
 ## A one-edge `margin-bottom` rule replaces the whole margin, not just its edge
 
 **TASK-33003.1, Chat settings disclosures, 2026-09-28.** A collapsed Chat

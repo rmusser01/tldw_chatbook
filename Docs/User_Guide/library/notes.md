@@ -344,7 +344,11 @@ device.
 ### Notes list
 
 Library notes are presented as a folder tree rather than one flattened
-snapshot. Each level loads independently in fixed pages of 20:
+snapshot. The tree scrolls at every terminal width — with the mouse wheel,
+and as Down/Up or Tab move focus past the edge of the visible rows, which
+scrolls the focused row into view one row at a time — so every folder,
+note, "More notes" control and the "Recently deleted" row can be reached.
+Each level loads independently in fixed pages of 20:
 
 - A folder-row **More folders** control loads the next 20 direct children of
   that exact folder. The root has its own folder control.

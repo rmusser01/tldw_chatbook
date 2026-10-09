@@ -2036,6 +2036,28 @@ with stray left-edge border fragments), and padding 0 1 so the full
     max-width: $ds-width-full;
 }
 
+/* TASK-34000.7 (review N-04): the list IS the scroll owner at every width.
+   `#library-notes-list` is a plain Vertical, whose Textual default is
+   `overflow: hidden`; only the compact rule (`_library.tcss`,
+   `.library-notes-compact #library-notes-list`) ever gave it `overflow-y:
+   auto`. At 120+ columns the tree therefore ignored the wheel, and Down/Tab
+   moved focus onto rows painted below the pane border (`focus()` asks each
+   ancestor to scroll the row in; a hidden owner declines), so Enter opened
+   notes the user never saw. Same contract as the compact rule, no per-size
+   numbers: the rows left after the toolbars, scrolling vertically, never
+   horizontally. The one-cell scrollbar matches `#library-rail` so the two
+   overflow cues read as one. */
+#library-notes-list {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 /* task-32127/32128: Button's own 16-cell minimum made "New / Sort: Newest /
    Select" 48 cells wide -- wider than the list pane itself, so Select, the
    Title sort option and the delete receipt's Undo were painted past the
