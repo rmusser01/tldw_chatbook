@@ -64,7 +64,7 @@ HELD_RUN_POLL_S = 3
 #   permission error): the first one re-raises with a `rerun-error` comment, and the second on the
 #   same head counts as refused, so a lasting error cannot fail every queue run forever.
 RERUN_REFUSALS = ("(HTTP 409)", "(HTTP 422)")
-RERUN_REFUSAL_403_TEXT = "month"
+RERUN_REFUSAL_403_TEXT = "month ago"
 # How long a woken queue run waits for a run to complete before deciding: well past the seconds the
 # waited run's queue-tick needs to finish, and inside queue-tick's own 10-minute timeout with room
 # left to act.
@@ -684,18 +684,18 @@ def wait_for_run(gh: GhApi, run_id: int, sleep: Callable[[float], None], log: Ca
         gh: The GitHub client.
         run_id: The run to wait for.
         sleep: Waits between reads (injected by tests).
-        log: Receives a line if the bound is reached or the run cannot be read.
+        log: Receives a line if the bound is reached.
     """
+    error: GhError | None = None
     for _ in range(WAIT_RUN_TRIES):
         try:
-            status = gh.rest("GET", f"repos/{REPO}/actions/runs/{run_id}").get("status")
-        except GhError as exc:
-            log(f"cannot read run {run_id} ({exc}); deciding anyway")
-            return
-        if status not in LIVE_RUN_STATUSES:
-            return
+            if gh.rest("GET", f"repos/{REPO}/actions/runs/{run_id}").get("status") not in LIVE_RUN_STATUSES:
+                return
+        except GhError as exc:  # a failed read is retried within the bound, never fatal
+            error = exc
         sleep(WAIT_RUN_DELAY_S)
-    log(f"run {run_id} still live after {WAIT_RUN_TRIES * WAIT_RUN_DELAY_S:.0f}s; deciding anyway")
+    seen = f"last read failed: {error}" if error else "still live"
+    log(f"run {run_id} not seen complete after {WAIT_RUN_TRIES * WAIT_RUN_DELAY_S:.0f}s ({seen}); deciding anyway")
 
 
 def _required_runs(gh: GhApi, sha: str) -> list[dict]:
@@ -757,15 +757,16 @@ def _rerun(gh: GhApi, pr: PrState, run: dict, failed_only: bool, log: Callable[[
         kind = _rerun_error(exc)
         if kind == "transient":
             raise
+        # Whatever code GitHub refused with, a racing queue run may have re-run it first.
+        if _going_again(gh, run["id"]):
+            log(f"  #{pr.number}: run {run['id']} was re-run by a racing queue run; standing down")
+            return "started"
         if kind == "unknown" and comment_once(
             gh, pr.number, "rerun-error", pr.head_sha,
             f"Merge queue: re-running the required check failed ({str(exc)[:200]}); will try once more, "
             "then remove from the line.",
         ):
             raise
-        if _going_again(gh, run["id"]):
-            log(f"  #{pr.number}: run {run['id']} was re-run by a racing queue run; standing down")
-            return "started"
         log(f"  #{pr.number}: re-run of run {run['id']} refused: {exc}")
         return "refused"
     # The re-run's actor is the queue's token, so GitHub may hold it for approval again.
@@ -774,6 +775,9 @@ def _rerun(gh: GhApi, pr: PrState, run: dict, failed_only: bool, log: Callable[[
         approve_held_runs(gh, pr.head_sha, log)
         if gh.rest("GET", f"repos/{REPO}/actions/runs/{run['id']}").get("status") in LIVE_RUN_STATUSES:
             break
+    else:
+        # A held run never executes, so its own queue-tick never comes: wake one to approve it.
+        _best_effort(log, "wake a queue tick", lambda: wake(gh))
     log(f"  #{pr.number}: re-ran run {run['id']}")
     return "started"
 
@@ -826,7 +830,13 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
             new_head = fresh.head_sha
             break
     if new_head is None:
-        log(f"  rebase of #{pr.number} accepted but the head never moved; a later tick recovers it")
+        log(f"  rebase of #{pr.number} accepted but the head never moved")
+        # If the branch moves later, its new head's runs are held and nothing would wake the
+        # queue to approve them. One kick per head; after that the next event recovers it.
+        if comment_once(gh, pr.number, "rebase-unmoved", pr.head_sha,
+                        "Merge queue: the rebase onto dev was accepted, but the branch has not moved yet; "
+                        "a queue run will look again shortly."):
+            _best_effort(log, "wake a queue tick", lambda: wake(gh))
         return False
     old_runs = runs_on(gh, pr.head_sha)
     # The new head's pull_request runs arrive held for approval (spec F4); approving them is what
@@ -1117,11 +1127,15 @@ def run(
             # A tick woken right after a rebase whose held runs had not appeared, or an arm right
             # after a push, can land before GitHub lists the head's run, and nothing may wake the
             # queue again for this head. Wait out the window once and decide again.
-            sleep(max(0.0, (pr.head_committed_at + YOUNG_HEAD - now()).total_seconds()) + 1)
-            pr = settle_unknown(gh, read_pr(gh, pr.number), sleep)
-            if pr.armed_at is None:
-                break  # disarmed meanwhile; that disarm's own event wakes a fresh queue run
-            pr, action = _decide(gh, pr, mode, now, log)
+            # Capped: the commit date comes from the author's clock and can lie in the future.
+            left = (pr.head_committed_at + YOUNG_HEAD - now()).total_seconds()
+            sleep(min(max(0.0, left), YOUNG_HEAD.total_seconds()) + 1)
+            fresh = settle_unknown(gh, read_pr(gh, pr.number), sleep)
+            if fresh.armed_at != pr.armed_at:
+                # Disarmed, or re-armed at the back of the line, meanwhile; that event wakes a
+                # fresh queue run, which reads the line again.
+                break
+            pr, action = _decide(gh, fresh, mode, now, log)
         decisions.append((pr.number, action))
         log(f"#{pr.number}: {action.kind} - {action.reason}")
         left_line = action.kind == "evict"

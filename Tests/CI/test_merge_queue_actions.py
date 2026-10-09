@@ -92,7 +92,8 @@ class FakeGh:
         self.dispatch_status = dispatch_status
         self.approve_error = approve_error
         self.rerun_error = rerun_error
-        # run_status[run_id]: successive statuses a single-run read walks (the last one sticks).
+        # run_status[run_id]: successive statuses a single-run read walks (the last one sticks); an
+        # entry may be a dict of fields instead (e.g. a held run's status and conclusion).
         self.run_status = run_status or {}
         self.run_reads = {}
         self.runs_reads = {}
@@ -201,7 +202,8 @@ class FakeGh:
             self.run_reads[rid] = seen + 1
             if rid in self.run_status:
                 statuses = self.run_status[rid]
-                return {"id": rid, "status": statuses[min(seen, len(statuses) - 1)]}
+                entry = statuses[min(seen, len(statuses) - 1)]
+                return {"id": rid, **entry} if isinstance(entry, dict) else {"id": rid, "status": entry}
             run = next((r for runs in self.runs.values() for r in runs if r.get("id") == rid), {"status": "completed"})
             return dict(run)
         if method == "POST" and path.endswith("/cancel"):
@@ -505,12 +507,20 @@ def test_rebase_approves_only_after_the_new_head_appears():
     assert OLD not in comment[2]
 
 
-def test_rebase_whose_head_never_moves_dispatches_nothing():
+def test_rebase_whose_head_never_moves_wakes_one_tick_per_head():
+    """Review round 3 of #3039: if the branch moves after the poll, its new head's runs are held and
+    nothing would wake the queue to approve them. One kick per head; then the next event recovers it."""
     sleeps = []
     gh = FakeGh([_node(1)], rebase_lag=None)
     mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
-    assert [c[0] for c in gh.calls] == ["rebase"]
+    assert [c[0] for c in gh.calls] == ["rebase", "comment", "dispatch"]
+    assert f"<!-- merge-queue:rebase-unmoved:{OLD} -->" in gh.calls[1][2]
+    assert gh.calls[2] == ("dispatch", "derived-artifacts.yml", {"ref": "dev"})
     assert sleeps == [mq.REBASE_POLL_S] * mq.REBASE_POLLS
+
+    again = FakeGh([_node(1)], rebase_lag=None, comments={1: [gh.calls[1][2]]})
+    _run(again)
+    assert [c[0] for c in again.calls] == ["rebase"]
 
 
 def test_blocked_green_evicts_only_with_unresolved_threads():
@@ -817,7 +827,7 @@ def test_the_wait_is_bounded():
     lines = []
     mq.run(gh, "on", now=lambda: NOW, sleep=lambda s: None, log=lines.append, wait_run=70)
     assert gh.run_reads[70] == mq.WAIT_RUN_TRIES
-    assert any("still live after" in line for line in lines)
+    assert any("not seen complete after" in line and "still live" in line for line in lines)
 
 
 def test_dry_mode_never_approves_reruns_or_wakes(monkeypatch):
@@ -971,30 +981,45 @@ def test_a_held_rerun_whose_approval_fails_never_evicts():
     assert gh.calls == [("approve", "70")]
 
 
+HELD_AGAIN = {"status": "completed", "conclusion": "action_required"}
+
+
+@pytest.mark.parametrize("error", ["gh: This workflow is already running (HTTP 409)",
+                                   "gh: Resource not accessible by integration (HTTP 403)"], ids=["409", "403"])
+@pytest.mark.parametrize("going", ["queued", HELD_AGAIN], ids=["running", "held"])
 @pytest.mark.parametrize("path", ["start", "retry"])
-def test_a_rerun_refused_because_a_racing_run_got_there_first_stands_down(path):
-    """Review round 2 of #3039: two queue runs re-run the same run, and GitHub refuses the second.
-    That refusal is not the branch's fault: the run is live again, so stand down, never evict.
+def test_a_rerun_refused_because_a_racing_run_got_there_first_stands_down(path, going, error):
+    """Review rounds 2-3 of #3039: two queue runs re-run the same run, and GitHub refuses the second,
+    with a code nobody has verified. That refusal is not the branch's fault: the run is going again
+    (live, or held for approval), so stand down: no eviction, and no rerun-error comment.
 
     Args:
         path: Re-running a cancelled run (start) or a failed one (retry).
+        going: What a fresh read of the run shows.
+        error: GitHub's refusal.
     """
     if path == "start":
         checks, run = [_check("cancelled", suite=800)], _pr_run(80, 800, conclusion="cancelled")
     else:
         checks, run = [_check("failure", suite=800)], _pr_run(80, 800)
     gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, runs={OLD: [run]},
-                rerun_error="gh: This workflow is already running (HTTP 409)", run_status={80: ["queued"]})
+                rerun_error=error, run_status={80: [going]})
     _run(gh)
     assert ("rerun", "80", "all" if path == "start" else "failed") in gh.calls
     assert not any(c[0] == "disarm" for c in gh.calls)
+    assert not any(c[0] == "comment" and "rerun-error" in c[2] for c in gh.calls)
 
 
-def test_a_retry_marker_with_the_run_going_again_stands_down():
-    """The racing run's re-run and its retry comment landed between this run's read and its marker check."""
+@pytest.mark.parametrize("going", ["in_progress", HELD_AGAIN], ids=["running", "held"])
+def test_a_retry_marker_with_the_run_going_again_stands_down(going):
+    """The racing run's re-run and its retry comment landed between this run's read and its marker check.
+
+    Args:
+        going: What a fresh read of the run shows.
+    """
     gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
                 runs={OLD: [_pr_run(70, 700)]}, comments={1: [f"<!-- merge-queue:retry:{OLD} -->\nre-running"]},
-                run_status={70: ["in_progress"]})
+                run_status={70: [going]})
     _run(gh)
     assert not any(c[0] in ("disarm", "rerun", "comment") for c in gh.calls)
 
@@ -1072,20 +1097,93 @@ def test_a_young_head_without_a_run_is_decided_again_after_the_window():
     assert slept == [121.0]
 
 
-def test_a_wait_run_that_cannot_be_read_decides_anyway():
-    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check()]})
+def test_the_young_head_sleep_is_capped_at_the_window():
+    """Review round 3 of #3039: the commit date comes from the author's clock; a head dated hours
+    ahead must not sleep the queue job into its timeout."""
+    slept = []
+    future = _node(1, state="BLOCKED", committed="2026-10-03T15:00:00Z")
+    mq.run(FakeGh([future]), "on", now=lambda: NOW, sleep=slept.append, log=lambda m: None)
+    assert slept[0] == mq.YOUNG_HEAD.total_seconds() + 1
+
+
+@pytest.mark.parametrize("armed", [None, "2026-10-03T11:59:30Z"], ids=["disarmed", "re-armed"])
+def test_a_front_disarmed_or_rearmed_during_the_young_wait_is_left_alone(armed):
+    """Review round 3 of #3039: re-armed, the PR is at the back of the line now; disarmed, it is out.
+    Either way the sleeping run must not act on it (that event wakes a fresh run).
+
+    Args:
+        armed: The arming time a fresh read shows (None: disarmed).
+    """
+    clock = [NOW]
+
+    def sleep(seconds):
+        clock[0] += timedelta(seconds=seconds)
+
+    young = _node(1, state="BLOCKED", committed="2026-10-03T11:59:00Z")
+    gh = FakeGh([young], reread={1: _node(1, state="BLOCKED", committed="2026-10-03T11:59:00Z", armed=armed)})
+    assert mq.run(gh, "on", now=lambda: clock[0], sleep=sleep, log=lambda m: None) == []
+    assert gh.calls == []
+
+
+def test_a_rerun_that_stays_held_wakes_a_tick_to_approve_it():
+    """Review round 3 of #3039: a held run never executes, so its own queue-tick never comes. When the
+    re-run is still not live after the approval polls, the queue wakes a tick instead of stalling."""
+    run = _pr_run(70, 700)
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]}, runs={OLD: [run]},
+                approve_error="gh: Server Error (HTTP 502)")
     original = gh.rest
 
     def rest(method, path, fields=None):
+        out = original(method, path, fields)
+        if path.endswith("/rerun-failed-jobs"):
+            gh._set_run(70, **_held_attempt(70, 700))
+        return out
+
+    gh.rest = rest
+    _run(gh)
+    assert ("dispatch", "derived-artifacts.yml", {"ref": "dev"}) in gh.calls
+    assert any(c[0] == "comment" and f"merge-queue:retry:{OLD}" in c[2] for c in gh.calls)
+    assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_a_403_that_mentions_a_month_is_not_a_refusal():
+    """Review round 3 of #3039: only GitHub's 'over a month ago' re-run refusal is lasting; a billing
+    or quota 403 about 'this month' must not evict on first sight."""
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_pr_run(70, 700)]}, rerun_error="gh: The spending limit for this month was reached (HTTP 403)")
+    with pytest.raises(mq.GhError, match="403"):
+        _run(gh)
+    assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+@pytest.mark.parametrize("failures", [1, None], ids=["one-blip", "never-readable"])
+def test_a_wait_run_read_error_is_retried_within_the_bound(failures):
+    """Review rounds 2-3 of #3039: a failed read neither kills the tick nor ends the wait early (the
+    woken tick would then decide while the run is still live, stand down, and stall the line).
+
+    Args:
+        failures: How many reads fail before the run reads completed; None for every read.
+    """
+    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check()]})
+    original = gh.rest
+    reads = []
+
+    def rest(method, path, fields=None):
         if method == "GET" and path.endswith("/actions/runs/70"):
-            raise mq.GhError("gh: Not Found (HTTP 404)")
+            reads.append(path)
+            if failures is None or len(reads) <= failures:
+                raise mq.GhError("gh: Server Error (HTTP 502)")
+            return {"id": 70, "status": "completed"}
         return original(method, path, fields)
 
     gh.rest = rest
     lines = []
     decisions = mq.run(gh, "on", now=lambda: NOW, sleep=lambda s: None, log=lines.append, wait_run=70)
     assert decisions[0][1].kind == "wait"
-    assert any("cannot read run 70" in line for line in lines)
+    if failures is None:
+        assert len(reads) == mq.WAIT_RUN_TRIES and any("last read failed" in line for line in lines)
+    else:
+        assert len(reads) == 2 and not any("deciding anyway" in line for line in lines)
 
 
 @pytest.mark.parametrize(("value", "expected"), [("70", 70), (" 71 ", 71), ("", None), ("x", None)])

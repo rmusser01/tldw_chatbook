@@ -66,6 +66,17 @@ Independent review round 2 (Qodo still out of credits). Fixed:
 4. A cancelled (not failed) retry attempt hit the retry cap. It is re-run in full without counting.
 5. A head whose commit predates its push could reach start before its run was listed, and was evicted (evict-no-run). _start now looks again for up to 10 x 3 s first.
 6. Wake-path stalls: in on mode a young-head wait now sleeps out the window once and decides again; the wait_run bound is 5 minutes (inside queue-tick's 10-minute timeout); a wait_run that cannot be read is decided on anyway.
-7. Mutants that survived: _start's own copy of the held-run filter (now one shared predicate, _queue_held), _required_runs' pull_request filter, main() reading WAIT_RUN, the rate-limit classification. Each now has a test; all 17 code mutants of the round-2 guards are killed.
+7. Mutants that survived: _start's own copy of the held-run filter (now one shared predicate, _queue_held), _required_runs' pull_request filter, main() reading WAIT_RUN, the rate-limit classification. Each now has a test. (Round 3 found two round-2 guards still unpinned; see below.)
 8. Doc drift: spec sections 2, 5, 6, 7, 8 and 11; the fork note (UNQUEUED_NOTES and spec: approving a fork's held runs would bypass GitHub's outside-contributor gate); stale 'merge queue re-runs this' comments in perf-guard.yml, task-19642 and task-32011 workflows; test_pr_workflows_dispatch_safe docstring; required_run_stand_ins docstring; this task's bullets above.
+
+Independent review round 3. Fixed:
+1. A re-run GitHub kept holding after the 30 s approval polls woke nothing (a held run never runs its own queue-tick), so the line stalled. _rerun now wakes a tick. A rebase whose branch never moves wakes one tick per head (rebase-unmoved marker) for the same reason.
+2. The young-head sleep was unbounded (a commit dated hours ahead slept past the job timeout). It is capped at 3 minutes.
+3. The young re-decide acted on a front that was re-armed (moved to the back) during the sleep. It now stops when the arming changed, not only on a disarm.
+4. A racing re-run refused with an unclassified code (e.g. a 403) used up the head's rerun-error allowance with a spurious comment. The live-or-held re-read now comes before the error classes.
+5. wait_for_run ended at the first read error. A failed read is retried within the bound.
+6. Unpinned guards: the 'held again' half of the re-read, and the disarm break. Both have tests now; 24 mutants (round 2 and 3 guards) are all killed.
+7. The month-old refusal matched any 403 mentioning 'month'; it now needs 'month ago'.
+8. Doc drift: ADR-218 eviction causes (a refused re-run of a cancelled run evicts as evict-no-run), spec sections 6, 7, 8 and 11.
+Test-harness trap: a parametrize id 'live' made Tests/conftest.py skip the test as --run-live (it matches item.keywords); ids renamed to 'running'.
 <!-- SECTION:NOTES:END -->
