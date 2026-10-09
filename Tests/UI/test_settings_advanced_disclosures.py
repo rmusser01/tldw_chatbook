@@ -485,19 +485,31 @@ def _context_window_row(screen):
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_an_unknown_context_window_opens_to_one_row_and_no_reset(request):
+@pytest.mark.parametrize(
+    ("provider", "assumed"), [("openai", "32,000"), ("anthropic", "200,000")]
+)
+async def test_an_unknown_context_window_opens_to_one_row_and_no_reset(
+    request, provider, assumed
+):
     """Captures review note 11: opened for a model nothing detected, Context
     window is one Label | field | Source word | help row in the Source-word
     column Model defaults uses; no prose wraps, and no disabled "Reset to
-    detected" offers a detected value the title says is unknown."""
+    detected" offers a detected value the title says is unknown. Finding 12:
+    its help names the size the Console assumes in the title's words (the
+    application fallback for OpenAI, the provider's for Anthropic)."""
     app = _app()
-    app.app_config["chat_defaults"]["model"] = "made-up-model-x"
+    app.app_config["chat_defaults"] = {
+        "provider": provider,
+        "model": "made-up-model-x",
+    }
     host = _SettingsCssHarness(app, "settings")
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open(host, pilot)
         context_id = "settings-advanced-context-window"
-        assert _title(screen, context_id).startswith("Context window · unknown")
+        assert _title(screen, context_id).startswith(
+            f"Context window · unknown, {assumed} assumed"
+        )
         screen.query_one(f"#{context_id}", Collapsible).collapsed = False
         await pilot.pause()
         await pilot.pause()
@@ -508,7 +520,10 @@ async def test_an_unknown_context_window_opens_to_one_row_and_no_reset(request):
         help_line = screen.query_one("#settings-model-context-window-status", Static)
         assert source.parent is row and help_line.parent is row
         assert str(source.render()) == "not set"
-        assert str(help_line.render()) == "required for Automatic conversation budgets"
+        assert (
+            str(help_line.render())
+            == f"unknown, {assumed} assumed · budgets use it until set"
+        )
         reset = screen.query_one("#settings-model-context-window-reset", Button)
         assert not reset.display
         temperature = screen.query_one("#settings-model-profile-temperature-source")

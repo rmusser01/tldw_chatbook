@@ -117,19 +117,6 @@ class ConsoleContextControlState:
         return int(budget * self.resolved_policy.policy.target_ratio)
 
     @property
-    def request_row(self) -> str:
-        used = format_context_tokens(self.request_tokens)
-        ceiling = format_context_tokens(self.safe_input_ceiling_tokens)
-        if self.safe_input_ceiling_tokens is None:
-            suffix = "limit unknown"
-        elif self.model_window_verified:
-            suffix = "safe input"
-        else:
-            suffix = "estimated input; model unverified"
-        estimate_prefix = "~" if self.request_tokens is not None else ""
-        return f"{estimate_prefix}{used} / {ceiling} {suffix}"
-
-    @property
     def conversation_row(self) -> str:
         used = format_context_tokens(self.conversation_tokens)
         budget = format_context_tokens(self.conversation_budget_tokens)
