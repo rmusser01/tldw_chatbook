@@ -291,10 +291,12 @@ def test_a_rebase_lost_to_an_outage_wakes_a_tick_only_if_the_head_moved(moved):
     """
     gh = FakeGh([_node(1)], rebase_error='gh api graphql -f failed: Post "https://api.github.com/graphql": EOF',
                 reread={1: _node(1, head=NEW if moved else OLD, state="BLOCKED" if moved else "BEHIND")})
+    sleeps = []
     with pytest.raises(mq.GhError, match="EOF"):
-        _run(gh)
+        mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
     expected = [("rebase", "PR_1", OLD)] + ([("dispatch", "derived-artifacts.yml", {"ref": "dev"})] if moved else [])
     assert gh.calls == expected
+    assert sleeps == [mq.REBASE_POLL_S], "the re-read waits for an accepted rebase's ref to land (review round 8)"
 
 
 def test_rebase_refused_on_conflict_evicts():
@@ -740,7 +742,7 @@ def test_a_head_with_no_run_is_warned_first_and_never_evicted_on_first_sight():
     gh = FakeGh([_node(1, state="BLOCKED"), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")])
     decisions = _run(gh)
     assert [(n, a.kind) for n, a in decisions] == [(1, "start")]
-    assert not any(c[0] == "disarm" for c in gh.calls)
+    assert not any(c[0] in ("disarm", "dispatch") for c in gh.calls), "no eviction, and no wake into the gap"
     comment = next(c for c in gh.calls if c[0] == "comment")
     assert f"<!-- merge-queue:no-run:{OLD} -->" in comment[2] and "10 minutes from now" in comment[2]
 
@@ -1559,3 +1561,71 @@ def test_a_content_creation_block_is_a_rate_limit_not_a_locked_pr():
     with pytest.raises(mq.GhError, match="secondary rate limit"):
         _run(gh)
     assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+@pytest.mark.parametrize("error", ["gh: This workflow run cannot be rerun (HTTP 409)", "gh: HTTP 409",
+                                   "gh: Unprocessable Entity (HTTP 422)", "gh: HTTP 422"])
+def test_a_refused_rerun_of_a_cancelled_run_evicts_at_once(error):
+    """Review round 8 of #3039: GitHub's refusal is final, so the start path does not add a no-run gap on
+    top (an unclassified error has already served its own gap inside _rerun).
+
+    Args:
+        error: GitHub's refusal, with or without the parenthesised status.
+    """
+    assert mq._rerun_error(mq.GhError(f"gh api -X POST failed: {error}")) == "refused"
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("cancelled", suite=800)]},
+                runs={OLD: [_pr_run(80, 800, conclusion="cancelled")]}, rerun_error=error)
+    _run(gh)
+    assert ("disarm", "PR_1") in gh.calls
+    comment = next(c for c in gh.calls if c[0] == "comment")
+    assert f"<!-- merge-queue:evict-no-run:{OLD} -->" in comment[2] and "refused to re-run the cancelled" in comment[2]
+
+
+def test_an_outage_that_mentions_a_lock_never_takes_a_pr_out_of_the_line():
+    """A transient error is never a lasting comment refusal, whatever its text says."""
+    gh = FakeGh([_node(1, state="DIRTY")])
+    original = gh.rest
+
+    def rest(method, path, fields=None):
+        if method == "POST" and path.endswith("/comments"):
+            raise mq.GhError("gh api -X POST failed: gh: Server Error: the conversation is locked (HTTP 502)")
+        return original(method, path, fields)
+
+    gh.rest = rest
+    with pytest.raises(mq.GhError, match="502"):
+        _run(gh)
+    assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+@pytest.mark.parametrize(("state", "warned_minutes_ago", "outcome"), [
+    ("held", None, "warned"),
+    ("held", 10, "evicted"),
+    ("approved", None, "stood-down"),
+])
+def test_a_lasting_approval_refusal_is_a_strike(state, warned_minutes_ago, outcome):
+    """Review round 8 of #3039: a strict approval re-raised every error, so a refusal that lasted would
+    fail every queue run without ever evicting. A non-transient refusal is re-read (a racing run may
+    have approved it) and is otherwise a strike.
+
+    Args:
+        state: What a re-read of the run shows: still held, or approved (queued).
+        warned_minutes_ago: The age of an existing approve-error warning, if any.
+        outcome: What the queue does.
+    """
+    comments = {}
+    if warned_minutes_ago is not None:
+        posted = (NOW - timedelta(minutes=warned_minutes_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        comments = {1: [(f"<!-- merge-queue:approve-error:{OLD} -->\nwarned", posted)]}
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_held(31)]}, comments=comments,
+                approve_error="gh api -X POST failed: gh: Unprocessable Entity (HTTP 422)",
+                run_status={31: ["queued"]} if state == "approved" else None)
+    pr = mq.read_prs(gh)[0]
+    evicted = mq._start(gh, pr, lambda m: None, lambda s: None, lambda: NOW)
+    assert evicted is (outcome == "evicted")
+    comments_posted = [c[2] for c in gh.calls if c[0] == "comment"]
+    if outcome == "warned":
+        assert len(comments_posted) == 1 and f"merge-queue:approve-error:{OLD}" in comments_posted[0]
+    elif outcome == "evicted":
+        assert ("disarm", "PR_1") in gh.calls and f"merge-queue:evict-approve:{OLD}" in comments_posted[0]
+    else:
+        assert comments_posted == [] and not any(c[0] == "disarm" for c in gh.calls)

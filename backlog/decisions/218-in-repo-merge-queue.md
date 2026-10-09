@@ -41,9 +41,10 @@ GitHub's native merge queue needs an organization-owned repository, and this one
   only dispatches a workflow whose file is on `main`), and that tick waits for the run to complete.
 - Eviction causes: "branch refuses the CI dispatch" is replaced by a refused re-run on a retry (`evict-rerun`, whether
   the run failed or its retry attempt was cancelled) and "no CI run the queue can start" (`evict-no-run`, also what a
-  refused re-run of a cancelled run gives on the start path). A strike (a rebase that did not take effect, no CI run
-  the queue can start, or an unclassified re-run error) is warned about once per head and evicts (`evict-rebase`,
-  `evict-rebase-unmoved`, `evict-no-run`, `evict-rerun`) only 10 minutes after the warning. A transient error (5xx,
+  refused re-run of a cancelled run gives on the start path, at once). A strike (a rebase that did not take effect, no
+  CI run the queue can start, an unclassified re-run error, or a refused approval) is warned about once per head and
+  evicts (`evict-rebase`, `evict-rebase-unmoved`, `evict-no-run`, `evict-rerun`, `evict-approve`) only 10 minutes after
+  the warning. A transient error (5xx,
   429, rate limit, network) never evicts. A PR whose conversation is locked leaves the line without a comment, because
   the queue keeps its counts in comments.
 - The dispatch-safe rule above no longer serves the queue. It still keeps manual dispatches safe.

@@ -176,8 +176,8 @@ seconds apart (after each merge the next front is routinely `UNKNOWN` for a whil
 A completed `derived-artifacts.yml` run on the head that failed (`failure`, `startup_failure` or `timed_out`) without
 reporting the required check in its check suite counts as a failed required check. A startup failure (for example a broken
 workflow file on the branch) is therefore retried once and then evicted. GitHub may answer that re-run with a 403 the queue
-cannot classify; the first one fails the queue run with a `rerun-error` comment and the second evicts (`evict-rerun`), so a
-broken branch can never fail every queue run forever.
+cannot classify; that fails the queue run with a `rerun-error` warning, and once the warning is 10 minutes old the next
+attempt evicts (`evict-rerun`), so a broken branch can never fail every queue run forever.
 
 After an eviction the queue re-evaluates the new front PR in the same run, at most 10 times. PRs behind the front are
 never rebased, dispatched or commented on.
@@ -220,8 +220,11 @@ never rebased, dispatched or commented on.
   `github-actions[bot]` (the queue's own token) are approved, and only for the front PR, which is same-repo, user-authored
   and armed by someone with write access. The queue never dispatches the required check (V4).
 - **Start and retry** re-read the head's live `derived-artifacts.yml` runs first; if one is live (a racing queue run acted
-  first), they do nothing. On the start and retry rows, approving a held run is not best-effort: a GitHub error
-  re-raises, so an outage fails the run instead of falling through to an eviction. A re-run refusal (HTTP 409/422, or a
+  first), they do nothing. On the start and retry rows, approving a held run is not best-effort: a transient error
+  re-raises, so an outage fails the run instead of falling through to an eviction. Any other refusal is re-read (a
+  racing queue run may have approved it) and is otherwise an `approve-error` strike: warn, and evict (`evict-approve`)
+  only once the warning is 10 minutes old. On the start row, GitHub refusing to re-run the cancelled run evicts at
+  once (`evict-no-run`): the refusal is final, or an unclassified error has already served its gap. A re-run refusal (HTTP 409/422, or a
   403 for a run over a month old) evicts, after one re-read of the run: if it is live or held again, a racing queue run
   re-ran it and this one stands down. A transient error (5xx, 429, rate limit, network) re-raises (section 8), so an
   outage never disarms the fronts it touches. Any other error re-raises with a `rerun-error` comment, and counts as a
@@ -240,7 +243,7 @@ never rebased, dispatched or commented on.
   puts the PR at the back of the line.
 - **Comments** carry a hidden marker `<!-- merge-queue:<kind>:<head-sha> -->`. The queue never posts a kind twice for the same
   head. An eviction's kind names its cause (`evict-conflict`, `evict-failed-twice`, `evict-blocked`, `evict-stuck`,
-  `evict-rebase`, `evict-rebase-unmoved`, `evict-rerun`, `evict-no-run`), so a re-armed PR evicted again on the same head for a different reason is still told
+  `evict-rebase`, `evict-rebase-unmoved`, `evict-rerun`, `evict-no-run`, `evict-approve`), so a re-armed PR evicted again on the same head for a different reason is still told
   why.
 - **Forbidden**, and enforced by a guard test:
   - enabling auto-merge;
@@ -261,7 +264,8 @@ never rebased, dispatched or commented on.
 - **API error or rate limit:** the queue run fails as a non-required job. The next event retries it.
 - **A held run left unapproved:** when the post-rebase wait or a re-run's approval polls run out (best-effort approvals
   that failed included), the queue wakes a tick, whose approval pass approves it. When a strict approval (start or retry)
-  fails, nothing is woken: it raises, so the run fails and the next event retries. Either way a retry decision on that head approves the held
+  fails, nothing is woken: an outage raises, so the run fails and the next event retries; any other refusal is a
+  strike. Either way a retry decision on that head approves the held
   run strictly instead of counting it as a second failure.
 - **A woken tick's wait** (`wait_run`) is bounded at 3 minutes; failed reads are retried within it. A run still live or
   unreadable after that (a GitHub fault) is decided on anyway, and the next event recovers it.
@@ -276,7 +280,7 @@ never rebased, dispatched or commented on.
     exists on `main` (F1).
   - Known gap: a stall during a stretch with no activity waits for the next event or a manual kick. There is no periodic
     timer, because `schedule` reads `main`.
-  - The same gap after a strike (rebase, no-run, or an unclassified re-run error): a strike inside its 10-minute gap
+  - The same gap after a strike (rebase, no-run, an unclassified re-run error, or a refused approval): a strike inside its 10-minute gap
     stands down and wakes nothing, so on a quiet repo the front (and the line behind it) waits for the next event after
     the gap. These failures are rare, and evicting sooner would let one GitHub slowdown disarm the PR.
   - An Actions incident that keeps a head's runs from being created for more than 10 minutes, seen by two events that

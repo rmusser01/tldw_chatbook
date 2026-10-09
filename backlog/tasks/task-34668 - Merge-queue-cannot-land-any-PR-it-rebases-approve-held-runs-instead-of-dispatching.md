@@ -39,7 +39,7 @@ scripts/merge_queue.py no longer dispatches the required check, which never coun
 - Every on-mode tick approves the front PR's held pull_request runs triggered by github-actions[bot] (approve_held_runs, best-effort), before deciding.
 - After a rebase the queue waits, bounded at 10 x 3 s, for the new head's held required run and approves it (_approve_until_required), then cancels old-head runs. The re-dispatch of other workflows and the deletion of held runs (cleanup_approval_runs) are gone.
 - 'dispatch' becomes 'start' (_start): approve a held run strictly, so a GitHub error re-raises and an outage never falls through to an eviction; else re-run a cancelled run in full; else evict (evict-no-run).
-- 'retry' (_retry): re-run the failed run in its own check suite (rerun-failed-jobs; a broken run's stand-in is re-run in full), once per head (retry marker). If the run is the tick's own (still in progress), send a queue kick (derived-artifacts.yml dispatched on dev, input wait_run); a live run is left alone and a held one approved. Re-run errors: refused (409/422, month-old 403) evicts (evict-rerun); transient (5xx, 429, rate limit, network) re-raises; anything else re-raises once with a rerun-error comment, then evicts.
+- 'retry' (_retry): re-run the failed run in its own check suite (rerun-failed-jobs; a broken run's stand-in is re-run in full), once per head (retry marker). If the run is the tick's own (still in progress), send a queue kick (derived-artifacts.yml dispatched on dev, input wait_run); a live run is left alone and a held one approved. Re-run errors: refused (409/422, month-old 403) evicts (evict-rerun); transient (5xx, 429, rate limit, network) re-raises; anything else re-raises with a rerun-error warning and evicts once that warning is 10 minutes old (rounds 2 and 7).
 - derived-artifacts.yml gains a wait_run workflow_dispatch input, passed to queue-tick as WAIT_RUN; run()/main() wait for that run, bounded at 50 x 6 s. merge-queue.yml is unchanged (not on main, so never dispatchable).
 
 Evidence: live probe #3033 on 2026-10-06. The queue's GITHUB_TOKEN approved a held run (APPROVE_OK), and the approved run's required check appeared in the PR rollup as SUCCESS/pull_request, merge state UNSTABLE (mergeable).
@@ -112,4 +112,11 @@ Independent review round 7: no critical or major findings; four minor, two plaus
 6. An Actions incident delaying run creation past the young window evicted on first sight (evict-no-run). No-run is now a strike too: warn first, evict 10 minutes later. Documented: an incident longer than that, seen twice, still evicts.
 7. Nits: ADR-218 now names the locked-PR rule and the strike kinds; bare 'HTTP 429' tested; a stale comment removed; ISC004 string concatenations parenthesised.
 Mutation check: 41 mutants of the round-2 to round-7 guards, all killed.
+Independent review round 8: no critical or major findings; all fixed:
+1. On the start path a final re-run refusal (409/422, month-old 403) now struck instead of evicting, and an unclassified error served two gaps (20 minutes) and was evicted as no-run. A refused re-run of a cancelled run evicts at once again (evict-no-run, naming the refusal); the unclassified error's gap is served inside _rerun.
+2. The transient-rebase re-read happened before an accepted rebase's ref could land; it now waits REBASE_POLL_S first, like the non-transient branch.
+3. CommentRefused again requires a non-transient error, so an outage can never take a PR out of the line by construction.
+4. A strict approval re-raised every error, so a lasting refusal failed every run without evicting. A non-transient refusal is re-read (a racing run may have approved it) and is otherwise an approve-error strike (evict-approve after the gap).
+5. Tests: bare and parenthesised 409/422, the no-run warning not waking, the re-read sleep; stale comments in merge_queue.py and the spec fixed. The parenthesised-403 mutant is equivalent (a body-less 403 cannot carry the 'month ago' text) and has no test.
+Mutation check: 49 mutants of the round-2 to round-8 guards, all killed.
 <!-- SECTION:NOTES:END -->
