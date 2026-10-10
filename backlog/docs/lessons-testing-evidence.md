@@ -18615,6 +18615,21 @@ every theme and look for the themes where new is lower. "Stronger on the
 default theme" says nothing about a theme whose background sits between its
 surfaces.
 
+**Update, review round 2.** The edges were fixed in the same task by giving
+both Workflows panes `background: $ds-surface-panel`. That fill alone made a
+second regression: the two pane headings inherit the theme's `$foreground`,
+and on `$panel` that text fell under 4.5:1 on five themes where it had passed
+on `$background` (atom-one-dark 6.57:1 to 3.45:1, tokyo-night 8.10:1 to
+4.23:1). The edge gate was green the whole time. A rendered sweep of the text
+cells found it, and the panes now also set `color: $ds-text-primary`.
+
+**What to do, as well.** A fill added under a line sits under everything
+transparent inside the widget too. After adding one, read the text cells
+painted straight on it (skip descendants that set their own fill) on every
+theme, and compare with the fill they sat on before. A theme whose `$panel`
+equals its `$surface` (solarized) makes "cells whose background is the pane's
+fill" match a list's own cells: select by widget region, not by colour.
+
 ## A colour built in Python with `dim` is measured on one theme only (TASK-33004.6, 2026-09-30)
 
 **What happened.** Pick-only Switch model painted its disabled NEEDS SETUP

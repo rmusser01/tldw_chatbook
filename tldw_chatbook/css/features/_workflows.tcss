@@ -36,13 +36,15 @@ WorkflowsScreen #workflow-authoring { height: $ds-height-fill; min-height: $ds-s
     StepChooser .choice-copy { max-height: $ds-control-height; }
 
 
-    WorkflowLibrary#workflows-library { width: $ds-size-28; min-width: $ds-size-0; height: $ds-height-fill; border-right: solid $ds-column-line; padding: $ds-space-0 $ds-space-inset; }
+    /* TASK-33003.15: panel rails. $ds-column-line reads at 3:1 on $surface and $panel only
+     * (not on $background), and the headings on that fill take the readable ink. */
+    WorkflowLibrary#workflows-library { width: $ds-size-28; min-width: $ds-size-0; height: $ds-height-fill; border-right: solid $ds-column-line; background: $ds-surface-panel; color: $ds-text-primary; padding: $ds-space-0 $ds-space-inset; }
     WorkflowLibrary#workflows-library OptionList { height: $ds-height-fill; min-height: $ds-control-height-compact; }
     WorkflowLibrary#workflows-library Input { margin: $ds-space-0; }
     WorkflowLibrary #workflow-library-pages { height: $ds-control-height-compact; }
 
 
-    WorkflowNavigator#workflows-navigator { width: $ds-workflow-navigator-width; min-width: $ds-size-0; height: $ds-height-fill; border-right: solid $ds-column-line; padding: $ds-space-0 $ds-space-inset; }
+    WorkflowNavigator#workflows-navigator { width: $ds-workflow-navigator-width; min-width: $ds-size-0; height: $ds-height-fill; border-right: solid $ds-column-line; background: $ds-surface-panel; color: $ds-text-primary; padding: $ds-space-0 $ds-space-inset; }
     WorkflowNavigator#workflows-navigator OptionList { height: $ds-height-fill; min-height: $ds-control-height-compact; }
 
 WorkflowsScreen #workflow-run:disabled {

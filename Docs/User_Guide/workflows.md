@@ -32,7 +32,9 @@ Press **Ctrl+8**, select **Workflows** in the navigation bar, or use **Ctrl+P** 
    becoming a valid saved revision. **More…** exposes history, duplication,
    reordering and draft recovery actions where applicable.
 
-At wide sizes the library, navigator and editor are visible together. Medium
+At wide sizes the library, navigator and editor are visible together. The
+library and the navigator are panel-coloured rails, each with a line down its
+right edge; the editor sits on the screen background. Medium
 widths retain the navigator and editor; compact widths use **Workflow…** and
 **Step / Overview…** selectors above the editor. **F6** moves between
 visible workbench panes; Tab moves through controls. Hidden panes are skipped.

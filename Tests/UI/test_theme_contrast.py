@@ -224,7 +224,8 @@ def _rule_token(sheet: Path | str, selector: str, prop: str) -> str:
     else:
         text = sheet.read_text(encoding="utf-8")
     block = css_block(text, selector)
-    match = re.search(rf"^\s*{prop}:\s*([^;]+);", block, re.MULTILINE)
+    # `(?:^|;)`: _workflows.tcss writes a whole rule on one line.
+    match = re.search(rf"(?:^|;)\s*{prop}:\s*([^;]+);", block, re.MULTILINE)
     assert match, f"{selector} sets no {prop}"
     return match.group(1).split()[-1].lstrip("$")
 
@@ -275,6 +276,115 @@ def test_library_pane_frames_clear_non_text_contrast(theme: Theme) -> None:
         token = _rule_token(LIBRARY_SHEET, selector, "border")
         for key in ("surface", "panel"):
             _assert_edge_visible(theme, table, token, key)
+
+
+WORKFLOWS_SHEET = CSS_ROOT / "features/_workflows.tcss"
+WORKFLOW_PANES = {
+    "WorkflowLibrary#workflows-library": "#workflows-library",
+    "WorkflowNavigator#workflows-navigator": "#workflows-navigator",
+}
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)
+def test_workflow_pane_edges_clear_non_text_contrast(theme: Theme) -> None:
+    """TASK-33003.15 AC#3: the Workflows pane edges set no fill and sat on
+    $background, where no line colour is pinned. Moving $ds-column-line to the
+    boundary colour took litestep from 3.64:1 to 1.32:1 there. Each edge reads
+    at 3:1 on the fill its own rule sets."""
+    table = _painted_variables(theme)
+    for selector in WORKFLOW_PANES:
+        edge = _rule_token(WORKFLOWS_SHEET, selector, "border-right")
+        fill = _rule_token(WORKFLOWS_SHEET, selector, "background")
+        _assert_edge_visible(theme, table, edge, fill)
+
+
+def _painted_text(app, widget) -> set[tuple[str, str]]:
+    """{(fg hex, bg hex)} of the letters and digits painted straight on
+    ``widget``'s fill: cells inside a descendant that sets its own fill (a
+    list, a field, a button) are skipped, since that fill is not the pane's."""
+    own = [child.region for child in widget.walk_children() if child.styles.background.a > 0]
+    region, cells = widget.region, set()
+    for y in range(region.y, region.bottom):
+        position = 0
+        for segment in app.screen._compositor.render_strips()[y]:
+            for glyph in segment.text:
+                inside = region.x <= position < region.right and glyph.isalnum()
+                if inside and not any(box.contains(position, y) for box in own):
+                    style = segment.style
+                    cells.add(
+                        (
+                            Color.from_rich_color(style.color).hex,
+                            Color.from_rich_color(style.bgcolor).hex,
+                        )
+                    )
+                position += 1
+    return cells
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "theme_name",
+    [
+        # The edge on $background: the two weakest of the six themes under 3:1.
+        "litestep",
+        "apricot",
+        # The pane headings on $panel in the theme's $foreground: under 4.5:1.
+        "atom-one-dark",
+        "tokyo-night",
+        "solarized-dark",
+        "solarized-light",
+        "pastel_dreams",
+        "textual-dark",
+        "textual-light",
+    ],
+)
+async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> None:
+    """TASK-33003.15 AC#3, rendered under the production stylesheet: the edge
+    cells are read from the frame, so the fill measured is the one that paints
+    under them (litestep 1.32:1 and apricot 2.63:1 on $background). The panel
+    fill that fixes the edge also sits under the pane headings, which
+    inherited $foreground: atom-one-dark fell from 6.57:1 to 3.45:1 there, so
+    text painted straight on the fill is read as well."""
+    from textual.containers import Horizontal
+
+    from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+    from tldw_chatbook.UI.Workflows_Modules.library import WorkflowLibrary
+    from tldw_chatbook.UI.Workflows_Modules.navigator import WorkflowNavigator
+
+    class Panes(ConsolidatedCSSApp):
+        def compose(self):
+            with Horizontal(id="workflow-panes"):
+                yield WorkflowLibrary(id="workflows-library")
+                yield WorkflowNavigator(id="workflows-navigator")
+
+    app = Panes(css_path=[str(path) for path in APP_STYLESHEETS])
+    async with app.run_test(size=(211, 44)) as pilot:
+        for theme in ALL_THEMES:
+            app.register_theme(theme)
+        app.theme = theme_name
+        await pilot.pause(0.3)
+        edges, text = {}, {}
+        for selector in WORKFLOW_PANES.values():
+            widget = app.query_one(selector)
+            pane = widget.region
+            edges[selector] = {
+                cell
+                for y in range(pane.y, pane.bottom)
+                for cell in _painted_line(app, y, pane.right - 1, pane.right, "│")
+            }
+            text[selector] = _painted_text(app, widget)
+    for selector, cells in edges.items():
+        assert cells, f"{theme_name}: no {selector} edge cells painted"
+        for edge, fill in cells:
+            ratio = _ratio(edge, fill)
+            assert ratio >= NON_TEXT, f"{theme_name}: {selector} edge {edge} on {fill} is {ratio:.2f}:1"
+    for selector, cells in text.items():
+        assert cells, f"{theme_name}: no {selector} text painted on the pane fill"
+        for ink, fill in cells:
+            ratio = _ratio(ink, fill)
+            assert ratio >= AA, f"{theme_name}: {selector} text {ink} on {fill} is {ratio:.2f}:1"
 
 
 WIDGETS_SHEET = CSS_ROOT / "components/_widgets.tcss"

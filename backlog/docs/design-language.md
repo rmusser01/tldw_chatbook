@@ -146,7 +146,13 @@ Every interactive control must define, at minimum:
   terminal — promotes instead to the config-safe Python leaf
   `Utils/adaptive_reader_state.py` (ADR-212): a stylesheet token cannot
   depend on the measured shell.
-- Pane borders use `$ds-grid-line` / `$ds-column-line`, never raw hex.
+- Pane borders use `$ds-grid-line` / `$ds-column-line`, never raw hex. The
+  pane that carries one sets its own `$ds-surface-panel` or
+  `$ds-surface-raised` fill: the line colour is pinned to 3:1 against those
+  two fills only, and on `$background` it fell to 1.32:1 on litestep
+  (Workflows, TASK-33003.15). Text that sits straight on that fill takes
+  `$ds-text-primary`, not the inherited `$foreground`, which reads under
+  4.5:1 on `$panel` in nine themes (atom-one-dark 3.45:1).
 
 ## 3. Interaction rules (binding on all screens)
 
