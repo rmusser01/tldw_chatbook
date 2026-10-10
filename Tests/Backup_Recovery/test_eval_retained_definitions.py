@@ -1,17 +1,24 @@
 """Completed local generations retain inactive eval sources across rebackup."""
 
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+from threading import Event
 
-from Tests.Backup_Recovery.conftest import helper_resource_root as helper_resource_root
+import pytest
+
+from Tests.Backup_Recovery import conftest as recovery_fixtures
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 from Tests.Backup_Recovery.test_temporary_media_capture import (
     _PUBLIC,
     _REOPEN,
     _RESTORE,
 )
+
+
+helper_resource_root = recovery_fixtures.helper_resource_root
 
 
 def _replace(source, old, new):
@@ -83,12 +90,6 @@ def test_complete_rebackup_retains_eval_after_source_and_candidate_removal(tmp_p
     (tmp_path / "reopen.log").write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]
     assert "retired and reopened" in result.stdout
-
-
-import json
-from threading import Event
-
-import pytest
 
 
 @pytest.fixture(scope="module")

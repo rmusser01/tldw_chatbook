@@ -12,9 +12,12 @@ from threading import Event
 
 import pytest
 
-from Tests.Backup_Recovery.conftest import helper_resource_root as helper_resource_root
+from Tests.Backup_Recovery import conftest as recovery_fixtures
 from Tests.Backup_Recovery import test_eval_retained_definitions
 from Tests.Backup_Recovery.test_restore_data_groups import _document
+
+
+helper_resource_root = recovery_fixtures.helper_resource_root
 
 
 @pytest.fixture
