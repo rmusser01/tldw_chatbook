@@ -18594,6 +18594,27 @@ paint each of them under the production stylesheet, on a light theme as well
 as the default. Then delete each selector of the fix in turn and check that
 the rendered test fails.
 
+## A shared line token is pinned against named fills, so measure each user on the fill it sits on (TASK-33003.15, 2026-10-10)
+
+**What happened.** `$ds-column-line` moved to `$tldw-boundary`, a colour the
+theme guard pins to 3:1 on `$surface` and `$panel`. The task notes said every
+other user of the token "paints on a `$surface` or `$panel` fill". That was
+read off the selectors, not resolved. The two Workflows pane edges set no
+fill, and neither does anything above them, so they sit on `$background`.
+The review found that and judged both exceptions "stronger than before"
+without measuring. Measured on the 89 themes, the Workflows edges are
+stronger on 88 and weaker on one: litestep went from 3.64:1 to 1.32:1,
+because its background is close to the boundary colour. Five more shipped
+themes stay under 3:1 there.
+
+**What to do.** When a token changes, list its users by grep, then resolve
+the fill under each one by walking up to the first ancestor that sets a
+`background`; "none set" means the screen's `$background`. For every fill
+that is not one the colour is pinned against, compute old and new ratios on
+every theme and look for the themes where new is lower. "Stronger on the
+default theme" says nothing about a theme whose background sits between its
+surfaces.
+
 ## A colour built in Python with `dim` is measured on one theme only (TASK-33004.6, 2026-09-30)
 
 **What happened.** Pick-only Switch model painted its disabled NEEDS SETUP
