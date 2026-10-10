@@ -944,19 +944,34 @@ Escape does not silently commit a dirty choice. If your resolved RAG scope comes
 back **empty**, auto-retrieve short-circuits with the same shared notice
 the manual path shows, rather than searching everything.
 
-While a send is retrieving, the staged-evidence strip briefly shows a
-"Retrieving…" state and the search is capped at a **5-second timeout**.
+While a send is retrieving, the run chip reads **Run: Searching Library…** and
+**Stop** is offered. The search itself is capped at a **5-second timeout**.
+The first automatic send after launch also has to start the Library's search
+service (it loads the embedding model: a few seconds, or about 20 seconds the
+very first time, while the model downloads). That start-up has its own,
+longer 60-second limit and does not count against the 5 seconds, so the first
+send after launch no longer times out just because the service was cold.
 Successful evidence is staged and then consumed by that send. **Zero results**
-is a completed retrieval, so the send continues without evidence and keeps a
-visible zero-results disclosure on the turn.
+is a completed retrieval, so the send continues without evidence. (A
+per-turn line saying so is not shown yet.)
 
-Failure, timeout, or a RAG service that is still starting pauses the prepared
-send before provider dispatch. The recovery card keeps the exact draft and
-frozen conversation authority visible and offers **Retry**, **Send once**, and
-**Cancel**. Retry makes one fresh retrieval attempt; Send once bypasses
-automatic retrieval for only this prepared send; Cancel restores the draft and
-does not contact the model provider. Nothing is silently downgraded to an
-ungrounded send.
+A timeout, a failed search, or **Stop** pauses the prepared send before
+provider dispatch. The model provider is not contacted. A recovery card in
+the transcript says why ("Library search timed out; your message was not
+sent"), the run chip reads **Run: Blocked — Library timeout** (or *error* /
+*stopped*), and the card offers three actions:
+
+- **Retry Library search** makes one fresh retrieval attempt and, if it
+  finishes, sends the message with what it found.
+- **Send once without Library** skips automatic retrieval for only this
+  message and sends it; the Auto setting is unchanged.
+- **Cancel send** sends nothing and puts the message back in the composer
+  (when the composer is empty).
+
+The paused message is also listed as an **unsent turn** above the composer.
+Its **Restore** and **Discard** release the paused send too, so the next
+message you send in that conversation goes through. Nothing is silently
+downgraded to an ungrounded send.
 
 The Inspector tray is not the only place staged evidence shows up: a
 **staged-evidence strip** sits on the main surface itself, at the top of
