@@ -146,7 +146,6 @@ async def test_import_keeps_textual_alpha_suffixed_variables(request, tmp_path, 
         assert "alpha" in app.available_themes
 
 
-
 @pytest.mark.asyncio
 @private_profile_test
 async def test_import_drops_auto_on_a_background_variable(request, tmp_path, src):
@@ -174,6 +173,7 @@ async def test_import_drops_auto_on_a_background_variable(request, tmp_path, src
         app.refresh_css()
         await pilot.pause()
         assert app.theme == "auto"
+
 
 HOSTILE = [
     ("notes.txt", GOOD, "Import needs a .toml file"),

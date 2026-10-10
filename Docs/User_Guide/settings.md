@@ -1281,9 +1281,13 @@ filename-safe, contains `[`, contains control characters, or starts with
 `custom_` or `unreadable:` each refuse with a specific reason and write
 nothing. The reason shows inside the Import prompt, which stays open with
 the path you typed; invalid TOML names the parser's line and column ("File
-is not valid TOML (line 3, column 1)"). A `[variables]` entry that isn't a colour
-(or `auto NN%` on a text colour, or a text style) is dropped with a warning instead, the same
-as Save. Importing a name you already have asks first ("Replace the saved
+is not valid TOML (line 3, column 1)"). A `[variables]` entry that isn't a colour,
+a text style or `auto NN%` is dropped with a warning instead, the same as Save.
+`auto NN%` is kept on `text`, `text-muted`, `text-disabled`, `link-color`,
+`link-color-hover`, `block-cursor-foreground` and `button-color-foreground`, and
+on a name the app does not use; every other built-in name drops it. A text style
+on a built-in colour name is dropped too, and so is a colour on a built-in
+text-style name such as `link-style`. Importing a name you already have asks first ("Replace the saved
 theme '\<Name\>' (\<file\>.toml)?"); Cancel leaves the existing file byte-for-byte
 unchanged. On success the picker highlights the new theme and shows
 "Imported '\<name\>'".
@@ -1321,12 +1325,18 @@ theme's extra readability colours (muted text, footer keys, input selection)
 through Try, Save and Export — they are stored in a `[variables]` table in
 the TOML. They are tuned for that palette, so once you change any base
 colour or the dark flag they are dropped and derived from your colours
-instead. A `[variables]` entry that is not a colour (or `auto NN%`, or a text
-style) is skipped with a warning when the theme loads. `auto NN%` is kept only
-on a text colour such as `text` or `text-muted`; on a name the app paints as a
-background or a border (`surface-lighten-2`, `block-cursor-blurred-background`,
-`primary`, `text-primary` and the like) it is skipped the same way, and the
-theme's own colours are used. **Back** — or **Esc**
+instead. A `[variables]` entry that is not a colour, a text style or `auto NN%`
+is skipped with a warning when the theme loads. `auto NN%` is kept on `text`,
+`text-muted`, `text-disabled`, `link-color`, `link-color-hover`,
+`block-cursor-foreground` and `button-color-foreground`, and on a name the app
+does not use. Every other built-in name drops it (`surface-lighten-2`,
+`block-cursor-blurred-background`, `primary`, `text-primary`, and also names
+that read like a text colour, such as `footer-key-foreground` or `scrollbar`),
+and the theme's own colour is used. A text style (`bold`, `italic`,
+`underline`, `reverse`, `strike`, `dim` or `none`) is kept on a built-in
+text-style name (`link-style`, `link-style-hover` and the `…-text-style` names
+such as `block-cursor-text-style`) and on a name the app does not use; on a built-in colour
+name it is skipped, and so is a colour on a built-in text-style name. **Back** — or **Esc**
 twice (the first releases the field you're typing in, the second acts as
 Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard**, or **Save**
 (Escape stays) — the same prompt appears if you switch to a different

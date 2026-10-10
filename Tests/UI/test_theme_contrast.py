@@ -453,11 +453,13 @@ def test_user_saved_themes_get_visible_boundaries(tmp_path) -> None:
         ("surface-lighten-2", "#2a2a2a 50%", True),
         # Kept by sanitize_theme_variables, but no colour to measure.
         ("text", "auto 60%", True),
-        ("text", "bold", True),
-        # TASK-33003.16, rewritten on purpose (both were kept): 'auto NN%' on
-        # a name painted as a background is dropped.
+        ("link-style", "italic", True),
+        # TASK-33003.16, rewritten on purpose (all three were kept): 'auto NN%'
+        # on a name painted as a background is dropped, and so is a text style
+        # on a name painted as a colour (AC#4).
         ("block-cursor-blurred-background", "auto 30%", False),
         ("surface-lighten-2", "auto 50%", False),
+        ("text", "bold", False),
     ],
 )
 def test_user_theme_with_any_kept_variable_form_still_loads(
@@ -481,7 +483,7 @@ def test_user_theme_with_any_kept_variable_form_still_loads(
     )
     (theme,) = load_user_themes(tmp_path)
     assert theme.variables.get(name) == (value if kept else None)
-    if not (kept and value.startswith(("auto", "bold"))):
+    if not (kept and value.startswith("auto")):
         _assert_boundaries_visible(theme)
         _assert_button_focus_keeps_contrast(theme)
 
@@ -713,7 +715,6 @@ def test_user_theme_with_unmeasurable_surfaces_keeps_visible_guard_colours(
     (theme,) = load_user_themes(tmp_path)
     assert not _measurable(theme)
     _assert_guard_colours_visible(theme)
-
 
 
 @pytest.mark.bootstrap_profile

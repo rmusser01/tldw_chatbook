@@ -32,6 +32,7 @@ from pathlib import Path
 
 from textual.theme import BUILTIN_THEMES, Theme
 from textual.color import Color
+from textual.css.constants import VALID_STYLE_FLAGS
 
 
 #: Longest slice of untrusted file text (a key or value) quoted in a message.
@@ -426,17 +427,27 @@ class ThemeVariableDefaultsMixin:
 _VARIABLE_NAME = re.compile(r"[a-z0-9-]+")
 _TEXT_STYLES = frozenset({"bold", "italic", "underline", "reverse", "strike", "dim", "none"})
 _ALPHA_SUFFIX = re.compile(r"(.+) (\d{1,3})%")
+_GENERATED = Theme(name="_", primary="#000000").to_color_system().generate()
 #: TASK-33003.16: Textual's CSS takes 'auto NN%' as a text colour only; as a
 #: background or a border colour it is a stylesheet error. The names Textual
 #: itself sets to auto (text, text-muted, link-color, ...) are safe wherever
 #: a stylesheet uses them, and a name no stylesheet knows paints nothing.
-#: Every other name Textual generates, and the guard's own, may be painted as
-#: a background (this app paints text-primary as one), so auto is dropped there.
+#: Every other name Textual generates, and the guard's own, drops auto. That is
+#: a safe superset: about 20 of them are only ever a text or scrollbar colour
+#: (footer-key-foreground, scrollbar, ...) and could paint it, but a list by
+#: use needs a scan of every stylesheet, and a miss is a crash at startup
+#: (this app paints text-primary as a fill and as a border).
 _NO_AUTO_NAMES = frozenset(GUARD_VARIABLES) | {
-    name
-    for name, value in Theme(name="_", primary="#000000").to_color_system().generate().items()
-    if not str(value).startswith("auto")
+    name for name, value in _GENERATED.items() if not str(value).startswith("auto")
 }
+#: TASK-33003.16 AC#4: the names Textual generates as a text style (link-style,
+#: block-cursor-text-style, ...) take no colour, and every other generated
+#: name, and the guard's own, takes no text style: `color: bold` and
+#: `link-style: #ff0000` are stylesheet errors too.
+_STYLE_NAMES = frozenset(
+    name for name, value in _GENERATED.items() if set(str(value).split()) <= VALID_STYLE_FLAGS
+)
+_COLOUR_NAMES = (frozenset(GUARD_VARIABLES) | _GENERATED.keys()) - _STYLE_NAMES
 
 
 def _is_safe_variable_value(name: str, value: object) -> bool:
@@ -444,7 +455,9 @@ def _is_safe_variable_value(name: str, value: object) -> bool:
     if not isinstance(value, str) or not value or not value.isprintable():
         return False
     if all(word in _TEXT_STYLES for word in value.split(" ")):
-        return True
+        return name not in _COLOUR_NAMES
+    if name in _STYLE_NAMES:
+        return False
     match = _ALPHA_SUFFIX.fullmatch(value)
     if match and match.group(1) == "auto":
         return name not in _NO_AUTO_NAMES
@@ -465,7 +478,9 @@ def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
     Kept: lowercase-hyphen names whose value is a colour (optionally
     ``" NN%"``), space-separated text-style keywords, or ``"auto NN%"`` on a
     name that can take it (TASK-33003.16: not one a stylesheet may paint as
-    a background, ``_NO_AUTO_NAMES``).
+    a background, ``_NO_AUTO_NAMES``). A value of the wrong kind for a name
+    Textual generates is dropped too: a text style on a colour name
+    (``_COLOUR_NAMES``), a colour on a text-style name (``_STYLE_NAMES``).
 
     Args:
         variables: The raw ``[variables]`` table from a theme file.
