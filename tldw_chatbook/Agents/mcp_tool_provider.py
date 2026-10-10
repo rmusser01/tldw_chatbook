@@ -555,7 +555,7 @@ class MCPToolProvider:
         self._entry_by_llm_name: dict[str, tuple[HubTool, EffectiveToolState]] = {}
         self._not_connected_count = 0
         # TASK-33620.15.1: ``((profile_id, plugin_owned, is_connected), ...)``
-        # as ``compose_catalog`` last saw them; None until it has run.
+        # as ``compose_catalog`` last saw them; None for an incomplete composition.
         self.composed_servers: tuple[tuple[Any, bool, bool], ...] | None = None
         self._init_decision_state()
 
@@ -693,6 +693,9 @@ class MCPToolProvider:
                         )
                     ]
                 hub_tools.extend(builtin_tools)
+            else:
+                # Keep this run usable, but retry an incomplete inventory next run.
+                self.composed_servers = None
 
         effective = self._service.effective_tool_states(
             hub_tools, **self._profile_kwargs()
