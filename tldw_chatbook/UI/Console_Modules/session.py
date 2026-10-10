@@ -6518,41 +6518,102 @@ class ConsoleSessionController:
     ) -> object:
         """Route a pre-dispatch card action; a cancelled hold refills the composer."""
 
+        from ...Chat.console_unsent_turn import (
+            card_action_finished,
+            card_action_started,
+            shelf_releasable,
+        )
+
         controller = self._ensure_console_chat_controller()
         held = controller.trace_call_recovery_preparation()
+        # TASK-33621.20: a paused send the unsent-turn shelf also lists (a
+        # Library pause, or a send that re-paused): one surface at a time.
+        releasable = shelf_releasable(held, preparation_id)
+        runtime = self._console_runtime_accessor() if releasable else None
         # TASK-34350: read the held text BEFORE the action: the UI sync that
         # follows it mirrors the (empty) composer back into the session draft.
         held_text = (
             held.executed_draft
             if held is not None
             and held.preparation_id == preparation_id
-            and controller.context_compaction_hold(preparation_id) is not None
+            and (
+                releasable
+                or controller.context_compaction_hold(preparation_id) is not None
+            )
             else ""
         )
-        result = await self._read_trace_recovery_dispatch()(
-            controller,
-            action,
-            preparation_id,
-            on_started=self._read_trace_recovery_started(),
-            on_finished=self._read_trace_recovery_finished(),
-        )
+        sync_ui = self._read_trace_recovery_finished()
+        if releasable:
+            card_action_started(runtime, preparation_id)
+            await sync_ui()  # the shelf stops offering the send right away
+        try:
+            result = await self._read_trace_recovery_dispatch()(
+                controller,
+                action,
+                preparation_id,
+                on_started=self._read_trace_recovery_started(),
+                on_finished=self._read_trace_recovery_finished(),
+            )
+        except BaseException:
+            if releasable:
+                card_action_finished(
+                    runtime,
+                    controller,
+                    preparation_id,
+                    accepted=False,
+                    return_to_composer=False,
+                )
+            raise
         composer = self._console_composer_or_none()
-        if (
+        now_held = controller.trace_call_recovery_preparation()
+        settled = bool(held_text) and (
+            not shelf_releasable(now_held, preparation_id)
+            if releasable
+            else controller.context_compaction_hold(preparation_id) is None
+        )
+        refill = (
             action == "cancel"
-            and held_text
-            and controller.context_compaction_hold(preparation_id) is None
+            and settled
             and composer is not None
             and not composer.draft_text().strip()
-        ):
+        )
+        if releasable:
+            returned = card_action_finished(
+                runtime,
+                controller,
+                preparation_id,
+                accepted=bool(getattr(result, "accepted", False)),
+                return_to_composer=refill,
+            )
+            if returned is not None:
+                held_text = returned.draft  # with its attachments restaged
+        if refill:
             # Cancel puts the held message back where it came from.
             composer.load_draft(held_text)
+        if releasable:
+            await sync_ui()  # the shelf (and the staged attachments) settled
         return result
 
     def _console_trace_recovery_state(self) -> Any:
         """Project the active pre-dispatch pause, with a context hold's numbers."""
 
+        from ...Chat.console_turn_preparation import (
+            ConsolePreparationPauseKind,
+            library_pause_copy,
+        )
+
         controller = self._ensure_console_chat_controller()
         preparation = controller.trace_call_recovery_preparation()
+        # TASK-33621.20: only a Library-paused send has a reason to look up
+        # and pass on (why its search stopped).
+        library: dict[str, str] = {}
+        if (
+            getattr(preparation, "pause_kind", None)
+            is ConsolePreparationPauseKind.RETRIEVAL
+        ):
+            outcome = controller.preparation_outcome(preparation.preparation_id)
+            code = getattr(outcome, "error_code", None)
+            library["library_reason"] = library_pause_copy(code)
         return self._read_trace_recovery_state()(
             preparation,
             context_hold=(
@@ -6560,4 +6621,5 @@ class ConsoleSessionController:
                 if preparation is not None
                 else None
             ),
+            **library,
         )
