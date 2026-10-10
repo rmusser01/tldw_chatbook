@@ -373,8 +373,12 @@ class ChatbookCreationWindow(ModalScreen):
             if items
         }
 
-        # Create chatbook in background
-        self.app.notify(f"Creating chatbook '{name}'...", severity="information")
+        # Create chatbook in background. markup=False: `name` is the
+        # user-typed chatbook name and App.notify parses Rich markup by
+        # default -- a stray `[/]` would raise MarkupError (TASK-1513).
+        self.app.notify(
+            f"Creating chatbook '{name}'...", severity="information", markup=False
+        )
 
         try:
             success, message, _dependency_info = self.creator.create_chatbook(

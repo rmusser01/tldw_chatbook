@@ -192,6 +192,25 @@ variable is unset, which means off.
 - API keys from env/config only, never logged
 - Sanitize HTML/Markdown content
 
+### Markup in notify / tooltips / Button labels (TASK-1513)
+
+`App.notify()`, widget `tooltip` strings, and `Button(label=…)` all parse Rich
+markup by default; an interpolated user-derived value containing `[/]` or
+`[b]` raises `MarkupError` at render time and can crash the app. One
+convention per seam:
+
+- `notify()` calls that interpolate runtime text pass `markup=False` (the
+  message renders literally; no escaping needed).
+- Tooltips and Button labels wrap every interpolated runtime value in
+  `escape_markup(...)` from `tldw_chatbook/Utils/input_validation.py` (they
+  have no `markup=False` seam).
+
+Guard: `python scripts/check_markup_interpolation.py` ratchets every
+remaining unescaped site in `scripts/markup_interpolation_census.tsv`; a NEW
+interpolated site fails preflight until it escapes (or passes
+`markup=False`). Existing pinned rows are migration work items, not
+approvals.
+
 ### Performance Rules
 
 - Workers for operations >100ms

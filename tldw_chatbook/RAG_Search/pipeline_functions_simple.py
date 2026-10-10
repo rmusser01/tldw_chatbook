@@ -45,6 +45,13 @@ from .semantic_availability import (
 #: Key under which pipeline diagnostics record scope-enforcement state
 #: (mirrors semantic_availability.SEMANTIC_DIAGNOSTICS_KEY's pattern).
 SCOPE_DIAGNOSTICS_KEY = "scope"
+
+#: TASK-407: content-prefix length the media FTS leg attaches to each hit.
+#: Must stay above ``deduplicate_results``' 200-char key so distinct media
+#: documents keep distinct dedup keys; bounded so multi-megabyte transcripts
+#: are never hauled off disk for a dedup key + context snippet.
+_MEDIA_SNIPPET_PREFIX_CHARS = 500
+
 _SEMANTIC_SOURCE_ALIASES = {
     "media": "media",
     "media_db": "media",
@@ -203,14 +210,29 @@ async def search_media_fts5(
     else:
         media_items = media_results
 
+    media_ids = [item.get("id") for item in media_items if item.get("id")]
+
     # Fetch keywords if needed
     keywords_map = {}
-    if media_items and keyword_filter:
-        media_ids = [item.get("id") for item in media_items if item.get("id")]
-        if media_ids:
-            keywords_map = await asyncio.to_thread(
-                app.media_db.fetch_keywords_for_media_batch, media_ids
-            )
+    if media_ids and keyword_filter:
+        keywords_map = await asyncio.to_thread(
+            app.media_db.fetch_keywords_for_media_batch, media_ids
+        )
+
+    # TASK-407: search_media_db's broad row carries no ``content`` key (full
+    # transcripts are deliberately kept out of the search SELECT), which used
+    # to leave every media hit with content="" -- and deduplicate_results'
+    # content-prefix key then collapsed ALL unscoped media results into one.
+    # One batched SQL-side substr fetch gives each hit a bounded, distinct
+    # snippet (500 chars > the dedup key's 200); rows with no content fall
+    # back to their title so the degenerate shape can never re-collapse.
+    content_map: Dict[int, str] = {}
+    if media_ids:
+        content_map = await asyncio.to_thread(
+            app.media_db.fetch_content_prefixes_for_media_batch,
+            media_ids,
+            _MEDIA_SNIPPET_PREFIX_CHARS,
+        )
 
     # Convert to SearchResult objects
     results = []
@@ -229,7 +251,9 @@ async def search_media_fts5(
                 source="media",
                 id=str(item.get("id", "")),
                 title=item.get("title", "Untitled"),
-                content=item.get("content", ""),
+                content=content_map.get(item.get("id"))
+                or item.get("title")
+                or "",
                 metadata={
                     "type": item.get("type", "unknown"),
                     "author": item.get("author", "Unknown"),
@@ -615,12 +639,24 @@ async def search_semantic(
 
 
 def deduplicate_results(results: List[SearchResult]) -> List[SearchResult]:
-    """Remove duplicate results based on content similarity."""
+    """Remove duplicate results based on content similarity.
+
+    TASK-407: the key is ``(source, content[:200])`` -- NOT a bare content
+    prefix. A bare prefix had two failure modes: content-less results (every
+    media hit before the media leg attached snippets, since search_media_db's
+    broad row omits ``content``) all shared the empty-string key and collapsed
+    into one; and once media hits carried real snippets, a media item and a
+    note that happen to share text (same transcript ingested as both) also
+    collapsed, eating a distinct result. Identical content within ONE source
+    is still a true duplicate -- the same document found by two legs (e.g.
+    FTS and the vector leg both report ``source="media"``) -- while identical
+    content across sources is two distinct results for the user.
+    """
     seen = {}
 
     for result in results:
-        # Use first 200 chars of content as key
-        key = result.content[:200]
+        # Use source + first 200 chars of content as key
+        key = (result.source, result.content[:200])
 
         if key not in seen or result.score > seen[key].score:
             seen[key] = result
