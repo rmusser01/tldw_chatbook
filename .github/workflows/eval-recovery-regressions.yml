@@ -76,13 +76,13 @@ jobs:
           New-Item -ItemType Directory -Path $evalTemp -Force | Out-Null
           "TEMP=$evalTemp" >> $env:GITHUB_ENV
           "TMP=$evalTemp" >> $env:GITHUB_ENV
-          "TMPDIR=$evalTemp" >> $env:GITHUB_ENV
       - name: Verify override classification and recovery lifetimes
         working-directory: ${{ env.EVAL_SOURCE_ROOT }}
         run: >-
           python -m Tests.windows_private_fixture_runner
           Tests/Backup_Recovery/test_eval_private_overrides.py
           Tests/Backup_Recovery/test_pending_directory_durability.py
+          Tests/Backup_Recovery/test_profile_launch_environment.py
           Tests/test_subprocess_pipes.py
           Tests/Backup_Recovery/test_eval_retained_definitions.py
           Tests/Backup_Recovery/test_eval_selective_retention.py
