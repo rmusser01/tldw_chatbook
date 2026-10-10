@@ -61,6 +61,7 @@ from tldw_chatbook.Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
     effective_provider_endpoint,
     generic_endpoint_differs,
+    meaningful_adapter_base_url,
     normalize_generic_endpoint_for_compare,
     provider_uses_endpoint,
     unsaved_endpoint_copy,
@@ -2940,6 +2941,15 @@ def _adapter_api_base_url(resolution: ConsoleProviderResolution) -> str | None:
     if resolution.execution_key == "custom-hosted":
         base_url = base_url.rstrip("/").removesuffix("/chat/completions")
     return base_url or None
+
+
+def _meaningful_adapter_base_url(
+    resolution: ConsoleProviderResolution,
+) -> str | None:
+    """TASK-2117 conditional endpoint pin; see ``meaningful_adapter_base_url``."""
+    return meaningful_adapter_base_url(
+        resolution.execution_key, _adapter_api_base_url(resolution)
+    )
 
 
 class ConsoleProviderGateway:
@@ -7362,6 +7372,12 @@ class ConsoleProviderGateway:
             # was resolved and capability-checked. Ordinary Console sends have
             # no response_format and retain their existing adapter behavior.
             kwargs["api_base_url"] = _adapter_api_base_url(resolution)
+        elif _meaningful_adapter_base_url(resolution) is not None:
+            # TASK-2117: the remaining first-party cloud adapters get the
+            # resolved endpoint pinned whenever it carries a configured or
+            # session-selected URL (unconditional forwarding would shadow the
+            # adapters' own fallbacks in the default case -- see helper).
+            kwargs["api_base_url"] = _meaningful_adapter_base_url(resolution)
         if (
             resolution.execution_key in _ENGINE_EXECUTION_KEYS
             and request.continuation_groups
@@ -7455,6 +7471,11 @@ class ConsoleProviderGateway:
             kwargs["api_base_url"] = _adapter_api_base_url(resolution)
             if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
                 kwargs["api_key_resolved"] = True
+        elif _meaningful_adapter_base_url(resolution) is not None:
+            # TASK-2117: mirror the prepared-path conditional pin here so the
+            # three kwargs builders agree for these providers (the auxiliary
+            # path already pins unconditionally).
+            kwargs["api_base_url"] = _meaningful_adapter_base_url(resolution)
         return {key: value for key, value in kwargs.items() if value is not None}
 
     @staticmethod

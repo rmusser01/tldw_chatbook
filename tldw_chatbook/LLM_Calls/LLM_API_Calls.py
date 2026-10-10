@@ -4613,6 +4613,12 @@ def chat_with_huggingface(
     # Remove None values from payload before sending, common practice
     payload = {k: v for k, v in payload.items() if v is not None}
 
+    # TASK-2122: OpenAI-semantics endpoints only send streamed usage when
+    # asked. The degrade-retry below covers strict OpenAI-compatible servers
+    # that 400 on the unknown body field.
+    if final_streaming_payload_val:
+        payload["stream_options"] = {"include_usage": True}
+
     if is_sensitive_llm_request():
         logger.debug(
             "HuggingFace request metadata: "
@@ -4669,6 +4675,29 @@ def chat_with_huggingface(
                     timeout=timeout_seconds,
                     verify=requests_verify(),
                 )
+                if (
+                    response.status_code == 400
+                    and "stream_options" in payload
+                    and "stream_options" in (response.text or "")
+                ):
+                    # TASK-2122: mirror the OpenAI path's degrade retry -- a
+                    # strict OpenAI-compatible server may reject the field;
+                    # usage reporting is dropped, streaming proceeds.
+                    logger.warning(
+                        "HuggingFace: endpoint rejected stream_options; "
+                        "retrying without usage reporting."
+                    )
+                    retry_payload = {
+                        k: v for k, v in payload.items() if k != "stream_options"
+                    }
+                    response = session.post(
+                        api_url,
+                        headers=headers,
+                        json=retry_payload,
+                        stream=True,
+                        timeout=timeout_seconds,
+                        verify=requests_verify(),
+                    )
             response.raise_for_status()
 
             # Log streaming success metrics
@@ -4688,48 +4717,85 @@ def chat_with_huggingface(
             )
 
             def stream_generator_huggingface():
+                # TASK-2122: relay OpenAI-shaped SSE data lines (the HF
+                # router speaks chat.completions), NOT bare text strings --
+                # the Console gateway parses usage only out of ``data:``
+                # chunks, and the provider's trailing usage frame (requested
+                # via stream_options above) must reach it verbatim.
                 try:
                     for line_bytes in response.iter_lines():
                         if line_bytes:
-                            decoded_line = line_bytes.decode("utf-8").strip()
+                            decoded_line = (
+                                line_bytes.decode("utf-8")
+                                if isinstance(line_bytes, bytes)
+                                else str(line_bytes)
+                            ).strip()
                             if not decoded_line:
                                 continue  # Skip empty keep-alive lines
 
-                            # logger.debug(f"HF Stream raw line: {decoded_line}")
                             if decoded_line.startswith("data:"):
-                                data_content = decoded_line[len("data:") :].strip()
-                                if data_content == "[DONE]":
+                                if decoded_line[len("data:") :].strip() == "[DONE]":
                                     logger.debug(
                                         "HuggingFace stream received [DONE] marker."
                                     )
                                     break
-                                try:
-                                    chunk_json = json.loads(data_content)
-                                    delta_content = (
-                                        chunk_json.get("choices", [{}])[0]
-                                        .get("delta", {})
-                                        .get("content")
-                                    )
-                                    if delta_content:
-                                        yield delta_content
-                                    # Consider if other parts of the chunk are needed, e.g., finish_reason in delta
-                                    # For now, just yielding content as per OpenAI's typical text stream delta.
-                                except json.JSONDecodeError:
-                                    logger.warning(
-                                        f"HuggingFace stream: JSON decode error for data: '{safe_llm_error_detail(data_content)}'"
-                                    )
+                                # Pass the provider's chunk line through.
+                                yield (
+                                    decoded_line
+                                    if decoded_line.endswith("\n")
+                                    else decoded_line + "\n"
+                                )
+                            else:
+                                logger.debug(
+                                    "HuggingFace stream: non-data line ignored."
+                                )
                 except requests.exceptions.ChunkedEncodingError as e_chunked:
                     logger.error(
                         f"HuggingFace stream: ChunkedEncodingError during streaming: {e_chunked}"
+                    )
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "error": {
+                                    "message": (
+                                        "Stream connection error: "
+                                        f"{e_chunked}"
+                                    ),
+                                    "type": "huggingface_stream_error",
+                                }
+                            }
+                        )
+                        + "\n\n"
                     )
                 except Exception as e_stream:
                     logger.opt(exception=True).error(
                         f"HuggingFace stream: Unexpected error during streaming: {e_stream}"
                     )
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "error": {
+                                    "message": f"Stream iteration error: {e_stream}",
+                                    "type": "huggingface_stream_error",
+                                }
+                            }
+                        )
+                        + "\n\n"
+                    )
                 finally:
                     if response:
                         response.close()  # Ensure response is closed
                     logger.debug("HuggingFace stream generator finished.")
+                # Exactly one trailing sentinel, emitted AFTER the finally --
+                # a consumer Stop closes this generator with GeneratorExit,
+                # and yielding inside ``finally`` would raise
+                # ``generator ignored GeneratorExit`` and skip the response
+                # close above (same ruling as the Cohere/OpenAI generators).
+                # The provider's own [DONE] was consumed as the terminator,
+                # so every completion ends with exactly one sentinel.
+                yield "data: [DONE]\n\n"
 
             return stream_generator_huggingface()
         else:  # Non-streaming

@@ -169,6 +169,47 @@ def builtin_provider_endpoint(
     return _BUILTIN_PROVIDER_ENDPOINTS.get(provider_key)
 
 
+#: TASK-2117: first-party cloud providers whose adapters accept an
+#: ``api_base_url`` request pin but whose primary Console sends previously
+#: left the kwarg unset (the auxiliary path already pins it). Shared by the
+#: gateway kwargs builders and the trace verifier's independent
+#: reconstruction, so the two can never drift.
+CONDITIONAL_BASE_URL_EXECUTION_KEYS = frozenset(
+    {
+        "openai",
+        "cohere",
+        "deepseek",
+        "google",
+        "groq",
+        "huggingface",
+        "openrouter",
+    }
+)
+
+
+def meaningful_adapter_base_url(execution_key: str, base_url: str | None) -> str | None:
+    """Pin the resolved endpoint only when it carries real information.
+
+    TASK-2117: a resolution's ``base_url`` always carries SOMETHING -- the
+    builtin cloud default when neither a configured
+    ``[api_settings.<provider>].api_base_url`` nor a session-selected endpoint
+    exists. Forwarding that builtin would pin the adapter to a value it
+    already falls back to on its own, and would shadow endpoints configured
+    in the adapter's OWN legacy config section (``[google]``,
+    ``huggingface_api``) that today win when Console's canonical table is
+    empty. The kwarg is therefore forwarded only when the resolved endpoint
+    differs from the provider's shipped default -- i.e. exactly when a
+    configured or session-selected URL must reach the request.
+    """
+    if execution_key not in CONDITIONAL_BASE_URL_EXECUTION_KEYS:
+        return None
+    if not isinstance(base_url, str) or not base_url.strip():
+        return None
+    if base_url == builtin_provider_endpoint(execution_key):
+        return None
+    return base_url
+
+
 def _huggingface_router_mode(provider_settings: Mapping[str, object]) -> bool:
     return (
         str(
