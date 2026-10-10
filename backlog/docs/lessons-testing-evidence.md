@@ -9077,10 +9077,17 @@ polling for up to a second while the process is busy. Under load the bare
 into view before the snapshot was taken. A mounted probe showed it both ways:
 scroll inside the reveal window and the body went from 4 back to 0; let the
 reveal settle first, or disable it, and it stayed at 4. A pause has no upper
-bound short enough to mean "that timer has not fired yet". When a flaky test
-fails on a setup line, look for a timer the widget armed itself and let it
-settle (here `pause(0.12)` then `pause()`) before the test changes the state
-that timer corrects: 20 of 20 after, at a load average of 17.
+bound short enough to mean "that timer has not fired yet", and none long
+enough to mean "it has". The first fix waited `pause(0.12)` for the 0.06 s
+timer and measured 60 of 60; review sent it back, because a longer pause only
+narrows the race. When a flaky test fails on a setup line, look for a timer
+the widget armed itself, and wait for what that timer does before the test
+changes the state it corrects. Here the test records the modal's reveal calls
+and polls, bounded by wall clock, until the focused control's own reveal has
+run. One control tells the two fixes apart: stretch the timer to 0.2 s and the
+pause after the scroll to 0.3 s, which is what load does, made repeatable. The
+fixed-pause version then fails on the same precondition every time, and the
+polling version passes. 20 of 20 after.
 
 ## A tiered design's boundary must be probed with a shape the tiers disagree on (task-16839 fix round, 2026-08-20)
 

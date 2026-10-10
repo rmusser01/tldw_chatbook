@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from rich.cells import cell_len
 from textual import events
@@ -529,15 +531,32 @@ async def test_new_focus_supersedes_pending_suspended_anchor_and_is_revealed(
         await pilot.pause()
 
         body = modal.query_one("#console-settings-body", ScrollableContainer)
+        reveal_records = []
+        original_reveal = modal._reveal_focused_control
+
+        def record_reveal(widget, generation):
+            reveal_records.append((widget, modal.focused))
+            original_reveal(widget, generation)
+
+        monkeypatch.setattr(modal, "_reveal_focused_control", record_reveal)
+
+        async def wait_for_reveal(widget) -> None:
+            """Poll, bounded by wall clock, until the modal reveals ``widget``."""
+            deadline = time.monotonic() + 10
+            while (widget, widget) not in reveal_records:
+                assert time.monotonic() < deadline, f"no reveal for #{widget.id}"
+                await pilot.pause(0.01)
+
         # TASK-33006.4: Change and Temperature replace the deleted pickers
         # as two distinct restorable targets.
-        modal.query_one("#console-settings-model-change").focus()
-        # TASK-33006.24: let Change's own focus reveal (a 0.06 s timer) run
-        # before scrolling away from it. Scrolling inside that window raced
-        # the pause below: whenever the pause outlasted the timer, the reveal
-        # scrolled Change back into view and the anchor was 0 (5 of 20 runs).
-        await pilot.pause(0.12)
-        await pilot.pause()
+        change = modal.query_one("#console-settings-model-change")
+        change.focus()
+        # TASK-33006.24: focusing arms Change's own reveal (a 0.06 s timer).
+        # Scrolling away before it ran raced the pause below: whenever the
+        # pause outlasted the timer, the reveal scrolled Change back into view
+        # and the anchor was 0 (5 of 20 runs). Wait for the reveal itself; a
+        # fixed pause only narrows the race.
+        await wait_for_reveal(change)
         body.scroll_to(y=7, animate=False)
         await pilot.pause()
         snapshot = modal.capture_suspended_draft()
@@ -548,17 +567,9 @@ async def test_new_focus_supersedes_pending_suspended_anchor_and_is_revealed(
         modal._restore_suspended_scroll_and_focus(snapshot)
         assert modal._pending_suspended_scroll_restore is not None
 
-        reveal_records = []
-        original_reveal = modal._reveal_focused_control
-
-        def record_reveal(widget, generation):
-            reveal_records.append((widget, modal.focused))
-            original_reveal(widget, generation)
-
-        monkeypatch.setattr(modal, "_reveal_focused_control", record_reveal)
         new_target = modal.query_one("#console-settings-base-url", Input)
         new_target.focus()
-        await pilot.pause(0.12)
+        await wait_for_reveal(new_target)
         await pilot.pause()
 
         assert app.focused is new_target
