@@ -574,6 +574,11 @@ If a save is blocked — most commonly a title that starts or ends with a
 space — Escape does not leave silently: it notifies "Can't leave yet — fix
 the title or press Discard new note." so there is always a visible way
 forward, either fixing the field or discarding a still-new note.
+Clicking another destination in the nav bar while a save is blocked shows
+the same reason with the destination named ("Can't open Console yet: Title
+begins or ends with whitespace — remove it to save."), keeps Library
+highlighted, and the next click on that destination goes through once the
+field is fixed.
 
 After a confirmed delete, the receipt stays in the Notes list until you
 choose **Undo**, choose **Dismiss**, complete a newer note deletion, or leave

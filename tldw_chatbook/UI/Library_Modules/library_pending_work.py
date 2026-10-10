@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from ...Library.library_notes_session import NoteFlushOutcome, NoteFlushOutcomeKind
 from ...Widgets.confirmation_dialog import confirm_quit_discarding_edits
 from .screen_constants import LIBRARY_NOTE_BLANK_SEED_TITLE
 
@@ -252,6 +253,81 @@ def _veto_reason(screen: LibraryScreen) -> str:
     ):
         return f"These changes could not be saved: {status}"
     return "These changes are not saved."
+
+
+#: The head of every Esc-path veto sentence in
+#: ``_library_note_editor_exit_veto_message`` (TASK-34000.29 owns that copy).
+_ESC_VETO_HEAD = "Can't leave yet — "
+
+
+def library_note_flush_veto_notice(
+    outcome: NoteFlushOutcome, *, destination: str
+) -> str:
+    """The toast for a Notes flush veto behind a nav-bar click (TASK-34000.27).
+
+    Review S-17: the veto used to be silent on this path, and N-25: the Esc
+    path's validation sentence blamed the title for every veto.
+
+    Args:
+        outcome: The typed barrier result the flush refused with.
+        destination: The clicked destination's nav-bar label (``"Console"``);
+            empty when the caller does not know where the user was going.
+
+    Returns:
+        ``"Can't open <destination> yet: <the save's own message>"`` for a
+        validation veto -- that message already names the field and the fix
+        ("Title …", "Keywords …"), so a keyword veto never blames the title.
+        Every other refusing kind reuses the Esc path's sentence
+        (``_library_note_editor_exit_veto_message``) with the destination in
+        its head, so the two paths never say different things. Empty for
+        ``PERMITTED``.
+    """
+    if outcome.kind is NoteFlushOutcomeKind.PERMITTED:
+        return ""
+    head = _leave_head(destination)
+    message = outcome.message.strip()
+    if outcome.kind is NoteFlushOutcomeKind.VALIDATION_VETO and message:
+        return f"{head}: {message}"
+    # Lazy: the screen module imports this one lazily (its docstring says
+    # why), and the sentence table lives beside the Esc path that owns it.
+    from ..Screens.library_screen import _library_note_editor_exit_veto_message
+
+    sentence = _library_note_editor_exit_veto_message(outcome.kind)
+    if not sentence.startswith(_ESC_VETO_HEAD):
+        return sentence
+    return f"{head} — {sentence.removeprefix(_ESC_VETO_HEAD)}"
+
+
+def library_file_notes_flush_veto_notice(*, destination: str) -> str:
+    """The toast when a Folder-files draft refuses the flush (TASK-34000.27).
+
+    The workspace shows its own save state in place; this names the refusal
+    at the click, which used to get nothing.
+    """
+    return (
+        f"{_leave_head(destination)} — the open file in Folder files isn't "
+        "saved; check its status there first."
+    )
+
+
+def library_prompt_mutation_veto_notice(*, destination: str) -> str:
+    """The toast when a prompt-collection mutation refuses the flush."""
+    return (
+        f"{_leave_head(destination)} — a prompt collection change is still in "
+        "progress; wait for it to finish."
+    )
+
+
+def notify_library_flush_veto(screen: LibraryScreen, text: str) -> None:
+    """Show one flush-veto toast through the app, when it can show one."""
+    notify = getattr(screen.app_instance, "notify", None)
+    if text and callable(notify):
+        notify(text, severity="warning")
+
+
+def _leave_head(destination: str) -> str:
+    destination = destination.strip()
+    return f"Can't open {destination} yet" if destination else "Can't leave yet"
 
 
 def _unsaved_names(screen: LibraryScreen) -> list[str]:
