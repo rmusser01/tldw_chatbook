@@ -182,6 +182,52 @@ dev closes the receipt *before* it restores, so the two numbers timed
 different things. Time both arms to the same user-visible end state (rows
 back and the receipt gone), n>=3 each, and report ranges for both.
 
+## Preserve stderr without blocking the observed child
+
+**TASK-34408, 2026-10-04.** After replacing unsupported Windows `select(pipe)`,
+uncertainty fixtures still timed out before their first stdout marker. A matched
+child with stderr captured to an owned file completed and preserved 4,992 bytes
+of diagnostics; the original unread stderr pipe blocked that child. The new real
+pipe regression writes 120 KB to stderr before its response and verifies both
+the response and the complete diagnostic output.
+
+Use non-consuming native readiness for stdout and an owned file for stderr when
+a test intentionally leaves diagnostics unread while controlling the child.
+Preserve kill/wait/close cleanup and the original absence assertions. A blocked
+logging channel can look like a product lock failure, even with correct readiness.
+
+## A passed mkdir does not prove its parent barrier completed
+
+**TASK-34408, 2026-10-04.** Native Windows publication tried to flush unchanged
+`C:\Users` and received WinError 5. Removing that ancestor loop passed the ordinary
+path, but review reproduced a creator dying after mkdir and before the parent
+flush: retry would adopt the existing directory without proving the missing
+barrier. A write-rights probe could not distinguish that interruption after
+permissions changed. The final regression kills a real creator at that boundary,
+changes the next attempt's rights, and verifies refusal on its surviving intent.
+
+Durably record intent before mutation and bind mutation, its barrier and intent
+retirement to the same native parent. An identity-bound receipt can narrow later
+barriers only after creation settles. Keep uncertified legacy operations on their
+existing barriers; current permissions are not evidence about a previous write.
+
+## Native Windows private-path tests need a private temporary ancestor
+
+**TASK-34407, 2026-10-04.** The Eval config regression initially failed before
+collection with `recovery_scope_uncertain` in the restricted executor. Running
+as the original user still failed: the ordinary `%TEMP%` directory carried a
+Codex sandbox Modify grant, projected by the native facade as mode `0o766`.
+Pytest's per-test private leaves could not make that ancestor private. A disposable
+directory directly under the original user's home, selected as child `TEMP` and
+`TMP`, allowed the real native checks to run; the final Eval set passed 29 tests.
+The root conftest continued to isolate HOME/USERPROFILE and config selectors.
+
+**What to do.** Check the exact rejected ancestor before diagnosing a private-path
+test failure. Use a disposable private test root and the ordinary test isolation;
+do not replace native admission or relax ACL checks to make collection pass.
+Separate later POSIX-only assertions or native publication failures from the
+evidence for the changed feature, and report those verification limits.
+
 ## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
 
 **TASK-14876 audit, 2026-09-30.** Checking whether the 2026-08-09 xdist
@@ -19339,3 +19385,9 @@ putting the irrelevant passage first made the smoke witness an actual reorder.
 
 **What to do.** Satisfy every earlier guard before testing a later one, place a
 bad item outside any selected subset, and start ordering tests out of order.
+
+## Profile selection can erase a qualified Windows snapshot temp parent (PR #3018)
+
+**Incident, 2026-10-10.** The expanded retained-Eval full-App fixture passed on Linux and macOS but Windows rebackup reported operational_validation_unavailable, core_validation_unavailable and recovered_validation_unavailable for restored SQLite owners. Preserved item metadata and direct validator results traced their shared preview snapshot path. CI selected a private parent through TEMP/TMP; select_profile rebuilt the environment with an allowlist that kept TMPDIR but dropped TEMP/TMP. Passing the same private parent through the existing TMPDIR selector and asserting the selected parent made all 75 Windows cases pass (one FIFO capability skip). The native launch-selector regression then reproduced two failures for TEMP/TMP and passed all five home/temp cases after those platform selectors were added; provider and app overrides stayed excluded.
+
+**What to do.** Before treating several unavailable owner labels as separate schema or custody defects, preserve full fresh-child output and inspect the environment after profile selection. Verify tempfile's actual parent under that selected environment. Keep native ancestry and SQLite guards intact; repair selector loss rather than relaxing validation. The same run also showed why a full-App parent deadline must budget for cold startup separately from the capture watchdog: more than 30 seconds elapsed before a 30-second capture watchdog started inside a child with a 45-second overall deadline.

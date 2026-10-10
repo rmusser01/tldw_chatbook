@@ -486,14 +486,16 @@ def _original_definition_paths(
     from tldw_chatbook.Backup_Recovery.journal import _Rollback
     from tldw_chatbook.Backup_Recovery.restore_plan import _ancestor
 
-    from . import _default_config_path
+    from . import _override_config_path
 
     target = plan.target
     # Scoped plans may record unrelated absent stores. The exact included Eval
     # rows still require selector, preservation/rollback, and native-root proof.
     if target is None or not target.complete and not plan.effective_groups:
         raise ValueError("eval_retained_originals_unverified")
-    unselected = bool(plan.effective_groups) and "evaluations" not in plan.effective_groups
+    unselected = (
+        bool(plan.effective_groups) and "evaluations" not in plan.effective_groups
+    )
     configs = {
         item.logical_id
         for item in target.items
@@ -528,8 +530,11 @@ def _original_definition_paths(
         if preserved_only and (item.logical_id, item.path) not in plan.preserve:
             continue
         path = item.path
-        if path == _default_config_path() and (
-            preserved_only or unselected and (item.logical_id, path) in plan.preserve
+        if path == _override_config_path(selector) and (
+            item.status == "unused"
+            or preserved_only
+            or unselected
+            and (item.logical_id, path) in plan.preserve
         ):
             # Native discovery already declares the installed canonical file;
             # it is not an extra source authorized by this recovery copy.
@@ -577,25 +582,34 @@ class _DefinitionsAdapter:
 
     def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
         context = discovery_context(config)
-        # Exact EvalConfigLoader default; never inspect arbitrary parents/home or
-        # import its YAML/runtime bootstrap during declaration discovery.
+        # Exact private Eval selector; no runtime bootstrap or package writes.
         import hashlib
 
-        from . import _default_config_path
+        from . import _override_config_path
 
-        path = _default_config_path()
+        path = _override_config_path(context.config_path)
         paths = [("", path)]
         for logical_id, retained in _retained_definition_paths(context):
             if retained not in {value for _, value in paths}:
                 paths.append(
                     (hashlib.sha256(logical_id.encode()).hexdigest(), retained)
                 )
+
+        def status(local_id, selected):
+            try:
+                selected.lstat()
+                return "included" if selected.is_file() else "missing_required"
+            except FileNotFoundError:
+                return "missing_required" if local_id else "unused"
+            except OSError:
+                return "unavailable"
+
         return tuple(
             StorageItem(
                 self.owner_id,
                 storage_logical_id(context, self.owner_id, local_id),
                 selected,
-                "included" if selected.is_file() else "missing_required",
+                status(local_id, selected),
                 (storage_logical_id(context, "config"),),
             )
             for local_id, selected in paths

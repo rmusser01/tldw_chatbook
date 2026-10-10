@@ -33,13 +33,13 @@ def binding(source):
     """Return a source's actual selected durable root and installation posture."""
     cls = _class("Evals.config_loader", "EvalConfigLoader")
     if cls is not None and isinstance(source, cls):
-        from ..Evals import _default_config_path
+        from ..Evals import _override_config_path
 
         selected = lexical_path(source.config_path)
         return (
             "eval.definitions",
             selected,
-            type(source) is cls and selected == lexical_path(_default_config_path()),
+            type(source) is cls and selected == _override_config_path(),
         )
     module = sys.modules.get("tldw_chatbook.Notes.template_store")
     if module is not None and source is module:

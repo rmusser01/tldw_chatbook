@@ -1,10 +1,15 @@
 """Completed local generations retain inactive eval sources across rebackup."""
 
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+from threading import Event
 
+import pytest
+
+from Tests.Backup_Recovery import conftest as recovery_fixtures
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 from Tests.Backup_Recovery.test_temporary_media_capture import (
     _PUBLIC,
@@ -13,11 +18,27 @@ from Tests.Backup_Recovery.test_temporary_media_capture import (
 )
 
 
+helper_resource_root = recovery_fixtures.helper_resource_root
+
+# Windows startup/setup already uses over 30s of the 45s parent budget.
+# Keep the separate 30s capture watchdog while allowing cold startup.
+_FULL_APP_CHILD_TIMEOUT = 90 if os.name == "nt" else 45
+
+
 def _replace(source, old, new):
     assert source.count(old) == 1
     return source.replace(old, new)
 
 
+_RETAIN_PUBLIC = _replace(
+    _PUBLIC,
+    "from tldw_chatbook.app import TldwCli",
+    """from tldw_chatbook.Evals import _override_config_path
+private_eval = _override_config_path(selector)
+private_eval.write_text('budget: {default_limit: 7}\\n', encoding='utf-8')
+private_eval.chmod(0o600)
+from tldw_chatbook.app import TldwCli""",
+)
 _RETAIN_RESTORE = _replace(
     _RESTORE,
     "source.rename(source.with_name('source-home-removed'))",
@@ -38,19 +59,70 @@ assert (journal.root / 'restore-plan.json').is_file()
 shutil.rmtree(source)
 assert not source.exists()""",
 )
-_RETAIN_REOPEN = _REOPEN
+_RETAIN_REOPEN = _replace(
+    _REOPEN,
+    "definitions = [",
+    "assert len(receipt['eval_sources']) == 1\n    definitions = [",
+)
+
+
+_RETAIN_REOPEN = _replace(
+    _RETAIN_REOPEN,
+    "    assert preview.complete,",
+    """    if not preview.complete:
+        print('preview issues:', preview.issues, flush=True)
+        for item in preview.items:
+            print(item.owner, item.logical_id, item.status, item.path,
+                  'dependencies=', item.dependencies,
+                  'shared_group=', item.shared_group,
+                  'metadata=', item.metadata, flush=True)
+        from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+        from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
+        owners = {adapter.owner_id: adapter for adapter in install_adapters()}
+        diagnostic_owners = {'db.workspaces', 'db.agent_runs',
+                             'db.chachanotes.primary', 'db.subscriptions', 'recovered.media'}
+        with _preview_reads():
+            for item in preview.items:
+                if item.owner in diagnostic_owners and item.path is not None:
+                    try:
+                        reason = owners[item.owner].validate(item.path)
+                    except Exception as error:
+                        reason = type(error).__name__ + ': ' + str(error)
+                    print('validator:', item.owner, item.logical_id, reason, flush=True)
+    assert preview.complete,""",
+)
+
+
+_RETAIN_REOPEN = _replace(
+    _RETAIN_REOPEN,
+    "select_profile(receipt['profile'], home / 'control')",
+    """import tempfile
+owned_temp = Path(os.environ['TEMP']).resolve(strict=True) if os.name == 'nt' else None
+select_profile(receipt['profile'], home / 'control')
+if owned_temp is not None:
+    assert Path(os.environ['TEMP']).resolve(strict=True) == owned_temp
+    assert Path(os.environ['TMP']).resolve(strict=True) == owned_temp
+    assert Path(tempfile.gettempdir()).resolve(strict=True) == owned_temp""",
+)
 
 
 def test_complete_rebackup_retains_eval_after_source_and_candidate_removal(tmp_path):
     original = tmp_path / "original"
     original.mkdir()
-    _run(original, "temporary", "complete", script=_PUBLIC)
+    _run(
+        original,
+        "temporary",
+        "complete",
+        script=_RETAIN_PUBLIC,
+        timeout=_FULL_APP_CHILD_TIMEOUT,
+    )
     restored = tmp_path / "restored"
     restored.mkdir()
     _run(restored, str(original / "home"), "isolated", script=_RETAIN_RESTORE)
     environment = os.environ.copy()
     environment.update(
         HOME=str(restored / "home"),
+        USERPROFILE=str(restored / "home"),
         XDG_CONFIG_HOME=str(restored / "config"),
         XDG_DATA_HOME=str(restored / "data"),
         TLDW_CONFIG_PATH=str(restored / "config" / "config.toml"),
@@ -64,17 +136,11 @@ def test_complete_rebackup_retains_eval_after_source_and_candidate_removal(tmp_p
         capture_output=True,
         text=True,
         check=False,
-        timeout=45,
+        timeout=_FULL_APP_CHILD_TIMEOUT,
     )
     (tmp_path / "reopen.log").write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]
     assert "retired and reopened" in result.stdout
-
-
-import json
-from threading import Event
-
-import pytest
 
 
 @pytest.fixture(scope="module")
@@ -215,12 +281,15 @@ def test_committed_replacement_preserves_multiple_inactive_eval_sources(
     completed_replacement,
 ):
     from tldw_chatbook.Backup_Recovery.models import DISCOVERY_CONTEXT_KEY
-    from tldw_chatbook.Evals import _default_config_path
+    from tldw_chatbook.Evals import _override_config_path
     from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
 
     _, _, context, selected = completed_replacement
     items = _DefinitionsAdapter().discover({DISCOVERY_CONTEXT_KEY: context})
-    assert {item.path for item in items} == {_default_config_path(), *selected}
+    assert {item.path for item in items} == {
+        _override_config_path(context.config_path),
+        *selected,
+    }
     assert len({item.logical_id for item in items}) == 3
     assert all(item.dependencies == ("profile:destination:config",) for item in items)
 
@@ -253,7 +322,12 @@ def test_retained_mapping_requires_exact_current_local_evidence(
         original.rename(saved)
         try:
             if change == "alias":
-                original.symlink_to(saved)
+                try:
+                    original.symlink_to(saved)
+                except OSError as error:
+                    if getattr(error, "winerror", None) != 1314:
+                        raise
+                    pytest.skip("Windows file symlink privilege is unavailable")
                 with pytest.raises(ValueError):
                     _DefinitionsAdapter().discover(config)
             else:
@@ -317,7 +391,9 @@ def test_pending_recovery_refuses_retained_definition_lookup(completed_replaceme
         path.unlink()
 
 
-def test_retained_manifest_checks_native_owner_identity(completed_replacement, monkeypatch):
+def test_retained_manifest_checks_native_owner_identity(
+    completed_replacement, monkeypatch
+):
     from tldw_chatbook.Evals.recovery import _retained_definition_paths
     from tldw_chatbook.Utils import platform_files
 
@@ -342,7 +418,7 @@ def test_ordinary_profile_does_not_create_retained_authority(tmp_path, monkeypat
         DISCOVERY_CONTEXT_KEY,
         DiscoveryContext,
     )
-    from tldw_chatbook.Evals import _default_config_path
+    from tldw_chatbook.Evals import _override_config_path
     from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
 
     root = tmp_path / "absent-bootstrap"
@@ -355,5 +431,5 @@ def test_ordinary_profile_does_not_create_retained_authority(tmp_path, monkeypat
     assert [
         item.path
         for item in _DefinitionsAdapter().discover({DISCOVERY_CONTEXT_KEY: context})
-    ] == [_default_config_path()]
+    ] == [_override_config_path(selector)]
     assert not root.exists()

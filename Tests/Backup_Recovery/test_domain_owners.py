@@ -946,20 +946,24 @@ def test_registered_cohort_composition_discovers_one_shared_physical_payload(
     )
 
 
-def test_eval_default_definition_selector_is_shared_and_import_light():
-    from tldw_chatbook.Evals import _default_config_path
+def test_eval_default_definition_selector_is_shared_and_import_light(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Evals import _override_config_path
     from tldw_chatbook.Evals.recovery import recovery_adapters
     from tldw_chatbook.Evals.config_loader import EvalConfigLoader
 
+    selector = tmp_path / "profile.toml"
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selector))
     loader = EvalConfigLoader()
     item = recovery_adapters()[1].discover(
         {
             DISCOVERY_CONTEXT_KEY: DiscoveryContext(
-                Path("/isolated/profile.toml"), "fixture"
+                selector, "fixture"
             )
         }
     )[0]
-    assert item.path == loader.config_path == _default_config_path()
+    assert item.path == loader.config_path == _override_config_path(selector)
 
 
 def test_asset_reference_cannot_resolve_a_valid_identifier_prefix(study_store):

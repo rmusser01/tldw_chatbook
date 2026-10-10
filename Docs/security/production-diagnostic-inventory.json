@@ -996,7 +996,7 @@
     },
     {
       "call_count": 5,
-      "diagnostic_digest": "9e5b9d42e2e249466c38",
+      "diagnostic_digest": "c13f764db786ca828d01",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Evals/config_loader.py",
       "reason": "remaining Chatbook production diagnostic owner"

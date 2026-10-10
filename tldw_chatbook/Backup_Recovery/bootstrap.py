@@ -267,6 +267,27 @@ def _same_activation_generation(
     )
 
 
+def _validate_ancestry_record(root: Path, parent: int, record: dict) -> None:
+    """Require a creation receipt bound to this actual local directory."""
+    info = os.fstat(parent)
+    device = record.get("root_device")
+    valid_device = (
+        type(device) is int and device == info.st_dev  # noqa: E721 - JSON bool is not an integer
+        if os.name == "nt"
+        else device is None
+    )
+    if (
+        set(record) != {"version", "root_inode", "root_device", "root_path"}
+        or type(record["version"]) is not int  # noqa: E721 - JSON bool is not an integer
+        or record["version"] != 1
+        or type(record["root_inode"]) is not int  # noqa: E721 - JSON bool is not an integer
+        or record["root_inode"] != info.st_ino
+        or not valid_device
+        or record["root_path"] != os.path.normcase(str(root.resolve(strict=True)))
+    ):
+        raise ValueError("invalid_bootstrap_ancestry")
+
+
 def _control_records(
     root: Path, *, activation: bool = True
 ) -> tuple[list[dict], list[dict], list[dict]]:
@@ -315,6 +336,8 @@ def _control_records(
                     raise ValueError("invalid_activation_association")
                 _activation_witness(record["activation"])
                 activations.append(record)
+            elif name == "ancestry-settled.json":
+                _validate_ancestry_record(root, parent, record)
             elif name.startswith("pending-"):
                 if (
                     set(record)
