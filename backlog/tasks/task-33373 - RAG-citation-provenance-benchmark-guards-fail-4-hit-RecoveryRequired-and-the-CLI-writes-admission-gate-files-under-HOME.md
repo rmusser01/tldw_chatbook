@@ -1,17 +1,18 @@
 ---
 id: TASK-33373
-title: 'RAG citation-provenance benchmark guards fail: 4 hit RecoveryRequired and
-  the CLI writes admission gate files under HOME'
-status: In Progress
+title: >-
+  RAG citation-provenance benchmark guards fail: 4 hit RecoveryRequired and the
+  CLI writes admission gate files under HOME
+status: Done
 assignee: []
-created_date: 2026-09-28 20:12
-updated_date: 2026-10-03 15:24
+created_date: '2026-09-28 20:12'
+updated_date: '2026-10-10 20:34'
 labels:
-- testing
-- rag
-- backup-recovery
+  - testing
+  - rag
+  - backup-recovery
 dependencies:
-- TASK-33370
+  - TASK-33370
 priority: medium
 ---
 
@@ -75,6 +76,7 @@ All19 unique original cases passed across two nonoverlapping phases (12 painted-
 2026-10-03 current-dev qualification: The approved 25 compatibility selectors ran in four separate private processes for their existing fixture-owned profiles. All 27 actual cases passed at UI runtime ae2956966b2d712cc0e842dc4c69214ca1e70b0e, based on dev e355b58c1e95fe467e9161184c3341abc02feda3: Hooks reuse/refusal, mounted Settings, Console pause and durable recovery, database deletion/undo, canonical F9 source composition and changed budget guards. Zero failures, errors, skips or parent network attempts. The initial mixed invocation had three collection errors and ran no selected cases; its unsuccessful receipt is retained. Independent actual JUnit/source/import/byte-and-stat review passed: /private/tmp/backup-workstream-deve355-functional-review.md (JSON SHA256 85b970d775e35b2867d6c1380d747f1ebef4f1bc57b7441e8dcd3e314005a7ef). F9 composition is source-run evidence, not installed/native qualification; the earlier 19 Console cases retain runtime 0c78c1759ff094891230ca76cc31100b2dece6e3.
 
 Normal latest-dev carry: e355..f0ffcf9e819b577bd38c416f38550969c75fb5a0 changes seven Task records only, with no own-path overlap and no new runtime requirement solely for that delta. Independent addendum /private/tmp/backup-workstream-devf0ff-addendum.md passed. Normal rebase produced 01e6bcab14b4da91ab2108dc1c85caf684dbd9e7 with all 22 patches and 34 own blob/mode entries unchanged. Evidence will be committed normally; integration still requires review and fresh exact published-head CI. No full suite, native rerun, deadline change, numerical waiver or relabelled runtime receipt.
+PR review integration (2026-10-10): against locally integrated predecessor head 732d1de8c29ede5c03d0a0263d4f9cacf29e0321, runtime 02135a825e8252c90db02dc0a89f7614d64b62df passes all 331 tests in the 19 affected modules in 103.67 seconds, with one unchanged strict TASK-34700 shipped-throttle expected failure and one existing worker-thread warning. The hot-reload rebase preserves both native child helpers and explicit source selection; independent carry review cleared all 22 owned test/benchmark paths and both lesson additions. Derived-artifact preflight, undefined-name checks and whitespace checks pass. The existing app-quit isolation repair is retained. No full suite or new native/performance qualification is claimed; TASK-33560 remains separate. All acceptance criteria for these fixture/benchmark tasks are complete; exact-head protected CI remains the PR integration gate.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
@@ -95,6 +97,3 @@ Earlier reviewed432/777/benchmark phases and ba actual19 keep their source ident
 
 PR https://github.com/rmusser01/tldw_chatbook/pull/2955 remains In Progress pending fresh exact-published-head required CI, current reviews and protected integration. Separate TASK-33560 retains the approved admission performance/native/numerical gates.
 <!-- SECTION:FINAL_SUMMARY:END -->
-## Definition of Done
-<!-- DOD:BEGIN -->
-<!-- DOD:END -->

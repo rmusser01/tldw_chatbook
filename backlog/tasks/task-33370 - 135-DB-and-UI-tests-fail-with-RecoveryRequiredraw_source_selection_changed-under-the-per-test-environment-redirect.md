@@ -1,17 +1,18 @@
 ---
 id: TASK-33370
-title: 135 DB and UI tests fail with RecoveryRequired('raw_source_selection_changed')
+title: >-
+  135 DB and UI tests fail with RecoveryRequired('raw_source_selection_changed')
   under the per-test environment redirect
-status: In Progress
+status: Done
 assignee: []
-created_date: 2026-09-28 20:12
-updated_date: 2026-10-03 15:24
+created_date: '2026-09-28 20:12'
+updated_date: '2026-10-10 20:34'
 labels:
-- testing
-- backup-recovery
-- tech-debt
+  - testing
+  - backup-recovery
+  - tech-debt
 dependencies:
-- TASK-33260
+  - TASK-33260
 priority: high
 ---
 
@@ -106,6 +107,7 @@ All19 unique original cases passed across two nonoverlapping phases (12 painted-
 Normal latest-dev carry: e355..f0ffcf9e819b577bd38c416f38550969c75fb5a0 changes seven Task records only, with no own-path overlap and no new runtime requirement solely for that delta. Independent addendum /private/tmp/backup-workstream-devf0ff-addendum.md passed. Normal rebase produced 01e6bcab14b4da91ab2108dc1c85caf684dbd9e7 with all 22 patches and 34 own blob/mode entries unchanged. Evidence will be committed normally; integration still requires review and fresh exact published-head CI. No full suite, native rerun, deadline change, numerical waiver or relabelled runtime receipt.
 
 2026-10-10 review follow-up on dev cc46cc7300: the mixed changed-file run initially passed330 with one app-quit encryption fixture refusal, while the exact case passed alone. That case now uses the existing private-profile interpreter helper so imported app/config consumers share one owned lifetime. The final19 changed test files pass all331 cases in104.11s; the paired app/encryption selection passes22. Preflight, undefined-name checks, formatting and whitespace checks pass. The informational warm-read thread still emits one pytest warning; no full suite or native qualification was repeated. Independent pinned code review found no introduced P1/P2; final fixture diff remains reviewable. ADR-126 is unchanged.
+PR review integration (2026-10-10): against locally integrated predecessor head 732d1de8c29ede5c03d0a0263d4f9cacf29e0321, runtime 02135a825e8252c90db02dc0a89f7614d64b62df passes all 331 tests in the 19 affected modules in 103.67 seconds, with one unchanged strict TASK-34700 shipped-throttle expected failure and one existing worker-thread warning. The hot-reload rebase preserves both native child helpers and explicit source selection; independent carry review cleared all 22 owned test/benchmark paths and both lesson additions. Derived-artifact preflight, undefined-name checks and whitespace checks pass. The existing app-quit isolation repair is retained. No full suite or new native/performance qualification is claimed; TASK-33560 remains separate. All acceptance criteria for these fixture/benchmark tasks are complete; exact-head protected CI remains the PR integration gate.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
@@ -126,6 +128,3 @@ Earlier reviewed432/777/benchmark phases and ba actual19 keep their source ident
 
 PR https://github.com/rmusser01/tldw_chatbook/pull/2955 remains In Progress pending fresh exact-published-head required CI, current reviews and protected integration. Separate TASK-33560 retains the approved admission performance/native/numerical gates.
 <!-- SECTION:FINAL_SUMMARY:END -->
-## Definition of Done
-<!-- DOD:BEGIN -->
-<!-- DOD:END -->
