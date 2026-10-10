@@ -219,13 +219,15 @@ async def _settled_rows(transcript: ConsoleTranscript, heartbeat: _Heartbeat) ->
     """Mounted message ids once the window and any jump placement have landed.
 
     A quiet loop alone is not enough: composing a window's rows runs as many
-    short slices, and a re-centered jump places its target only after them.
+    short slices, a re-centered jump places its target only after them, and
+    a window mounting a batch at a time adds its batches across refreshes.
     """
     await _until(
         lambda: (
             transcript._reveal_scroll_target is None
             and not transcript._suppress_boundary_hydration
             and not transcript._refresh_lock.locked()
+            and getattr(transcript, "_window_fill", None) is None
         ),
         "the transcript window to land",
     )

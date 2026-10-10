@@ -3193,11 +3193,13 @@ class ConsoleTranscript(VerticalScroll):
         self._reveal_scroll_target: str | None = None
         #: Review E: while the re-center's reconcile + placement are in
         #: flight, the layout transits states (an emptied arrangement, the
-        #: target parked at y~0) that look exactly like top-boundary hits and
-        #: fired one spurious upward hydration — the jump landed with an
-        #: extra chunk mounted ABOVE the target. Latched in
+        #: target parked at y~0) that look like top-boundary hits and fired
+        #: one spurious upward hydration ABOVE the jump target. Latched in
         #: ``_recenter_window_on``, released once the placement lands.
         self._suppress_boundary_hydration = False
+        #: (last message id, refollow stamp) of a window mounting a batch at a
+        #: time, else ``None`` (TASK-33628.5.1 AC#3; ``console_transcript_fill``).
+        self._window_fill: tuple[str, float | None] | None = None
         #: Console selection phase 5 (keyboard mode): the row currently
         #: armed for keyboard-driven text selection via `s`, or ``None``
         #: when the mode is off. Distinct from ``_selection_origin_row``
@@ -3502,15 +3504,15 @@ class ConsoleTranscript(VerticalScroll):
         super().release_anchor()
 
     def _check_anchor(self) -> None:
-        """Keep a far jump detached until its target is placed.
+        """Keep a far jump, or a window still filling, detached until it lands.
 
         A re-centered window replaces every row under a reader who was at the
         bottom, so the old offset clamps to the new bottom and Textual
         re-attaches the anchor. Pinned there with a hidden tail, the next sync
         tick's ghost-follow heal threw the jump away and re-windowed onto the
-        tail (TASK-33628.5.1). The latch lifts once the placement lands.
+        tail (TASK-33628.5.1); a fill re-attaches its reader itself when done.
         """
-        if not self._suppress_boundary_hydration:
+        if not self._suppress_boundary_hydration and self._window_fill is None:
             super()._check_anchor()
 
     @on(events.MouseScrollUp)
@@ -4797,8 +4799,7 @@ class ConsoleTranscript(VerticalScroll):
         if menus:
             self._restore_message_action_focus(opener_id)
         # TASK-15777: a re-centered far jump replaced the whole window, so the
-        # previous scroll offset points at arbitrary content — put the jump
-        # target at the top of the viewport once its row has a layout.
+        # old offset is arbitrary — put its target on top once it has a layout.
         target_id = self._reveal_scroll_target
         if target_id is not None:
             self._reveal_scroll_target = None
@@ -4810,9 +4811,8 @@ class ConsoleTranscript(VerticalScroll):
                     self._scroll_reveal_target_into_view, target_widget
                 )
             else:
-                # No row to place: release the review-E latch here, since
-                # the placement callback that normally releases it will
-                # never run.
+                # No row to place: release the review-E latch here; the
+                # placement callback that normally releases it never runs.
                 self._suppress_boundary_hydration = False
         self._schedule_prune_check()
 
