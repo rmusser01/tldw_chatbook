@@ -398,6 +398,11 @@ async def test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsew
 ):
     """AC#3: a composer still bound to another chat never sends there.
 
+    The reviewer's screen: a switch path that leaves the rebind to the sync
+    pass moves the store to A while a pass is in flight. That pass synced the
+    draft before the switch, then paints A's tab and transcript, so A is on
+    screen while the composer still holds B's draft.
+
     ``send_button`` is the call the Send button and the spoken "Console,
     send." both make (``handle_console_send_message``).
     """
@@ -420,23 +425,39 @@ async def test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsew
             group="console-sync",
         )
         await until(held_pass.entered.is_set)
-        # An activation path that leaves the rebind to the sync pass: the
-        # store moves to A while the composer still holds B's draft.
         store.switch_session(a.id)
-        assert console._console_visible_draft_session_id == b.id
+        held_pass.release.set()
+        await _sync_idle(console)
+        await pilot.pause()
+        assert {
+            "draft owner": console._console_visible_draft_session_id == b.id,
+            "highlighted tabs": _active_tabs(console),
+            "transcript": console._last_native_transcript_session_id == a.id,
+            "composer": composer.draft_text(),
+        } == {
+            "draft owner": True,
+            "highlighted tabs": [a.id],
+            "transcript": True,
+            "composer": B_LEFTOVER,
+        }
 
         if send == "enter":
             await pilot.press("enter")
         else:
             button = console.query_one("#console-send-message", Button)
-            assert not await console.handle_console_send_message(Button.Pressed(button))
-        await pilot.pause()
-        assert dispatched == []
-        assert composer.draft_text() == B_LEFTOVER
-        assert _refused(notices), notices
+            await console.handle_console_send_message(Button.Pressed(button))
+        await until(lambda: bool(dispatched) or _refused(notices))
+        assert {
+            "dispatched": _named(dispatched, a, b),
+            "composer": composer.draft_text(),
+            "refused": _refused(notices),
+        } == {"dispatched": [], "composer": B_LEFTOVER, "refused": True}
 
-        held_pass.release.set()
+        # The next pass binds the composer to A; B keeps its own draft.
+        await console._sync_native_console_chat_ui()
         await _sync_idle(console)
-        await pilot.pause()
-        assert dispatched == []
-        assert store.session_draft(b.id) == B_LEFTOVER
+        assert {
+            "dispatched": dispatched,
+            "composer": composer.draft_text(),
+            "B stored draft": store.session_draft(b.id),
+        } == {"dispatched": [], "composer": A_OWN, "B stored draft": B_LEFTOVER}
