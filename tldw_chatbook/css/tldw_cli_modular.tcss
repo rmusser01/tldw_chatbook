@@ -1781,9 +1781,9 @@ DataTable:focus > .datatable--header {
     text-style: bold underline;
 }
 
+
 OptionList > .option-list--option-highlighted,
 OptionList:focus > .option-list--option-highlighted,
-SelectionList > .selection-list--button-highlighted,
 SelectionList > .selection-list--button-selected,
 SelectionList > .selection-list--button-selected-highlighted,
 Tree > .tree--cursor,
@@ -1805,7 +1805,8 @@ LibraryFileNotesWorkspace Tree:focus > .tree--cursor {
 }
 
 
-#settings-discovered-models-list .selection-list--button {
+#settings-discovered-models-list .selection-list--button,
+#settings-discovered-models-list .selection-list--button-highlighted {
     color: $ds-grid-line;
     background: $ds-grid-line;
 }

@@ -247,7 +247,8 @@ The biggest page, and where to start.
 
 Open **Saved model list**, then use **Tab** to reach the discovered-model
 list, arrow keys to move, and **Space** to select a model; its row then starts
-with **selected**. Checked rows, and the **Served now** rows in Model,
+with **selected** and its box shows an **X**. An unchecked row's box stays
+empty, under the cursor too. Checked rows, and the **Served now** rows in Model,
 survive leaving this category and returning within Settings. **Save selected** immediately appends those exact
 model IDs to that provider’s saved list and reports once, on the line above
 **Discover models**: "Saved 2 discovered models to OpenAI.", "The selected
