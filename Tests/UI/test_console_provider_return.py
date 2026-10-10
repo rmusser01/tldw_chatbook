@@ -4,8 +4,9 @@ The unit tests drive the Console's consumer (``Console_Modules/
 provider_return.py``) and the Settings offer and copy (``Settings_Modules/
 provider_return.py``) with the real handoff store and the real Console chat
 store. The private-profile tests run the real app: card -> Settings -> key ->
-save -> Enter, Return without saving, the return offered on arrival, and a
-return that lapses when the user walks back by hand.
+save -> Enter, the saved model an untouched chat comes back on, Return without
+saving in every unsaved state, the return offered on arrival, and a return
+that lapses when the user walks back by hand.
 """
 
 from __future__ import annotations
@@ -17,11 +18,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Checkbox, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app as _build_production_app
 from tldw_chatbook import config as config_module
+from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Constants import TAB_CHAT, TAB_SETTINGS
 from tldw_chatbook.UI.Console_Modules.model_switcher import open_provider_setup
@@ -46,6 +48,7 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Settings_Modules.provider_return import (
     INACTIVE_COPY,
+    can_return_without_saving,
     console_return_lapsed,
     continuation_copy,
     fitted_chat_title,
@@ -286,13 +289,20 @@ def test_an_unused_return_is_taken_back_when_the_console_is_reached_by_hand(
     assert workers == [] and events == []  # Nothing lands, nothing is said.
 
 
-def _settings(target, outcome, store=None, *, dirty=False, conflict=None):
-    """What the Settings offer and copy read from their screen."""
+def _settings(
+    target, outcome, store=None, *, dirty=False, conflict=None, own_draft=False
+):
+    """What the Settings offer and copy read from their screen.
+
+    ``dirty`` is any unsaved Providers & Models edit; ``own_draft`` is the
+    narrower case of a labelled edit to the target's own provider.
+    """
     return SimpleNamespace(
         _provider_return_target=target,
         _provider_return_outcome=outcome,
         _provider_navigation_conflict_target=conflict,
-        _category_has_unsaved_changes=lambda _category: dirty,
+        _category_has_unsaved_changes=lambda _category: dirty or own_draft,
+        _provider_same_target_has_draft=lambda: own_draft and conflict is None,
         _custom_endpoints_store=lambda: store,
     )
 
@@ -302,7 +312,13 @@ def test_a_console_return_is_offered_before_any_save_and_the_modals_is_not() -> 
     return, so the Console kind is offered on arrival and names the chat. An
     unsaved edit or a provider conflict withdraws it, because Return without
     saving and the conflict panel answer those. Chat settings' return shows
-    after a save only, as before (AC#7)."""
+    after a save only, as before (AC#7).
+
+    A Console recovery is never left with no return: every unsaved state that
+    withdraws Return to Console offers Return without saving, including the
+    two with no labelled edit to the target's provider (another provider
+    picked in the Provider row; only a snapshot preference edited). Chat
+    settings' Return without saving still needs that edit."""
     store = ConsoleChatStore()
     chat = store.create_session(title="Chat 1")
     console = ProviderSettingsNavigationTarget(
@@ -314,6 +330,23 @@ def test_a_console_return_is_offered_before_any_save_and_the_modals_is_not() -> 
     on_arrival = _settings(console, None, store)
     assert return_outcome(on_arrival) is UNSAVED
     assert continuation_copy(on_arrival) == arrival
+    assert not can_return_without_saving(on_arrival)
+    for unsaved in (
+        _settings(console, None, store, own_draft=True),  # the key, typed
+        # No labelled edit to the target's provider: another provider picked,
+        # or only a snapshot preference edited (both driven on the real app).
+        _settings(console, None, store, dirty=True),
+    ):
+        assert return_outcome(unsaved) is None
+        assert can_return_without_saving(unsaved)
+    assert can_return_without_saving(_settings(modal, None, store, own_draft=True))
+    for no_question in (
+        _settings(modal, None, store, dirty=True),  # as before: its own draft only
+        _settings(console, None, store, dirty=True, conflict=console),
+        _settings(console, SAVED, store, dirty=True),
+        _settings(None, None, store, dirty=True),
+    ):
+        assert not can_return_without_saving(no_question)
     for withdrawn in (
         _settings(console, None, store, dirty=True),
         _settings(console, None, store, conflict=console),
@@ -456,6 +489,12 @@ async def _recover_from_the_card(app, pilot):
     return console, session, settings
 
 
+def _fully_on_screen(screen, widget) -> bool:
+    """Whether the whole widget is painted: no scroll or Tab is needed."""
+    placed = screen._compositor.visible_widgets.get(widget)
+    return placed is not None and placed[1].contains_region(placed[0])
+
+
 def _cloud_app_without_a_key(monkeypatch):
     """The real app on its scratch profile: OpenAI is the default, keyless."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -473,12 +512,15 @@ def _cloud_app_without_a_key(monkeypatch):
     return app
 
 
-def _saved_openai_key() -> object:
+def _saved_config() -> dict[str, object]:
     config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     # The scratch profile, never the user's own config.
     assert config_path.is_relative_to(Path(os.environ["TLDW_TEST_CONFIG_ROOT"]))
-    saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
-    return saved.get("api_settings", {}).get("openai", {}).get("api_key")
+    return tomllib.loads(config_path.read_text(encoding="utf-8"))
+
+
+def _saved_openai_key() -> object:
+    return _saved_config().get("api_settings", {}).get("openai", {}).get("api_key")
 
 
 @pytest.mark.asyncio
@@ -504,6 +546,16 @@ async def test_recovery_round_trip_returns_to_the_chat_on_one_enter(
             f"No unsaved changes. Return to Console to continue in “{session.title}”."
         )
         assert app.focused.id == "settings-provider-api-key"
+        # AC#2's "shows", at 211x44: the status and the action are painted
+        # as Settings opens, with focus still at the top of the card.
+        await pilot.pause()
+        action = settings.query_one("#settings-provider-return", Button)
+        assert _fully_on_screen(settings, status)
+        assert _fully_on_screen(settings, action)
+        # The helper can say no: a closed disclosure's row is not painted.
+        assert not _fully_on_screen(
+            settings, settings.query_one("#settings-snapshot-enabled", Checkbox)
+        )
 
         # Another chat is active by the time Settings returns, so only the
         # Console's consumer can put the user back on the chat they left.
@@ -547,6 +599,57 @@ async def test_recovery_round_trip_returns_to_the_chat_on_one_enter(
         assert not console._console_setup_modal_blocking()
         assert not app.pending_handoffs.has_pending(CHANNEL)
         assert settings._provider_return_target is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("holds_work", [False, True], ids=["untouched", "holds-work"])
+@private_profile_test
+async def test_the_returning_chat_follows_a_newly_saved_model_only_while_untouched(
+    monkeypatch, request, holds_work: bool
+):
+    """AC#3, second sentence (ADR-095, D1), on the return path: the visit
+    saves another default model as well as the key. An untouched chat comes
+    back on the saved provider · model; a chat that holds work keeps its own.
+    The return adds no convergence code, so this is the Console's own sync."""
+    app = _cloud_app_without_a_key(monkeypatch)
+    app.providers_models = {"openai": ["gpt-5", "gpt-4.1"]}
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        console, session, settings = await _recover_from_the_card(app, pilot)
+        store = console._ensure_console_chat_store()
+        if holds_work:
+            store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+
+        await pilot.press(*_KEY)
+        settings.query_one("#settings-model-value", Input).value = "gpt-4.1"
+        await pilot.press("escape")  # leave the field, so s is Save
+        await pilot.press("s")
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "settings-provider-return",
+            "focus on the Return to Console action after the save",
+        )
+        saved = _saved_config()["chat_defaults"]
+        assert (saved["provider"], saved["model"]) == ("openai", "gpt-4.1")
+
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console
+                and console._is_descendant_or_self(
+                    app.focused, console.query_one("#console-native-composer")
+                )
+            ),
+            "the composer to hold focus",
+        )
+        assert store.active_session_id == session.id
+        chat, readiness = console._active_console_settings_readiness()
+        assert (chat.provider, chat.model) == (
+            "openai",
+            "gpt-5" if holds_work else "gpt-4.1",
+        )
+        assert readiness.operability == "ready_to_send"
 
 
 @pytest.mark.asyncio
@@ -607,6 +710,70 @@ async def test_recovery_return_without_saving_lands_on_the_same_chat_unchanged(
         )
         assert console._ensure_console_chat_store().active_session_id == session.id
         assert console._console_setup_modal_blocking()
+        assert not _saved_openai_key()
+        assert not app.pending_handoffs.has_pending(CHANNEL)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_every_unsaved_recovery_state_offers_return_without_saving(
+    monkeypatch, request
+):
+    """A Console recovery is never left with no return. Two unsaved states
+    carry no labelled edit to the target's provider, so Chat settings' rule
+    would hide both returns until a save or a revert: only a snapshot
+    preference edited, and another provider picked in the Provider row. Each
+    withdraws Return to Console and offers Return without saving, which asks,
+    discards the whole category and lands on the same chat."""
+    app = _cloud_app_without_a_key(monkeypatch)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        console, session, settings = await _recover_from_the_card(app, pilot)
+
+        def offered() -> tuple[bool, bool]:
+            """(Return to Console shows, Return without saving shows)."""
+            return (
+                settings.query_one("#settings-provider-return-continuation").display,
+                settings.query_one("#settings-provider-return-without-save").display,
+            )
+
+        assert offered() == (True, False)
+        snapshots = settings.query_one("#settings-snapshot-enabled", Checkbox)
+        assert not snapshots.disabled
+        snapshots.toggle()
+        await _until(
+            pilot, lambda: offered() == (False, True), "a snapshot edit to ask first"
+        )
+        assert not settings._provider_same_target_has_draft()
+        snapshots.toggle()
+        await _until(
+            pilot, lambda: offered() == (True, False), "the undone edit to stop asking"
+        )
+
+        settings.query_one("#settings-provider-value", Select).value = "anthropic"
+        await _until(
+            pilot, lambda: offered() == (False, True), "another provider to ask first"
+        )
+        assert not settings._provider_same_target_has_draft()
+
+        settings.query_one("#settings-provider-return-without-save").focus()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: isinstance(app.screen, ConfirmationDialog),
+            "the discard confirmation",
+        )
+        app.screen.query_one("#confirm-button", Button).press()
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console
+                and getattr(app.focused, "id", None) == "console-setup-modal-action"
+            ),
+            "the Console's card to hold focus again",
+        )
+        assert console._ensure_console_chat_store().active_session_id == session.id
+        assert _saved_config()["chat_defaults"]["provider"] == "openai"
         assert not _saved_openai_key()
         assert not app.pending_handoffs.has_pending(CHANNEL)
 

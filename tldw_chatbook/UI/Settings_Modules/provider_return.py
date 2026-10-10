@@ -105,6 +105,34 @@ def return_outcome(screen: SettingsScreen) -> Outcome | None:
     return Outcome.WITHOUT_SAVING
 
 
+def can_return_without_saving(screen: SettingsScreen) -> bool:
+    """Whether Return without saving is offered.
+
+    Only before a save, and never beside the conflict panel. Chat settings'
+    return needs a labelled edit to its own provider, as before. A Console
+    recovery's is offered for every unsaved Providers & Models edit (another
+    provider picked, a snapshot preference), so whenever an unsaved edit makes
+    ``return_outcome`` withdraw the return, this one takes over: its dialog
+    discards the whole category.
+
+    Args:
+        screen: The Settings screen holding the return target and its outcome.
+
+    Returns:
+        True while Return without saving shows.
+    """
+    target = screen._provider_return_target
+    if (
+        target is None
+        or screen._provider_return_outcome is not None
+        or screen._provider_navigation_conflict_target is not None
+    ):
+        return False
+    if target.session_id is None:
+        return screen._provider_same_target_has_draft()
+    return screen._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS)
+
+
 def console_return_lapsed(
     screen: SettingsScreen, target: ProviderSettingsNavigationTarget
 ) -> bool:

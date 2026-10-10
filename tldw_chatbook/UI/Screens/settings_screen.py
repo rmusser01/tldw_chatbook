@@ -13780,12 +13780,9 @@ class SettingsScreen(BaseAppScreen):
         return "Chat settings" if target is None else target.destination
 
     def _provider_can_return_without_saving(self) -> bool:
-        return bool(
-            self._provider_return_target is not None
-            and self._provider_navigation_conflict_target is None
-            and self._provider_return_outcome is None
-            and self._provider_same_target_has_draft()
-        )
+        from ..Settings_Modules.provider_return import can_return_without_saving
+
+        return can_return_without_saving(self)
 
     def _provider_return_actions_disabled(self) -> bool:
         """Return whether confirmation or committed navigation owns the return."""
