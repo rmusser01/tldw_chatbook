@@ -1268,8 +1268,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 134,
-      "diagnostic_digest": "ae3552702cdb4b964bc9",
+      "call_count": 135,
+      "diagnostic_digest": "e95dd7e4efd49deb1d81",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/LLM_API_Calls.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
