@@ -5673,6 +5673,23 @@ class ConsoleSessionController:
         if composer is None:
             self._console_draft_switch_snapshot = None
             return
+        store = self._console_chat_store
+        visible = self._console_visible_draft_session_id
+        known_revision = getattr(self._screen, "_console_visible_draft_revision", None)
+        if store is not None and visible is not None and known_revision is not None:
+            try:
+                actual_revision = store.session_input_snapshot(visible).draft_revision
+            except KeyError:
+                pass
+            else:
+                if known_revision != actual_revision:
+                    # Hydrate a newer domain revision before banking the old view.
+                    # Later settle-window edits still use the snapshot below.
+                    project = getattr(
+                        self._screen, "_project_console_received_input", None
+                    )
+                    if callable(project):
+                        project(visible)
         self._console_draft_switch_snapshot = (
             self._console_visible_draft_session_id,
             composer.draft_text(),
