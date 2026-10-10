@@ -45,7 +45,6 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Settings_Modules.provider_return import (
     INACTIVE_COPY,
@@ -60,7 +59,6 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 CHANNEL = HandoffChannel.CONVERSATION_SETTINGS_RETURN
 SAVED = ConversationSettingsReturnOutcome.CREDENTIAL_SAVED
 UNSAVED = ConversationSettingsReturnOutcome.WITHOUT_SAVING
-_PROVIDERS_MODELS = SettingsCategoryId.PROVIDERS_MODELS
 
 
 def _console(store: ConsoleChatStore, *, blocking: bool = False, owns: bool = True):
@@ -728,7 +726,11 @@ async def test_every_unsaved_recovery_state_offers_return_without_saving(
     would hide both returns until a save or a revert: only a snapshot
     preference edited, and another provider picked in the Provider row. Each
     withdraws Return to Console and offers Return without saving, which asks,
-    discards the whole category and lands on the same chat."""
+    discards the whole category and lands on the same chat.
+
+    A save of only the snapshot preference is not the recovery's save: it
+    sets no outcome, moves no focus and leaves the way back as it was before
+    that edit, so the next edit asks first again."""
     app = _cloud_app_without_a_key(monkeypatch)
 
     async with app.run_test(size=(211, 44)) as pilot:
@@ -742,13 +744,45 @@ async def test_every_unsaved_recovery_state_offers_return_without_saving(
             )
 
         assert offered() == (True, False)
+        status = settings.query_one(
+            "#settings-provider-return-continuation-status", Static
+        )
+        on_arrival = str(status.renderable)
+        assert on_arrival == (
+            f"No unsaved changes. Return to Console to continue in “{session.title}”."
+        )
         snapshots = settings.query_one("#settings-snapshot-enabled", Checkbox)
         assert not snapshots.disabled
+        snapshot_saved = snapshots.value
         snapshots.toggle()
         await _until(
             pilot, lambda: offered() == (False, True), "a snapshot edit to ask first"
         )
         assert not settings._provider_same_target_has_draft()
+
+        await pilot.press("escape")  # leave the field, so s is Save
+        await pilot.pause()
+        focus_before_the_save = app.focused
+        await pilot.press("s")
+        await _until(
+            pilot,
+            lambda: (
+                not settings._snapshot_preferences_saving
+                and not settings._snapshot_preferences_dirty()
+                and offered() == (True, False)
+            ),
+            "the snapshot preference's save to land",
+        )
+        await pilot.pause()  # A focus move would be scheduled after the refresh.
+        assert _saved_config()["llamacpp_snapshots"]["enabled"] is not snapshot_saved
+        assert settings._provider_return_outcome is None
+        assert str(status.renderable) == on_arrival
+        assert app.focused is focus_before_the_save
+        assert getattr(app.focused, "id", None) != "settings-provider-return"
+        snapshots.toggle()
+        await _until(
+            pilot, lambda: offered() == (False, True), "the next edit to ask first"
+        )
         snapshots.toggle()
         await _until(
             pilot, lambda: offered() == (True, False), "the undone edit to stop asking"
@@ -896,11 +930,21 @@ async def test_an_unused_return_lapses_when_the_user_walks_back_by_hand(
 ):
     """A return that was not taken does not stay armed. Walking back to the
     Console by hand takes the handoff back, and the next Settings visit no
-    longer holds a return, so a later save cannot offer one to the old chat."""
+    longer holds a return, so a later save cannot offer one to the old chat.
+
+    The same walk measures the guide's third exception to "leaving keeps the
+    draft": the screen alone holds an unsaved snapshot preference, so leaving
+    Settings by the nav bar drops it."""
     app = _cloud_app_without_a_key(monkeypatch)
 
     async with app.run_test(size=(211, 44)) as pilot:
         console, _session, settings = await _recover_from_the_card(app, pilot)
+        snapshots = settings.query_one("#settings-snapshot-enabled", Checkbox)
+        snapshot_saved = snapshots.value
+        snapshots.toggle()
+        await _until(
+            pilot, settings._snapshot_preferences_dirty, "an unsaved snapshot edit"
+        )
 
         settings.post_message(NavigateToScreen(TAB_CHAT))  # as the nav bar does
         await _until(
@@ -920,6 +964,8 @@ async def test_an_unused_return_lapses_when_the_user_walks_back_by_hand(
                 and app.screen is not settings
                 and bool(app.screen.query("#settings-provider-return-continuation"))
                 and bool(app.screen.query("#settings-provider-value SelectOverlay"))
+                and bool(app.screen.query("#settings-snapshot-enabled"))
+                and app.screen._snapshot_preferences_loaded is not None
             ),
             "a fresh Settings screen on Providers & Models",
         )
@@ -928,6 +974,13 @@ async def test_an_unused_return_lapses_when_the_user_walks_back_by_hand(
         assert not app.screen.query_one(
             "#settings-provider-return-continuation"
         ).display
+        # Loaded from the file again: the old screen's edit went with it, and
+        # with nothing else unsaved the category carries no "*".
+        fresh_snapshots = app.screen.query_one("#settings-snapshot-enabled", Checkbox)
+        assert fresh_snapshots.value is snapshot_saved
+        assert not app.screen._category_has_unsaved_changes(
+            app.screen._active_category_id()
+        )
 
 
 @pytest.mark.asyncio
@@ -937,6 +990,8 @@ async def test_a_field_edited_after_the_save_waits_in_settings_as_an_unsaved_edi
 ):
     """The guide's after-save sentences, on the real app.
 
+    A later save of only a snapshot preference leaves the way back as the
+    recovery's save left it: same outcome, same status, focus not moved.
     Edits made after the save keep Return to Console, and the return neither
     asks about them nor saves them. A field edit (another key) waits in
     Settings as an unsaved edit, so the next recovery, for another provider,
@@ -965,12 +1020,39 @@ async def test_a_field_edited_after_the_save_waits_in_settings_as_an_unsaved_edi
             lambda: getattr(app.focused, "id", None) == "settings-provider-return",
             "focus on the Return to Console action after the save",
         )
-        saved = _saved_config()
         assert _saved_openai_key() == _KEY
+
+        # A save of only a snapshot preference leaves the way back as it was
+        # before that edit, here as the recovery's own save left it.
+        saved_status = settings.query_one(
+            "#settings-provider-return-continuation-status", Static
+        )
+        after_the_save = str(saved_status.renderable)
+        snapshots = settings.query_one("#settings-snapshot-enabled", Checkbox)
+        snapshots.toggle()
+        await _until(
+            pilot, settings._snapshot_preferences_dirty, "an unsaved snapshot edit"
+        )
+        assert offered(settings) == (True, False)
+        await pilot.press("s")
+        await _until(
+            pilot,
+            lambda: (
+                not settings._snapshot_preferences_saving
+                and not settings._snapshot_preferences_dirty()
+            ),
+            "the snapshot preference's save to land",
+        )
+        await pilot.pause()
+        assert settings._provider_return_outcome is SAVED
+        assert offered(settings) == (True, False)
+        assert str(saved_status.renderable) == after_the_save
+        assert app.focused.id == "settings-provider-return"
+        saved = _saved_config()
+        assert saved["llamacpp_snapshots"]["enabled"] is snapshots.value
 
         settings.query_one("#settings-provider-api-key", Input).focus()
         await pilot.press(*later_key)
-        snapshots = settings.query_one("#settings-snapshot-enabled", Checkbox)
         snapshot_saved = snapshots.value
         snapshots.toggle()
         await _until(
