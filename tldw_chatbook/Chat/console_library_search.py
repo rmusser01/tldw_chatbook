@@ -127,11 +127,10 @@ async def automatic_search_outcome(
     )
     searches: dict[str, asyncio.Task] = controller._library_search_tasks
     searches[session_id] = search
+    searching = ConsoleRunState(ConsoleRunStatus.VALIDATING, LIBRARY_SEARCHING_COPY)
+    previous = controller.run_state_for(session_id)
     try:
-        controller._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, LIBRARY_SEARCHING_COPY),
-            session_id=session_id,
-        )
+        controller._set_run_state(searching, session_id=session_id)
         return _outcome_from_service_result(await search), None
     except asyncio.CancelledError:
         current = asyncio.current_task()
@@ -147,3 +146,7 @@ async def automatic_search_outcome(
             del searches[session_id]
         if not search.done():
             search.cancel()
+        # Hand the chip back: a Retry's continuation is admitted only from a
+        # settled run state, and a first send resumes "Validating provider.".
+        if controller.run_state_for(session_id) == searching:
+            controller._set_run_state(previous, session_id=session_id)

@@ -2828,6 +2828,25 @@ class ConsoleRuntime:
                 )
         return True
 
+    def forget_turn_recoveries_for_preparation(self, preparation_id: str) -> int:
+        """Drop the unsent turns whose paused send its card has settled.
+
+        TASK-33621.20: Retry or Send once without Library sent that exact
+        turn, or Cancel put it back in the composer, so its shelf entry goes
+        without restoring its draft or releasing the preparation.
+
+        Returns:
+            How many shelf entries were dropped.
+        """
+        turn_ids = [
+            turn_id
+            for turn_id, entry in self._turn_recoveries.items()
+            if entry.preparation_id == preparation_id
+        ]
+        for turn_id in turn_ids:
+            self.discard_turn_recovery(turn_id, release=False)
+        return len(turn_ids)
+
     def _record_turn_recovery(
         self,
         record: _ConsoleTurnCustodyRecord,

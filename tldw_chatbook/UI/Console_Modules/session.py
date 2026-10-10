@@ -6518,15 +6518,21 @@ class ConsoleSessionController:
     ) -> object:
         """Route a pre-dispatch card action; a cancelled hold refills the composer."""
 
+        from ...Chat.console_unsent_turn import library_paused, settle_unsent_turn
+
         controller = self._ensure_console_chat_controller()
         held = controller.trace_call_recovery_preparation()
+        library_pause = library_paused(held, preparation_id)  # TASK-33621.20
         # TASK-34350: read the held text BEFORE the action: the UI sync that
         # follows it mirrors the (empty) composer back into the session draft.
         held_text = (
             held.executed_draft
             if held is not None
             and held.preparation_id == preparation_id
-            and controller.context_compaction_hold(preparation_id) is not None
+            and (
+                library_pause
+                or controller.context_compaction_hold(preparation_id) is not None
+            )
             else ""
         )
         result = await self._read_trace_recovery_dispatch()(
@@ -6537,22 +6543,39 @@ class ConsoleSessionController:
             on_finished=self._read_trace_recovery_finished(),
         )
         composer = self._console_composer_or_none()
-        if (
+        now_held = controller.trace_call_recovery_preparation()
+        settled = bool(held_text) and (
+            not library_paused(now_held, preparation_id)
+            if library_pause
+            else controller.context_compaction_hold(preparation_id) is None
+        )
+        refilled = (
             action == "cancel"
-            and held_text
-            and controller.context_compaction_hold(preparation_id) is None
+            and settled
             and composer is not None
             and not composer.draft_text().strip()
-        ):
+        )
+        if refilled:
             # Cancel puts the held message back where it came from.
             composer.load_draft(held_text)
+        if library_pause and (refilled or getattr(result, "accepted", False)):
+            # TASK-33621.20: the card sent or returned the turn; drop its copy
+            # on the unsent-turn shelf. A Cancel into a busy composer keeps it.
+            settle_unsent_turn(self._console_runtime_accessor(), preparation_id)
         return result
 
     def _console_trace_recovery_state(self) -> Any:
         """Project the active pre-dispatch pause, with a context hold's numbers."""
 
+        from ...Chat.console_turn_preparation import library_pause_copy
+
         controller = self._ensure_console_chat_controller()
         preparation = controller.trace_call_recovery_preparation()
+        outcome = (
+            controller.preparation_outcome(preparation.preparation_id)
+            if preparation is not None
+            else None
+        )
         return self._read_trace_recovery_state()(
             preparation,
             context_hold=(
@@ -6560,4 +6583,6 @@ class ConsoleSessionController:
                 if preparation is not None
                 else None
             ),
+            # TASK-33621.20: why a Library-paused send stopped.
+            library_reason=library_pause_copy(getattr(outcome, "error_code", None)),
         )

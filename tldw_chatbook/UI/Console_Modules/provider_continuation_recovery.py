@@ -40,6 +40,9 @@ class TraceCallRecoveryState:
     #: TASK-33621.2: the request's trace record failed before any call was
     #: reserved (``TRACE_PROVENANCE``), rather than the call's capture.
     provenance: bool = False
+    #: TASK-33621.20: why automatic Library retrieval paused this send
+    #: (``RETRIEVAL``), e.g. "Library search timed out"; empty otherwise.
+    library_reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +57,7 @@ def trace_call_recovery_state(
     preparation: ConsoleTurnPreparation | None,
     *,
     context_hold: ContextCompactionHold | None = None,
+    library_reason: str = "",
 ) -> TraceCallRecoveryState | None:
     """Project only an actionable pre-dispatch pause into the transcript UI.
 
@@ -61,11 +65,24 @@ def trace_call_recovery_state(
         preparation: Current session preparation, if one exists.
         context_hold: The controller's numbers for a send held at the
             compaction threshold (TASK-34350); required for that pause.
+        library_reason: Why automatic Library retrieval paused the send
+            (TASK-33621.20); a generic reason stands in when empty.
 
     Returns:
         Content-free recovery identity for a supported pause, otherwise None.
     """
 
+    if (
+        preparation is not None
+        and preparation.state is ConsoleTurnPreparationState.PAUSED
+        and preparation.pause_kind is ConsolePreparationPauseKind.RETRIEVAL
+    ):
+        # TASK-33621.20: a timed-out, failed or stopped Library search used
+        # to pause with no card, no reason and no way to continue.
+        return TraceCallRecoveryState(
+            preparation.preparation_id,
+            library_reason=library_reason or "Library search did not finish",
+        )
     if (
         preparation is not None
         and preparation.state is ConsoleTurnPreparationState.PAUSED
@@ -109,6 +126,12 @@ _BLOCKED_TURN_REASONS = {
     ConsolePreparationPauseKind.TRACE_CALL: "capture failed",
     ConsolePreparationPauseKind.TEMPORARY_CAPTURE: "save chat first",
 }
+#: TASK-33621.20: the same for a Library-paused send, by its error code.
+_LIBRARY_BLOCKED_REASONS = {
+    "library_retrieval_timeout": "Library timeout",
+    "library_retrieval_failed": "Library error",
+    "library_retrieval_stopped": "Library stopped",
+}
 
 
 def blocked_turn_reason(controller: Any) -> str:
@@ -136,6 +159,11 @@ def blocked_turn_reason(controller: Any) -> str:
     paused = preparation() if callable(preparation) else None
     if trace_call_recovery_state(paused) is None:
         return ""
+    if paused.pause_kind is ConsolePreparationPauseKind.RETRIEVAL:
+        outcome_for = getattr(controller, "preparation_outcome", None)
+        outcome = outcome_for(paused.preparation_id) if callable(outcome_for) else None
+        code = getattr(outcome, "error_code", None) or ""
+        return _LIBRARY_BLOCKED_REASONS.get(code, "Library paused")
     return _BLOCKED_TURN_REASONS.get(paused.pause_kind, "trace capture blocked")
 
 
@@ -170,6 +198,7 @@ async def dispatch_trace_call_recovery_action(
         "send_without_capture": "send_without_capture",
         "compact_and_send": "compact_and_send",
         "send_without_compacting": "send_without_compacting",
+        "bypass": "bypass_library_preparation",  # TASK-33621.20
         "cancel": "cancel_library_preparation",
     }.get(action)
     handler = getattr(controller, handler_name, None) if handler_name else None
@@ -280,6 +309,12 @@ class TraceCallRecoveryCallout(Vertical):
                 id="console-trace-send-without",
                 variant="warning",
             )
+            # TASK-33621.20: a Library-paused send's one-off bypass.
+            yield Button(
+                "Send once without Library",
+                id="console-trace-send-without-library",
+                variant="warning",
+            )
             yield Button("Cancel send", id="console-trace-cancel")
 
     def on_mount(self) -> None:
@@ -294,9 +329,12 @@ class TraceCallRecoveryCallout(Vertical):
         self.display = state is not None
         temporary = bool(state is not None and state.temporary_capture)
         hold = state.context_hold if state is not None else None
+        library = state.library_reason if state is not None else ""
         self.query_one("#console-trace-title", Static).update(
             "Context limit reached; your message is held"
             if hold is not None
+            else f"{library}; your message was not sent"
+            if library
             else "Save chat to capture this send"
             if temporary
             else "Trace capture blocked"
@@ -321,7 +359,9 @@ class TraceCallRecoveryCallout(Vertical):
             else:
                 detail_rows[1].update(
                     (
-                        "Problem: Temporary chats cannot store durable captures."
+                        f"Problem: {library} before this send could use it."
+                        if library
+                        else "Problem: Temporary chats cannot store durable captures."
                         if temporary
                         else "Problem: This send's trace record could not be saved."
                         if state is not None and state.provenance
@@ -337,11 +377,14 @@ class TraceCallRecoveryCallout(Vertical):
         self.query_one("#console-trace-save-send", Button).display = (
             temporary and hold is None
         )
-        self.query_one("#console-trace-retry", Button).display = (
-            state is not None and not temporary and hold is None
-        )
+        retry = self.query_one("#console-trace-retry", Button)
+        retry.display = state is not None and not temporary and hold is None
+        retry.label = "Retry Library search" if library else "Retry capture"
         self.query_one("#console-trace-send-without", Button).display = (
-            state is not None and hold is None
+            state is not None and hold is None and not library
+        )
+        self.query_one("#console-trace-send-without-library", Button).display = bool(
+            library
         )
         self.query_one("#console-trace-compact-send", Button).display = (
             hold is not None
@@ -363,6 +406,7 @@ class TraceCallRecoveryCallout(Vertical):
             "console-trace-send-without": "send_without_capture",
             "console-trace-compact-send": "compact_and_send",
             "console-trace-send-uncompacted": "send_without_compacting",
+            "console-trace-send-without-library": "bypass",
             "console-trace-cancel": "cancel",
         }.get(event.button.id or "")
         state = self.recovery_state
