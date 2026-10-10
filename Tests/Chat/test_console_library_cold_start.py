@@ -190,3 +190,97 @@ async def test_cancelling_the_send_itself_is_not_a_library_stop(monkeypatch):
     assert controller._library_search_tasks == {}
     current = store.preparation_for_session("session-1")
     assert current.state is ConsoleTurnPreparationState.PREPARING
+
+
+@pytest.mark.asyncio
+async def test_retries_during_a_hung_build_join_it_instead_of_queueing_threads(
+    monkeypatch,
+):
+    """Review MINOR 9: every Stop, timeout or Retry started another build thread.
+
+    Each one blocked on the shared-build lock behind the hung build, so
+    repeated retries could exhaust the default executor. They now join the one
+    build in flight, which keeps running when a waiter gives up.
+    """
+    calls: list[int] = []
+    release = threading.Event()
+
+    def build_shared_runtime():
+        calls.append(1)
+        release.wait(30)
+        return _Runtime()
+
+    monkeypatch.setattr(service_module, "embeddings_rag_deps_installed", lambda: True)
+    monkeypatch.setattr(service_module, "get_shared_rag_service", build_shared_runtime)
+    service = LibraryLocalRagSearchService(SimpleNamespace())
+    try:
+        for _ in range(3):
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(0.2):
+                    await service.warm_up()
+        assert len(calls) == 1
+    finally:
+        release.set()
+
+    assert await asyncio.wait_for(service.warm_up(), timeout=10) is True
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_runtime_that_did_not_build_fails_at_once(monkeypatch):
+    """Review MINOR 4: no second build attempt inside the search budget."""
+    service, builds, release = _cold_library(monkeypatch, build_seconds=0.0)
+    monkeypatch.setattr(service_module, "get_shared_rag_service", lambda: None)
+    searched: list[str] = []
+
+    async def search(*_args, **_kwargs):
+        searched.append("search")
+        return {"results": []}
+
+    monkeypatch.setattr(service, "search", search)
+    controller, store = _controller_for_preparation(
+        _preparation(), service, timeout=SEARCH_BUDGET
+    )
+    release.set()
+
+    outcome = await controller.prepare_library_for_turn("preparation-1")
+
+    assert outcome.error_code == "library_retrieval_failed"
+    assert searched == []
+    assert (
+        store.preparation_for_session("session-1").pause_kind
+        is ConsolePreparationPauseKind.RETRIEVAL
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_retry_that_pauses_again_says_why_it_paused_this_time(monkeypatch):
+    """Review MINOR 7: the chip kept the first pause's reason after a Retry."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleRunState
+
+    service, _builds, _release = _cold_library(
+        monkeypatch, build_seconds=0.0, search_seconds=COLD_BUILD_SECONDS
+    )
+    controller, store = _controller_for_preparation(
+        _preparation(
+            state=ConsoleTurnPreparationState.PAUSED,
+            pause_kind=ConsolePreparationPauseKind.RETRIEVAL,
+        ),
+        service,
+        timeout=SEARCH_BUDGET,
+    )
+    controller._set_run_state(
+        ConsoleRunState.blocked("Library search stopped"), session_id="session-1"
+    )
+
+    result = await controller.retry_library_preparation("preparation-1")
+
+    assert result.accepted is False
+    assert result.visible_copy == "Library search timed out"
+    assert controller.run_state_for("session-1").visible_copy == (
+        "Library search timed out"
+    )
+    assert (
+        store.preparation_for_session("session-1").pause_kind
+        is ConsolePreparationPauseKind.RETRIEVAL
+    )
