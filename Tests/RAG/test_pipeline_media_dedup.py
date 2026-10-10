@@ -57,11 +57,13 @@ def media_db(tmp_path):
         pass
 
 
-def _seed_media(db: MediaDatabase, n: int = 4) -> List[int]:
+def _seed_media(
+    db: MediaDatabase, n: int = 4, *, title: str | None = None
+) -> List[int]:
     ids = []
     for i in range(n):
         media_id, _uuid, _msg = db.add_media_with_keywords(
-            title=f"Doc {i}",
+            title=title if title is not None else f"Doc {i}",
             media_type="document",
             content=f"zanzibarite crystal sample {i}",
             keywords=["test"],
@@ -94,9 +96,7 @@ class TestUnscopedMediaSearchSurvivesDedup:
         results = await pfs.search_media_fts5(app, "zanzibarite", limit=10)
 
         assert {r.id for r in results} == {str(i) for i in ids}
-        assert all(r.content.strip() for r in results), (
-            [r.content for r in results]
-        )
+        assert all(r.content.strip() for r in results), [r.content for r in results]
         # Content prefixes are distinct per hit, so dedup keys differ.
         assert len({r.content[:200] for r in results}) == len(results)
 
@@ -154,13 +154,16 @@ class TestDedupStillCollapsesTrueDuplicates:
         """AC2 at the media seam: two media items whose content prefixes are
         identical are true duplicates and collapse to one through the
         pipeline."""
+        ids = []
         for title in ("Twin A", "Twin B"):
-            media_db.add_media_with_keywords(
+            media_id, _uuid, _message = media_db.add_media_with_keywords(
                 title=title,
                 media_type="document",
-                content="identical zanzibarite description",
+                content="identical zanzibarite description " * 20 + title,
                 keywords=["test"],
             )
+            ids.append(media_id)
+        assert len(set(ids)) == 2  # ingestion must not collapse the test before dedup
         app = _App(media_db)
 
         result_dicts, _context = await pbs.execute_pipeline(
@@ -192,3 +195,71 @@ class TestDedupStillCollapsesTrueDuplicates:
         assert all(r.content for r in results), [r.content for r in results]
         assert sorted(r.content for r in results) == ["Doc 0", "Doc 1", "Doc 2"]
         assert len({r.content[:200] for r in results}) == 3
+
+    @pytest.mark.parametrize("content", [None, ""])
+    async def test_contentless_media_with_repeated_titles_survives_pipeline(
+        self, media_db, content
+    ):
+        ids = _seed_media(media_db, n=3, title="Repeated report")
+        conn = media_db.get_connection()
+        conn.execute(
+            f"UPDATE Media SET content = ?, "
+            f"version = version + 1 WHERE id IN ({','.join('?' * len(ids))})",
+            (content, *ids),
+        )
+        conn.commit()
+        app = _App(media_db)
+
+        result_dicts, _context = await pbs.execute_pipeline(
+            dict(_MEDIA_DEDUP_PIPELINE), app, "Repeated", {"media": True}
+        )
+
+        assert len(result_dicts) == 3
+        assert {result["id"] for result in result_dicts} == {str(i) for i in ids}
+        assert [result["content"] for result in result_dicts] == ["Repeated report"] * 3
+
+    async def test_repeated_contentless_hit_collapses_by_record_id(self, media_db):
+        ids = _seed_media(media_db, n=2, title="Repeated report")
+        conn = media_db.get_connection()
+        conn.execute(
+            f"UPDATE Media SET content = NULL, "
+            f"version = version + 1 WHERE id IN ({','.join('?' * len(ids))})",
+            tuple(ids),
+        )
+        conn.commit()
+        results = await pfs.search_media_fts5(_App(media_db), "Repeated", limit=10)
+        repeated = results[0]
+        higher_score = SearchResult(
+            source=repeated.source,
+            id=repeated.id,
+            title=repeated.title,
+            content=repeated.content,
+            score=2.0,
+            metadata=dict(repeated.metadata),
+        )
+
+        deduped = pfs.deduplicate_results([*results, higher_score])
+
+        assert len(deduped) == 2
+        assert {result.id for result in deduped} == {str(i) for i in ids}
+        assert (
+            next(result for result in deduped if result.id == repeated.id).score == 2.0
+        )
+
+    async def test_title_fallback_does_not_dedup_against_real_content(self, media_db):
+        ids = _seed_media(media_db, n=2, title="Repeated report")
+        conn = media_db.get_connection()
+        for media_id, content in zip(ids, [None, "Repeated report"]):
+            conn.execute(
+                "UPDATE Media SET content = ?, version = version + 1 WHERE id = ?",
+                (content, media_id),
+            )
+        conn.commit()
+
+        result_dicts, _context = await pbs.execute_pipeline(
+            dict(_MEDIA_DEDUP_PIPELINE), _App(media_db), "Repeated", {"media": True}
+        )
+
+        assert len(result_dicts) == 2
+        assert {result["id"] for result in result_dicts} == {str(i) for i in ids}
+        assert [result["content"] for result in result_dicts] == ["Repeated report"] * 2

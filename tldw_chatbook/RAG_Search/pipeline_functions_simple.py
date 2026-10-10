@@ -225,7 +225,7 @@ async def search_media_fts5(
     # content-prefix key then collapsed ALL unscoped media results into one.
     # One batched SQL-side substr fetch gives each hit a bounded, distinct
     # snippet (500 chars > the dedup key's 200); rows with no content fall
-    # back to their title so the degenerate shape can never re-collapse.
+    # back to their title for display and dedup by their media record ID.
     content_map: Dict[int, str] = {}
     if media_ids:
         content_map = await asyncio.to_thread(
@@ -246,19 +246,19 @@ async def search_media_fts5(
             ):
                 continue
 
+        content_prefix = content_map.get(item.get("id"))
         results.append(
             SearchResult(
                 source="media",
                 id=str(item.get("id", "")),
                 title=item.get("title", "Untitled"),
-                content=content_map.get(item.get("id"))
-                or item.get("title")
-                or "",
+                content=content_prefix or item.get("title") or "",
                 metadata={
                     "type": item.get("type", "unknown"),
                     "author": item.get("author", "Unknown"),
                     "ingestion_date": item.get("ingestion_date", ""),
                     "keywords": keywords_map.get(item.get("id"), []),
+                    "_content_is_title_fallback": not bool(content_prefix),
                 },
             )
         )
@@ -641,10 +641,11 @@ async def search_semantic(
 def deduplicate_results(results: List[SearchResult]) -> List[SearchResult]:
     """Remove duplicate results based on content similarity.
 
-    TASK-407: the key is ``(source, content[:200])`` -- NOT a bare content
-    prefix. A bare prefix had two failure modes: content-less results (every
-    media hit before the media leg attached snippets, since search_media_db's
-    broad row omits ``content``) all shared the empty-string key and collapsed
+    TASK-407: real content keys are ``(source, content[:200])``. Media
+    title-fallback rows instead key by record ID: equal titles do not prove
+    equal content. A bare content prefix had two failure modes: content-less
+    results (every media hit before the media leg attached snippets, since
+    search_media_db's broad row omits ``content``) all shared the empty-string key and collapsed
     into one; and once media hits carried real snippets, a media item and a
     note that happen to share text (same transcript ingested as both) also
     collapsed, eating a distinct result. Identical content within ONE source
@@ -655,8 +656,13 @@ def deduplicate_results(results: List[SearchResult]) -> List[SearchResult]:
     seen = {}
 
     for result in results:
-        # Use source + first 200 chars of content as key
-        key = (result.source, result.content[:200])
+        if (
+            result.source == "media"
+            and result.metadata.get("_content_is_title_fallback") is True
+        ):
+            key = (result.source, "id", result.id)
+        else:
+            key = (result.source, result.content[:200])
 
         if key not in seen or result.score > seen[key].score:
             seen[key] = result

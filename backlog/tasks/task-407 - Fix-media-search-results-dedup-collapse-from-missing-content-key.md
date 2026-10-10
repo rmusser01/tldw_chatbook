@@ -1,9 +1,11 @@
 ---
 id: TASK-407
 title: Fix media search results dedup collapse from missing content key
-status: Done
-assignee: ['@claude']
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-21 09:48'
+updated_date: '2026-10-10 19:46'
 labels:
   - rag
   - bug
@@ -25,6 +27,7 @@ Pre-existing bug confirmed twice during the RAG scope program (Task 5 review tra
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 Premise re-verified at branch base `cddc89d3e7` (2026-10-06, real in-memory
 `MediaDatabase`): `search_media_db` returns no `content` key, the media leg
 builds `SearchResult(content="")` for every hit, and `deduplicate_results`
@@ -45,8 +48,18 @@ builds `SearchResult(content="")` for every hit, and `deduplicate_results`
    media leg (`Tests/RAG/test_scope_pipeline_enforcement.py`,
    `Tests/RAG/test_fusion.py`, `Tests/RAG/test_local_citation_capture.py`).
 
+Post-merge review follow-up (2026-10-10; base bade7c9a9d)
+1. Reproduce repeated-title media collapse with real NULL/empty content rows through the media-plus-dedup pipeline.
+2. Mark title-fallback media results for record-identity dedup; retain title display, bounded snippets, source isolation, and real-content duplicate semantics.
+3. Verify repeated fallback hits still collapse by record identity; run the targeted media/pipeline regressions and preflight.
+ADR required: no
+ADR path: N/A
+Reason: complete the existing dedup bug fix using SearchResult metadata; no schema, source authority, or persistence changes.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Premise CONFIRMED at base `cddc89d3e7` (2026-10-06): with a real tmp-path
 `MediaDatabase` seeded 3 distinct media, `search_media_db`'s row has no
 `content` key, `search_media_fts5` returned 3 hits all with `content=''`,
@@ -113,3 +126,9 @@ scope-enforcement + fusion + citation suites 243 passed with only the 4
 pre-existing `TestActiveConsoleSessionRealGlue` reds (identical at base).
 Incident recorded in `backlog/docs/lessons-backlog-hygiene.md`
 ("stale /tmp backup" entry).
+
+Post-merge review completion (2026-10-10)
+The NULL/empty-content fallback retains the original title for display but is marked in SearchResult metadata and deduplicated by source plus media record ID. Real-content prefix dedup and highest-score selection remain unchanged. Added real-database repeated-title, repeated-hit and fallback-versus-real-content regressions; strengthened the existing real-content control so ingestion itself cannot collapse its two records before the pipeline runs.
+Red/green: the new media cases failed with 1 result instead of 3/2 before the repair; all pass afterward. Combined guard/media/widget/fusion/citation run: 218 passed; post-format changed-module plus scoped-media/custom-pipeline/chat-context run: 49 passed. Black 25.1.0 and focused Ruff 0.13.1 error checks passed; preflight passed. No full-suite run. Independent review pending; task remains In Progress until that review.
+ADR required: no; routine completion of this task's existing dedup fix; no schema or source-authority change.
+<!-- SECTION:NOTES:END -->

@@ -3,8 +3,8 @@
 
 Textual parses Rich markup by default in three widget-facing places --
 ``App.notify()`` messages, widget ``tooltip`` strings (rendered through the
-``Tooltip`` Static), and ``Button(label=...)`` -- so an interpolated
-user-derived value containing a stray ``[/]`` or ``[b]`` raises
+``Tooltip`` Static), and Button labels (including label assignment) -- so
+an interpolated user-derived value containing a stray ``[/]`` or ``[b]`` raises
 ``MarkupError`` at render time and can crash the app. The 2026-07-30 Evals
 UAT batch (task-1476/1482) fixed the Evals package's instances; this guard
 is the repo-wide half: the convention is
@@ -21,9 +21,9 @@ string that is not wrapped in ``escape_markup(...)``):
 1. ``notify_interp`` -- ``<anything>.notify(<msg>, ...)`` whose ``msg``
    interpolates an unsafe atom AND the call does not pass ``markup=False``.
 2. ``button_label_interp`` -- ``Button(<label>)`` / ``Button(label=...)``
-   whose label interpolates an unsafe atom. A whole-expression
-   ``escape_markup(...)`` or ``Text(...)`` wrap is exempt (``Text(str)``
-   does not parse markup).
+   and ``<obj>.label =`` whose label interpolates an unsafe atom. A
+   whole-expression ``escape_markup(...)`` or ``Text(...)`` wrap is exempt
+   unless its input first evaluates ``from_markup(...)``.
 3. ``tooltip_interp`` -- any call's ``tooltip=`` keyword, or an
    ``<obj>.tooltip =`` assignment, interpolating an unsafe atom.
 
@@ -69,36 +69,44 @@ RATCHETED_KINDS = (KIND_NOTIFY, KIND_BUTTON_LABEL, KIND_TOOLTIP)
 Occurrence = tuple[str, str, str]  # (module, symbol, kind)
 
 
+def _contains_markup_parse(node: ast.AST) -> bool:
+    """A wrapper cannot make an earlier markup parse safe."""
+    return any(
+        isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Attribute)
+        and child.func.attr == "from_markup"
+        for child in ast.walk(node)
+    )
+
+
 def _is_escape_markup_call(node: ast.AST) -> bool:
     """Whether ``node`` is a call to ``escape_markup`` (imported or dotted)."""
     if not isinstance(node, ast.Call):
         return False
     func = node.func
-    if isinstance(func, ast.Name):
-        return func.id == "escape_markup"
-    return isinstance(func, ast.Attribute) and func.attr == "escape_markup"
+    matches = (
+        func.id == "escape_markup"
+        if isinstance(func, ast.Name)
+        else (isinstance(func, ast.Attribute) and func.attr == "escape_markup")
+    )
+    return matches and not _contains_markup_parse(node)
 
 
 def _is_text_wrap(node: ast.AST) -> bool:
-    """Whether ``node`` wraps its content in a markup-inert ``Text`` object.
-
-    ``Text("...")`` and ``Text.from_markup("...")`` both yield parsed
-    content: a plain-string ``Text`` never interprets brackets, and a
-    ``from_markup`` wrap is the author explicitly choosing markup with no
-    further interpolation hazard *of its own string* (the f-string inside
-    is still scanned by the JoinedStr predicate, so ``Text(f"{name}")``
-    stays safe while ``Button(f"{name}")`` does not).
-    """
+    """Whether plain ``Text(...)`` wraps text without first parsing markup."""
     if not isinstance(node, ast.Call):
         return False
     func = node.func
-    if isinstance(func, ast.Name):
-        return func.id == "Text"
-    if isinstance(func, ast.Attribute):
-        return func.attr == "from_markup" or (
-            func.attr == "Text" and isinstance(func.value, ast.Name)
+    matches = (
+        func.id == "Text"
+        if isinstance(func, ast.Name)
+        else (
+            isinstance(func, ast.Attribute)
+            and func.attr == "Text"
+            and isinstance(func.value, ast.Name)
         )
-    return False
+    )
+    return matches and not _contains_markup_parse(node)
 
 
 def _atom_is_safe(node: ast.AST) -> bool:
@@ -287,16 +295,17 @@ class _Visitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        # <widget>.tooltip = <...>
+        # Tooltip and label setters parse strings just like constructors.
         for target in node.targets:
             if (
                 isinstance(target, ast.Attribute)
-                and target.attr == "tooltip"
+                and target.attr in {"tooltip", "label"}
                 and not _is_escape_markup_call(node.value)
                 and not _is_text_wrap(node.value)
                 and _interpolates_unsafe_atom(node.value)
             ):
-                self.hits[(self.module, self._symbol, KIND_TOOLTIP)] += 1
+                kind = KIND_TOOLTIP if target.attr == "tooltip" else KIND_BUTTON_LABEL
+                self.hits[(self.module, self._symbol, kind)] += 1
         self.generic_visit(node)
 
 
