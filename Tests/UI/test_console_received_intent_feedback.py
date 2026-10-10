@@ -301,7 +301,7 @@ async def _held_received_record(case):
 
 
 @pytest.mark.parametrize("route", ["enter", "send-button"])
-async def test_actual_send_paints_preparing_and_accepts_input_within_100ms(
+async def test_actual_send_paints_sending_and_accepts_input_within_100ms(
     route, monkeypatch, record_property
 ):
     """Headless supplied frames qualify readiness, not physical terminal flush."""
@@ -376,7 +376,7 @@ async def test_actual_send_paints_preparing_and_accepts_input_within_100ms(
                 assert preparing.feedback_frame_at is not None
                 assert preparing.feedback_frame_at - preparing.action_at <= 0.1
                 assert preparing.frame_at is not None and preparing.while_held
-                assert preparing.frame_at - preparing.action_at <= 0.1
+                # Preparing follows the immediate Sending frame at real receipt.
                 assert typing.mutated_while_held and typing.frame_while_held
                 assert typing.mutated_at - typing.sent_at <= 0.1
                 assert typing.frame_at - typing.sent_at <= 0.1

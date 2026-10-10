@@ -2081,3 +2081,22 @@ was observed at 6.4067 s; later reply frames were not observed, so the combined
 observations; no real-provider first-token or later-response display claim follows.
 Post-rebase qualification must be recorded separately. Further optimization
 candidates remain in `console-optimization-review-list.md`.
+Post-rebase integration preserves the landed captured-press acknowledgement:
+`Sending…` and its pending USER row paint before received-custody preparation,
+then `Preparing` reflects the real held configuration reader. The same press
+snapshot/body/revision reaches the received owner; later draft edits survive.
+The exact dispatching acknowledgement may pass its own disabled-composer
+presentation, while unrelated acknowledgements and every source, setup,
+recovery and authority gate retain their original refusal.
+
+`post-rebase-smoke-3` on 1eddc7a4a8 passed all receipt, captured-draft and authority
+cases. Its two failures were the earlier stage-specific `Preparing <=100ms`
+assertions: natural `Sending` frames were 87.21/92.11ms, pending USER frames
+86.88/196.47ms, and later held-reader `Preparing` frames 316.38/356.43ms
+(Enter/button respectively). The Enter pending row met the landed <=100ms
+contract in this sample; the button result has no such claim. Typing mutation
+was 2.55/3.16ms and its supplied frame 11.78/8.52ms. The corrected test keeps the
+100ms immediate Sending and input gates, the original 0.5s held-reader budget,
+natural Preparing while held, and exact pending-row linkage; it records these
+endpoints separately. These remain headless supplied-frame observations, not
+physical terminal flush or real-provider first-token measurements.
