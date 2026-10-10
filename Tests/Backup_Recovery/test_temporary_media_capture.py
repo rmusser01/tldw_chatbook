@@ -349,7 +349,7 @@ async def main():
     store.append_video_message(session.id, video_metadata=VideoGenerationMetadata(name='expired', prompt='expired', backend='comfyui'), persist=True, message_id='expired-message')
     options = {'staging_parent': home, 'temporary_media': True}
     preview = preview_capture((selector,), options=options)
-    assert preview.complete, (preview.issues, [(i.owner, i.status) for i in preview.items if i.status == 'unsupported'])
+    assert preview.complete, (preview.issues, [(i.owner, i.status, str(i.path)) for i in preview.items])
     destination = home / 'retained-temporary.tldw-backup.zip'
     monitoring = asyncio.create_task(monitor_app(app))
     cancel = threading.Event()
