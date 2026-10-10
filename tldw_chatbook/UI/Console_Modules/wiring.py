@@ -1256,6 +1256,9 @@ def build_console_controllers(
         render_character_avatar=(
             lambda **kwargs: screen._render_character_avatar_into_section(**kwargs)
         ),
+        bind_composer=(
+            lambda: screen._session._bind_composer_to_active_session(focus=False)
+        ),
     )
 
     def _character_progress_counts() -> dict[str, int]:
@@ -1383,10 +1386,9 @@ def build_console_controllers(
                 screen._workspace._set_active_workspace_for_console_session(session_id)
             )
         ),
-        switch_chat_session=(
-            lambda session_id: screen._console_chat_controller.switch_session(
-                session_id
-            )
+        # TASK-33622.7: bind the composer with the switch, not on the next pass.
+        switch_chat_session=lambda session_id: screen._session.switch_and_bind(
+            session_id
         ),
         schedule_native_console_sync=(
             lambda: screen.run_worker(

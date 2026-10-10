@@ -1143,6 +1143,11 @@ class ConsoleSessionController:
         ) = None
         self._console_undo_histories: dict[str, ConsoleComposerUndoHistory] = {}
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
+        #: TASK-33622.7: the composer as a session-tab click found it, keyed
+        #: by the clicked session (see ``note_session_tab_click``).
+        self._console_tab_click_snapshot: (
+            tuple[str, tuple[str | None, str, int]] | None
+        ) = None
         self._closing_session_requests: set[str] = set()
         self._manual_reaction_overrides: dict[tuple[str, str, str], str] = {}
         self._reaction_preview_generation = 0
@@ -3166,6 +3171,8 @@ class ConsoleSessionController:
             activate_if: Optional current-claim/screen guard checked before
                 activation and after each awaited refresh; absent for tab clicks.
         """
+        clicked = self._console_tab_click_snapshot
+        self._console_tab_click_snapshot = None
         if activate_if is not None and not activate_if():
             return
         claim = self._claim_manual_read_visit(session_id)
@@ -3173,7 +3180,16 @@ class ConsoleSessionController:
         switching = controller.store.active_session_id != session_id
         if switching:
             self._hide_console_activity_notice()
-            self._capture_console_draft_switch_snapshot()
+            if (
+                clicked is not None
+                and clicked[0] == session_id
+                and clicked[1][0] == self._console_visible_draft_session_id
+            ):
+                # TASK-33622.7: keys typed after the click on this tab, while
+                # an earlier activation held the screen, belong to this chat.
+                self._console_draft_switch_snapshot = clicked[1]
+            else:
+                self._capture_console_draft_switch_snapshot()
             self._note_console_follow_intent()
             self._set_active_workspace_for_session(session_id)
             controller.switch_session(session_id)
@@ -3190,6 +3206,10 @@ class ConsoleSessionController:
             self._bind_composer_to_active_session()
         visit = await self._read_claimed_visit(claim)
         if activate_if is not None and not activate_if():
+            if switching:
+                # TASK-33622.7: the switch is already shown in the composer
+                # and tab strip; let the next sync pass repaint the rest.
+                self._screen._console_sync_requested = True
             return
         if switching:
             # Task-13 review finding 2: this path activates an ALREADY-
@@ -3220,6 +3240,7 @@ class ConsoleSessionController:
                         session_id,
                     )
             if activate_if is not None and not activate_if():
+                self._screen._console_sync_requested = True  # TASK-33622.7
                 return
             await self._sync_native_console_chat_ui()
         if activate_if is not None and not activate_if():
@@ -4015,6 +4036,7 @@ class ConsoleSessionController:
             ephemeral=ephemeral,
             **assistant_kwargs,
         )
+        self._bind_composer_to_active_session()  # TASK-33622.7
         # TASK-251: new-chat-tab handler -- invalidate so the browser's
         # "selected" row indicator picks up the new active session promptly.
         self._invalidate_console_persisted_rows_cache()
@@ -5298,6 +5320,7 @@ class ConsoleSessionController:
                     type(exc).__name__,
                 )
         store.switch_session(session.id)
+        self._bind_composer_to_active_session()  # TASK-33622.7
         if not duplicate_handoff:
             if local_character_id is None:
                 self._clear_session_manual_reactions(session.id)
@@ -5477,6 +5500,7 @@ class ConsoleSessionController:
                     type(exc).__name__,
                 )
         store.switch_session(session.id)
+        self._bind_composer_to_active_session()  # TASK-33622.7
         if not duplicate_handoff:
             # Same defensive cleanup as the server-character path: a persona
             # session never keys reactions by actor, so clear wholesale.
@@ -5653,39 +5677,123 @@ class ConsoleSessionController:
             else None
         )
 
-    def _bind_composer_to_active_session(self) -> None:
+    def _bind_composer_to_active_session(self, *, focus: bool = True) -> None:
         """Show the active chat's draft, tab highlight and title in one step.
 
-        TASK-33622.7: called synchronously by an activation, so the old
-        draft is saved to its own chat, the new chat's draft is loaded, its
-        tab is highlighted and the composer takes focus before any await,
-        whether or not a console-sync pass is in flight.
+        TASK-33622.7: every UI path that switches or creates the active
+        session calls this right after the switch, so the old draft is saved
+        to its own chat, the new chat's draft is loaded and its tab is
+        highlighted before any await, whether or not a console-sync pass is
+        in flight. The pass still owns labels, markers and the transcript.
+
+        Args:
+            focus: Also move the keyboard to the composer (user-initiated
+                switches); background switches leave focus where it is.
         """
         self._sync_console_session_draft()
         session = self._active_native_console_session()
         surface = self._session_surface_accessor()
         if session is not None and surface is not None and surface.is_mounted:
             surface.show_active_session(session.id, session.title)
-        self._focus_console_composer_if_needed(force=True)
+        if focus:
+            self._focus_console_composer_if_needed(force=True)
 
-    def refuse_send_from_unbound_composer(self) -> bool:
-        """Refuse a send while the composer is bound to another chat.
+    def switch_and_bind(self, session_id: str) -> Any:
+        """Switch the native session and bind the composer to it at once.
 
-        TASK-33622.7: switch paths that still leave the rebind to the sync
-        pass can show one chat while the composer holds another chat's
-        draft. Sending then would queue the draft into the chat that is no
-        longer on screen, so the send is refused visibly and the draft kept.
-        Until the active chat's tab or transcript is painted, the composer's
-        chat is still the one on screen and the send goes there (a display
-        rebuild can create a blank active session first; TASK-4).
+        TASK-33622.7: for background switches (fleet completion handoffs),
+        which leave the keyboard where it is.
+
+        Args:
+            session_id: Native Console session to make active.
 
         Returns:
-            True when the send was refused.
+            The session the controller switched to.
+        """
+        session = self._ensure_console_chat_controller().switch_session(session_id)
+        self._bind_composer_to_active_session(focus=False)
+        return session
+
+    def note_session_tab_click(self, session_id: str) -> None:
+        """Record the composer as a session-tab click finds it.
+
+        TASK-33622.7: the click's Pressed message reaches the activation only
+        after earlier screen work (another tab's activation) has finished,
+        while keys typed straight after the click can already reach the
+        composer. The activation for this tab uses the record, so those keys
+        move to the clicked chat (TASK-339) instead of staying with the chat
+        the composer showed.
+
+        Args:
+            session_id: The session whose tab was clicked.
+        """
+        composer = self._console_composer_or_none()
+        store = self._ensure_console_chat_store()
+        if composer is None or store.active_session_id == session_id:
+            self._console_tab_click_snapshot = None
+            return
+        self._console_tab_click_snapshot = (
+            session_id,
+            (
+                self._console_visible_draft_session_id,
+                composer.draft_text(),
+                composer.edit_serial,
+            ),
+        )
+
+    def refuse_send_from_unbound_composer(
+        self, *, strict: bool = False, action: str = "sent"
+    ) -> bool:
+        """Refuse a send while the composer is bound to another chat.
+
+        TASK-33622.7: a switch can show one chat while the composer holds
+        another chat's draft. Sending then would queue the draft into a chat
+        that is not on screen, so the send is refused visibly and the draft
+        kept. A send goes to the composer's chat, so it is refused only when
+        that chat is no longer the one shown: another chat's tab or
+        transcript is painted. Until anything else is painted the composer's
+        chat is still on screen (a display rebuild can create a blank active
+        session first; TASK-4).
+
+        Args:
+            strict: Refuse whenever the composer is not bound to the active
+                chat. Redirect acts on the active chat's run, painted or not.
+            action: Past participle for the notice ("sent", "redirected").
+
+        Returns:
+            True when the action was refused.
         """
         bound = self._console_visible_draft_session_id
         active = self._ensure_console_chat_store().active_session_id
-        if bound is None or active is None or bound == active:
+        if strict:
+            if self._console_composer_history_session_synced():
+                return False
+        elif (
+            bound is None
+            or active is None
+            or bound == active
+            or not self._composer_chat_left_the_screen(bound, active)
+        ):
             return False
+        logger.warning(
+            "Console {} refused: composer bound to {} while {} is active",
+            action,
+            bound,
+            active,
+        )
+        self.app_instance.notify(
+            f"Still switching chats, so nothing was {action}. Your draft was kept.",
+            severity="warning",
+        )
+        return True
+
+    def _composer_chat_left_the_screen(self, bound: str, active: str) -> bool:
+        """Whether the screen shows a chat other than the composer's.
+
+        True when the active chat's tab or transcript is painted, or when
+        something is painted and none of it is the composer's chat (two
+        switches in a row; TASK-33622.7 review).
+        """
         surface = self._session_surface_accessor()
         highlighted = (
             surface.highlighted_session_id()
@@ -5693,18 +5801,8 @@ class ConsoleSessionController:
             else None
         )
         transcript = getattr(self._screen, "_last_native_transcript_session_id", None)
-        if active not in (highlighted, transcript):
-            return False
-        logger.warning(
-            "Console send refused: composer bound to {} while {} is active",
-            bound,
-            active,
-        )
-        self.app_instance.notify(
-            "Still switching chats, so nothing was sent. Your draft was kept.",
-            severity="warning",
-        )
-        return True
+        painted = {item for item in (highlighted, transcript) if item is not None}
+        return active in painted or (bool(painted) and bound not in painted)
 
     # -- Session identity / state -------------------------------------------
 

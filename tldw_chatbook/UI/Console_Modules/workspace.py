@@ -1379,6 +1379,17 @@ class ConsoleWorkspaceController:
     def _capture_console_draft_switch_snapshot(self) -> Any:
         return self._capture_draft_switch_snapshot_fn
 
+    def _bind_composer_to_active_session(self, *, focus: bool = False) -> None:
+        """Bind the composer to the chat just switched to (TASK-33622.7).
+
+        See ``ConsoleSessionController._bind_composer_to_active_session``:
+        never leave the rebind to the coalescable sync pass.
+        """
+        session = getattr(self._screen, "_session", None)
+        bind = getattr(session, "_bind_composer_to_active_session", None)
+        if callable(bind):
+            bind(focus=focus)
+
     @property
     def _sync_console_chat_core_state(self) -> Any:
         return self._sync_chat_core_state_fn
@@ -5394,6 +5405,7 @@ class ConsoleWorkspaceController:
             if prior_active_session_id != session_id:
                 self._capture_console_draft_switch_snapshot()
                 controller.switch_session(session_id)
+                self._bind_composer_to_active_session(focus=True)
             self._set_active_workspace_for_console_session(session_id)
             session = next(item for item in store.sessions() if item.id == session_id)
             try:
@@ -5586,6 +5598,7 @@ class ConsoleWorkspaceController:
             if session.workspace_id == target_workspace_id:
                 self._capture_console_draft_switch_snapshot()
                 store.switch_session(session.id)
+                self._bind_composer_to_active_session()  # TASK-33622.7
                 # task-7 review: this switches the active session with no
                 # other chip-refresh call anywhere in the caller chain (all
                 # three callers only run `_sync_native_console_chat_ui()`
@@ -6344,6 +6357,7 @@ class ConsoleWorkspaceController:
             return
         try:
             store.switch_session(prior_active_session_id)
+            self._bind_composer_to_active_session()  # TASK-33622.7
             self._set_active_workspace_for_console_session(prior_active_session_id)
             self._sync_console_chat_core_state()
             sync_result = self._sync_native_console_chat_ui_fn()
@@ -6543,6 +6557,7 @@ class ConsoleWorkspaceController:
                 )
                 return None
             store.switch_session(session.id)
+            self._bind_composer_to_active_session()  # TASK-33622.7
             self._set_active_workspace_for_console_session(session.id)
             self._sync_console_retrieval_scope_row()
             self._console_agent_drilldown_run_id = None

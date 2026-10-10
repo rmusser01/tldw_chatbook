@@ -3974,6 +3974,7 @@ class ChatScreen(BaseAppScreen):
             ):
                 return
             store.switch_session(prior_active_session_id)
+            self._session._bind_composer_to_active_session(focus=False)
             await self._sync_native_console_chat_ui()
 
         try:
@@ -4035,6 +4036,7 @@ class ChatScreen(BaseAppScreen):
                     return
                 switched_session = True
                 selected_active_session_epoch = store.active_session_epoch()
+                self._session._bind_composer_to_active_session(focus=False)
                 await self._sync_native_console_chat_ui()
             restored = await self._reopen_suspended_console_settings(
                 token,
@@ -7683,6 +7685,9 @@ class ChatScreen(BaseAppScreen):
             self.console_session_surface = ConsoleSessionSurface(
                 self.app_instance,
                 background_effect_settings=settings,
+                on_session_tab_click=lambda sid: self._session.note_session_tab_click(
+                    sid
+                ),
                 id="console-session-surface",
                 classes="console-region",
             )

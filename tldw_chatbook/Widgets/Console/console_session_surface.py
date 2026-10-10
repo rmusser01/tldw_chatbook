@@ -156,9 +156,18 @@ class ConsoleSessionTabButton(Button):
     }
     """
 
-    def __init__(self, *args: Any, session_id: str, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        session_id: str,
+        on_click_started: Callable[[str], None] | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._session_id = session_id
+        #: TASK-33622.7: called with this tab's session id when a left click
+        #: lands, before the Pressed message starts its way to the screen.
+        self._on_click_started = on_click_started
 
     async def _on_click(self, event) -> None:
         # TASK-33621.15: both branches prevent the default, because Textual
@@ -177,6 +186,8 @@ class ConsoleSessionTabButton(Button):
                 return
             close_button.press()
             return
+        if self._on_click_started is not None:
+            self._on_click_started(self._session_id)
         await super()._on_click(event)
         event.prevent_default()
 
@@ -254,10 +265,13 @@ class ConsoleSessionSurface(Vertical):
         app_instance: Any,
         *,
         background_effect_settings: ConsoleBackgroundEffectSettings | None = None,
+        on_session_tab_click: Callable[[str], None] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.app_instance = app_instance
+        #: TASK-33622.7: told which session tab a click landed on, at once.
+        self._on_session_tab_click = on_session_tab_click
         self.background_effect_settings = (
             background_effect_settings or ConsoleBackgroundEffectSettings()
         )
@@ -457,6 +471,7 @@ class ConsoleSessionSurface(Vertical):
     def _build_new_tab_button(self) -> Button:
         """Return the compact symbolic Console new-session control."""
         button = Button("New tab", id="console-new-chat-tab", compact=True)
+        button.FOCUS_ON_CLICK = False  # TASK-33622.7: see ConsoleSessionTabButton
         button.tooltip = "New Console tab"
         button.remove_class(*(name for name in button.classes if name.startswith("w-")))
         button.set_styles(width=None)
@@ -473,6 +488,7 @@ class ConsoleSessionSurface(Vertical):
     def _build_new_temporary_tab_button(self) -> Button:
         """Return the tab-strip control for a chat that is never saved."""
         button = Button("Temporary", id="console-new-temporary-tab", compact=True)
+        button.FOCUS_ON_CLICK = False  # TASK-33622.7: see ConsoleSessionTabButton
         button.tooltip = "New temporary Console tab — not saved locally"
         button.remove_class(*(name for name in button.classes if name.startswith("h-")))
         button.remove_class(*(name for name in button.classes if name.startswith("w-")))
@@ -542,6 +558,7 @@ class ConsoleSessionSurface(Vertical):
             classes=classes,
             compact=True,
             session_id=session.id,
+            on_click_started=self._on_session_tab_click,
         )
         button.tooltip = _session_tab_tooltip(
             session,
@@ -624,6 +641,7 @@ class ConsoleSessionSurface(Vertical):
             classes="console-session-close-button",
             compact=True,
         )
+        close_button.FOCUS_ON_CLICK = False  # TASK-33622.7
         close_button.tooltip = "Close Console tab"
         close_button.remove_class(
             *(name for name in close_button.classes if name.startswith("w-"))
