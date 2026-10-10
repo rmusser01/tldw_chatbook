@@ -1,11 +1,11 @@
 ---
 id: TASK-32931
 title: Speak Console replies sentence-by-sentence so audio starts sooner
-status: Done
+status: In Progress
 assignee:
   - '@dsh'
 created_date: '2026-09-27 20:10'
-updated_date: '2026-09-27 20:35'
+updated_date: '2026-10-10 15:54'
 labels:
   - tts
   - speech
@@ -46,6 +46,7 @@ after the first piece while the rest generate during playback.
 - [x] #4 A failure after playback has started is reported to the user and never silently replayed from the beginning
 - [x] #5 A sink that fails to open before any audio plays still delivers the utterance through the existing fallback path
 - [x] #6 Targeted TTS and TTS_Events suites pass
+- [x] #7 Sentence chunking preserves cancellation, exact response contracts, utterance progress, and non-Console file delivery; long unspaced text is bounded.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -70,6 +71,15 @@ after the first piece while the rest generate during playback.
    change -- this reuses the existing sink seam and the existing chunker. The
    rejected alternative (making the local TTS server stream its response
    instead) is recorded in the Implementation Notes.
+
+Review follow-up (2026-10-10):
+1. Rebase onto current dev and preserve both lesson additions.
+2. Reproduce and fix import failure, cancellation during response cleanup, per-piece response validation, overall progress, and accidental non-Console chunking.
+3. Bound oversized text pieces while preserving word boundaries; document one provider call per piece and custom metered-endpoint quota limits.
+4. Exercise long speech through the public entry, run targeted speech regressions and derived-artifact preflight, and review the final diff.
+ADR required: no
+ADR path: N/A
+Reason: repair existing speech lifecycle and response contracts without changing module boundaries or storage. Existing ADRs: backlog/decisions/023-tts-adapter-registry-and-audio-cpp-runtime-boundary.md and backlog/decisions/028-character-tts-generation-profile-ownership.md.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -155,3 +165,13 @@ the last.
   `Tests/TTS_Events/`): **6 failed / 242 passed with this change and 6 failed /
   242 passed with it stashed** -- identical, so those failures are pre-existing
   on `origin/dev`, not caused here.
+
+**Review follow-up (2026-10-10).** Fixed the missing `Any` import that broke test collection; shared the whole-response contract checks with every piece; retained cancellation during cleanup, including after a primary failure; scaled per-piece progress to the utterance; and restricted chunking to Console playback. Oversized pieces are capped at 200 characters, prefer word boundaries, and preserve delimiters. Tests now distinguish every PCM payload and cover the public Console snapshot/event route, exact-selection rejection on first/later pieces, manual file delivery, and multilingual/oversized text.
+
+One provider request is made per piece. A custom OpenAI-compatible endpoint backed by tldw_server consumes one `max_calls` unit per request; a finite quota may reject a later piece after playback begins. This is an accepted tradeoff of client-side chunking, reported as a playback failure without replay. No server quota or batching contract changes are included.
+
+Fresh local verification: 29 chunked-speech tests passed; the targeted Console speech, format adaptation, logging privacy and TTS_Events run passed 268 tests with four excluded tests. Those four config-source lifetime failures were independently reproduced unchanged on dev `0c3ebc6ed76e5753385897c958f80b1c282abaa3` (4 failed, 19 deselected in the logging-privacy file), before reaching the modified speech path. Ruff formatting and undefined-name checks passed. Required preflight result is recorded after the final rebase. Historical live-server/device measurements above were not repeated locally because that server is unavailable.
+
+ADR required: no; existing ADR-023 and ADR-028 govern these lifecycle/selection repairs. No storage or boundary changes.
+
+<!-- SECTION:NOTES:END -->

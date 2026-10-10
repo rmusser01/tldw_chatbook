@@ -8,8 +8,9 @@ import re
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from dataclasses import replace
 from functools import partial, wraps
-from typing import Dict, Literal, Optional, TypeVar
+from typing import Any, Dict, Literal, Optional, TypeVar
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
@@ -113,6 +114,7 @@ _MAX_WAV_SINK_UPGRADE_BYTES = 16 * 1024 * 1024
 # fraction of generation, and that the sink never starves (the next piece
 # generates in less time than the current piece takes to play).
 _SPEECH_PIECE_MAX_TOKENS = 35
+_SPEECH_PIECE_MAX_CHARACTERS = 200
 # One piece's WAV body is bounded like the single-response sink upgrade is
 # (`_MAX_WAV_SINK_UPGRADE_BYTES`): a piece this large is already far past
 # anything the sink could play from its own bounded buffer.
@@ -2050,9 +2052,7 @@ class TTSEventHandler:
                     if admission_authorizer is not None
                     else {}
                 )
-                character_profile_selection: (
-                    TTSCharacterProfileSelection | None
-                ) = None
+                character_profile_selection: TTSCharacterProfileSelection | None = None
                 default_profile_selection: TTSDefaultProfileSelection | None = None
                 if exact_request is not None:
                     assert resolution is not None
@@ -2073,9 +2073,7 @@ class TTSEventHandler:
                     if resolution.source == "assigned":
                         character_profile_selection = TTSCharacterProfileSelection(
                             selection=exact_selection,
-                            repository_generation=(
-                                resolution.repository_generation
-                            ),
+                            repository_generation=(resolution.repository_generation),
                             profile_revision=resolution.profile_revision,
                             profile_id=resolution.profile_id,
                             reference=resolution.reference,
@@ -2084,15 +2082,18 @@ class TTSEventHandler:
                         assert resolution.source == "default_profile"
                         default_profile_selection = TTSDefaultProfileSelection(
                             selection=exact_selection,
-                            repository_generation=(
-                                resolution.repository_generation
-                            ),
+                            repository_generation=(resolution.repository_generation),
                             profile_revision=resolution.profile_revision,
                             profile_id=resolution.profile_id,
                             reference=resolution.reference,
                         )
 
-                async def request_piece(piece_text: str):
+                async def request_piece(
+                    piece_text: str,
+                    *,
+                    piece_index: int = 0,
+                    piece_count: int = 1,
+                ):
                     """Issue ONE provider request for exactly `piece_text`.
 
                     Returns `(response, effective_selection_or_None)`. The
@@ -2104,18 +2105,35 @@ class TTSEventHandler:
                     request is now just this function called once with the
                     full text.
                     """
+
+                    async def piece_progress_sink(progress: TTSProgress) -> None:
+                        fraction = progress.fraction
+                        if fraction is None and progress.processed is not None:
+                            if progress.total is not None and progress.total > 0:
+                                fraction = progress.processed / progress.total
+                        if isinstance(fraction, (int, float)):
+                            progress = replace(
+                                progress,
+                                fraction=(piece_index + min(1.0, max(0.0, fraction)))
+                                / piece_count,
+                            )
+                        await progress_sink(progress)
+
+                    request_progress_sink = (
+                        progress_sink if piece_count == 1 else piece_progress_sink
+                    )
                     if exact_request is not None:
                         if character_profile_selection is not None:
                             return await service.synthesize_effective(
                                 text=piece_text,
                                 character_profile=character_profile_selection,
-                                progress_sink=progress_sink,
+                                progress_sink=request_progress_sink,
                                 **authorization_kwargs,
                             )
                         return await service.synthesize_effective(
                             text=piece_text,
                             default_profile=default_profile_selection,
-                            progress_sink=progress_sink,
+                            progress_sink=request_progress_sink,
                             **authorization_kwargs,
                         )
                     return (
@@ -2123,7 +2141,7 @@ class TTSEventHandler:
                             text=piece_text,
                             voice_override=voice,
                             response_format_override=response_format_override,
-                            progress_sink=progress_sink,
+                            progress_sink=request_progress_sink,
                             **authorization_kwargs,
                         ),
                         None,
@@ -2144,6 +2162,7 @@ class TTSEventHandler:
                         else (response_format_override or candidate_format)
                     ),
                     message_id=normalized_message_id,
+                    exact_request=exact_request,
                     on_finished=on_finished,
                     playback_lifecycle=playback_lifecycle,
                 )
@@ -2152,47 +2171,12 @@ class TTSEventHandler:
                     return
 
                 response, effective_selection = await request_piece(text)
-                if exact_request is not None:
-                    assert effective_selection is not None
-                    requested_selection = TTSRequestedSelectionSnapshot(
-                        provider_id=effective_selection.provider_id,
-                        model_id=effective_selection.model_id,
-                        voice_id=effective_selection.voice_id,
-                        response_format=effective_selection.response_format,
-                        speed=effective_selection.speed,
-                        options=effective_selection.provider_options,
-                        configuration_revision=(
-                            effective_selection.revisions.provider_configuration
-                        ),
-                    )
-                    self._validate_exact_selection(
-                        exact_request,
-                        requested_selection,
-                    )
-                if (
-                    not isinstance(response.provider_id, str)
-                    or not response.provider_id
-                ):
-                    raise _TTSResponseContractError
-                if (
-                    exact_request is not None
-                    and response.provider_id != exact_request.provider_id
-                ):
-                    raise _TTSResponseContractError
+                audio_format = self._validate_speech_response(
+                    response,
+                    effective_selection,
+                    exact_request,
+                )
                 provider_id = response.provider_id
-                if not isinstance(response.model_id, str) or not response.model_id:
-                    raise _TTSResponseContractError
-                if (
-                    exact_request is not None
-                    and response.model_id != exact_request.model_id
-                ):
-                    raise _TTSResponseContractError
-                audio_format = self._response_audio_format(response.audio_format)
-                if (
-                    exact_request is not None
-                    and audio_format != exact_request.response_format
-                ):
-                    raise _TTSResponseContractError
 
                 # --- streaming PCM sink seam (task-4) ------------------------
                 # Raw PCM has no container-declared length, so `sink_plan`
@@ -2608,9 +2592,10 @@ class TTSEventHandler:
         self,
         *,
         text: str,
-        request_piece: Callable[[str], Awaitable[Any]],
+        request_piece: Callable[..., Awaitable[Any]],
         requested_format: str | None,
         message_id: str,
+        exact_request: TTSRequest | None = None,
         on_finished: Callable[[bool], None] | None = None,
         playback_lifecycle: TTSPlaybackLifecycle | None = None,
     ) -> str | None:
@@ -2666,7 +2651,11 @@ class TTSEventHandler:
             any audio played -- in which case the caller's ordinary
             whole-utterance path still runs, unchanged.
         """
-        if requested_format != "wav" or not sink_available():
+        if (
+            requested_format != "wav"
+            or (on_finished is None and playback_lifecycle is None)
+            or not sink_available()
+        ):
             return None
 
         # Function-local (PR #2638 CI): `text_processing` is only reachable
@@ -2681,6 +2670,26 @@ class TTSEventHandler:
             )
             if chunk.text.strip()
         ]
+        # The legacy chunker can discard repeated or trailing delimiters.
+        if "".join("".join(pieces).split()) != "".join(text.split()):
+            pieces = [text.strip()]
+        bounded_pieces = []
+        for piece in pieces:
+            while len(piece) > _SPEECH_PIECE_MAX_CHARACTERS:
+                boundaries = list(
+                    re.finditer(r"\s+", piece[: _SPEECH_PIECE_MAX_CHARACTERS + 1])
+                )
+                boundary = (
+                    boundaries[-1].start()
+                    if boundaries
+                    else _SPEECH_PIECE_MAX_CHARACTERS
+                )
+                bounded_pieces.append(piece[:boundary].strip())
+                piece = piece[boundary:].strip()
+            if piece:
+                bounded_pieces.append(piece)
+        # shortcut: oversized unspaced pieces split at characters; upgrade with a language-aware chunker.
+        pieces = bounded_pieces
         if len(pieces) < 2:
             return None
 
@@ -2695,7 +2704,12 @@ class TTSEventHandler:
         # requested format, say -- return `None` here, before the sink is
         # open and before any audio has played, so the caller can still fall
         # back to the ordinary path with nothing to replay.
-        first_body = await self._collect_speech_piece(request_piece, pieces[0])
+        first_body = await self._collect_speech_piece(
+            request_piece,
+            pieces[0],
+            exact_request=exact_request,
+            piece_count=len(pieces),
+        )
         if first_body is None:
             return None
         first_plan = sink_plan("wav", None, first_body)
@@ -2717,6 +2731,7 @@ class TTSEventHandler:
                 request_piece,
                 first_body=first_body,
                 first_plan=first_plan,
+                exact_request=exact_request,
             ),
             message_id=message_id,
             # False: a mid-stream failure must NOT fall back to replaying the
@@ -2726,10 +2741,56 @@ class TTSEventHandler:
             playback_lifecycle=playback_lifecycle,
         )
 
+    def _validate_speech_response(
+        self,
+        response: Any,
+        effective_selection: Any,
+        exact_request: TTSRequest | None,
+    ) -> str:
+        """Apply the same selection and audio contract to every response."""
+        if exact_request is not None:
+            if effective_selection is None:
+                raise _TTSResponseContractError
+            requested_selection = TTSRequestedSelectionSnapshot(
+                provider_id=effective_selection.provider_id,
+                model_id=effective_selection.model_id,
+                voice_id=effective_selection.voice_id,
+                response_format=effective_selection.response_format,
+                speed=effective_selection.speed,
+                options=effective_selection.provider_options,
+                configuration_revision=(
+                    effective_selection.revisions.provider_configuration
+                ),
+            )
+            self._validate_exact_selection(
+                exact_request,
+                requested_selection,
+            )
+        if not isinstance(response.provider_id, str) or not response.provider_id:
+            raise _TTSResponseContractError
+        if (
+            exact_request is not None
+            and response.provider_id != exact_request.provider_id
+        ):
+            raise _TTSResponseContractError
+        if not isinstance(response.model_id, str) or not response.model_id:
+            raise _TTSResponseContractError
+        if exact_request is not None and response.model_id != exact_request.model_id:
+            raise _TTSResponseContractError
+        audio_format = self._response_audio_format(response.audio_format)
+        if exact_request is not None and audio_format != exact_request.response_format:
+            raise _TTSResponseContractError
+
+        return audio_format
+
     async def _collect_speech_piece(
         self,
-        request_piece: Callable[[str], Awaitable[Any]],
+        request_piece: Callable[..., Awaitable[Any]],
         piece_text: str,
+        *,
+        exact_request: TTSRequest | None = None,
+        piece_index: int = 0,
+        piece_count: int = 1,
     ) -> bytes | None:
         """Synthesize one piece and return its complete WAV body.
 
@@ -2746,33 +2807,51 @@ class TTSEventHandler:
                 contract (no provider id, an unknown format name), or one
                 piece's body exceeded `_MAX_SPEECH_PIECE_BYTES`.
         """
-        response, _effective = await request_piece(piece_text)
+        response, effective_selection = await request_piece(
+            piece_text,
+            piece_index=piece_index,
+            piece_count=piece_count,
+        )
         body = bytearray()
+        primary_error: BaseException | None = None
         try:
-            if not isinstance(getattr(response, "provider_id", None), str) or not (
-                response.provider_id
-            ):
-                raise _TTSResponseContractError
-            if self._response_audio_format(response.audio_format) != "wav":
+            audio_format = self._validate_speech_response(
+                response,
+                effective_selection,
+                exact_request,
+            )
+            if audio_format != "wav":
                 return None
             async for chunk in response.byte_stream:
                 body.extend(chunk)
                 if len(body) > _MAX_SPEECH_PIECE_BYTES:
                     raise _TTSResponseContractError
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
+            waiter = asyncio.current_task()
+            cancellation_requests = waiter.cancelling() if waiter is not None else 0
             try:
                 await response.aclose()
-            except BaseException:
+            except BaseException as cleanup_error:
+                if primary_error is None or (
+                    isinstance(cleanup_error, asyncio.CancelledError)
+                    and waiter is not None
+                    and waiter.cancelling() > cancellation_requests
+                ):
+                    raise
                 logger.warning("TTS piece response close failed")
         return bytes(body)
 
     async def _iter_speech_pieces_pcm(
         self,
         pieces: Sequence[str],
-        request_piece: Callable[[str], Awaitable[Any]],
+        request_piece: Callable[..., Awaitable[Any]],
         *,
         first_body: bytes,
         first_plan: SinkPlan,
+        exact_request: TTSRequest | None = None,
     ) -> AsyncIterator[bytes]:
         """Yield raw PCM16 for every piece, synthesizing each one on demand.
 
@@ -2793,7 +2872,13 @@ class TTSEventHandler:
             if index == 0:
                 body, plan = first_body, first_plan
             else:
-                body = await self._collect_speech_piece(request_piece, piece_text)
+                body = await self._collect_speech_piece(
+                    request_piece,
+                    piece_text,
+                    exact_request=exact_request,
+                    piece_index=index,
+                    piece_count=len(pieces),
+                )
                 if body is None:
                     raise PcmStreamError("invalid_audio_stream")
                 plan = sink_plan("wav", None, body)
