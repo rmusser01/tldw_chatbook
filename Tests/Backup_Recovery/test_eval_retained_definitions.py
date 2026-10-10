@@ -97,10 +97,11 @@ _RETAIN_REOPEN = _replace(
     _RETAIN_REOPEN,
     "select_profile(receipt['profile'], home / 'control')",
     """import tempfile
-owned_temp = Path(os.environ['TMPDIR']).resolve(strict=True) if os.name == 'nt' else None
+owned_temp = Path(os.environ['TEMP']).resolve(strict=True) if os.name == 'nt' else None
 select_profile(receipt['profile'], home / 'control')
 if owned_temp is not None:
-    assert Path(os.environ['TMPDIR']).resolve(strict=True) == owned_temp
+    assert Path(os.environ['TEMP']).resolve(strict=True) == owned_temp
+    assert Path(os.environ['TMP']).resolve(strict=True) == owned_temp
     assert Path(tempfile.gettempdir()).resolve(strict=True) == owned_temp""",
 )
 
@@ -128,8 +129,6 @@ def test_complete_rebackup_retains_eval_after_source_and_candidate_removal(tmp_p
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
     )
-    if os.name == "nt":
-        environment["TMPDIR"] = environment.get("TMPDIR", environment["TEMP"])
     result = subprocess.run(
         [sys.executable, "-c", _RETAIN_REOPEN],
         cwd=Path(__file__).resolve().parents[2],

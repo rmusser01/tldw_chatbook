@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 17:58'
-updated_date: '2026-10-10 03:25'
+updated_date: '2026-10-10 03:43'
 labels: []
 dependencies: []
 ---
@@ -71,6 +71,8 @@ The 90s Windows run completes original capture and isolated restore, confirming 
 Restored-home selection is corrected and reopened App starts, but Windows rebackup preview now refuses restored agents, persona, subscriptions and recovered-media owners. The same reviewer confirms their discovery, validators and preview/classification code are unchanged from dev. The current assertion omits validator reasons, so no production cause or common metadata cause is established. Add test-only failure diagnostics using existing item metadata/dependencies and owner validators under the existing preview-read scope; upload the owned reopened/restore logs as well as original-capture output. All assertions and qualification gates remain intact; no production repair is guessed.
 
 The same reviewer identified the common profile-selection temp-selector mismatch: select_profile clears the environment via an existing allowlist that preserves TMPDIR but drops Windows TEMP/TMP. CI supplied the owned private ancestor only through TEMP/TMP; read-only SQLite preview snapshots then select tempfile.gettempdir() and can be refused by native ancestry guards. Supply that same owned parent through the already permitted TMPDIR and assert both the environment and tempfile select it after profile selection. The fallback directory/exact native exception was not yet recorded, so the next run must verify this causal correction. Production launch/snapshot code remains unchanged; ordinary Windows TEMP/TMP preservation is a separate baseline consideration.
+
+Final fixture qualification on 92cca217e9: Windows 75 passed/1 FIFO capability skip, Linux/macOS all 76 passed, including actual original capture, source/candidate removal, isolated restore, reopened inactive Eval retention and complete rebackup. Snapshot temp-parent preservation assertions passed. This evidence resolves the earlier full-App inventory and 45s-budget limits for the qualified hosted fixture; the separate installed-wheel 300s release gate remains unverified. TASK-34408 now fixes the proven native TEMP/TMP launch-selector omission so ordinary Windows launches do not require a TMPDIR workaround.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering Provenance

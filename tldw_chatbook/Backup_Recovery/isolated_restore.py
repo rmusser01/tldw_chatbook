@@ -144,7 +144,12 @@ def restore_isolated(
     authority.register(names[0], tuple(ancestors))
     selectors = tuple(Path(row["config"]) for row in profiles)
     _finish_isolated(
-        candidate, plan, journal, names, operation_id, cancel,
+        candidate,
+        plan,
+        journal,
+        names,
+        operation_id,
+        cancel,
         initial_selectors=selectors,
     )
     return profiles[0]["profile_id"]
@@ -192,7 +197,9 @@ def _finish_isolated(
             from .native_files import pinned_directory
 
             with pinned_directory(candidate) as parent:
-                descriptor = _read(parent, "candidate.json", max_bytes=RECOVERY_RECORD_BYTES)
+                descriptor = _read(
+                    parent, "candidate.json", max_bytes=RECOVERY_RECORD_BYTES
+                )
             journal.prepare_publication(
                 candidate,
                 plan,
@@ -341,6 +348,8 @@ def _launch_environment() -> dict[str, str]:
         "LC_CTYPE",
         "SYSTEMROOT",
         "WINDIR",
+        "TEMP",
+        "TMP",
         "TMPDIR",
     )
     env = {name: os.environ[name] for name in allowed if name in os.environ}
