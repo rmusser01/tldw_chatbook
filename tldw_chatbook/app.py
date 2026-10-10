@@ -3243,6 +3243,16 @@ class TldwCli(
         # Both were diagnosed only after several live rounds because the run
         # left no record of its own environment (2026-08-01); one line here
         # dates every future report to a specific interpreter.
+        #
+        # TASK-2110: a provider substitution is its own degradation, reported
+        # as such. The resolver's `was_overridden` (console_voice_input
+        # `resolve()`) means the configured provider's package is missing and
+        # another was substituted; recording only the substitute with
+        # `status=ok` is exactly the report that made the 2026-08-03 live gate
+        # read a degraded run as healthy. Status precedence: a substitution is
+        # `fallback` (VAD present) or `degraded-fallback` (both degradations);
+        # with no substitution the status keeps its original VAD-only meaning
+        # so the healthy path's shape is unchanged.
         try:
             from importlib.util import find_spec
 
@@ -3252,12 +3262,32 @@ class TldwCli(
             # is installed: the resolver's config precedence is exactly what
             # went wrong before, so recording its answer is the point.
             _effective = _resolve_dictation()
+            _vad_available = find_spec("webrtcvad") is not None
+            _provider_substituted = (
+                _effective is not None and _effective.was_overridden
+            )
+            if _provider_substituted:
+                _status = "fallback" if _vad_available else "degraded-fallback"
+            else:
+                _status = "ok" if _vad_available else "degraded"
+            _speech_fields = {
+                "status": _status,
+                "provider": _effective.provider if _effective else "none",
+                "model": (_effective.model if _effective else None)
+                or "provider-default",
+            }
+            if _provider_substituted:
+                _speech_fields["configured_provider"] = (
+                    _effective.configured_provider
+                )
             persist_event(
                 "dictation",
                 "speech_stack_available",
-                status="ok" if find_spec("webrtcvad") is not None else "degraded",
-                provider=_effective.provider if _effective else "none",
-                model=(_effective.model if _effective else None) or "provider-default",
+                # WARNING, not ERROR: dictation still works, on a provider the
+                # user did not choose -- same severity the first-capture
+                # `VoiceProviderOverridden` toast uses for the same fact.
+                level=logging.WARNING if _provider_substituted else logging.INFO,
+                **_speech_fields,
             )
         except Exception:
             pass
