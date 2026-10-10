@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-28 20:12'
-updated_date: '2026-10-10 21:10'
+updated_date: '2026-10-10 21:20'
 labels:
   - testing
   - backup-recovery
@@ -131,6 +131,18 @@ ADR required: no. ADR path: backlog/decisions/126-complete-local-backup-and-reco
 2026-10-10 immutable independent review and closeout
 Independent reviewer review_3029 cleared source range 75d3d1c30f7d75149953e14fe49166572ab44547..510b534ac10516e485885cc17791ceabf70f057e with no actionable introduced findings. The exact three-file commit matches the reviewed correction: the owned selected path reaches the unchanged real guarded writer, captured errors and positive entry close the refusal blind spot, and existing negative ordering assertions and deadlines remain. Reviewer independently inspected the RED RecoveryRequired capture, module GREEN5 and affected331 plus one strict TASK-34700 xfail receipts.
 All existing acceptance criteria remain checked. Source and verification receipts are unchanged; this is metadata-only closeout after independent review. No test rerun is attributed to these notes. stack_parent remains 732d1de8c29ede5c03d0a0263d4f9cacf29e0321. No rebase or push. ADR-126 is unchanged; no new ADR is required for this test-only repair.
+
+2026-10-10 fbe-stack integration qualification
+Normal rebase carries reviewed final a8e1ec560dfc5b41c5ad540b5e7cc99261b017e4 from prior stack boundary 732d1de8c29ede5c03d0a0263d4f9cacf29e0321 onto exact independently reviewed predecessor fbe14192c7147450e7dfdbe88b9eee10e7b94403, producing runtime 0715eaa49b4d295b285547905e4aa7071662470b. All 27 own commits carry. All 32 nonlesson own blob/deletion entries remain identical; the sole conflict is the exact lessons union preserving both upstream TASK-34785 and PR2955 source-lifetime/writer evidence. No borrowed production/CI fixes or fixture conflict changes were introduced. Correspondence: /private/tmp/pr2955-fbe-correspondence.json and /private/tmp/pr2955-fbe-range-diff.log.
+Fresh exact prior 19-module selection passes 331 cases plus the unchanged strict TASK-34700 shipped-throttle xfail in 127.66s, with PytestUnhandledThreadExceptionWarning treated as an error and no warnings emitted. Receipt: /private/tmp/pr2955-fbe-affected.log. This is a distinct new run; earlier RED, module5, 331/100.09s and warning-bearing phases retain their original identities and limits.
+Complete preflight passes (502 markup occurrences pinned; 175 gated UI entries), Black/default Ruff on the writer module and fatal static checks on all 23 owned Python paths pass, whitespace checks pass, and all 5100 task files are readable. Receipts: /private/tmp/pr2955-fbe-preflight.log and /private/tmp/pr2955-fbe-static.log. Self-review confirms unchanged source-selection/consumer lifetimes, writer-entry oracle, benchmark isolation assertions and deadlines; all existing AC remain qualified, so status stays Done. No full suite, native/performance requalification, production guard change, push or remote mutation. This notes-only closeout will not be attributed another runtime test run; current published-head CI remains the integration gate.
+Current stack_parent: fbe14192c7147450e7dfdbe88b9eee10e7b94403
+ADR required: no. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: mechanical carry and evidence update preserve the existing isolation/admission contracts; no new runtime, boundary or tooling decision.
+
+2026-10-10 immutable fbe-stack carry review
+Independent reviewer review_3029 cleared runtime 0715eaa49b4d295b285547905e4aa7071662470b and recomputed old/new own path sets, source correspondence, exact lessons union, fresh331 plus strict TASK-34700 xfail and preflight receipts. No actionable source findings.
+Inventory clarification: the immediately preceding 33-total/32-nonlesson comparison uses Git's default rename-aware inventory. The complete --no-renames inventory has 34 total entries and 33 identical nonlesson blob/mode/deletion entries, including inherited absent-at-both-heads backlog/tasks/task-33267 - PERF-08-Amortize-Backup-Recovery-storage-admission-ADR-126-amendment.md. The remaining lesson is the exact union. /private/tmp/pr2955-fbe-correspondence.json now records this complete inventory explicitly. This is a proof-count correction, not a runtime change or another test run.
+Both tasks retain qualified Done status. This commit only records integration and review metadata; stack_parent remains exact fbe14192c7147450e7dfdbe88b9eee10e7b94403. No push or remote mutation.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
