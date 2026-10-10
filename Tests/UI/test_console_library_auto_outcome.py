@@ -198,3 +198,67 @@ async def test_a_slow_library_search_is_shown_and_stop_pauses_the_send():
                 ).preparation_id
             ].error_code == "library_retrieval_stopped"
             library.release.set()
+
+
+_CARD_ACTIONS = {
+    "Retry Library search": "#console-trace-retry",
+    "Send once without Library": "#console-trace-send-without-library",
+    "Cancel send": "#console-trace-cancel",
+}
+
+
+def _card_buttons(console) -> dict[str, bool]:
+    return {
+        label: bool(console.query_one(selector, Button).display)
+        for label, selector in _CARD_ACTIONS.items()
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("label", list(_CARD_ACTIONS))
+async def test_a_timed_out_send_says_why_and_each_card_action_does_what_it_says(
+    label,
+):
+    """AC#2: the reason is shown, and Retry / bypass / Cancel each act."""
+    host, gateway = _build()
+    library = _StalledLibrary()
+    host.app_instance.library_rag_search_service = library
+    async with host.run_test(size=(120, 40)) as pilot:
+        with eager_tasks():
+            console, controller, composer = await _automatic_console(host, pilot)
+            controller._library_preparation_timeout = 0.2
+            composer.load_draft(FIRST)
+            await pilot.pause()
+            press(host, "enter", "\r")
+            await until(lambda: _paused_retrieval(controller))
+            await until(lambda: _shelf_offers_unsent_turn(console))
+            await until(lambda: all(_card_buttons(console).values()))
+            for painted in (
+                "Library search timed out; your message was not sent",
+                "Problem: Library search timed out before this send could use it.",
+                "Run: Blocked — Library",  # the chip may clip "timeout"
+            ):
+                await until(lambda: painted in "\n".join(_painted_lines(host)))
+            assert gateway.stream_calls == 0
+
+            library.release.set()  # a retried search now answers at once
+            console.query_one(_CARD_ACTIONS[label], Button).press()
+            await until(lambda: not _paused_retrieval(controller))
+            await until(lambda: not _shelf_offers_unsent_turn(console))
+            if label == "Cancel send":
+                await until(lambda: composer.draft_text() == FIRST)
+                assert gateway.stream_calls == 0
+                assert library.calls == 1
+                # And the conversation is not jammed behind the cancelled send.
+                composer.load_draft(SECOND)
+                await pilot.pause()
+                press(host, "enter", "\r")
+            await until(lambda: gateway.stream_calls == 1)
+            await until(lambda: REPLY in "\n".join(_painted_lines(host)))
+            expected_searches = {
+                "Retry Library search": 2,  # the retry searched again
+                "Send once without Library": 1,  # it did not
+                "Cancel send": 2,  # the later, ordinary send searched
+            }[label]
+            assert library.calls == expected_searches
+            assert not any(_card_buttons(console).values())

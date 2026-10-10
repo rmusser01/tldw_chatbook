@@ -13,7 +13,10 @@ this when that turn leaves the shelf. Restore and Discard decide the draft:
 cancelling the preparation would otherwise write the sent text back into the
 session's draft, so the draft the shelf action left is put back.
 
-Imported lazily by the runtime: it runs only when a paused turn is released.
+The other way round, the paused send's card (Retry / Send once without
+Library / Cancel) settles the send, and its shelf copy is then dropped.
+
+Imported lazily: it runs only when a paused turn is released or settled.
 """
 
 from __future__ import annotations
@@ -41,13 +44,7 @@ def release_unsent_turn_preparation(
         cancelled; False when it is gone, was resumed, or paused otherwise.
     """
     store = controller.store
-    preparation = store.preparation_for_session(session_id)
-    if (
-        preparation is None
-        or preparation.preparation_id != preparation_id
-        or preparation.state is not ConsoleTurnPreparationState.PAUSED
-        or preparation.pause_kind is not ConsolePreparationPauseKind.RETRIEVAL
-    ):
+    if not library_paused(store.preparation_for_session(session_id), preparation_id):
         return False
     draft = store.session_draft(session_id)
     controller.cancel_library_preparation(preparation_id)
@@ -55,3 +52,39 @@ def release_unsent_turn_preparation(
         store.set_session_draft(session_id, draft)
     current = store.preparation_for_session(session_id)
     return current is None or current.preparation_id != preparation_id
+
+
+def library_paused(preparation: Any, preparation_id: str) -> bool:
+    """Whether ``preparation`` is exactly this send, paused for retrieval.
+
+    Args:
+        preparation: The session's current preparation, if any.
+        preparation_id: The paused send's preparation id.
+
+    Returns:
+        True only for that preparation, PAUSED with ``RETRIEVAL``.
+    """
+    return (
+        preparation is not None
+        and preparation.preparation_id == preparation_id
+        and preparation.state is ConsoleTurnPreparationState.PAUSED
+        and preparation.pause_kind is ConsolePreparationPauseKind.RETRIEVAL
+    )
+
+
+def settle_unsent_turn(runtime: Any, preparation_id: str) -> int:
+    """Drop the shelf copy of a paused send its card has settled.
+
+    Retry and Send once without Library send the paused turn; Cancel puts it
+    back in the composer. Either way the unsent-turn shelf must stop offering
+    Restore/Discard for it, or the same message could be restored twice.
+
+    Args:
+        runtime: The Console runtime owning the unsent-turn shelf, or None.
+        preparation_id: The settled send's preparation id.
+
+    Returns:
+        How many shelf entries were dropped.
+    """
+    forget = getattr(runtime, "forget_turn_recoveries_for_preparation", None)
+    return int(forget(preparation_id)) if callable(forget) else 0

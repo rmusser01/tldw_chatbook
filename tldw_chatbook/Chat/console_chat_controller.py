@@ -7533,6 +7533,7 @@ class ConsoleChatController:
                 ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
                 # TASK-34350: the context-limit hold uses the same card.
                 ConsolePreparationPauseKind.CONTEXT_COMPACTION,
+                ConsolePreparationPauseKind.RETRIEVAL,  # TASK-33621.20
             }
         ):
             return None
