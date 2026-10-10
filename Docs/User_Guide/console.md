@@ -336,8 +336,8 @@ says "Press t to test \<provider\> again". Settings opens with focus on
 **Return to Console**, under the Default model's **Applies to** row: press
 **t** to test, then **Enter** to come back to this chat. If you change
 something first, such as the key, the button hides until you save, and the
-save puts focus back on it (a save of only a snapshot preference brings the
-button back without moving focus to it). Every test sends the
+save puts focus back on it (saving only **Prompt-cache snapshots**, under
+**Advanced**, brings the button back without moving focus to it). Every test sends the
 API key a message would use, so a local server started with a key (vLLM's
 `--api-key`, for example) is tested with it, and "key rejected" means that
 key was refused (a 401). A 403 from any model listing, local or cloud, means

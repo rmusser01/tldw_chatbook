@@ -774,7 +774,7 @@ async def test_every_unsaved_recovery_state_offers_return_without_saving(
             "the snapshot preference's save to land",
         )
         await pilot.pause()  # A focus move would be scheduled after the refresh.
-        assert _saved_config()["llamacpp_snapshots"]["enabled"] is not snapshot_saved
+        assert _saved_config()["llamacpp_snapshots"]["enabled"] is (not snapshot_saved)
         assert settings._provider_return_outcome is None
         assert str(status.renderable) == on_arrival
         assert app.focused is focus_before_the_save
@@ -932,9 +932,9 @@ async def test_an_unused_return_lapses_when_the_user_walks_back_by_hand(
     Console by hand takes the handoff back, and the next Settings visit no
     longer holds a return, so a later save cannot offer one to the old chat.
 
-    The same walk measures the guide's third exception to "leaving keeps the
-    draft": the screen alone holds an unsaved snapshot preference, so leaving
-    Settings by the nav bar drops it."""
+    The same walk measures the guide's snapshot exception to "leaving keeps
+    the draft": the screen alone holds an unsaved snapshot preference, so
+    leaving Settings by the nav bar drops it."""
     app = _cloud_app_without_a_key(monkeypatch)
 
     async with app.run_test(size=(211, 44)) as pilot:
