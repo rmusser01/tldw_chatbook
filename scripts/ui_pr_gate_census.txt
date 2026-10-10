@@ -60,7 +60,12 @@ Tests/UI/test_console_session_tab_close.py
 # insertion the 2nd/6th/10th entries (the heaviest: about 210 s together under
 # load) land in shard 2, the lightest (about 6 min in CI). All are
 # private-profile or static, so none poisons its shard. Pinned by
-# Tests/CI/test_console_p0_regression_gate.py.
+# Tests/CI/test_console_p0_regression_gate.py. In CI (PR #3062, run
+# 38064483856) the block took 49/160/46/51 s in shards 1-4. Shard 3's 18m25s
+# against 20 (15m43s on re-run) was the rest of that shard on a slow runner
+# plus an unrelated flake's timeout, not these 46 s; if a shard nears its
+# cap, add a shard (TASK-34353) rather than drop a P0 entry. The rest of the
+# Console P0 tests run in the console-p0-gate job.
 Tests/UI/test_console_conversation_action_menu.py::test_row_menu_save_md_writes_the_file_and_keeps_the_app_running
 Tests/UI/test_app_keep_alive_dead_screen.py::test_ctrl_q_quits_after_a_screen_handler_error_while_a_modal_is_up
 Tests/UI/test_console_project_instruction_choose_folder.py::test_choose_folder_opens_picker_and_applies_the_chosen_binding[choose]

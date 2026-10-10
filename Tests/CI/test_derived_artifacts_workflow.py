@@ -53,6 +53,14 @@ CHECKERS = (
 )
 
 
+#: Each lane the required aggregate depends on, and its verdict step.
+VERDICTS = {
+    "pr-fast-lane": "Require successful PR fast lane",
+    "ui-fast-lane": "Require successful UI fast lane",
+    "console-p0-gate": "Require successful Console P0 regression gate",
+}
+
+
 def _workflow() -> dict:
     return yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
 
@@ -80,6 +88,9 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
     assert list(_workflow()["jobs"]) == [
         "pr-fast-lane",
         "ui-fast-lane",
+        # TASK-33621.27: the Console review's P0 regression tests, moved out
+        # of pr-fast-lane when they took it to 33m41s of its 35-min cap.
+        "console-p0-gate",
         "derived-artifacts",
         "queue-tick",
     ]
@@ -93,14 +104,9 @@ def test_required_aggregator_fails_when_either_lane_fails():
     "guard nobody is gated on" shape this whole workflow exists to replace.
     """
     job = _workflow()["jobs"]["derived-artifacts"]
-    assert job.get("needs") == ["pr-fast-lane", "ui-fast-lane"]
-    for lane in ("pr-fast-lane", "ui-fast-lane"):
-        verdict = next(
-            step
-            for step in job["steps"]
-            if step.get("name")
-            == f"Require successful {'PR' if lane == 'pr-fast-lane' else 'UI'} fast lane"
-        )
+    assert job.get("needs") == ["pr-fast-lane", "ui-fast-lane", "console-p0-gate"]
+    for lane, step_name in VERDICTS.items():
+        verdict = next(step for step in job["steps"] if step.get("name") == step_name)
         assert verdict["if"] == f"${{{{ ({LANES}) && needs.{lane}.result != 'success' }}}}"
         assert "exit 1" in verdict["run"]
 
@@ -337,12 +343,68 @@ def test_branch_dispatch_without_pr_runs_the_gate():
     queue kick.
     """
     workflow = _workflow()
-    for job_name in ("pr-fast-lane", "ui-fast-lane"):
+    for job_name in VERDICTS:
         assert workflow["jobs"][job_name]["if"] == LANES
-    for step_name in ("Require successful PR fast lane", "Require successful UI fast lane"):
+    for step_name in VERDICTS.values():
         step = next(
             step
             for step in workflow["jobs"]["derived-artifacts"]["steps"]
             if step.get("name") == step_name
         )
         assert "github.ref != 'refs/heads/dev'" in step["if"]
+
+
+def _pytest_step_targets() -> list[tuple[str, tuple[str, ...]]]:
+    import shlex
+
+    steps = []
+    for job_name in ("pr-fast-lane", "console-p0-gate"):
+        for step in _workflow()["jobs"][job_name]["steps"]:
+            run = step.get("run", "")
+            if not run.lstrip().startswith("pytest"):
+                continue
+            tokens = shlex.split(run.replace("\\\n", " "))
+            targets = tuple(t for t in tokens[1:] if t == "Tests" or t.startswith("Tests/"))
+            steps.append((f"{job_name}: {step['name']}", targets))
+    return steps
+
+
+def _census_checker():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "census_overlap", PROJECT_ROOT / "scripts" / "check_ui_pr_gate_census.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_every_pr_lane_pytest_step_has_disjoint_targets():
+    """TASK-33621.27 review: pytest collapses overlapping arguments (ADR-103).
+
+    With a file listed whole beside its own node ids, pytest collected 1 of
+    its 21 tests and the step stayed green. The census checker refuses that
+    for the UI lane; this is the same rule, through the same helper, for
+    every pytest step of the PR lanes: no node id beside its whole file, no
+    target under a listed directory, nothing listed twice.
+    """
+    steps = _pytest_step_targets()
+    assert len(steps) == 4, [name for name, _ in steps]
+    overlapping = _census_checker().overlapping_targets
+    for name, targets in steps:
+        assert targets, f"{name} lists no targets"
+        problems = overlapping(targets)
+        assert not problems, f"{name}:\n" + "\n".join(problems)
+
+
+def test_every_node_id_target_in_a_pr_lane_step_resolves():
+    """A renamed test or parametrize id makes pytest exit 4 with "not found"."""
+    resolve = _census_checker().resolve_node
+    for name, targets in _pytest_step_targets():
+        for target in targets:
+            file_part, _, node = target.partition("::")
+            assert (PROJECT_ROOT / file_part).exists(), f"{name}: {file_part} is gone"
+            if node:
+                reason = resolve(PROJECT_ROOT / file_part, node)
+                assert reason is None, f"{name}: {target}: {reason}"

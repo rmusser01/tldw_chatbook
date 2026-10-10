@@ -175,8 +175,17 @@ cron entry on `dev`.
 one test's pytest node id as well as a whole file, so a P0 regression test whose
 file is too slow for the lane can be gated on its own. The census checker
 verifies a node id's file still defines the test, rejects an entry with
-whitespace, and rejects a node id beside its own whole file (the overlap rule
-above). The Console review's P0 regression tests are gated in the census and in
-both PR Fast Lane steps (bootstrap_profile ones in the admission-sensitive step),
-and `Tests/CI/test_console_p0_regression_gate.py` pins where each one runs. The
-required context, prerequisites, cadence and dependency boundary are unchanged.
+whitespace, rejects a node id beside its own whole file (the overlap rule
+above), and resolves a bracketed parametrize id statically, refusing one it
+cannot resolve. The same overlap helper pins every PR-lane pytest step.
+
+The Console review's P0 regression tests run in the census (mounted
+private-profile node ids) and in a third parallel lane, `console-p0-gate`
+("Console P0 regression gate"), with the PR Fast Lane's plugin set and its
+sandboxed / admission-sensitive split. They first went into the PR Fast Lane,
+which then took 33m41s of its 35-min cap (run 38064483856). The required check
+now `needs` all three lanes and fails when any of them is not `success`. This is
+one more runner per PR: the PR Fast Lane, four UI shards and the P0 gate make
+six concurrent test runners, then the aggregate.
+`Tests/CI/test_console_p0_regression_gate.py` pins where each P0 test runs. The
+required context name, event cadence and dependency boundary are unchanged.
