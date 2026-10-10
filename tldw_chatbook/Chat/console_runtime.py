@@ -2789,7 +2789,13 @@ class ConsoleRuntime:
         )
 
     def _turn_recovery_offered(self, entry: ConsoleTurnRecoveryEntry) -> bool:
-        """Whether an unsent turn may be restored or discarded right now."""
+        """Whether an unsent turn may be restored or discarded right now.
+
+        Not while its paused send's card is acting on it (held), and not once
+        that send has been accepted: either way Restore would send it twice.
+        Other states are not a signal: a durable-commit failure leaves its
+        preparation COMMITTING, and its turn must stay restorable.
+        """
         preparation_id = entry.preparation_id
         if preparation_id is None:
             return True
@@ -2804,7 +2810,11 @@ class ConsoleRuntime:
             ConsoleTurnPreparationState as State,
         )
 
-        return preparation.state in {State.PAUSED, State.CANCELLED, State.SETTLED}
+        return preparation.state not in {
+            State.ACCEPTED,
+            State.DISPATCH_STARTED,
+            State.DISPATCHED,
+        }
 
     def restore_turn_recovery(self, turn_id: str) -> ConsoleTurnRecoveryEntry:
         """Re-stage one exact recovery into its still-live owning session."""
