@@ -681,6 +681,20 @@ def _admit_console_turn_to_runtime(
         record_send_stage("ui_submit", "failed", error=error)
         raise
     record_send_stage("ui_submit", "accepted")
+    if request._pressed_inputs is not None:
+        try:
+            if (
+                not runtime._disposed
+                and runtime.view is screen
+                and runtime._attached_generation
+                == request._pressed_attachment_generation
+                and screen._console_runtime_attachment_generation
+                == request._pressed_attachment_generation
+            ):
+                screen._start_console_transcript_sync_timer()
+        except Exception as error:
+            # Presentation failure cannot undo the already accepted custody.
+            record_send_stage("ui_poll_handoff", "failed", error=error)
     return turn_id
 
 

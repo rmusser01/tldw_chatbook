@@ -1366,6 +1366,8 @@ async def _await_original_console_sync_completion(screen, pilot, *, deadline):
             if task is not asyncio.current_task()
         )
         if (not pending and not screen._console_sync_in_progress
+                and screen._console_attach_reconciled
+                and not screen._console_attach_reconcile_running
                 and not screen._console_sync_requested
                 and not getattr(screen, "_console_control_bar_replay_whole_sync", False)
                 and not getattr(screen, "_console_control_bar_sync_scheduled", False)):

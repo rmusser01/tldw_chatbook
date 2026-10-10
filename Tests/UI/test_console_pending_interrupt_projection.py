@@ -371,6 +371,21 @@ async def _verify_review_routes_reach_visible_skill_confirm_before_queued_approv
                 if entry_point == "shortcut":
                     await pilot.press("alt+a")
                 elif entry_point == "inspector":
+                    # Row/count publication can precede replacement actions.
+                    # Button.press silently declines a hidden or disabled button.
+                    def review_action_ready():
+                        button = next(
+                            iter(console.query("#console-inspector-review-approval")),
+                            None,
+                        )
+                        return (
+                            button is not None
+                            and button.is_mounted
+                            and button.display
+                            and not button.disabled
+                        )
+
+                    await _wait(pilot, review_action_ready)
                     console.query_one(
                         "#console-inspector-review-approval", Button
                     ).press()
