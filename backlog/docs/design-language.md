@@ -161,13 +161,12 @@ Every interactive control must define, at minimum:
   placeholder takes `$ds-focus-fg` in italic and its focus outline takes
   `$ds-active-fg`, because `$ds-text-muted` and `$primary` do not read on
   it (under 4.5:1 on 59 themes, under 3:1 on 54). Its selected text and its
-  caret are `$ds-focus-fg` reversed (`text-style: reverse` over a transparent
-  `background`). Textual paints both in the theme's own `$foreground`, and
-  on that fill selected text read under 4.5:1 on 46 themes and the caret
-  under 3:1 on 8. A `background` cannot take the auto ink, and each
-  selection fill tried left themes under 4.5:1 (`$ds-focus-bg` under
-  `$ds-focus-fg` 17, Textual's own tint under the auto ink 22,
-  `$ds-active-fg` under the auto ink 4). A focus
+  caret are `$ds-focus-fg`, the auto ink, reversed (`text-style: reverse`
+  over a transparent `background`). Textual paints both in the theme's own
+  `$foreground`, and on that fill selected text read under 4.5:1 on 46
+  themes and the caret under 3:1 on 8. A `background` cannot take the auto
+  ink, and each selection fill tried under it left themes under 4.5:1
+  (`$ds-focus-bg` 17, Textual's own tint 22, `$ds-active-fg` 4). A focus
   fill is measured against the pane as well as under its text: the tint on
   an opaque `$background` kept the field's text and matched the rail's
   luminance on the default theme (1.00x).
