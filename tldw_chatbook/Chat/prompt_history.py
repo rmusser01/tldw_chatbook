@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 import time
 from pathlib import Path
 from typing import TypedDict
@@ -32,12 +34,43 @@ from ..Backup_Recovery.profile_paths import lexical_path
 
 DEFAULT_MAX_ENTRIES = 1000
 
+#: ``(inputs, path)`` of the last resolution, or None (TASK-33620.15.5).
+_DEFAULT_PATH_MEMO: tuple[tuple, Path] | None = None
+
+
+def _default_path_inputs() -> tuple:
+    """What the default path depends on, cheaply: no lock, no file access."""
+    config = sys.modules["tldw_chatbook.config"]
+    return (config, config.current_config_identity(), os.environ.get("HOME"))
+
 
 def default_prompt_history_path() -> Path:
-    """Return the default per-user prompt history file path."""
+    """Return the default per-user prompt history file path.
+
+    TASK-33620.15.5: every prompt-history file job resolves this twice on the
+    UI loop, and each resolution was a guarded config operation (about 6 ms
+    live). The result is kept while its inputs hold: the installed config
+    module, its identity (generation and effective path) and ``HOME``, which
+    the default data root follows. Inputs are read before and after the
+    resolution, and the result is kept only if they did not move.
+
+    The identity does not see an external edit (a reload installs a new
+    config without a new generation). That is safe here: the file job's
+    worker scope re-derives the selection from the live config before any
+    IO and refuses a mismatch, so a kept path is refused, never written to.
+    """
+    global _DEFAULT_PATH_MEMO
     from ..config import get_user_data_dir
 
-    return get_user_data_dir() / "prompt_history.jsonl"
+    inputs = _default_path_inputs()
+    memo = _DEFAULT_PATH_MEMO
+    if memo is not None and memo[0][0] is inputs[0] and memo[0][1:] == inputs[1:]:
+        return memo[1]
+    path = get_user_data_dir() / "prompt_history.jsonl"
+    after = _default_path_inputs()
+    if after[0] is inputs[0] and after[1:] == inputs[1:]:
+        _DEFAULT_PATH_MEMO = (inputs, path)
+    return path
 
 
 class HistoryEntry(TypedDict):
