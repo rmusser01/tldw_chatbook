@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 17:58'
-updated_date: '2026-10-10 01:01'
+updated_date: '2026-10-10 01:12'
 labels: []
 dependencies: []
 ---
@@ -53,6 +53,8 @@ Diagnostic artifact review: the existing loaded-selected-path info message becam
 2026-10-09 PR #3018 review follow-up: the single delegated read-only reviewer found an existing nonregular canonical override was silently classified unused. Discovery now probes link metadata, keeps nonregular objects missing_required and metadata/read errors unavailable, and reserves unused for genuine absence. Added directory/dangling-link/FIFO/unreadable regressions; meaningful native RED was 2 failed/2 capability skips, then the focused rebased override/durability/pipe run was 40 passed/2 skips. The Windows account cannot create file symlinks and has no FIFO primitive; a focused Windows/Linux/macOS CI job also covers retained/selective/rollback/later-snapshot paths. Changed Python files pass formatting and lint with the two existing exact-type E721 checks retained. The published PR was rebased onto dev a190654d4c; append-only documentation conflicts preserve both versions. Three unrelated unpublished Console documentation commits stay in the original checkout. No new ADR: this restores ADR-220/126 absence and blocking-inventory semantics. Final CI is pending; the task remains In Progress until those results arrive.
 
 Expanded verification follow-up: the first platform run exposed 32 missing-fixture setup errors; affected modules now explicitly reuse the existing helper_resource_root fixture. The shared rebackup oracle now checks canonical private overrides rather than the immutable package resource, and the Eval-specific full-App scenario seeds an actual private override before capture so retention is not vacuous. Native finite recovery coverage: 71 passed, 4 capability skips, with one full-App rebackup exceeding its existing 45-second child deadline. Preserved phase/stack diagnostics locate that delay inside unchanged dev live-capture/startup-reacquisition code; no deadline was increased and the broader result remains unqualified. Removed all temporary diagnostics. The shared child helper now records UTF-8 output to an owned file, avoiding inherited-pipe EOF and decoding failures without changing its deadline. Windows CI initially created fixtures under the elevated default Administrators owner, correctly refused as selector_unverified; CI now reuses the genuine user-default-owner launcher from the existing Console test tooling, changing only test-process TokenOwner and restoring it afterwards, never production guards or ACLs. A new exact-head platform run will verify these corrections before merge.
+
+Linux follow-up reached 75 passing cases with one remaining stale full-App oracle: restored private overrides retain their actual filename instead of eval_config.yaml. The fixture now records exact trusted restore-plan destinations and source digests in its own receipt, verifies each retained file after original/candidate removal, and compares the complete rebackup Eval payload multiset with those exact sources. The Eval-specific scenario requires one actual incoming private source; no retention assertion is removed or made vacuous. Generic media scenarios no longer demand a nonexistent packaged-default payload. All shared and Eval-specific embedded scripts compile with unique replacement anchors.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering Provenance
