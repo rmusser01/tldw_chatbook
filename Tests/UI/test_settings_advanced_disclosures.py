@@ -30,6 +30,7 @@ from Tests.UI.test_settings_configuration_hub import (
     ModelDiscoveryResult,
     _discovered_model,
 )
+from Tests.UI.test_settings_connect_rows import _until
 from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
@@ -172,13 +173,15 @@ async def test_saved_model_list_counts_and_each_row_says_selected_and_saved(requ
         screen.query_one(f"#{disclosure_id}", Collapsible).collapsed = False
         await pilot.pause()
         screen.query_one("#settings-discover-provider-models", Button).press()
+        # press() only posts the handler that starts the worker, so there may
+        # be no worker yet to wait for: wait for what the worker shows.
+        discovered = "Saved model list · 2 saved in config · 3 discovered, 2 not saved"
+        await _until(pilot, lambda: _title(screen, disclosure_id) == discovered)
         await host.workers.wait_for_complete()
         await pilot.pause()
 
         selection = screen.query_one("#settings-discovered-models-list", SelectionList)
-        assert _title(screen, disclosure_id) == (
-            "Saved model list · 2 saved in config · 3 discovered, 2 not saved"
-        )
+        assert _title(screen, disclosure_id) == discovered
         assert [prompt.split(" · ")[:3] for prompt in _prompts(selection)] == [
             ["not selected", "gpt-saved-a", "saved"],
             ["not selected", "gpt-new-1", "not saved"],
@@ -199,9 +202,10 @@ async def test_saved_model_list_counts_and_each_row_says_selected_and_saved(requ
         assert _title(screen, disclosure_id).endswith(" · 1 selected")
 
         screen.query_one("#settings-save-discovered-provider-models", Button).press()
+        scope = app.llm_provider_catalog_scope_service
+        await _until(pilot, lambda: bool(scope.persist_calls))
         await host.workers.wait_for_complete()
         await pilot.pause()
-        scope = app.llm_provider_catalog_scope_service
         assert [call["model_ids"] for call in scope.persist_calls] == [["gpt-new-1"]]
 
 
@@ -277,11 +281,11 @@ async def test_catalog_refresh_rows_say_on_off_and_whether_choices_apply(startup
                 assert len(row.query(Checkbox)) == 2, provider
 
             master.toggle()
+            toggled = f"Refresh on startup {'Off' if startup else 'On'}"
+            await _until(pilot, lambda: master.label.plain == toggled)
             await host.workers.wait_for_complete()
             await pilot.pause()
-            assert (
-                master.label.plain == f"Refresh on startup {'Off' if startup else 'On'}"
-            )
+            assert master.label.plain == toggled
             assert startup_off.display is startup
             assert ("startup refresh Off" in _title(screen, disclosure_id)) is startup
             openai.toggle()
@@ -640,10 +644,9 @@ async def test_session_summary_on_quit_is_a_one_row_disclosure_that_says_its_sta
         await pilot.pause()
         enabled = screen.query_one("#settings-session-summary-enabled", Checkbox)
         enabled.value = True
-        await pilot.pause()
+        on = "Session summary on quit · applies immediately · On · 3 s"
+        await _until(pilot, lambda: _title(screen, disclosure_id) == on)
         await host.workers.wait_for_complete()
         await pilot.pause()
-        assert _title(screen, disclosure_id) == (
-            "Session summary on quit · applies immediately · On · 3 s"
-        )
+        assert _title(screen, disclosure_id) == on
         assert writes and writes[-1]["session_summary"]["enabled"] is True
