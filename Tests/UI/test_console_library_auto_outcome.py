@@ -200,6 +200,10 @@ async def test_a_slow_library_search_is_shown_and_stop_pauses_the_send():
                 ].error_code
                 == "library_retrieval_stopped"
             )
+            # Review MINOR 8: Stop does not linger once there is nothing to stop.
+            await pilot.pause()
+            assert stop.styles.display == "none"
+            assert not controller.is_stop_allowed
             library.release.set()
 
 

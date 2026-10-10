@@ -27,14 +27,13 @@ import asyncio
 import inspect
 from typing import Any
 
-#: How long the Library's first-use runtime build may take before the turn
-#: pauses with a timeout. Generous on purpose: a first build that has to
-#: download the embedding model took 18 s live.
-LIBRARY_INITIALIZATION_TIMEOUT_SECONDS = 60.0
+from tldw_chatbook.Chat.console_turn_preparation import (
+    LIBRARY_INITIALIZATION_TIMEOUT_SECONDS,
+)
 
 
 class LibrarySearchUnavailable(RuntimeError):
-    """The app has no callable Library search service."""
+    """The Library cannot search: no service, or its runtime did not build."""
 
 
 async def run_bounded_library_search(
@@ -57,7 +56,10 @@ async def run_bounded_library_search(
         The service's raw search result, for the caller to normalise.
 
     Raises:
-        LibrarySearchUnavailable: The service has no callable ``search``.
+        LibrarySearchUnavailable: The service has no callable ``search``, or
+            its ``prewarm`` reported that the runtime did not build (missing
+            dependencies, a failed build). Searching anyway would only try
+            the build again inside the search's short budget.
         TimeoutError: The build or the search outlasted its bound.
     """
     search = getattr(service, "search", None)
@@ -68,7 +70,11 @@ async def run_bounded_library_search(
         async with asyncio.timeout(initialization_budget):
             built = prewarm()
             if inspect.isawaitable(built):
-                await built
+                built = await built
+        # Only an explicit False means "did not build"; a hook that returns
+        # nothing (other backends, test doubles) just warmed up.
+        if built is False:
+            raise LibrarySearchUnavailable("library runtime unavailable")
     kwargs: dict[str, object] = {
         "top_k": request.top_k,
         "include_citations": request.include_citations,
