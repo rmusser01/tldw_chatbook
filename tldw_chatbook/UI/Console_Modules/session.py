@@ -5784,6 +5784,7 @@ class ConsoleSessionController:
         self.app_instance.notify(
             f"Still switching chats, so nothing was {action}. Your draft was kept.",
             severity="warning",
+            markup=False,
         )
         return True
 
