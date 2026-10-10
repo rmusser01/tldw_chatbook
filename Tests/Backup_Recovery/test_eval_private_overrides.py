@@ -303,3 +303,64 @@ def test_full_rollback_omits_only_the_canonical_unused_declaration(
     else:
         with pytest.raises(ValueError, match="eval_retained_owner_unverified"):
             _original_definition_paths(selector, binding, rows, prepared, plan)
+
+
+@pytest.mark.parametrize("kind", ["directory", "dangling-link", "fifo"])
+def test_recovery_blocks_nonregular_private_override(eval_profile, kind):
+    import os
+
+    from tldw_chatbook.Backup_Recovery.inventory import BLOCKING
+    from tldw_chatbook.Backup_Recovery.models import (
+        DISCOVERY_CONTEXT_KEY,
+        DiscoveryContext,
+    )
+    from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
+
+    selector, path, _, _ = eval_profile
+    if kind == "directory":
+        path.mkdir()
+        (path / "private.yaml").write_text("budget: 7", encoding="utf-8")
+    elif kind == "dangling-link":
+        try:
+            path.symlink_to(path.with_name("missing.yaml"))
+        except OSError as error:
+            if getattr(error, "winerror", None) == 1314:
+                pytest.skip("Windows account cannot create file symlinks")
+            raise
+    else:
+        if not hasattr(os, "mkfifo"):
+            pytest.skip("Platform has no FIFO creation primitive")
+        os.mkfifo(path)
+    context = DiscoveryContext(selector, "eval-profile")
+    (item,) = _DefinitionsAdapter().discover({DISCOVERY_CONTEXT_KEY: context})
+    assert item.path == path
+    assert item.status in BLOCKING
+
+
+def test_recovery_blocks_unreadable_private_override(eval_profile, monkeypatch):
+    from pathlib import Path
+
+    from tldw_chatbook.Backup_Recovery.inventory import BLOCKING
+    from tldw_chatbook.Backup_Recovery.models import (
+        DISCOVERY_CONTEXT_KEY,
+        DiscoveryContext,
+    )
+    from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
+
+    selector, path, _, _ = eval_profile
+    path.write_text("budget: {default_limit: 7}", encoding="utf-8")
+    original = Path.stat
+    attempted = []
+
+    def unreadable(selected, *args, **kwargs):
+        if selected == path:
+            attempted.append(True)
+            raise PermissionError("override metadata is unreadable")
+        return original(selected, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", unreadable)
+    context = DiscoveryContext(selector, "eval-profile")
+    (item,) = _DefinitionsAdapter().discover({DISCOVERY_CONTEXT_KEY: context})
+    assert attempted
+    assert item.path == path
+    assert item.status in BLOCKING
