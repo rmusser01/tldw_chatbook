@@ -1,11 +1,11 @@
 ---
 id: TASK-34407
 title: Separate shipped Eval defaults from private profile overrides
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-04 17:58'
-updated_date: '2026-10-10 03:43'
+updated_date: '2026-10-10 03:56'
 labels: []
 dependencies: []
 ---
@@ -73,6 +73,8 @@ Restored-home selection is corrected and reopened App starts, but Windows reback
 The same reviewer identified the common profile-selection temp-selector mismatch: select_profile clears the environment via an existing allowlist that preserves TMPDIR but drops Windows TEMP/TMP. CI supplied the owned private ancestor only through TEMP/TMP; read-only SQLite preview snapshots then select tempfile.gettempdir() and can be refused by native ancestry guards. Supply that same owned parent through the already permitted TMPDIR and assert both the environment and tempfile select it after profile selection. The fallback directory/exact native exception was not yet recorded, so the next run must verify this causal correction. Production launch/snapshot code remains unchanged; ordinary Windows TEMP/TMP preservation is a separate baseline consideration.
 
 Final fixture qualification on 92cca217e9: Windows 75 passed/1 FIFO capability skip, Linux/macOS all 76 passed, including actual original capture, source/candidate removal, isolated restore, reopened inactive Eval retention and complete rebackup. Snapshot temp-parent preservation assertions passed. This evidence resolves the earlier full-App inventory and 45s-budget limits for the qualified hosted fixture; the separate installed-wheel 300s release gate remains unverified. TASK-34408 now fixes the proven native TEMP/TMP launch-selector omission so ordinary Windows launches do not require a TMPDIR workaround.
+
+Final reviewed production head 401037ceb1: hosted eight-file qualification passes on all platforms without the TMPDIR workaround. Linux 81 passed (240.92s), macOS 81 passed (229.19s), Windows 80 passed/1 FIFO capability skip (see saved job evidence). The complete original capture, isolated restore, source/candidate removal, reopened inactive Eval retention and complete rebackup all pass, including post-selection native-temp assertions. Native launch-selector regression is 5 passed after meaningful 2-failure RED; changed Python static checks and embedded-script compilation pass. Final single delegated reviewer reports no actionable issues; worktree remains isolated from original user changes. Performance guard is green. Existing ADR-220/126 govern the completed fixes. Exact final documentation-head required CI remains the merge gate; installed-wheel 300s release flow is still outside this qualification.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering Provenance
