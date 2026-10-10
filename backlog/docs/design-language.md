@@ -155,8 +155,15 @@ Every interactive control must define, at minimum:
   4.5:1 on `$panel` in nine themes (atom-one-dark 3.45:1). The pane's fill
   also shows through a translucent fill inside it: the house focus tint over
   `$panel` reads under 4.5:1 on five themes (catppuccin-frappe 4.12:1). In
-  the Workflows rails a focused button takes `$tldw-focus-fill`, and the
-  focused search field lays its tint on an opaque `$background`.
+  the Workflows rails a focused button and the focused search field take
+  `$tldw-focus-fill`, which §2.7 keeps at least as far from the rail as the
+  resting fill. The field drops Textual's own focus tint; on that fill its
+  placeholder takes `$ds-focus-fg` in italic and its focus outline takes
+  `$ds-active-fg`, because `$ds-text-muted` and `$primary` do not read on
+  it (under 4.5:1 on 59 themes, under 3:1 on 54). A focus fill is measured
+  against the pane as well as under its text: the tint on an opaque
+  `$background` kept the field's text and matched the rail's luminance on the
+  default theme (1.00x).
 
 ## 3. Interaction rules (binding on all screens)
 

@@ -34,7 +34,9 @@ Press **Ctrl+8**, select **Workflows** in the navigation bar, or use **Ctrl+P** 
 
 At wide sizes the library, navigator and editor are visible together. The
 library and the navigator are panel-coloured rails, each with a line down its
-right edge; the editor sits on the screen background. Medium
+right edge; the editor sits on the screen background. A focused rail button or
+the focused library search field takes the focus fill, and the search hint
+shows in italic until you type. Medium
 widths retain the navigator and editor; compact widths use **Workflow…** and
 **Step / Overview…** selectors above the editor. **F6** moves between
 visible workbench panes; Tab moves through controls. Hidden panes are skipped.

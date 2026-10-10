@@ -285,6 +285,7 @@ WORKFLOW_PANES = {
     "WorkflowNavigator#workflows-navigator": "#workflows-navigator",
 }
 WORKFLOW_FIELD_FOCUS = "WorkflowLibrary#workflows-library Input:focus"
+WORKFLOW_PLACEHOLDER_FOCUS = "#workflow-library-search:focus > .input--placeholder"
 
 
 def _assert_ink_readable(theme: Theme, table: dict, token: str, on: Color, what: str) -> None:
@@ -292,6 +293,19 @@ def _assert_ink_readable(theme: Theme, table: dict, token: str, on: Color, what:
     ink = _resolve_color(_painted(table, token), on)
     ratio = _ratio(ink.hex, on.hex)
     assert ratio >= AA, f"{theme.name}: {what} {ink.hex} is {ratio:.2f}:1 on {on.hex} (needs {AA}:1)"
+
+
+def _workflow_focus_fill(theme: Theme, table: dict, selector: str, pane: Color) -> Color:
+    """The fill ``selector`` paints over ``pane``. It is at least as far from
+    the pane's fill as the resting $surface fill of a Button or an Input is."""
+    fill = _over(pane, Color.parse(_painted(table, _rule_token(WORKFLOWS_SHEET, selector, "background"))))
+    rest = _ratio(Color.parse(_painted(table, "surface")).hex, pane.hex)
+    shift = _ratio(fill.hex, pane.hex)
+    assert shift >= rest, (
+        f"{theme.name}: {selector} fill {fill.hex} is {shift:.2f}x from the pane's "
+        f"{pane.hex}; the resting fill is {rest:.2f}x from it"
+    )
+    return fill
 
 
 @pytest.mark.bootstrap_profile
@@ -305,28 +319,45 @@ def test_workflow_pane_edges_clear_non_text_contrast(theme: Theme) -> None:
     Review round 3: the text is gated here too, on every theme. The rule's
     `color` reads at 4.5:1 on that fill. So does the ink of a focused control:
     the house focus tint is translucent, and over $panel it took that ink
-    under 4.5:1 on five themes (catppuccin-frappe 4.12:1). A focused button's
-    fill is measured over the pane's; the focused search field's tint sits on
-    an opaque base of its own."""
+    under 4.5:1 on five themes (catppuccin-frappe 4.12:1). Each focused fill
+    is measured over the pane's.
+
+    Review round 4: the fill is gated as well as the ink. The search field's
+    tint on $background kept its text readable and landed on the rail's own
+    luminance (textual-dark 1.00x, under 1.25x on 17 themes). A focused fill
+    is at least as far from the pane's as the resting fill is; the field's
+    placeholder takes an ink that reads on it; and where that fill shifts the
+    pane by less than the house floor, the field's frame reads at 3:1 on it."""
     table = _painted_variables(theme)
     focus_ink = _rule_token(WORKFLOWS_SHEET, ".workflow-compact:focus", "color")
+    panes = {}
     for selector in WORKFLOW_PANES:
         edge = _rule_token(WORKFLOWS_SHEET, selector, "border-right")
         fill = _rule_token(WORKFLOWS_SHEET, selector, "background")
         _assert_edge_visible(theme, table, edge, fill)
-        pane = Color.parse(_painted(table, fill))
+        pane = panes[selector] = Color.parse(_painted(table, fill))
         ink = _rule_token(WORKFLOWS_SHEET, selector, "color")
         _assert_ink_readable(theme, table, ink, pane, f"{selector} text")
         button = f"{selector} .workflow-compact:focus"
-        focused = Color.parse(_painted(table, _rule_token(WORKFLOWS_SHEET, button, "background")))
-        _assert_ink_readable(theme, table, focus_ink, _over(pane, focused), button)
-    field = [
-        Color.parse(_painted(table, _rule_token(WORKFLOWS_SHEET, WORKFLOW_FIELD_FOCUS, prop)))
-        for prop in ("background", "background-tint")
-    ]
-    assert field[0].a == 1, f"{theme.name}: the pane's fill shows through {WORKFLOW_FIELD_FOCUS}"
+        focused = _workflow_focus_fill(theme, table, button, pane)
+        _assert_ink_readable(theme, table, focus_ink, focused, button)
+    # Textual's own 5% $foreground focus tint on an Input: left on, typed text
+    # is under 4.5:1 on three themes (catppuccin-mocha 4.27:1).
+    assert _rule_token(WORKFLOWS_SHEET, WORKFLOW_FIELD_FOCUS, "background-tint") == "transparent"
+    library = panes[WORKFLOW_FIELD_FOCUS.split()[0]]
+    field = _workflow_focus_fill(theme, table, WORKFLOW_FIELD_FOCUS, library)
+    # More than the caret marks the focused field: its fill shifts the pane by
+    # the house floor, or its frame reads at 3:1 on that fill (flexoki: 1.23x).
+    frame = _resolve_color(_painted(table, _rule_token(WORKFLOWS_SHEET, WORKFLOW_FIELD_FOCUS, "outline")), field)
+    shift, edge = _ratio(field.hex, library.hex), _ratio(frame.hex, field.hex)
+    assert shift >= FOCUS_SHIFT_FLOOR or edge >= NON_TEXT, (
+        f"{theme.name}: {WORKFLOW_FIELD_FOCUS} fill {field.hex} is {shift:.2f}x from the pane's "
+        f"{library.hex} and its frame {frame.hex} is {edge:.2f}:1 on it"
+    )
     typed = _rule_token(FORMS_SHEET, "Input:focus", "color")
-    _assert_ink_readable(theme, table, typed, _over(*field), WORKFLOW_FIELD_FOCUS)
+    _assert_ink_readable(theme, table, typed, field, WORKFLOW_FIELD_FOCUS)
+    hint = _rule_token(WORKFLOWS_SHEET, WORKFLOW_PLACEHOLDER_FOCUS, "color")
+    _assert_ink_readable(theme, table, hint, field, WORKFLOW_PLACEHOLDER_FOCUS)
 
 
 def _text_cells(app, region, skip=()) -> set[tuple[str, str]]:
@@ -370,6 +401,11 @@ def _painted_text(app, widget) -> set[tuple[str, str]]:
         # The focus tint on $panel under a focused control's text: the weakest
         # of the five themes under 4.5:1 (atom-one-dark, below, is another).
         "catppuccin-frappe",
+        # Typed text in the focused search field: the lowest (4.54:1), and
+        # 4.27:1 with Textual's own focus tint left on the field.
+        "catppuccin-mocha",
+        # The focus fill nearest its rail (1.23x): the field's frame marks it.
+        "flexoki",
         # The pane headings on $panel in the theme's $foreground: under 4.5:1.
         "atom-one-dark",
         "tokyo-night",
@@ -390,10 +426,15 @@ async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> 
 
     Review round 3: at rest and with each control focused in turn. The fill
     also sat under the translucent focus tint, and the focused buttons and
-    text typed in the search field fell under 4.5:1 on five themes. The field
-    is read with a typed value: its placeholder ink is under 4.5:1 on the
-    tint on 48 themes, as it was before the panes had a fill."""
+    text typed in the search field fell under 4.5:1 on five themes.
+
+    Review round 4: the fills are read too. Each focused control's fill is at
+    least as far from the pane's as its resting fill; the search field's sat
+    on the rail's own luminance (textual-dark 1.00x, catppuccin-frappe 1.01x).
+    The field is read with its placeholder and then with a typed value, and
+    its frame is read where its fill shifts the pane by less than the floor."""
     from textual.containers import Horizontal
+    from textual.geometry import Region
     from textual.widgets import Button, Input, OptionList
 
     from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
@@ -415,7 +456,7 @@ async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> 
             button.disabled = False  # Previous and Next: no page to turn here
         app.set_focus(None)  # the search field takes focus on mount
         await pilot.pause(0.3)
-        edges, text = {}, {}
+        edges, text, fills = {}, {}, {}
         for selector in WORKFLOW_PANES.values():
             widget = app.query_one(selector)
             pane = widget.region
@@ -426,16 +467,28 @@ async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> 
             }
             text[selector] = _painted_text(app, widget)
             for control in [child for child in widget.walk_children() if child.focusable]:
+                resting = _text_cells(app, control.region)
                 app.set_focus(control)
                 await pilot.pause()
+                frame = []
                 if isinstance(control, Input):
+                    box = control.region
+                    frame = _painted_line(app, box.y + 1, box.x, box.x + 1, "│")
+                    assert frame, f"no #{control.id} frame"
+                    # The placeholder, without its first cell: the caret paints there.
+                    own = _text_cells(app, box, [Region(*control.content_region.offset, 1, 1)])
+                    assert own, f"no #{control.id} placeholder"
                     # Typed once the focus has landed: focusing selects a value.
                     control.value = "typed 123"
                     await pilot.pause()
-                own = _text_cells(app, control.region)
+                    own |= _text_cells(app, box)
+                else:
+                    own = _text_cells(app, control.region)
                 # The lists are empty here, and their fill is opaque either way.
                 assert own or isinstance(control, OptionList), f"no #{control.id} text"
-                text[f"{selector} with #{control.id} focused"] = own | _painted_text(app, widget)
+                focused = f"{selector} with #{control.id} focused"
+                text[focused] = own | _painted_text(app, widget)
+                fills[focused] = (selector, resting, own, frame)
     for selector, cells in edges.items():
         assert cells, f"{theme_name}: no {selector} edge cells painted"
         for edge, fill in cells:
@@ -446,6 +499,21 @@ async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> 
         for ink, fill in cells:
             ratio = _ratio(ink, fill)
             assert ratio >= AA, f"{theme_name}: {selector} text {ink} on {fill} is {ratio:.2f}:1"
+    for focused, (selector, resting, own, frame) in fills.items():
+        (pane_fill,) = {fill for _, fill in text[selector]}
+        rest = max((_ratio(fill, pane_fill) for _, fill in resting), default=0)
+        for _, fill in own:
+            shift = _ratio(fill, pane_fill)
+            assert shift >= rest, (
+                f"{theme_name}: {focused} fill {fill} is {shift:.2f}x from the pane's "
+                f"{pane_fill}; at rest it is {rest:.2f}x from it"
+            )
+        for edge, fill in frame:
+            shift, ratio = _ratio(fill, pane_fill), _ratio(edge, fill)
+            assert shift >= FOCUS_SHIFT_FLOOR or ratio >= NON_TEXT, (
+                f"{theme_name}: {focused} fill {fill} is {shift:.2f}x from the pane's "
+                f"{pane_fill} and its frame {edge} is {ratio:.2f}:1 on it"
+            )
 
 
 WIDGETS_SHEET = CSS_ROOT / "components/_widgets.tcss"

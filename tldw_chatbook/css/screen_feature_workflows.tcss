@@ -315,7 +315,7 @@ WorkflowsScreen #workflow-authoring { height: $ds-height-fill; min-height: $ds-s
     /* TASK-33003.15: panel rails. $ds-column-line reads at 3:1 on $surface and $panel only
      * (not on $background), and the headings on that fill take the readable ink. The house
      * focus tint is translucent, and over $panel it took focused text under 4.5:1 on five
-     * themes: the focus rules below keep the rails' fill out from under that text. */
+     * themes: the focus rules below take the guarded fill, which reads over $panel. */
     WorkflowLibrary#workflows-library { width: $ds-size-28; min-width: $ds-size-0; height: $ds-height-fill; border-right: solid $ds-column-line; background: $ds-surface-panel; color: $ds-text-primary; padding: $ds-space-0 $ds-space-inset; }
     WorkflowLibrary#workflows-library OptionList { height: $ds-height-fill; min-height: $ds-control-height-compact; }
     WorkflowLibrary#workflows-library Input { margin: $ds-space-0; }
@@ -324,10 +324,14 @@ WorkflowsScreen #workflow-authoring { height: $ds-height-fill; min-height: $ds-s
 
     WorkflowNavigator#workflows-navigator { width: $ds-workflow-navigator-width; min-width: $ds-size-0; height: $ds-height-fill; border-right: solid $ds-column-line; background: $ds-surface-panel; color: $ds-text-primary; padding: $ds-space-0 $ds-space-inset; }
     WorkflowNavigator#workflows-navigator OptionList { height: $ds-height-fill; min-height: $ds-control-height-compact; }
-    /* A focused button takes the shared Button:focus fill, which themes.py pins readable on $panel. */
+    /* A focused button and the focused search field take the shared Button:focus fill.
+     * themes.py pins it readable on $panel and never closer to it than the resting fill.
+     * The tint on $background was readable too, and matched the rail (textual-dark 1.00x). */
     WorkflowLibrary#workflows-library .workflow-compact:focus, WorkflowNavigator#workflows-navigator .workflow-compact:focus { background: $tldw-focus-fill; }
-    /* The search field's tint sits on $background, as it did before the rails had a fill. */
-    WorkflowLibrary#workflows-library Input:focus { background: $background; background-tint: $ds-focus-bg; }
+    /* Textual's own 5% $foreground tint is dropped: with it typed text is under 4.5:1 on three themes.
+     * The focus outline takes the readable primary ($ds-active-fg, the Settings rail's focus edge):
+     * $primary on this fill is under 3:1 on 54 themes, the default theme among them. */
+    WorkflowLibrary#workflows-library Input:focus { background: $tldw-focus-fill; background-tint: transparent; outline: solid $ds-active-fg; }
 
 WorkflowsScreen #workflow-run:disabled {
     background: $ds-disabled-bg;

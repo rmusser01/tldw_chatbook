@@ -18633,6 +18633,21 @@ search field takes focus on mount, so its "rest" frame had one focused
 control in it. The focused buttons now take the guarded `$tldw-focus-fill`,
 and the field's tint sits on an opaque `$background`.
 
+**Update, review round 4.** That field fix was measured on the text alone, and
+both tests asserted text alone. The tint on `$background` kept typed text at
+4.77:1 and put the focused field's fill on the rail's own luminance: 1.00x
+on textual-dark, the default theme, and under 1.25x on 17 of the 89 themes,
+where 3 had been at the task base. On 18 themes the focused field sat closer
+to the rail than the resting field did. The task notes had rejected that same
+composite for the buttons, for that reason, in the block of notes that chose
+it for the field. The field now takes `$tldw-focus-fill` as the buttons
+do, and both tests assert that a focused fill is at least as far from the
+pane's fill as the resting fill is. That fill moved two more pairs, and
+measuring them before the commit found both: the placeholder's
+`$ds-text-muted` fell under 4.5:1 on 59 themes (48 before), and the
+`$primary` focus outline fell under 3:1 on 54 (41 before; the default theme
+went from 3.01:1 to 2.25:1). Each got its own ink in the focused field.
+
 **What to do, as well.** A fill added under a line sits under everything
 inside the widget that is transparent or translucent. After adding one, read
 the text cells painted on it on every theme, and compare with the fill they
@@ -18642,7 +18657,11 @@ control in turn (enable the disabled ones first) and read its text again: a
 focus or hover tint is where a translucent fill usually comes from. A theme
 whose `$panel` equals its `$surface` (solarized) makes "cells whose
 background is the pane's fill" match a list's own cells: select by widget
-region, not by colour.
+region, not by colour. A colour fix moves more than the ratio it was written
+for: before choosing one, list what each colour in the rule is read against
+(the text and the placeholder on the fill, the fill on the pane, the frame
+on the fill) and measure every pair on every theme against the task base.
+Gate the pairs the fix must hold, and write down the ones it lowers.
 
 ## A colour built in Python with `dim` is measured on one theme only (TASK-33004.6, 2026-09-30)
 
