@@ -1,11 +1,11 @@
 ---
 id: TASK-34783
 title: Correct architecture references against implemented runtime contracts
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-10 19:27'
-updated_date: '2026-10-10 21:39'
+updated_date: '2026-10-10 21:41'
 labels: []
 dependencies: []
 ---
@@ -20,7 +20,7 @@ Keep the new engineering reference accurate about live hooks, workflow execution
 <!-- AC:BEGIN -->
 - [x] #1 Hooks documentation describes the wired v2 runtime and its permission/checkpoint requirements
 - [x] #2 Workflow execution scope and reranking request counts match actual source
-- [ ] #3 Schema, module paths and storage descriptions avoid known stale or inaccurate claims
+- [x] #3 Schema, module paths and storage descriptions avoid known stale or inaccurate claims
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,4 +51,6 @@ Final carry/source review (2026-10-10): rebased the four original docs commits f
 Independent source review identified one existing app-shell.md sentence conflating refresh scheduling and focus restoration. Corrected it to name screen refresh(recompose=True) mouse release, BaseAppScreen.recompose focus capture/restoration for scheduled and direct awaits, and the independent child-widget lifecycle. Verified actual BaseAppScreen.refresh/recompose plus ConsoleTranscript.recompose/refresh_messages/on_mount; Eval selectors, sparse private override loading and eval.definitions recovery claims remain source-consistent. Existing ADR190 applies; no new ADR or runtime change.
 
 All 83 relative Architecture links resolve before and after the sentence correction. Git whitespace check passes. The normal hash-pinned preflight on 3810f8aab9a8c318003281f51f5e47b8e1b72570 exits zero with all checks passed; its inherited UI census is 175/floor 175. The later Task34785 CI wiring commit b2d24076ca1af97b4a020aa7d90448da9420d547 is not an ancestor of this pinned parent, so no broader claim is made about that separate carry. This Markdown-only correction needs no runtime lint/formatter or test replay; Backlog readability is checked separately after task edits. Receipts: /private/tmp/pr3038-carry-checks.json; pr3038-carry-copy-links.json; pr3038-carry-preflight.log. Final immutable copy review remains pending before restoring AC #3 and Done.
+
+Independent immutable final carry/copy review cleared 998ac7e3ddec5d30c40fdae133361293549ff1b8 (parent 3810f8aab9a8c318003281f51f5e47b8e1b72570, exact stack parent 590c18b2b2551f7871684854f982ba79f022bb0a). Reviewer review_3029 confirmed the screen refresh/recompose sentence matches BaseAppScreen and ConsoleTranscript ownership, all original four patch and 25 pre-copy blob correspondences, exact inherited lesson preservation, no runtime/test/CI delta, all 83 final relative links, whitespace and the explicitly limited pre-copy preflight receipt. The identified copy finding is resolved. All acceptance criteria are verified; restoring AC #3 and Done via CLI. Final closeout changes only this task's metadata and receipt.
 <!-- SECTION:NOTES:END -->
