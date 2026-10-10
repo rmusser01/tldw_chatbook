@@ -99,5 +99,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: eval-recovery-windows-child-logs
-          path: ${{ env.TEMP }}/pytest-of-*/pytest-*/*/original/restart-output.log
+          path: |
+            ${{ env.TEMP }}/pytest-of-*/pytest-*/*/original/restart-output.log
+            ${{ env.TEMP }}/pytest-of-*/pytest-*/*/restored/restart-output.log
+            ${{ env.TEMP }}/pytest-of-*/pytest-*/*/reopen.log
           if-no-files-found: ignore
