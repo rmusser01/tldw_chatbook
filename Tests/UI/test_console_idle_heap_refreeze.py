@@ -51,7 +51,7 @@ def recording_refreezer(timeline) -> tuple[IdleHeapRefreezer, list[str]]:
         compaction_quiet_seconds=0.05,
         enabled=lambda: True,
         refreeze=refreeze,
-        unfreeze=lambda: None,
+        compact=lambda reason: refreeze(reason) or 1_000_000,
         freeze_count=lambda: 1_000_000,
     )
     return refreezer, reasons

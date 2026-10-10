@@ -381,13 +381,8 @@ def freeze_long_lived_heap(reason: str, *, generation: int = 1) -> int:
     boot cycles cheaply; a full collection is deliberately NOT run there (a
     one-time 130-270 ms loop stall right as the user starts interacting).
     Thresholds stay at CPython's defaults and the collector is never disabled
-    (see the ADR).
-
-    The idle re-freeze (ADR-198 amendment, TASK-33620.15.3) passes
-    ``generation=2``: a full collection of the UNFROZEN heap (frozen objects
-    are never scanned, so it costs what the next automatic pass would have),
-    so cyclic garbage that already reached the old generation is reclaimed
-    instead of frozen for good.
+    (see the ADR). A compaction (ADR-198 amendment, TASK-33620.15.3) passes
+    ``generation=2`` after unfreezing the heap.
 
     Args:
         reason: What froze the heap, for the DEBUG log line.
@@ -403,7 +398,46 @@ def freeze_long_lived_heap(reason: str, *, generation: int = 1) -> int:
     return frozen
 
 
-def _refreeze_long_lived_heap(reason: str) -> int:
+def refreeze_long_lived_heap(reason: str) -> int:
+    """Collect the unfrozen heap in full, then freeze it (TASK-33620.15.3).
+
+    The idle re-freeze (ADR-198 amendment). The full collection reclaims
+    cyclic garbage already in the old generation instead of freezing it for
+    good; frozen objects are never scanned, so it costs what the next
+    automatic pass would have cost on the UI loop. It does not walk the
+    permanent generation to size it (40-60 ms at ~850K objects, live under
+    load), so it returns what it froze: an upper bound on the growth.
+
+    Args:
+        reason: What asked for the re-freeze, for the DEBUG log line.
+
+    Returns:
+        How many objects it moved into the permanent generation. A full
+        collection leaves every unfrozen survivor in generation 2.
+    """
+    gc.collect()
+    added = len(gc.get_objects(generation=2))
+    gc.freeze()
+    logging.getLogger(__name__).debug(
+        "gc heap re-frozen (%s): +%d objects", reason, added
+    )
+    return added
+
+
+def compact_long_lived_heap(reason: str) -> int:
+    """Unfreeze, collect the whole heap, freeze the survivors (TASK-33620.15.3).
+
+    Reclaims every frozen object that has become cyclic garbage since it was
+    frozen, at the price of one full scan (the pass ADR-198 kept off
+    ``_ui_ready``).
+
+    Args:
+        reason: What asked for the compaction, for the DEBUG log line.
+
+    Returns:
+        The permanent generation's size after the freeze.
+    """
+    gc.unfreeze()
     return freeze_long_lived_heap(reason, generation=2)
 
 
@@ -446,15 +480,19 @@ class IdleHeapRefreezer:
 
     ``gc.freeze()`` never collects a frozen object, and Textual widgets are
     cyclic, so whatever is frozen live and dropped later (a switched-away
-    transcript, a recomposed rail) would leak. Each re-freeze therefore
-    measures the permanent generation; once it has grown by ``growth_ratio``
-    of its size after the last compaction (and by at least ``min_growth``),
-    the next idle moment of ``compaction_quiet_seconds`` compacts instead:
-    unfreeze, collect the whole heap, freeze the survivors. No re-freeze runs
-    while a compaction is due, so frozen garbage never exceeds that budget
-    plus one re-freeze. Frozen objects freed by reference counting (most
-    replaced render strips) leave the permanent generation by themselves, so
-    only real growth counts. The collector is never disabled and its
+    transcript, a recomposed rail) would leak. So once the permanent
+    generation has grown by ``growth_ratio`` of its size after the last
+    compaction (and by at least ``min_growth``), the next idle moment of
+    ``compaction_quiet_seconds`` compacts instead: unfreeze, collect the whole
+    heap, freeze the survivors. No re-freeze runs while a compaction is due,
+    so frozen garbage never exceeds that budget plus one re-freeze.
+
+    Growth is tracked cheaply and checked exactly: re-freezes add what they
+    froze to an upper bound, and only when that bound reaches the budget is
+    the permanent generation walked to size it. Frozen objects freed by
+    reference counting (most replaced render strips: live, ~70K frozen per
+    send for ~20K of real growth) leave it by themselves, so only real growth
+    makes a compaction due. The collector is never disabled and its
     thresholds are never touched.
     """
 
@@ -467,8 +505,8 @@ class IdleHeapRefreezer:
         min_growth: int = COMPACTION_MIN_GROWTH,
         clock: Callable[[], float] = time.monotonic,
         enabled: Callable[[], bool] = _idle_refreeze_enabled,
-        refreeze: Callable[[str], int] = _refreeze_long_lived_heap,
-        unfreeze: Callable[[], None] = gc.unfreeze,
+        refreeze: Callable[[str], int] = refreeze_long_lived_heap,
+        compact: Callable[[str], int] = compact_long_lived_heap,
         freeze_count: Callable[[], int] = gc.get_freeze_count,
     ) -> None:
         """Create a refreezer with nothing requested.
@@ -481,11 +519,11 @@ class IdleHeapRefreezer:
             min_growth: The smallest growth that makes a compaction due.
             clock: Monotonic clock, injectable for tests.
             enabled: Whether requests are honoured at all.
-            refreeze: Collects the unfrozen heap, freezes the survivors and
+            refreeze: Collects the unfrozen heap, freezes it and returns how
+                many objects it froze.
+            compact: Unfreezes, collects the whole heap, freezes it and
                 returns the permanent generation's size.
-            unfreeze: Moves the permanent generation back into generation 2.
-            freeze_count: Size of the permanent generation, read once for the
-                first baseline.
+            freeze_count: Walks the permanent generation to size it.
         """
         self._quiet = quiet_seconds
         self._compaction_quiet = compaction_quiet_seconds
@@ -494,7 +532,7 @@ class IdleHeapRefreezer:
         self._clock = clock
         self._enabled = enabled
         self._refreeze = refreeze
-        self._unfreeze = unfreeze
+        self._compact = compact
         self._freeze_count = freeze_count
         self._last_input = float("-inf")
         self._requested_at = float("-inf")
@@ -502,8 +540,10 @@ class IdleHeapRefreezer:
         self._generation = 0
         #: Permanent generation's size after the last compaction (or first look).
         self._baseline: int | None = None
-        #: Its size after the last re-freeze or compaction.
+        #: Its size when last walked, plus what re-freezes froze since.
         self._frozen = 0
+        #: Whether ``_frozen`` includes re-freezes made since the last walk.
+        self._estimated = False
         #: ``(action, reason)`` of each maintenance run, newest last.
         self.actions: deque[tuple[str, str]] = deque(maxlen=32)
 
@@ -532,21 +572,31 @@ class IdleHeapRefreezer:
         self._arm(owner, self._quiet)
 
     def compaction_due(self) -> bool:
-        """Whether the frozen set has grown enough since the last compaction."""
+        """Whether the frozen set has grown enough since the last compaction.
+
+        Walks the permanent generation only when the cheap upper bound has
+        reached the budget.
+        """
         if self._baseline is None:
             return False
-        growth = self._frozen - self._baseline
-        return growth >= max(self._min_growth, self._growth_ratio * self._baseline)
+        budget = max(self._min_growth, self._growth_ratio * self._baseline)
+        if self._frozen - self._baseline < budget:
+            return False
+        if self._estimated:
+            self._frozen = self._freeze_count()
+            self._estimated = False
+        return self._frozen - self._baseline >= budget
 
     def maintain(self, reason: str) -> str:
         """Re-freeze or, when one is due, compact now. Returns which ran."""
         self._look()
         if self.compaction_due():
-            self._unfreeze()
-            self._baseline = self._frozen = self._refreeze(f"compact:{reason}")
+            self._baseline = self._frozen = self._compact(f"compact:{reason}")
+            self._estimated = False
             action = "compact"
         else:
-            self._frozen = self._refreeze(reason)
+            self._frozen += self._refreeze(reason)
+            self._estimated = True
             action = "refreeze"
         self.actions.append((action, reason))
         return action
@@ -571,10 +621,12 @@ class IdleHeapRefreezer:
                 self._request = None
                 return
             quiet = self._clock() - max(self._last_input, self._requested_at)
-            self._look()
-            need = self._compaction_quiet if self.compaction_due() else self._quiet
-            if quiet < need:
-                self._arm(owner, need - quiet)
+            if quiet < self._quiet:
+                self._arm(owner, self._quiet - quiet)
+                return
+            self._look()  # the walks below run only once the user is quiet
+            if self.compaction_due() and quiet < self._compaction_quiet:
+                self._arm(owner, self._compaction_quiet - quiet)
                 return
             self._request = None
             self.maintain(reason)

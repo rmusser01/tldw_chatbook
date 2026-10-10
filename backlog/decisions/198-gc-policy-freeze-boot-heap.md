@@ -164,10 +164,15 @@ within a launch (36 ms on the first send, 121 ms by the fifth).
    here to the frozen set.
 
    The measure is the generation's real size, not a count of what each
-   re-freeze added. Most of what a send's re-freeze freezes is render strips
-   that the next paint replaces, and reference counting frees them out of
-   the permanent generation. Live, counting additions instead triggered a
-   compaction every third send.
+   re-freeze added. Live, a send's re-freeze froze about 70K objects for
+   about 20K of real growth: reference counting frees most of the rest out
+   of the permanent generation, because the next paint replaces them.
+   Counting additions instead triggered a compaction every third send.
+
+   Sizing the generation means walking it, which took 40-60 ms at about 850K
+   objects under load. So re-freezes keep a running upper bound (the last
+   walked size plus what each re-freeze froze), and the generation is walked
+   only when that bound reaches the budget.
 
    No re-freeze runs while a compaction is due. Frozen garbage therefore never
    exceeds that budget plus one re-freeze, and a compaction also reclaims any

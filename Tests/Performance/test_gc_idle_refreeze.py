@@ -59,23 +59,32 @@ def owner_busy(owner: Owner) -> bool:
 
 
 class Ops:
-    """Fake collector operations with a permanent generation of ``frozen`` objects."""
+    """Fake collector operations with a permanent generation of ``frozen`` objects.
 
-    def __init__(self, frozen: int = 1_000_000, added: int = 10_000) -> None:
+    ``freed`` of each re-freeze's ``added`` objects are freed by reference
+    counting right after it, as replaced render strips are.
+    """
+
+    def __init__(
+        self, frozen: int = 1_000_000, added: int = 10_000, freed: int = 0
+    ) -> None:
         self.frozen = frozen
         self.added = added
+        self.freed = freed
         self.calls: list[str] = []
+        self.walks = 0
 
     def refreeze(self, reason: str) -> int:
         self.calls.append(f"refreeze:{reason}")
-        if not reason.startswith("compact:"):
-            self.frozen += self.added
+        self.frozen += self.added - self.freed
+        return self.added
+
+    def compact(self, reason: str) -> int:
+        self.calls.append(f"compact:{reason}")
         return self.frozen
 
-    def unfreeze(self) -> None:
-        self.calls.append("unfreeze")
-
     def freeze_count(self) -> int:
+        self.walks += 1
         return self.frozen
 
 
@@ -84,7 +93,7 @@ def make(clock: Clock, ops: Ops, **kwargs) -> IdleHeapRefreezer:
         clock=clock,
         enabled=lambda: True,
         refreeze=ops.refreeze,
-        unfreeze=ops.unfreeze,
+        compact=ops.compact,
         freeze_count=ops.freeze_count,
         **kwargs,
     )
@@ -105,13 +114,42 @@ def test_the_idle_refreeze_collects_every_unfrozen_generation_then_freezes(
         lambda generation=2: calls.append(("collect", generation)) or 0,
     )
     monkeypatch.setattr(
+        ui_responsiveness.gc,
+        "get_objects",
+        lambda generation=None: calls.append(("get_objects", generation)) or [1, 2],
+    )
+    monkeypatch.setattr(
+        ui_responsiveness.gc, "freeze", lambda: calls.append(("freeze",))
+    )
+
+    assert ui_responsiveness.refreeze_long_lived_heap("unit-test") == 2
+    assert calls == [("collect", 2), ("get_objects", 2), ("freeze",)]
+
+
+def test_a_compaction_unfreezes_then_collects_everything_then_freezes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole heap, frozen set included, is collected before the re-freeze.
+
+    Args:
+        monkeypatch: Records the collector calls instead of running them.
+    """
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        ui_responsiveness.gc, "unfreeze", lambda: calls.append(("unfreeze",))
+    )
+    monkeypatch.setattr(
+        ui_responsiveness.gc,
+        "collect",
+        lambda generation=2: calls.append(("collect", generation)) or 0,
+    )
+    monkeypatch.setattr(
         ui_responsiveness.gc, "freeze", lambda: calls.append(("freeze",))
     )
     monkeypatch.setattr(ui_responsiveness.gc, "get_freeze_count", lambda: 1234)
 
-    refreezer = IdleHeapRefreezer(enabled=lambda: True, freeze_count=lambda: 1000)
-    assert refreezer.maintain("unit-test") == "refreeze"
-    assert calls == [("collect", 2), ("freeze",)]
+    assert ui_responsiveness.compact_long_lived_heap("unit-test") == 1234
+    assert calls == [("unfreeze",), ("collect", 2), ("freeze",)]
 
 
 def test_a_request_runs_once_its_owner_is_idle_and_the_user_quiet() -> None:
@@ -229,7 +267,7 @@ def test_a_compaction_runs_once_refreezes_add_a_quarter_and_waits_longer() -> No
     clock.now += 2.0
     owner.fire_last()
     assert refreezer.compaction_due()  # 160,000 >= 150,000
-    assert ops.calls.count("unfreeze") == 0
+    assert not any(call.startswith("compact:") for call in ops.calls)
 
     refreezer.request("run_settled", owner, owner_busy)
     clock.now += 2.0
@@ -240,7 +278,7 @@ def test_a_compaction_runs_once_refreezes_add_a_quarter_and_waits_longer() -> No
 
     clock.now += 3.0
     owner.fire_last()
-    assert ops.calls[-2:] == ["unfreeze", "refreeze:compact:run_settled"]
+    assert ops.calls[-1] == "compact:compact:run_settled"
     assert refreezer.actions[-1] == ("compact", "run_settled")
     assert not refreezer.compaction_due()
 
@@ -248,21 +286,24 @@ def test_a_compaction_runs_once_refreezes_add_a_quarter_and_waits_longer() -> No
 def test_only_real_growth_of_the_frozen_set_makes_a_compaction_due() -> None:
     """Objects frozen then freed by reference counting never trigger a compaction.
 
-    Live (2026-10-10), each send's re-freeze froze ~70K objects, most of them
-    render strips the next paint replaced and reference counting freed; a
-    count of what re-freezes ADD compacted every third send. The budget is
-    measured on the permanent generation itself.
+    Live (2026-10-10), each send's re-freeze froze ~70K objects for ~20K of
+    real growth: most were render strips the next paint replaced and
+    reference counting freed. Budgeting on what re-freezes ADD compacted
+    every third send, so the upper bound only decides when to walk the
+    permanent generation, and the walk decides.
     """
-    clock, ops, owner = Clock(), Ops(frozen=800_000, added=0), Owner()
+    clock = Clock()
+    ops, owner = Ops(frozen=800_000, added=70_000, freed=66_000), Owner()
     refreezer = make(clock, ops, quiet_seconds=2.0, min_growth=1_000)
     for _ in range(20):
         refreezer.request("run_settled", owner, owner_busy)
         clock.now += 2.0
         owner.fire_last()
-    assert "unfreeze" not in ops.calls
-    assert not refreezer.compaction_due()
+    assert not any(call.startswith("compact:") for call in ops.calls)
+    assert not refreezer.compaction_due()  # 20 x 4,000 = 80,000 < 200,000
+    assert 1 < ops.walks <= 8, ops.walks  # a walk per ~3 re-freezes, not per one
 
-    ops.added = 200_000
+    ops.added, ops.freed = 200_000, 0
     refreezer.maintain("conversation_painted")
     assert refreezer.compaction_due()
 
