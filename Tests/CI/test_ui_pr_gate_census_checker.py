@@ -168,7 +168,7 @@ def test_a_node_id_naming_a_renamed_test_is_rejected(tmp_path, capsys):
         root=root,
     )
     assert m.main() == 1
-    assert "listed test does not exist" in capsys.readouterr().err
+    assert "does not define" in capsys.readouterr().err
 
 
 def test_a_node_id_naming_a_method_on_the_wrong_class_is_rejected(tmp_path, capsys):
@@ -180,7 +180,7 @@ def test_a_node_id_naming_a_method_on_the_wrong_class_is_rejected(tmp_path, caps
         root=root,
     )
     assert m.main() == 1
-    assert "listed test does not exist" in capsys.readouterr().err
+    assert "does not define" in capsys.readouterr().err
 
 
 def test_a_node_id_in_a_missing_file_is_rejected(tmp_path, capsys):
@@ -216,3 +216,130 @@ def test_an_entry_with_whitespace_is_rejected(tmp_path, capsys):
     )
     assert m.main() == 1
     assert "entry contains whitespace" in capsys.readouterr().err
+
+
+# ---- parametrize ids and argument overlap (TASK-33621.27 review) -----------
+# A renamed parametrize id used to pass the checker (it stripped `[...]`), and
+# pytest then exits 4 and the whole shard runs nothing. The ids are now
+# resolved statically; an id that cannot be resolved is refused by name.
+
+_PARAM_SOURCE = (
+    "import pytest\n\n"
+    "SIZES = [(80, 24), (235, 52)]\n"
+    "TRIGGERS = {'system-prompt': object(), 'image-only': object()}\n\n"
+    "@pytest.mark.parametrize('route', ['enter', 'send-button'])\n"
+    "@pytest.mark.parametrize('answer', ['escape', 'not-now'])\n"
+    "async def test_stacked(route, answer):\n    pass\n\n"
+    "@pytest.mark.parametrize('how', [1, True, None, 2.5])\n"
+    "def test_scalars(how):\n    pass\n\n"
+    "@pytest.mark.parametrize(('key', 'size'), [('enter', (80, 24))])\n"
+    "def test_tuple_values(key, size):\n    pass\n\n"
+    "@pytest.mark.parametrize('size', SIZES, ids=['narrow', 'wide'])\n"
+    "def test_named_ids(size):\n    pass\n\n"
+    "@pytest.mark.parametrize('trigger', list(TRIGGERS))\n"
+    "def test_dict_keys(trigger):\n    pass\n\n"
+    "@pytest.mark.parametrize('x', [pytest.param(1, id='one'), 2])\n"
+    "def test_param_ids(x):\n    pass\n\n"
+    "@pytest.mark.parametrize('size', SIZES, ids=lambda s: f'{s[0]}x{s[1]}')\n"
+    "def test_callable_ids(size):\n    pass\n\n"
+    "@pytest.mark.parametrize('action', _computed())\n"
+    "def test_computed(action):\n    pass\n"
+)
+
+
+def _param_file(tmp_path: Path) -> Path:
+    path = tmp_path / "test_params.py"
+    path.write_text(_PARAM_SOURCE, encoding="utf-8")
+    return path
+
+
+def _resolve(tmp_path: Path, node: str):
+    spec = importlib.util.spec_from_file_location(f"cen_r_{tmp_path.name}", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.resolve_node(_param_file(tmp_path), node)
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        "test_stacked[escape-enter]",
+        "test_stacked[not-now-send-button]",
+        "test_scalars[1]",
+        "test_scalars[True]",
+        "test_scalars[None]",
+        "test_scalars[2.5]",
+        "test_tuple_values[enter-size0]",
+        "test_named_ids[wide]",
+        "test_dict_keys[image-only]",
+        "test_param_ids[one]",
+        "test_param_ids[2]",
+        "test_callable_ids",
+        "test_computed",
+    ],
+)
+def test_resolvable_parametrize_ids_pass(tmp_path, node):
+    """Positive control: the ids pytest would generate, closest decorator first."""
+    assert _resolve(tmp_path, node) is None
+
+
+@pytest.mark.parametrize(
+    ("node", "reason"),
+    [
+        ("test_stacked[enter-escape]", "no parametrize id"),
+        ("test_named_ids[narrow-ish]", "no parametrize id"),
+        ("test_dict_keys[system-prompt-renamed]", "no parametrize id"),
+        ("test_callable_ids[80x24]", "cannot be resolved statically"),
+        ("test_computed[save-markdown]", "cannot be resolved statically"),
+        ("test_missing[x]", "does not define"),
+    ],
+)
+def test_unresolvable_or_renamed_parametrize_ids_are_refused(tmp_path, node, reason):
+    """A renamed id fails here by name instead of emptying a whole shard."""
+    problem = _resolve(tmp_path, node)
+    assert problem is not None and reason in problem, problem
+
+
+def test_a_renamed_parametrize_id_fails_the_census(tmp_path, capsys):
+    root = _tree(tmp_path)
+    target = root / "Tests/UI/test_params.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_PARAM_SOURCE, encoding="utf-8")
+    m = _checker(
+        tmp_path, ["Tests/UI/test_params.py::test_stacked[escape-shout]"], floor=1, root=root
+    )
+    assert m.main() == 1
+    assert "no parametrize id" in capsys.readouterr().err
+
+
+def _overlaps(targets):
+    spec = importlib.util.spec_from_file_location("cen_overlap", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.overlapping_targets(targets)
+
+
+def test_disjoint_pytest_targets_have_no_overlap():
+    assert _overlaps(
+        [
+            "Tests/CI",
+            "Tests/UI/test_a.py",
+            "Tests/UI/test_b.py::test_x",
+            "Tests/UI/test_b.py::test_y[1]",
+        ]
+    ) == []
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [
+        # The review's case: pytest then collected 1 of 21 tests, all green.
+        ["Tests/UI/test_b.py", "Tests/UI/test_b.py::test_x"],
+        ["Tests/UI/test_b.py::test_x", "Tests/UI/test_b.py"],
+        ["Tests/CI", "Tests/CI/test_c.py"],
+        ["Tests/CI", "Tests/CI/test_c.py::test_x"],
+        ["Tests/UI/test_b.py::test_x", "Tests/UI/test_b.py::test_x"],
+    ],
+)
+def test_overlapping_pytest_targets_are_named(targets):
+    assert _overlaps(targets), targets

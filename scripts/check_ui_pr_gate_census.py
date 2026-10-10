@@ -247,12 +247,160 @@ def shard(entries: list[str], index: int, total: int) -> list[str]:
     return entries[index::total]
 
 
-def defines_test(path: Path, node: str) -> bool:
-    """Whether `path` still defines the test a node id names.
+class _Unresolvable(Exception):
+    """A parametrize id that cannot be worked out without importing the test."""
+
+
+_PRIMITIVE = (str, int, float, bool, type(None))
+
+
+def _module_values(tree: ast.Module) -> dict[str, ast.AST]:
+    """Module-level ``NAME = <expr>`` assignments and def/class names."""
+    values: dict[str, ast.AST] = {}
+    for item in tree.body:
+        if isinstance(item, ast.Assign) and len(item.targets) == 1:
+            target = item.targets[0]
+            if isinstance(target, ast.Name):
+                values[target.id] = item.value
+        elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+            if item.value is not None:
+                values[item.target.id] = item.value
+        elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            values[item.name] = item
+    return values
+
+
+def _elements(node: ast.AST, scope: dict[str, ast.AST]) -> list[ast.AST]:
+    """The argvalues sequence, as AST nodes, in iteration order."""
+    if isinstance(node, ast.Name) and node.id in scope:
+        return _elements(scope[node.id], scope)
+    if isinstance(node, (ast.List, ast.Tuple)):
+        return list(node.elts)
+    if isinstance(node, ast.Dict):  # iterating a dict yields its keys
+        if any(key is None for key in node.keys):
+            raise _Unresolvable("a ** splat in a dict literal")
+        return list(node.keys)
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"list", "tuple", "sorted"}
+        and len(node.args) == 1
+        and not node.keywords
+    ):
+        items = _elements(node.args[0], scope)
+        if node.func.id == "sorted":
+            keys = [_literal(item, scope) for item in items]
+            if not all(isinstance(key, str) for key in keys):
+                raise _Unresolvable("sorted() over non-strings")
+            return [ast.Constant(key) for key in sorted(keys)]
+        return items
+    raise _Unresolvable(f"argvalues built by {ast.unparse(node)!r}")
+
+
+def _literal(node: ast.AST, scope: dict[str, ast.AST]):
+    if isinstance(node, ast.Name) and node.id in scope:
+        return _literal(scope[node.id], scope)
+    try:
+        return ast.literal_eval(node)
+    except (ValueError, SyntaxError, TypeError):
+        raise _Unresolvable(f"value {ast.unparse(node)!r}") from None
+
+
+def _value_id(node: ast.AST, argname: str, index: int, scope: dict[str, ast.AST]) -> str:
+    """The id pytest gives one parameter value (``_idval`` in pytest 8)."""
+    if isinstance(node, ast.Name) and isinstance(
+        scope.get(node.id), (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    ):
+        return node.id  # pytest uses a function's or class's __name__
+    try:
+        value = _literal(node, scope)
+    except _Unresolvable:
+        if isinstance(node, (ast.List, ast.Tuple, ast.Dict, ast.Set)):
+            return f"{argname}{index}"
+        raise
+    if isinstance(value, str):
+        return value.encode("unicode_escape").decode("ascii")
+    if isinstance(value, _PRIMITIVE):
+        return str(value)
+    return f"{argname}{index}"
+
+
+def _is_param_call(node: ast.AST) -> bool:
+    func = node.func if isinstance(node, ast.Call) else None
+    return isinstance(func, ast.Attribute) and func.attr == "param"
+
+
+def _parametrize_ids(decorator: ast.Call, scope: dict[str, ast.AST]) -> list[str]:
+    """The ids one ``@pytest.mark.parametrize`` call generates, in order."""
+    args = list(decorator.args)
+    keywords = {keyword.arg: keyword.value for keyword in decorator.keywords}
+    argnames_node = args[0] if args else keywords.get("argnames")
+    argvalues_node = args[1] if len(args) > 1 else keywords.get("argvalues")
+    if argnames_node is None or argvalues_node is None:
+        raise _Unresolvable("parametrize without literal argnames/argvalues")
+    argnames = _literal(argnames_node, scope)
+    if isinstance(argnames, str):
+        argnames = [name.strip() for name in argnames.split(",") if name.strip()]
+    argnames = list(argnames)
+    explicit = None
+    ids_node = args[3] if len(args) > 3 else keywords.get("ids")
+    if ids_node is not None:
+        if not isinstance(ids_node, (ast.List, ast.Tuple, ast.Name)):
+            raise _Unresolvable(f"ids={ast.unparse(ids_node)}")
+        explicit = [
+            None if _literal(item, scope) is None else str(_literal(item, scope))
+            for item in _elements(ids_node, scope)
+        ]
+    ids: list[str] = []
+    for index, item in enumerate(_elements(argvalues_node, scope)):
+        given = None
+        values = item
+        if _is_param_call(item):
+            id_keyword = next((k.value for k in item.keywords if k.arg == "id"), None)
+            if id_keyword is not None:
+                given = _literal(id_keyword, scope)
+            values = ast.Tuple(elts=list(item.args)) if len(argnames) > 1 else item.args[0]
+        if explicit is not None and index < len(explicit) and explicit[index] is not None:
+            given = explicit[index]
+        if given is not None:
+            ids.append(str(given))
+            continue
+        if len(argnames) == 1:
+            ids.append(_value_id(values, argnames[0], index, scope))
+            continue
+        if isinstance(values, ast.Name) and values.id in scope:
+            values = scope[values.id]
+        if not isinstance(values, (ast.Tuple, ast.List)) or len(values.elts) != len(argnames):
+            raise _Unresolvable(f"multi-argument value {ast.unparse(values)!r}")
+        ids.append(
+            "-".join(
+                _value_id(element, name, index, scope)
+                for element, name in zip(values.elts, argnames)
+            )
+        )
+    if len(set(ids)) != len(ids):
+        raise _Unresolvable("duplicate ids (pytest would suffix them)")
+    return ids
+
+
+def _is_parametrize(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "parametrize"
+    )
+
+
+def resolve_node(path: Path, node: str) -> str | None:
+    """Check that `path` still defines the test a node id names.
 
     Static on purpose: the census check runs install-free, so it cannot import
-    the test module. Parametrize ids (`[...]`) are not checked here; pytest
-    refuses an unknown one with "not found", which fails the lane by name.
+    the test module. A bracketed id (``test_x[enter-80x24]``) is resolved from
+    the function's literal ``@pytest.mark.parametrize`` decorators -- closest
+    decorator first, as pytest joins them -- because a renamed id makes pytest
+    exit 4 and the whole shard runs nothing (TASK-33621.27 review). An id built
+    by code (a computed list, ``ids=lambda ...``) cannot be checked here, so it
+    is refused: gate the whole test, or give it literal ids.
 
     Args:
         path: The test file.
@@ -260,27 +408,111 @@ def defines_test(path: Path, node: str) -> bool:
             ``TestClass::test_x[id]``.
 
     Returns:
-        True when the file defines that function (or that class method).
+        None when the node resolves; otherwise why it does not.
     """
-    names = node.split("[", 1)[0].split("::")
+    name_part, bracket, param = node.partition("[")
+    names = name_part.split("::")
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, ValueError):
-        return False
-    body = tree.body
+    except (OSError, SyntaxError, ValueError) as error:
+        return f"cannot read {path.name}: {type(error).__name__}"
+    body: list[ast.stmt] = tree.body
+    owners: list[ast.AST] = []
+    match: ast.AST | None = None
     for depth, name in enumerate(names):
         last = depth == len(names) - 1
-        kinds = (
-            (ast.FunctionDef, ast.AsyncFunctionDef) if last else (ast.ClassDef,)
-        )
+        kinds = (ast.FunctionDef, ast.AsyncFunctionDef) if last else (ast.ClassDef,)
         match = next(
             (item for item in body if isinstance(item, kinds) and item.name == name),
             None,
         )
         if match is None:
-            return False
+            return f"{path.name} does not define {name_part}"
+        owners.append(match)
         body = getattr(match, "body", [])
-    return True
+    if not bracket:
+        return None
+    if not param.endswith("]"):
+        return f"malformed node id {node!r}"
+    wanted = param[:-1]
+    module_marks = any(
+        isinstance(item, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in item.targets)
+        and any(_is_parametrize(sub) for sub in ast.walk(item.value))
+        for item in tree.body
+    )
+    class_marks = any(
+        _is_parametrize(decorator)
+        for owner in owners[:-1]
+        for decorator in getattr(owner, "decorator_list", [])
+    )
+    if module_marks or class_marks:
+        return (
+            f"parametrize id [{wanted}] cannot be resolved statically: module- or "
+            "class-level parametrize. Gate the whole test instead."
+        )
+    scope = _module_values(tree)
+    decorators = [d for d in reversed(match.decorator_list) if _is_parametrize(d)]
+    if not decorators:
+        return f"{name_part} is not parametrized, so it has no id [{wanted}]"
+    try:
+        combined = [""]
+        for decorator in decorators:  # closest to the function first
+            ids = _parametrize_ids(decorator, scope)
+            combined = [f"{left}-{right}" if left else right for left in combined for right in ids]
+    except _Unresolvable as reason:
+        return (
+            f"parametrize id [{wanted}] cannot be resolved statically ({reason}). "
+            "Gate the whole test, or give its parametrize literal ids."
+        )
+    if wanted not in combined:
+        shown = ", ".join(combined[:8]) + (" ..." if len(combined) > 8 else "")
+        return f"{name_part} has no parametrize id [{wanted}] (it has: {shown})"
+    return None
+
+
+def defines_test(path: Path, node: str) -> bool:
+    """Whether `path` defines the test (and parametrize id) a node id names."""
+    return resolve_node(path, node) is None
+
+
+def overlapping_targets(targets: list[str] | tuple[str, ...]) -> list[str]:
+    """Pytest arguments that overlap another in the same invocation.
+
+    Pytest collapses overlapping arguments (ADR-103): a file listed whole
+    beside one of its node ids ran 1 of its 21 tests with everything green
+    (TASK-33621.27 review). Shared by the census check and the Tests/CI pins
+    on every PR-lane pytest step.
+
+    Args:
+        targets: One pytest invocation's targets (directories, files or node
+            ids), in order.
+
+    Returns:
+        One problem line per overlap; empty when the targets are disjoint.
+    """
+    problems: list[str] = []
+    seen: set[str] = set()
+    wholes = {target.rstrip("/") for target in targets if "::" not in target}
+    directories = {target for target in wholes if not target.endswith(".py")}
+    for target in targets:
+        if target in seen:
+            problems.append(f"duplicate entry: {target}")
+        seen.add(target)
+        file_part = target.split("::", 1)[0].rstrip("/")
+        if "::" in target and file_part in wholes:
+            problems.append(
+                f"node id overlaps a whole-file entry: {target}\n"
+                f"    {file_part} is already listed whole; pytest collapses "
+                "overlapping arguments (ADR-103). Drop one of the two."
+            )
+        for directory in sorted(directories):
+            if file_part != directory and file_part.startswith(directory + "/"):
+                problems.append(
+                    f"{target} sits under the listed directory {directory}; "
+                    "pytest collapses overlapping arguments (ADR-103)."
+                )
+    return problems
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -306,12 +538,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     problems: list[str] = []
 
-    seen: set[str] = set()
-    whole_files = {entry for entry in entries if "::" not in entry}
+    # Duplicates, a node id beside its own whole file, and anything under a
+    # listed directory: the same helper pins every PR-lane pytest step.
+    problems.extend(overlapping_targets(entries))
     for entry in entries:
-        if entry in seen:
-            problems.append(f"duplicate entry: {entry}")
-        seen.add(entry)
         if not entry.startswith("Tests/UI/"):
             problems.append(f"not a Tests/UI path: {entry}")
             continue
@@ -334,18 +564,14 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if not node:
             continue
-        if file_part in whole_files:
+        reason = resolve_node(REPO_ROOT / file_part, node)
+        if reason is not None:
             problems.append(
-                f"node id overlaps a whole-file entry: {entry}\n"
-                f"    {file_part} is already gated whole; pytest collapses "
-                "overlapping arguments (ADR-103). Drop one of the two."
-            )
-        if not defines_test(REPO_ROOT / file_part, node):
-            problems.append(
-                f"listed test does not exist: {entry}\n"
+                f"listed test does not resolve: {entry}\n"
+                f"    {reason}\n"
                 "    A renamed or deleted gated test makes pytest refuse the "
-                "whole shard with 'not found'.\n"
-                "    Update the census to the test's new name, or remove the "
+                "whole shard with 'not found' (exit 4, nothing runs).\n"
+                "    Update the census to the test's current id, or remove the "
                 "line and lower MINIMUM_FILES with a reason."
             )
 
