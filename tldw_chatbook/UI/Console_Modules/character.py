@@ -92,11 +92,8 @@ class ConsoleCharacterController:
         console_image_default_mode: Callable[[], str | None],
         is_mounted: Callable[[], bool],
         render_character_avatar: Callable[..., Awaitable[None]],
-        bind_composer: Callable[[], None] | None = None,
     ) -> None:
         self._app_config_accessor = app_config_accessor
-        #: TASK-33622.7: binds the composer to a chat this controller switched to.
-        self._bind_composer = bind_composer
         self._chat_store_accessor = chat_store_accessor
         self._active_native_session_accessor = active_native_session_accessor
         self._current_conversation_id_accessor = current_conversation_id_accessor
@@ -316,8 +313,6 @@ class ConsoleCharacterController:
                     "Character picker: roleplay template seed failed; continuing."
                 )
             store.switch_session(session.id)
-            if self._bind_composer is not None:
-                self._bind_composer()
             self._sync_temporary_chip()
             self._notify(f"Started a new chat with {notification_name}.")
         else:

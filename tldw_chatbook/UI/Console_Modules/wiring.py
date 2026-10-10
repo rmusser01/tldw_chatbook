@@ -1256,9 +1256,6 @@ def build_console_controllers(
         render_character_avatar=(
             lambda **kwargs: screen._render_character_avatar_into_section(**kwargs)
         ),
-        bind_composer=(
-            lambda: screen._session._bind_composer_to_active_session(focus=False)
-        ),
     )
 
     def _character_progress_counts() -> dict[str, int]:
