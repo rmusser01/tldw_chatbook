@@ -107,7 +107,9 @@ async def test_console_refreezes_after_painting_a_conversation_and_after_a_run_s
     inside = [
         value
         for index, (kind, value) in enumerate(timeline.entries)
-        if kind == "event" and str(value).startswith("refreeze:") and enter < index < provider
+        if kind == "event"
+        and str(value).startswith("refreeze:")
+        and enter < index < provider
     ]
     assert inside == []
     assert timeline.index("refreeze:run_settled") > provider

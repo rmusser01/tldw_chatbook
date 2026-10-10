@@ -27,7 +27,6 @@ from tldw_chatbook.Utils.text_selection_crash_guard import TextualAppGuards
 from tldw_chatbook.Utils.ui_responsiveness import (
     COMPACTION_GROWTH_RATIO,
     IdleHeapRefreezer,
-    refreeze_long_lived_heap,
 )
 
 
@@ -69,10 +68,9 @@ class Ops:
 
     def refreeze(self, reason: str) -> int:
         self.calls.append(f"refreeze:{reason}")
-        if reason.startswith("compact:"):
-            return self.frozen
-        self.frozen += self.added
-        return self.added
+        if not reason.startswith("compact:"):
+            self.frozen += self.added
+        return self.frozen
 
     def unfreeze(self) -> None:
         self.calls.append("unfreeze")
@@ -92,7 +90,7 @@ def make(clock: Clock, ops: Ops, **kwargs) -> IdleHeapRefreezer:
     )
 
 
-def test_refreeze_collects_every_unfrozen_generation_then_freezes(
+def test_the_idle_refreeze_collects_every_unfrozen_generation_then_freezes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A full collection first (reclaims old-generation garbage), then the freeze.
@@ -102,17 +100,18 @@ def test_refreeze_collects_every_unfrozen_generation_then_freezes(
     """
     calls: list[tuple] = []
     monkeypatch.setattr(
-        ui_responsiveness.gc, "collect", lambda generation=2: calls.append(("collect", generation)) or 0
+        ui_responsiveness.gc,
+        "collect",
+        lambda generation=2: calls.append(("collect", generation)) or 0,
     )
     monkeypatch.setattr(
-        ui_responsiveness.gc,
-        "get_objects",
-        lambda generation=None: calls.append(("get_objects", generation)) or [1, 2, 3],
+        ui_responsiveness.gc, "freeze", lambda: calls.append(("freeze",))
     )
-    monkeypatch.setattr(ui_responsiveness.gc, "freeze", lambda: calls.append(("freeze",)))
+    monkeypatch.setattr(ui_responsiveness.gc, "get_freeze_count", lambda: 1234)
 
-    assert refreeze_long_lived_heap("unit-test") == 3
-    assert calls == [("collect", 2), ("get_objects", 2), ("freeze",)]
+    refreezer = IdleHeapRefreezer(enabled=lambda: True, freeze_count=lambda: 1000)
+    assert refreezer.maintain("unit-test") == "refreeze"
+    assert calls == [("collect", 2), ("freeze",)]
 
 
 def test_a_request_runs_once_its_owner_is_idle_and_the_user_quiet() -> None:
@@ -246,6 +245,28 @@ def test_a_compaction_runs_once_refreezes_add_a_quarter_and_waits_longer() -> No
     assert not refreezer.compaction_due()
 
 
+def test_only_real_growth_of_the_frozen_set_makes_a_compaction_due() -> None:
+    """Objects frozen then freed by reference counting never trigger a compaction.
+
+    Live (2026-10-10), each send's re-freeze froze ~70K objects, most of them
+    render strips the next paint replaced and reference counting freed; a
+    count of what re-freezes ADD compacted every third send. The budget is
+    measured on the permanent generation itself.
+    """
+    clock, ops, owner = Clock(), Ops(frozen=800_000, added=0), Owner()
+    refreezer = make(clock, ops, quiet_seconds=2.0, min_growth=1_000)
+    for _ in range(20):
+        refreezer.request("run_settled", owner, owner_busy)
+        clock.now += 2.0
+        owner.fire_last()
+    assert "unfreeze" not in ops.calls
+    assert not refreezer.compaction_due()
+
+    ops.added = 200_000
+    refreezer.maintain("conversation_painted")
+    assert refreezer.compaction_due()
+
+
 class TranscriptApp(TextualAppGuards, App[None]):
     """Swaps whole "transcripts" (rows of nested widgets), as a chat switch does."""
 
@@ -262,7 +283,11 @@ class TranscriptApp(TextualAppGuards, App[None]):
         await host.remove_children()
         transcript = Vertical(
             *[
-                Vertical(Static(f"header {index}"), Static(f"body {index} " * 8), Static("footer"))
+                Vertical(
+                    Static(f"header {index}"),
+                    Static(f"body {index} " * 8),
+                    Static("footer"),
+                )
                 for index in range(rows)
             ]
         )
@@ -279,7 +304,9 @@ def alive(refs: list[weakref.ref]) -> int:
     return sum(ref() is not None for ref in refs)
 
 
-async def test_widgets_frozen_live_and_switched_away_are_reclaimed_only_by_compaction() -> None:
+async def test_widgets_frozen_live_and_switched_away_are_reclaimed_only_by_compaction() -> (
+    None
+):
     """AC#6: a re-freeze strands what it froze live; the compaction reclaims it.
 
     Two controls: without a freeze a switched-away transcript is collected
@@ -345,7 +372,9 @@ async def test_twenty_switches_keep_the_frozen_generation_bounded() -> None:
                 size = gc.get_freeze_count()
                 if action == "compact":
                     floor = size
-                    assert alive(dropped) == 0, "a compaction left switched-away rows alive"
+                    assert alive(dropped) == 0, (
+                        "a compaction left switched-away rows alive"
+                    )
                 else:
                     steps.append(size - before)
                     if floor is not None:
@@ -353,10 +382,14 @@ async def test_twenty_switches_keep_the_frozen_generation_bounded() -> None:
                 dropped.extend(shown)
                 shown = await app.show()
                 await pilot.pause()
-            compactions = [action for action, _ in refreezer.actions if action == "compact"]
+            compactions = [
+                action for action, _ in refreezer.actions if action == "compact"
+            ]
             assert len(compactions) >= 4, list(refreezer.actions)
             assert max(excess) <= budget + max(steps), (excess, steps)
-            assert alive(dropped) > 0  # frozen since the last compaction: the bounded leak
+            assert (
+                alive(dropped) > 0
+            )  # frozen since the last compaction: the bounded leak
 
             final = real_refreezer(growth_ratio=0.0, min_growth=0)
             assert final.maintain("run_settled") == "compact"

@@ -119,6 +119,78 @@ about 0.6M unfrozen objects. Two things dominate it:
 - **`gc.disable()` plus manual collection at idle.** This risks unbounded
   growth when nothing is ever idle, such as during a long agent run.
 
+## Amendment (2026-10-10, TASK-33620.15.3): re-freeze at idle, bound the frozen garbage
+
+**Context.** Live profiling on 2026-10-10 (160x45, Anthropic haiku, 56
+sends) found the residual this ADR predicted, on the Console's hottest path.
+Generation-2 collection on the main thread took about 70 ms per send window
+(Enter to the provider call), with single pauses of 23-65 ms at up to 16 turns
+and 78-122 ms at 31-46 turns. That was 54% of the time spent in Textual screen
+updates after a send was accepted. Each pass rescanned everything the Console
+had built since the last boot freeze, and the pauses grew with every send
+within a launch (36 ms on the first send, 121 ms by the fifth).
+
+**Decision.**
+
+1. **Re-freeze at idle moments the Console names.** The Console asks for a
+   re-freeze when a run settles (the transcript poll's stop edge) and when
+   its transcript shows a different conversation.
+   `IdleHeapRefreezer` (`Utils/ui_responsiveness.py`, one per process) runs
+   it only when two things hold:
+   - the Console says it is not busy. It is busy from Enter until the run
+     settles, and whenever it is not the top screen;
+   - no user input has arrived for 2 s. A `TextualAppGuards` mixin stamps
+     every input event.
+
+   A busy Console drops the request and asks again when it next settles.
+2. **Collect the unfrozen heap in full before each re-freeze**
+   (`refreeze_long_lived_heap`). Frozen objects are not scanned, so this
+   costs what the next automatic pass would have cost, paid at an idle moment
+   instead of in a send window. Without it, cyclic garbage already in the old
+   generation would be frozen for good. The boot freezes keep decision 2's
+   young collection.
+3. **Bound what re-freezing can leak.** `gc.freeze()` never collects a frozen
+   object. Textual widgets are cyclic: their parent links, styles and message
+   pumps form reference cycles. So a widget frozen while live and dropped
+   later (a switched-away transcript, a recomposed rail) is garbage that
+   never goes away. `Tests/Performance/test_gc_idle_refreeze.py` shows this
+   with real widgets.
+
+   Each re-freeze therefore measures the permanent generation. Once it has
+   grown by 25% of its size after the last compaction (with a 50K floor), the
+   next idle moment with 5 s of quiet compacts instead: unfreeze, collect the
+   whole heap, freeze what survives. 25% is CPython's own rule for deferring a
+   full collection (`long_lived_pending < long_lived_total / 4`), applied
+   here to the frozen set.
+
+   The measure is the generation's real size, not a count of what each
+   re-freeze added. Most of what a send's re-freeze freezes is render strips
+   that the next paint replaces, and reference counting frees them out of
+   the permanent generation. Live, counting additions instead triggered a
+   compaction every third send.
+
+   No re-freeze runs while a compaction is due. Frozen garbage therefore never
+   exceeds that budget plus one re-freeze, and a compaction also reclaims any
+   boot-era garbage the earlier freezes kept.
+4. **Unchanged.** Thresholds stay at CPython's defaults. The collector is
+   never disabled. The policy is off under pytest (`PYTEST_CURRENT_TEST`), as
+   the screen pre-import is; `TLDW_IDLE_HEAP_REFREEZE` overrides it either way.
+
+**Consequences.**
+
+- A compaction scans the whole heap. That is the pass decision 2 kept off
+  `_ui_ready`, and this ADR measured it at 130-420 ms. It runs only after 5 s
+  without input and with no send in flight, about once per 25% growth of the
+  frozen set.
+- The "boot-era garbage becomes permanent" consequence above is now temporary:
+  the first compaction reclaims it.
+- Re-freezing ends CPython's habit, noted in the measured result above, of
+  running full collections more often against a small unfrozen old
+  generation. Each re-freeze resets it.
+
+**Measured.** See TASK-33620.15.3's Implementation Notes: paired live sends
+against origin/dev, and memory across conversation switches and run cycles.
+
 ## Python versions
 
 The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.14 documentation on 2026-09-29:
@@ -135,3 +207,13 @@ The owner plans to move from 3.12 to 3.13 and then 3.14. Checked against the 3.1
     at `_ui_ready`;
   - records the automatic gen-2 pause durations of a destination tour as
     evidence in the task notes rather than as a timing assertion.
+- `Tests/Performance/test_gc_idle_refreeze.py` (amendment): the re-freeze's
+  full collect then freeze; scheduling (quiet period, busy owner, departed
+  owner, stale timers, errors); the compaction budget; the input tap; and,
+  with the real collector and real Textual widgets, that a frozen
+  switched-away transcript survives a full collection (negative control),
+  that a compaction reclaims it, and that the frozen set stays bounded over
+  24 switches.
+- `Tests/UI/test_console_idle_heap_refreeze.py` (amendment): on the mounted
+  Console, a re-freeze is requested when a conversation is painted and when a
+  run settles, and none runs from Enter to the provider call.
