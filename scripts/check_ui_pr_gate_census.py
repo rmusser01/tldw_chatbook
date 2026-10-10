@@ -185,7 +185,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # its tests) gates the widget-level hostile-text sinks. B1's mounted Roleplay
 # files are bootstrap-profile and run in the PR Fast Lane's
 # admission-sensitive step instead (TASK-32873).
-MINIMUM_FILES = 163
+# TASK-34751 (2026-10-10) raised it to 164:
+# Tests/UI/test_study_card_list_single_writer.py -- Study's #card-list keeps
+# one row per card when rebuilds overlap (re-list, two refreshes, a slowed
+# create-deck, a rebuild whose list leaves mid-fetch); 4 tests, about 16 s
+# pytest / 19 s wall locally. Same real-service builder and bootstrap-profile
+# marker as test_study_flashcards_real_service_contract.py, already here.
+MINIMUM_FILES = 164
 
 
 def read_census(path: Path) -> list[str]:
