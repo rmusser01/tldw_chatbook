@@ -292,10 +292,12 @@ def read_global_context_policy_overrides(
     ):
         return last[3]
     with operation(config):
+        before = config._CONFIG_CACHE
         values = {key: read_setting("console", key, None) for key in keys}
         installed = config._CONFIG_CACHE
     result = parse(values)
-    if installed is not None:
+    # Memoize only a read of one installed config (no reload between reads).
+    if installed is not None and installed is before:
         _LAST_GLOBAL_OVERRIDES = (installed, read_setting, parse, result)
     return result
 

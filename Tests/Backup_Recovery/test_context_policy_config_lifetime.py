@@ -199,3 +199,36 @@ def test_a_warm_context_policy_read_reuses_the_installed_config(tmp_path):
     still refuses, and a save is read through a fresh checked operation.
     """
     _run(tmp_path, "warm", "context-policy-warm", script=_WARM, timeout=30)
+
+
+_RELOADED = _SCRIPT.split("assert config.get_cli_setting")[0] + r'''
+from tldw_chatbook.Chat import console_chat_controller as controller
+assert config.save_setting_to_cli_config('console','conversation_budget_tokens',1234)
+read=controller.ConsoleChatController._global_context_policy_overrides
+getter=controller.get_cli_setting
+keys=[]
+def reloading(section,key,default=None):
+ keys.append(key)
+ if len(keys)==2:
+  fresh={**config._CONFIG_CACHE}
+  fresh['console']={**fresh['console'],'conversation_budget_tokens':4321}
+  config._CONFIG_CACHE=fresh
+ return getter(section,key,default)
+controller.get_cli_setting=reloading
+mixed=read(None)
+assert len(keys)==9 and mixed.custom_budget_tokens==4321
+assert read(None).custom_budget_tokens==4321
+assert len(keys)==18,'a read that straddled a reload was reused'
+assert read(None).custom_budget_tokens==4321
+assert len(keys)==18,'a read of one installed config was not reused'
+print('retired and reopened')
+'''
+
+
+def test_a_read_straddling_a_reload_is_not_reused(tmp_path):
+    """TASK-33620.15.1 review: only a read of one installed config is memoized.
+
+    A reload installed between the nine reads left a result mixing two
+    configs; keyed by the new dict, every later warm read would reuse it.
+    """
+    _run(tmp_path, "reloaded", "context-policy-reloaded", script=_RELOADED, timeout=30)
