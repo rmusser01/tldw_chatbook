@@ -11,9 +11,9 @@ Phase 9 is the last phase of the model-configuration redesign, added by owner de
 Scope: every rider that is not Done and is a subtask of TASK-33001 through TASK-33007 or of TASK-33641, plus TASK-33666 and TASK-33667. Phase 8's own tasks (TASK-33008.x) are in flight on the branch below this one and are out of scope.
 
 This plan triaged 59 riders against this branch's HEAD (8b4a1ad23e, stacked on Phase 8's in-progress branch, which is stacked on Phase 7):
-- 51 VALID: grouped into the 16 plan tasks below.
+- 52 VALID (TASK-33003.13 joined them once the owner ruled): grouped into the 16 plan tasks below.
 - 7 ALREADY FIXED and 0 OBSOLETE: listed under "Closed without code" with their evidence. They get no plan task; each is closed with that rationale in its own task file.
-- 1 NEEDS OWNER: listed under "Needs owner" with the decision and its options; no plan task until the owner rules.
+- 0 NEEDS OWNER: TASK-33003.13 was ruled on 2026-10-09 and is in Task 15.
 
 It ships as one PR, or as a few PRs grouped by wave, through the program's usual SDD plus Qodo loop.
 
@@ -637,10 +637,11 @@ Depends on: Task 4 (raw-scope change) and Task 7 (it edits Tests/UI/test_setting
 - Tests/Chat/test_console_settings_defaults.py
 - tldw_chatbook/Chat/console_settings_defaults.py (only if the red is a product defect)
 
-## Task 15: Chat settings offers only what the request sends and counts only the user's edits (TASK-33002.7, TASK-33006.11, TASK-33006.12, TASK-33006.16)
+## Task 15: Chat settings offers only what the request sends and counts only the user's edits (TASK-33002.7, TASK-33003.13, TASK-33006.11, TASK-33006.12, TASK-33006.16)
 
 Task files:
 - backlog/tasks/task-33002.7 - Conversation-settings-stops-offering-levels-the-local-request-drops.md
+- backlog/tasks/task-33003.13 - Custom-endpoints-show-the-provider-choice-rows-their-registry-family-supports.md
 - backlog/tasks/task-33006.11 - Providers-without-a-PROVIDER-PARAM-MAP-entry-get-a-support-answer-for-their-samplers.md
 - backlog/tasks/task-33006.12 - A-field-whose-support-is-unknown-keeps-its-own-help-visible-beside-the-neutral-note.md
 - backlog/tasks/task-33006.16 - A-pick-does-not-list-fields-the-user-never-touched-in-the-unsaved-prompt.md
@@ -650,6 +651,7 @@ Depends on: —
 ### Why
 
 - TASK-33002.7 (Conversation settings stops offering levels the local request drops): console_settings_modal.py::_generation_choice_select builds its options from the static _PROVIDER_CHOICE_VALUES; only settings_screen.py calls console_provider_support.py::reasoning_effort_values_sent. The modal has zero headroom, so put the logic in console_provider_support.py or console_settings_field_row.py. _generation_choice_validation_copy ('Saved value is unavailable') is the existing hook for AC#2.
+- TASK-33003.13 (Custom endpoints show the provider-choice rows their registry family supports): OWNER RULING 2026-10-09: the family rule that 5ba142ac79 shipped stands (console_provider_support.py::_registry_family_provider decides a custom-ep id by its family, which matches what the request sends). Nothing changes in the rule. Record the ruling in the rider's task file, and pin a second family: Tests/UI/test_console_settings_hidden_fields.py::test_a_registry_endpoint_hides_what_its_family_hides pins llama_cpp only today.
 - TASK-33006.11 (Providers without a PROVIDER_PARAM_MAP entry get a support answer for their samplers): local_onnx and local_transformers are in neither PROVIDER_PARAM_MAP (61 keys) nor API_CALL_HANDLERS (62 keys). They have no chat handler at all, as UI/Evals/evals_state.py notes, so there is no request map to derive their fields from. The neutral-copy branch of AC#1 is the honest choice.
 - TASK-33006.12 (A field whose support is unknown keeps its own help visible beside the neutral note): console_settings_field_row.py::_field_help returns f"{GENERATION_CONTROL_UNKNOWN_COPY} {text}" on a help line that does not wrap and ends in an ellipsis, so the field's own help is cut off. Prefer a shorter marker to moving it into the Source column, which would change CSS. Tests/UI/test_console_settings_hidden_fields.py and Tests/UI/test_console_session_settings.py import the constant.
 - TASK-33006.16 (A pick does not list fields the user never touched in the unsaved prompt): console_settings_unsaved.py::unsaved_labels compares every value with the opening baseline. A pin conflicts with this rider: test_credential_round_trip_keeps_the_restored_edit_unsaved[model] (Tests/UI/test_console_settings_unsaved_guard.py) asserts {'Model', 'Streaming'} <= labels, under a comment from Qodo #2937 that a pick's re-base of Streaming counts as an edit. This rider was filed later and rules that it does not.
@@ -662,6 +664,8 @@ Depends on: —
 - [ ] TASK-33002.7 #1 The modal's Reasoning effort choices for a strict local template offer only levels the request sends, decided by the same real request builder Settings uses
 - [ ] TASK-33002.7 #2 A value saved earlier stays visible and labelled as not supported rather than silently cleared
 - [ ] TASK-33002.7 #3 console_settings_modal.py does not grow past its module-size ratchet
+- [ ] TASK-33003.13 #1 The owner's decision on which choice rows a custom endpoint shows is recorded in this task.
+- [ ] TASK-33003.13 #2 Chat settings shows a custom endpoint's provider-choice rows according to that decision, pinned by a test over at least two registry families.
 - [ ] TASK-33006.11 #1 local_onnx and local_transformers either have PROVIDER_PARAM_MAP entries or their sampler rows carry the neutral support copy
 - [ ] TASK-33006.11 #2 A test pins the chosen behaviour for both providers
 - [ ] TASK-33006.12 #1 At 211x44 an unknown-support row shows both that support is not verified and the start of the field's own help
@@ -751,8 +755,6 @@ These riders get no plan task. Close each one in its own task file, with the evi
 
 ## Needs owner
 
-No plan task until the owner rules.
+None open.
 
-- TASK-33003.13 (Custom endpoints show the provider-choice rows their registry family supports): Should a custom endpoint (custom-ep:<slug>) show exactly the provider-choice rows its registry family supports, or all four? The rider's AC#1 requires the owner's decision to be recorded in the task.
-  - (a) Ratify the rule already shipped by 5ba142ac79 (TASK-33006.2 review round 1): Chat/console_provider_support.py::_registry_family_provider decides a custom-ep id by its family, which matches what the request sends. Today one family is pinned exactly (llama_cpp, in Tests/UI/test_console_settings_hidden_fields.py::test_a_registry_endpoint_hides_what_its_family_hides), and an ollama-family endpoint is only exercised by test_a_bracketed_endpoint_name_paints_literally. The only remaining work is AC#2's second family: one parametrize row in the first test.
-  - (b) Show all four rows for every custom endpoint. That offers controls the family's request drops, and it reverts 5ba142ac79's rule.
+- TASK-33003.13 (Custom endpoints show the provider-choice rows their registry family supports): OWNER RULING 2026-10-09: a custom endpoint shows exactly the rows its registry family supports, the rule 5ba142ac79 already shipped (Chat/console_provider_support.py::_registry_family_provider). Task 15 records the ruling in the rider's task file (AC#1) and pins a second family with one parametrize row in Tests/UI/test_console_settings_hidden_fields.py::test_a_registry_endpoint_hides_what_its_family_hides (AC#2).
