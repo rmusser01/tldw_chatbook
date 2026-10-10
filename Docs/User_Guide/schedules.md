@@ -387,8 +387,11 @@ within a minute read "(due now)".
 
 A recurring task keeps showing its next run after it has run. Its badge
 reads **Completed**, **Missed** or **Timed out** for the last run, and
-Next Run still names the next occurrence. Only a one-time task that has
-fired reads a bare **—** (see Disabled tasks below).
+Next Run still names the next occurrence. A one-time task that has fired
+has no next run and reads a bare **—** (see Disabled tasks below). Edit
+its schedule to give it a new time and, once it is enabled, Next Run
+shows that time under the same **Completed** badge; until you enable it,
+it reads **— (disabled)**.
 
 ## Bulk actions — marking rows
 

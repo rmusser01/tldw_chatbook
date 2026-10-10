@@ -1091,9 +1091,9 @@ could fail for.
 
 **TASK-33641.4, 2026-10-09.** `Tests/UI/test_schedules_disabled_state.py` and
 `test_schedules_next_run_relative.py` carry no isolation marker, so every node
-errors at setup with `RecoveryRequired: raw_source_selection_changed`: 43 of 43
-while the new tests were still unmarked. Marking only the new nodes let them
-run, and it also changed the 34 nodes nobody touched. The first marked node
+errors at setup with `RecoveryRequired: raw_source_selection_changed`, and so
+did the new tests while they were still unmarked. Marking only the new nodes let
+them run, and it also changed the 34 nodes nobody touched. The first marked node
 imports `tldw_chatbook.app` successfully and the import stays cached in the
 worker, so each later unmarked node gets past the conftest fixture:
 - 24 still errored at setup, because they run before the first marked node;
@@ -1104,9 +1104,9 @@ worker, so each later unmarked node gets past the conftest fixture:
 **What to do:** in a base-vs-head comparison, read such a file by its reason
 and not by its error/failure split; an error that became a failure there is the
 same admission trip. To prove the untouched nodes still hold, run the file once
-with a scratch `-p` plugin that stamps the marker on every `Tests/UI` item (28
-and 15 passed here). That run is diagnosis. The marked nodes are the evidence
-that holds without the plugin.
+with a scratch `-p` plugin that stamps the marker on every `Tests/UI` item (all
+45 nodes passed here, 30 and 15). That run is diagnosis. The marked nodes are
+the evidence that holds without the plugin.
 
 ## A restore helper that reuses persisted ids as native ids hides relaunch bugs
 

@@ -295,6 +295,27 @@ def test_enabled_recurring_reminder_shows_its_next_run_whatever_its_last_status(
 
 
 @pytest.mark.bootstrap_profile
+def test_rearmed_one_time_reminder_shows_its_new_run():
+    """The rule is "has it fired", not "is it recurring".
+
+    A fired one-time reminder that is enabled and has had its schedule
+    edited is armed again: the edit stores a new ``next_run_at`` and leaves
+    ``last_status`` at "completed". That row is one-time, enabled and
+    Completed with a stored next run, so a fix that spared only recurring
+    reminders would still hide a run that will fire.
+    """
+    new_run = _weekly().next_run_at  # a one-time reminder's next run IS its run_at
+    task = _weekly(schedule_kind=ScheduleKind.ONE_TIME, cron=None, run_at=new_run)
+    # The shape that used to read a bare dash, asserted rather than assumed.
+    assert task.enabled is True
+    assert task.next_run_at == new_run
+    assert _task_status(task) is TaskStatus.COMPLETED
+
+    assert _format_next_run(task, now=_WEEKLY_NOW) == "2026-10-05 09:00 UTC (in 5d)"
+    assert _queue_next_run(task) == "2026-10-05 09:00 (in 5d)"
+
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("task", "expected"),
     [
