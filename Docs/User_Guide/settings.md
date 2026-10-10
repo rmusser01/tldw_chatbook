@@ -1287,7 +1287,8 @@ a text style or `auto NN%` is dropped with a warning instead, the same as Save.
 `link-color-hover`, `block-cursor-foreground` and `button-color-foreground`, and
 on a name the app does not use; every other built-in name drops it. A text style
 on a built-in colour name is dropped too, and so is a colour on a built-in
-text-style name such as `link-style`. Importing a name you already have asks first ("Replace the saved
+text-style name such as `link-style`. `none` is a text style on its own only:
+`none bold` is dropped on any name. Importing a name you already have asks first ("Replace the saved
 theme '\<Name\>' (\<file\>.toml)?"); Cancel leaves the existing file byte-for-byte
 unchanged. On success the picker highlights the new theme and shows
 "Imported '\<name\>'".
@@ -1333,10 +1334,12 @@ does not use. Every other built-in name drops it (`surface-lighten-2`,
 `block-cursor-blurred-background`, `primary`, `text-primary`, and also names
 that read like a text colour, such as `footer-key-foreground` or `scrollbar`),
 and the theme's own colour is used. A text style (`bold`, `italic`,
-`underline`, `reverse`, `strike`, `dim` or `none`) is kept on a built-in
+`underline`, `reverse`, `strike` and `dim`, alone or together, or `none` on
+its own) is kept on a built-in
 text-style name (`link-style`, `link-style-hover` and the `…-text-style` names
 such as `block-cursor-text-style`) and on a name the app does not use; on a built-in colour
-name it is skipped, and so is a colour on a built-in text-style name. **Back** — or **Esc**
+name it is skipped, and so is a colour on a built-in text-style name. `none`
+beside another style (`none bold`) is skipped on any name. **Back** — or **Esc**
 twice (the first releases the field you're typing in, the second acts as
 Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard**, or **Save**
 (Escape stays) — the same prompt appears if you switch to a different

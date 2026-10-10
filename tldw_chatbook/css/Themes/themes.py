@@ -454,8 +454,11 @@ def _is_safe_variable_value(name: str, value: object) -> bool:
     # Color.parse accepts "#fff\n"; nothing non-printable is a CSS value.
     if not isinstance(value, str) or not value or not value.isprintable():
         return False
-    if all(word in _TEXT_STYLES for word in value.split(" ")):
-        return name not in _COLOUR_NAMES
+    words = value.split(" ")
+    if all(word in _TEXT_STYLES for word in words):
+        # Textual takes `none` on its own only: "none bold" or "none none"
+        # ends the app when the style paints (StyleValueError).
+        return name not in _COLOUR_NAMES and (words == ["none"] or "none" not in words)
     if name in _STYLE_NAMES:
         return False
     match = _ALPHA_SUFFIX.fullmatch(value)
@@ -476,7 +479,8 @@ def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
     ``"red; } Screen { display: none"`` or a bare number escapes every
     try/except and kills the app (every launch, if it is the default theme).
     Kept: lowercase-hyphen names whose value is a colour (optionally
-    ``" NN%"``), space-separated text-style keywords, or ``"auto NN%"`` on a
+    ``" NN%"``), space-separated text-style keywords (``none`` only on its
+    own), or ``"auto NN%"`` on a
     name that can take it (TASK-33003.16: not one a stylesheet may paint as
     a background, ``_NO_AUTO_NAMES``). A value of the wrong kind for a name
     Textual generates is dropped too: a text style on a colour name
