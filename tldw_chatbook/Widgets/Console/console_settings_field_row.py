@@ -154,6 +154,12 @@ SAMPLING_HIDDEN_LIST_ID = "console-settings-sampling-hidden"
 #: A blank choice Select shows the value it inherits, not "Select" (spec
 #: §6); its Source word says the provider's (``_field_source``).
 BLANK_CHOICE_PROMPT = "default"
+
+class ConsoleSettingsSelect(Select):
+    """A Chat settings Select. Its own CSS type lets the width rules name it
+    instead of every Select in the app (the CSS fast-path ratchet counts
+    ancestor-scoped bare ``Select`` subjects)."""
+
 _CHOICE_FIELDS = frozenset(
     {"reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort"}
 )
@@ -460,7 +466,7 @@ class ConsoleSettingsFieldRowsMixin:
         # it is hidden while empty, so the row grammar holds.
         validation: list[Widget] = []
         if name == "streaming":
-            control: Widget = Select(
+            control: Widget = ConsoleSettingsSelect(
                 STREAMING_OPTIONS,
                 value=self._streaming_select_value(),
                 allow_blank=False,

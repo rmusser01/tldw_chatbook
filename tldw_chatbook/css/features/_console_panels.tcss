@@ -154,17 +154,20 @@ ConsoleSettingsModal .console-context-action-row {
    prefix: the boot CSS budget (ADR-097) sits bytes under its ceiling, and
    deleting dead rules for retired Console widgets paid for these.
    ponytail: the number width is by container, so a free-text Input added to
-   either container later also gets its width; give it an id rule then. */
-.console-settings-field-row Input,
-.console-settings-field-row Select {
+   either container later also gets its width; give it an id rule then.
+   The subjects are the Chat settings types, not bare Input/Select: the CSS
+   fast-path ratchet counts ancestor-scoped bare-type subjects, which every
+   Input or Select in the app would be matched against. */
+.console-settings-field-row ConsoleSettingsInput,
+.console-settings-field-row ConsoleSettingsSelect {
     width: $ds-size-13;
 }
 
-#console-settings-context-view Input {
+#console-settings-context-view ConsoleSettingsInput {
     width: $ds-size-12;
 }
 
-#console-settings-context-view Select {
+#console-settings-context-view ConsoleSettingsSelect {
     width: $ds-size-32;
 }
 
