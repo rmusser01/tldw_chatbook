@@ -201,7 +201,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # measured 148-942 s each under load, so they come in as 12 node-id entries --
 # the first entries that are not whole files; see the module docstring. A
 # node id counts as one entry toward this floor, like a file.
-MINIMUM_FILES = 175
+# TASK-34785 (2026-10-10) raised it by three, to 178: the transcript
+# detach/lock/composition regressions enter as three node IDs (13 cases),
+# preserving every existing file/node and its shard placement.
+MINIMUM_FILES = 178
 
 
 def read_census(path: Path) -> list[str]:

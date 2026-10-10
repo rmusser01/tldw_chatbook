@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-10 20:50'
-updated_date: '2026-10-10 21:05'
+updated_date: '2026-10-10 21:19'
 labels:
   - console
   - bug
@@ -41,6 +41,7 @@ Reason: repair stale DOM mutation within the existing mounted presentation lifec
 1. Preserve the hosted failure and reproduce actual widget removal during an awaited activity update; compare the unchanged base implementation.
 2. Reuse existing attachment/closing checks to stop the shared transcript mutation path after detachment; retain normal projection updates.
 3. Verify the deterministic regression and affected activity/pending-projection modules, static checks and preflight; obtain independent review before publication.
+4. Required CI wiring: the Assistant-turn test module was not in the UI census; the earlier gated-module description was incorrect. Add only the three new regression node IDs (ten nested detach parameters, one lock-resume case, two composition parameters), raise the literal census ratchet from 175 to 178, verify the existing node/shard checker contracts and preflight, then obtain independent review of the CI-only commit. Retain all 18 uncensused config-profile baseline failures; do not add or alter those unrelated controls. Existing ADR190 applies and no new ADR is required for this existing CI census mechanism.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -53,4 +54,12 @@ The exact hosted MountError is reproduced outside the repository on both immutab
 Initial regression selection is NON-GREEN13FAIL: eleven genuine detach/mount/signature failures plus two app-context harness failures. Correcting only the composition harness preserves the actual Textual context and yields RED2 exact MountError. Initial standalone recovery_scope_uncertain and the first unchanged-signature probe oracle are retained separately. Final current-source selection PASS15 in3.68s: thirteen new deterministic lifecycle cases plus two existing real live-tool controls. Earlier GREEN15 and tightened lock-oracle GREEN2 are separate receipts, never summed. XML/logs: /private/tmp/pr2882-transcript-lifecycle-red.{xml,log}; pr2882-transcript-composition-red.{xml,log}; pr2882-transcript-lifecycle-final.{xml,log}. Existing cleanup warnings remain retained.
 
 Scoped Ruff baseline27/current27/zeroNEW; fatal diagnostics zero and formatter all three files pass. Broader trace modules, the actual pending-projection journey, generated-artifact preflight and independent immutable review remain pending under root ownership. Task stays In Progress with acceptance criteria unchecked until that qualification completes.
+
+Required CI coverage correction: test_console_assistant_turn.py was not previously gated. Appending exactly three regression node IDs now includes all 13 new lifecycle cases without adding unrelated controls. All original 175 census entries retain their positions and shard assignments; the floor rises to 178. Runtime and test source remain identical to reviewed commit fbe14192c7147450e7dfdbe88b9eee10e7b94403. Collection confirms 13 cases; the census checker passes at 178; the three affected Tests/CI contract modules pass 218 tests in 4.22s. Normal hash-pinned derived-artifact preflight exits zero with all checks passed. Receipts: /private/tmp/pr2882-transcript-census-collect.log; pr2882-transcript-census-check.log; pr2882-transcript-census-ci.{xml,log}; pr2882-transcript-census-preflight.log.
+
+The broader current-source selection is NON-GREEN: 119 passed and 18 failed in 211.99s, including all nine trace modules (45 cases), the actual pending-projection journey and all 13 new lifecycle cases passing. Each of the 18 failures refuses a raw config source change before the requested widget assertions. Replaying exactly those 18 node IDs under immutable c2d6dcc3016708bec3473450016177b2ff602fb3 lifecycle methods and the same original 12-module collection context yields 18 failures, zero errors and 119 deselections in 24.32s; every failure is RecoveryRequired: raw_source_selection_changed. The outside-repository source-pin plugin preserves the real config getter, conftest and profile admission. Separate two-node collections produced two setup errors and are retained as non-qualifying harness evidence. No config bypass, registry reset, unrelated control change or full sweep. Receipts: /private/tmp/tldw-pr2882-lifecycle-integrated.{xml,log}; pr2882-profile-failure-nodeids.json; pr2882-profile-baseline-all18.{xml,log}; pr2882_source_pin_plugin.py.
+
+CI-checker static qualification: two inherited Ruff findings (EXE001 and PIE810), zero new findings; fatal diagnostics pass. Its existing formatter drift is unchanged from fbe (32 formatting change-lines), so the checker formatter check remains NON-GREEN and no incidental reformat is included. Runtime/test scoped static receipts above remain valid. Git diff whitespace check passes.
+
+Independent immutable runtime review by review_3029 found no actionable defect in fbe14192c7147450e7dfdbe88b9eee10e7b94403: first-mount/recompose projection retention and post-await detach guards preserve unconsumed signatures. The peer also provisionally verified this CI diff, exact old-entry preservation, 13-case collection, 218 contract passes and all 18 baseline failures. Final immutable CI review and task closeout remain under root ownership; status stays In Progress and acceptance criteria remain unchecked.
 <!-- SECTION:NOTES:END -->

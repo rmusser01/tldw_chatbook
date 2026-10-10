@@ -235,3 +235,13 @@ Tests/UI/test_roleplay_frame_state.py
 Tests/UI/test_roleplay_stylesheet.py
 Tests/UI/test_workbench_fitted_text.py
 Tests/UI/test_roleplay_hostile_text_surfaces.py
+
+
+# TASK-34785: actual transcript owner removal at every nested await, lock
+# resume, and retained activity updates during initial/recompose child mounting.
+# Three node entries cover 13 bootstrap-profile cases (~3 s locally); append
+# so existing entries keep their shards. The whole module remains outside this
+# census; its unrelated unmarked controls retain separate profile-baseline gaps.
+Tests/UI/test_console_assistant_turn.py::test_transcript_update_stops_after_real_owner_removal
+Tests/UI/test_console_assistant_turn.py::test_transcript_refresh_lock_resume_stops_after_real_removal
+Tests/UI/test_console_assistant_turn.py::test_activity_projection_during_child_composition_eventually_renders
