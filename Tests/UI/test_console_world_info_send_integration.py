@@ -20,6 +20,8 @@ swapping the chat-dictionary seam for the world-book seam.
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_dictionary_send_integration import (
     _CapturingGateway,
     _final_user_content,
@@ -28,11 +30,10 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from Tests.UI.app_factory import attach_chachanotes_db
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.config import save_setting_to_cli_config
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 @pytest.fixture
@@ -62,7 +63,10 @@ async def _bind_existing_console_conversation(console, conversation_id: str):
 
 
 @pytest.mark.asyncio
-async def test_native_send_applies_conversation_world_info_provider_branch(wb_db):
+@private_profile_test
+async def test_native_send_applies_conversation_world_info_provider_branch(
+    wb_db, request
+):
     assert save_setting_to_cli_config("console", "agent_runtime", False)
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -106,8 +110,9 @@ async def test_native_send_applies_conversation_world_info_provider_branch(wb_db
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_native_send_world_info_disabled_by_config_not_injected(
-    wb_db, monkeypatch
+    wb_db, monkeypatch, request
 ):
     assert save_setting_to_cli_config("console", "agent_runtime", False)
     app = _build_test_app()

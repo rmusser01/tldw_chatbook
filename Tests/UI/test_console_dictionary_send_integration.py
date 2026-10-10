@@ -17,6 +17,9 @@ overwritten it on every path).
 
 import pytest
 
+from Tests.console_provider_doubles import with_destination
+from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -31,8 +34,6 @@ from tldw_chatbook.Character_Chat.local_chat_dictionary_service import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from Tests.console_provider_doubles import with_destination
-from Tests.UI.app_factory import attach_chachanotes_db
 
 
 @pytest.fixture
@@ -67,6 +68,11 @@ class _CapturingGateway:
     def __init__(self):
         self.captured = None
 
+    def cached_context_window(self, settings):
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
+
     async def resolve_for_send(self, selection):
         return with_destination(
             ConsoleProviderResolution(
@@ -96,8 +102,10 @@ def _final_user_content(messages):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_native_send_applies_conversation_dictionary_provider_branch(
     dictionary_db,
+    request,
 ):
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -139,7 +147,10 @@ async def test_native_send_applies_conversation_dictionary_provider_branch(
 
 
 @pytest.mark.asyncio
-async def test_native_send_applies_conversation_dictionary_agent_branch(dictionary_db):
+@private_profile_test
+async def test_native_send_applies_conversation_dictionary_agent_branch(
+    dictionary_db, request
+):
     app = _build_test_app()
     attach_chachanotes_db(app)
     app.chachanotes_db = dictionary_db
@@ -185,7 +196,7 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
             **_kwargs,
         ):
             captured["agent_messages"] = [dict(m) for m in agent_messages]
-            from tldw_chatbook.Agents.agent_models import RunOutcome, RUN_DONE
+            from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
 
             store = screen._ensure_console_chat_store()
             store.append_stream_chunk(assistant_message_id, "ok")

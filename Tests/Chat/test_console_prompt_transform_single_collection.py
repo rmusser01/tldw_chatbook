@@ -271,10 +271,9 @@ def test_console_screen_level_applier_copies_stay_removed():
     ``ChatScreen._console_world_info_applier`` were passed into
     ``ConsoleRuntime.ensure_chat_controller``, which unconditionally
     overwrote both via its runtime-owned ``kwargs.update`` -- dead on every
-    path, and already drifted: the screen world-info copy called
-    ``world_info_resolver.apply_world_info_to_message`` with a 3-argument
-    signature the live call site (which passes ``frozen_inputs`` as a
-    fourth argument) would have rejected outright. Dead always-overwritten
+    path, and already drifted: the screen world-info callback accepted three arguments,
+    while the live controller passes ``frozen_inputs`` as a fourth
+    callback argument. Dead always-overwritten
     copies are the ``_library_provider_for_app`` precedent recorded in
     console_runtime.py: a stale copy silently shadowed the live
     binding and cost 24 Library tools behind one swallowed warning. The
@@ -291,3 +290,46 @@ def test_console_screen_level_applier_copies_stay_removed():
     # The bounds constants existed only to feed the dead dictionary copy.
     assert not hasattr(chat_screen_module, "_CHATDICT_MAX_TOKENS")
     assert not hasattr(chat_screen_module, "_CHATDICT_STRATEGY")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("caller_overrides", [False, True])
+async def test_runtime_applier_override_diagnostic_reports_only_ignored_keys(
+    monkeypatch, caller_overrides
+):
+    from tldw_chatbook.Chat import console_runtime as runtime_module
+
+    runtime = runtime_module.ConsoleRuntime(SimpleNamespace())
+    messages = []
+    monkeypatch.setattr(runtime_module.logger, "debug", messages.append)
+    kwargs = {"model": "private-model-value"}
+    if caller_overrides:
+        kwargs.update(
+            chat_dictionary_applier="private-dictionary-value",
+            world_info_applier="private-world-value",
+        )
+    try:
+        controller = runtime.ensure_chat_controller(
+            store=ConsoleChatStore(), provider_gateway=object(), **kwargs
+        )
+        assert (
+            controller._chat_dictionary_applier.func is _apply_chat_dictionaries_for_app
+        )
+        assert controller._world_info_applier.func is _apply_world_info_for_app
+        diagnostics = [
+            message
+            for message in messages
+            if message.startswith("ensure_chat_controller: ignoring")
+        ]
+        assert diagnostics == (
+            [
+                (
+                    "ensure_chat_controller: ignoring runtime-owned kwargs supplied by caller: "
+                    "['chat_dictionary_applier', 'world_info_applier']"
+                )
+            ]
+            if caller_overrides
+            else []
+        )
+    finally:
+        await runtime.dispose()
