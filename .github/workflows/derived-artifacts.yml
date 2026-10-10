@@ -22,16 +22,23 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [dev, main]
-  # Merge queue (Docs/superpowers/specs/2026-10-03-merge-queue-design.md): the queue
-  # dispatches this workflow on a rebased PR head with `pr` set, so the required check
-  # runs on exactly the head that merges. A dispatch without `pr` on dev is a manual
-  # queue kick: the lanes skip and only queue-tick runs. A dispatch without `pr` on any
-  # other branch runs the full gate, so the required check can never go green without
-  # tests actually running.
+  # Merge queue (Docs/superpowers/specs/2026-10-03-merge-queue-design.md): a dispatch without
+  # `pr` on dev is a queue kick: the lanes skip and only queue-tick runs. The queue sends one
+  # itself (with `wait_run`) to wake a tick after a run finishes, because GitHub only starts a
+  # workflow_dispatch run for a file that exists on main, and this is the queue file that does.
+  # The queue no longer dispatches the required check on a PR head: a dispatched run's check is
+  # not in the PR's status rollup, so it never satisfies protection (spec V4). A dispatch with
+  # `pr`, or without `pr` on any other branch, runs the full gate, so the required check can
+  # never go green without tests actually running.
   workflow_dispatch:
     inputs:
       pr:
-        description: PR number (set by the merge queue)
+        description: PR number (manual full-gate dispatch)
+        required: false
+        type: string
+        default: ''
+      wait_run:
+        description: A run the queue tick waits for before deciding (set by the merge queue)
         required: false
         type: string
         default: ''
@@ -397,16 +404,16 @@ jobs:
           python scripts/check_ui_pr_gate_census.py
 
   queue-tick:
-    # Wakes the merge queue after CI finishes, for the queue's own dispatched runs and for any
-    # same-repo PR run. Deliberately no auto_merge check: the event payload is a trigger-time
+    # Wakes the merge queue after CI finishes, for any same-repo PR run (including the held runs
+    # the queue approves after its rebase) and for the queue's own kicks on dev. Deliberately no auto_merge check: the event payload is a trigger-time
     # snapshot, and the documented disarm-push-rearm flow leaves it null, so a red author run
     # would never wake the queue. The script itself only acts on the armed line. NOT a required
     # check and NOT in the aggregate's needs: a queue failure can never turn `Derived artifacts
     # reproduce from their sources` red. Pushes to dev are merge-queue.yml's job.
-    # Security (spec section 9): a queue dispatch runs the PR branch's copy of this file, so the
-    # branch controls these write permissions, exactly as a same-repo pull_request run already
-    # does. The difference is the actor (github-actions[bot] skips GitHub's Dependabot and
-    # agent-push gates), which is why the queue only queues PRs opened by a user.
+    # Security (spec section 9): a queue-approved held run executes the PR branch's copy of this
+    # file, so the branch controls these write permissions, exactly as a same-repo pull_request
+    # run already does. The difference is the actor (github-actions[bot] skips GitHub's
+    # Dependabot and agent-push gates), which is why the queue only queues PRs opened by a user.
     # Spec: Docs/superpowers/specs/2026-10-03-merge-queue-design.md
     name: Merge queue tick
     needs: [derived-artifacts]
@@ -431,5 +438,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MERGE_QUEUE: ${{ vars.MERGE_QUEUE }}
+          WAIT_RUN: ${{ inputs.wait_run }}
         run: python3 scripts/merge_queue.py
 

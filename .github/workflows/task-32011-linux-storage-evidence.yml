@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [dev]
     types: [labeled, synchronize]
-  # Merge queue re-runs this on the rebased head (spec 2026-10-03, section 5.4).
+  # For manual runs; the merge queue approves the held pull_request run instead (ADR-218 amendment 2026-10-06).
   workflow_dispatch:
 
 permissions:
