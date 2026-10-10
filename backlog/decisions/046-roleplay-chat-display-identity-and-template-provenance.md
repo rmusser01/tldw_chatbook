@@ -112,6 +112,24 @@ partial success preserves remaining drafts and blocks navigation. This
 amendment is owned by
 [TASK-31241](../tasks/task-31241%20-%20Align-character-conversation-navigation-decisions.md).
 
+### 2026-10-03 amendment: one unsaved predicate (Roleplay frame B1)
+
+The aggregate snapshot above is also the one answer to "does Roleplay hold
+unsaved work?": `roleplay_has_unsaved_work()` in
+`tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py` returns `not
+snapshot.is_clean`, which counts every domain and in-flight save the aggregate
+snapshot tracks (the character and Persona forms, character and Persona
+visuals, staged attachments). From TASK-33910.2 it drives the Roleplay header's
+Unsaved chip, and the leave and Ctrl+Q guards
+(`roleplay_draft_guard.confirm_roleplay_drafts`, TASK-33622.14) decide on the
+same predicate. The
+[Roleplay frame spec](../../Docs/superpowers/specs/2026-10-02-roleplay-library-frame-design.md)
+(section 3.12, G4) routes the in-screen guard (B5b-1: selecting another item or
+kind, which today checks only the form and visual authoring), the work-pane
+title word and the commit-bar summary through the same predicate, and adds the
+entry form and lore/dictionary Options as domains (B9a, with their own dated
+amendment). The dialog's third choice stays "Stay".
+
 ## Context
 
 The native Console session already persists character identity, including

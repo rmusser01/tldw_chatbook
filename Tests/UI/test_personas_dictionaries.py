@@ -1,7 +1,6 @@
 """Mounted tests for the Roleplay Dictionaries mode (P1a)."""
 
 import copy
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,8 +10,7 @@ import pytest
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, DataTable, Input, ListView, Static, Switch, TextArea
 
-from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen
-from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from Tests.UI.roleplay_frame_harness import PersonasTestApp, StyledPersonasTestApp
 from tldw_chatbook.Widgets.Persona_Widgets.personas_dictionary_detail import (
     DictionaryEntryAddRequested,
     DictionarySettingsSaveRequested,
@@ -687,47 +685,6 @@ def stub_characters(monkeypatch):
     patch_character_paging(monkeypatch)
 
 
-class PersonasTestApp(ConsolidatedCSSApp):
-    """Same harness as test_personas_workbench.py (delegating App)."""
-
-    def __init__(self, mock_app_instance):
-        super().__init__()
-        self._mock = mock_app_instance
-        self.character_persona_scope_service = (
-            mock_app_instance.character_persona_scope_service
-        )
-
-    _NON_DELEGATED_PREFIXES = (
-        "_",
-        "watch_",
-        "compute_",
-        "validate_",
-        "action_",
-        "key_",
-        "on_",
-    )
-
-    def __getattr__(self, name):
-        if name.startswith(self._NON_DELEGATED_PREFIXES):
-            raise AttributeError(name)
-        return getattr(self.__dict__["_mock"], name)
-
-    def compose(self):
-        yield AppFooterStatus(id="app-footer-status")
-
-    def on_mount(self) -> None:
-        self.push_screen(PersonasScreen(self))
-
-
-class StyledPersonasTestApp(PersonasTestApp):
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
-
-
 async def _mounted(pilot):
     await pilot.pause()
     return pilot.app.screen
@@ -1355,10 +1312,8 @@ class TestDictionarySettings:
             screen.query_one("#personas-dict-name", Input).value = "Half-renamed"
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
-            subtitle = screen.query_one(
-                "#personas-header #workbench-header-subtitle", Static
-            )
-            assert "- unsaved" in str(subtitle.renderable)
+            # Roleplay frame B1: the header's unsaved chip (spec R24).
+            assert screen.query_one("#personas-header-unsaved").display is True
 
     async def test_reverting_edit_clears_dirty_flag(
         self, mock_app_instance, stub_characters, fake_dict_service
@@ -1379,17 +1334,12 @@ class TestDictionarySettings:
             name_input.value = "Half-renamed"
             await pilot.pause()
             assert screen.state.has_unsaved_changes is True
-            subtitle = screen.query_one(
-                "#personas-header #workbench-header-subtitle", Static
-            )
-            assert "- unsaved" in str(subtitle.renderable)
+            chip = screen.query_one("#personas-header-unsaved")
+            assert chip.display is True
             name_input.value = original
             await pilot.pause()
             assert screen.state.has_unsaved_changes is False
-            subtitle = screen.query_one(
-                "#personas-header #workbench-header-subtitle", Static
-            )
-            assert "- unsaved" not in str(subtitle.renderable)
+            assert chip.display is False
 
     async def test_conflict_surfaces_status_not_crash(
         self, mock_app_instance, stub_characters, fake_dict_service

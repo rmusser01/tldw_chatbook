@@ -178,7 +178,14 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # external-edit conflict, `n` inside Find, the server-item refusal, the
 # untouched-blank GC, the vetoed title, Back at 100x30, 120x36) stay in
 # test_library_rail_switch_keeps_reader_and_note_extended.py, outside the lane.
-MINIMUM_FILES = 159
+# Roleplay frame B1 raised it to 163: test_roleplay_frame_state.py,
+# test_roleplay_stylesheet.py and test_workbench_fitted_text.py gate the pure
+# header state, the lazy Roleplay sheet's ownership and FittedText; TASK-34400's
+# test_roleplay_hostile_text_surfaces.py (no lane ran it; B1 re-pins one of
+# its tests) gates the widget-level hostile-text sinks. B1's mounted Roleplay
+# files are bootstrap-profile and run in the PR Fast Lane's
+# admission-sensitive step instead (TASK-32873).
+MINIMUM_FILES = 163
 
 
 def read_census(path: Path) -> list[str]:

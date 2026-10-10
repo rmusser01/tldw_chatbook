@@ -1,0 +1,436 @@
+/* ========================================
+ * GENERATED FILE - DO NOT EDIT DIRECTLY
+ * ========================================
+ * roleplay-owned rules split out of features/_roleplay.tcss
+ * by build_css.py (TASK-25812/TASK-24459). Loaded via the owning screen's
+ * CSS_PATH, so these bytes are parsed on first visit instead of before
+ * first paint. Edit features/_roleplay.tcss and re-run build_css.py.
+ * ======================================== */
+
+$ds-surface-panel: $panel;
+$ds-surface-raised: $surface;
+$ds-surface-inspector: $surface;
+$ds-grid-line: $tldw-boundary;
+$ds-column-line: $surface-lighten-2;
+$ds-text-primary: $text;
+$ds-text-muted: $text-muted;
+$ds-text-disabled: $text-disabled;
+$ds-action-focus: $primary;
+$ds-focus-fg: $ds-text-primary;
+$ds-focus-bg: $block-cursor-blurred-background;
+$ds-focus-accent: $primary;
+$ds-input-focus-border: $primary;
+$ds-input-focus-bg: $ds-focus-bg;
+$ds-input-focus-accent: $primary;
+$ds-control-edge: $tldw-boundary;
+$ds-status-ready: $success;
+$ds-status-running: $primary;
+$ds-status-info: $accent;
+$ds-status-warning: $warning;
+$ds-status-approval-required: $warning;
+$ds-status-blocked: $error;
+$ds-status-error: $error;
+$ds-status-error-readable: $text-error;
+$ds-status-warning-readable: $text-warning;
+$ds-text-placeholder: $text-muted;
+$ds-text-disabled-readable: $text-muted;
+$ds-status-paused: $warning;
+$ds-status-unsaved: $warning;
+$ds-status-recovered: $success;
+$ds-authority-local: $success;
+$ds-authority-server: $primary;
+$ds-authority-workspace: $accent;
+$ds-authority-remote-only: $warning;
+$ds-source-role-context: $accent;
+$ds-source-role-evidence: $accent;
+$ds-source-role-editable-target: $warning;
+$ds-source-role-output-seed: $secondary;
+$ds-active-fg: $text-primary;
+$ds-value-fg: $text-accent;
+
+$ds-chat-user-accent: $text-primary;
+$ds-chat-user-accent-dark: #8bd5ff;
+$ds-chat-user-accent-light: #004d6d;
+$ds-chat-assistant-accent-dark: #ffc473;
+$ds-chat-assistant-accent-light: #704000;
+$ds-chat-rp-speech-dark: #8bd5ff;
+$ds-chat-rp-speech-light: #004d6d;
+$ds-chat-rp-thought-dark: #2dd4bf;
+$ds-chat-rp-thought-light: #0b5d4a;
+$ds-chat-rp-action-dark: #d7b2ff;
+$ds-chat-rp-action-light: #5e3578;
+$ds-chat-rp-strong-dark: #fff0a6;
+$ds-chat-rp-strong-light: #665000;
+$ds-destination-header-height: 1;
+$ds-destination-compact-strip-height: 1;
+$ds-panel-min-height: 3;
+$ds-destination-header-min-height: 3;
+$ds-destination-header-compact-min-height: 2;
+$ds-destination-header-comfortable-min-height: 4;
+$ds-field-row-min-height: 2;
+$ds-toolbar-min-height: 1;
+$ds-home-dashboard-grid-height: 18;
+$ds-home-control-button-height: 1;
+$ds-home-compact-row-height: 1;
+$ds-home-followup-row-height: 6;
+$ds-console-workspace-grid-height: 1fr;
+$ds-console-composer-height: 1;
+$ds-library-mode-chip-height: 1;
+$ds-library-mode-chip-min-width: 10;
+$ds-workflow-navigator-width: 27;
+$ds-library-source-action-width: auto;
+$ds-library-source-action-min-width: 0;
+$ds-library-source-action-height: 1;
+$ds-library-source-browser-width: 31;
+
+$ds-space-0: 0;
+$ds-space-1: 1;
+$ds-space-2: 2;
+$ds-space-3: 3;
+$ds-space-inline: $ds-space-1;
+$ds-space-stack: $ds-space-1;
+$ds-space-section: $ds-space-2;
+$ds-space-inset: $ds-space-1;
+
+$ds-control-height: 3;
+$ds-control-height-compact: 1;
+$ds-textarea-min-height: 5;
+$ds-model-switcher-width: 140;
+$ds-width-full: 100%;
+$ds-width-fill: 1fr;
+$ds-width-auto: auto;
+$ds-height-auto: auto;
+
+$ds-height-full: 100%;
+$ds-height-fill: 1fr;
+$ds-size-0: 0;
+$ds-size-1: 1;
+$ds-size-2: 2;
+$ds-size-3: 3;
+$ds-size-4: 4;
+$ds-size-5: 5;
+$ds-size-6: 6;
+$ds-size-7: 7;
+$ds-size-8: 8;
+$ds-size-9: 9;
+$ds-size-10: 10;
+$ds-size-11: 11;
+$ds-size-12: 12;
+$ds-size-13: 13;
+$ds-size-14: 14;
+$ds-size-15: 15;
+$ds-size-16: 16;
+$ds-size-17: 17;
+$ds-size-18: 18;
+$ds-size-20: 20;
+$ds-size-21: 21;
+$ds-size-22: 22;
+$ds-size-23: 23;
+$ds-size-24: 24;
+$ds-size-25: 25;
+$ds-size-26: 26;
+$ds-size-28: 28;
+$ds-size-29: 29;
+$ds-size-30: 30;
+$ds-size-31: 31;
+$ds-size-32: 32;
+$ds-size-34: 34;
+$ds-size-35: 35;
+$ds-size-36: 36;
+$ds-size-38: 38;
+$ds-size-40: 40;
+$ds-size-42: 42;
+$ds-size-44: 44;
+$ds-size-45: 45;
+$ds-size-46: 46;
+$ds-size-48: 48;
+$ds-size-50: 50;
+$ds-size-52: 52;
+$ds-size-60: 60;
+$ds-size-64: 64;
+$ds-size-66: 66;
+$ds-size-70: 70;
+$ds-size-76: 76;
+$ds-size-80: 80;
+$ds-size-84: 84;
+$ds-size-90: 90;
+$ds-size-92: 92;
+$ds-size-94: 94;
+$ds-size-96: 96;
+$ds-splash-progress-cap: 100;
+$ds-size-104: 104;
+$ds-size-110: 110;
+$ds-size-120: 120;
+$ds-size-150: 150;
+$ds-size-170: 170;
+$ds-percent-34: 34%;
+$ds-percent-25: 25%;
+$ds-percent-30: 30%;
+$ds-percent-40: 40%;
+$ds-percent-42: 42%;
+$ds-percent-45: 45%;
+$ds-percent-50: 50%;
+$ds-percent-70: 70%;
+$ds-percent-75: 75%;
+$ds-percent-80: 80%;
+$ds-percent-85: 85%;
+$ds-percent-90: 90%;
+$ds-percent-92: 92%;
+$ds-percent-94: 94%;
+$ds-percent-95: 95%;
+$ds-percent-96: 96%;
+$ds-percent-99: 99%;
+$ds-fr-2: 2fr;
+$ds-fr-4: 4fr;
+$ds-fr-5: 5fr;
+$ds-fr-6: 6fr;
+$ds-fr-3: 3fr;
+$ds-fr-13: 13fr;
+$ds-watchlists-rail-left-share: 28fr;
+$ds-watchlists-rail-right-share: 34fr;
+$ds-watchlists-region-share: 44fr;
+$ds-watchlists-region-share-read: 50fr;
+$ds-watchlists-artifacts-detail-share: 8fr;
+$ds-agentic-mcp-table-cap: 70%;
+$ds-agentic-prompt-vars-pane: 27;
+$ds-agentic-mcp-compact-canvas-share: 7fr;
+$ds-research-chat-pane-floor: 58;
+$ds-new-ingest-media-panel-share: 65%;
+$ds-new-ingest-activity-panel-share: 35%;
+$ds-new-ingest-file-panel-share: 55%;
+$ds-new-ingest-card-desc-leading: 1.2;
+$ds-new-ingest-scrollbar-gutter: 6px;
+$ds-conversations-ai-generate-share: 12%;
+$ds-profile-link-modal-cols: 88;
+$ds-profile-link-modal-body-share: 82%;
+$ds-widgets-skeleton-title-share: 60%;
+$ds-messages-scroll-cap: 50vh;
+$ds-messages-text-scroll-cap: 40vh;
+$ds-console-frame: #6f7782;
+$ds-tool-preview-max-height: 3;
+
+$ds-duration-fast: 0.2s;
+$ds-duration-medium: 0.3s;
+$ds-duration-slow: 0.5s;
+
+$ds-opacity-dim: 70%;
+
+$ds-text-strong: bold;
+$ds-text-emphasis: italic;
+
+$ds-hover-bg: $surface-lighten-1;
+$ds-hover-fg: $ds-text-primary;
+$ds-disabled-bg: $surface-darken-1;
+$ds-surface-sunken: $surface-darken-1;
+
+$ds-sidebar-width: 25%;
+$ds-sidebar-min-width: 35;
+$ds-sidebar-max-width: 80;
+
+$ds-theme-preset-blues-0: #0099FF;
+$ds-theme-preset-blues-1: #006FB3;
+$ds-theme-preset-blues-2: #004D80;
+$ds-theme-preset-blues-3: #003366;
+$ds-theme-preset-blues-4: #002244;
+$ds-theme-preset-greens-0: #00CC66;
+$ds-theme-preset-greens-1: #009944;
+$ds-theme-preset-greens-2: #006633;
+$ds-theme-preset-greens-3: #004422;
+$ds-theme-preset-greens-4: #002211;
+$ds-theme-preset-reds-0: #FF3333;
+$ds-theme-preset-reds-1: #CC0000;
+$ds-theme-preset-reds-2: #990000;
+$ds-theme-preset-reds-3: #660000;
+$ds-theme-preset-reds-4: #330000;
+$ds-theme-preset-purples-0: #9966FF;
+$ds-theme-preset-purples-1: #7744DD;
+$ds-theme-preset-purples-2: #5522BB;
+$ds-theme-preset-purples-3: #330099;
+$ds-theme-preset-purples-4: #220066;
+$ds-theme-preset-grays-0: #FFFFFF;
+$ds-theme-preset-grays-1: #CCCCCC;
+$ds-theme-preset-grays-2: #999999;
+$ds-theme-preset-grays-3: #666666;
+$ds-theme-preset-grays-4: #333333;
+$ds-theme-preset-material-0: #2196F3;
+$ds-theme-preset-material-1: #4CAF50;
+$ds-theme-preset-material-2: #FF9800;
+$ds-theme-preset-material-3: #F44336;
+$ds-theme-preset-material-4: #9C27B0;
+$ds-theme-preset-pastels-0: #FFB3BA;
+$ds-theme-preset-pastels-1: #BAFFC9;
+$ds-theme-preset-pastels-2: #BAE1FF;
+$ds-theme-preset-pastels-3: #FFFFBA;
+$ds-theme-preset-pastels-4: #FFDFBA;
+$ds-theme-preset-dark-0: #1A1A1A;
+$ds-theme-preset-dark-1: #2D2D2D;
+$ds-theme-preset-dark-2: #404040;
+$ds-theme-preset-dark-3: #525252;
+$ds-theme-preset-dark-4: #656565;
+$ds-theme-preview-dark-ink: #000000;
+$ds-theme-preview-light-ink: #FFFFFF;
+$ds-theme-preview-invalid: #808080;
+
+$ds-inspector-modal-width: 120;
+$ds-inspector-modal-height: 42;
+$ds-inspector-section-width: 28;
+$ds-inspector-recovery-max-height: 6;
+$ds-conversation-action-width: 4;
+$ds-conversation-action-ascii-width: 9;
+$ds-inspector-usage-list-width: 60;
+$ds-conversation-menu-width: 30;
+
+
+.tldw-agentic-split-preamble-end { }
+
+/* ========================================
+ * FEATURES: Roleplay (Ctrl+4) on the Library frame
+ * ========================================
+ * Spec: Docs/superpowers/specs/2026-10-02-roleplay-library-frame-design.md.
+ * Every rule here is lazy: build_css.py moves it to
+ * screen_feature_roleplay.tcss, which TldwCli._SCREEN_OWNED_ROUTE_CSS parses
+ * on the first visit to Roleplay (never PersonasScreen.CSS_PATH: Textual
+ * loads a screen's CSS_PATH under every app, including the unstyled test
+ * harnesses). Every selector carries a Roleplay token (#personas-header...,
+ * .roleplay-...). The split also claims the shared tokens
+ * workbench-header-title/-subtitle/-status and -active so these rules can
+ * leave the boot bundle; Tests/UI/test_roleplay_stylesheet.py refuses a
+ * selector anchored only by one of them. $ds-* tokens only, no numbers.
+ */
+
+/* One-row inline DestinationHeader (spec 1.3; DESIGN.md "Destination header
+   variants"), after #console-workbench-header.console-header-inline. The
+   id+class rules (1,2,0) beat the compact-height and density rules that hide
+   a subtitle at 24 rows or fewer (.shell-header-compact
+   .workbench-header-subtitle is 0,2,0), so the kind stays visible. The cells
+   these rules spend on padding and margins are mirrored by the HEADER_*_CELLS
+   constants in UI/Persona_Modules/roleplay_frame_state.py. */
+#personas-header.personas-header-inline {
+    layout: horizontal;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
+    border: none;
+}
+
+#personas-header.personas-header-inline .workbench-header-title {
+    width: auto;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+}
+
+/* The kind: auto width and no wrap, so it is never cut; the item label
+   beside it is the part that gives way. */
+#personas-header.personas-header-inline .workbench-header-subtitle {
+    display: block;
+    width: auto;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-2;
+    text-wrap: nowrap;
+}
+
+/* The authority chip (Local / Server: <label> · read-only) is a word, not a
+   badge: neutral by id, since WorkbenchStatus has no neutral value. */
+#personas-header.personas-header-inline .workbench-header-status {
+    width: auto;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+    text-style: none;
+}
+
+#personas-header-tail {
+    layout: horizontal;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+}
+
+/* Interim (spec 5.3): "› <item>" until the work-pane title row (B5b-2). */
+#personas-header-item {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+}
+
+#personas-header-unsaved,
+#personas-header-blocked {
+    width: auto;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    text-style: bold;
+}
+
+/* Words that must be READ: the readable status foregrounds, not the
+   decorative $ds-status-unsaved/$ds-status-blocked hues, which fall below
+   AA on the panel in many themes. */
+#personas-header-unsaved {
+    color: $ds-status-warning-readable;
+}
+
+#personas-header-blocked {
+    color: $ds-status-error-readable;
+}
+
+#personas-header-blocked:hover {
+    text-style: bold underline;
+}
+
+/* Adaptive pane shell (spec 2.12 item 2): the Library's shell and grip rules
+   (features/_library.tcss) keyed to Roleplay's destination classes
+   (ROLEPLAY_PANE_CLASS_NAMES in UI/Persona_Modules/roleplay_frame_state.py).
+   Tests/UI/test_roleplay_stylesheet.py pins the two sets equal once the class
+   names are normalised: change both or neither. No width rule: grip widths
+   are inline styles from the resolver. Inert until frame slice B7 mounts the
+   shell. */
+.roleplay-shell {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+}
+
+.roleplay-shell > .roleplay-shell-work {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+
+.roleplay-shell > .roleplay-shell-grip {
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+    border: none !important;
+    content-align: center middle;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: none;
+    tint: transparent;
+    outline: none;
+}
+
+.roleplay-shell > .roleplay-shell-grip:hover,
+.roleplay-shell > .roleplay-shell-grip.-active {
+    background: $ds-surface-raised;
+    tint: transparent;
+}
+
+.roleplay-shell > .roleplay-shell-grip:hover {
+    color: $ds-text-primary;
+}
+
+/* task-32053: focus inverts the whole grip (reverse), never an outline. */
+.roleplay-shell > .roleplay-shell-grip:focus {
+    background: $ds-surface-raised;
+    color: $ds-action-focus;
+    text-style: bold reverse;
+    tint: transparent;
+    outline: none;
+}

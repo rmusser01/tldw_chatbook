@@ -192,12 +192,12 @@ async def test_completion_between_header_and_inspector_reads_refreshes_both_surf
         # Finish after the header read but before the inspector read in this
         # synchronous render. No further edit should be needed to reconcile it.
         screen._sync_title_and_console_actions()
-        header_status = screen.query_one(
-            "#personas-header #workbench-header-status", Static
-        )
+        # Roleplay frame B1: the header's destination block chip (no longer a
+        # "Ready" badge) is the header surface that must catch up.
+        blocked = screen.query_one("#personas-header-blocked")
         assert len(reads) >= 2
         async with asyncio.timeout(3):
-            while str(header_status.renderable) != "Ready":
+            while blocked.display:
                 await asyncio.sleep(0.01)
         assert "Ready to chat" in _readiness_text(screen)
         assert not screen.query_one("#personas-start-chat", Button).disabled

@@ -1,0 +1,151 @@
+/* ========================================
+ * FEATURES: Roleplay (Ctrl+4) on the Library frame
+ * ========================================
+ * Spec: Docs/superpowers/specs/2026-10-02-roleplay-library-frame-design.md.
+ * Every rule here is lazy: build_css.py moves it to
+ * screen_feature_roleplay.tcss, which TldwCli._SCREEN_OWNED_ROUTE_CSS parses
+ * on the first visit to Roleplay (never PersonasScreen.CSS_PATH: Textual
+ * loads a screen's CSS_PATH under every app, including the unstyled test
+ * harnesses). Every selector carries a Roleplay token (#personas-header...,
+ * .roleplay-...). The split also claims the shared tokens
+ * workbench-header-title/-subtitle/-status and -active so these rules can
+ * leave the boot bundle; Tests/UI/test_roleplay_stylesheet.py refuses a
+ * selector anchored only by one of them. $ds-* tokens only, no numbers.
+ */
+
+/* One-row inline DestinationHeader (spec 1.3; DESIGN.md "Destination header
+   variants"), after #console-workbench-header.console-header-inline. The
+   id+class rules (1,2,0) beat the compact-height and density rules that hide
+   a subtitle at 24 rows or fewer (.shell-header-compact
+   .workbench-header-subtitle is 0,2,0), so the kind stays visible. The cells
+   these rules spend on padding and margins are mirrored by the HEADER_*_CELLS
+   constants in UI/Persona_Modules/roleplay_frame_state.py. */
+#personas-header.personas-header-inline {
+    layout: horizontal;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0;
+    border: none;
+}
+
+#personas-header.personas-header-inline .workbench-header-title {
+    width: auto;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+}
+
+/* The kind: auto width and no wrap, so it is never cut; the item label
+   beside it is the part that gives way. */
+#personas-header.personas-header-inline .workbench-header-subtitle {
+    display: block;
+    width: auto;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-2;
+    text-wrap: nowrap;
+}
+
+/* The authority chip (Local / Server: <label> · read-only) is a word, not a
+   badge: neutral by id, since WorkbenchStatus has no neutral value. */
+#personas-header.personas-header-inline .workbench-header-status {
+    width: auto;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    background: $ds-surface-panel;
+    color: $ds-text-muted;
+    text-style: none;
+}
+
+#personas-header-tail {
+    layout: horizontal;
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+}
+
+/* Interim (spec 5.3): "› <item>" until the work-pane title row (B5b-2). */
+#personas-header-item {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+}
+
+#personas-header-unsaved,
+#personas-header-blocked {
+    width: auto;
+    height: $ds-size-1;
+    padding: $ds-space-0 $ds-space-1;
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    text-style: bold;
+}
+
+/* Words that must be READ: the readable status foregrounds, not the
+   decorative $ds-status-unsaved/$ds-status-blocked hues, which fall below
+   AA on the panel in many themes. */
+#personas-header-unsaved {
+    color: $ds-status-warning-readable;
+}
+
+#personas-header-blocked {
+    color: $ds-status-error-readable;
+}
+
+#personas-header-blocked:hover {
+    text-style: bold underline;
+}
+
+/* Adaptive pane shell (spec 2.12 item 2): the Library's shell and grip rules
+   (features/_library.tcss) keyed to Roleplay's destination classes
+   (ROLEPLAY_PANE_CLASS_NAMES in UI/Persona_Modules/roleplay_frame_state.py).
+   Tests/UI/test_roleplay_stylesheet.py pins the two sets equal once the class
+   names are normalised: change both or neither. No width rule: grip widths
+   are inline styles from the resolver. Inert until frame slice B7 mounts the
+   shell. */
+.roleplay-shell {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+}
+
+.roleplay-shell > .roleplay-shell-work {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+}
+
+.roleplay-shell > .roleplay-shell-grip {
+    height: $ds-height-full;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+    border: none !important;
+    content-align: center middle;
+    background: $ds-surface-raised;
+    color: $ds-text-muted;
+    text-style: none;
+    tint: transparent;
+    outline: none;
+}
+
+.roleplay-shell > .roleplay-shell-grip:hover,
+.roleplay-shell > .roleplay-shell-grip.-active {
+    background: $ds-surface-raised;
+    tint: transparent;
+}
+
+.roleplay-shell > .roleplay-shell-grip:hover {
+    color: $ds-text-primary;
+}
+
+/* task-32053: focus inverts the whole grip (reverse), never an outline. */
+.roleplay-shell > .roleplay-shell-grip:focus {
+    background: $ds-surface-raised;
+    color: $ds-action-focus;
+    text-style: bold reverse;
+    tint: transparent;
+    outline: none;
+}

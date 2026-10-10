@@ -1,0 +1,167 @@
+"""Self-tests for the Roleplay frame harness (spec 5.7.1; frame slice B1 AC#6, AC#8).
+
+A geometry assertion is only evidence if the tier it runs under really loads
+Roleplay's lazy sheet and if deleting a rule from that sheet turns it red.
+These tests prove both, under both styled tiers, and that the containment
+helper can fail.
+"""
+
+from __future__ import annotations
+
+import pytest
+from textual.app import App, ComposeResult
+from textual.containers import Vertical
+from textual.widgets import Static
+
+import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
+from Tests.UI import test_personas_dictionaries, test_personas_workbench
+from Tests.UI.consolidated_css import APP_STYLESHEETS
+from Tests.UI.roleplay_frame_harness import (
+    ROLEPLAY_SHEET,
+    ROLEPLAY_SIZES,
+    RoleplayMockApp,
+    StyledRoleplayMockApp,
+    assert_painted_inside,
+    drop_rule_from_loaded_sheet,
+    open_styled_roleplay,
+    roleplay_full_app,
+    seed_mock_characters,
+    settle,
+    styled_tiers,
+    wait_until,
+)
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
+
+CHARACTERS = [{"id": 1, "name": "Detective Sam", "version": 1}]
+
+
+@pytest.fixture
+def one_character(monkeypatch):
+    seed_mock_characters(monkeypatch, CHARACTERS)
+
+
+def test_the_size_matrix_is_the_b1_matrix():
+    assert ROLEPLAY_SIZES == ((80, 24), (120, 36), (160, 45), (220, 55))
+    assert ROLEPLAY_SHEET.name == "screen_feature_roleplay.tcss"
+
+
+def test_the_moved_harness_is_the_one_object_under_every_old_name():
+    """Moved verbatim and re-exported, so existing tests are untouched."""
+    for module in (test_personas_workbench, test_personas_dictionaries):
+        assert module.PersonasTestApp is RoleplayMockApp
+        assert module.StyledPersonasTestApp is StyledRoleplayMockApp
+
+
+def test_the_styled_mock_tier_loads_every_app_stylesheet():
+    """The boot bundle AND every lazy split sheet, derived from the build's
+    own SCREEN_OWNED_SPLITS (never named by hand)."""
+    assert StyledRoleplayMockApp.CSS_PATH == [str(path) for path in APP_STYLESHEETS]
+    assert "CSS_PATH" not in RoleplayMockApp.__dict__  # the unstyled tier
+
+
+@pytest.mark.parametrize("entry", ["initial_tab", "ctrl+4"])
+async def test_the_full_app_tier_reaches_roleplay_by_both_real_routes(
+    entry, one_character
+):
+    async with roleplay_full_app(size=(120, 36), entry=entry) as pilot:
+        assert type(pilot.app.screen).__name__ == "PersonasScreen"
+        assert pilot.app.screen.query("#personas-library-rows > ListItem")
+
+
+def test_app_stylesheets_carry_the_roleplay_sheet():
+    """APP_STYLESHEETS derives from the build's splits, so it gains the sheet."""
+    assert ROLEPLAY_SHEET in APP_STYLESHEETS
+    assert ROLEPLAY_SHEET.is_file()
+
+
+@styled_tiers
+async def test_only_the_styled_tiers_carry_the_roleplay_sheet(
+    styled_tier, mock_app_instance, one_character
+):
+    async with open_styled_roleplay(
+        styled_tier, mock_app_instance, size=(120, 36)
+    ) as pilot:
+        assert pilot.app.stylesheet.has_source(str(ROLEPLAY_SHEET), "")
+    unstyled = RoleplayMockApp(mock_app_instance)
+    async with unstyled.run_test(size=(120, 36)) as pilot:
+        await settle(pilot)
+        assert not unstyled.stylesheet.has_source(str(ROLEPLAY_SHEET), "")
+
+
+@pytest.mark.parametrize("entry", ["initial_tab", "ctrl+4"])
+async def test_the_full_app_loads_the_sheet_on_the_first_visit_only(
+    entry, one_character
+):
+    """AC#8: never parsed at boot (Home), parsed by either real route: the
+    initial tab (``_push_initial_screen``) and Ctrl+4 (in-app navigation)."""
+    at_home = []
+    async with roleplay_full_app(
+        size=(120, 36),
+        entry=entry,
+        on_home=lambda app: at_home.append(
+            app.stylesheet.has_source(str(ROLEPLAY_SHEET), "")
+        ),
+    ) as pilot:
+        assert type(pilot.app.screen).__name__ == "PersonasScreen"
+        assert pilot.app.stylesheet.has_source(str(ROLEPLAY_SHEET), "")
+    assert at_home == ([False] if entry == "ctrl+4" else [])
+
+
+@styled_tiers
+async def test_deleting_one_header_rule_turns_the_one_row_assertion_red(
+    styled_tier, mock_app_instance, one_character
+):
+    """AC#6: the discrimination check, run as an executable negative control."""
+    async with open_styled_roleplay(
+        styled_tier, mock_app_instance, size=(120, 36)
+    ) as pilot:
+        screen = pilot.app.screen
+        header = screen.query_one("#personas-header")
+        assert header.region.height == 1
+        drop_rule_from_loaded_sheet(
+            pilot.app, ROLEPLAY_SHEET, "#personas-header.personas-header-inline"
+        )
+        await settle(pilot)
+        await wait_until(
+            pilot, lambda: header.region.height > 1, what="the header to regrow"
+        )
+
+
+def test_dropping_a_rule_that_is_not_there_is_a_loud_error():
+    class _NoSheetApp(App):
+        pass
+
+    with pytest.raises(KeyError):
+        drop_rule_from_loaded_sheet(_NoSheetApp(), ROLEPLAY_SHEET, "#nothing")
+
+
+class _ContainmentProbe(App):
+    CSS = """
+    Screen { layers: base overlay; }
+    #other, #pane { width: 30; height: 3; }
+    #inside, #covered, #outside { width: 10; height: 1; }
+    #outside { offset: 40 0; }
+    #cover { width: 20; height: 1; dock: top; layer: overlay; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="other"):
+            yield Static("covered", id="covered")
+        with Vertical(id="pane"):
+            yield Static("inside", id="inside")
+            yield Static("outside", id="outside")
+        yield Static("cover", id="cover")
+
+
+async def test_assert_painted_inside_fails_for_escape_and_cover():
+    """The helper's two refusals each fire (it is not vacuous)."""
+    app = _ContainmentProbe()
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        pane = app.query_one("#pane")
+        assert_painted_inside(app.query_one("#inside"), pane)
+        with pytest.raises(AssertionError, match="escapes"):
+            assert_painted_inside(app.query_one("#outside"), pane)
+        with pytest.raises(AssertionError, match="covered"):
+            assert_painted_inside(app.query_one("#covered"), app.query_one("#other"))

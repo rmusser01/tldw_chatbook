@@ -254,7 +254,10 @@ def test_fast_lane_is_one_serial_minimal_python_312_job() -> None:
     assert fast["name"] == "PR Fast Lane"
     assert fast["if"] == LANES
     assert fast["runs-on"] == "ubuntu-latest"
-    assert fast["timeout-minutes"] == 30
+    # Roleplay frame B1 (TASK-33910.2): owner decision 2026-10-09, "Raise
+    # timeout to 35 (Rec.)" -- 30 -> 35 to fit B1's mounted Roleplay suites in
+    # the admission-sensitive step (worst case measured 28m20s).
+    assert fast["timeout-minutes"] == 35
     assert "strategy" not in fast
     # TASK-32873: 5 steps -- the admission-sensitive suites run in a
     # separate pytest invocation inside the same job (their

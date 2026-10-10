@@ -1,4 +1,4 @@
-# Roleplay & Chat Dictionaries — Author the pieces that shape a chat
+# Roleplay & Chat Dictionaries
 
 ## What this screen is for
 
@@ -36,11 +36,17 @@ The details live on three child pages:
 
 Top to bottom:
 
-- **Header** — the title **Roleplay & Chat Dictionaries**, a subtitle that
-  normally reads "Author the pieces that shape a chat" (it changes while
-  you edit — "New character", "Editing \<name\>", and " - unsaved" when
-  there are unsaved edits), and a status badge reading **Ready** or
-  **Blocked**.
+- **Header** — one row: the title **Roleplay**, the kind you are browsing
+  (**Characters**, **Personas**, **Dictionaries** or **Lore**) and, for now,
+  "› \<name\>" for the selected item, with " · editing" while an editor is
+  open. A long name ends in "…" ("..." with ASCII glyphs on); the kind is
+  never cut. On the right, in words: **Unsaved changes** (**Unsaved** below
+  100 columns) while any Roleplay draft is unsaved or still saving — an
+  edited form, a staged avatar, open visual authoring; **No chat provider ·
+  Settings ›** while no chat provider is ready, whatever is selected (click
+  it to open Settings › Providers & Models); and where your data lives:
+  **Local**, or **Server: \<name\> · read-only**. The header never says
+  "Ready".
 - **Purpose line** — one line describing the active mode; it is the same
   text as that mode's chip tooltip, and it changes every time you switch
   modes.
@@ -140,7 +146,8 @@ action won't fire:
 - "Console blocked: unsaved edits" — save (or discard) first.
 - "Start Chat blocked: \<reason\>" — the selection is fine, but the chat
   provider the handoff would use isn't ready. Attach still works; Start
-  Chat doesn't. The header badge reads **Blocked** in this state too.
+  Chat doesn't. The header shows **No chat provider · Settings ›** whenever
+  that provider isn't ready, whatever is selected.
 
 ### Sending to Console
 
@@ -236,7 +243,7 @@ Screen-level keys only — global keys live in the [guide index](index.md).
   [Console ▸ Chat basics](console/chat-basics.md) covers sending itself.
 - `config.toml`: this screen reads no section of its own. The only setting
   it reflects is your chat provider default — what the Readiness line and
-  the **Blocked** badge report on.
+  the header's **No chat provider** chip report on.
 
 ## Quirks & troubleshooting
 

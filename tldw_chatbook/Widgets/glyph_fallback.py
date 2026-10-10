@@ -5,6 +5,9 @@ commonly missing or narrow, geometric shapes are font-dependent, and emoji
 paint double-width or not at all. This module owns the opt-in escape hatch:
 when ``appearance.ascii_glyphs`` is enabled, every status marker resolves to
 a pure-ASCII substitute via ``resolve_glyph`` / ``resolve_glyph_text``.
+A second table, ``FRAME_GLYPH_FALLBACKS`` (the Roleplay frame's punctuation),
+is consulted by ``resolve_glyph`` only; ``resolve_glyph_text`` uses
+``ASCII_GLYPH_FALLBACKS`` alone, because its callers pass user text.
 
 Deliberately a zero-import leaf: ``Widgets.destination_rail`` must stay free
 of the Chat layer (ADR-034) and ``Workspaces.conversation_browser_state``
@@ -12,7 +15,7 @@ threads glyph strings without model imports, so the fallback machinery lives
 here, below both. ``Chat.console_glyphs`` documents the vocabulary; this
 module decides how it renders.
 
-The map is keyed by CHARACTER, not by constant, so every consumer of the
+Both maps are keyed by CHARACTER, not by constant, so every consumer of the
 same glyph gets the same substitute no matter which import path it took.
 Substitutes are bracketed where the marker carries meaning (state, urgency)
 and bare punctuation where it is a pure geometric affordance (disclosure
@@ -57,6 +60,28 @@ ASCII_GLYPH_FALLBACKS: dict[str, str] = {
     "📎": "[+]",  # staged attachment indicator
 }
 
+#: Roleplay frame vocabulary (spec section 4.12; frame slice B1). Resolved
+#: glyph-by-glyph through ``resolve_glyph`` ONLY. Deliberately not part of
+#: ``ASCII_GLYPH_FALLBACKS``: ``resolve_glyph_text`` rewrites every character
+#: of Console user text (staged file names, Inspect rows), and these are
+#: ordinary punctuation users type (owner decision 2026-10-09, TASK-33910.2).
+FRAME_GLYPH_FALLBACKS: dict[str, str] = {
+    # Breadcrumb and return arrows, the truncation ellipsis, separators, the
+    # indent key and arrow-key names, and the multiplication sign ("✕" in
+    # ASCII_GLYPH_FALLBACKS is the close glyph, a different character).
+    "›": ">",  # breadcrumb / "go there" (Settings ›)
+    "‹": "<",  # return crumb (‹ Library)
+    "…": "...",  # truncation ellipsis
+    "·": "-",  # inline separator
+    "—": "-",  # em dash in copy
+    "⇥": ">|",  # tab key
+    "→": "->",  # right arrow key
+    "←": "<-",  # left arrow key
+    "↑": "^",  # up arrow key
+    "↓": "v",  # down arrow key
+    "×": "x",  # multiplication sign
+}
+
 _ASCII_MODE = False
 
 
@@ -87,6 +112,7 @@ def ascii_glyph_mode() -> bool:
 def resolve_glyph(glyph: str) -> str:
     """Return the ASCII substitute for ``glyph`` in ASCII mode, else ``glyph``.
 
+    Consults ``ASCII_GLYPH_FALLBACKS`` then ``FRAME_GLYPH_FALLBACKS``.
     Unknown glyphs pass through untouched in both modes, so a glyph with no
     assigned fallback can never be swallowed by the resolver.
 
@@ -99,7 +125,9 @@ def resolve_glyph(glyph: str) -> str:
     """
     if not _ASCII_MODE:
         return glyph
-    return ASCII_GLYPH_FALLBACKS.get(glyph, glyph)
+    if glyph in ASCII_GLYPH_FALLBACKS:
+        return ASCII_GLYPH_FALLBACKS[glyph]
+    return FRAME_GLYPH_FALLBACKS.get(glyph, glyph)
 
 
 def resolve_glyph_text(text: str) -> str:
@@ -107,7 +135,10 @@ def resolve_glyph_text(text: str) -> str:
 
     Identity when ASCII mode is off. Used for composed labels that embed a
     marker next to words ("◐ Transcribing…", "📎 2 files", "Composer ▾");
-    ordinary ASCII text passes through unchanged in both modes.
+    ordinary ASCII text passes through unchanged in both modes. Uses
+    ``ASCII_GLYPH_FALLBACKS`` only: ``FRAME_GLYPH_FALLBACKS`` is excluded
+    because callers pass user text (file names, Inspect rows) and the frame
+    characters are ordinary punctuation there.
 
     Args:
         text: The label text to resolve character by character.

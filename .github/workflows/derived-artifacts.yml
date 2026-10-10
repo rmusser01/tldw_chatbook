@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     # TASK-32831: the main and admission-sensitive invocations measured 14m45s
     # and 4m59s, plus setup; keep both required steps within one bounded job.
-    timeout-minutes: 30
+    timeout-minutes: 35  # B1 (TASK-33910.2): owner decision 2026-10-09, raised 30 -> 35 to fit B1's mounted Roleplay suites (27m46s worst case at the merge-time re-read: worst run 23m40s + B1's files 4m06s)
 
     steps:
       - uses: actions/checkout@v4
@@ -149,6 +149,8 @@ jobs:
       # sandboxed suites lets the enrollment poison their config access
       # (RecoveryRequired: raw_source_selection_changed). Their own
       # invocation, after the sandboxed one, keeps both green.
+      # Roleplay frame B1 (TASK-33910.2): the mounted Roleplay frame suites (both
+      # styled tiers, hostile names, the journeys) are bootstrap_profile files too.
       - name: Run admission-sensitive suites
         if: always()
         run: |
@@ -171,6 +173,10 @@ jobs:
             Tests/Notes/test_notes_sync_attention_fence.py \
             Tests/Agents/test_first_request_window_honest_plan.py \
             Tests/Chat/test_console_capacity_refusal_copy.py \
+            Tests/UI/test_roleplay_frame_harness.py \
+            Tests/UI/test_roleplay_header.py \
+            Tests/UI/test_roleplay_hostile_names.py \
+            Tests/UI/test_roleplay_journeys.py \
             --timeout=300 \
             --tb=short
 

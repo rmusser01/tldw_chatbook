@@ -125,7 +125,9 @@ Roleplay deep links pass through an app-owned navigation coordinator before
 selection changes. The coordinator snapshots all incumbent Roleplay draft and
 in-flight save owners as one aggregate and requires Save and continue, Discard
 and continue, or Stay. Navigation proceeds only after every owned draft domain
-is clean; failure keeps drafts mounted and recoverable.
+is clean; failure keeps drafts mounted and recoverable. (2026-10-03: the single
+predicate over this aggregate is `roleplay_has_unsaved_work()`; see ADR-046's
+2026-10-03 amendment.)
 
 Unresolved identity repair is owned by Library. It accepts the exact
 `UnresolvedConversationKey`, expected conversation version, saved historical

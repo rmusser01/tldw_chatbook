@@ -12,24 +12,32 @@ copy of the name runs nothing. ``[/`` and ``[TODO] y`` pin the escaper choice:
 
 from __future__ import annotations
 
-import asyncio
-import time
-from collections.abc import Callable
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from textual.pilot import Pilot
-from textual.screen import Screen
-from textual.widgets import ListView
+from textual.widgets import ListView, Static
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (bootstrap profile)
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
+
+# Roleplay frame B1: the paint helpers and the character seam live in the
+# frame harness, their one home (test_roleplay_hostile_text_surfaces.py
+# imports them from there too).
+from Tests.UI.roleplay_frame_harness import (
+    StyledRoleplayMockApp,
+    click_meta_cells,
+    open_styled_roleplay,
+    painted_rows,
+    seed_mock_characters,
+    settle,
+    wait_until,
+)
 from Tests.UI.test_personas_dictionaries import (
     FakeDictScopeService,
     make_dict_record,
-    patch_character_paging,
 )
 from Tests.UI.test_personas_workbench import (
     PersonasTestApp,
@@ -38,6 +46,7 @@ from Tests.UI.test_personas_workbench import (
 )
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Workbench.workbench_widgets import FittedText
 from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
     EditCharacterRequested,
     PersonaProfileSaveRequested,
@@ -67,104 +76,9 @@ class _RecordingApp(PersonasTestApp):
         self.recorded.append(value)
 
 
-def _seed_characters(monkeypatch, records: list[dict]) -> None:
-    """Route the screen's character seams over ``records``."""
-    monkeypatch.setattr(
-        character_handler_module,
-        "fetch_all_characters",
-        lambda: [dict(record) for record in records],
-    )
-    monkeypatch.setattr(
-        character_handler_module,
-        "fetch_character_by_id",
-        lambda character_id: next(
-            (dict(r) for r in records if str(r["id"]) == str(character_id)), None
-        ),
-    )
-    patch_character_paging(monkeypatch)
-
-
-def painted_rows(screen: Screen) -> list[str]:
-    """Every compositor row as plain text: what the terminal shows.
-
-    Args:
-        screen: The mounted screen whose compositor output is read.
-
-    Returns:
-        One string per terminal row, top to bottom, as currently painted.
-    """
-    return [strip.text for strip in screen._compositor.render_strips()]
-
-
-def click_meta_cells(screen: Screen) -> list[tuple[int, int, str, str]]:
-    """Every painted cell run that carries an ``@click`` action.
-
-    Args:
-        screen: The mounted screen whose compositor output is scanned.
-
-    Returns:
-        ``(x, y, text, action)`` for each painted segment whose style meta
-        holds ``@click``; empty when no painted text is clickable markup.
-    """
-    hits = []
-    for y, strip in enumerate(screen._compositor.render_strips()):
-        x = 0
-        for segment in strip:
-            meta = segment.style.meta if segment.style is not None else {}
-            if meta and "@click" in meta:
-                hits.append((x, y, segment.text, meta["@click"]))
-            x += segment.cell_length
-    return hits
-
-
-async def settle(pilot: Pilot) -> None:
-    """Let the screen's own workers finish, then repaint twice.
-
-    Only workers owned by the current screen: the full app runs app-wide
-    workers that never finish, so ``app.workers.wait_for_complete()`` would
-    wait forever there.
-
-    Args:
-        pilot: The running test pilot.
-    """
-    await pilot.pause()
-    screen = pilot.app.screen
-    unfinished = [
-        worker
-        for worker in pilot.app.workers
-        if screen in worker.node.ancestors_with_self and not worker.is_finished
-    ]
-    if unfinished:
-        await pilot.app.workers.wait_for_complete(unfinished)
-    await pilot.pause()
-    await asyncio.sleep(0)
-    await pilot.pause()
-
-
-async def wait_until(
-    pilot: Pilot,
-    predicate: Callable[[], bool],
-    *,
-    timeout: float = 20.0,
-    what: str = "",
-) -> None:
-    """Poll ``predicate`` with a monotonic deadline.
-
-    Args:
-        pilot: The running test pilot.
-        predicate: Returns True once the awaited state holds.
-        timeout: Seconds to wait before failing.
-        what: Names the awaited state in the failure message.
-
-    Raises:
-        AssertionError: ``predicate`` stayed False for ``timeout`` seconds.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        await pilot.pause(0.02)
-    raise AssertionError(f"timed out after {timeout}s waiting for {what or predicate}")
+class _RecordingStyledApp(_RecordingApp, StyledRoleplayMockApp):
+    """``_RecordingApp`` under styled tier 1 (Roleplay frame B1): only the lazy
+    Roleplay sheet gives the header's item label and chips their row."""
 
 
 def _painted(screen) -> str:
@@ -219,7 +133,7 @@ async def test_the_real_app_keeps_running_with_a_character_named_like_markup(
     """The user-visible failure: on dev the whole app exited when Roleplay
     showed a character named ``[/]`` (a render-time ``MarkupError`` from the
     Inspector's ``Selected:`` line, which the keep-alive does not cover)."""
-    _seed_characters(
+    seed_mock_characters(
         monkeypatch, [{"id": 1, "name": "[/]", "description": "d", "version": 1}]
     )
     app = _build_test_app(configured_default="personas")
@@ -246,8 +160,8 @@ async def test_a_character_name_tag_and_conversation_title(
     name, mock_app_instance, monkeypatch
 ):
     """Library row, card, Inspector, conversation row, the Tag filter button,
-    a toast and the header's ``Editing`` subtitle."""
-    _seed_characters(
+    a toast and the header's item label while editing."""
+    seed_mock_characters(
         monkeypatch,
         [{"id": 1, "name": name, "description": "d", "tags": [name], "version": 1}],
     )
@@ -275,17 +189,68 @@ async def test_a_character_name_tag_and_conversation_title(
         assert f"Imported '{name}'." in _painted(screen)
         # Row, card name, card tags, Inspector, conversation row and toast.
         await _assert_literal_and_inert(pilot, name, at_least=6)
-        # Editing puts the name in the shared header's subtitle.
+        # Roleplay frame B1: editing names the item in the header's literal
+        # item label, never in the shared markup-on subtitle (the kind). This
+        # unstyled tier gives the label no row to paint on, so the painted
+        # and clicked copy is pinned under styled tier 1 by
+        # test_the_header_item_label_and_server_label.
         screen.post_message(EditCharacterRequested("1"))
         await settle(pilot)
         assert screen._edit_mode == "edit"
-        assert f"Editing {name}" in _painted(screen)
+        item = screen.query_one("#personas-header-item", FittedText)
+        assert item.value == (name, True)
+        subtitle = screen.query_one("#workbench-header-subtitle", Static)
+        assert str(subtitle.render()) == "Characters"
+        assert click_meta_cells(screen) == []
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+async def test_the_header_item_label_and_server_label(
+    name, mock_app_instance, monkeypatch
+):
+    """Roleplay frame B1's header surfaces: the item label (a literal
+    ``FittedText``, viewing and editing) and the status chip's server label
+    (escaped by ``build_header_view`` into the shared markup-on header)."""
+    seed_mock_characters(
+        monkeypatch, [{"id": 1, "name": name, "description": "d", "version": 1}]
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, app_class=_RecordingStyledApp
+    ) as pilot:
+        screen = pilot.app.screen
+        item = screen.query_one("#personas-header-item", FittedText)
+        # Alone in the library, so the first-paint auto-selection (F-031) picks it.
+        await wait_until(
+            pilot,
+            lambda: item.value == (name, False),
+            what="the hostile name in the header",
+        )
+        pilot.app.runtime_policy = SimpleNamespace(
+            state=SimpleNamespace(last_known_server_label=name, active_server_id=None)
+        )
+        screen._set_persona_editor_runtime_source("server")
+        screen._update_title()
+        await settle(pilot)
+        assert item.fitted_text == f"› {name}"
+        painted = _painted(screen)
+        assert f"› {name}" in painted
+        assert f"Server: {name} · read-only" in painted
+        # Library row, card name, Inspector, header item label and status.
+        await _assert_literal_and_inert(pilot, name, at_least=5)
+        # Editing is a local-only action: back to the local source first.
+        screen._set_persona_editor_runtime_source("local")
+        screen._update_title()
+        await settle(pilot)
+        screen.post_message(EditCharacterRequested("1"))
+        await settle(pilot)
+        assert screen._edit_mode == "edit"
+        assert f"› {name} · editing" in _painted(screen)
         assert click_meta_cells(screen) == []
 
 
 @pytest.mark.parametrize("name", HOSTILE_NAMES)
 async def test_a_persona_name(name, mock_app_instance, monkeypatch):
-    _seed_characters(monkeypatch, [])
+    seed_mock_characters(monkeypatch, [])
     record = {
         "id": "p-1",
         "name": name,
@@ -312,7 +277,7 @@ async def test_a_persona_name(name, mock_app_instance, monkeypatch):
 async def test_a_chat_dictionary_and_its_entry_key(
     name, mock_app_instance, monkeypatch
 ):
-    _seed_characters(monkeypatch, [])
+    seed_mock_characters(monkeypatch, [])
     entry = {
         "pattern": name,
         "replacement": "replacement",
@@ -342,7 +307,7 @@ async def test_a_chat_dictionary_and_its_entry_key(
 async def test_a_lore_book_and_its_entry_key(
     name, mock_app_instance, monkeypatch, tmp_path
 ):
-    _seed_characters(monkeypatch, [])
+    seed_mock_characters(monkeypatch, [])
     db = CharactersRAGDB(tmp_path / "hostile_lore.db", "test-client")
     try:
         manager = WorldBookManager(db)
@@ -367,7 +332,7 @@ async def test_a_persona_save_that_fails_validation_keeps_the_app_running(
     """TASK-33790's crash: a 205-character name fails the model's 200-character
     limit, and the validation text (``[type=string_too_long, ...]``) reached a
     markup-parsing toast."""
-    _seed_characters(monkeypatch, [])
+    seed_mock_characters(monkeypatch, [])
     service = Mock()
     service.list_persona_profiles = AsyncMock(return_value={"items": [], "total": 0})
     service.create_persona_profile = AsyncMock(return_value={"id": "p-9"})

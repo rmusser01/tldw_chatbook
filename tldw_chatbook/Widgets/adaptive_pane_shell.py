@@ -564,8 +564,8 @@ class AdaptivePaneShell(Horizontal):
 RAIL_ROW_CURRENT_MARKER = "▸"
 
 #: The ellipsis a squeezed title ends with (step 6), measured in cells. It goes
-#: through ``resolve_glyph``, but the glyph map has no ASCII substitute for it,
-#: so ASCII mode paints it unchanged.
+#: through ``resolve_glyph``, so ASCII mode paints ``...`` (Roleplay frame B1
+#: added the map entry); the fitter measures the resolved glyph.
 RAIL_ROW_ELLIPSIS = "…"
 
 #: Gap between the count and the key hint (the spec's examples print two cells).

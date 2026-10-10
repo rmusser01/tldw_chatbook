@@ -142,6 +142,7 @@ from tldw_chatbook.Constants import (
     TAB_EVALS,
     TAB_HOME,
     TAB_LIBRARY,
+    TAB_PERSONAS,
     TAB_SCHEDULES,
     TAB_SETTINGS,
     TAB_WATCHLISTS_COLLECTIONS,
@@ -2487,6 +2488,7 @@ class TldwCli(
         TAB_EVALS: ("screen_feature_evals.tcss",),
         TAB_WATCHLISTS_COLLECTIONS: ("screen_feature_watchlists.tcss",),
         TAB_WORKFLOWS: ("screen_feature_workflows.tcss",),
+        TAB_PERSONAS: ("screen_feature_roleplay.tcss",),
     }
 
     # Cluster K2 (TASK-33011): Roleplay-to-Console character-conversation

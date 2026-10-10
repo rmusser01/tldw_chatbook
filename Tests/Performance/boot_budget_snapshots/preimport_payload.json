@@ -1,7 +1,7 @@
 {
   "_comment": "Screen pre-importer payload census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "pass_added_modules": 557,
-  "pass_added_loc": 412492,
+  "pass_added_modules": 558,
+  "pass_added_loc": 417832,
   "routes": {
     "acp": {
       "loc": 520,
@@ -10,7 +10,7 @@
       ]
     },
     "ccp": {
-      "loc": 54571,
+      "loc": 55248,
       "modules": [
         "tldw_chatbook.Backup_Recovery.persona_visual_participants",
         "tldw_chatbook.Character_Chat.Character_Chat_Lib",
@@ -45,6 +45,7 @@
         "tldw_chatbook.UI.Persona_Modules.personas_conversations_controller",
         "tldw_chatbook.UI.Persona_Modules.personas_preview_controller",
         "tldw_chatbook.UI.Persona_Modules.personas_preview_coordinator",
+        "tldw_chatbook.UI.Persona_Modules.roleplay_frame_state",
         "tldw_chatbook.UI.Screens.personas_screen",
         "tldw_chatbook.UI.stts_profile_library",
         "tldw_chatbook.UI.tts_profile_recovery",
@@ -81,7 +82,7 @@
       "modules": []
     },
     "chatbooks": {
-      "loc": 897,
+      "loc": 971,
       "modules": [
         "tldw_chatbook.Chatbooks.database_paths",
         "tldw_chatbook.UI.Chatbooks_Window_Improved",
@@ -89,7 +90,7 @@
       ]
     },
     "chunking_lab": {
-      "loc": 5318,
+      "loc": 5277,
       "modules": [
         "tldw_chatbook.Chunking.chunking_interop_library",
         "tldw_chatbook.Chunking.lab_comparison",
@@ -112,7 +113,7 @@
       ]
     },
     "evals": {
-      "loc": 21346,
+      "loc": 21451,
       "modules": [
         "tldw_chatbook.Evals.character_probe",
         "tldw_chatbook.Evals.character_probe.cards",
@@ -164,7 +165,7 @@
       ]
     },
     "home": {
-      "loc": 1475,
+      "loc": 1473,
       "modules": [
         "tldw_chatbook.Home.home_rail_state",
         "tldw_chatbook.UI.Screens.home_screen",
@@ -174,7 +175,7 @@
       ]
     },
     "library": {
-      "loc": 125646,
+      "loc": 129284,
       "modules": [
         "tldw_chatbook.Audio.meeting_session",
         "tldw_chatbook.Chunking",
@@ -259,7 +260,6 @@
         "tldw_chatbook.Notes.notes_sync_conflicts",
         "tldw_chatbook.Notes.notes_sync_models",
         "tldw_chatbook.Notes.notes_sync_reconciler",
-        "tldw_chatbook.Prompt_Management.prompt_markdown_export",
         "tldw_chatbook.RAG_Search.chunking_service",
         "tldw_chatbook.STT.parakeet_external",
         "tldw_chatbook.STT.parakeet_sources",
@@ -291,6 +291,7 @@
         "tldw_chatbook.UI.Library_Modules.library_media_state",
         "tldw_chatbook.UI.Library_Modules.library_media_trash_browse_controller",
         "tldw_chatbook.UI.Library_Modules.library_notes_state",
+        "tldw_chatbook.UI.Library_Modules.library_notes_sync_attention",
         "tldw_chatbook.UI.Library_Modules.library_notes_work_session",
         "tldw_chatbook.UI.Library_Modules.library_prompt_browse_controller",
         "tldw_chatbook.UI.Library_Modules.library_prompts_state",
@@ -356,7 +357,7 @@
       ]
     },
     "llm": {
-      "loc": 23744,
+      "loc": 23743,
       "modules": [
         "tldw_chatbook.Event_Handlers.LLM_Management_Events",
         "tldw_chatbook.Event_Handlers.LLM_Management_Events.gguf_source_modes",
@@ -390,14 +391,14 @@
       ]
     },
     "logs": {
-      "loc": 852,
+      "loc": 856,
       "modules": [
         "tldw_chatbook.UI.Logs_Window",
         "tldw_chatbook.UI.Screens.logs_screen"
       ]
     },
     "mcp": {
-      "loc": 20596,
+      "loc": 20605,
       "modules": [
         "tldw_chatbook.MCP.hub_test_execution",
         "tldw_chatbook.MCP.local_config_saves",
@@ -432,7 +433,7 @@
       ]
     },
     "research": {
-      "loc": 6242,
+      "loc": 6262,
       "modules": [
         "tldw_chatbook.Research_Workspace.controller",
         "tldw_chatbook.Research_Workspace.layout_state",
@@ -462,13 +463,13 @@
       ]
     },
     "research_workspace": {
-      "loc": 2017,
+      "loc": 2019,
       "modules": [
         "tldw_chatbook.UI.Screens.research_workspace_screen"
       ]
     },
     "schedules": {
-      "loc": 14947,
+      "loc": 14925,
       "modules": [
         "tldw_chatbook.Scheduling.automation_health",
         "tldw_chatbook.Scheduling.events",
@@ -492,7 +493,7 @@
       ]
     },
     "settings": {
-      "loc": 60065,
+      "loc": 60806,
       "modules": [
         "tldw_chatbook.Agents.agent_presets",
         "tldw_chatbook.Audio.voice_process_types",
@@ -542,7 +543,7 @@
       ]
     },
     "stats": {
-      "loc": 1396,
+      "loc": 1394,
       "modules": [
         "tldw_chatbook.Stats",
         "tldw_chatbook.Stats.user_statistics",
@@ -550,7 +551,7 @@
       ]
     },
     "stts": {
-      "loc": 21316,
+      "loc": 21288,
       "modules": [
         "tldw_chatbook.Audio.dictation_service_lazy",
         "tldw_chatbook.Audio.duplex_contracts",
@@ -584,7 +585,7 @@
       ]
     },
     "study": {
-      "loc": 5309,
+      "loc": 5353,
       "modules": [
         "tldw_chatbook.UI.Screens.notes_scope_models",
         "tldw_chatbook.UI.Screens.study_screen",
@@ -598,7 +599,7 @@
       ]
     },
     "watchlists_collections": {
-      "loc": 33965,
+      "loc": 34087,
       "modules": [
         "tldw_chatbook.Subscriptions.briefing_audio",
         "tldw_chatbook.Subscriptions.briefing_export",

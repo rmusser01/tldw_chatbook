@@ -1,0 +1,24 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Roleplay  Characters › Ada (Debugging…  No chat provider · Settings ›   Local
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────┐
+│╭──────────────╮╭──────────────────────────────────────╮┌────────────────────┐│
+││  Library  <  ││      ▸ Try a test chat (nothing      ││  Inspector     >   ││
+││  Search...   ││ Character                            ││ Selected: Ada      ││
+││     New      ││  Name: Ada (Debugging Partner)       ││ (Debugging         ││
+││     New      ││                                      ││ Partner)           ││
+││    Import    ││  Description: A patient senior       ││ Type: character    ││
+││    Import    ││  engineer who helps you debug by     ││ Validation: OK   ▁ ││
+││    Duplic    ││  asking questions rather than     ▁  ││ Conversations (0)  ││
+││    Sort:     ││  giving answers.                     ││   Search this      ││
+││     Tag:     ││  Personality: Socratic, calm,        ││  No saved          ││
+││  Ada (Deb…   ││  precise.                            ││  conversations.    ││
+││  A patien…   ││  First message: What did you         ││ Readiness          ││
+││  ARIA-7      ││  expect to happen, and what        ▅ ││ Chat now blocked:  ││
+││              ││    Edit     Conversations (0)        ││ openai is not      ││
+│╰──────────────╯╰──────────────────────────────────────╯└────────────────────┘│
+└──────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | F1 · F6 · Ctrl+P · Ctrl+Q

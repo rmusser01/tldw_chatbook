@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 import inspect
 import json
 import os
-from pathlib import Path
 import threading
 from types import SimpleNamespace
 from typing import Any
@@ -17,6 +16,7 @@ from uuid import UUID
 
 import pytest
 from textual.app import App
+from textual.color import Color
 from textual.screen import Screen
 
 # Harness apps load the consolidated widget CSS the real app loads
@@ -25,6 +25,11 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Button, Checkbox, Input, ListView, Select, Static, TextArea
 
 from Tests.UI.background_signals import wait_for_background_signal, wait_for_signal
+
+# Roleplay frame B1: the delegating harness apps moved to
+# Tests/UI/roleplay_frame_harness.py (spec 5.7.1); these names stay importable
+# from here for the modules that import them.
+from Tests.UI.roleplay_frame_harness import PersonasTestApp, StyledPersonasTestApp
 import tldw_chatbook.UI.CCP_Modules.ccp_character_handler as character_handler_module
 import tldw_chatbook.UI.Persona_Modules.personas_conversations_controller as conversations_controller_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
@@ -97,6 +102,7 @@ from tldw_chatbook.UI.Screens.personas_screen import (
     PersonasScreen,
 )
 from tldw_chatbook.UI.tts_profile_recovery import dependency_recovery_actions
+from tldw_chatbook.UI.Workbench.workbench_widgets import FittedText
 from tldw_chatbook.Widgets.Persona_Widgets.persona_buddy_widget import (
     PersonaBuddyWidget,
 )
@@ -213,66 +219,6 @@ def stub_characters(monkeypatch):
     # Task 4: the library pages from the DB seam now; mirror fetch_all_characters
     # (read live so tests that swap it mid-run for create/delete stay consistent).
     patch_character_paging(monkeypatch)
-
-
-class PersonasTestApp(ConsolidatedCSSApp):
-    def __init__(self, mock_app_instance):
-        super().__init__()
-        self._mock = mock_app_instance
-        self.character_persona_scope_service = (
-            mock_app_instance.character_persona_scope_service
-        )
-
-    # Delegating these to a MagicMock would make Textual see phantom dynamic
-    # hooks (``compute_*``/``watch_*``/...) on the App and crash at mount.
-    _NON_DELEGATED_PREFIXES = (
-        "_",
-        "watch_",
-        "compute_",
-        "validate_",
-        "action_",
-        "key_",
-        "on_",
-    )
-
-    def __getattr__(self, name):
-        if name.startswith(self._NON_DELEGATED_PREFIXES):
-            raise AttributeError(name)
-        return getattr(self.__dict__["_mock"], name)
-
-    def compose(self):
-        # Mirrors the real app: an `AppFooterStatus` composed directly on
-        # the app's own default screen (see app.py's `compose()`).
-        # Task-264: `PersonasScreen` (via `BaseAppScreen.compose()`) now
-        # mounts its OWN `AppFooterStatus` too, and
-        # `PersonasScreen._register_footer_shortcuts()` resolves that
-        # screen-owned instance via ``self.query_one("AppFooterStatus")`` --
-        # so this default-screen widget is only kept around as a foil (the
-        # tests below assert the registration does NOT land here).
-        yield AppFooterStatus(id="app-footer-status")
-
-    async def _ensure_tts_profile_service(self):
-        """Delegate the real app's private lazy loader when a test provides it."""
-
-        loader = self.__dict__["_mock"].__dict__.get("_ensure_tts_profile_service")
-        if not callable(loader):
-            return None
-        result = loader()
-        if inspect.isawaitable(result):
-            result = await result
-        return result
-
-    def on_mount(self) -> None:
-        self.push_screen(PersonasScreen(self))
-
-
-class StyledPersonasTestApp(PersonasTestApp):
-    CSS_PATH = str(
-        Path(__file__).resolve().parents[2]
-        / "tldw_chatbook"
-        / "css"
-        / "tldw_cli_modular.tcss"
-    )
 
 
 class PersonaBuddyWorkbenchApp(PersonasTestApp):
@@ -559,8 +505,15 @@ class TestWorkbenchShell:
             assert not screen.query("#personas-status-row")
             purpose = screen.query_one("#personas-purpose", Static)
             assert str(purpose.renderable) == "Characters — who the AI plays · 2"
-            # ...so the workbench starts one row higher than the old layout.
-            assert screen.query_one("#personas-workbench").region.y == 10
+            # Roleplay frame B1: the header is one row, and the purpose line and
+            # the mode strip sit right under it (y 6 at 170x50 with today's
+            # 3-row nav; asserted relative to the measured header, spec 5.7.2).
+            header = screen.query_one("#personas-header")
+            assert header.region.height == 1
+            assert (
+                screen.query_one("#personas-workbench").region.y
+                == header.region.bottom + 2
+            )
             # The count renders once (header line), not again under the list.
             count = screen.query_one("#personas-library-count", Static)
             assert str(count.renderable) == ""
@@ -879,20 +832,20 @@ class TestWorkbenchShell:
             status = screen.query_one(
                 "#personas-header #workbench-header-status", Static
             )
-            # F-031 auto-selects the first row on first paint, which makes
-            # the provider gate operative (task-440): the mock config has no
-            # ready provider, so the header honestly reads Blocked.
-            assert str(status.renderable) == "Blocked"
-            # dynamic suffix still appends in create mode
+            # Roleplay frame B1: the status word is the data source, never a
+            # readiness badge; the provider block is the header's own chip.
+            assert str(status.renderable) == "Local"
+            assert screen.query_one("#personas-header-blocked").display is True
+            # The kind is the subtitle; the item (interim) names a new draft.
             screen._edit_mode = "create"
             screen._update_title()
             await pilot.pause()
-            subtitle = str(
-                screen.query_one(
-                    "#personas-header #workbench-header-subtitle", Static
-                ).renderable
+            subtitle = screen.query_one(
+                "#personas-header #workbench-header-subtitle", Static
             )
-            assert "New character" in subtitle
+            assert str(subtitle.renderable) == "Characters"
+            item = screen.query_one("#personas-header-item", FittedText)
+            assert item.value == ("New character", True)
 
     async def test_purpose_shows_active_mode_descriptor_and_updates_on_switch(
         self, mock_app_instance, stub_characters
@@ -1444,6 +1397,36 @@ class TestPersonasMode:
             # Save-in-place: the editor stays open after an edit save too.
             assert screen._edit_mode == "edit"
             assert screen.query_one("#ccp-persona-editor-view").display is True
+
+    async def test_persona_save_clears_the_unsaved_chip_without_the_poll(
+        self, mock_app_instance, stub_characters, stub_scope_service
+    ):
+        """Roleplay frame B1: the post-save sync inside ``_after_profile_save``
+        runs while the persona save is still flagged in flight, so a chip
+        repainted only there would stay "Unsaved" after a successful save until
+        some unrelated refresh. With the readiness poll stopped, the save path
+        alone must clear it."""
+        app = PersonasTestApp(mock_app_instance)
+        async with app.run_test(size=(160, 50)) as pilot:
+            screen = await self._enter_personas_mode(pilot)
+            screen._console_readiness_poll_timer.stop()
+            await pilot.click("#personas-library-row-persona-p-1")
+            await pilot.pause()
+            screen.post_message(EditPersonaProfileRequested("p-1"))
+            await pilot.pause()
+            screen.state.has_unsaved_changes = True
+            screen._update_title()
+            chip = screen.query_one("#personas-header-unsaved", FittedText)
+            assert chip.display is True
+            screen.post_message(
+                PersonaProfileSaveRequested({"id": "p-1", "name": "Archivist 2"})
+            )
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            stub_scope_service.update_persona_profile.assert_awaited_once()
+            assert screen._profile_save_operation_inflight is False
+            assert chip.display is False
 
     async def test_local_profile_editor_roundtrip_builds_local_update_schema(
         self, mock_app_instance, stub_characters, stub_scope_service
@@ -7831,12 +7814,14 @@ class TestConsoleActions:
                     "#personas-header #workbench-header-status", Static
                 ).renderable
             )
-            assert header_status != "Ready"
+            assert header_status == "Local"  # never "Ready" (B1, RP-067)
+            assert screen.query_one("#personas-header-blocked").display is True
 
     async def test_readiness_surfaces_stay_ready_with_a_configured_provider(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Provider ready -> "Ready to chat in Console."/"Ready" copy shows."""
+        """Provider ready -> "Ready to chat in Console."; the header shows no
+        block chip and its status stays the data source (B1: never "Ready")."""
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
             "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
@@ -7855,8 +7840,9 @@ class TestConsoleActions:
                         "#personas-header #workbench-header-status", Static
                     ).renderable
                 )
-                == "Ready"
+                == "Local"
             )
+            assert screen.query_one("#personas-header-blocked").display is False
             assert (
                 screen.query_one("#personas-attach-to-console", Button).disabled
                 is False
@@ -7900,8 +7886,9 @@ class TestConsoleActions:
                         "#personas-header #workbench-header-status", Static
                     ).renderable
                 )
-                != "Ready"
+                == "Local"
             )
+            assert screen.query_one("#personas-header-blocked").display is True
             # Per-intent gating (task-523): Chat now disabled, Send to Console
             # draft enabled.
             assert screen.query_one("#personas-start-chat", Button).disabled is True
@@ -7926,24 +7913,18 @@ class TestConsoleActions:
             assert "Ready to chat in Console." in str(
                 screen.query_one("#personas-readiness-console", Static).renderable
             )
-            assert (
-                str(
-                    screen.query_one(
-                        "#personas-header #workbench-header-status", Static
-                    ).renderable
-                )
-                == "Ready"
-            )
+            assert screen.query_one("#personas-header-blocked").display is False
 
     async def test_action_gate_precedes_provider_readiness_on_both_surfaces(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Qodo #824-2: with the action gate closed (unsaved edits), the
-        provider axis is NOT operative -- the inspector shows the ACTION
-        reason (never provider copy) and the header keeps its pre-task-440
-        semantics rather than claiming a conflicting provider-"Blocked".
-        One precedence rule on both surfaces: action gate first, provider
-        readiness only once the gate opens."""
+        """Qodo #824-2, re-scoped by Roleplay frame B1 (spec 1.3): the
+        inspector speaks for the STAGED item, so with its action gate closed
+        (unsaved edits) it shows the ACTION reason and never provider copy.
+        The header now speaks for the DESTINATION: its block chip says no chat
+        provider is ready whatever is selected, beside the unsaved chip. The
+        two no longer conflict -- they answer different questions -- and the
+        header never claims "Ready"."""
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
             "chat_defaults": {"provider": "openai", "model": "gpt-4o"},
@@ -7965,7 +7946,9 @@ class TestConsoleActions:
                     "#personas-header #workbench-header-status", Static
                 ).renderable
             )
-            assert header_status == "Ready"  # pre-task-440 header semantics
+            assert header_status == "Local"
+            assert screen.query_one("#personas-header-blocked").display is True
+            assert screen.query_one("#personas-header-unsaved").display is True
 
     async def test_selection_pushes_console_gate_before_async_followup(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
@@ -8327,12 +8310,12 @@ class TestConsoleActions:
         payload = app.open_chat_with_handoff.call_args.args[0]
         assert payload.metadata.get("intent") != "start_chat"
 
-    async def test_header_carries_blocked_class_when_provider_unready(
+    async def test_header_blocked_chip_follows_the_handoff_provider(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Task-523: the header carries the ``status-blocked`` class (the red
-        cue's CSS hook) while the staged handoff provider is unready, and drops
-        it once the provider becomes ready."""
+        """Roleplay frame B1 (replaces task-523's ``status-blocked`` class): the
+        header's block chip shows while the chat provider is unready and goes
+        once it is ready; the header never takes the ``status-blocked`` class."""
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
             "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
@@ -8341,29 +8324,25 @@ class TestConsoleActions:
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
             header = screen.query_one("#personas-header")
-            assert header.has_class("status-blocked") is True
+            chip = screen.query_one("#personas-header-blocked")
+            assert chip.display is True
+            assert header.has_class("status-blocked") is False
 
             mock_app_instance.app_config["api_settings"] = {
                 "anthropic": {"api_key": "unit-test-placeholder-key"}
             }
             screen._sync_title_and_console_actions()
             await pilot.pause()
-            assert header.has_class("status-blocked") is False
+            assert chip.display is False
 
-    async def test_blocked_header_badge_renders_red_under_real_bundle(
+    async def test_blocked_chip_renders_red_under_the_lazy_sheet(
         self, mock_app_instance, stub_characters, stub_conversations
     ):
-        """Task-523 regression guard for the red cue's CSS cascade.
-
-        The colour rule MUST live in app-tier CSS: a widget ``DEFAULT_CSS``
-        rule is outranked by the bundle's ``.ds-status-badge`` (color:
-        $ds-text-primary) regardless of selector specificity, so the badge
-        would stay primary and the cue would never render. Uses
-        ``StyledPersonasTestApp`` (loads the real bundle) and asserts the
-        blocked-state badge colour DIFFERS from the ready-state colour - if the
-        rule were outranked, both states would render the identical primary
-        colour and this fails.
-        """
+        """Roleplay frame B1 (replaces the task-523 red badge): the block chip
+        is coloured by the lazy Roleplay sheet, which only a styled tier loads
+        (``StyledPersonasTestApp`` = the boot bundle plus every split sheet),
+        in the readable error hue ($text-error via $ds-status-error-readable).
+        The neutral status word must NOT turn red: it is the data source."""
         mock_app_instance.app_config = {
             "character_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
             "chat_defaults": {"provider": "anthropic", "model": "claude-3-haiku"},
@@ -8371,21 +8350,21 @@ class TestConsoleActions:
         app = StyledPersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._select_first_character(pilot)
-            badge = screen.query_one(
+            status = screen.query_one(
                 "#personas-header #workbench-header-status", Static
             )
-            assert screen.query_one("#personas-header").has_class("status-blocked")
-            blocked_color = badge.styles.color
+            chip = screen.query_one("#personas-header-blocked")
+            assert chip.display is True
+            error = pilot.app.get_css_variables()["text-error"]
+            assert chip.styles.color.rgb == Color.parse(error).rgb
+            assert status.styles.color != chip.styles.color
 
             mock_app_instance.app_config["api_settings"] = {
                 "anthropic": {"api_key": "unit-test-placeholder-key"}
             }
             screen._sync_title_and_console_actions()
             await pilot.pause()
-            assert not screen.query_one("#personas-header").has_class("status-blocked")
-            ready_color = badge.styles.color
-
-        assert blocked_color != ready_color
+            assert chip.display is False
 
     async def test_attach_stages_profile_payload(
         self, mock_app_instance, stub_characters, stub_conversations, stub_scope_service
@@ -13134,19 +13113,22 @@ class TestDirtyTracking:
             subtitle = screen.query_one(
                 "#personas-header #workbench-header-subtitle", Static
             )
-            text = str(subtitle.renderable)
-            assert "Editing Detective Sam" in text
-            assert "unsaved" not in text
+            item = screen.query_one("#personas-header-item", FittedText)
+            chip = screen.query_one("#personas-header-unsaved", FittedText)
+            assert str(subtitle.renderable) == "Characters"
+            assert item.value == ("Detective Sam", True)
+            assert chip.display is False
             await self._type_in_description(pilot, screen)
-            assert "Editing Detective Sam - unsaved" in str(subtitle.renderable)
+            assert chip.display is True
+            assert chip.value == "Unsaved changes"
             await pilot.press("ctrl+s")
             await pilot.pause()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            # Save-in-place: the editor stays open, so the header keeps
-            # showing "Editing <name>" (just without the "- unsaved" suffix
-            # now that the save cleared it).
-            assert str(subtitle.renderable) == "Editing Detective Sam"
+            # Save-in-place: the editor stays open, so the item still reads
+            # "editing", and the save cleared the aggregate, so the chip goes.
+            assert item.value == ("Detective Sam", True)
+            assert chip.display is False
             title = screen.query_one("#personas-header #workbench-header-title", Static)
             # F-034: the screen's one public name matches the nav label.
             assert str(title.renderable) == "Roleplay"

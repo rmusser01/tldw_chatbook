@@ -25,6 +25,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import QueryError
+from textual.events import Click
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.worker import Worker
@@ -345,6 +346,8 @@ from ...Widgets.Persona_Widgets.personas_state import (
     MODE_LABELS,
     PersonasWorkbenchState,
 )
+from ..Persona_Modules import roleplay_frame_state as frame_state
+from ..Workbench.workbench_widgets import FittedText
 from ...Widgets.workbench_focus import (
     WorkbenchPaneTarget,
     focus_relative_workbench_pane,
@@ -358,7 +361,6 @@ from .destination_recovery import DestinationRecoveryState
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.shortcut_context import ShortcutAction, ShortcutContext
-from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Workbench.workbench_widgets import DestinationHeader
 from ..Persona_Modules.personas_conversations_controller import (
     _CONVERSATION_VIEW_ID,
@@ -444,18 +446,6 @@ MODE_CHIP_ORDER: tuple[str, ...] = ("characters", "personas", "dictionaries", "l
 #: only act from list/button focus. Known shadow: the persona-buddy overlay
 #: binds "c" (collapse) while the buddy itself holds DOM focus.
 MODE_HOTKEYS: tuple[str, ...] = ("c", "p", "d", "l")
-
-#: One-line "what this mode is" copy, shown under the title and as chip tooltips.
-_MODE_DESCRIPTORS: dict[str, str] = {
-    "characters": "Characters — who the AI plays.",
-    # F-034: the descriptor teaches the genre convention (characters = who
-    # the AI plays, personas = who YOU play) instead of the vague "assistant
-    # profiles" - without reviving the retired human-identity framing.
-    "personas": "Personas — who you play in the chat.",
-    "prompts": "Prompts — moving to the Library.",
-    "dictionaries": "Dictionaries — text find/replace rules.",
-    "lore": "Lore — world facts injected on keywords.",
-}
 
 #: Modes genuinely coming to Roleplay — their chips carry the "· soon" marker.
 #: Departing modes (prompts) are deliberately excluded: they are leaving, not arriving.
@@ -1178,12 +1168,6 @@ class PersonasScreen(BaseAppScreen):
         background: $background;
     }
 
-    /* Red cue when the staged Console handoff provider is unready (task-523):
-       the "Blocked" badge word turns $ds-status-blocked. The rule CANNOT live
-       here — app-bundle CSS (`.ds-status-badge { color: $ds-text-primary }`)
-       outranks any widget DEFAULT_CSS regardless of specificity — so it lives
-       in the app-tier source css/components/_workbench.tcss instead. */
-
     #personas-mode-strip {
         height: 1;
         min-height: 1;
@@ -1460,7 +1444,7 @@ class PersonasScreen(BaseAppScreen):
         self._conversation_search_debounce_timer: Timer | None = None
         self._console_readiness_poll_timer: Timer | None = None
         self._console_readiness_block_reason: str | None = None
-        self._console_header_block_reason: str | None = None
+        self._header_inputs: frame_state.RoleplayHeaderInputs | None = None
         self._character_tts_request_generation = 0
         self._character_tts_snapshot: _CharacterTTSControlSnapshot | None = None
         self._character_tts_presentation = CharacterTTSPresentationState.disabled()
@@ -1562,12 +1546,19 @@ class PersonasScreen(BaseAppScreen):
         """
         with Vertical(id="personas-shell"):
             yield DestinationHeader(
-                WorkbenchHeaderState(
-                    title="Roleplay",
-                    subtitle=self._header_subtitle_text(),
-                    status="ready",
+                frame_state.initial_header_state(
+                    self.state.active_mode, self.state.runtime_source
+                ),
+                before_status=Widget(
+                    FittedText(
+                        fit=frame_state.fit_header_item, id="personas-header-item"
+                    ),
+                    FittedText(hide_when_empty=True, id="personas-header-unsaved"),
+                    FittedText(hide_when_empty=True, id="personas-header-blocked"),
+                    id="personas-header-tail",
                 ),
                 id="personas-header",
+                classes="personas-header-inline",
             )
             # F-033: one line carries both the mode descriptor and the live
             # item count - the old standalone status strip ("Characters: N")
@@ -1960,6 +1951,7 @@ class PersonasScreen(BaseAppScreen):
         self._sync_responsive_workbench()
         self._sync_personas_rails()
         self._set_persona_editor_runtime_source(self.persona_handler.current_mode())
+        self._update_title()
         self.query_one(PersonasLibraryPane).set_mode(self.state.active_mode)
         self._sync_local_character_actions()
         self._show_center(None)
@@ -2337,6 +2329,7 @@ class PersonasScreen(BaseAppScreen):
             event: Textual resize event emitted when the screen size changes.
         """
         self._sync_responsive_workbench()
+        self._paint_header()
 
     def _sync_responsive_workbench(self) -> None:
         compact = self.size.width <= PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH
@@ -4579,53 +4572,50 @@ class PersonasScreen(BaseAppScreen):
             )
             self._show_center("#personas-mode-placeholder")
 
-    def _header_subtitle_text(self) -> str:
-        """Live header subtitle: destination purpose plus the editing state."""
-        suffix = " - unsaved" if self.state.has_unsaved_changes else ""
-        if self._edit_mode == "create":
-            noun = "persona" if self.state.active_mode == "personas" else "character"
-            return f"New {noun}{suffix}"
-        # TASK-34400: the shared header subtitle parses markup; names are untrusted.
-        if self._edit_mode == "edit":
-            name = self.state.selected_entity_name or "item"
-            return f"Editing {escape_markup(name)}{suffix}"
-        # Upstream improvement kept: surface the selected entity in view mode
-        # when it has unsaved changes, instead of the bare purpose line.
-        if self.state.has_unsaved_changes and self.state.selected_entity_name:
-            return f"{escape_markup(self.state.selected_entity_name)}{suffix}"
-        return "Author the pieces that shape a chat"
-
     def _mode_descriptor_text(self, mode: str) -> str:
         """The visible one-line meaning of a mode (falls back for un-described modes)."""
-        return _MODE_DESCRIPTORS.get(mode, MODE_LABELS.get(mode, mode))
+        return frame_state.mode_descriptor(mode)
 
     def _mode_placeholder_text(self, mode: str) -> str:
         """The inviting placeholder body for a not-yet-built (or departing) mode."""
         return _MODE_PLACEHOLDER_BODY.get(mode, _PLACEHOLDER_FALLBACK)
 
     def _update_title(self) -> None:
-        """Refresh the destination header; tolerate updates racing teardown."""
+        """Gather the header's inputs and repaint it (spec 1.3; never "Ready")."""
+        self._header_inputs = self._gather_header_inputs()
+        self._paint_header()
+
+    def _gather_header_inputs(self) -> frame_state.RoleplayHeaderInputs:
+        """Read every header input; the chip follows the ADR-046 aggregate (R24)."""
+        ready, _reason = self.preview.console_handoff_readiness()
+        return frame_state.RoleplayHeaderInputs(
+            mode=self.state.active_mode,
+            edit_mode=self._edit_mode,
+            item_name=self.state.selected_entity_name or "",
+            unsaved=frame_state.roleplay_has_unsaved_work(
+                self._aggregate_roleplay_draft_snapshot()
+            ),
+            provider_blocked=not ready,
+            runtime_source=self.state.runtime_source,
+            server_label=frame_state.runtime_server_label(self.app_instance),
+        )
+
+    def _paint_header(self) -> None:
+        """Push the header view for the cached inputs; tolerate teardown races."""
         try:
             header = self.query_one("#personas-header", DestinationHeader)
         except Exception:
             logger.opt(exception=True).debug("Could not update the personas header.")
             return
-        # Same input as the inspector's readiness line (task-440): a staged
-        # character/persona whose resolved provider would not answer must
-        # not claim "Ready" - the existing degraded-state badge ("Blocked")
-        # is the header's own established pattern (see stats_screen.py) for
-        # this, so no new header UI is introduced. The fuller "what to do"
-        # remedy text stays in the inspector's readiness line below it.
-        provider_block_reason = self._provider_send_block_reason()
-        status = "blocked" if provider_block_reason else "ready"
-        header.sync_state(
-            WorkbenchHeaderState(
-                title="Roleplay",
-                subtitle=self._header_subtitle_text(),
-                status=status,
-            )
-        )
-        self._console_header_block_reason = provider_block_reason
+        if self._header_inputs is None:
+            return
+        width = header.outer_size.width or self.size.width  # first paint: screen
+        view = frame_state.build_header_view(self._header_inputs, width)
+        header.sync_state(view.state)
+        header.query_one("#personas-header-item", FittedText).set_value(view.item)
+        chips = (("unsaved", view.unsaved_chip), ("blocked", view.blocked_chip))
+        for chip, text in chips:
+            header.query_one(f"#personas-header-{chip}", FittedText).set_value(text)
 
     def _purpose_line_text(self) -> str:
         """Mode descriptor plus the live item count on one line (F-033).
@@ -4636,7 +4626,6 @@ class PersonasScreen(BaseAppScreen):
         first render lands, same as the old strip's pre-load "0").
         """
         mode = self.state.active_mode
-        descriptor = self._mode_descriptor_text(mode)
         count: int | None = None
         if mode == "characters":
             # ``_characters`` is now one page; the full-library count lives in
@@ -4648,9 +4637,7 @@ class PersonasScreen(BaseAppScreen):
             count = len(self._dictionaries_cache)
         elif mode == "lore":
             count = len(self._lore_books_cache)
-        if count is None:
-            return descriptor
-        return f"{descriptor.rstrip('.')} · {count}"
+        return frame_state.purpose_line(mode, count)
 
     def _update_purpose_line(self) -> None:
         """Refresh the merged purpose/count line; tolerate teardown races."""
@@ -7316,10 +7303,11 @@ class PersonasScreen(BaseAppScreen):
         if not self.is_mounted or not self.is_active:
             return
         reason = self._provider_send_block_reason()
-        # A background read can complete between header and inspector paints.
+        # A background read can complete between header and inspector paints;
+        # the header also follows the draft aggregate and the destination block.
         if (
             reason == self._console_readiness_block_reason
-            and reason == self._console_header_block_reason
+            and self._gather_header_inputs() == self._header_inputs
         ):
             return
         self._sync_title_and_console_actions()
@@ -7527,6 +7515,12 @@ class PersonasScreen(BaseAppScreen):
     ) -> None:
         message.stop()
         self.preview.open_provider_settings()
+
+    @on(Click, "#personas-header-blocked")
+    def _open_chat_provider_settings(self, event: Click) -> None:
+        """The blocked chip opens Settings for the provider a chat would use."""
+        event.stop()
+        self.preview.open_provider_settings(defaults_key="chat_defaults")
 
     @on(PreviewGreetingSelected)
     async def _handle_preview_greeting_selected(
@@ -15898,6 +15892,7 @@ class PersonasScreen(BaseAppScreen):
             self._profile_save_operation_inflight = False
             if not profile_save_completion.done():
                 profile_save_completion.set_result(None)
+            self._update_title()
 
     async def _after_profile_save(
         self, saved: dict, *, source: str | None = None
@@ -16176,9 +16171,11 @@ class PersonasScreen(BaseAppScreen):
         ):
             inflight.append("Persona visuals")
         attachments_dirty = False
+        # The cached demand-mounted editor, never a DOM query: the 0.25 s
+        # readiness poll gathers this aggregate on every tick (Roleplay B1).
         try:
-            editor = self.query_one(PersonasCharacterEditorWidget)
-            attachments_dirty = editor.has_unsaved_attachment()
+            editor = self._ready_center_view("character-editor")
+            attachments_dirty = editor is not None and editor.has_unsaved_attachment()
         except (AttributeError, QueryError):
             pass
         return RoleplayDraftSnapshot(

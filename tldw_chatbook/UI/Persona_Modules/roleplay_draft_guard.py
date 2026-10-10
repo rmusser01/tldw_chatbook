@@ -39,6 +39,7 @@ from ..Navigation.character_conversation_navigation import (
     RoleplayDraftRecoveryDialog,
     RoleplayDraftSnapshot,
 )
+from .roleplay_frame_state import roleplay_has_unsaved_work
 
 if TYPE_CHECKING:
     from ..Screens.personas_screen import PersonasScreen
@@ -94,7 +95,7 @@ async def confirm_roleplay_drafts(screen: PersonasScreen, ask: AskPrompt) -> boo
     if snapshot.inflight_save_domains:
         await _await_roleplay_save_owners(screen)
         snapshot = screen._aggregate_roleplay_draft_snapshot()
-    if snapshot.is_clean:
+    if not roleplay_has_unsaved_work(snapshot):
         return True
     domains = tuple(
         dict.fromkeys(
@@ -112,7 +113,9 @@ async def confirm_roleplay_drafts(screen: PersonasScreen, ask: AskPrompt) -> boo
     if choice == "save":
         while True:
             failures = await _save_aggregate_roleplay_drafts(screen, snapshot)
-            if not failures and screen._aggregate_roleplay_draft_snapshot().is_clean:
+            if not failures and not roleplay_has_unsaved_work(
+                screen._aggregate_roleplay_draft_snapshot()
+            ):
                 return True
             retry = await ask(RoleplayDraftRecoveryDialog(failures))
             if retry != "retry":
@@ -130,7 +133,9 @@ async def confirm_roleplay_drafts(screen: PersonasScreen, ask: AskPrompt) -> boo
             editor.discard_unsaved_form()
         screen.state.has_unsaved_changes = False
         screen._set_active_row_unsaved(False)
-        return screen._aggregate_roleplay_draft_snapshot().is_clean
+        return not roleplay_has_unsaved_work(
+            screen._aggregate_roleplay_draft_snapshot()
+        )
     return False
 
 
