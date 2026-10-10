@@ -4471,3 +4471,22 @@ failure paths. A later passing natural run alone did not disprove this race.
 **Incident.** The replacement review initially could not collect targeted tests: the native privacy walker rejected the existing Windows Temp parent as `shared_writable_parent` (mode 0o766). Moving a test profile below that same parent did not fix the ancestor failure. A profile under the managed worktree, whose ancestors were independently verified through `platform_files.os.stat`, collected and passed.
 
 **What worked.** Create an owned test-only parent using `platform_files.os.mkdir(path, 0o700)`, then set `TMP`, `TEMP`, and `TLDW_TEST_CONFIG_ROOT` beneath it before pytest starts. Use separate bootstrap roots for concurrent test processes. Keep the real profile and existing directory ACLs untouched; changing a privacy guard to get collection past this error would discard the condition under test. On Windows the native facade supplies ACL-derived modes and file change times; stdlib stat's creation time does not substitute for ChangeTime in cache invalidation tests.
+
+## A live round can be frozen by the host's own maintenance sleep (TASK-33620.15.1, 2026-10-10)
+
+**Incident.** The config-sync cadence round's paired sends kept stalling for about
+15 minutes between sends (908, 933 and 1,016 s), and one hover poller took 17 minutes
+over a 12 s window. One provider call never finished ("no first token after 90 s"), so
+that app's queue paused and every later send was queued. App Tamer (`autoStopEnabled`)
+was suspected first, and the pollers were moved off the Command Line Tools Python. That
+was not the cause: `pmset -g log` showed the Mac entering "Maintenance Sleep" for about
+976 s at a time, which froze the apps, the proxies and the pollers together. A send
+that straddles one of those sleeps measures the sleep. The previous agent's seven pairs
+from the same host (`uxrev/evidence/bd3/C4/`) had provider calls 3-12 s after Enter and
+two sends with no provider call.
+
+**Practice.** Before a live round, hold a no-idle-sleep assertion for its length
+(`caffeinate -i -s -t <seconds>` in your own tmux server, killed when done; check it with
+`pmset -g assertions`). Run pollers and helpers with the venv interpreter, not
+`/usr/bin/python3`. After the round, check `pmset -g log | grep Sleep` for its window,
+and drop any send that spans a sleep or a hung provider call. Do not average it in.
