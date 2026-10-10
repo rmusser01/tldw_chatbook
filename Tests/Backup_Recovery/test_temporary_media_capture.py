@@ -629,6 +629,7 @@ def _first_temporary_roundtrip(tmp_path, *, delete_one=False):
     environment = os.environ.copy()
     environment.update(
         HOME=str(restored / "home"),
+        USERPROFILE=str(restored / "home"),
         XDG_CONFIG_HOME=str(restored / "config"),
         XDG_DATA_HOME=str(restored / "data"),
         TLDW_CONFIG_PATH=str(restored / "config" / "config.toml"),
@@ -739,6 +740,7 @@ def test_second_temporary_archive_restores_ready_assets_and_deleted_references(
     environment = os.environ.copy()
     environment.update(
         HOME=str(second / "home"),
+        USERPROFILE=str(second / "home"),
         XDG_CONFIG_HOME=str(second / "config"),
         XDG_DATA_HOME=str(second / "data"),
         TLDW_CONFIG_PATH=str(second / "config" / "config.toml"),
