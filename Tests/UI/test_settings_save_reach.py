@@ -28,6 +28,9 @@ from tldw_chatbook.Chat.console_session_settings import blank_console_session_se
 from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
 
 _SIZE = (211, 44)
+#: The helper's 2 s default is under one Settings or Console mount on a CI
+#: runner (#3057's UI lane timed out with the awaited row already painted).
+_MOUNT_TIMEOUT = 30.0
 _FAKE_KEY = "sk-proj-abcdefghijklmnop1234"
 #: Rewritten on purpose (TASK-33007 capture fix 4): the row is one line with
 #: a dated model id, so "(Ctrl+T, temporary, workspace)" moved to the
@@ -389,7 +392,9 @@ async def test_saving_default_b_states_its_reach_and_a_new_chat_takes_it(
         app.providers_models = {"OpenAI": ["gpt-4.1"], "llama_cpp": ["model-a"]}
         app.post_message(NavigateToScreen("chat"))
         console = await _wait_for_screen(app, pilot, "ChatScreen")
-        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        await _wait_for_selector(
+            console, pilot, "#console-settings-summary", timeout=_MOUNT_TIMEOUT
+        )
         store = console._ensure_console_chat_store()
         chat_id = store.active_session_id
         chat = console._session._ensure_active_console_session_settings()
@@ -405,7 +410,9 @@ async def test_saving_default_b_states_its_reach_and_a_new_chat_takes_it(
 
         app.post_message(NavigateToScreen("settings", {"category": PROVIDERS_MODELS}))
         screen = await _wait_for_screen(app, pilot, "SettingsScreen")
-        await _wait_for_selector(screen, pilot, "#settings-model-applies-to")
+        await _wait_for_selector(
+            screen, pilot, "#settings-model-applies-to", timeout=_MOUNT_TIMEOUT
+        )
         await pilot.pause()
         keeps = f"{_NEW_CHATS} open chat “{title}” keeps llama.cpp · model-a."
         if work == "untouched":
@@ -454,7 +461,9 @@ async def test_saving_default_b_states_its_reach_and_a_new_chat_takes_it(
 
         app.post_message(NavigateToScreen("chat"))
         console = await _wait_for_screen(app, pilot, "ChatScreen")
-        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        await _wait_for_selector(
+            console, pilot, "#console-settings-summary", timeout=_MOUNT_TIMEOUT
+        )
         store = console._ensure_console_chat_store()
         assert store.active_session_id == chat_id
         held = console._session._ensure_active_console_session_settings()

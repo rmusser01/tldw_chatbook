@@ -131,21 +131,10 @@ Tests/UI/test_screen_reuse_helpers.py
 Tests/UI/test_select_directory_typed_path.py
 Tests/UI/test_selection_dialogs.py
 Tests/UI/test_server_chatbook_service_lease.py
-Tests/UI/test_settings_advanced_disclosures.py
 Tests/UI/test_settings_anthropic_auth_source.py
-Tests/UI/test_settings_console_behavior_grammar.py
-Tests/UI/test_settings_console_fallback_rows.py
-Tests/UI/test_settings_default_model_picker.py
-Tests/UI/test_settings_connect_rows.py
-Tests/UI/test_settings_connect_key_rows.py
-Tests/UI/test_settings_connect_paint.py
-Tests/UI/test_settings_connect_tab_budget.py
 Tests/UI/test_settings_discovered_model_toggle.py
-Tests/UI/test_settings_model_defaults_rows.py
 Tests/UI/test_settings_network_defaults.py
 Tests/UI/test_settings_provider_view_model.py
-Tests/UI/test_settings_providers_models_card_geometry.py
-Tests/UI/test_settings_save_reach.py
 Tests/UI/test_shell_product_model_visibility.py
 Tests/UI/test_smart_content_tree_tooltips.py
 Tests/UI/test_speech_axis_row.py
@@ -213,3 +202,17 @@ Tests/UI/test_roleplay_frame_state.py
 Tests/UI/test_roleplay_stylesheet.py
 Tests/UI/test_workbench_fitted_text.py
 Tests/UI/test_roleplay_hostile_text_surfaces.py
+# Phase 7's Settings files: 35 of the lane's 71 pytest minutes on CI. They sit
+# last, in this order, so round-robin over seven shards spreads them and no
+# other file's shard depends on them (see check_ui_pr_gate_census.py).
+Tests/UI/test_settings_default_model_picker.py
+Tests/UI/test_settings_providers_models_card_geometry.py
+Tests/UI/test_settings_connect_paint.py
+Tests/UI/test_settings_console_behavior_grammar.py
+Tests/UI/test_settings_connect_rows.py
+Tests/UI/test_settings_model_defaults_rows.py
+Tests/UI/test_settings_console_fallback_rows.py
+Tests/UI/test_settings_save_reach.py
+Tests/UI/test_settings_advanced_disclosures.py
+Tests/UI/test_settings_connect_key_rows.py
+Tests/UI/test_settings_connect_tab_budget.py

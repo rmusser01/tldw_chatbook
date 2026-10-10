@@ -153,7 +153,7 @@ def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     assert "-p no:randomly" not in run  # not installed; order is collection order
 
 
-@pytest.mark.parametrize("total", [1, 2, 3, 4, 5, 6])
+@pytest.mark.parametrize("total", [1, 2, 3, 4, 5, 6, 7])
 def test_ui_gate_shards_cover_the_census_once_each_in_census_order(total):
     """TASK-34353: the shards the UI lane runs are exactly the census.
 
