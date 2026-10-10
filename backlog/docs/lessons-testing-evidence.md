@@ -19339,3 +19339,18 @@ putting the irrelevant passage first made the smoke witness an actual reorder.
 
 **What to do.** Satisfy every earlier guard before testing a later one, place a
 bad item outside any selected subset, and start ordering tests out of order.
+
+## A workflow edit is pinned by a contract test the plan never ran (PR #3058, TASK-33910.2)
+
+**Incident.** B1 raised the PR Fast Lane's `timeout-minutes` from 30 to 35 in
+`.github/workflows/derived-artifacts.yml` (owner decision). Its CI task ran the
+UI census check, the admission-step lane timing and preflight, all green, and
+twelve reviews read the diff. The PR's first CI run still went red:
+`Tests/CI/test_ci_queue_pressure_contract.py` pins the job at `== 30`, and the
+required check fails whenever the fast lane does. Nothing local had run
+`Tests/CI/`; it takes about 7 s.
+
+**What to do.** After any edit under `.github/workflows/`, run
+`pytest Tests/CI -q` before pushing, and grep `Tests/` for the job id or the
+changed key (`timeout-minutes`, step names) to find the contract tests that
+pin it. Update the pin in the same commit as the workflow edit.
