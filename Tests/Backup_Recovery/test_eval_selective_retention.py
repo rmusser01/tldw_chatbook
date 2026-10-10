@@ -12,6 +12,7 @@ from threading import Event
 
 import pytest
 
+from Tests.Backup_Recovery.conftest import helper_resource_root as helper_resource_root
 from Tests.Backup_Recovery import test_eval_retained_definitions
 from Tests.Backup_Recovery.test_restore_data_groups import _document
 
@@ -128,7 +129,10 @@ def test_selective_generations_keep_inactive_evals_after_config_edit_and_undo(
     def assert_retained():
         with _preview_reads():
             rows = _DefinitionsAdapter().discover({DISCOVERY_CONTEXT_KEY: context})
-        assert {item.path for item in rows} == {_override_config_path(selector), *selected}
+        assert {item.path for item in rows} == {
+            _override_config_path(selector),
+            *selected,
+        }
         assert len({item.logical_id for item in rows}) == len(rows) == 3
         assert all(observed(path) == before for path, before in preserved.items())
         assert not activation_permission("eval.definitions", config_selector=selector)
@@ -219,10 +223,15 @@ def test_selective_generations_keep_inactive_evals_after_config_edit_and_undo(
         with _preview_reads():
             rows = _DefinitionsAdapter().discover({DISCOVERY_CONTEXT_KEY: context})
         assert (
-            next(item.status for item in rows if item.path == _override_config_path(selector))
+            next(
+                item.status
+                for item in rows
+                if item.path == _override_config_path(selector)
+            )
             == "unused"
         )
         return
+
     # The actual config writer atomically publishes preferences and advances
     # only this existing binding. Each child exits before native recovery runs.
     def edit_config(section, key, value):
@@ -266,9 +275,14 @@ def test_selective_generations_keep_inactive_evals_after_config_edit_and_undo(
     shutil.copy2(prompt_path, alternate)
     edit_config("database", "prompts_db_path", str(alternate))
     moved_target = discover()
-    assert next(
-        item.path for item in moved_target.items if item.owner == "db.prompts.primary"
-    ) == alternate
+    assert (
+        next(
+            item.path
+            for item in moved_target.items
+            if item.owner == "db.prompts.primary"
+        )
+        == alternate
+    )
     unchanged_stores = {path: observed(path) for path in (prompt_path, alternate)}
     unchanged_config = observed(selector)
     with pytest.raises(ValueError):

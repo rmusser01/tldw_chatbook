@@ -537,10 +537,17 @@ async def main():
     options = {'staging_parent':home, 'temporary_media':False}
     preview = preview_capture((selector,), options=options)
     assert preview.complete, (preview.issues, [(i.owner,i.status,i.path) for i in preview.items if i.status == 'unsupported'])
-    from tldw_chatbook.Evals import _default_config_path
+    from tldw_chatbook.Evals import _override_config_path
+    canonical = _override_config_path(selector)
     definitions = [i for i in preview.items if i.owner == 'eval.definitions' and i.status == 'included']
-    assert {i.path for i in definitions} == {_default_config_path(), data/'eval_config.yaml'}
-    assert _default_config_path() != data/'eval_config.yaml'
+    expected = {data/'eval_config.yaml'} if (data/'eval_config.yaml').is_file() else set()
+    if canonical.is_file():
+        expected.add(canonical)
+    assert {i.path for i in definitions} == expected
+    assert canonical != data/'eval_config.yaml'
+    canonical_rows = [i for i in preview.items if i.owner == 'eval.definitions' and i.path == canonical]
+    assert len(canonical_rows) == 1
+    assert canonical_rows[0].status == ('included' if canonical.is_file() else 'unused')
     from tldw_chatbook.Backup_Recovery.activation import ActivationStore
     from tldw_chatbook.Backup_Recovery import bootstrap
     _, profiles = bootstrap._records(bootstrap.default_bootstrap_root())

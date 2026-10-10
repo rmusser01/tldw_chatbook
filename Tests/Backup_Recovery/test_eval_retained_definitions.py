@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from Tests.Backup_Recovery.conftest import helper_resource_root as helper_resource_root
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 from Tests.Backup_Recovery.test_temporary_media_capture import (
     _PUBLIC,
@@ -18,6 +19,15 @@ def _replace(source, old, new):
     return source.replace(old, new)
 
 
+_RETAIN_PUBLIC = _replace(
+    _PUBLIC,
+    "from tldw_chatbook.app import TldwCli",
+    """from tldw_chatbook.Evals import _override_config_path
+private_eval = _override_config_path(selector)
+private_eval.write_text('budget: {default_limit: 7}\\n', encoding='utf-8')
+private_eval.chmod(0o600)
+from tldw_chatbook.app import TldwCli""",
+)
 _RETAIN_RESTORE = _replace(
     _RESTORE,
     "source.rename(source.with_name('source-home-removed'))",
@@ -38,13 +48,17 @@ assert (journal.root / 'restore-plan.json').is_file()
 shutil.rmtree(source)
 assert not source.exists()""",
 )
-_RETAIN_REOPEN = _REOPEN
+_RETAIN_REOPEN = _replace(
+    _REOPEN,
+    "definitions = [",
+    "assert (data / 'eval_config.yaml').is_file()\n    definitions = [",
+)
 
 
 def test_complete_rebackup_retains_eval_after_source_and_candidate_removal(tmp_path):
     original = tmp_path / "original"
     original.mkdir()
-    _run(original, "temporary", "complete", script=_PUBLIC)
+    _run(original, "temporary", "complete", script=_RETAIN_PUBLIC)
     restored = tmp_path / "restored"
     restored.mkdir()
     _run(restored, str(original / "home"), "isolated", script=_RETAIN_RESTORE)
@@ -325,7 +339,9 @@ def test_pending_recovery_refuses_retained_definition_lookup(completed_replaceme
         path.unlink()
 
 
-def test_retained_manifest_checks_native_owner_identity(completed_replacement, monkeypatch):
+def test_retained_manifest_checks_native_owner_identity(
+    completed_replacement, monkeypatch
+):
     from tldw_chatbook.Evals.recovery import _retained_definition_paths
     from tldw_chatbook.Utils import platform_files
 
