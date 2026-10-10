@@ -95,6 +95,8 @@ async def test_home_resume_keeps_saved_identity_and_independent_buddy_draft(
         modal.query_one("#buddy-close", Button).press()
         await _until(lambda: type(app.screen).__name__ == "HomeScreen")
         home = app.screen
+        # Drain the queued ScreenResume before starting its exclusive worker group.
+        await asyncio.wait_for(pilot.pause(), timeout=8)
         await home._refresh_home_content_snapshot().wait()
         await pilot.pause()
         resume = home.query_one("#home-resume-latest", Button)

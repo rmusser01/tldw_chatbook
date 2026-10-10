@@ -19,7 +19,10 @@ plus a synthetic one); and the metric series name ``groq``.
 
 from __future__ import annotations
 
+import json
+import math
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from loguru import logger
@@ -92,6 +95,118 @@ class GroqFinishPolicy:
 _FINISH_POLICY = GroqFinishPolicy()
 
 
+# Ordinary metadata only; provider-hosted execution remains unsupported.
+_GROQ_RESPONSE_KEYS = frozenset({"x_groq", "service_tier", "usage_breakdown"})
+_GROQ_STREAM_RESPONSE_KEYS = _GROQ_RESPONSE_KEYS | {"obfuscation"}
+_GROQ_CHOICE_KEYS = frozenset({"logprobs"})
+_GROQ_MESSAGE_KEYS = frozenset({"reasoning"})
+_GROQ_METADATA_KEYS = frozenset({"id", "debug", "seed", "usage"})
+_GROQ_STREAM_METADATA_KEYS = _GROQ_METADATA_KEYS | {"error", "usage_breakdown"}
+_GROQ_CACHE_KEYS = frozenset({"dram_cached_tokens", "sram_cached_tokens"})
+_GROQ_TOKEN_KEYS = frozenset({"prompt_tokens", "completion_tokens", "total_tokens"})
+_GROQ_TIME_KEYS = frozenset(
+    {"queue_time", "prompt_time", "completion_time", "total_time"}
+)
+
+
+def _normalize_groq_wire(
+    response: Mapping[str, Any], *, streaming: bool
+) -> Mapping[str, Any]:
+    """Reconcile Groq metadata without dropping accounting or terminal errors.
+
+    Args:
+        response: Bounded decoded body or SSE event; never mutated.
+        streaming: Whether x_groq.usage means completion usage rather than cache metrics.
+
+    Returns:
+        A copied envelope with streamed nested usage promoted to ordinary usage.
+
+    Raises:
+        HostedChatProtocolError: For malformed metadata or conflicting accounting.
+        ChatProviderError: When Groq reports a nested stream failure.
+    """
+    obfuscation = response.get("obfuscation")
+    if obfuscation is not None and not isinstance(obfuscation, str):
+        raise HostedChatProtocolError("Groq stream obfuscation is malformed.")
+    metadata = response.get("x_groq")
+    if metadata is None:
+        return response
+    allowed = _GROQ_STREAM_METADATA_KEYS if streaming else _GROQ_METADATA_KEYS
+    if not isinstance(metadata, Mapping) or set(metadata) - allowed:
+        raise HostedChatProtocolError("Groq response metadata is malformed.")
+    if not streaming and not isinstance(metadata.get("id"), str):
+        raise HostedChatProtocolError("Groq request ID is malformed.")
+    for key in ("id", "seed", "debug", "usage_breakdown"):
+        value = metadata.get(key)
+        if value is None:
+            continue
+        valid = (
+            isinstance(value, str)
+            if key == "id"
+            else type(value) is int  # noqa: E721 - JSON integers must exclude booleans and subclasses.
+            if key == "seed"
+            else isinstance(value, Mapping)
+        )
+        if not valid:
+            raise HostedChatProtocolError("Groq response metadata is malformed.")
+    error = metadata.get("error")
+    if error is not None:
+        if not isinstance(error, str):
+            raise HostedChatProtocolError("Groq stream error is malformed.")
+        raise ChatProviderError(
+            provider="groq",
+            message="Groq reported an error during the response.",
+            status_code=502,
+        )
+    nested_usage = metadata.get("usage")
+    if nested_usage is None:
+        return response
+    if not isinstance(nested_usage, Mapping):
+        raise HostedChatProtocolError("Groq response usage is malformed.")
+    if not streaming:
+        if set(nested_usage) - _GROQ_CACHE_KEYS or any(
+            value is not None and (type(value) is not int or value < 0)  # noqa: E721 - JSON integers must exclude booleans and subclasses.
+            for value in nested_usage.values()
+        ):
+            raise HostedChatProtocolError("Groq cache usage is malformed.")
+        return response
+    if set(nested_usage) - (
+        _GROQ_TOKEN_KEYS
+        | _GROQ_TIME_KEYS
+        | {"completion_tokens_details", "prompt_tokens_details"}
+    ):
+        raise HostedChatProtocolError("Groq stream usage is malformed.")
+    if any(
+        type(nested_usage.get(key)) is not int or nested_usage[key] < 0  # noqa: E721 - JSON integers must exclude booleans and subclasses.
+        for key in _GROQ_TOKEN_KEYS
+    ):
+        raise HostedChatProtocolError("Groq stream usage is malformed.")
+    for key in _GROQ_TIME_KEYS:
+        value = nested_usage.get(key)
+        if value is not None and (
+            type(value) not in {int, float} or not math.isfinite(value) or value < 0
+        ):
+            raise HostedChatProtocolError("Groq stream usage is malformed.")
+    for key, counter in (
+        ("completion_tokens_details", "reasoning_tokens"),
+        ("prompt_tokens_details", "cached_tokens"),
+    ):
+        detail = nested_usage.get(key)
+        if detail is not None and (
+            not isinstance(detail, Mapping)
+            or set(detail) != {counter}
+            or type(detail.get(counter)) is not int  # noqa: E721 - JSON integers must exclude booleans and subclasses.
+            or detail[counter] < 0
+        ):
+            raise HostedChatProtocolError("Groq stream usage detail is malformed.")
+    top_usage = response.get("usage")
+    if top_usage is not None and json.dumps(top_usage, sort_keys=True) != json.dumps(
+        nested_usage, sort_keys=True
+    ):
+        raise HostedChatProtocolError("Groq stream usage conflicts.")
+    return {**response, "usage": dict(nested_usage)}
+
+
 class GroqResponse(dict):
     """Public legacy response dict with the normalized terminal turn attached."""
 
@@ -123,12 +238,17 @@ def _groq_turn_response(turn: HostedChatTurn) -> GroqResponse:
 
 
 def _log_usage_metrics(model: str, usage: dict[str, Any]) -> None:
-    log_histogram("groq_api_input_tokens", usage.get("prompt_tokens", 0),
-                  labels={"model": model})
-    log_histogram("groq_api_output_tokens", usage.get("completion_tokens", 0),
-                  labels={"model": model})
-    log_histogram("groq_api_total_tokens", usage.get("total_tokens", 0),
-                  labels={"model": model})
+    log_histogram(
+        "groq_api_input_tokens", usage.get("prompt_tokens", 0), labels={"model": model}
+    )
+    log_histogram(
+        "groq_api_output_tokens",
+        usage.get("completion_tokens", 0),
+        labels={"model": model},
+    )
+    log_histogram(
+        "groq_api_total_tokens", usage.get("total_tokens", 0), labels={"model": model}
+    )
     from tldw_chatbook.Chat.session_usage import session_usage  # deferred: boot census (ADR-097)
 
     session_usage().record_provider_payload(usage, provider="groq", model=model)
@@ -136,9 +256,7 @@ def _log_usage_metrics(model: str, usage: dict[str, Any]) -> None:
 
 def _log_error_metrics(model: str, duration: float, exc: BaseException) -> None:
     status_code = getattr(exc, "status_code", None)
-    error_type = (
-        "http_error" if status_code is not None else exc.__class__.__name__
-    )
+    error_type = "http_error" if status_code is not None else exc.__class__.__name__
     labels: dict[str, str] = {"model": model, "error_type": error_type}
     if status_code is not None:
         labels["status_code"] = str(status_code)
@@ -212,7 +330,9 @@ def chat_with_groq(
             return None
 
     current_max_tokens = (
-        max_tokens if max_tokens is not None else _coerce_int(groq_config.get("max_tokens"))
+        max_tokens
+        if max_tokens is not None
+        else _coerce_int(groq_config.get("max_tokens"))
     )
 
     api_messages = []
@@ -287,14 +407,26 @@ def chat_with_groq(
             payload=data,
             streaming=current_streaming,
             finish_policy=_FINISH_POLICY,
+            allowed_extra_keys=(
+                _GROQ_STREAM_RESPONSE_KEYS if current_streaming else _GROQ_RESPONSE_KEYS
+            ),
+            allowed_choice_keys=_GROQ_CHOICE_KEYS,
+            allowed_message_keys=_GROQ_MESSAGE_KEYS,
+            wire_normalizer=lambda response: _normalize_groq_wire(
+                response, streaming=current_streaming
+            ),
         )
     except HostedChatProtocolError:
         duration = time.time() - start_time
-        _log_error_metrics(current_model, duration, exc=ChatProviderError(
-            provider="groq",
-            message="Groq returned a malformed successful response.",
-            status_code=502,
-        ))
+        _log_error_metrics(
+            current_model,
+            duration,
+            exc=ChatProviderError(
+                provider="groq",
+                message="Groq returned a malformed successful response.",
+                status_code=502,
+            ),
+        )
         raise ChatProviderError(
             provider="groq",
             message="Groq returned a malformed successful response.",

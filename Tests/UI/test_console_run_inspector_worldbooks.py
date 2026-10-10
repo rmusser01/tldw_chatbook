@@ -12,7 +12,7 @@ from tldw_chatbook.Chat.console_display_state import (
 from tldw_chatbook.Widgets.Console.console_run_inspector import ConsoleRunInspector
 from tldw_chatbook.Widgets.Console.console_bounded_section import ConsoleBoundedSection
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 def _state(**kw):

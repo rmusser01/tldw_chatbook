@@ -152,6 +152,7 @@ def _controller(**overrides):
     return ConsoleCharacterContextController(**params)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_controller_enforces_four_by_five_and_eight_search_bounds() -> None:
     _Service.recent_calls.clear()
@@ -178,6 +179,7 @@ async def test_controller_enforces_four_by_five_and_eight_search_bounds() -> Non
     assert controller.state.restore_scroll_offset == 6
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("query", [None, 42, b"needle", "x" * 513, " " * 513])
 async def test_character_query_validation_rejects_before_state_or_database(query):
@@ -198,6 +200,7 @@ async def test_character_query_validation_rejects_before_state_or_database(query
     assert _Service.search_calls == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "query, expected", [(" " + "é" * 510 + " ", "é" * 510), ("  needle  ", "needle")]
@@ -215,6 +218,7 @@ async def test_character_query_validation_preserves_bounded_trimmed_keyword(
     assert _Service.search_calls == [(expected, 8)]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("invalid", ["x" * 513, " " * 513, None, 42])
 @pytest.mark.parametrize("previous_query", ["", "needle"])
@@ -269,6 +273,7 @@ async def test_widget_query_validation_preserves_search_and_clear(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_character_mount_loads_groups_without_duplicate_cold_resume_worker(
     monkeypatch,
 ):
@@ -304,8 +309,26 @@ async def test_character_mount_loads_groups_without_duplicate_cold_resume_worker
     monkeypatch.setattr(chat_screen_module.ChatScreen, "run_worker", run_worker)
     async with make_console_pilot(size=(120, 50)) as pilot:
         screen = pilot.app.screen
+        controller = screen._character_context
+        widget = screen.query_one(ConsoleCharacterContext)
+
+        def projection_ready(expected_revision):
+            state = controller.state
+            return (
+                screen._character_context is controller
+                and widget._controller is controller
+                and widget.is_attached
+                and screen.query_one(ConsoleCharacterContext) is widget
+                and widget.state is state
+                and state.phase is ConsoleCharacterOperationPhase.IDLE
+                and not state.loading
+                and state.scope_fingerprint is not None
+                and state.scope_fingerprint.data_revision == expected_revision
+                and len(screen.query(".console-character-group")) == 4
+            )
+
         for _ in range(40):
-            if screen._character_context.state.groups:
+            if projection_ready(7):
                 break
             await pilot.pause(0.05)
         assert len(screen.query(".console-character-group")) == 4
@@ -315,7 +338,7 @@ async def test_character_mount_loads_groups_without_duplicate_cold_resume_worker
         screen.on_screen_resume()
         for _ in range(40):
             await pilot.pause(0.05)
-            if screen._character_context.state.scope_fingerprint.data_revision == 8:
+            if projection_ready(8):
                 break
         assert len(refresh_workers) == 1
         assert screen._character_context.state.scope_fingerprint.data_revision == 8
@@ -348,6 +371,7 @@ def test_character_disclosure_new_explicit_and_legacy_rules() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_canonical_writer_persists_first_use_close_reopen_and_legacy(
     monkeypatch,
 ) -> None:
@@ -508,6 +532,7 @@ async def test_identity_line_uses_only_owner_current_and_exact_open_state(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_production_avatar_repaint_never_overwrites_identity_variants() -> None:
     from Tests.UI.test_console_left_rail import make_console_pilot
 

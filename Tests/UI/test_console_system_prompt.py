@@ -20,8 +20,9 @@ from Tests.UI.test_console_native_chat_flow import (
     _wait_for_text,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
+from Tests.UI.test_console_session_tab_close import (
+    ProductionConsoleHarness as ConsoleHarness,
 )
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
@@ -246,9 +247,9 @@ async def test_console_system_bare_command_opens_editor_with_current_text():
         assert len(host.screen_stack) == baseline_depth + 1
         modal = host.screen_stack[-1]
         assert modal.query_one(f"#{TEXT_AREA_ID}", TextArea).text == "Answer tersely."
-        assert composer.draft_text() == "/system", (
-            "bare /system must not touch the draft"
-        )
+        assert (
+            composer.draft_text() == "/system"
+        ), "bare /system must not touch the draft"
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +257,7 @@ async def test_console_system_bare_command_opens_editor_with_current_text():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_system_prompt_modal_apply_updates_settings_and_rail_preview():
     app = _build_test_app()
@@ -282,6 +284,7 @@ async def test_console_system_prompt_modal_apply_updates_settings_and_rail_previ
         assert not _rail_system_line_is_dim(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_system_prompt_modal_clear_resets_settings_and_rail_to_none():
     app = _build_test_app()
@@ -310,6 +313,7 @@ async def test_console_system_prompt_modal_clear_resets_settings_and_rail_to_non
         assert _rail_system_line_is_dim(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_system_prompt_modal_cancel_leaves_settings_untouched():
     app = _build_test_app()
@@ -392,9 +396,9 @@ async def test_console_system_command_unique_name_applies_and_updates_rail_previ
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        assert len(host.screen_stack) == baseline_depth, (
-            "a unique match must not open the picker"
-        )
+        assert (
+            len(host.screen_stack) == baseline_depth
+        ), "a unique match must not open the picker"
         settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt == "Answer tersely."
         assert _rail_system_line_text(console) == "System: Answer tersely."
@@ -472,9 +476,9 @@ async def test_console_system_command_empty_system_part_shows_exact_inline_error
         console.query_one("#console-send-message", Button).press()
         await _wait_for_text(console, pilot, NO_SYSTEM_PART_COPY)
 
-        assert len(host.screen_stack) == baseline_depth, (
-            "no picker/modal should open on this error"
-        )
+        assert (
+            len(host.screen_stack) == baseline_depth
+        ), "no picker/modal should open on this error"
         settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt is None
         assert _rail_system_line_text(console) == "System: none"
@@ -521,9 +525,9 @@ async def test_console_system_command_ambiguous_exact_match_opens_apply_system_p
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        assert len(host.screen_stack) == baseline_depth + 1, (
-            "the picker must have opened"
-        )
+        assert (
+            len(host.screen_stack) == baseline_depth + 1
+        ), "the picker must have opened"
         picker = host.screen_stack[-1]
         filter_input = picker.query_one(f"#{FILTER_INPUT_ID}", Input)
         assert filter_input.value == "Foo"
@@ -572,9 +576,9 @@ async def test_console_system_command_picker_selection_applies_system_prompt(tmp
         row.press()
         await pilot.pause(0.2)
 
-        assert len(host.screen_stack) == baseline_depth, (
-            "the picker must have dismissed"
-        )
+        assert (
+            len(host.screen_stack) == baseline_depth
+        ), "the picker must have dismissed"
         settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt == "Sunny system."
 
@@ -626,6 +630,7 @@ async def test_console_system_command_picker_escape_leaves_settings_untouched(tm
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_system_prompt_modal_save_to_library_creates_new_prompt(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -802,7 +807,7 @@ async def test_console_context_estimate_counts_system_prompt_after_apply():
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        baseline = console._active_console_settings_context_estimate()
+        baseline = console._context_spend._active_console_settings_context_estimate()
         assert baseline.used_tokens is not None
 
         console._session._apply_console_session_system_prompt(
@@ -810,7 +815,7 @@ async def test_console_context_estimate_counts_system_prompt_after_apply():
         )
         await pilot.pause(0.1)
 
-        after = console._active_console_settings_context_estimate()
+        after = console._context_spend._active_console_settings_context_estimate()
         assert after.used_tokens is not None
         assert after.used_tokens > baseline.used_tokens
 
@@ -869,6 +874,7 @@ async def test_action_open_console_prompt_insert_opens_picker_with_empty_query()
         assert filter_input.value == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_action_open_console_system_prompt_editor_opens_modal():
     app = _build_test_app()
@@ -929,3 +935,35 @@ def test_system_prompt_modal_and_rail_line_css_pinned_in_source_and_bundle():
             text, "#console-rail-system-line.console-rail-system-line-dim {"
         )
         assert "color: $ds-text-muted;" in dim_block
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prompt", ["Be concise.", None])
+async def test_system_prompt_preview_updates_before_deferred_readiness_summary(
+    prompt, monkeypatch
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.set_session_system_prompt(session_id, "Previous prompt.")
+        console._sync_console_rail_system_line()
+        assert _rail_system_line_text(console) == "System: Previous prompt."
+        # Readiness refresh may queue a checked worker and return immediately.
+        # Its completion must not own publication of already-applied local text.
+        deferred = []
+        monkeypatch.setattr(
+            console, "_sync_console_settings_summary", lambda: deferred.append(True)
+        )
+        console._session._apply_console_session_system_prompt(prompt)
+        assert deferred
+        assert store.session_settings(session_id).system_prompt == prompt
+        assert _rail_system_line_text(console) == (
+            "System: Be concise." if prompt else "System: none"
+        )
+        assert _rail_system_line_is_dim(console) is (prompt is None)

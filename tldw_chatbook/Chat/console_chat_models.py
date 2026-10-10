@@ -373,6 +373,7 @@ _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
 
 
 #: Shared decision-kind keys for pending-round registries and UI copy.
+CONSOLE_PENDING_HOOK_REVIEW_KIND = "hook_review"
 CONSOLE_PENDING_APPROVAL_KIND = "approval"
 CONSOLE_PENDING_QUESTION_KIND = "question"
 CONSOLE_PENDING_SKILL_INSTALL_KIND = "skill_install"
@@ -1521,3 +1522,32 @@ def fold_greeting_into_system_prompt(system_prompt: str, greeting: str) -> str:
     if not (system_prompt or "").strip():
         return opener_block
     return f"{system_prompt}\n\n{opener_block}"
+
+
+_CONSOLE_PENDING_COPY_SOURCE = (
+    console_pending_round_copy_for,
+    console_pending_round_copy_for.__code__,
+    console_pending_round_copy_for.__globals__,
+    console_pending_round_copy_for.__defaults__,
+    console_pending_round_copy_for.__kwdefaults__,
+    tuple((console_pending_round_copy_for.__kwdefaults__ or {}).items()),
+    console_pending_round_copy_for.__closure__,
+    tuple(
+        (cell, cell.cell_contents)
+        for cell in console_pending_round_copy_for.__closure__ or ()
+    ),
+)
+
+_CONSOLE_PENDING_COPY_KIND_SOURCE = (
+    console_pending_round_copy,
+    console_pending_round_copy.__code__,
+    console_pending_round_copy.__globals__,
+    console_pending_round_copy.__defaults__,
+    console_pending_round_copy.__kwdefaults__,
+    tuple((console_pending_round_copy.__kwdefaults__ or {}).items()),
+    console_pending_round_copy.__closure__,
+    tuple(
+        (cell, cell.cell_contents)
+        for cell in console_pending_round_copy.__closure__ or ()
+    ),
+)

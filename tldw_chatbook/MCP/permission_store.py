@@ -67,6 +67,7 @@ import errno
 import hashlib
 import fnmatch
 import json
+import sys
 import os
 import re
 import tempfile
@@ -75,7 +76,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from types import MappingProxyType
+from types import FunctionType, MappingProxyType
 from typing import Any, Callable, Iterator, Literal, Mapping
 
 from loguru import logger
@@ -2639,3 +2640,300 @@ def cycle_global(current: str) -> str:
         The next state in the cycle: Allow -> Ask -> Off -> Allow.
     """
     return _CYCLE_GLOBAL_STATES[current]
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_METHODS = (
+    ("load", MCPPermissionStore.load),
+    ("get_kill_switch", MCPPermissionStore.get_kill_switch),
+    ("mark_config_changed", MCPPermissionStore.mark_config_changed),
+)
+
+
+# TASK-34561: only the two original guarded members used by the omitted getter.
+# The known decorator's function cell is captured here, never lazily unwrapped.
+_CONSOLE_CONTROLLER_PERMISSION_MODULE = sys.modules[__name__]
+_CONSOLE_CONTROLLER_PERMISSION_CLASS = MCPPermissionStore
+
+
+def _capture_controller_inputs(function):
+    keyword_defaults = function.__kwdefaults__
+    closure = function.__closure__
+    return (
+        function.__defaults__,
+        keyword_defaults,
+        tuple(dict.items(keyword_defaults)) if keyword_defaults is not None else (),
+        closure,
+        tuple((cell, cell.cell_contents) for cell in closure or ()),
+    )
+
+
+def _capture_controller_permission_member(name):
+    wrapper = vars(MCPPermissionStore)[name]
+    guard = mcp_sources.guarded
+    if type(wrapper) is not FunctionType or type(guard) is not FunctionType:
+        return name, wrapper, ()
+    wrapper_codes = tuple(
+        code
+        for code in guard.__code__.co_consts
+        if type(code) is type(guard.__code__) and code.co_name == "wrapped"  # noqa: E721 -- exact original code
+    )
+    if (
+        len(wrapper_codes) != 1
+        or wrapper.__code__ is not wrapper_codes[0]
+        or wrapper.__globals__ is not vars(mcp_sources)
+        or wrapper.__closure__ is None
+        or "function" not in wrapper.__code__.co_freevars
+    ):
+        return name, wrapper, ()
+    try:
+        body = wrapper.__closure__[
+            wrapper.__code__.co_freevars.index("function")
+        ].cell_contents
+    except ValueError:
+        return name, wrapper, ()
+    if type(body) is not FunctionType or body.__globals__ is not globals():
+        return name, wrapper, ()
+    return (
+        name,
+        wrapper,
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__globals__,
+                sys.modules[function.__globals__["__name__"]],
+                _capture_controller_inputs(function),
+            )
+            for function in (wrapper, body)
+        ),
+    )
+
+
+_CONSOLE_CONTROLLER_PERMISSION_METHODS = tuple(
+    _capture_controller_permission_member(name) for name in ("get_kill_switch", "load")
+)
+
+
+# The named Console read skips only these original forwarding/fence members.
+_CONSOLE_OWNED_LOAD_MEMBERS = tuple(
+    _capture_controller_permission_member(name) for name in ("load", "_load_locked")
+) + (
+    (
+        "mutation_fence",
+        MCPPermissionStore.mutation_fence,
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__globals__,
+                sys.modules[function.__globals__["__name__"]],
+                _capture_controller_inputs(function),
+            )
+            for function in (
+                MCPPermissionStore.mutation_fence,
+                MCPPermissionStore.mutation_fence.__wrapped__,
+            )
+        ),
+    ),
+    _capture_controller_permission_member("_backup_corrupt_file"),
+)
+
+
+def _console_owned_load_current(source, captured) -> bool:
+    """Check captured stock inputs without filesystem or permission reads."""
+    from types import MethodType
+
+    def inputs_current(function, inputs):
+        defaults, keywords, items, closure, cells = inputs
+        try:
+            cells_current = all(cell.cell_contents is value for cell, value in cells)
+        except ValueError:
+            return False
+        return (
+            function.__defaults__ is defaults
+            and function.__kwdefaults__ is keywords
+            and function.__closure__ is closure
+            and cells_current
+            and (
+                keywords is None
+                or len(keywords) == len(items)
+                and all(
+                    key in keywords and keywords[key] is value for key, value in items
+                )
+            )
+        )
+
+    if (
+        type(captured) is not tuple  # noqa: E721 -- exact internal metadata tuple.
+        or len(captured) != 4
+        or captured[0] is not source
+        or type(source) is not _CONSOLE_CONTROLLER_PERMISSION_CLASS
+        or MCPPermissionStore is not _CONSOLE_CONTROLLER_PERMISSION_CLASS
+        or sys.modules.get(__name__) is not _CONSOLE_CONTROLLER_PERMISSION_MODULE
+        or vars(_CONSOLE_CONTROLLER_PERMISSION_MODULE) is not globals()
+    ):
+        return False
+    for name, function, code, namespace, inputs in _CONSOLE_OWNED_LOAD_HELPERS:
+        if (
+            globals().get(name) is not function
+            or function.__code__ is not code
+            or function.__globals__ is not namespace
+            or not inputs_current(function, inputs)
+        ):
+            return False
+    for name, wrapper, bodies in _CONSOLE_OWNED_LOAD_MEMBERS:
+        if (
+            len(bodies) != 2
+            or vars(MCPPermissionStore).get(name) is not wrapper
+            or getattr(wrapper, "__wrapped__", None) is not bodies[1][0]
+        ):
+            return False
+        callback = getattr(source, name, None)
+        if (
+            type(callback) is not MethodType  # noqa: E721 -- exact bound method.
+            or callback.__func__ is not wrapper
+            or callback.__self__ is not source
+        ):
+            return False
+        for function, code, namespace, module, inputs in bodies:
+            if (
+                function.__code__ is not code
+                or function.__globals__ is not namespace
+                or sys.modules.get(namespace["__name__"]) is not module
+                or vars(module) is not namespace
+                or not inputs_current(function, inputs)
+            ):
+                return False
+    raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
+    package = sys.modules.get("tldw_chatbook.Backup_Recovery")
+    if (
+        raw is None
+        or package is None
+        or vars(package).get("raw_participants") is not raw
+    ):
+        return False
+    guards = getattr(raw, "_CONSOLE_PERMISSION_LOAD_GUARDS", None)
+    if guards is None:
+        return False
+    for name, callback, bodies in guards:
+        if (
+            vars(raw).get(name) is not callback
+            or name == "_scope"
+            and getattr(callback, "__wrapped__", None) is not bodies[1][0]
+        ):
+            return False
+        for function, code, namespace, module, inputs in bodies:
+            if (
+                function.__code__ is not code
+                or function.__globals__ is not namespace
+                or sys.modules.get(namespace["__name__"]) is not module
+                or vars(module) is not namespace
+                or not inputs_current(function, inputs)
+            ):
+                return False
+    _, binding, selected, lock = captured
+    if (
+        binding is None
+        or mcp_sources._BINDINGS.get(source) is not binding
+        or binding.source_type is not type(source)
+        or type(selected) is not type(binding.selected)  # noqa: E721 -- native immutable Path metadata.
+        or binding.selected != selected
+        or source.path is not selected
+        or source._path_lock is not lock
+        or source._mutation_lock is not lock
+        or source._mcp_source_lock is not lock
+    ):
+        return False
+    with _PATH_LOCKS_GUARD:
+        return _PATH_LOCKS.get(selected) is lock
+
+
+def _capture_console_owned_load(source) -> tuple[Any, ...] | None:
+    """Capture original Console load metadata before its source scope is issued."""
+    checker = _CONSOLE_OWNED_LOAD_HELPERS[1]
+    if (
+        globals().get(checker[0]) is not checker[1]
+        or checker[1].__code__ is not checker[2]
+    ):
+        return None
+    try:
+        binding = mcp_sources._BINDINGS.get(source)
+        if binding is None or type(source.path) is not type(binding.selected):  # noqa: E721 -- custom path protocols retain ordinary calls.
+            return None
+        captured = (source, binding, source.path, source._path_lock)
+        return captured if _console_owned_load_current(source, captured) else None
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _load_in_owned_scope(source, operation, captured) -> dict[str, Any]:
+    """Read the original payload inside the named caller's checked source scope.
+
+    The caller must retain its existing final native check and source receipt.
+    This private helper grants no admission and never creates an operation.
+    """
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    state = None
+
+    def checked_state():
+        checker = _CONSOLE_OWNED_LOAD_HELPERS[1]
+        if (
+            globals().get(checker[0]) is not checker[1]
+            or checker[1].__code__ is not checker[2]
+            or not _console_owned_load_current(source, captured)
+        ):
+            raise mcp_sources.bootstrap.RecoveryRequired("mcp_source_selection_changed")
+        with storage._lock:
+            if getattr(raw._local, "operation", None) is not operation:
+                raise mcp_sources.bootstrap.RecoveryRequired(
+                    "raw_operation_provenance_invalid"
+                )
+            current = raw._live_state(operation, None, True)
+            if (
+                current.source is not source
+                or current.route != mcp_sources.ROUTE
+                or current.participant is None
+                or current.selected != captured[2]
+                or raw._participant_identity(current.participant).source() is not source
+            ):
+                raise mcp_sources.bootstrap.RecoveryRequired("mcp_source_not_installed")
+            return current
+
+    try:
+        state = checked_state()
+        fence = _CONSOLE_OWNED_LOAD_MEMBERS[2][1]
+        body = _CONSOLE_OWNED_LOAD_MEMBERS[1][2][1][0]
+        with fence(source):
+            if checked_state() is not state:
+                raise mcp_sources.bootstrap.RecoveryRequired(
+                    "raw_operation_provenance_invalid"
+                )
+            result = body(source)
+            if checked_state() is not state:
+                raise mcp_sources.bootstrap.RecoveryRequired(
+                    "raw_operation_provenance_invalid"
+                )
+            return result
+    except BaseException:
+        if state is not None and (state.mcp_effects or state.uncertain):
+            source._mcp_persistence_error = "mcp_persistence_incomplete"
+        raise
+
+
+_CONSOLE_OWNED_LOAD_HELPERS = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__globals__,
+        _capture_controller_inputs(function),
+    )
+    for name in (
+        "_capture_console_owned_load",
+        "_console_owned_load_current",
+        "_load_in_owned_scope",
+    )
+    for function in (globals()[name],)
+)

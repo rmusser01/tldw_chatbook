@@ -161,10 +161,14 @@ class SkillsScopeService:
         method_name: str,
         args: tuple[Any, ...] = (),
         kwargs: dict[str, Any] | None = None,
+        _console_trust_preparation: tuple[Any, Any] | None = None,
     ) -> Any:
         normalized_mode = self._normalize_mode(mode)
         service = self._require_service(normalized_mode)
         self._enforce_policy(self._source_action_id(action_id, normalized_mode))
+        if _console_trust_preparation is not None:
+            prepare, captured = _console_trust_preparation
+            await prepare(captured)
         result = await self._maybe_await(
             getattr(service, method_name)(*args, **(kwargs or {}))
         )
@@ -181,8 +185,18 @@ class SkillsScopeService:
         )
 
     async def get_context(
-        self, *, mode: SkillsBackend | str | None = None
+        self,
+        *,
+        mode: SkillsBackend | str | None = None,
+        _console_trust_preparation: tuple[Any, Any] | None = None,
     ) -> dict[str, Any]:
+        if _console_trust_preparation is not None:
+            return await self._call(
+                mode=mode,
+                action_id="skills.context.list.server",
+                method_name="get_context",
+                _console_trust_preparation=_console_trust_preparation,
+            )
         return await self._call(
             mode=mode,
             action_id="skills.context.list.server",
@@ -538,3 +552,102 @@ class SkillsScopeService:
             method_name="seed_builtin_skills",
             kwargs=kwargs,
         )
+
+
+# Definition-time originals for stock Console trust preparation only.
+from types import FunctionType as _SkillFunctionType  # noqa: E402
+
+
+_CONSOLE_SKILL_FUNCTIONS = {
+    "__init__": SkillsScopeService.__dict__["__init__"],
+    "get_context": SkillsScopeService.__dict__["get_context"],
+    "_call": SkillsScopeService.__dict__["_call"],
+    "_enforce_policy": SkillsScopeService.__dict__["_enforce_policy"],
+    "_require_service": SkillsScopeService.__dict__["_require_service"],
+    "_normalize_mode": SkillsScopeService.__dict__["_normalize_mode"],
+    "_normalize_response": SkillsScopeService.__dict__["_normalize_response"],
+    "_maybe_await": SkillsScopeService.__dict__["_maybe_await"].__func__,
+    "_source_action_id": SkillsScopeService.__dict__["_source_action_id"].__func__,
+    "_normalize_item": SkillsScopeService.__dict__["_normalize_item"],
+    "_with_record_id": SkillsScopeService.__dict__["_with_record_id"].__func__,
+}
+_CONSOLE_SKILL_CONTEXT_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "SkillsScopeService", SkillsScopeService),
+        (globals(), "_CONSOLE_SKILL_FUNCTIONS", _CONSOLE_SKILL_FUNCTIONS),
+        (
+            SkillsScopeService.__dict__,
+            "__init__",
+            SkillsScopeService.__dict__["__init__"],
+        ),
+        (
+            SkillsScopeService.__dict__,
+            "get_context",
+            SkillsScopeService.__dict__["get_context"],
+        ),
+        (SkillsScopeService.__dict__, "_call", SkillsScopeService.__dict__["_call"]),
+        (
+            SkillsScopeService.__dict__,
+            "_enforce_policy",
+            SkillsScopeService.__dict__["_enforce_policy"],
+        ),
+        (
+            SkillsScopeService.__dict__,
+            "_require_service",
+            SkillsScopeService.__dict__["_require_service"],
+        ),
+        (
+            SkillsScopeService.__dict__,
+            "_normalize_mode",
+            SkillsScopeService.__dict__["_normalize_mode"],
+        ),
+        (
+            SkillsScopeService.__dict__,
+            "_normalize_response",
+            SkillsScopeService.__dict__["_normalize_response"],
+        ),
+        (
+            SkillsScopeService.__dict__,
+            "_maybe_await",
+            SkillsScopeService.__dict__["_maybe_await"],
+        ),
+        (
+            SkillsScopeService.__dict__,
+            "_source_action_id",
+            SkillsScopeService.__dict__["_source_action_id"],
+        ),
+        (
+            SkillsScopeService.__dict__,
+            "_normalize_item",
+            SkillsScopeService.__dict__["_normalize_item"],
+        ),
+        (
+            SkillsScopeService.__dict__,
+            "_with_record_id",
+            SkillsScopeService.__dict__["_with_record_id"],
+        ),
+    ),
+    tuple(
+        (
+            _CONSOLE_SKILL_FUNCTIONS,
+            _skill_name,
+            _skill_function,
+            _skill_function.__code__,
+            _skill_function.__globals__,
+            _skill_function.__defaults__,
+            _skill_function.__kwdefaults__,
+            tuple((_skill_function.__kwdefaults__ or {}).items()),
+            _skill_function.__closure__,
+            tuple(
+                (cell, cell.cell_contents) for cell in _skill_function.__closure__ or ()
+            ),
+            vars(_skill_function).get("__wrapped__"),
+        )
+        for _skill_name, _skill_function in _CONSOLE_SKILL_FUNCTIONS.items()
+        if type(_skill_function) is _SkillFunctionType
+    ),
+)

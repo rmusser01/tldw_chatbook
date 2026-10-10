@@ -968,6 +968,7 @@ def test_published_bytes_are_fsynced_before_the_rename(
     import os
 
     from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
     from tldw_chatbook.Notes.template_store import merge_templates
 
     selected = tmp_path / "note_templates.json"
@@ -976,14 +977,14 @@ def test_published_bytes_are_fsynced_before_the_rename(
     )
 
     synced: list[tuple[int, int]] = []
-    real_fsync = os.fsync
+    real_fsync = raw.flush_file
 
     def recording_fsync(fd):
         info = os.fstat(fd)
         synced.append((info.st_dev, info.st_ino))
         return real_fsync(fd)
 
-    monkeypatch.setattr(os, "fsync", recording_fsync)
+    monkeypatch.setattr(raw, "flush_file", recording_fsync)
     merge_templates([("durable", {"title": "Durable"})])
 
     published = selected.stat()
@@ -993,39 +994,130 @@ def test_published_bytes_are_fsynced_before_the_rename(
     }
 
 
-def test_writeback_failure_does_not_wedge_the_operation_file_list(
-    tmp_path, local_root, monkeypatch
+_TEMPLATE_FLUSH_FAILURE_CHILD = r"""
+import os, sys, time
+from pathlib import Path
+from Tests import network_guard, real_profile_guard
+network_guard.install()
+real_profile_guard.install()
+from tldw_chatbook.Backup_Recovery import bootstrap, raw_participants as raw, storage_admission as storage
+root, selected = map(Path, sys.argv[1:])
+bootstrap.default_bootstrap_root = lambda: root
+from tldw_chatbook import config
+from tldw_chatbook.Notes import template_store
+config._get_effective_config_path = lambda: selected.parent / 'config.toml'
+template_store.merge_templates([('before', {'title': 'Before'})])
+previous = selected.read_bytes()
+startup = storage._startups.pop((os.getpid(), str(root)), None)
+if startup is not None:
+    startup.close()
+assert not any(state.source is template_store for state in raw._states.values())
+original = raw.flush_file
+failed = []
+failure = OSError('canonical template file flush failed')
+
+def refuse(fd):
+    operation = getattr(raw._local, 'operation', None)
+    state = raw._states.get(operation)
+    if state is not None and state.source is template_store and fd in state.descriptors:
+        failed.append((operation, state, fd, os.fstat(fd)))
+        raise failure
+    return original(fd)
+
+raw.flush_file = refuse
+try:
+    try:
+        template_store.merge_templates([('after', {'title': 'After'})])
+    except bootstrap.RecoveryRequired as error:
+        # _close_descriptor first refuses uncertain native close; the template
+        # finally then refuses _remove_temporary through the original live gate.
+        assert str(error) == 'raw_operation_provenance_invalid'
+        cause = error
+        for _ in range(8):
+            if cause is failure:
+                break
+            cause = cause.__context__
+            assert cause is not None
+        assert cause is failure
+    else:
+        raise AssertionError('unflushed bytes were published')
+finally:
+    raw.flush_file = original
+assert len(failed) == 1
+operation, state, fd, observed = failed[0]
+assert selected.read_bytes() == previous
+assert state.selected == selected and state.uncertain and not state.active
+assert raw._states.get(operation) is state and operation in storage._raw_operations
+assert fd in state.descriptors and state.pins and state.leases
+assert all(lease in storage._live_leases for lease in state.leases)
+current = os.fstat(fd)
+assert (current.st_dev, current.st_ino) == (observed.st_dev, observed.st_ino)
+assert state.files and all(stream.closed for stream in state.files)
+try:
+    template_store.merge_templates([('later', {'title': 'Later'})])
+except bootstrap.RecoveryRequired as error:
+    assert str(error) == 'raw_resources_not_retired'
+else:
+    raise AssertionError('a later writer bypassed uncertain custody')
+assert selected.read_bytes() == previous
+participant = state.participant
+assert participant is not None
+participant.close_admission()
+pause = storage._begin_local_pause()
+assert not participant.drain(time.monotonic() + .03)
+assert not pause.drain(time.monotonic() + .03)
+print('held', flush=True)
+assert sys.stdin.readline().strip() == 'exit'
+# No simulated repair: process exit reaps the deliberately uncertain resources.
+pause.resume()
+"""
+
+
+def test_failed_canonical_file_flush_retains_uncertain_custody(
+    tmp_path, local_root, launch  # noqa: F811 - imported pytest fixtures
 ):
-    """A rejected fsync must not leave a closed wrapper in `state.files`.
+    """The first real durability barrier refuses publish and retains exclusion."""
+    import subprocess
+    import sys
 
-    `_file` removed the wrapper only *after* `os.fsync(fd)`, so a writeback
-    error jumped straight to descriptor cleanup with the already-closed
-    wrapper still listed as live. `_retire` gates on `state.files`, so that
-    stale entry -- not the durability failure -- was what permanently refused
-    to release the operation's pins and leases, and it did so with
-    `state.uncertain` still False, i.e. outside this module's one deliberate
-    fail-closed signal. Rejecting an unprovable write is intended; leaking a
-    pinned directory descriptor and a live `_states` entry per failure is not.
-    """
-    from tldw_chatbook import config
-    from tldw_chatbook.Backup_Recovery import raw_participants as raw
-    from tldw_chatbook.Notes.template_store import merge_templates
-
-    monkeypatch.setattr(
-        config, "_get_effective_config_path", lambda: tmp_path / "config.toml"
+    from Tests.pipe_readiness import pipe_readable
+    from tldw_chatbook.Backup_Recovery.control_records import (
+        UNBOUND_NAMESPACE,
+        admission_authority,
     )
 
-    real_fsync = raw.os.fsync
-
-    def refuse(fd):
-        # Only this module's own writes: storage admission fsyncs its own
-        # bookkeeping through the same module object during fixture setup.
-        if getattr(raw._local, "operation", None) is not None:
-            raise OSError("writeback failed")
-        return real_fsync(fd)
-
-    monkeypatch.setattr(raw.os, "fsync", refuse)
-    with pytest.raises(OSError, match="writeback failed"):
-        merge_templates([("durable", {"title": "Durable"})])
-
-    assert not raw._states
+    authority = admission_authority(local_root)
+    error_log = tmp_path / "canonical-flush-child.stderr"
+    # Import logging cannot fill an undrained stderr pipe while awaiting 'held'.
+    with error_log.open("w", encoding="utf-8") as errors:
+        child = subprocess.Popen(
+            [
+                sys.executable,
+                "-u",
+                "-c",
+                _TEMPLATE_FLUSH_FAILURE_CHILD,
+                str(local_root),
+                str(tmp_path / "note_templates.json"),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=errors,
+            text=True,
+            bufsize=1,
+        )
+        try:
+            assert line(child) == "held"
+            observer = launch(authority.control_root, "maintenance", (UNBOUND_NAMESPACE,))
+            assert not pipe_readable(observer.stdout, .05)
+            child.stdin.write("exit\n")
+            child.stdin.flush()
+            child.wait(timeout=10)
+            assert child.returncode == 0, error_log.read_text(encoding="utf-8")[-6000:]
+            assert line(observer) == "entered"
+            release(observer)
+        finally:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=10)
+            child.stdin.close()
+            child.stdout.close()

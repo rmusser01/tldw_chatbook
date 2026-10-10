@@ -13,11 +13,17 @@ over the returned loader callable.
 
 from __future__ import annotations
 
+from tldw_chatbook.UI.Console_Modules.context_spend import (
+    ConsoleContextSpendController,
+    _build_console_inspector_exchanges_loader,
+)
+
 import inspect
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from Tests.UI.console_controller_stubs import context_spend_for_test
 from loguru import logger as loguru_logger
 
 from tldw_chatbook.Chat.console_chat_controller import CapturePolicyMutationStatus
@@ -39,7 +45,6 @@ from tldw_chatbook.Chat.console_trace_projection import (
 )
 from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
-    _build_console_inspector_exchanges_loader,
 )
 
 
@@ -141,7 +146,9 @@ async def test_durable_fallback_consumes_discriminated_projection() -> None:
 
 
 def test_inspector_cost_builder_has_no_raw_database_dependency() -> None:
-    source = inspect.getsource(ChatScreen._build_console_inspector_cost_data)
+    source = inspect.getsource(
+        ConsoleContextSpendController._build_console_inspector_cost_data
+    )
 
     assert "chachanotes_db" not in source
     assert "projected_trace_calls" in source
@@ -401,6 +408,9 @@ def test_inspector_push_captures_immutable_revision_target() -> None:
         app=SimpleNamespace(push_screen=pushed),
     )
 
+    owner = context_spend_for_test(screen)
+    owner._build_console_inspector_cost_data = screen._build_console_inspector_cost_data
+
     async def snapshot_factory():
         return SimpleNamespace()
 
@@ -460,7 +470,15 @@ def test_both_inspector_routes_estimate_the_captured_prepared_request(
         _push_console_inspector=pushed,
         _console_next_send_token_estimate=estimator,
     )
-    getattr(ChatScreen, entry)(screen)
+    owner = context_spend_for_test(screen)
+    owner._console_inspector_next_send_factories = (
+        screen._console_inspector_next_send_factories
+    )
+    owner._console_next_send_token_estimate = screen._console_next_send_token_estimate
+    if entry == "_open_console_cost_breakdown":
+        getattr(owner, entry)()
+    else:
+        getattr(ChatScreen, entry)(screen)
     controller.store.active_session_id = "different"
     payload = SimpleNamespace(
         payload={"messages": [{"role": "system", "content": "long context"}]}

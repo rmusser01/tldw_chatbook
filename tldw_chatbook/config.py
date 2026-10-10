@@ -97,6 +97,7 @@ from tldw_chatbook.Utils.private_paths import (
     create_private_text,
     lexical_path,
     open_private_binary,
+    open_private_lock_stream,
     open_private_text_append_stream,
     secure_private_directory,
     verify_trusted_directory,
@@ -112,6 +113,41 @@ if TYPE_CHECKING:
 #######################################################################################################################
 #
 # Functions:
+
+
+def _contains_literal_backslash_x(value: Any) -> bool:
+    pending = [value]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if type(current) is str:  # noqa: E721 - inspect builtin values without custom coercion.
+            if "\\x" in current:
+                return True
+        elif type(current) in (dict, list, tuple):
+            identity = id(current)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            # Only builtin containers enter this branch; custom mappings keep the legacy route.
+            pending.extend(current.values() if type(current) is dict else current)  # noqa: E721
+    return False
+
+
+def dumps_cli_config(config_data: Mapping[str, Any]) -> str:
+    """Retain the original codec and defer the exceptional literal encoder.
+
+    Args:
+        config_data: Original configuration mapping passed to the writer.
+
+    Returns:
+        TOML text using the existing ordinary or literal-backslash-x codec.
+    """
+    if not _contains_literal_backslash_x(config_data):
+        return toml.dumps(config_data)
+    from tldw_chatbook.Utils.toml_serialization import dumps_cli_config as special
+
+    return special(config_data)
+
 
 logger.debug("CRITICAL DEBUG: config.py module is being imported/executed NOW.")
 # --- Constants ---
@@ -524,7 +560,7 @@ def get_console_ssh_settings() -> ConsoleSshSettings:
 
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
-from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id
+from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id  # noqa: E402 - startup identity follows config/provider setup
 
 CLI_APP_CLIENT_ID = installation_client_id()
 
@@ -6615,6 +6651,72 @@ except tomllib.TOMLDecodeError as e:
     DEFAULT_CONFIG_FROM_TOML = {}  # Should not happen with valid TOML string
 
 
+def _creation_library_shape(value: object) -> tuple | None:
+    """Freeze only plain TOML library data; unsupported custom values decline."""
+    kind = type(value)
+    if kind in (str, int, float, bool):
+        return (kind, value)
+    if kind is list:
+        items = tuple(_creation_library_shape(item) for item in value)
+        return (list, items) if all(item is not None for item in items) else None
+    if kind is dict:
+        if any(type(key) is not str for key in value):  # noqa: E721 -- exact plain TOML keys, no custom comparison
+            return None
+        items = tuple(
+            (key, _creation_library_shape(item)) for key, item in value.items()
+        )
+        return (dict, items) if all(item is not None for _, item in items) else None
+    return None
+
+
+# Captured during the defining module's initialization, before any fresh load.
+# This is source eligibility, never a profile-origin or permission verdict.
+_FRESH_LIBRARY_CREATION_SOURCE = (
+    CONFIG_TOML_CONTENT,
+    DEFAULT_CONFIG_FROM_TOML,
+    DEFAULT_CONFIG_FROM_TOML.get("library"),
+    _creation_library_shape(DEFAULT_CONFIG_FROM_TOML.get("library")),
+    CONFIG_TOML_CONTENT + '\n[library.rail_state]\nlifecycle = "unknown"\n',
+)
+
+
+def _fresh_profile_creation_content(
+    loaded_config: Dict[str, Any], _source=_FRESH_LIBRARY_CREATION_SOURCE
+) -> tuple[str, bool]:
+    """Append UNKNOWN only to the unchanged stock fresh-creation document."""
+    if _FRESH_LIBRARY_CREATION_SOURCE is not _source:
+        return CONFIG_TOML_CONTENT, False
+    template, defaults, library, shape, creation = _source
+    current_library = (
+        DEFAULT_CONFIG_FROM_TOML.get("library")
+        if type(DEFAULT_CONFIG_FROM_TOML) is dict  # noqa: E721 -- exact stock dictionary lookup
+        else None
+    )
+    returned_library = (
+        loaded_config.get("library") if type(loaded_config) is dict else None  # noqa: E721 -- exact stock dictionary lookup
+    )
+    eligible = (
+        type(CONFIG_TOML_CONTENT) is str  # noqa: E721 -- exact stock template type
+        and CONFIG_TOML_CONTENT is template
+        and DEFAULT_CONFIG_FROM_TOML is defaults
+        and current_library is library
+        and type(library) is dict  # noqa: E721 -- exact stock dictionary lookup
+        and "rail_state" not in library
+        and shape is not None
+        and _creation_library_shape(current_library) == shape
+        and _creation_library_shape(returned_library) == shape
+    )
+    return (creation, True) if eligible else (CONFIG_TOML_CONTENT, False)
+
+
+_FRESH_LIBRARY_CREATION_SELECTOR = (
+    _fresh_profile_creation_content,
+    _fresh_profile_creation_content.__code__,
+    _fresh_profile_creation_content.__globals__,
+    _fresh_profile_creation_content.__defaults__,
+)
+
+
 # --- Primary Configuration Loading Logic for the CLI ---
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
@@ -7043,13 +7145,18 @@ def _load_cli_config_bootstrap_unlocked(
         logger.info(
             f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."
         )
+        creation_content, creation_has_lifecycle = _fresh_profile_creation_content(
+            loaded_config
+        )
         created = create_private_text(
             config_path,
-            CONFIG_TOML_CONTENT,
+            creation_content,
             application_owned_directory=application_directory,
         )
         _report_config_path_posture(created)
         logger.info(f"Created default CLI config file at {config_path}")
+        if creation_has_lifecycle:
+            loaded_config["library"]["rail_state"] = {"lifecycle": "unknown"}
         loaded_config["_first_run"] = True
         _FIRST_PROFILE_CREATED_THIS_SESSION = True
         bootstrap_succeeded = True
@@ -7058,13 +7165,18 @@ def _load_cli_config_bootstrap_unlocked(
             logger.info(
                 f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."
             )
+            creation_content, creation_has_lifecycle = _fresh_profile_creation_content(
+                loaded_config
+            )
             created = create_private_text(
                 config_path,
-                CONFIG_TOML_CONTENT,
+                creation_content,
                 application_owned_directory=application_directory,
             )
             _report_config_path_posture(created)
             logger.info(f"Created default CLI config file at {config_path}")
+            if creation_has_lifecycle:
+                loaded_config["library"]["rail_state"] = {"lifecycle": "unknown"}
             loaded_config["_first_run"] = True
             _FIRST_PROFILE_CREATED_THIS_SESSION = True
             bootstrap_succeeded = True
@@ -7267,15 +7379,7 @@ def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
     with _config_participants.operation(sys.modules[__name__], target=config_path):
         lock_path = config_path.with_name(f"{config_path.name}.lock")
         application_directory = application_owned_config_directory(config_path)
-        try:
-            create_private_text(
-                lock_path,
-                "",
-                application_owned_directory=application_directory,
-            )
-        except FileExistsError:
-            pass
-        stream = open_private_text_append_stream(
+        stream = open_private_lock_stream(
             lock_path,
             application_owned_directory=application_directory,
         )
@@ -7545,7 +7649,7 @@ def _write_raw_cli_config_unlocked(
     """
 
     application_directory = _prepare_config_parent(config_path)
-    serialized = toml.dumps(dict(config_data))
+    serialized = dumps_cli_config(dict(config_data))
     try:
         parsed_back = tomllib.loads(serialized)
     except tomllib.TOMLDecodeError as exc:
@@ -8150,11 +8254,19 @@ def replace_cli_config_snapshot(
 
     if not isinstance(expected_snapshot, ConfigFileSnapshot):
         raise TypeError("A config file snapshot is required for guarded replacement")
-    return _replace_cli_config_serialized(
-        serialized,
-        create_backup=create_backup,
-        expected_snapshot=expected_snapshot,
-    )
+    try:
+        return _replace_cli_config_serialized(
+            serialized,
+            create_backup=create_backup,
+            expected_snapshot=expected_snapshot,
+        )
+    except _config_participants.bootstrap.RecoveryRequired as error:
+        if (
+            str(error) == "raw_source_selection_changed"
+            and expected_snapshot.path != get_cli_config_path()
+        ):
+            raise ConfigSnapshotConflictError() from error
+        raise
 
 
 def _replace_cli_config_serialized(
@@ -8330,7 +8442,7 @@ def export_cli_config_snapshot(
         if serialized is None:
             if config_data is None:
                 raise FileNotFoundError(config_path)
-            serialized = toml.dumps(_config_data_for_persistence(config_data))
+            serialized = dumps_cli_config(_config_data_for_persistence(config_data))
         result_path = _write_serialized_config_artifact_unlocked(
             snapshot_path,
             serialized,
@@ -8843,7 +8955,7 @@ def _apply_literal_settings_transaction_locked(
             expected_raw: Mapping[str, Any] | None = None
             try:
                 persisted = _config_data_for_persistence(config_data)
-                expected_raw = tomllib.loads(toml.dumps(dict(persisted)))
+                expected_raw = tomllib.loads(dumps_cli_config(dict(persisted)))
                 raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
             except Exception as error:
                 committed_content_visible = False
@@ -10853,11 +10965,14 @@ def _user_data_dir_stamps(paths: tuple[Path, ...]) -> tuple | None:
     A path that is not a directory, or sits under one the user cannot search,
     raises here; the memo then steps aside so the resolution reports it as it
     always has (``PrivatePathError``), rather than a raw ``OSError`` escaping.
+    One fresh snapshot shares ancestor visits across these requested paths.
     """
-    from tldw_chatbook.Backup_Recovery.storage_admission import _posture
+    if not paths:
+        return ()
+    from tldw_chatbook.Backup_Recovery.storage_admission import _observe_stamps
 
     try:
-        return tuple(_posture(path) for path in paths)
+        return _observe_stamps(paths, ())[0]
     except OSError:
         return None
 
@@ -10971,6 +11086,36 @@ def _get_custom_database_path(
     return lexical_path(validated)
 
 
+def _database_path(
+    setting_name: str,
+    *,
+    ignore_override: bool = False,
+    expand_before_validation: bool = True,
+    _user_data_dir: Path | None = None,
+) -> Path:
+    """Select a database path, optionally using an already verified directory.
+
+    Args:
+        setting_name: The existing database setting and default leaf selector.
+        ignore_override: Skip custom settings when selecting a default path.
+        expand_before_validation: Preserve the setting's custom-path expansion.
+        _user_data_dir: Directory supplied by finite sensitive-path preparation.
+
+    Returns:
+        The custom path or the database's default path beneath the directory.
+    """
+    if not ignore_override:
+        custom_path = (
+            _get_custom_database_path(setting_name)
+            if expand_before_validation
+            else _get_custom_database_path(setting_name, expand_before_validation=False)
+        )
+        if custom_path:
+            return custom_path
+    user_data_dir = get_user_data_dir() if _user_data_dir is None else _user_data_dir
+    return user_data_dir / profile_paths.database_leaf(setting_name)
+
+
 def get_chachanotes_db_path(*, ignore_override: bool = False) -> Path:
     """Get the resolved path for the ChaChaNotes database.
 
@@ -10985,11 +11130,7 @@ def get_chachanotes_db_path(*, ignore_override: bool = False) -> Path:
         (unless ``ignore_override``) or the default filename under the
         current profile's user data directory.
     """
-    if ignore_override:
-        return get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
-    return _get_custom_database_path(
-        "chachanotes_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
+    return _database_path("chachanotes_db_path", ignore_override=ignore_override)
 
 
 def get_tts_profiles_db_path() -> Path:
@@ -11148,11 +11289,7 @@ def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
         (unless ``ignore_override``) or the default filename under the
         current profile's user data directory.
     """
-    if ignore_override:
-        return get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
-    return _get_custom_database_path(
-        "prompts_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
+    return _database_path("prompts_db_path", ignore_override=ignore_override)
 
 
 def get_media_db_path(*, ignore_override: bool = False) -> Path:
@@ -11169,19 +11306,11 @@ def get_media_db_path(*, ignore_override: bool = False) -> Path:
         (unless ``ignore_override``) or the default filename under the
         current profile's user data directory.
     """
-    if ignore_override:
-        return get_user_data_dir() / profile_paths.database_leaf("media_db_path")
-    return _get_custom_database_path(
-        "media_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("media_db_path")
+    return _database_path("media_db_path", ignore_override=ignore_override)
 
 
 def get_library_collections_db_path() -> Path:
-    return _get_custom_database_path(
-        "library_collections_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf(
-        "library_collections_db_path"
-    )
+    return _database_path("library_collections_db_path")
 
 
 def get_dreams_db_path() -> Path:
@@ -11193,49 +11322,33 @@ def get_dreams_db_path() -> Path:
 
 
 def get_library_ingest_jobs_db_path() -> Path:
-    return _get_custom_database_path(
-        "library_ingest_jobs_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf(
-        "library_ingest_jobs_db_path"
-    )
+    return _database_path("library_ingest_jobs_db_path")
 
 
 def get_workspaces_db_path() -> Path:
-    return _get_custom_database_path(
-        "workspaces_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("workspaces_db_path")
+    return _database_path("workspaces_db_path")
 
 
 def get_subscriptions_db_path() -> Path:
-    return _get_custom_database_path(
-        "subscriptions_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("subscriptions_db_path")
+    return _database_path("subscriptions_db_path")
 
 
 def get_evals_db_path() -> Path:
     """Return the canonical path for the Evals database."""
-    return _get_custom_database_path(
-        "evals_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("evals_db_path")
+    return _database_path("evals_db_path")
 
 
 def get_rag_indexing_db_path() -> Path:
     """Return the canonical path for the RAG indexing-state database."""
-    return _get_custom_database_path(
-        "rag_indexing_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("rag_indexing_db_path")
+    return _database_path("rag_indexing_db_path")
 
 
 def get_notifications_db_path() -> Path:
-    return _get_custom_database_path(
-        "notifications_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("notifications_db_path")
+    return _database_path("notifications_db_path")
 
 
 def get_research_db_path() -> Path:
-    return _get_custom_database_path(
-        "research_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("research_db_path")
+    return _database_path("research_db_path")
 
 
 def get_workflows_db_path() -> Path:
@@ -11247,16 +11360,11 @@ def get_workflows_db_path() -> Path:
 
 
 def get_writing_db_path() -> Path:
-    return _get_custom_database_path(
-        "writing_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("writing_db_path")
+    return _database_path("writing_db_path")
 
 
 def get_scheduled_tasks_db_path() -> Path:
-    return _get_custom_database_path(
-        "scheduled_tasks_db_path",
-        expand_before_validation=False,
-    ) or get_user_data_dir() / profile_paths.database_leaf("scheduled_tasks_db_path")
+    return _database_path("scheduled_tasks_db_path", expand_before_validation=False)
 
 
 def get_cli_log_file_path() -> Path:
@@ -11626,3 +11734,318 @@ def create_mcp_credential_service(data_root: Path | None = None):
     return CredentialBindingService(
         KeyringCredentialBackend(data_root or get_user_data_dir())
     )
+
+
+# TASK-34404: defining-module originals, retained before helper lazy import.
+_SENSITIVE_INPUT_ORIGINALS = (
+    globals(),
+    tuple(
+        (name, globals()[name], globals()[name].__globals__, globals()[name].__code__)
+        for name in (
+            "get_user_data_dir",
+            "_get_effective_config_path",
+            "_database_path",
+            "_get_custom_database_path",
+            "get_cli_setting",
+            "load_cli_config_and_ensure_existence",
+            "lexical_path",
+            "validate_path_simple",
+            "get_chachanotes_db_path",
+            "get_prompts_db_path",
+            "get_media_db_path",
+            "get_library_collections_db_path",
+            "get_library_ingest_jobs_db_path",
+            "get_workspaces_db_path",
+            "get_subscriptions_db_path",
+            "get_notifications_db_path",
+            "get_research_db_path",
+            "get_writing_db_path",
+            "get_scheduled_tasks_db_path",
+            "get_evals_db_path",
+            "get_rag_indexing_db_path",
+        )
+    ),
+)
+
+_SENSITIVE_INPUT_ORIGINALS = (
+    _SENSITIVE_INPUT_ORIGINALS[0],
+    _SENSITIVE_INPUT_ORIGINALS[1]
+    + (
+        (
+            "_config_participants",
+            _config_participants,
+            _config_participants.__dict__,
+            None,
+        ),
+        ("profile_paths", profile_paths, profile_paths.__dict__, None),
+    ),
+)
+
+# Capture default values before lazy sensitive-path readers can be replaced.
+# The tuple of keyword items remains independent of an in-place dict edit.
+_SENSITIVE_INPUT_DEFAULTS = tuple(
+    (
+        name,
+        globals()[name],
+        globals()[name].__defaults__,
+        globals()[name].__kwdefaults__,
+        tuple((globals()[name].__kwdefaults__ or {}).items()),
+    )
+    for name in (
+        "get_chachanotes_db_path",
+        "get_prompts_db_path",
+        "get_media_db_path",
+        "get_library_collections_db_path",
+        "get_library_ingest_jobs_db_path",
+        "get_workspaces_db_path",
+        "get_subscriptions_db_path",
+        "get_notifications_db_path",
+        "get_research_db_path",
+        "get_writing_db_path",
+        "get_scheduled_tasks_db_path",
+        "get_evals_db_path",
+        "get_rag_indexing_db_path",
+        "_database_path",
+    )
+)
+
+_SENSITIVE_INPUT_OWNERS = (
+    (
+        _config_participants,
+        _config_participants.__dict__,
+        tuple(
+            (
+                name,
+                getattr(_config_participants, name),
+                getattr(_config_participants, name).__globals__,
+                getattr(_config_participants, name).__code__,
+            )
+            for name in (
+                "operation",
+                "checked_config_identity",
+                "verified_user_data_directory",
+                "_sensitive_input_publication_owner",
+                "_check_sensitive_input_publication",
+            )
+        ),
+    ),
+    (
+        profile_paths,
+        profile_paths.__dict__,
+        tuple(
+            (
+                name,
+                getattr(profile_paths, name),
+                getattr(profile_paths, name).__globals__,
+                getattr(profile_paths, name).__code__,
+            )
+            for name in ("lexical_path", "custom_database_input", "database_leaf")
+        ),
+    ),
+)
+
+# Capture the guarded getter's actual body and closure at definition time,
+# before sensitive_paths is lazily imported or custom readers are installed.
+_SENSITIVE_INPUT_GUARDED_READERS = (
+    ("get_user_data_dir", get_user_data_dir, get_user_data_dir._config_guarded_body),
+)
+
+# This original selector is a concrete lru wrapper, not a Python function.
+_SENSITIVE_INPUT_CACHED_READERS = (
+    (
+        "_resolve_effective_config_path",
+        _resolve_effective_config_path,
+        type(_resolve_effective_config_path),
+        _resolve_effective_config_path.__wrapped__,
+        _resolve_effective_config_path.__wrapped__.__code__,
+        _resolve_effective_config_path.__wrapped__.__globals__,
+    ),
+)
+
+
+_CONSOLE_PENDING_FACTS_IDENTITY_SOURCE = (
+    current_config_identity,
+    current_config_identity.__code__,
+    current_config_identity.__globals__,
+    current_config_identity.__defaults__,
+    current_config_identity.__kwdefaults__,
+    current_config_identity.__closure__,
+)
+
+
+# Defining callbacks for the optional finite legacy run-log probe only.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "get_workspaces_db_path",
+                "_database_path",
+                "_get_custom_database_path",
+                "get_user_data_dir",
+                "get_cli_setting",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "get_workspaces_db_path",
+                    "_database_path",
+                    "_get_custom_database_path",
+                    "get_user_data_dir",
+                    "get_cli_setting",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+
+# Definition-time source of the optional finite Compact display read.
+_COMPACT_MODEL_CONFIG_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (globals(), name, globals()[name])
+        for name in (
+            "get_cli_providers_and_models",
+            "load_settings",
+            "_load_settings_guarded",
+            "_load_settings_uncached",
+            "_settings_cache_hit",
+            "_get_effective_config_path",
+            "current_config_identity",
+            "resolve_provider_name",
+            "_normalize_provider_lookup_key",
+            "normalize_provider_config_key",
+            "_config_participants",
+        )
+    )
+    + tuple(
+        (vars(_config_participants), name, vars(_config_participants)[name])
+        for name in ("operation",)
+    )
+    + ((sys.modules, _config_participants.__name__, _config_participants),),
+    tuple(
+        (
+            namespace,
+            name,
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for namespace, name, function in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "get_cli_providers_and_models",
+                    "load_settings",
+                    "_load_settings_guarded",
+                    "_load_settings_uncached",
+                    "_settings_cache_hit",
+                    "_get_effective_config_path",
+                    "current_config_identity",
+                    "resolve_provider_name",
+                    "_normalize_provider_lookup_key",
+                    "normalize_provider_config_key",
+                )
+            ),
+            *(
+                (vars(function), "__wrapped__", function.__wrapped__)
+                for function in (_load_settings_guarded, _load_settings_uncached)
+            ),
+            (vars(_config_participants), "operation", _config_participants.operation),
+            (
+                vars(_config_participants.operation),
+                "__wrapped__",
+                _config_participants.operation.__wrapped__,
+            ),
+        )
+    ),
+)
+
+
+# Original callbacks eligible for finite deferred Collections setup only.
+def _record_collections_setup_source(entries):
+    from types import FunctionType
+
+    rows = []
+    for owner, name in entries:
+        original = owner[name] if type(owner) is dict else getattr(owner, name)  # noqa: E721 - exact stock compatibility boundary
+        function = getattr(original, "__func__", original)
+        records = []
+        while type(function) is FunctionType:
+            records.append(
+                (
+                    function,
+                    function.__code__,
+                    function.__globals__,
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple((function.__kwdefaults__ or {}).items()),
+                    function.__closure__,
+                    tuple(
+                        (cell, cell.cell_contents)
+                        for cell in function.__closure__ or ()
+                    ),
+                    vars(function).get("__wrapped__"),
+                )
+            )
+            function = vars(function).get("__wrapped__")
+        rows.append((owner, name, original, tuple(records)))
+    return globals(), tuple(rows)
+
+
+_COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
+    (
+        (globals(), "current_config_identity"),
+        (globals(), "get_library_collections_db_path"),
+        (globals(), "get_user_data_dir"),
+        (globals(), "_database_path"),
+        (globals(), "_get_effective_config_path"),
+    )
+)
+del _record_collections_setup_source

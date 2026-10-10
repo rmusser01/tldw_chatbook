@@ -547,7 +547,7 @@ async def test_mounted_console_refreshes_send_price_without_changing_cost_chip()
         cost_before = (
             cost_chip.display,
             str(cost_chip.render()),
-            console._last_console_cost_state,
+            console._context_spend._last_console_cost_state,
         )
 
         composer.load_draft("hello")
@@ -567,7 +567,7 @@ async def test_mounted_console_refreshes_send_price_without_changing_cost_chip()
         assert (
             cost_chip.display,
             str(cost_chip.render()),
-            console._last_console_cost_state,
+            console._context_spend._last_console_cost_state,
         ) == cost_before
 
         composer.load_draft("hello with a substantially longer live draft")

@@ -300,7 +300,13 @@ class ConsoleImageController:
         )
         selection = (root, profile, identities)
         if not self._recovered_image_tasks and not self._recovered_image_paused:
-            task = asyncio.create_task(self._load_recovered_images(selection, cache))
+            worker = self._screen.run_worker(
+                self._load_recovered_images(selection, cache),
+                group="console-recovered-images",
+                exclusive=True,
+                exit_on_error=False,
+            )
+            task = worker._task
             self._recovered_image_tasks.add(task)
             task.add_done_callback(self._recovered_image_tasks.discard)
         # Until this exact source/message selection resolves, suppress transient
@@ -398,6 +404,27 @@ class ConsoleImageController:
 
     def _recovered_images_close_admission(self):
         self._recovered_image_paused = True
+
+    async def _recovered_images_close(self):
+        """Seal this view's image work and join its exact native readers."""
+        self._recovered_images_close_admission()
+        tasks = tuple(self._recovered_image_tasks)
+        for task in tasks:
+            task.cancel()
+        settled = asyncio.gather(*tasks, return_exceptions=True)
+        cancellation = None
+        while not settled.done():
+            try:
+                await asyncio.shield(settled)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+        for result in settled.result():
+            if isinstance(result, BaseException) and not isinstance(
+                result, asyncio.CancelledError
+            ):
+                raise result
+        if cancellation is not None:
+            raise cancellation
 
     async def _recovered_images_drain(self, deadline):
         import time

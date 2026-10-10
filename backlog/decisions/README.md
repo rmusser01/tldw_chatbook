@@ -146,7 +146,11 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-221](221-prompt-injection-cold-start-caches.md) | Accepted | Pay prompt-injection cold starts (book fetch, entry processing, pattern compilation) once per store generation: a monotonic WorldBookManager generation counter, a lock-guarded 8-conversation LRU of built processors keyed (conversation, character, generation), precompiled entry keys, and id-set recursion dedup; chat dictionaries adopt the same contract. |
 
 | [ADR-211](211-ephemeral-provider-failure-presentation.md) | Accepted | Keep sanitized provider failure presentation transient across the gateway, agent outcome and Console while preserving typed fallback semantics and diagnostic persistence. |
+| [ADR-222](222-provider-http-session-reuse.md) | Accepted | Reuse per-thread provider HTTP sessions and retain payload mutation isolation. |
+| [ADR-223](223-persistent-embedding-content-hash-cache.md) | Accepted | Persist model-qualified embedding content hashes and batch ingestion skip-checks. |
 | [ADR-224](224-conversation-timestamp-normalization.md) | Accepted | Migrate `conversations.last_modified` and `flashcards.next_review` to the ADR-173 canonical UTC shape (schema v78→v79) so the keyset, due-card, and character-list queries compare and order on raw indexed columns; a partial expression index serves the character visibility predicate and NOCASE order. |
+| [ADR-225](225-console-send-preparation-and-io-ownership.md) | Accepted | Give Console Send finite received custody, shared preparation and exact native retirement. |
+| [ADR-226](226-console-polling-and-full-state-reconciliation.md) | Proposed | Separate qualified Console polling from full live-state reconciliation. |
 
 ## Historical Decision Material
 

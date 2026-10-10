@@ -304,16 +304,18 @@ DATABRICKS = ProviderRecord(
 # implementation is this record plus one dispatch entry (no per-provider
 # LLM_Calls module).
 #
-# ALLOWANCES ARE PROVISIONAL PENDING FIRST LIVE CAPTURE: this environment
-# holds no provider keys, so Task 2 captured NO cloud fixtures, and all
-# three records ship EMPTY response/choice/message allowance sets -- the
-# strict parser unchanged. Task 7's live probes capture real envelopes and
-# reconcile these sets (amend, never silent).
-#
-# Memory of expected extras (recorded here as memory, NOT as live
-# allowances -- fixture-unproven): Together -- a top-level ``prompt``
-# string (the prompt tokens actually shown) and choice-level ``logprobs``;
-# Cerebras -- a top-level ``time_info`` object on some responses.
+# TASK-34367.3-.5: scoped allowances reconciled with current official schemas
+# (2026-10-04) and actual-adapter complete/SSE replays. These are offline
+# contracts; live qualification remains TASK-33640. Sources:
+# docs.together.ai/reference/chat-completions -- choice logprobs/seed/text/
+# top_logprobs, message reasoning, envelope prompt (array)/warnings.
+# docs.fireworks.ai/api-reference/post-chatcompletions -- choice logprobs/
+# raw_output, envelope perf_metrics (terminal-only in SSE)/prompt_token_ids.
+# inference-docs.cerebras.ai/api-reference/chat-completions -- choice
+# logprobs/reasoning_logprobs, message reasoning, envelope time_info and
+# service_tier/service_tier_used. No allowance applies to another provider.
+# Opt-in nonempty choice token_ids and structured reasoning_details are not
+# permitted by the existing level-value contract; do not silently drop them.
 #
 # Fireworks returns reasoning in ``message.reasoning_content`` (and stream
 # deltas) and requires it replayed on interleaved tool turns
@@ -362,10 +364,12 @@ TOGETHER = ProviderRecord(
     },
     pricing_seeds={},       # per-model pricing lands with the catalog
     engine_driven=True,
+    response_allowances=frozenset({"prompt", "warnings"}),
+    choice_allowances=frozenset({"logprobs", "seed", "top_logprobs", "text"}),
+    message_allowances=frozenset({"reasoning"}),
     base_url_suffix=None,   # the default URL is already complete
     reasoning_disposition="ignored",
     auth_scheme="bearer",
-    choice_allowances=frozenset({"logprobs"}),
     stream_include_usage=True,
 )
 # Fireworks, captured live 2026-10-04 (Tests/fixtures/cloud_live/fireworks.json,
@@ -399,6 +403,8 @@ FIREWORKS = ProviderRecord(
     },
     pricing_seeds={},
     engine_driven=True,
+    response_allowances=frozenset({"perf_metrics", "prompt_token_ids"}),
+    choice_allowances=frozenset({"logprobs", "raw_output"}),
     base_url_suffix=None,
     reasoning_disposition="proprietary",  # reasoning_content, replayed on tool turns
     auth_scheme="bearer",
@@ -423,6 +429,9 @@ CEREBRAS = ProviderRecord(
     },
     pricing_seeds={},
     engine_driven=True,
+    response_allowances=frozenset({"time_info", "service_tier", "service_tier_used"}),
+    choice_allowances=frozenset({"logprobs", "reasoning_logprobs"}),
+    message_allowances=frozenset({"reasoning"}),
     base_url_suffix=None,
     reasoning_disposition="ignored",
     auth_scheme="bearer",

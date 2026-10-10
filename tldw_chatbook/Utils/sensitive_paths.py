@@ -204,8 +204,11 @@ track is the real answer for shell execution.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 from pathlib import Path
+from types import FunctionType as _SensitiveFunctionType
+from types import ModuleType as _SensitiveModuleType
 from typing import Iterable, Literal, NamedTuple
 
 #: Resolution failures seen on this thread; ``_raw_inputs`` never memoizes a
@@ -360,7 +363,9 @@ def _resolved(path_str: str) -> Path | None:
         return None
 
 
-def _sensitive_db_paths() -> tuple[Path, ...]:
+def _sensitive_db_paths(
+    checkpoint=None, *, _user_data_dir: Path | None = None
+) -> tuple[Path, ...]:
     """Resolve this app's own SQLite database paths, lazily.
 
     These databases live under ``config.get_user_data_dir()`` -- by default
@@ -379,18 +384,38 @@ def _sensitive_db_paths() -> tuple[Path, ...]:
     from .. import config as _config
 
     resolved: list[Path] = []
+    projector = _config._database_path if _user_data_dir is not None else None
     for accessor_name in _DB_PATH_ACCESSOR_NAMES:
+        if checkpoint is not None:
+            checkpoint()
         accessor = getattr(_config, accessor_name, None)
+        prepared_directory = _user_data_dir
+        if checkpoint is not None and checkpoint(accessor_name, accessor) is False:
+            prepared_directory = None
         if accessor is None:
             continue
         try:
-            resolved.append(accessor())
+            if prepared_directory is None:
+                selected = accessor()
+            elif accessor_name == "get_scheduled_tasks_db_path":
+                selected = projector(
+                    accessor_name[4:],
+                    expand_before_validation=False,
+                    _user_data_dir=prepared_directory,
+                )
+            else:
+                selected = projector(
+                    accessor_name[4:], _user_data_dir=prepared_directory
+                )
+            resolved.append(selected)
         except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
             _debug(f"sensitive_paths: could not resolve {accessor_name}: {exc}")
     return tuple(resolved)
 
 
-def _sensitive_single_file_paths() -> tuple[Path, ...]:
+def _sensitive_single_file_paths(
+    *, _user_data_dir: Path | None = None
+) -> tuple[Path, ...]:
     """Resolve this app's own non-DB sensitive single files, lazily.
 
     Two families, each resolved through the same accessor the app itself
@@ -432,7 +457,9 @@ def _sensitive_single_file_paths() -> tuple[Path, ...]:
         _debug(f"sensitive_paths: could not resolve config.toml path: {exc}")
 
     try:
-        user_data_dir = _config.get_user_data_dir()
+        user_data_dir = (
+            _config.get_user_data_dir() if _user_data_dir is None else _user_data_dir
+        )
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
         _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
     else:
@@ -443,7 +470,7 @@ def _sensitive_single_file_paths() -> tuple[Path, ...]:
     return tuple(resolved)
 
 
-def _sensitive_skill_trust_dir() -> Path | None:
+def _sensitive_skill_trust_dir(*, _user_data_dir: Path | None = None) -> Path | None:
     """Resolve this app's skill trust/grant store directory, lazily.
 
     ``get_user_data_dir() / "skills"`` is one of the existing-directory
@@ -485,7 +512,9 @@ def _sensitive_skill_trust_dir() -> Path | None:
     from ..Skills_Interop.skill_trust_store import default_trust_store_dir
 
     try:
-        user_data_dir = _config.get_user_data_dir()
+        user_data_dir = (
+            _config.get_user_data_dir() if _user_data_dir is None else _user_data_dir
+        )
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
         _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
         return None
@@ -494,7 +523,9 @@ def _sensitive_skill_trust_dir() -> Path | None:
     return default_trust_store_dir(local_skills_store_dir)
 
 
-def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
+def _direct_child_rule_container_dirs(
+    *, _user_data_dir: Path | None = None
+) -> tuple[Path, ...]:
     """Resolve every directory whose direct (non-recursive) child FILES are refused, lazily.
 
     Each of these is a directory this app treats as a bounded container for
@@ -541,7 +572,9 @@ def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
     resolved: list[Path] = []
 
     try:
-        resolved.append(_config.get_user_data_dir())
+        resolved.append(
+            _config.get_user_data_dir() if _user_data_dir is None else _user_data_dir
+        )
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
         _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
 
@@ -624,6 +657,435 @@ _RAW_INPUTS_MEMO: tuple | None = None
 _RAW_INPUTS_LOCK = threading.Lock()
 
 
+def _sensitive_reader_defaults_current(module, records):
+    """Check definition-time defaults before bypassing stock reader bodies."""
+    if (
+        type(records) is not tuple
+        or module.__dict__.get("_SENSITIVE_INPUT_DEFAULTS") is not records
+    ):
+        return False
+    for name, function, defaults, keywords, items in records:
+        if (
+            module.__dict__.get(name) is not function
+            or type(function) is not _SensitiveFunctionType
+            or function.__defaults__ is not defaults
+            or function.__kwdefaults__ is not keywords
+            or (
+                keywords is not None
+                and (
+                    type(keywords) is not dict  # noqa: E721 -- only stock default maps qualify.
+                    or len(keywords) != len(items)
+                    or any(
+                        key not in keywords or keywords[key] is not value
+                        for key, value in items
+                    )
+                )
+            )
+        ):
+            return False
+    return True
+
+
+def _sensitive_reader_bindings(module):
+    """Read definition-time callback metadata without invoking custom accessors."""
+    if type(module) is not _SensitiveModuleType:
+        return None
+    if sys.modules.get(module.__name__) is not module:
+        return None
+    if module.__name__ in (
+        "tldw_chatbook.config",
+        "tldw_chatbook.Utils.sensitive_paths",
+    ) and not _sensitive_reader_defaults_current(
+        module, module.__dict__.get("_SENSITIVE_INPUT_DEFAULTS")
+    ):
+        return None
+    originals = module.__dict__.get("_SENSITIVE_INPUT_ORIGINALS")
+    if type(originals) is not tuple or len(originals) != 2:
+        return None
+    defining, records = originals
+    if defining is not module.__dict__ or type(records) is not tuple:
+        return None
+    bindings = []
+    for name, original, defining_globals, code in records:
+        if (
+            type(original) is not _SensitiveFunctionType
+            and type(original) is not _SensitiveModuleType
+        ):
+            return None
+        if module.__dict__.get(name) is not original:
+            return None
+        if type(original) is _SensitiveFunctionType:
+            if (
+                original.__globals__ is not defining_globals
+                or original.__code__ is not code
+            ):
+                return None
+        elif original.__dict__ is not defining_globals:
+            return None
+        bindings.append((module, defining, name, original, defining_globals, code))
+    return tuple(bindings)
+
+
+def _sensitive_cached_reader_bindings(source):
+    """Qualify retained original wrappers without unwrapping current callbacks."""
+    records = source.__dict__.get("_SENSITIVE_INPUT_CACHED_READERS")
+    if type(records) is not tuple:
+        return None
+    bindings = []
+    for name, wrapper, wrapper_type, wrapped, code, defining_globals in records:
+        if (
+            source.__dict__.get(name) is not wrapper
+            or type(wrapper) is not wrapper_type
+        ):
+            return None
+        if type(wrapped) is not _SensitiveFunctionType:
+            return None
+        if (
+            getattr(wrapper, "__wrapped__", None) is not wrapped
+            or wrapped.__code__ is not code
+            or wrapped.__globals__ is not defining_globals
+        ):
+            return None
+        bindings.append(
+            (source, name, wrapper, wrapper_type, wrapped, code, defining_globals)
+        )
+    return tuple(bindings)
+
+
+def _sensitive_guarded_readers_current(source, records):
+    """Check retained guarded bodies and cells without invoking a reader."""
+    if (
+        type(records) is not tuple
+        or source.__dict__.get("_SENSITIVE_INPUT_GUARDED_READERS") is not records
+    ):
+        return False
+    for name, wrapper, captured in records:
+        if (
+            type(wrapper) is not _SensitiveFunctionType
+            or source.__dict__.get(name) is not wrapper
+            or wrapper.__dict__.get("_config_guarded_body") is not captured
+            or type(captured) is not tuple
+            or len(captured) != 9
+        ):
+            return False
+        body, code, defining, defaults, kwdefaults, closure, cells, outer, outer_cells = captured
+        if (
+            type(body) is not _SensitiveFunctionType
+            or wrapper.__dict__.get("__wrapped__") is not body
+            or body.__code__ is not code
+            or body.__globals__ is not defining
+            or body.__defaults__ is not defaults
+            or body.__kwdefaults__ is not kwdefaults
+            or body.__closure__ is not closure
+            or wrapper.__closure__ is not outer
+        ):
+            return False
+        for current, saved in ((closure, cells), (outer, outer_cells)):
+            if len(current or ()) != len(saved):
+                return False
+            for cell, (original_cell, original_value) in zip(current or (), saved):
+                try:
+                    if cell is not original_cell or cell.cell_contents is not original_value:
+                        return False
+                except ValueError:
+                    return False
+    return True
+
+
+class _SensitiveConfigInputBundle:
+    """Invocation-local refusal metadata; the original operation admits reads."""
+
+    def __init__(
+        self,
+        source,
+        local,
+        key,
+        bindings,
+        cached_bindings,
+        guarded_readers,
+        operation,
+        checked_identity,
+        capture_publication,
+        check_publication,
+        db_names,
+        error,
+    ):
+        self.source = source
+        self.key = key
+        self.bindings = bindings
+        self.reader_defaults = tuple(
+            (module, module.__dict__.get("_SENSITIVE_INPUT_DEFAULTS"))
+            for module in (source, local)
+        )
+        self.prepared_inputs_changed = False
+        self.cached_bindings = cached_bindings
+        self.guarded_readers = guarded_readers
+        self.operation = operation
+        self.checked_identity = checked_identity
+        self.capture_publication = capture_publication
+        self.check_publication = check_publication
+        self.publication_owner = None
+        self.local = local
+        self.db_names = db_names
+        self.db_readers = {name: source.__dict__[name] for name in db_names}
+        self.error = error
+        self.pid = os.getpid()
+        self.thread = threading.current_thread()
+        self.asyncio = sys.modules.get("asyncio")
+        self.task_reader = (
+            self.asyncio.__dict__.get("current_task")
+            if self.asyncio is not None
+            else None
+        )
+        self.task = self._task()
+        self.builders = {
+            name: original
+            for module, _, name, original, _, _ in bindings
+            if module is local
+        }
+
+    def _task(self):
+        if self.task_reader is None:
+            return None
+        try:
+            return self.task_reader()
+        except RuntimeError:
+            return None
+
+    def check(self, accessor_name=None, accessor=None, *, observe_path=True):
+        """Refuse drift; never reuse a native or permission verdict."""
+        if self.pid != os.getpid() or self.thread is not threading.current_thread():
+            raise self.error("sensitive_input_actor_changed")
+        if self.asyncio is not None and (
+            sys.modules.get("asyncio") is not self.asyncio
+            or self.asyncio.__dict__.get("current_task") is not self.task_reader
+        ):
+            raise self.error("sensitive_input_actor_changed")
+        if self._task() is not self.task:
+            raise self.error("sensitive_input_actor_changed")
+        for module, defining, name, original, defining_globals, code in self.bindings:
+            if (
+                type(module) is not _SensitiveModuleType
+                or sys.modules.get(module.__name__) is not module
+                or module.__dict__ is not defining
+                or defining.get(name) is not original
+            ):
+                raise self.error("sensitive_input_reader_changed")
+            if type(original) is _SensitiveFunctionType:
+                if (
+                    original.__globals__ is not defining_globals
+                    or original.__code__ is not code
+                ):
+                    raise self.error("sensitive_input_reader_changed")
+            elif (
+                sys.modules.get(original.__name__) is not original
+                or original.__dict__ is not defining_globals
+            ):
+                raise self.error("sensitive_input_reader_changed")
+        for module, defaults in self.reader_defaults:
+            if not self.builders["_sensitive_reader_defaults_current"](
+                module, defaults
+            ):
+                raise self.error("sensitive_input_reader_changed")
+        for (
+            source,
+            name,
+            wrapper,
+            wrapper_type,
+            wrapped,
+            code,
+            defining_globals,
+        ) in self.cached_bindings:
+            if (
+                source.__dict__.get(name) is not wrapper
+                or type(wrapper) is not wrapper_type
+                or getattr(wrapper, "__wrapped__", None) is not wrapped
+                or wrapped.__code__ is not code
+                or wrapped.__globals__ is not defining_globals
+            ):
+                raise self.error("sensitive_input_reader_changed")
+        if not self.builders["_sensitive_guarded_readers_current"](
+            self.source, self.guarded_readers
+        ):
+            raise self.error("sensitive_input_reader_changed")
+        if self.local.__dict__.get("_DB_PATH_ACCESSOR_NAMES") is not self.db_names:
+            raise self.error("sensitive_input_reader_changed")
+        source = self.source.__dict__
+        if (
+            source.get("_CONFIG_CACHE") is not self.key[0]
+            or source.get("_CONFIG_GENERATION") != self.key[1]
+            or source.get("_CONFIG_CACHE_SOURCE") != self.key[2]
+            or (
+                observe_path
+                and str(source["_get_effective_config_path"]()) != self.key[3]
+            )
+        ):
+            raise self.error("sensitive_input_source_changed")
+        if accessor_name is not None and (
+            accessor_name not in self.db_readers
+            or self.db_readers[accessor_name] is not accessor
+            or source.get(accessor_name) is not accessor
+        ):
+            raise self.error("sensitive_input_reader_changed")
+        # Startup metadata has a four-field key and never builds these inputs.
+        if len(self.key) < 7:
+            return True
+        try:
+            current = os.environ.copy() == self.key[5] and os.getcwd() == self.key[6]
+        except OSError:
+            current = False
+        if not current:
+            self.prepared_inputs_changed = True
+        return current
+
+    def check_admitted(self, active):
+        self.check()
+        if self.checked_identity(self.source, active) != (self.key[1], self.key[3]):
+            raise self.error("sensitive_input_source_changed")
+        self.check()
+        owner = self.capture_publication(self.source, active)
+        if self.publication_owner is None:
+            self.publication_owner = owner
+        elif any(
+            current is not captured
+            for current, captured in zip(owner, self.publication_owner)
+        ):
+            raise self.error("sensitive_input_source_changed")
+
+    def build(self, user_data_dir):
+        values = [user_data_dir]
+        for name in (
+            "_sensitive_single_file_paths",
+            "_sensitive_skill_trust_dir",
+            "_sensitive_db_paths",
+            "_direct_child_rule_container_dirs",
+        ):
+            prepared = self.check()
+            callback = self.builders[name]
+            kwargs = {"_user_data_dir": user_data_dir} if prepared else {}
+            values.append(
+                callback(self.check, **kwargs)
+                if name == "_sensitive_db_paths"
+                else callback(**kwargs)
+            )
+            self.check()
+        return tuple(values)
+
+
+def _stock_sensitive_config_bundle(key):
+    """Qualify exact stock readers; remote/custom sources retain the old route."""
+    source = sys.modules.get("tldw_chatbook.config")
+    bindings = _sensitive_reader_bindings(source)
+    if bindings is None:
+        return None
+    cached_bindings = _sensitive_cached_reader_bindings(source)
+    if cached_bindings is None:
+        return None
+    local = sys.modules.get("tldw_chatbook.Utils.sensitive_paths")
+    local_bindings = _sensitive_reader_bindings(local)
+    if local_bindings is None or local.__dict__ is not globals():
+        return None
+    db_names = local.__dict__.get("_SENSITIVE_INPUT_DB_NAMES")
+    if (
+        type(db_names) is not tuple
+        or local.__dict__.get("_DB_PATH_ACCESSOR_NAMES") is not db_names
+    ):
+        return None
+    guarded_readers = source.__dict__.get("_SENSITIVE_INPUT_GUARDED_READERS")
+    if not _sensitive_guarded_readers_current(source, guarded_readers):
+        return None
+    bindings += local_bindings
+    life = source.__dict__.get("_config_participants")
+    if type(life) is not _SensitiveModuleType:
+        return None
+    # These references were retained by config's defining module, before this
+    # helper's first lazy import. They do not grant a source or native capability.
+    owners = source.__dict__.get("_SENSITIVE_INPUT_OWNERS")
+    if type(owners) is not tuple:
+        return None
+    for owner, defining, records in owners:
+        if (
+            type(owner) is not _SensitiveModuleType
+            or sys.modules.get(owner.__name__) is not owner
+            or owner.__dict__ is not defining
+        ):
+            return None
+        for name, original, defining_globals, code in records:
+            if type(original) is not _SensitiveFunctionType:
+                return None
+            if (
+                defining.get(name) is not original
+                or original.__globals__ is not defining_globals
+                or original.__code__ is not code
+            ):
+                return None
+            bindings += ((owner, defining, name, original, defining_globals, code),)
+    try:
+        from ..Skills_Interop import local_skills_service, recovery, skill_trust_store
+        from ..RAG_Search import config_profiles
+        from ..RAG_Search.simplified import config as rag_config
+    except ImportError:
+        # The stdlib worker's stub config never qualifies above. Keep this
+        # optional preflight's import failure on the preceding ungrouped route.
+        return None
+    for helper in (
+        local_skills_service,
+        recovery,
+        skill_trust_store,
+        config_profiles,
+        rag_config,
+    ):
+        helper_bindings = _sensitive_reader_bindings(helper)
+        if helper_bindings is None:
+            return None
+        bindings += helper_bindings
+    if (
+        rag_config.__dict__.get("get_user_data_dir")
+        is not source.__dict__["get_user_data_dir"]
+        or rag_config.__dict__.get("get_cli_setting")
+        is not source.__dict__["get_cli_setting"]
+        or config_profiles.__dict__.get("get_user_data_dir")
+        is not source.__dict__["get_user_data_dir"]
+    ):
+        return None
+    bundle = _SensitiveConfigInputBundle(
+        source,
+        local,
+        key,
+        bindings,
+        cached_bindings,
+        guarded_readers,
+        life.operation,
+        life.checked_config_identity,
+        life._sensitive_input_publication_owner,
+        life._check_sensitive_input_publication,
+        db_names,
+        life.bootstrap.RecoveryRequired,
+    )
+    bundle.check()
+    return bundle
+
+
+def _sensitive_memo_inputs_current(key, failures):
+    """Recheck pure publication inputs after native retirement, without rereading."""
+    source = sys.modules.get("tldw_chatbook.config")
+    if type(source) is not _SensitiveModuleType:
+        return False
+    try:
+        environment = os.environ.copy()
+        cwd = os.getcwd()
+    except OSError:
+        return False
+    return (
+        source.__dict__.get("_CONFIG_CACHE") is key[0]
+        and source.__dict__.get("_CONFIG_GENERATION") == key[1]
+        and source.__dict__.get("_CONFIG_CACHE_SOURCE") == key[2]
+        and getattr(_failures, "count", 0) == failures
+        and environment == key[5]
+        and cwd == key[6]
+    )
+
+
 def _raw_inputs() -> tuple:
     """Return the unresolved sensitive paths, memoized on the config and data dir.
 
@@ -648,6 +1110,45 @@ def _raw_inputs() -> tuple:
     if memo is not None and _same_key(memo[0], key):
         return memo[1]
     failures = getattr(_failures, "count", 0)
+    bundle = (
+        _stock_sensitive_config_bundle(key)
+        if user_data_dir is not None and config_path is not None
+        else None
+    )
+    if bundle is not None:
+        bundle.check()
+        with bundle.operation(bundle.source) as active:
+            bundle.check_admitted(active)
+            inputs = bundle.build(user_data_dir)
+            eligible = (
+                user_data_dir is not None
+                and config_path is not None
+                and getattr(_failures, "count", 0) == failures
+                and _same_key(key, _raw_inputs_key()[2])
+                and not bundle.prepared_inputs_changed
+            )
+            bundle.check_admitted(active)
+        # Config rollback cannot own this memo. Never publish inside the
+        # operation: even its final native/resource check may still refuse.
+        bundle.check()
+        # Pause entry and participant closure use this same coordinator. The
+        # completed read can retire while paused, but cannot return or publish
+        # new inputs between an availability check and its actual memo write.
+        with bundle.publication_owner[-1]:
+            bundle.check(observe_path=False)
+            bundle.check_publication(bundle.source, bundle.publication_owner)
+            if (
+                eligible
+                and not bundle.prepared_inputs_changed
+                and _sensitive_memo_inputs_current(key, failures)
+            ):
+                with _RAW_INPUTS_LOCK:
+                    if (
+                        not bundle.prepared_inputs_changed
+                        and _sensitive_memo_inputs_current(key, failures)
+                    ):
+                        _RAW_INPUTS_MEMO = (key, inputs)
+        return inputs
     inputs = (
         user_data_dir,
         _sensitive_single_file_paths(),
@@ -757,6 +1258,14 @@ def resolve_sensitive_context() -> SensitivePathContext:
             p for p in (_resolved(str(raw)) for raw in containers) if p is not None
         ),
     )
+
+
+# Direct callback inputs for finite context reuse; no denylist data is retained.
+_RESOLVE_SENSITIVE_CONTEXT_ORIGINAL = (
+    resolve_sensitive_context,
+    resolve_sensitive_context.__code__,
+    resolve_sensitive_context.__defaults__,
+)
 
 
 def merge_sensitive_context(
@@ -994,6 +1503,13 @@ def is_sensitive_path(
             return True
 
     return False
+
+
+_IS_SENSITIVE_PATH_ORIGINAL = (
+    is_sensitive_path,
+    is_sensitive_path.__code__,
+    is_sensitive_path.__defaults__,
+)
 
 
 class SensitiveExclusion(NamedTuple):
@@ -1381,3 +1897,82 @@ def is_git_metadata_write(path: Path) -> bool:
     # `.GITIGNORE` stays writable.
     folded = GIT_METADATA_COMPONENT.casefold()
     return any(part.casefold() == folded for part in path.parts)
+
+
+# Definition-time defaults for the four stock prepared-input projections.
+_SENSITIVE_INPUT_DEFAULTS = tuple(
+    (
+        name,
+        globals()[name],
+        globals()[name].__defaults__,
+        globals()[name].__kwdefaults__,
+        tuple((globals()[name].__kwdefaults__ or {}).items()),
+    )
+    for name in (
+        "_sensitive_single_file_paths",
+        "_sensitive_skill_trust_dir",
+        "_sensitive_db_paths",
+        "_direct_child_rule_container_dirs",
+    )
+)
+
+
+# TASK-34404: defining-module originals, retained before helper lazy import.
+_SENSITIVE_INPUT_DB_NAMES = _DB_PATH_ACCESSOR_NAMES
+_SENSITIVE_INPUT_ORIGINALS = (
+    globals(),
+    tuple(
+        (name, globals()[name], globals()[name].__globals__, globals()[name].__code__)
+        for name in (
+            "_sensitive_guarded_readers_current",
+            "_sensitive_reader_defaults_current",
+            "_raw_inputs",
+            "_raw_inputs_key",
+            "_same_key",
+            "_debug",
+            "_sensitive_single_file_paths",
+            "_sensitive_skill_trust_dir",
+            "_sensitive_db_paths",
+            "_direct_child_rule_container_dirs",
+        )
+    ),
+)
+
+
+# TASK-34404: defining originals for reuse of existing pure refusal metadata.
+_STARTUP_PATH_METADATA_ORIGINALS = (
+    _SensitiveConfigInputBundle,
+    tuple(_SensitiveConfigInputBundle.__dict__.items()),
+    tuple(
+        (
+            namespace,
+            name,
+            callback,
+            callback.__code__,
+            callback.__globals__,
+            callback.__defaults__,
+            callback.__kwdefaults__,
+            tuple((callback.__kwdefaults__ or {}).items()),
+            callback.__closure__,
+            tuple((cell, cell.cell_contents) for cell in callback.__closure__ or ()),
+        )
+        for namespace, name, callback in (
+            *(
+                (
+                    _SensitiveConfigInputBundle.__dict__,
+                    name,
+                    _SensitiveConfigInputBundle.__dict__[name],
+                )
+                for name in ("__init__", "_task", "check")
+            ),
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "_sensitive_reader_bindings",
+                    "_sensitive_cached_reader_bindings",
+                    "_sensitive_guarded_readers_current",
+                )
+            ),
+        )
+    ),
+)

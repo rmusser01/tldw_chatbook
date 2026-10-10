@@ -10,6 +10,7 @@ import pytest
 import toml
 
 from tldw_chatbook import config
+from tldw_chatbook.Utils.toml_serialization import dumps_cli_config
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -38,7 +39,7 @@ def hook_file(monkeypatch):
             }
         ]
     }
-    path.write_text(toml.dumps(raw))
+    path.write_text(dumps_cli_config(raw))
     try:
         yield path
     finally:
@@ -68,7 +69,7 @@ def _approve(owner):
 def _edit(path, mutate):
     raw = toml.loads(path.read_text())
     mutate(raw["hooks"])
-    path.write_text(toml.dumps(raw))
+    path.write_text(dumps_cli_config(raw))
 
 
 def _count_reads(owner, monkeypatch, *, settle_ns: int = 0) -> list[int]:
@@ -418,7 +419,11 @@ def test_consent_survives_a_new_owner_and_state_contains_no_commands(hook_file):
     assert state["schema_version"] == 1
     assert "pass" not in current.store_path.read_text()
     assert "command" not in current.store_path.read_text()
-    assert current.store_path.stat().st_mode & 0o777 == 0o600
+    # The platform adapter derives these bits from the actual Windows DACL;
+    # stdlib Path.stat reports synthetic writable bits on Windows.
+    from tldw_chatbook.Utils.platform_files import os as platform_os
+
+    assert platform_os.stat(current.store_path, follow_symlinks=False).st_mode & 0o777 == 0o600
 
 
 def test_deleting_an_approved_legacy_duplicate_cannot_transfer_grant(hook_file):
@@ -1188,7 +1193,7 @@ def test_raw_profile_change_cannot_use_a_throttled_previous_profile_grant(
         raw.setdefault("general", {})["users_name"] = "different_profile"
     else:
         raw.setdefault("paths", {})["data_dir"] = str(hook_file.parent / "other_data")
-    hook_file.write_text(toml.dumps(raw))
+    hook_file.write_text(dumps_cli_config(raw))
     stale = owner.snapshot()
     assert not stale.ready
     assert owner.notification_targets("PostToolUse", None) == ()

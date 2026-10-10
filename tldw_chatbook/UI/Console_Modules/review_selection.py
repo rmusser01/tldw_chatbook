@@ -13,6 +13,8 @@ import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+import sys
+from types import ModuleType
 from typing import Any
 
 from loguru import logger
@@ -409,9 +411,40 @@ class ConsoleReviewSelectionController:
         try:
             from ...DB.base_db import run_owned_db_call
 
-            rows = await run_owned_db_call(
-                database, database.get_transcript_annotations, conversation_id
+            source = sys.modules.get("tldw_chatbook.DB.ChaChaNotes_DB")
+            stock_type = (
+                vars(source).get("CharactersRAGDB")
+                if type(source) is ModuleType
+                else None
             )
+            if (
+                stock_type is not None
+                and type(database) is stock_type
+                and not database.is_memory_db
+            ):
+                producer = asyncio.create_task(
+                    run_owned_db_call(
+                        database, database.get_transcript_annotations, conversation_id
+                    )
+                )
+                try:
+                    rows = await asyncio.shield(producer)
+                except asyncio.CancelledError:
+                    # Keep the admitted callback until its native work retires.
+                    while not producer.done():
+                        try:
+                            await asyncio.shield(producer)
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception:  # Preserve the caller's cancellation.
+                            break
+                    if not producer.cancelled():
+                        producer.exception()
+                    raise
+            else:
+                rows = await run_owned_db_call(
+                    database, database.get_transcript_annotations, conversation_id
+                )
         except Exception:
             logger.warning(
                 f"Console annotations: load failed for {conversation_id!r}",

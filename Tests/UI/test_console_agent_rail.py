@@ -544,6 +544,7 @@ async def test_agent_section_lines_render_brackets_literally_not_escaped():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_agent_section_falls_back_to_historical_snapshot_when_live_is_idle():
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -586,6 +587,7 @@ async def test_agent_section_falls_back_to_historical_snapshot_when_live_is_idle
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_agent_section_prefers_live_snapshot_over_historical_when_present():
     app = _build_test_app()
     host = ConsoleHarness(app)

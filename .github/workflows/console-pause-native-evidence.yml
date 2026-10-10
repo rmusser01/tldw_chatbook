@@ -1,0 +1,820 @@
+name: Console pause native evidence
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/console-performance-fixes]
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'tldw_chatbook/Backup_Recovery/**'
+      - 'tldw_chatbook/Utils/windows_files.py'
+      - 'tldw_chatbook/Chat/console_*.py'
+      - 'tldw_chatbook/Chat/Chat_Functions.py'
+      - 'tldw_chatbook/Chat/chat_persistence_service.py'
+      - 'tldw_chatbook/UI/Console_Modules/**'
+      - 'tldw_chatbook/UI/Screens/chat_screen.py'
+      - 'tldw_chatbook/Widgets/Console/**'
+      - 'tldw_chatbook/LLM_Calls/**'
+      - 'tldw_chatbook/provider_registry.py'
+      - 'tldw_chatbook/Scheduling/scheduler/loop.py'
+      - 'tldw_chatbook/DB/base_db.py'
+      - 'tldw_chatbook/DB/Workspace_DB.py'
+      - 'tldw_chatbook/Workspaces/**'
+      - 'Tests/Agents/test_stock_nested_agent_admission.py'
+      - 'Tests/Chat/test_console_hook_workspace_lifetime.py'
+      - 'Tests/Chat/test_console_trace_maintenance_lifetime.py'
+      - 'Tests/Chat/test_console_change_review_marker_reads.py'
+      - 'Tests/UI/test_console_marker_projection_native.py'
+      - 'Tests/Chat/test_console_attention_native_lifetime.py'
+      - 'Tests/UI/test_console_turn_attention.py'
+      - 'Tests/Chat/test_change_turn_tracking.py'
+      - 'Tests/Chat/test_console_trace_maintenance_parking.py'
+      - 'Tests/Chat/test_console_initial_hook_review.py'
+      - 'Tests/Chat/test_workspace_cold_composite_work_count.py'
+      - 'Tests/Chat/test_workspace_composite_fences.py'
+      - 'Tests/Chat/test_workspace_composite_gap_faults.py'
+      - 'Tests/Backup_Recovery/test_raw_file_single_flush.py'
+      - 'Tests/Backup_Recovery/test_async_file_participant_lifetimes.py'
+      - 'Tests/Backup_Recovery/test_settings_file_participant_lifetimes.py'
+      - 'Tests/Backup_Recovery/test_compound_chat_source_lifetimes.py'
+      - 'Tests/Backup_Recovery/test_binding_root_tree_observation.py'
+      - 'Tests/Backup_Recovery/test_binding_root_tree_refusals.py'
+      - 'Tests/Backup_Recovery/test_character_refresh_finite_batch.py'
+      - 'Tests/Backup_Recovery/test_character_refresh_batch_source_controls.py'
+      - 'Tests/Backup_Recovery/test_character_refresh_batch_entry_controls.py'
+      - 'Tests/UI/test_console_workspace_availability_cancellation_lifetime.py'
+      - 'Tests/Performance/test_probe_trace_retirement.py'
+      - 'Tests/Performance/test_console_cold_receipt_native_initialization.py'
+      - 'Tests/Performance/test_console_initial_receipt_await.py'
+      - 'Tests/Performance/_startup_receipt_native_gate.py'
+      - 'Tests/Performance/_startup_receipt_await_native_gate.py'
+      - 'Tests/Performance/console_storage_unit_observer.py'
+      - 'Tests/Performance/test_original_credential_storage_observer.py'
+      - 'Tests/Performance/test_console_keystroke_work_census.py'
+      - 'tldw_chatbook/Agents/mcp_tool_provider.py'
+      - 'tldw_chatbook/Agents/activation.py'
+      - 'tldw_chatbook/Agents/agent_service.py'
+      - 'tldw_chatbook/Agents/run_log.py'
+      - 'tldw_chatbook/Utils/sensitive_paths.py'
+      - 'tldw_chatbook/config.py'
+      - 'Tests/Agents/test_console_scoped_run_log_admission.py'
+      - 'Tests/Backup_Recovery/test_sensitive_input_config_bundle.py'
+      - 'tldw_chatbook/app.py'
+      - 'Tests/LLM_Calls/test_documented_provider_response_contracts.py'
+      - 'Tests/Chat/test_console_context_presentation_reads.py'
+      - 'Tests/Chat/test_console_retry_json_identity.py'
+      - 'Tests/Chat/test_console_retry_json_wire.py'
+      - 'Tests/Chat/test_console_engine_trace_reconstruction.py'
+      - 'Tests/UI/test_console_settings_context_owner.py'
+      - 'Tests/UI/test_console_refresh_read_batching.py'
+      - 'Tests/Performance/test_console_native_pause_probe.py'
+      - 'Tests/Performance/console_trace_settlement_witness.py'
+      - 'Tests/Performance/run_trace_settlement_diagnostic.py'
+      - 'Tests/Utils/test_windows_native_admission.py'
+      - 'Tests/Backup_Recovery/test_windows_admission_evidence.py'
+      - 'Tests/Backup_Recovery/test_raw_pin_evidence_eligibility.py'
+      - 'Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py'
+      - 'Tests/Backup_Recovery/test_generation_witness_observation.py'
+      - 'Tests/Backup_Recovery/test_raw_source_coordinator_io.py'
+      - 'Tests/Backup_Recovery/test_restored_mcp_continuous_custody.py'
+      - 'Tests/Backup_Recovery/test_bootstrap_creation_intents.py'
+      - 'Tests/Backup_Recovery/test_bootstrap_creation_intent_evidence.py'
+      - 'Tests/windows_private_fixture_runner.py'
+      - 'Tests/private_profile.py'
+      - 'Tests/test_private_profile_failure_report.py'
+      - 'Tests/Utils/test_windows_private_fixture_runner.py'
+      - 'Tests/UI/test_console_shared_context_policy.py'
+      - 'Tests/Backup_Recovery/test_mcp_source_metadata_repetition.py'
+      - 'Tests/Backup_Recovery/test_nested_repository_check_repetition.py'
+      - 'Tests/Backup_Recovery/test_repository_coordinator_io.py'
+      - 'Tests/Backup_Recovery/test_storage_coordinator_native_io.py'
+      - 'Tests/Backup_Recovery/test_storage_scope_publication.py'
+      - 'Tests/Backup_Recovery/test_prepared_close_runtime_owner.py'
+      - 'Tests/UI/_prepared_close_runtime_owner.py'
+      - 'Tests/Backup_Recovery/test_console_presentation_cadence.py'
+      - 'Tests/Backup_Recovery/test_console_subagent_query_custody.py'
+      - 'Tests/Backup_Recovery/test_finite_workspace_workers.py'
+      - 'tldw_chatbook/DB/AgentRuns_DB.py'
+      - 'tldw_chatbook/Agents/run_log_paging.py'
+      - 'tldw_chatbook/Tools/workspace_file_roots.py'
+      - 'tldw_chatbook/Tools/file_operation_tools.py'
+      - 'Tests/Backup_Recovery/test_console_live_empty_fleet.py'
+      - 'Tests/Backup_Recovery/test_controller_finite_db_interval.py'
+      - 'Tests/MCP/test_external_catalog_worker_ownership.py'
+      - 'tldw_chatbook/MCP/server.py'
+      - 'Tests/MCP/test_local_manifest_snapshot.py'
+      - 'tldw_chatbook/MCP/console_tool_preparation.py'
+      - 'tldw_chatbook/MCP/hub_tool_catalog.py'
+      - 'tldw_chatbook/Agents/mcp_tool_provider.py'
+      - 'Tests/MCP/test_console_tool_preparation.py'
+      - 'Tests/MCP/test_console_preparation_constructors.py'
+      - 'Tests/Chat/test_console_shared_tool_preparation.py'
+      - 'Tests/Chat/test_console_composition_tool_ceiling.py'
+      - 'tldw_chatbook/MCP/local_control_service.py'
+      - 'tldw_chatbook/MCP/unified_control_plane_service.py'
+      - 'tldw_chatbook/MCP/console_snapshot.py'
+      - 'tldw_chatbook/MCP/local_store.py'
+      - 'tldw_chatbook/MCP/permission_store.py'
+      - 'tldw_chatbook/MCP/execution_log.py'
+      - 'Tests/Chat/test_console_async_mcp_snapshot.py'
+      - 'Tests/Chat/test_console_snapshot_first_import.py'
+      - 'Tests/Chat/test_console_local_review_hook.py'
+      - 'Tests/Tools/test_workspace_root_native_identity.py'
+      - 'Tests/Tools/test_workspace_root_pin.py'
+      - 'Tests/Tools/test_worker_import_closure.py'
+      - 'tldw_chatbook/Tools/workspace_root_pin.py'
+      - 'Tests/MCP/test_console_snapshot_source_contracts.py'
+      - 'Tests/Backup_Recovery/test_console_settings_worker_lifetime.py'
+      - 'Tests/UI/test_character_context_async_ownership.py'
+      - 'Tests/UI/test_console_character_picker_native_lifetime.py'
+      - 'tldw_chatbook/UI/Console_Modules/character.py'
+      - 'Tests/UI/test_console_character_context.py'
+      - 'Tests/UI/test_console_agent_controller.py'
+      - 'Tests/UI/test_console_native_send_pump.py'
+      - 'Tests/UI/test_console_hook_refresh_lifetime.py'
+      - 'Tests/UI/test_console_prompt_history_host_shutdown.py'
+      - 'Tests/UI/test_polling_static_update_idempotence.py'
+      - 'Tests/UI/test_console_final_poll_completion.py'
+      - 'Tests/UI/test_console_poll_reconciliation.py'
+      - 'Tests/UI/test_console_poll_tab_source_boundaries.py'
+      - 'Tests/Backup_Recovery/test_console_config_sync_lifetime.py'
+      - 'Tests/UI/test_polling_recovery_status_updates.py'
+      - 'Tests/Chat/test_console_hook_admission.py'
+      - 'Tests/UI/test_console_hook_review_send_freeze.py'
+      - 'Tests/UI/test_console_checked_display_scope.py'
+      - 'Tests/Backup_Recovery/test_startup_initializing_publication.py'
+      - 'Tests/Backup_Recovery/test_visual_identity_observation_budget.py'
+      - 'Tests/Backup_Recovery/test_bootstrap_directory_durability.py'
+      - 'Tests/Agents/test_mcp_catalog_store_offload.py'
+      - 'tldw_chatbook/Agents/hook_permissions.py'
+      - 'tldw_chatbook/Agents/run_hooks.py'
+      - 'tldw_chatbook/DB/ChaChaNotes_DB.py'
+      - 'Tests/Backup_Recovery/test_acquisition_single_path_fence.py'
+      - 'Tests/Backup_Recovery/test_windows_evidence_watch.py'
+      - 'Tests/Backup_Recovery/test_windows_evidence_watch_final_gate.py'
+      - 'Tests/Backup_Recovery/test_windows_snapshot_metadata_work.py'
+      - 'Tests/Chat/test_console_hook_preparation_lifetime.py'
+      - 'Tests/Chat/test_console_send_hook_read_sharing.py'
+      - 'Tests/DB/test_journal_mode_statement_retention.py'
+      - 'Tests/UI/test_console_poll_cadence.py'
+      - 'Tests/UI/test_console_context_publication_routing.py'
+      - 'Tests/UI/test_console_ask_user_typed_answers.py'
+      - 'Tests/Utils/test_windows_security_decode.py'
+      - 'Tests/Performance/test_console_send_wall_clock.py'
+      - '.github/workflows/console-pause-native-evidence.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  preparing-poll:
+    name: Manual Preparing polling (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - run: python -m pip install -e ".[dev]"
+      - name: Select a user-owned Windows temporary root
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pollTemp = Join-Path $env:USERPROFILE '.config/preparing-poll-temp'
+          New-Item -ItemType Directory -Path $pollTemp -Force | Out-Null
+          "TEMP=$pollTemp" >> $env:GITHUB_ENV
+          "TMP=$pollTemp" >> $env:GITHUB_ENV
+      - name: Verify original polling, current actions and source escalation
+        run: >-
+          python -m Tests.windows_private_fixture_runner
+          Tests/UI/test_console_poll_reconciliation.py
+          Tests/UI/test_console_poll_cadence.py
+          Tests/UI/test_console_context_publication_routing.py
+          Tests/UI/test_console_poll_tab_source_boundaries.py
+          Tests/Backup_Recovery/test_console_config_sync_lifetime.py::test_full_console_sync_defers_live_state_until_fresh_config_entry
+          -q --timeout=180 --junitxml=${{ runner.temp }}/preparing-poll.xml
+      - name: Verify question routing and ordinary Send feedback
+        if: ${{ !cancelled() }}
+        run: >-
+          python -m Tests.windows_private_fixture_runner
+          Tests/UI/test_console_ask_user_typed_answers.py
+          Tests/UI/test_console_native_chat_flow.py::test_console_successful_send_does_not_leave_empty_send_tooltip
+          -q --timeout=180 --junitxml=${{ runner.temp }}/send-question-routing.xml
+      - name: Verify Send hook sharing and original native read lifetime
+        if: ${{ !cancelled() }}
+        run: >-
+          python -m Tests.windows_private_fixture_runner
+          Tests/Chat/test_console_send_hook_read_sharing.py
+          Tests/Chat/test_console_hook_preparation_lifetime.py
+          -q --timeout=180 --junitxml=${{ runner.temp }}/send-hook-lifetime.xml
+      - name: Verify fresh local capability manifest and independent results
+        if: ${{ !cancelled() }}
+        run: >-
+          python -m Tests.windows_private_fixture_runner
+          Tests/MCP/test_local_manifest_snapshot.py
+          Tests/MCP/test_local_control_service.py::test_local_manifest_helper_stays_aligned_with_registered_server_surface
+          Tests/MCP/test_local_control_service.py::test_local_control_service_builds_inventory_from_local_manifest_without_loopback
+          Tests/MCP/test_library_tools.py::test_manifest_library_entries_do_not_alias_descriptor_schemas
+          -q --timeout=180 --junitxml=${{ runner.temp }}/local-manifest.xml
+      - name: Verify composition ceilings and fresh invocation boundaries
+        if: ${{ !cancelled() }}
+        run: >-
+          python -m Tests.windows_private_fixture_runner
+          Tests/MCP/test_console_tool_preparation.py
+          Tests/MCP/test_console_preparation_constructors.py
+          Tests/Chat/test_console_shared_tool_preparation.py
+          Tests/Chat/test_console_composition_tool_ceiling.py
+          Tests/Agents/test_mcp_tool_provider.py
+          Tests/MCP/test_console_snapshot_source_contracts.py::test_empty_mcp_maximum_preserves_plugin_route
+          -q --timeout=180 --junitxml=${{ runner.temp }}/builtin-only-preparation.xml
+      - name: Publish failed test identifiers and report completeness
+        if: always()
+        run: >-
+          python -m Tests.junit_result_summary
+          "${{ runner.temp }}/preparing-poll.xml"
+          "${{ runner.temp }}/send-question-routing.xml"
+          "${{ runner.temp }}/send-hook-lifetime.xml"
+          "${{ runner.temp }}/local-manifest.xml"
+          "${{ runner.temp }}/builtin-only-preparation.xml"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preparing-poll-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/preparing-poll.xml
+            ${{ runner.temp }}/send-hook-lifetime.xml
+            ${{ runner.temp }}/send-question-routing.xml
+            ${{ runner.temp }}/local-manifest.xml
+            ${{ runner.temp }}/builtin-only-preparation.xml
+          if-no-files-found: error
+  raw-pin-evidence:
+    name: Raw pin evidence (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - run: python -m pip install -e ".[dev]"
+      - name: Select a user-owned Windows temporary root
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pinTemp = Join-Path $env:USERPROFILE '.config/raw-pin-evidence-temp'
+          New-Item -ItemType Directory -Path $pinTemp -Force | Out-Null
+          "TEMP=$pinTemp" >> $env:GITHUB_ENV
+          "TMP=$pinTemp" >> $env:GITHUB_ENV
+      - name: Verify derived-evidence eligibility and original native ownership
+        run: >-
+          python -m Tests.windows_private_fixture_runner
+          Tests/Backup_Recovery/test_raw_file_single_flush.py
+          Tests/Backup_Recovery/test_async_file_participant_lifetimes.py::test_raw_publication_flushes_the_file_and_the_parent_directory
+          Tests/Backup_Recovery/test_settings_file_participant_lifetimes.py::test_published_bytes_are_fsynced_before_the_rename
+          Tests/Backup_Recovery/test_settings_file_participant_lifetimes.py::test_failed_canonical_file_flush_retains_uncertain_custody
+          Tests/Backup_Recovery/test_compound_chat_source_lifetimes.py::test_dictionary_history_publication_flushes_its_own_bytes
+          Tests/Backup_Recovery/test_raw_pin_evidence_eligibility.py
+          Tests/Backup_Recovery/test_windows_admission_evidence.py
+          Tests/Backup_Recovery/test_acquisition_single_path_fence.py
+          Tests/Backup_Recovery/test_windows_evidence_watch.py
+          Tests/Backup_Recovery/test_windows_evidence_watch_final_gate.py
+          Tests/Backup_Recovery/test_windows_snapshot_metadata_work.py
+          Tests/Utils/test_windows_security_decode.py
+          Tests/DB/test_journal_mode_statement_retention.py
+          Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_warm_raw_operation_owns_and_retires_actual_parent_fd
+          Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_wrong_warm_parent_fd_is_closed_before_original_fallback
+          Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_parent_swap_during_open_has_the_same_original_refusal
+          Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_reuse_stamp_io_never_runs_under_coordinator_lock
+          Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_warm_descriptor_uncertainty_and_publication_keep_original_custody
+          -q --timeout=180 --junitxml=${{ runner.temp }}/raw-pin-evidence.xml
+      - name: Publish failed test identifiers and report completeness
+        if: always()
+        run: >-
+          python -m Tests.junit_result_summary
+          "${{ runner.temp }}/raw-pin-evidence.xml"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: raw-pin-evidence-${{ matrix.os }}
+          path: ${{ runner.temp }}/raw-pin-evidence.xml
+          if-no-files-found: error
+  windows-custody:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12.10', '3.13', '3.14']
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      TLDW_REQUIRE_ELEVATED_CUSTODY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e ".[dev]"
+      - name: Verify fixture launcher restores the original elevated owner
+        env:
+          TLDW_REQUIRE_ELEVATED_CUSTODY: '0'
+        run: python -m pytest Tests/Utils/test_windows_private_fixture_runner.py -q --timeout=120
+      - name: Verify actual elevated token ownership and fresh NTFS admission
+        run: python -m pytest Tests/Utils/test_windows_custody_requirement.py Tests/Utils/test_windows_native_admission.py Tests/Backup_Recovery/test_windows_admission_evidence.py Tests/Backup_Recovery/test_bootstrap_creation_intents.py -q -s --timeout=180 --junitxml=${{ runner.temp }}/windows-admission.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-custody-${{ matrix.python }}
+          path: ${{ runner.temp }}/windows-admission.xml
+          if-no-files-found: error
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - name: Install bounded-probe dependencies
+        id: install
+        run: python -m pip install -e ".[dev]"
+      - name: Select a user-owned Windows temporary root
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pauseTemp = Join-Path $env:USERPROFILE '.config/console-pause-native-temp'
+          New-Item -ItemType Directory -Path $pauseTemp -Force | Out-Null
+          "TEMP=$pauseTemp" >> $env:GITHUB_ENV
+          "TMP=$pauseTemp" >> $env:GITHUB_ENV
+      - name: Verify trace maintenance and optional Hook-host shutdown
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Chat/test_console_trace_maintenance_lifetime.py Tests/Chat/test_console_trace_maintenance_parking.py Tests/Chat/test_console_initial_hook_review.py Tests/Chat/test_console_cold_trust_preparation.py -q --timeout=180 --junitxml=${{ runner.temp }}/trace-maintenance-lifetimes.xml
+      - name: Retain focused maintenance evidence before longer controls
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: trace-maintenance-${{ matrix.os }}
+          path: ${{ runner.temp }}/trace-maintenance-lifetimes.xml
+          if-no-files-found: error
+      - name: Verify Change Review marker query scope and unchanged rendering
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Chat/test_console_change_review_marker_reads.py Tests/UI/test_console_marker_projection_native.py Tests/Chat/test_change_turn_tracking.py::test_resume_re_derives_the_summary_row_byte_identical -q --timeout=180 --junitxml=${{ runner.temp }}/change-review-marker-reads.xml
+      - name: Retain focused marker query evidence before longer controls
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: change-review-marker-reads-${{ matrix.os }}
+          path: ${{ runner.temp }}/change-review-marker-reads.xml
+          if-no-files-found: error
+      - name: Verify attention callback native cleanup and existing behavior
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Chat/test_console_attention_native_lifetime.py Tests/UI/test_console_turn_attention.py -q --timeout=180 --junitxml=${{ runner.temp }}/attention-lifetimes.xml
+      - name: Retain attention lifetime evidence before longer controls
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: attention-lifetimes-${{ matrix.os }}
+          path: ${{ runner.temp }}/attention-lifetimes.xml
+          if-no-files-found: error
+      - name: Verify retained Character picker native lifetime and profile selection
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/UI/test_console_character_picker_native_lifetime.py Tests/UI/test_character_context_async_ownership.py::test_start_keeps_exact_profile_through_picker_fetch -q --timeout=180 --junitxml=${{ runner.temp }}/character-picker-lifetimes.xml
+      - name: Retain focused Character picker evidence before longer controls
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: character-picker-lifetimes-${{ matrix.os }}
+          path: ${{ runner.temp }}/character-picker-lifetimes.xml
+          if-no-files-found: error
+      - name: Verify original browser and annotation native callback lifetimes
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/UI/test_console_browser_worker_native_lifetime.py Tests/UI/test_console_annotation_preview_native_lifetime.py -q --timeout=300 --junitxml=${{ runner.temp }}/query-lifetimes.xml
+      - name: Verify cold workspace provisioning on the actual platform
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/UI/test_workspace_cold_provisioning.py -q --timeout=300 --junitxml=${{ runner.temp }}/workspace-provisioning.xml
+      - name: Verify Workspace run-log cleanup and declared query freshness
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_finite_workspace_workers.py Tests/Backup_Recovery/test_console_subagent_query_custody.py Tests/UI/test_console_agent_controller.py::test_drilldown_row_click_retargets_the_full_log_to_that_run "Tests/MCP/test_external_catalog_worker_ownership.py::test_accepted_catalog_retains_producer_and_native_custody[False]" -q --timeout=240 --junitxml=${{ runner.temp }}/workspace-query-lifetimes.xml
+      - name: Verify shared admission, refresh, scheduler and captured trace controls
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Utils/test_windows_private_fixture_runner.py Tests/test_private_profile_failure_report.py Tests/UI/test_console_shared_context_policy.py Tests/Backup_Recovery/test_mcp_source_metadata_repetition.py Tests/Backup_Recovery/test_nested_repository_check_repetition.py Tests/Backup_Recovery/test_controller_finite_db_interval.py Tests/Backup_Recovery/test_controller_agent_source_intervals.py Tests/Backup_Recovery/test_console_settings_worker_lifetime.py Tests/Chat/test_console_async_mcp_snapshot.py Tests/Chat/test_console_snapshot_first_import.py Tests/Chat/test_console_local_review_hook.py Tests/Tools/test_workspace_root_native_identity.py Tests/Tools/test_workspace_root_pin.py Tests/Tools/test_worker_import_closure.py Tests/MCP/test_console_snapshot_source_contracts.py Tests/UI/test_character_context_async_ownership.py Tests/UI/test_console_character_context.py Tests/UI/test_console_agent_controller.py Tests/UI/test_console_native_send_pump.py Tests/UI/test_console_command_origin_chat.py Tests/UI/test_console_video_send_freeze.py Tests/Console/test_console_command_draft.py Tests/UI/test_home_console_resume.py Tests/UI/test_console_shutdown_recompose.py Tests/UI/test_chat_screen_resume_handoff_registration.py Tests/Chat/test_console_generation_actions.py::test_generate_image_handler_restores_draft_when_batch_raises Tests/UI/test_console_hook_refresh_lifetime.py Tests/Chat/test_console_hook_admission.py Tests/UI/test_console_hook_review_send_freeze.py Tests/UI/test_console_checked_display_scope.py Tests/Backup_Recovery/test_startup_initializing_publication.py Tests/Backup_Recovery/test_visual_identity_observation_budget.py Tests/Backup_Recovery/test_repository_coordinator_io.py Tests/Backup_Recovery/test_storage_coordinator_native_io.py Tests/Backup_Recovery/test_storage_scope_publication.py Tests/Backup_Recovery/test_related_path_admission.py Tests/Backup_Recovery/test_startup_readmission_continuity.py Tests/Backup_Recovery/test_console_presentation_cadence.py Tests/Backup_Recovery/test_console_live_empty_fleet.py Tests/MCP/test_external_catalog_worker_ownership.py Tests/Backup_Recovery/test_admission_evidence_reuse.py Tests/Backup_Recovery/test_console_metadata_batching.py Tests/Backup_Recovery/test_generation_witness_observation.py Tests/Backup_Recovery/test_bootstrap_creation_intents.py Tests/Backup_Recovery/test_bootstrap_directory_durability.py Tests/Backup_Recovery/test_bootstrap_creation_intent_evidence.py Tests/Backup_Recovery/test_raw_source_coordinator_io.py Tests/Backup_Recovery/test_restored_mcp_continuous_custody.py Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_permission_rmw_admitted_before_pause_finishes Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_same_path_distinct_source_cannot_borrow_admitted_permission Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_installed_retarget_refuses_and_custom_subclass_stays_unqualified Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_config_retarget_and_native_demotion_refuse_bound_source Tests/Backup_Recovery/test_finite_db_counted_interval.py Tests/Backup_Recovery/test_console_config_sync_lifetime.py Tests/Chat/test_console_context_presentation_reads.py Tests/Chat/test_console_retry_json_identity.py Tests/Chat/test_console_retry_json_wire.py Tests/Chat/test_console_engine_trace_reconstruction.py Tests/UI/test_console_settings_context_owner.py Tests/Chat/test_console_trace_admission_gc.py Tests/Chat/test_console_trace_graph_gc.py Tests/UI/test_console_refresh_read_batching.py Tests/UI/test_console_readiness_config_projection.py Tests/UI/test_console_partial_mount_resize.py Tests/UI/test_console_initial_draft_ownership.py Tests/UI/test_console_attach_completion.py Tests/UI/test_console_switch_draft_integrity.py Tests/UI/test_console_received_intent_feedback.py::test_switch_settlement_send_refuses_stale_draft_without_consumption Tests/UI/test_console_recovery_height_idempotence.py Tests/Scheduling/test_scheduler_stop_resolution.py Tests/App/test_subscription_boot_admission_thread.py Tests/LLM_Calls/test_documented_provider_response_contracts.py Tests/Agents/test_mcp_catalog_store_offload.py Tests/Agents/test_console_scoped_run_log_admission.py Tests/Backup_Recovery/test_sensitive_input_config_bundle.py -q --timeout=180 --junitxml=${{ runner.temp }}/console-controls.xml
+      - name: Verify finite callback repairs with actual platform resources
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_binding_root_tree_observation.py Tests/Backup_Recovery/test_binding_root_tree_refusals.py Tests/Chat/test_console_hook_workspace_lifetime.py Tests/Backup_Recovery/test_character_refresh_finite_batch.py Tests/Backup_Recovery/test_character_refresh_batch_source_controls.py Tests/Backup_Recovery/test_character_refresh_batch_entry_controls.py Tests/UI/test_console_workspace_availability_cancellation_lifetime.py Tests/Performance/test_probe_trace_retirement.py Tests/Chat/test_workspace_cold_composite_work_count.py Tests/Chat/test_workspace_composite_fences.py Tests/Chat/test_workspace_composite_gap_faults.py Tests/Agents/test_stock_nested_agent_admission.py Tests/Performance/test_console_cold_receipt_native_initialization.py Tests/Performance/test_console_initial_receipt_await.py -q --timeout=240 --junitxml=${{ runner.temp }}/finite-callback-controls.xml
+      - name: Verify original mounted Windows restore and live-scheduler boundaries
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && runner.os == 'Windows' }}
+        run: python -m Tests.windows_private_fixture_runner "Tests/Backup_Recovery/test_startup_pending_readmission.py::test_parent_readmission_waits_for_actual_isolated_finalization[success]" "Tests/Backup_Recovery/test_startup_pending_readmission.py::test_parent_readmission_waits_for_actual_isolated_finalization[pending_failure]" "Tests/Backup_Recovery/test_startup_pending_readmission.py::test_initial_pending_fence_waits_for_live_scheduler_and_native_pause[success]" -q --timeout=180 --junitxml=${{ runner.temp }}/mounted-restores.xml
+      - name: Measure real guarded Console and three immediate captured replies
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        env:
+          TLDW_PAUSE_PROBE_RESULT: ${{ runner.temp }}/console-pause.json
+        run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_console_native_pause_probe.py -q --timeout=900 --junitxml=${{ runner.temp }}/console-pause.xml
+      - name: Retain native evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-pause-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/console-pause.json
+            ${{ runner.temp }}/console-pause.xml
+            ${{ runner.temp }}/console-controls.xml
+            ${{ runner.temp }}/finite-callback-controls.xml
+            ${{ runner.temp }}/query-lifetimes.xml
+            ${{ runner.temp }}/trace-maintenance-lifetimes.xml
+            ${{ runner.temp }}/change-review-marker-reads.xml
+            ${{ runner.temp }}/character-picker-lifetimes.xml
+            ${{ runner.temp }}/workspace-query-lifetimes.xml
+            ${{ runner.temp }}/workspace-provisioning.xml
+            ${{ runner.temp }}/mounted-restores.xml
+          if-no-files-found: error
+  trace-settlement-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      PYTHONUTF8: '1'
+      PYTEST_PLUGINS: Tests.Performance.console_trace_settlement_witness
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - name: Install original probe dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Observe original Ubuntu terminal settlement (diagnostic only)
+        run: python -m Tests.Performance.run_trace_settlement_diagnostic --output-base ${{ runner.temp }}/trace-settlement-diagnostic
+      - name: Retain diagnostic exception and ownership evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trace-settlement-diagnostic-ubuntu
+          path: |
+            ${{ runner.temp }}/trace-settlement-diagnostic.json
+            ${{ runner.temp }}/trace-settlement-diagnostic.xml
+            ${{ runner.temp }}/trace-settlement-diagnostic.source.json
+            ${{ runner.temp }}/trace-settlement-diagnostic.log
+          if-no-files-found: error
+
+  supplemental-controls:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - name: Install targeted control dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Select a user-owned Windows temporary root
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $supplementalTemp = Join-Path $env:USERPROFILE '.config/console-supplemental-native-temp'
+          New-Item -ItemType Directory -Path $supplementalTemp -Force | Out-Null
+          "TEMP=$supplementalTemp" >> $env:GITHUB_ENV
+          "TMP=$supplementalTemp" >> $env:GITHUB_ENV
+      - name: Verify source, codec, display and finite worker regressions
+        env:
+          TLDW_HIDDEN_READINESS_RESULT: ${{ runner.temp }}/hidden-readiness.json
+          TLDW_TEST_TAB_SYNC_LIFETIME: ${{ runner.os == 'Windows' && '1' || '0' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_sensitive_input_config_bundle.py Tests/Backup_Recovery/test_sensitive_input_body_bindings.py Tests/Backup_Recovery/test_sensitive_input_tuple_bindings.py Tests/Backup_Recovery/test_sensitive_input_guarded_body_bindings.py Tests/Agents/test_console_scoped_run_log_admission.py Tests/Agents/test_scoped_run_log_body_bindings.py Tests/Config/test_windows_argv_roundtrip.py Tests/Utils/test_toml_serialization.py Tests/UI/test_provider_context_display.py Tests/UI/test_provider_context_display_controls.py Tests/UI/test_console_session_sync_lifetime.py Tests/UI/test_console_session_pruning_replacement.py Tests/UI/test_console_session_tab_strip.py Tests/UI/test_console_session_tab_close.py Tests/Backup_Recovery/test_prepared_close_runtime_owner.py Tests/UI/test_manual_unread_worker_lifetime.py Tests/UI/test_manual_unread_source_provenance.py Tests/UI/test_console_hidden_readiness_native.py Tests/UI/test_console_readiness_scheduling.py Tests/UI/test_polling_static_update_idempotence.py Tests/UI/test_polling_recovery_status_updates.py Tests/UI/test_console_final_poll_completion.py Tests/Workspaces/test_workspace_list_read_ownership.py Tests/Workspaces/test_workspace_db_connection_reuse.py Tests/Performance/test_trace_settlement_diagnostic.py -q --timeout=180 --junitxml=${{ runner.temp }}/supplemental-controls.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: console-supplemental-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/supplemental-controls.xml
+            ${{ runner.temp }}/hidden-readiness.json
+          if-no-files-found: error
+      - name: Retain original Windows Close callback timelines
+        if: ${{ always() && runner.os == 'Windows' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-tab-sync-${{ matrix.os }}
+          path: ${{ env.TEMP }}/**/*.tab-sync-lifetime.json
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: Verify related source batches and empty transcript rendering
+        if: always()
+        run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_control_observation_parent_reads.py Tests/Backup_Recovery/test_control_observation_parent_lifetimes.py Tests/Backup_Recovery/test_raw_mcp_pending_preparation_counts.py Tests/Backup_Recovery/test_raw_mcp_pending_preparation_lifetimes.py Tests/Backup_Recovery/test_raw_mcp_module_identity.py Tests/Backup_Recovery/test_raw_parent_preparation.py Tests/Backup_Recovery/test_bootstrap_creation_intent_evidence.py Tests/UI/test_console_empty_transcript_config_reads.py Tests/UI/test_console_turn_file_card_factory.py Tests/Backup_Recovery/test_raw_related_source_preparation.py Tests/Backup_Recovery/test_raw_stock_hold_pause.py Tests/Backup_Recovery/test_raw_stock_hold_pause_midcall.py Tests/Backup_Recovery/test_raw_stock_hold_pause_dict.py Tests/Backup_Recovery/test_console_related_source_integration.py Tests/Backup_Recovery/test_nested_mcp_scope_integration.py Tests/Backup_Recovery/test_related_path_admission.py Tests/Backup_Recovery/test_restored_mcp_continuous_custody.py Tests/Backup_Recovery/test_mcp_source_metadata_repetition.py Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_actual_warm_mcp_readers_skip_all_admission_derivations Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_warm_bound_history_keeps_fresh_temporary_authority Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_warm_raw_operation_owns_and_retires_actual_parent_fd Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_wrong_warm_parent_fd_is_closed_before_original_fallback Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_parent_swap_during_open_has_the_same_original_refusal Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_warm_descriptor_uncertainty_and_publication_keep_original_custody Tests/Chat/test_console_hook_preparation_reads.py::test_repeated_cancellation_keeps_same_physical_read_in_both_observers Tests/Agents/test_hook_permissions.py::test_consent_survives_a_new_owner_and_state_contains_no_commands Tests/Agents/test_hook_permissions.py::test_stale_approval_cannot_undo_another_owners_revocation -q --timeout=180 --junitxml=${{ runner.temp }}/related-source-controls.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: console-related-source-${{ matrix.os }}
+          path: ${{ runner.temp }}/related-source-controls.xml
+          if-no-files-found: error
+  pricing-model-setup:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - name: Install targeted dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Select a user-owned Windows temporary root
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pricingTemp = Join-Path $env:USERPROFILE '.config/console-pricing-native-temp'
+          New-Item -ItemType Directory -Path $pricingTemp -Force | Out-Null
+          "TEMP=$pricingTemp" >> $env:GITHUB_ENV
+          "TMP=$pricingTemp" >> $env:GITHUB_ENV
+      - name: Verify current and historical pricing plus original display compatibility
+        run: python -m Tests.windows_private_fixture_runner Tests/UI/test_console_pricing_display.py Tests/UI/test_console_checked_display_scope.py Tests/Chat/test_models_dev_catalog.py -q --timeout=180 --junitxml=${{ runner.temp }}/pricing-display.xml
+      - name: Verify model setup ownership, original responsiveness and source refusal
+        if: always()
+        run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_compact_setup_ownership.py Tests/Performance/test_compact_model_original_checked_read.py Tests/UI/test_compact_source_qualification.py Tests/UI/test_console_inspector_compact_access.py::test_default_rail_scope_does_not_dispatch_config_write Tests/UI/test_console_inspector_compact_access.py::test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_safe Tests/UI/test_console_inspector_compact_access.py::test_console_rail_writes_cannot_finish_with_stale_seed Tests/UI/test_console_inspector_compact_access.py::test_console_rail_scope_seed_preserves_explicit_left_open_intent Tests/UI/test_console_first_chat_first_mount.py::test_start_chatting_through_consoles_first_mount_warns_nothing -q --timeout=180 --junitxml=${{ runner.temp }}/model-setup.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pricing-model-setup-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/pricing-display.xml
+            ${{ runner.temp }}/model-setup.xml
+          if-no-files-found: error
+  context-and-skill-lifetime:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - name: Install targeted dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Select a user-owned Windows temporary root
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $contextTemp = Join-Path $env:USERPROFILE '.config/console-context-native-temp'
+          New-Item -ItemType Directory -Path $contextTemp -Force | Out-Null
+          "TEMP=$contextTemp" >> $env:GITHUB_ENV
+          "TMP=$contextTemp" >> $env:GITHUB_ENV
+      - name: Verify reply publication and Context native retirement
+        run: python -m Tests.windows_private_fixture_runner Tests/Chat/test_console_context_native_lifetime.py Tests/Chat/test_console_context_presentation_reads.py Tests/UI/test_console_shared_context_policy.py Tests/UI/test_console_post_transcript_rail_read.py -q --timeout=180 --junitxml=${{ runner.temp }}/context-display.xml
+      - name: Verify stock skill setup source and physical lifetime
+        if: ${{ !cancelled() }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_console_skill_trust_stock_owned.py -q --timeout=180 --junitxml=${{ runner.temp }}/skill-setup-lifetime.xml
+      - name: Preserve stock skill diagnostics before later pytest sessions
+        if: always()
+        shell: python
+        run: |
+          import os, shutil, tempfile
+          from pathlib import Path
+          target = Path(os.environ["RUNNER_TEMP"]) / "context-lifetime-diagnostics"
+          target.mkdir(exist_ok=True)
+          for base in Path(tempfile.gettempdir()).glob("pytest-of-*"):
+              for pattern in ("stock-skill-*.json",):
+                  for source in base.rglob(pattern):
+                      if source.is_file() and source.stat().st_size <= 1000000:
+                          name = "_".join(source.relative_to(base).parts)
+                          shutil.copyfile(source, target / name)
+      - name: Verify MCP registration observations and native failure boundaries
+        if: ${{ !cancelled() }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_raw_mcp_registration_counts.py Tests/Backup_Recovery/test_raw_mcp_registration_boundaries.py Tests/Backup_Recovery/test_mcp_source_lifetimes.py Tests/Backup_Recovery/test_raw_owned_permission_load_counts.py Tests/MCP/test_console_owned_permission_load.py Tests/MCP/test_console_owned_permission_boundaries.py Tests/MCP/test_console_owned_permission_effect_lifetimes.py Tests/Utils/test_private_lock_stream.py Tests/Agents/test_hook_lock_stream_integration.py Tests/Backup_Recovery/test_raw_lock_stream_preparation.py Tests/Backup_Recovery/test_raw_lock_stream_parent_posture.py -q --timeout=180 --junitxml=${{ runner.temp }}/mcp-registration.xml
+      - name: Verify user directory observation batching and memo invalidation
+        if: ${{ !cancelled() }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_user_data_directory_posture_batch.py Tests/test_user_data_dir_memo_perf07.py -q --timeout=180 --junitxml=${{ runner.temp }}/user-directory-posture.xml
+      - name: Verify Collections setup responsiveness and native ownership
+        if: ${{ !cancelled() }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_collections_deferred_loop.py Tests/Performance/test_collections_reconciliation_shutdown.py Tests/Library/test_collections_capture_app_wiring.py -q --timeout=180 --junitxml=${{ runner.temp }}/collections-setup.xml
+      - name: Verify original Actor Pack native shutdown
+        if: ${{ !cancelled() }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_actor_recovery_native_shutdown.py -q --timeout=180 --junitxml=${{ runner.temp }}/actor-recovery-shutdown.xml
+      - name: Verify original finite presentation host shutdown
+        if: ${{ !cancelled() }}
+        run: python -m Tests.windows_private_fixture_runner Tests/UI/test_console_finite_presentation_host_terminal.py Tests/UI/test_console_view_worker_groups.py Tests/UI/test_console_prompt_history_host_shutdown.py Tests/Performance/test_console_rail_prune_shutdown.py Tests/Performance/test_console_unread_host_shutdown.py Tests/Performance/test_console_subagent_count_host_shutdown.py Tests/Performance/test_console_receipt_hydration_shutdown.py Tests/Performance/test_console_fleet_recovery_shutdown.py Tests/Performance/test_console_citation_count_host_shutdown.py Tests/Performance/test_console_retrieval_host_shutdown.py Tests/DB/test_scope_existence_read_retirement.py -q --timeout=180 --junitxml=${{ runner.temp }}/context-host.xml
+      - name: Collect bounded original lifetime diagnostics
+        if: always()
+        shell: python
+        run: |
+          import os, shutil, tempfile
+          from pathlib import Path
+          target = Path(os.environ["RUNNER_TEMP"]) / "context-lifetime-diagnostics"
+          target.mkdir(exist_ok=True)
+          for base in Path(tempfile.gettempdir()).glob("pytest-of-*"):
+              for pattern in ("stock-skill-*.json", "console-host-*.json"):
+                  for source in base.rglob(pattern):
+                      if source.is_file() and source.stat().st_size <= 1000000:
+                          name = "_".join(source.relative_to(base).parts)
+                          shutil.copyfile(source, target / name)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: context-and-skill-lifetime-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/context-display.xml
+            ${{ runner.temp }}/skill-setup-lifetime.xml
+            ${{ runner.temp }}/context-host.xml
+            ${{ runner.temp }}/collections-setup.xml
+            ${{ runner.temp }}/actor-recovery-shutdown.xml
+            ${{ runner.temp }}/mcp-registration.xml
+            ${{ runner.temp }}/user-directory-posture.xml
+            ${{ runner.temp }}/context-lifetime-diagnostics/*.json
+          if-no-files-found: error
+  remote-bundle-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      # Install the actual floor first; keep 3.12 as the app interpreter.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - name: Install original bundle control dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Verify actual floor is available before original tests
+        run: python3.10 --version
+      - name: Verify exact regeneration, bare execution and real 3.10 parsing
+        run: python -m Tests.windows_private_fixture_runner Tests/Tools/test_remote_worker_bundle.py Tests/Tools/test_worker_import_closure.py -q --timeout=180 --junitxml=${{ runner.temp }}/remote-bundle-controls.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: remote-bundle-controls-ubuntu
+          path: ${{ runner.temp }}/remote-bundle-controls.xml
+          if-no-files-found: error
+
+  startup-cohort-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - name: Install original control dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Observe original control prefix through catalog False (diagnostic only)
+        run: python -m Tests.Performance.run_startup_cohort_diagnostic --output-base ${{ runner.temp }}/startup-cohort-diagnostic
+      - name: Retain original exception and startup cohort evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: startup-cohort-diagnostic-ubuntu
+          path: |
+            ${{ runner.temp }}/startup-cohort-diagnostic.witness.json
+            ${{ runner.temp }}/startup-cohort-diagnostic.xml
+            ${{ runner.temp }}/startup-cohort-diagnostic.source.json
+            ${{ runner.temp }}/startup-cohort-diagnostic.log
+          if-no-files-found: error
+
+  startup-liveness:
+    name: Complete startup liveness (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.10'
+      - name: Install original startup dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Select ordinary Windows startup temporary root
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $startupTemp = Join-Path $env:USERPROFILE '.config/console-startup-native-temp'
+          New-Item -ItemType Directory -Path $startupTemp -Force | Out-Null
+          "TEMP=$startupTemp" >> $env:GITHUB_ENV
+          "TMP=$startupTemp" >> $env:GITHUB_ENV
+      - name: Qualify source-current startup helper/process route without App
+        id: startup_sources
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          $startupPython = (Get-Command python).Source
+          $startupRoot = Join-Path $env:RUNNER_TEMP 'console-startup-source-qualification'
+          & $startupPython -I -X utf8 Tests/Performance/qualify_console_startup_liveness_sources.py --repo $env:GITHUB_WORKSPACE --python $startupPython --receipt-root $startupRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Measure complete cold and fresh-process warm startup liveness
+        if: ${{ !cancelled() && steps.startup_sources.outcome == 'success' }}
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          $startupPython = (Get-Command python).Source
+          $startupPairBase = $env:RUNNER_TEMP
+          if ($env:RUNNER_OS -eq 'Windows') { $startupPairBase = $env:TEMP }
+          $startupPair = Join-Path $startupPairBase 'console-startup-private-pair'
+          $startupReceipts = Join-Path $env:RUNNER_TEMP 'console-startup-liveness'
+          $startupHead = git rev-parse HEAD
+          & $startupPython -I -X utf8 Tests/Performance/run_console_startup_liveness.py --repo $env:GITHUB_WORKSPACE --python $startupPython --pair-root $startupPair --receipt-root $startupReceipts --mode liveness --expected-commit $startupHead
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify passive startup timing and diagnostic mode controls
+        id: startup_timing_controls
+        if: ${{ !cancelled() && steps.startup_sources.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          python -I -X utf8 -m unittest discover -s Tests/Performance -p test_console_startup_timing_witness.py -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -I -X utf8 -m unittest discover -s Tests/Performance -p test_console_startup_timing_mode.py -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Diagnose original startup bodies with separate cold and warm profiles
+        if: ${{ !cancelled() && steps.startup_sources.outcome == 'success' && steps.startup_timing_controls.outcome == 'success' }}
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          $startupPython = (Get-Command python).Source
+          $startupPairBase = $env:RUNNER_TEMP
+          if ($env:RUNNER_OS -eq 'Windows') { $startupPairBase = $env:TEMP }
+          $startupPair = Join-Path $startupPairBase 'console-startup-timing-private-pair'
+          $startupReceipts = Join-Path $env:RUNNER_TEMP 'console-startup-timing'
+          $startupHead = git rev-parse HEAD
+          & $startupPython -I -X utf8 Tests/Performance/run_console_startup_liveness.py --repo $env:GITHUB_WORKSPACE --python $startupPython --pair-root $startupPair --receipt-root $startupReceipts --mode timing --expected-commit $startupHead
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain original startup liveness/source receipts on every outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-startup-liveness-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/console-startup-source-qualification
+            ${{ runner.temp }}/console-startup-liveness
+            ${{ runner.temp }}/console-startup-timing
+          if-no-files-found: error

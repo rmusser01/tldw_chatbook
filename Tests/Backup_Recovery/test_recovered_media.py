@@ -395,8 +395,15 @@ async def test_actual_console_image_specs_override_stale_cache(media, state, tra
     stale = BytesIO()
     Image.new("RGB", (2, 2), "blue").save(stale, format="PNG")
     cache.prepare(message.id, stale.getvalue())
-    workers = []
-    screen.run_worker = lambda coroutine, **kwargs: workers.append(coroutine)
+    from textual.app import App
+
+    worker_host = App()
+
+    def run_worker(coroutine, **kwargs):
+        with worker_host._context():
+            return worker_host.run_worker(coroutine, **kwargs)
+
+    screen.run_worker = run_worker
 
     async def synced():
         pass

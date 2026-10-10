@@ -2886,3 +2886,150 @@ class LocalSkillsService:
         if blocked:
             result["blocked"] = blocked
         return result
+
+
+# TASK-34404: defining-module originals, retained before helper lazy import.
+_SENSITIVE_INPUT_ORIGINALS = (
+    globals(),
+    tuple(
+        (name, globals()[name], globals()[name].__globals__, globals()[name].__code__)
+        for name in ("default_local_skills_store_dir",)
+    ),
+)
+
+
+# Definition-time identity of the getter bypassed only by owned Console capture.
+_STOCK_PLUGIN_SERVICE_PROPERTY = (
+    LocalSkillsService.plugin_service,
+    LocalSkillsService.plugin_service.fget,
+    LocalSkillsService.plugin_service.fget.__code__,
+)
+
+
+# Definition-time originals for stock Console trust preparation only.
+from types import FunctionType as _SkillFunctionType  # noqa: E402
+
+
+_CONSOLE_SKILL_FUNCTIONS = {
+    "__init__": LocalSkillsService.__dict__["__init__"],
+    "get_context": LocalSkillsService.__dict__["get_context"],
+    "trust_service": LocalSkillsService.__dict__["trust_service"].fget,
+    "_content_sources": _content_sources,
+}
+_CONSOLE_SKILL_FUNCTIONS["get_context_body"] = _CONSOLE_SKILL_FUNCTIONS[
+    "get_context"
+].__wrapped__
+for _skill_name, _skill_cell in zip(
+    _CONSOLE_SKILL_FUNCTIONS["get_context"].__code__.co_freevars,
+    _CONSOLE_SKILL_FUNCTIONS["get_context"].__closure__ or (),
+):
+    if (
+        _skill_name in ("function", "selected")
+        and type(_skill_cell.cell_contents) is _SkillFunctionType
+    ):
+        _CONSOLE_SKILL_FUNCTIONS["get_context_" + _skill_name] = (
+            _skill_cell.cell_contents
+        )
+_CONSOLE_SKILL_CONTEXT_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "LocalSkillsService", LocalSkillsService),
+        (globals(), "_CONSOLE_SKILL_FUNCTIONS", _CONSOLE_SKILL_FUNCTIONS),
+        (
+            LocalSkillsService.__dict__,
+            "__init__",
+            LocalSkillsService.__dict__["__init__"],
+        ),
+        (
+            LocalSkillsService.__dict__,
+            "get_context",
+            LocalSkillsService.__dict__["get_context"],
+        ),
+        (
+            LocalSkillsService.__dict__,
+            "trust_service",
+            LocalSkillsService.__dict__["trust_service"],
+        ),
+        (globals(), "_content_sources", _content_sources),
+    ),
+    tuple(
+        (
+            _CONSOLE_SKILL_FUNCTIONS,
+            _skill_name,
+            _skill_function,
+            _skill_function.__code__,
+            _skill_function.__globals__,
+            _skill_function.__defaults__,
+            _skill_function.__kwdefaults__,
+            tuple((_skill_function.__kwdefaults__ or {}).items()),
+            _skill_function.__closure__,
+            tuple(
+                (cell, cell.cell_contents) for cell in _skill_function.__closure__ or ()
+            ),
+            vars(_skill_function).get("__wrapped__"),
+        )
+        for _skill_name, _skill_function in _CONSOLE_SKILL_FUNCTIONS.items()
+        if type(_skill_function) is _SkillFunctionType
+    ),
+)
+
+
+# Additional read/projection records do not narrow the existing discovery adapter.
+_CONSOLE_SKILL_CATALOG_METHODS = (
+    "_visible_records",
+    "_load_index",
+    "_disabled_builtins",
+    "_builtin_record",
+    "_metadata_from_content",
+    "_summary_for_record",
+    "_trust_fields_for_record",
+)
+_CONSOLE_SKILL_CATALOG_FUNCTIONS = {
+    name: method.__func__ if isinstance(method, (staticmethod, classmethod)) else method
+    for name in _CONSOLE_SKILL_CATALOG_METHODS
+    for method in (LocalSkillsService.__dict__[name],)
+}
+_CONSOLE_SKILL_CATALOG_FUNCTIONS["_builtins"] = _builtins
+_CONSOLE_SKILL_CATALOG_SOURCE = (
+    *_CONSOLE_SKILL_CONTEXT_SOURCE[:4],
+    _CONSOLE_SKILL_CONTEXT_SOURCE[4]
+    + (
+        (globals(), "_SERVICE_ASSIGNED_KEYS", _SERVICE_ASSIGNED_KEYS),
+        (
+            globals(),
+            "_CONSOLE_SKILL_CATALOG_FUNCTIONS",
+            _CONSOLE_SKILL_CATALOG_FUNCTIONS,
+        ),
+        (globals(), "_CONSOLE_SKILL_CATALOG_METHODS", _CONSOLE_SKILL_CATALOG_METHODS),
+        (globals(), "_builtins", _builtins),
+    )
+    + tuple(
+        (LocalSkillsService.__dict__, name, LocalSkillsService.__dict__[name])
+        for name in _CONSOLE_SKILL_CATALOG_METHODS
+    ),
+    _CONSOLE_SKILL_CONTEXT_SOURCE[5]
+    + tuple(
+        (
+            _CONSOLE_SKILL_CATALOG_FUNCTIONS,
+            name,
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for name, method in _CONSOLE_SKILL_CATALOG_FUNCTIONS.items()
+        for function in (
+            method.__func__
+            if isinstance(method, (staticmethod, classmethod))
+            else method,
+        )
+    ),
+)

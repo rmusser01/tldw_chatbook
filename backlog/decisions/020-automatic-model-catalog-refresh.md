@@ -71,3 +71,10 @@ not an unambiguous confirmation.
 - Spec: Docs/superpowers/specs/2026-07-17-model-catalog-auto-refresh-design.md
 - Plan: Docs/superpowers/plans/2026-07-17-model-catalog-auto-refresh.md
 - Amends: backlog/decisions/002-openai-compatible-model-discovery.md
+
+## Discovery metadata clarification (2026-10-05, TASK-34363)
+
+Automatic refresh uses ADR-002's bounded per-field metadata policy: oversized
+details cannot discard otherwise valid model IDs. Consent, endpoint snapshot
+authority, selector caps, active-model preservation, TTL and opt-in append-only
+write-through remain unchanged. The disk cache still stores IDs/timestamps only.

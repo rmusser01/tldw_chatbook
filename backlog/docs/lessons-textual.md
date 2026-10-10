@@ -1738,6 +1738,23 @@ that chat no longer shows, and post awaited answers with an explicit
 `session_id`. **Making a call asynchronous changes the contract of everything
 it calls: list each handler's awaits and what it re-reads after them.**
 
+## A widget's `_task` belongs to Textual's message pump (TASK-34561, 2026-10-04)
+
+The Character browser reused `self._task` for an `asyncio.create_task` controller
+refresh. Textual also stores its message-pump task there, and `App._prune` waits
+for `node._task` during awaited removal. The unchanged removed-browser assertion
+then accepted a late presentation because removal had waited for the unrelated
+read rather than detached the real widget. A real suspended-read barrier proved
+the inverse symptom too: removal waited on a blocked controller operation.
+Both controls failed on the immutable original source and on current native
+Windows source; naming only the widget slot `_controller_task` made both pass.
+
+Keep widget-owned asynchronous slots distinct from framework-owned attributes.
+For removal claims, mount a real widget and hold the unrelated operation across
+`await widget.remove()`; assert actual attachment and the original state
+identity. A fake `is_attached` flag or an already-finished controller read cannot
+establish that Textual retired its own message pump.
+
 ---
 
 ## A handler that awaits the removal of its own ancestor never returns -- and `asyncio.wait_for` cannot get you out (TASK-34000.4, 2026-10-04)
@@ -1842,3 +1859,22 @@ assertions like `"Session summary" in svg` fail on fully-rendered text.
 **Card modals: fixed width. Screenshot asserts: normalize `&#160;`/`\xa0`
 to spaces first, and pair any screen-popped assertion with a render
 assertion so it cannot pass vacuously.**
+
+---
+
+## Deferring draft cleanup can also defer polling (PR #3050, 2026-10-09)
+
+**Incident.** The protected Console fallback moved draft consumption from runtime
+custody to durable saved acceptance so a failed save retained the original draft.
+Its existing cleanup callback also started transcript polling. Deferring that
+callback therefore left an accepted turn without a poll while the controller's
+start was held. Dev's unchanged regression returned no poll decisions on both
+Windows and Linux. The original held entry and exact custody checks had passed.
+
+**What to do.** Keep lifecycle publication at its own acceptance boundary when
+deferring destructive cleanup. The successful fallback admission now starts the
+existing poll only for its exact attached runtime and captured generation; draft
+cleanup stays at durable acceptance. The original three-True-decisions test and
+25 related controls pass on `073f3b99be`. The worked example is
+`test_console_poll_outlives_a_turn_the_controller_has_not_started`; the change
+adds no timer owner or timeout and does not establish general teardown health.

@@ -1033,6 +1033,7 @@ def _sync_stub(activity: str, effective: str | None = None):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_the_transcript_sync_hands_the_controllers_line_to_the_transcript():
     """The 0.2s poll's transcript sync is the one feed for this line."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -1046,6 +1047,7 @@ async def test_the_transcript_sync_hands_the_controllers_line_to_the_transcript(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_ticking_elapsed_alone_repaints_the_transcript():
     """The refresh key must move when only the elapsed figure changed."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -1060,6 +1062,7 @@ async def test_a_ticking_elapsed_alone_repaints_the_transcript():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_published_token_usage_repaints_once_per_changed_scalar():
     """Repeated chunk observations cannot churn the DOM until publication changes."""
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen

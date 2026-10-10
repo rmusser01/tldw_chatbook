@@ -167,6 +167,7 @@ def take_out_sent_draft(
     undo_histories: dict[str, Any],
     notify: Callable[[str], None],
     verb: str = "sent",
+    captured_inputs: Any = None,
 ) -> None:
     """Take a dispatched capture out of the draft of the chat it came from.
 
@@ -206,6 +207,29 @@ def take_out_sent_draft(
         draft = store.session_draft(session_id)
     except KeyError:
         return
+    if captured_inputs is not None:
+        session = captured_inputs._session_ref()
+        token = getattr(session, "_draft_authored_token", None)
+        current = store.session_input_snapshot(session_id)
+        # A hidden prefix belongs to this capture only in its authored generation.
+        if (
+            captured_inputs._store_ref() is not store
+            or current._session_ref() is not session
+            or type(token) is not tuple
+            or len(token) != 2
+            or token[0] != stash.generation
+            or (
+                current.draft == captured_inputs.draft
+                and current.draft_revision != captured_inputs.draft_revision
+            )
+        ):
+            if stash.text in current.draft:
+                notify(
+                    SENT_DRAFT_KEPT_IN.format(
+                        verb=verb, chat=chat_label(store, session_id)
+                    )
+                )
+            return
     if draft.startswith(stash.text):
         undo_histories.pop(session_id, None)
         _save_draft(store, session_id, draft[len(stash.text) :])

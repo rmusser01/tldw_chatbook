@@ -530,8 +530,8 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
         ),
         (
             "set_interval",
-            "tldw_chatbook/UI/Screens/chat_screen.py",
-            "ChatScreen",
+            "tldw_chatbook/UI/Console_Modules/context_spend.py",
+            "ConsoleContextSpendController",
             "_sync_console_cost_chip",
         ),
         (
@@ -729,12 +729,14 @@ def _callback_names(arg: ast.AST) -> list[str]:
         names.append(arg.id)
     elif isinstance(arg, ast.Lambda):
         for call in (n for n in ast.walk(arg) if isinstance(n, ast.Call)):
-            names.append(_callee(call))
             # `lambda: app.call_later(self.update_db_sizes)` runs
             # update_db_sizes per tick; the shim's argument is the real
             # callback (TASK-23028).
-            if _callee(call) in DEFERRAL_SHIMS and call.args:
-                names.extend(_callback_names(call.args[0]))
+            if _callee(call) in DEFERRAL_SHIMS:
+                if call.args:
+                    names.extend(_callback_names(call.args[0]))
+            else:
+                names.append(_callee(call))
     elif isinstance(arg, ast.Call) and _callee(arg) == "partial" and arg.args:
         names.extend(_callback_names(arg.args[0]))
     return [name for name in names if name]
@@ -1191,7 +1193,7 @@ def _collect_clock_roots(
 
             # Nothing resolved. The only excusable shape is a pass-through
             # wrapper whose exposed name is itself in the clock family.
-            rel = str(module.path.relative_to(REPO_ROOT))
+            rel = module.path.relative_to(REPO_ROOT).as_posix()
             where = f"{cls}.{fn}"
             call_text = ast.unparse(node)
             starred = {
@@ -1292,7 +1294,7 @@ def census(
     for kind, dotted, cls, callback in roots:
         for mod, klass, meth, node in graph.reachable(dotted, cls, callback):
             module = modules[mod]
-            rel = str(module.path.relative_to(REPO_ROOT))
+            rel = module.path.relative_to(REPO_ROOT).as_posix()
             for call in (n for n in ast.walk(node) if isinstance(n, ast.Call)):
                 if _callee(call) != "update":
                     continue
@@ -1512,7 +1514,7 @@ def test_clock_root_set_is_pinned() -> None:
     modules = _load_package()
     roots, _problems = _package_clock_roots()
     rel_of = {
-        dotted: str(module.path.relative_to(REPO_ROOT))
+        dotted: module.path.relative_to(REPO_ROOT).as_posix()
         for dotted, module in modules.items()
     }
     actual = frozenset(
@@ -1580,9 +1582,9 @@ def test_wrapper_spelled_interval_is_censused() -> None:
         "InjectedClockWidget._tick",
         "self.status",
     )
-    assert key in sites and not sites[key]["explicit"], (
-        "the wrapper-spelled clock's repaint did not reach the census"
-    )
+    assert (
+        key in sites and not sites[key]["explicit"]
+    ), "the wrapper-spelled clock's repaint did not reach the census"
 
 
 def test_deferral_shim_callback_resolves_through() -> None:
@@ -1593,6 +1595,10 @@ def test_deferral_shim_callback_resolves_through() -> None:
     """
     modules = _modules_from_source(
         """
+        class UnrelatedController:
+            def call_later(self):
+                self.unrelated_status.update("not a timer callback")
+
         class ShimClockManager:
             def start(self):
                 self.app.set_interval(5.0, lambda: self.app.call_later(self.reconcile))
@@ -1604,6 +1610,7 @@ def test_deferral_shim_callback_resolves_through() -> None:
     roots, problems = _collect_clock_roots(modules, _CallGraph(modules))
     assert not problems
     assert ("set_interval", roots[0][1], "ShimClockManager", "reconcile") in roots
+    assert {root[3] for root in roots} == {"reconcile"}
     key = (
         "tldw_chatbook/timer_census_fixture.py",
         "ShimClockManager.reconcile",
@@ -1699,9 +1706,9 @@ def test_provable_dict_receiver_is_auto_classified() -> None:
         """
     )
     sites = census(modules)
-    assert not any(receiver == "merged" for (_p, _q, receiver) in sites), (
-        "a provably-dict receiver still demands a CLASSIFIED_SITES row"
-    )
+    assert not any(
+        receiver == "merged" for (_p, _q, receiver) in sites
+    ), "a provably-dict receiver still demands a CLASSIFIED_SITES row"
 
 
 def test_self_attr_set_receiver_is_auto_classified() -> None:
@@ -1770,9 +1777,9 @@ def test_mixed_binding_receiver_is_never_auto_classified() -> None:
         """
     )
     sites = census(modules)
-    assert any(receiver == "target" for (_p, _q, receiver) in sites), (
-        "a dict-then-widget receiver was auto-classified as a collection"
-    )
+    assert any(
+        receiver == "target" for (_p, _q, receiver) in sites
+    ), "a dict-then-widget receiver was auto-classified as a collection"
 
 
 def test_rebound_self_attr_is_never_auto_classified() -> None:

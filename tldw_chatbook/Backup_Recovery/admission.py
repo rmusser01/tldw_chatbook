@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import math
 import stat
+import sys
 import threading
 import time
 import uuid
@@ -938,3 +939,18 @@ class Admission:
                         None,
                     )
                     self._write(parent, registry)
+
+
+# One direct stock-query witness. No native result or permission is retained.
+_ORDINARY_PAUSE_REQUEST_BINDING = (
+    sys.modules[__name__],
+    Admission,
+    Admission.pause_requested,
+    Admission.pause_requested.__code__,
+    Admission.pause_requested.__globals__,
+    Admission.pause_requested.__defaults__,
+    Admission.pause_requested.__kwdefaults__,
+    Admission.pause_requested.__closure__,
+    vars(Admission).get("__getattribute__"),
+    vars(Admission).get("__dict__"),
+)

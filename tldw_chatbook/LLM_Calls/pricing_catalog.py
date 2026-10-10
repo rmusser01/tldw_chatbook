@@ -473,6 +473,11 @@ def _models_dev_pricing(provider: str, model: str) -> "ModelPricing | None":
         entry = models_dev_entry(provider, model)
     except Exception:  # noqa: BLE001 -- the gap-fill never breaks a lookup
         return None
+    return _pricing_from_models_dev_entry(entry)
+
+
+def _pricing_from_models_dev_entry(entry: Any) -> "ModelPricing | None":
+    """Apply the same complete-price rule to live and detached catalog entries."""
     # Review minor 3: require BOTH rates -- a missing output price would
     # otherwise bill $0 for output (a misleading half price). No partial
     # price is more honest than a wrong one (AC#6).
@@ -607,6 +612,13 @@ class CostBreakdown:
 #
 # PricingCatalog class
 #
+class _NoConfiguredPrice:
+    """Distinguish an unmatched model from a configured unknown price."""
+
+
+_NO_CONFIGURED_PRICE = _NoConfiguredPrice()
+
+
 class PricingCatalog:
     """
     Resolves per-model pricing and computes dollar costs from ProviderUsage.
@@ -745,6 +757,15 @@ class PricingCatalog:
         provider_key_normalized = provider_config_key(provider)
         model_l = (model or "").strip().lower()
 
+        configured = self._configured_pricing(provider_key_normalized, model_l)
+        if configured is not _NO_CONFIGURED_PRICE:
+            return configured
+        return _models_dev_pricing(provider_key_normalized, model_l)
+
+    def _configured_pricing(
+        self, provider_key_normalized: str, model_l: str
+    ) -> ModelPricing | None | _NoConfiguredPrice:
+        """Resolve normalized configured/pattern/local rates without gap-fill IO."""
         # 1. Direct mapping (highest priority)
         entry = self.direct_mappings.get(f"{provider_key_normalized}:{model_l}")
         if entry is not None:
@@ -761,15 +782,7 @@ class PricingCatalog:
         if provider_key_normalized in LOCAL_PROVIDERS:
             return self._zero_pricing
 
-        # 4. TASK-26023: upstream models.dev as a LOWER-priority gap-fill,
-        # beneath the hand-maintained direct/pattern entries above (AC#2).
-        # Disabled by default and network-free -- see models_dev_catalog.
-        upstream = _models_dev_pricing(provider_key_normalized, model_l)
-        if upstream is not None:
-            return upstream
-
-        # 5. Unknown model: no fabricated price, let the UI fall back to token counts.
-        return None
+        return _NO_CONFIGURED_PRICE
 
     def cost_for_usage(self, usage: ProviderUsage) -> Optional[CostBreakdown]:
         """
@@ -904,6 +917,7 @@ class PricingCatalog:
 
 # Global instance (lazy-loaded)
 _global_catalog: Optional[PricingCatalog] = None
+_global_catalog_owner: Optional[PricingCatalog] = None
 
 
 def get_pricing_catalog() -> PricingCatalog:
@@ -913,9 +927,10 @@ def get_pricing_catalog() -> PricingCatalog:
     Returns:
         PricingCatalog instance configured from user settings.
     """
-    global _global_catalog
+    global _global_catalog, _global_catalog_owner
     if _global_catalog is None:
         _global_catalog = PricingCatalog()
+        _global_catalog_owner = _global_catalog
     return _global_catalog
 
 
@@ -929,3 +944,27 @@ def reload_pricing_catalog() -> None:
 #
 # End of pricing_catalog.py
 #######################################################################################################################
+
+
+# Retain original bindings for the optional, explicitly passed display adapter.
+_DISPLAY_PRICING_SOURCE = tuple(
+    (
+        owner,
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+    )
+    for owner, name, function in (
+        (None, "get_pricing_catalog", get_pricing_catalog),
+        (None, "_models_dev_pricing", _models_dev_pricing),
+        (None, "_pricing_from_models_dev_entry", _pricing_from_models_dev_entry),
+        (None, "provider_config_key", provider_config_key),
+        (PricingCatalog, "__init__", PricingCatalog.__init__),
+        (PricingCatalog, "get_pricing", PricingCatalog.get_pricing),
+        (PricingCatalog, "_configured_pricing", PricingCatalog._configured_pricing),
+        (PricingCatalog, "_to_model_pricing", PricingCatalog._to_model_pricing),
+        (PricingCatalog, "cost_for_usage", PricingCatalog.cost_for_usage),
+    )
+)

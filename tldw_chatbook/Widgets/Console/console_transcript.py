@@ -3291,8 +3291,13 @@ class ConsoleTranscript(VerticalScroll):
         self._row_widgets.clear()
         self._row_signatures.clear()
         self._row_build_counts.clear()
-        turn_file_cards = self._turn_file_cards_enabled()
-        for row in self._transcript_rows():
+        rows = self._transcript_rows()
+        turn_file_cards = (
+            self._turn_file_cards_enabled()
+            if any(row.kind != "empty" for row in rows)
+            else False
+        )
+        for row in rows:
             widget = self._build_row_widget(
                 row, track=True, turn_file_cards=turn_file_cards
             )
@@ -7023,10 +7028,15 @@ class ConsoleTranscript(VerticalScroll):
         return rows
 
     def _message_widgets(self) -> list[Widget]:
-        turn_file_cards = self._turn_file_cards_enabled()
+        rows = self._transcript_rows()
+        turn_file_cards = (
+            self._turn_file_cards_enabled()
+            if any(row.kind != "empty" for row in rows)
+            else False
+        )
         return [
             self._build_row_widget(row, track=False, turn_file_cards=turn_file_cards)
-            for row in self._transcript_rows()
+            for row in rows
         ]
 
     def _canvas_card_session_id(self) -> str | None:
@@ -7070,7 +7080,11 @@ class ConsoleTranscript(VerticalScroll):
     async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
         desired_keys = [row.key for row in rows]
         desired_key_set = set(desired_keys)
-        turn_file_cards = self._turn_file_cards_enabled()
+        turn_file_cards = (
+            self._turn_file_cards_enabled()
+            if any(row.kind != "empty" for row in rows)
+            else False
+        )
 
         removals: list[Widget] = []
         for stale_key in [

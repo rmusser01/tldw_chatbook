@@ -2220,6 +2220,7 @@ def test_summary_row_survives_the_next_message(tmp_path, root, tracker):
     assert len(rows) == 1, "the summary row was destroyed by the next message"
 
 
+@pytest.mark.bootstrap_profile
 def test_resume_re_derives_the_summary_row_byte_identical(tmp_path, root, tracker):
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 
@@ -2228,29 +2229,54 @@ def test_resume_re_derives_the_summary_row_byte_identical(tmp_path, root, tracke
         side_effect_on_call=2,
         side_effect=lambda: (root / "made.txt").write_text("x\n"),
     )
-    bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
-    run_id, _ = _run(bridge, session, aid, root)
-    live = [m for m in _tool_rows(store, session) if m.content.startswith("✎")]
-    assert live, "precondition"
+    import contextlib
 
-    fresh = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
-    resumed = [
-        m
-        for _anchor, block in fresh.resume_marker_messages("conv-1")
-        for m in block
-        if m.content.startswith("✎")
-    ]
-    assert [m.content for m in resumed] == [m.content for m in live]
-    assert resumed[0].change_review_run_id == run_id
-    projected = [
-        message
-        for _anchor, block in fresh.change_review_marker_messages("conv-1")
-        for message in block
-    ]
-    assert [message.content for message in projected] == [
-        message.content for message in live
-    ]
-    assert all(message.change_review_run_id == run_id for message in projected)
+    from tldw_chatbook.DB.base_db import operation_owned_connection
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Tools import workspace_file_roots
+    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+    # The original marker turn reads the default file-tools registry as well
+    # as this fixture's run store. Retire only handles this fixture acquires.
+    registry_before = workspace_file_roots._default_registry_instance
+    with contextlib.ExitStack() as cleanup:
+        if type(registry_before) is LocalWorkspaceRegistryService:
+            cleanup.enter_context(operation_owned_connection(registry_before.db))
+        elif registry_before is None:
+
+            def close_created_registry():
+                registry = workspace_file_roots._default_registry_instance
+                if (
+                    type(registry) is LocalWorkspaceRegistryService
+                    and type(registry.db) is WorkspaceDB
+                ):
+                    registry.db.close()
+
+            cleanup.callback(close_created_registry)
+        bridge, db, store, session, aid = _bridge_with(tmp_path, gateway, tracker)
+        cleanup.callback(db.close)
+        run_id, _ = _run(bridge, session, aid, root)
+        live = [m for m in _tool_rows(store, session) if m.content.startswith("✎")]
+        assert live, "precondition"
+
+        fresh = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
+        resumed = [
+            m
+            for _anchor, block in fresh.resume_marker_messages("conv-1")
+            for m in block
+            if m.content.startswith("✎")
+        ]
+        assert [m.content for m in resumed] == [m.content for m in live]
+        assert resumed[0].change_review_run_id == run_id
+        projected = [
+            message
+            for _anchor, block in fresh.change_review_marker_messages("conv-1")
+            for message in block
+        ]
+        assert [message.content for message in projected] == [
+            message.content for message in live
+        ]
+        assert all(message.change_review_run_id == run_id for message in projected)
 
 
 def test_review_changes_action_offered_only_for_summary_rows():

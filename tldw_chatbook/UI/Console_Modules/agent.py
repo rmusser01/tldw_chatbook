@@ -193,6 +193,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: renders statuses with one glyph language. Same keys, same marks; the
 #: shared map additionally covers "blocked" (Environment/Tasks rows).
 _AGENT_STATUS_GLYPHS: Dict[str, str] = dict(STATUS_GLYPHS)
+_SUBAGENT_COUNTS_ROW_SET_CACHE_LIMIT = 16
 
 #: TASK-31429: the rail's Agent status line ("Agent: running · step 3",
 #: "Sub-agent · done") carries its run status as the first word after the
@@ -397,7 +398,11 @@ def _fleet_turn_activity(children: Sequence[Any], *, now: float) -> str:
     )
     line = f"{label}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{CONSOLE_TURN_ACTIVITY_TOOL_GLYPH} {longest.text}"
     started_at = getattr(longest, "started_at", None)
-    elapsed = _format_fleet_elapsed(max(0.0, now - started_at)) if started_at is not None else ""
+    elapsed = (
+        _format_fleet_elapsed(max(0.0, now - started_at))
+        if started_at is not None
+        else ""
+    )
     return f"{line}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}" if elapsed else line
 
 
@@ -419,13 +424,20 @@ def console_turn_activity_abandon_action(snapshot: Any, *, now: float) -> str:
         return ""
     steps = tuple(getattr(snapshot, "steps", ()) or ())
     step = next(
-        (s for s in reversed(steps) if getattr(s, "agent_kind", "") == AGENT_KIND_PRIMARY),
+        (
+            s
+            for s in reversed(steps)
+            if getattr(s, "agent_kind", "") == AGENT_KIND_PRIMARY
+        ),
         None,
     )
     if step is None or step.kind != STEP_TOOL_CALL:
         return ""
     started_at = getattr(step, "started_at", None)
-    if started_at is None or now - started_at < CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS:
+    if (
+        started_at is None
+        or now - started_at < CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS
+    ):
         return ""
     return CONSOLE_TURN_ACTIVITY_ABANDON_ACTION
 
@@ -625,6 +637,48 @@ def console_turn_activity_text(
     return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
         segment for segment in segments if segment
     )
+
+
+def project_console_run_feedback(screen: Any, copy: str) -> None:
+    """Paint resident run feedback without configuration or authority reads."""
+    from textual.css.query import QueryError
+    from ...Widgets.Console.console_status_chips import ConsoleStatusChips
+
+    try:
+        screen.query_one("#console-status-chips", ConsoleStatusChips).sync_run_chip(
+            bool(copy), copy
+        )
+    except QueryError:
+        pass
+
+
+def console_send_activity_copy(
+    run_state: Any, *, snapshot: Any = None, reply_started: bool = False
+) -> str:
+    """Project current send feedback without implying remote receipt."""
+    status = getattr(run_state.status, "value", run_state.status)
+    if status == "validating":
+        return "Sending…"
+    if status in {"retrying", "checking_citations"}:
+        return run_state.visible_copy or status
+    if status != "streaming":
+        return ""
+    if getattr(snapshot, "status", None) == "setup":
+        return CONSOLE_TURN_ACTIVITY_SETUP
+    step = next(
+        (
+            item
+            for item in reversed(tuple(getattr(snapshot, "steps", ()) or ()))
+            if getattr(item, "agent_kind", "") == AGENT_KIND_PRIMARY
+        ),
+        None,
+    )
+    if (
+        getattr(snapshot, "status", None) == "running"
+        and getattr(step, "kind", None) == STEP_TOOL_CALL
+    ):
+        return f"{CONSOLE_TURN_ACTIVITY_TOOL_GLYPH} {step.text}"
+    return "Streaming reply…" if reply_started else "Waiting for reply…"
 
 
 def _viewed_provider_is_self_hosted(controller: Any, session_id: Any) -> bool:
@@ -981,6 +1035,9 @@ class ConsoleAgentController:
         self._console_subagent_counts_cache_at: float = 0.0
         #: Whether that cache was filled while a run was active (TASK-33620.15).
         self._console_subagent_counts_cache_during_run = False
+        self._console_subagent_counts_read: dict[frozenset[str], dict[str, Any]] = {}
+        self._console_subagent_counts_read_owner: tuple[Any, Any] | None = None
+        self._console_historical_read: dict[str, Any] | None = None
         #: TASK-915: sticky suppression of the fleet force-open for the rest
         #: of THIS busy window. Written by the screen's own `_toggle_console_
         #: rail_section`, so it is proxied read-write there.
@@ -1107,6 +1164,29 @@ class ConsoleAgentController:
             ),
         )
         return self._console_agent_bridge
+
+    def console_run_feedback_copy(self, run_state: Any) -> str:
+        """Read only resident viewed-session messages and current bridge activity."""
+        if getattr(run_state.status, "value", run_state.status) != "streaming":
+            return console_send_activity_copy(run_state)
+        controller = self._console_chat_controller
+        store = getattr(controller, "store", None)
+        session_id = getattr(store, "active_session_id", None)
+        runtime = getattr(self._screen, "_console_runtime_ref", None)
+        bridge = getattr(runtime, "agent_bridge", None)
+        read = getattr(bridge, "live_snapshot", None)
+        snapshot = (
+            read(self._current_console_rail_conversation_id() or "")
+            if callable(read)
+            else None
+        )
+        has_output = getattr(store, "has_live_reply_output", None)
+        reply_started = bool(
+            callable(has_output) and session_id and has_output(session_id)
+        )
+        return console_send_activity_copy(
+            run_state, snapshot=snapshot, reply_started=reply_started
+        )
 
     def console_turn_activity(self) -> str:
         """The viewed session's live turn-activity line, or ``""``.
@@ -1269,14 +1349,15 @@ class ConsoleAgentController:
         it showed "Agent: idle" for a resumed conversation right after an
         app restart even though the drill-in and the conversation-row
         badge both correctly re-derived from ``AgentRunsDB``. An idle live
-        snapshot now falls back to ``bridge.historical_snapshot`` (cached
-        by the bridge itself, so this does not add a DB hit per 0.2s poll
-        tick) -- a live/in-process run always reports non-"idle" and keeps
-        precedence over the fallback.
+        snapshot now falls back to a shared finite historical projection
+        for exact durable bridges, so the UI does not admit a cold DB read
+        during the 0.2s poll. A live/in-process run reports non-"idle" and
+        keeps precedence over the fallback.
         """
         bridge = self._ensure_console_agent_bridge()
         conversation_id = self._current_console_rail_conversation_id() or ""
         if bridge is None:
+            self._console_historical_read = None
             return ("Agent: unavailable", "", "")
         if conversation_id != self._console_agent_drilldown_conversation_id:
             # The active conversation/session changed since the drill-in
@@ -1380,7 +1461,9 @@ class ConsoleAgentController:
             # test double that only implements ``live_snapshot``.
             historical = getattr(bridge, "historical_snapshot", None)
             if historical is not None:
-                snapshot = historical(conversation_id)
+                snapshot = self._presentation_historical_snapshot(
+                    bridge, conversation_id
+                )
         status = f"Agent: {snapshot.status}"
         if snapshot.status == "running":
             status = f"Agent: running · step {snapshot.step}"
@@ -1501,14 +1584,22 @@ class ConsoleAgentController:
         worker = get_current_worker()
         run_id = None
         try:
-            run_id = bridge.resolve_run_log_target(selection[0], selection[1])
-            available = bool(
-                run_id
-                and not worker.is_cancelled
-                and bridge.run_log_available(
-                    run_id, cancelled=lambda: worker.is_cancelled
-                )
+            from tldw_chatbook.UI.Console_Modules.run_log_probe_scope import (
+                finite_stock_probe,
             )
+
+            def read():
+                nonlocal run_id
+                run_id = bridge.resolve_run_log_target(selection[0], selection[1])
+                return bool(
+                    run_id
+                    and not worker.is_cancelled
+                    and bridge.run_log_available(
+                        run_id, cancelled=lambda: worker.is_cancelled
+                    )
+                )
+
+            available = finite_stock_probe(bridge, read)
         except Exception as error:  # noqa: BLE001 - optional log reads fail closed.
             logger.error("Run-log availability failed ({})", type(error).__name__)
             available = False
@@ -1849,12 +1940,13 @@ class ConsoleAgentController:
            THIS process -- real per-child status, plus ``started_at``/
            ``finished_at`` (monotonic floats), which is the only source
            that can render an "elapsed" segment.
-        2. ``bridge.historical_snapshot(conversation_id).subagents``: the
-           durable, DB-re-derived fallback for a resumed conversation (no
-           live coordinator this process has ever seen) -- cached by the
-           bridge itself, so this costs no extra DB round trip beyond what
-           ``_console_agent_section_lines`` already pays each tick.
-        3. ``bridge.subagent_runs(conversation_id)``: a last-resort raw-
+        2. The exact standard bridge's process-owned setup or bound running
+           primary snapshot, including a meaningful empty child list.
+        3. ``bridge.historical_snapshot(conversation_id).subagents``: the
+           durable fallback for a resumed or terminal conversation. Exact file-backed
+           bridges share a finite owned projection with the overview; cold
+           reads defer instead of admitting database work on the UI thread.
+        4. ``bridge.subagent_runs(conversation_id)``: a last-resort raw-
            record fallback for a bridge stub that implements only the
            oldest surface (no ``historical_snapshot``) -- several test
            doubles in ``Tests/UI/test_console_agent_rail.py`` predate
@@ -1873,9 +1965,17 @@ class ConsoleAgentController:
         """
         bridge = self._ensure_console_agent_bridge()
         if bridge is None:
+            self._console_historical_read = None
             return ()
         conversation_id = self._current_console_rail_conversation_id() or ""
         if not conversation_id:
+            state = self._console_historical_read
+            if state is not None and (
+                state["key"][0] is not bridge
+                or state["key"]
+                != self._historical_presentation_key(bridge, conversation_id)
+            ):
+                self._console_historical_read = None
             return ()
         fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
         handles = fleet_snapshot(conversation_id) if fleet_snapshot is not None else []
@@ -1894,12 +1994,38 @@ class ConsoleAgentController:
                 )
                 for handle in handles
             )
+        from ...Chat.console_agent_bridge import ConsoleAgentBridge
+        from ...DB.AgentRuns_DB import AgentRunsDB
+
+        database = getattr(bridge, "_db", None)
+        if (
+            type(bridge) is ConsoleAgentBridge
+            and type(database) is AgentRunsDB
+            and not database.is_memory_db
+        ):
+            live = bridge.live_snapshot(conversation_id)
+            established = (
+                live.status == "setup"
+                and bridge._setup_started_at.get(conversation_id) is not None
+            ) or (
+                live.status == "running"
+                and bool(bridge.live_primary_run_id(conversation_id))
+            )
+            if established:
+                # Empty is meaningful for this actual process-owned turn.
+                # Previous durable children must not overlay current setup.
+                return tuple(
+                    _fleet_row_from_summary(summary, index)
+                    for index, summary in enumerate(live.subagents)
+                )
         historical_snapshot = getattr(bridge, "historical_snapshot", None)
         if historical_snapshot is not None:
             return tuple(
                 _fleet_row_from_summary(summary, index)
                 for index, summary in enumerate(
-                    historical_snapshot(conversation_id).subagents
+                    self._presentation_historical_snapshot(
+                        bridge, conversation_id
+                    ).subagents
                 )
             )
         subagent_runs = getattr(bridge, "subagent_runs", None)
@@ -1908,6 +2034,122 @@ class ConsoleAgentController:
         return tuple(
             _fleet_row_from_record(record) for record in subagent_runs(conversation_id)
         )
+
+    def _historical_presentation_key(self, bridge: Any, conversation_id: str) -> tuple:
+        """Capture only process-local source and display ownership identities."""
+        from tldw_chatbook import config
+
+        store = getattr(self._screen, "_console_chat_store", None)
+        session_id = getattr(store, "active_session_id", None)
+        owner = (
+            next((item for item in store.sessions() if item.id == session_id), None)
+            if store is not None
+            else None
+        )
+        live = bridge.live_snapshot(conversation_id)
+        return (
+            bridge,
+            bridge._db,
+            getattr(self.app_instance, "chachanotes_db", None),
+            config.current_config_identity(),
+            store,
+            session_id,
+            getattr(owner, "workspace_id", None),
+            conversation_id,
+            bridge.run_log_target_token(conversation_id),
+            live.status,
+            tuple((child.run_id, child.status) for child in live.subagents),
+        )
+
+    def _presentation_historical_snapshot(
+        self, bridge: Any, conversation_id: str
+    ) -> Any:
+        """Share one finite historical read across rail and fleet presentation."""
+        from ...Chat.console_agent_bridge import AgentLiveSnapshot, ConsoleAgentBridge
+        from ...DB.AgentRuns_DB import AgentRunsDB
+
+        database = getattr(bridge, "_db", None)
+        if (
+            type(bridge) is not ConsoleAgentBridge
+            or type(database) is not AgentRunsDB
+            or database.is_memory_db
+        ):
+            self._console_historical_read = None
+            return bridge.historical_snapshot(conversation_id)
+        key = self._historical_presentation_key(bridge, conversation_id)
+        state = self._console_historical_read
+        if state is None or state["key"] != key:
+            state = {"key": key, "value": None, "pending": False}
+            self._console_historical_read = state
+        if state["value"] is None and not state["pending"]:
+            state["pending"] = True
+            state["worker"] = self.run_worker(
+                self._load_historical_presentation(
+                    bridge, database, conversation_id, state
+                ),
+                exclusive=False,
+                group="console-agent-history",
+            )
+        return state["value"] or AgentLiveSnapshot()
+
+    async def _load_historical_presentation(
+        self, bridge: Any, database: Any, conversation_id: str, state: dict
+    ) -> None:
+        """Retire the captured callback before any current-owner publication."""
+        import asyncio
+        from ...DB.base_db import run_owned_db_call
+
+        worker = asyncio.create_task(
+            run_owned_db_call(
+                database,
+                bridge._derive_historical_snapshot,
+                conversation_id,
+                database=database,
+            )
+        )
+        try:
+            try:
+                value = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                while not worker.done():
+                    try:
+                        await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:  # noqa: BLE001 - retain cancellation identity.
+                        break
+                if not worker.cancelled():
+                    worker.exception()
+                raise
+            if (
+                self._console_historical_read is not state
+                or self._console_agent_bridge is not bridge
+                or (self._current_console_rail_conversation_id() or "")
+                != conversation_id
+                or state["key"]
+                != self._historical_presentation_key(bridge, conversation_id)
+            ):
+                if self._console_historical_read is state:
+                    self._console_historical_read = None
+                return
+            state["value"] = value
+        except asyncio.CancelledError:
+            if self._console_historical_read is state:
+                self._console_historical_read = None
+            raise
+        except Exception:  # noqa: BLE001 - failed historical reads remain retryable.
+            return
+        finally:
+            state["pending"] = False
+        from ...Chat.console_agent_bridge import AgentLiveSnapshot
+
+        if value == AgentLiveSnapshot():
+            return
+        repaint = getattr(self._screen, "_request_console_agent_fleet_sync", None)
+        if callable(repaint):
+            repaint()
+        else:
+            self.run_worker(self._sync_native_console_chat_ui(), exclusive=False)
 
     def _console_agent_fleet_token_total(self) -> int:
         """Sum the active conversation's LIVE fleet's run-budget counters.
@@ -2389,6 +2631,72 @@ class ConsoleAgentController:
         row_ids = frozenset(
             cid for row in rows if (cid := getattr(row, "conversation_id", None))
         )
+        from ...DB.AgentRuns_DB import AgentRunsDB
+
+        database = getattr(bridge, "_db", None)
+        if type(database) is AgentRunsDB and not database.is_memory_db:
+            authority = getattr(self.app_instance, "chachanotes_db", None)
+            query, query_definition, query_key, stock_query = (
+                self._subagent_count_query(bridge, database)
+            )
+            key = (
+                bridge,
+                row_ids,
+                self._subagent_count_live_token(
+                    bridge, row_ids, stock_query=stock_query
+                ),
+                authority,
+                query_key,
+                database,
+            )
+            owner = self._console_subagent_counts_read_owner
+            if owner is None or owner[0] is not bridge or owner[1] is not authority:
+                self._console_subagent_counts_read.clear()
+                self._console_subagent_counts_read_owner = (bridge, authority)
+            state = self._console_subagent_counts_read.get(row_ids)
+            if state is None or state["key"] != key:
+                state = {
+                    "key": key,
+                    "values": {},
+                    "pending": False,
+                    "at": 0.0,
+                    "database": authority,
+                    "query": query,
+                    # Keep the original function/Code/namespace alive while its
+                    # identity IDs participate in the pending input key.
+                    "query_definition": query_definition,
+                    "stock_query": stock_query,
+                }
+                self._console_subagent_counts_read[row_ids] = state
+                # Browser and workspace projections may alternate subsets.
+                # Keep their pending owners rather than cancelling each other;
+                # this small process-local memo contains only IDs and counts.
+                while (
+                    len(self._console_subagent_counts_read)
+                    > _SUBAGENT_COUNTS_ROW_SET_CACHE_LIMIT
+                ):
+                    self._console_subagent_counts_read.pop(
+                        next(iter(self._console_subagent_counts_read))
+                    )
+            # Live run/child/owner tokens invalidate immediately; unchanged
+            # display counts share the existing two-second observation window.
+            from ..Screens.chat_screen import (
+                CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS,
+            )
+
+            ttl = CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+            if (
+                row_ids
+                and not state["pending"]
+                and (not state["at"] or time.monotonic() - state["at"] >= ttl)
+            ):
+                state["pending"] = True
+                self.run_worker(
+                    self._load_subagent_counts(bridge, database, state),
+                    exclusive=False,
+                    group="console-subagent-counts",
+                )
+            return state["values"]
         if self._console_subagent_counts_refresh_needed(row_ids):
             from ..Screens.chat_screen import CONSOLE_ACTIVE_RUN_STATUSES
 
@@ -2401,6 +2709,188 @@ class ConsoleAgentController:
                 CONSOLE_ACTIVE_RUN_STATUSES
             )
         return self._console_subagent_counts_cache
+
+    @staticmethod
+    def _subagent_count_query(bridge: Any, database: Any) -> tuple:
+        """Capture one selected callable and its disposable semantic identity."""
+        import inspect
+        from types import FunctionType, MethodType
+
+        from ...Chat.console_agent_bridge import _SUBAGENT_BADGE_COUNT_CALLBACK
+        from ...DB.AgentRuns_DB import _CONVERSATION_SUBAGENT_COUNT_CALLBACK
+
+        def definition_current(receiver, record):
+            owner, name, function, code, namespace, lookup, dictionary = record
+            return (
+                type(receiver) is owner
+                and inspect.getattr_static(owner, "__getattribute__") is lookup
+                and inspect.getattr_static(owner, "__dict__") is dictionary
+                and inspect.getattr_static(owner, "__getattr__", None) is None
+                and inspect.getattr_static(receiver, name, None) is function
+                and function.__code__ is code
+                and function.__globals__ is namespace
+            )
+
+        def bound_current(method, receiver, record):
+            return (
+                type(method) is MethodType
+                and method.__self__ is receiver
+                and method.__func__ is record[2]
+            )
+
+        bridge_record = _SUBAGENT_BADGE_COUNT_CALLBACK
+        database_record = _CONVERSATION_SUBAGENT_COUNT_CALLBACK
+        bridge_stock = definition_current(bridge, bridge_record)
+        bridge_query = bridge.subagent_counts
+        bridge_stock = bridge_stock and bound_current(
+            bridge_query, bridge, bridge_record
+        )
+        database_stock = definition_current(database, database_record)
+        query = (
+            database.count_subagents_by_conversation if bridge_stock else bridge_query
+        )
+        stock = (
+            bridge_stock
+            and database_stock
+            and bound_current(query, database, database_record)
+        )
+        if type(query) is MethodType:
+            receiver, function = query.__self__, query.__func__
+        elif type(query) is FunctionType:
+            receiver, function = None, query
+        else:
+            # Preserve arbitrary callable ABI without probing its properties.
+            receiver = query
+            function = inspect.getattr_static(type(query), "__call__", None)
+        code = function.__code__ if type(function) is FunctionType else None
+        namespace = function.__globals__ if type(function) is FunctionType else None
+        definition = receiver, function, code, namespace
+        return query, definition, tuple(id(item) for item in definition), stock
+
+    @staticmethod
+    def _subagent_count_live_token(
+        bridge: Any, row_ids: frozenset[str], *, stock_query: bool = False
+    ) -> tuple:
+        """Read process-local run/child identities without database work."""
+        import inspect
+        from types import MethodType
+
+        from ...Chat.console_agent_bridge import (
+            ConsoleAgentBridge,
+            _SUBAGENT_BADGE_LIVE_CALLBACKS,
+        )
+
+        lookup, dictionary, callbacks = _SUBAGENT_BADGE_LIVE_CALLBACKS
+        stock = (
+            type(bridge) is ConsoleAgentBridge
+            and inspect.getattr_static(ConsoleAgentBridge, "__getattribute__") is lookup
+            and inspect.getattr_static(ConsoleAgentBridge, "__dict__") is dictionary
+            and inspect.getattr_static(ConsoleAgentBridge, "__getattr__", None) is None
+            and all(
+                inspect.getattr_static(bridge, name, None) is function
+                and function.__code__ is code
+                and function.__globals__ is namespace
+                for name, function, code, namespace in callbacks
+            )
+        )
+        snapshot = getattr(bridge, "live_snapshot", None)
+        target = getattr(bridge, "run_log_target_token", None)
+        stock = stock and all(
+            type(method) is MethodType
+            and method.__self__ is bridge
+            and method.__func__ is record[1]
+            for method, record in zip((snapshot, target), callbacks)
+        )
+        # Primary turn/run publication cannot change the sub-agent-only count.
+        # Custom callbacks keep their preceding primary-token contract.
+        if stock and stock_query:
+            target = None
+        return tuple(
+            (
+                cid,
+                target(cid) if callable(target) else None,
+                tuple(
+                    (getattr(child, "run_id", None), getattr(child, "handle_id", None))
+                    for child in getattr(snapshot(cid), "subagents", ())
+                )
+                if callable(snapshot)
+                else (),
+            )
+            for cid in sorted(row_ids)
+        )
+
+    async def _load_subagent_counts(
+        self, bridge: Any, database: Any, state: dict
+    ) -> None:
+        """Retire a finite worker read before publishing to its exact input owner."""
+        import asyncio
+        from ...DB.base_db import run_owned_db_call
+
+        operation = run_owned_db_call(
+            database,
+            state["query"],
+            list(state["key"][1]),
+        )
+        try:
+            if state.get("stock_query", False):
+                # The stock finite worker owns its callback until the native
+                # connection retires; cancellation must not detach that read.
+                worker = asyncio.Task(operation)
+                try:
+                    values = await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    while not worker.done():
+                        try:
+                            await asyncio.shield(worker)
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception:  # noqa: BLE001 - cancellation wins.
+                            break
+                    if not worker.cancelled():
+                        worker.exception()
+                    raise
+            else:
+                values = await operation
+        except Exception:  # noqa: BLE001 - counts remain retryable.
+            return
+        finally:
+            if self._console_subagent_counts_read.get(state["key"][1]) is state:
+                state["pending"] = False
+        if self._console_subagent_counts_read.get(state["key"][1]) is not state:
+            return
+        if (
+            self._console_agent_bridge is not bridge
+            or bridge._db is not database
+            or getattr(self.app_instance, "chachanotes_db", None)
+            is not state["database"]
+        ):
+            return
+        try:
+            _query, _definition, query_key, stock_query = self._subagent_count_query(
+                bridge, database
+            )
+        except Exception:  # noqa: BLE001 - changed custom getter remains retryable.
+            return
+        if state["key"] != (
+            bridge,
+            state["key"][1],
+            self._subagent_count_live_token(
+                bridge, state["key"][1], stock_query=stock_query
+            ),
+            getattr(self.app_instance, "chachanotes_db", None),
+            query_key,
+            database,
+        ):
+            return
+        changed = state["values"] != values
+        state["values"] = values
+        state["at"] = time.monotonic()
+        if changed:
+            self.run_worker(
+                self._sync_native_console_chat_ui_accessor()(),
+                exclusive=False,
+                group="console-subagent-count-publication",
+            )
 
     def _inject_resume_agent_markers(
         self,

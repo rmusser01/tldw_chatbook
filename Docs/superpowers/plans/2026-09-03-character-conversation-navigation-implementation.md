@@ -1842,3 +1842,81 @@ recorded UAT artifact. Commit with message
 - [x] Each task adds its Backlog Implementation Notes, checks all acceptance
   criteria, records ADR status, and moves to Done only after its own Definition
   of Done is satisfied.
+
+
+## Character browser message-pump lifetime follow-up (TASK-34561 AC17)
+
+ADR required: no
+ADR path: backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md
+Reason: restore the framework-owned message-pump task without changing the existing controller, presentation, action, or surface ownership contracts. This is a mechanical lifetime bug fix under ADR-120. The design language and component-pattern documents were read; no visual values, CSS, geometry, interaction copy, or keybindings change.
+
+1. Qualify the unchanged removed-browser assertion on actual current and isolated original source, and observe the real Textual task ownership.
+2. Add a controlled suspended controller refresh: awaited removal must finish while that unrelated read remains held, and late state must preserve the exact prior state identity.
+3. Rename only the widget-owned controller-task slot so Textual retains its own message-pump task and removal awaits the correct task.
+4. Verify the original removed-browser assertion plus mounted Character/controller ownership tests. Qualify three real-app config-selection fixture failures and give only those nodes the canonical bootstrap_profile marker; keep their behavioral assertions unchanged.
+5. Record actual regression, fixture qualification, and scoped verification separately; the combined native matrix and whole-send budgets remain open.
+
+
+### AC17 native removal verification and mounted failure qualification
+
+The installed Textual message pump owns `node._task`; `App._prune` awaits that
+exact task for removal. The Character widget assigned an unrelated controller
+refresh to the same slot. Qualified native current-source controls reproduce the
+unchanged late-presentation state-identity failure and a real removal blocked by
+a suspended controller refresh (2 failures, 3 canonical fixture controls pass,
+52.31s). Identical removal controls against the immutable original
+0ecd8327f79c1b14ea18c15f704850cc41b0ec9f archive reproduce both failures in 7.32s;
+all loaded project modules are confined to that archive. The production repair
+only names the widget-owned slot `_controller_task`, preserving the framework
+message pump, existing action/service contracts and original state assertion.
+
+Three real-app Character nodes require the existing node-specific
+`bootstrap_profile` fixture contract: their unmarked per-case configuration
+redirect conflicts with the actually installed raw source and correctly refuses
+before their behavioral assertions. Those three controls pass with the canonical
+markers before the widget production repair. No native source or identity guard
+is replaced. The native config-sync worker fixture now supplies the exact new
+presentation facade and accepts its declared optional arguments; production
+wiring already constructs the exact service. Its missing-facade RED is one
+failure in 7.06s; the five actual worker/pause/teardown controls pass in 26.76s.
+
+The original broad 79-pass/5-failure receipt is superseded as a classification:
+the exact original archive qualification is 4 failures/1 pass, with all 1,510
+project/test file hashes matching. The badge node passes that original baseline,
+so its current failure remains actionable until a real identical overlap barrier
+qualifies the fixture. The final three targeted mounted modules now give 84
+passes and only that unchanged badge global-call assertion fails (120.97s).
+Its uninstrumented current standalone node passes in 19.70s; that isolated pass
+does not erase the mounted failure. Initial setup errors and faulty diagnostic
+observer attempts are excluded from behavioral proof.
+
+Production widget SHA256 is
+3499dd1f22831f2afd853db308e1709a687c950390748fa449b5a53d52e9e52b.
+Scoped Ruff, edited-method formatting and diff checks pass. Textual teardown
+warnings remain in the mounted receipt; this is not a warning-free whole-suite,
+native-matrix or captured-send budget claim. TASK-34561 remains In Progress.
+
+### Badge fixture consumer qualification (TASK-34561, 2026-10-04)
+
+The original badge node passed uninstrumented at exact original `0ecd8327`
+and also passed a current standalone run. The earlier mounted bundle failure
+therefore remained actionable until its ownership was qualified. Identical
+native current and immutable-archive barriers preserved every original
+assertion and made the actual mounted browser's native-ID row query complete
+between the manual AB/A row reads. Both hosts of the same Windows interpreter
+then failed the original last-call assertion, with actual returned mappings
+and both ordering barriers reached (29.40 s current, 26.42 s archive). This
+proves competing legitimate row-set consumers, not a production count loss.
+The archive's 1,510 project/test file hashes had matched exact original source;
+the controlled launcher also confined all 1,505 loaded project/test modules
+to that archive. The initial overbroad trace and observer-None fault attempts
+are excluded from this qualification.
+
+The fixture now supplies only the unrelated mounted browser's declared
+`_subagent_counts_for_rows_fn` dependency with an empty mapping. The manual
+real AB/A AgentRunsDB, bridge, cache, worker, and every calls/value/count
+assertion remain unchanged. Its exact native node is GREEN in the four-node
+`checked-display-scope-red.xml` receipt (12.22 s test call; 21.36 s bundle).
+No production filtering, global spy suppression, or assertion relaxation was
+introduced. The full three-host original module verification remains a final
+matrix requirement; the prior mounted bundle was 84 GREEN plus this race.

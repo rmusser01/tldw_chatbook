@@ -15,6 +15,7 @@ and forwarded streamed usage, exactly one ``[DONE]``); pinned in
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from loguru import logger
@@ -87,12 +88,90 @@ class OpenRouterFinishPolicy:
 _FINISH_POLICY = OpenRouterFinishPolicy()
 
 
+# Official response annotations, never universal hosted-parser fields.
+_OPENROUTER_RESPONSE_KEYS = frozenset(
+    {"provider", "service_tier", "openrouter_metadata"}
+)
+_OPENROUTER_CHOICE_KEYS = frozenset({"native_finish_reason", "logprobs"})
+_OPENROUTER_MESSAGE_KEYS = frozenset({"reasoning", "reasoning_details"})
+
+
+class _OpenRouterWireNormalizer:
+    """Keep OpenRouter's content-free repeated terminal usage choice call-local."""
+
+    def __init__(self, *, streaming: bool) -> None:
+        self._streaming = streaming
+        self._finish: str | None = None
+        self._native_finish: str | None = None
+
+    def __call__(self, response: Mapping[str, Any]) -> Mapping[str, Any]:
+        choices = response.get("choices")
+        if "error" in response or (
+            isinstance(choices, list)
+            and any(
+                isinstance(choice, Mapping) and "error" in choice for choice in choices
+            )
+        ):
+            raise ChatProviderError(
+                provider="openrouter",
+                message="OpenRouter reported an error during the response.",
+                status_code=502,
+            )
+        if (
+            not isinstance(choices, list)
+            or len(choices) != 1
+            or not isinstance(choices[0], Mapping)
+        ):
+            return response
+        choice = choices[0]
+        native = choice.get("native_finish_reason")
+        if native is not None and not isinstance(native, str):
+            raise HostedChatProtocolError(
+                "OpenRouter native finish state is malformed."
+            )
+        logprobs = choice.get("logprobs")
+        if logprobs is not None and not isinstance(logprobs, Mapping):
+            raise HostedChatProtocolError("OpenRouter logprobs are malformed.")
+        if not self._streaming:
+            return response
+        finish = choice.get("finish_reason")
+        if self._finish is None:
+            if isinstance(finish, str):
+                self._finish = finish
+                self._native_finish = native
+            return response
+        # The provider intentionally repeats finish/native_finish in the final
+        # usage choice. Validate everything consumed before converting it to
+        # the neutral parser's empty-choice accounting frame.
+        if response.get("usage") is None:
+            return response
+        if (
+            set(choice) - {"index", "delta", "finish_reason"} - _OPENROUTER_CHOICE_KEYS
+            or type(choice.get("index")) is not int  # noqa: E721 - JSON integers must exclude booleans and subclasses.
+            or choice.get("index") != 0
+            or finish != self._finish
+            or (self._native_finish is not None and native != self._native_finish)
+        ):
+            raise HostedChatProtocolError(
+                "OpenRouter terminal usage choice is malformed."
+            )
+        delta = choice.get("delta")
+        if (
+            not isinstance(delta, Mapping)
+            or set(delta) - {"role", "content"}
+            or ("role" in delta and delta["role"] != "assistant")
+            or delta.get("content") not in (None, "")
+        ):
+            raise HostedChatProtocolError(
+                "OpenRouter terminal usage delta is malformed."
+            )
+        return {**response, "choices": []}
+
+
 class OpenRouterResponse(dict):
     """Public legacy response dict with the normalized terminal turn attached."""
 
-    def __init__(
-        self, value: dict[str, Any], *, terminal_turn: HostedChatTurn
-    ) -> None:
+    def __init__(self, value: dict[str, Any], *, terminal_turn: HostedChatTurn) -> None:
         super().__init__(value)
         self._terminal_turn = terminal_turn
 
@@ -121,15 +200,18 @@ def _openrouter_turn_response(turn: HostedChatTurn) -> OpenRouterResponse:
 
 def _log_usage_metrics(model: str, usage: dict[str, Any]) -> None:
     log_histogram(
-        "openrouter_api_input_tokens", usage.get("prompt_tokens", 0),
+        "openrouter_api_input_tokens",
+        usage.get("prompt_tokens", 0),
         labels={"model": model},
     )
     log_histogram(
-        "openrouter_api_output_tokens", usage.get("completion_tokens", 0),
+        "openrouter_api_output_tokens",
+        usage.get("completion_tokens", 0),
         labels={"model": model},
     )
     log_histogram(
-        "openrouter_api_total_tokens", usage.get("total_tokens", 0),
+        "openrouter_api_total_tokens",
+        usage.get("total_tokens", 0),
         labels={"model": model},
     )
     from tldw_chatbook.Chat.session_usage import session_usage  # deferred: boot census (ADR-097)
@@ -139,9 +221,7 @@ def _log_usage_metrics(model: str, usage: dict[str, Any]) -> None:
 
 def _log_error_metrics(model: str, duration: float, exc: BaseException) -> None:
     status_code = getattr(exc, "status_code", None)
-    error_type = (
-        "http_error" if status_code is not None else exc.__class__.__name__
-    )
+    error_type = "http_error" if status_code is not None else exc.__class__.__name__
     labels: dict[str, str] = {"model": model, "error_type": error_type}
     if status_code is not None:
         labels["status_code"] = str(status_code)
@@ -181,7 +261,9 @@ def chat_with_openrouter(
     start_time = time.time()
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     openrouter_config = cli_api_settings.get("openrouter", {})
-    final_api_key = api_key or resolve_provider_api_key(openrouter_config.get("api_key"))
+    final_api_key = api_key or resolve_provider_api_key(
+        openrouter_config.get("api_key")
+    )
     if not final_api_key:
         raise ChatConfigurationError(
             provider="openrouter", message="OpenRouter API Key required."
@@ -302,14 +384,22 @@ def chat_with_openrouter(
             payload=data,
             streaming=current_streaming,
             finish_policy=_FINISH_POLICY,
+            allowed_extra_keys=_OPENROUTER_RESPONSE_KEYS,
+            allowed_choice_keys=_OPENROUTER_CHOICE_KEYS,
+            allowed_message_keys=_OPENROUTER_MESSAGE_KEYS,
+            wire_normalizer=_OpenRouterWireNormalizer(streaming=current_streaming),
         )
     except HostedChatProtocolError:
         duration = time.time() - start_time
-        _log_error_metrics(current_model, duration, exc=ChatProviderError(
-            provider="openrouter",
-            message="OpenRouter returned a malformed successful response.",
-            status_code=502,
-        ))
+        _log_error_metrics(
+            current_model,
+            duration,
+            exc=ChatProviderError(
+                provider="openrouter",
+                message="OpenRouter returned a malformed successful response.",
+                status_code=502,
+            ),
+        )
         raise ChatProviderError(
             provider="openrouter",
             message="OpenRouter returned a malformed successful response.",

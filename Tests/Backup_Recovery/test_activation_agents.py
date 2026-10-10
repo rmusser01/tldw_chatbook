@@ -14,7 +14,7 @@ sys.modules.setdefault('parakeet_mlx', types.ModuleType('parakeet_mlx'))
 route, state = sys.argv[1:]
 selector = Path(os.environ['TLDW_CONFIG_PATH'])
 base = selector.parent.parent
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(base/'data') + '"\n[agents]\nmax_live_subagents=1\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + (base/'data').as_posix() + '"\n[agents]\nmax_live_subagents=1\n')
 selector.chmod(0o600)
 from tldw_chatbook import config
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
@@ -134,7 +134,7 @@ def effect():
 if route in ('timeout','cancel'):
     result = _call_with_timeout(effect, .2, 'delayed', should_cancel=lambda:route=='cancel')
     assert not result.ok
-    assert entered.is_set(), result
+    assert entered.wait(10), result
     assert not effect_file.exists()
     try:
         with authority.maintenance(('profile',), .04):
@@ -396,7 +396,7 @@ def effect():
     assert release.wait(10)
     return ToolResult(ok=True, content='complete')
 result=_call_with_timeout(effect, .5, 'database-tool', execution_owner=service)
-assert not result.ok and entered.is_set()
+assert not result.ok and entered.wait(10)
 startup=storage._startups.pop((os.getpid(), str(root)), None)
 if startup is not None: startup.close()
 try:

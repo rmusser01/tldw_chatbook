@@ -564,7 +564,12 @@ class ConsoleStatusChips(Horizontal):
             expand_button.styles.max_width = 9
             expand_button.styles.line_pad = 0
             yield expand_button
-            yield Static("Status hidden", id="console-status-collapsed-copy")
+            label, _tooltip, hidden = self._run_chip_render(*self._run_chip_state)
+            yield Static(
+                "Status hidden" if hidden else label,
+                id="console-status-collapsed-copy",
+                markup=False,
+            )
 
     @property
     def collapsed(self) -> bool:
@@ -636,6 +641,9 @@ class ConsoleStatusChips(Horizontal):
         except NoMatches:
             return
         label, tooltip, hidden = self._run_chip_render(*next_state)
+        self.query_one("#console-status-collapsed-copy", Static).update(
+            "Status hidden" if hidden else label
+        )
         if hidden:
             chip.display = False
             return

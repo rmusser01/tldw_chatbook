@@ -42,7 +42,6 @@ from tldw_chatbook.Chat.console_turn_context import (
     resolve_turn_persona_policy_rules,
     resolve_turn_tool_policy_profile_id,
 )
-from tldw_chatbook.config import coerce_bool_setting
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +111,8 @@ def authority_inputs(controller: Any, session_id: str) -> AuthorityInputs:
         The inputs; the session is a shallow copy, so a worker never reads the
         live store record.
     """
+    from .session import _console_live_runtime_enabled
+
     app_config = controller._provider_readiness_app_config()
     console_config = (
         app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
@@ -121,7 +122,9 @@ def authority_inputs(controller: Any, session_id: str) -> AuthorityInputs:
     store = controller._ensure_console_chat_store()
     session = next(item for item in store.sessions() if item.id == session_id)
     include_bindings = bool(
-        coerce_bool_setting(console_config.get("agent_runtime", True), True)
+        _console_live_runtime_enabled(
+            getattr(controller.app_instance, "app_config", None), console_config
+        )
         and not store.session_one_shot_prefill(session_id)
         and session.assistant_kind != "character"
     )
@@ -143,7 +146,12 @@ def authority_inputs(controller: Any, session_id: str) -> AuthorityInputs:
     )
 
 
-def capture_authority(controller: Any, inputs: AuthorityInputs) -> TurnAuthority:
+def capture_authority(
+    controller: Any,
+    inputs: AuthorityInputs,
+    *,
+    mcp_definition_maximum: Mapping[str, str] | None = None,
+) -> TurnAuthority:
     """Read every service-owned value the turn snapshot freezes.
 
     Touches no store and no widget, so it may run on a worker thread.
@@ -151,7 +159,8 @@ def capture_authority(controller: Any, inputs: AuthorityInputs) -> TurnAuthority
     app = getattr(controller, "app_instance", None)
     session = inputs.session
     roots, aliases, skipped = capture_change_review_admission(app, inputs.workspace_id)
-    mcp_definition_maximum = capture_mcp_definition_maximum(app)
+    if mcp_definition_maximum is None:
+        mcp_definition_maximum = capture_mcp_definition_maximum(app)
     return TurnAuthority(
         key=inputs.key,
         project_authority=capture_project_instruction_authority(
@@ -166,7 +175,7 @@ def capture_authority(controller: Any, inputs: AuthorityInputs) -> TurnAuthority
             app, inputs.workspace_id
         ),
         persona_policy_rules=resolve_turn_persona_policy_rules(app, session),
-        mcp_definition_maximum=mcp_definition_maximum,
+        mcp_definition_maximum=dict(mcp_definition_maximum),
         scratch_space=controller._scratch_snapshot_provider(inputs.session_id),
         character_authority=capture_character_authority(
             session, inputs.character_repository
@@ -177,12 +186,19 @@ def capture_authority(controller: Any, inputs: AuthorityInputs) -> TurnAuthority
     )
 
 
-def authority_for(controller: Any, inputs: AuthorityInputs) -> TurnAuthority:
+def authority_for(
+    controller: Any,
+    inputs: AuthorityInputs,
+    *,
+    mcp_definition_maximum: Mapping[str, str] | None = None,
+) -> TurnAuthority:
     """The precaptured authority when its inputs still match, else a fresh read."""
     precaptured = _PRECAPTURED.get()
     if precaptured is not None and precaptured.key == inputs.key:
         return precaptured
-    return capture_authority(controller, inputs)
+    return capture_authority(
+        controller, inputs, mcp_definition_maximum=mcp_definition_maximum
+    )
 
 
 async def precapture(controller: Any, session_id: str) -> TurnAuthority | None:

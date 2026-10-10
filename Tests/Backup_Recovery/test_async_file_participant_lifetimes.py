@@ -11,6 +11,7 @@ import pytest
 from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storage
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 from Tests.Backup_Recovery.test_participant_lifetimes import local_root as local_root  # noqa: PLC0414 - exported pytest fixture
+from Tests.pipe_readiness import pipe_readable
 
 
 @pytest.mark.asyncio
@@ -108,7 +109,6 @@ async def test_history_queued_cancel_retires_without_cache_loss(
 from contextlib import contextmanager
 import copy
 import os
-import select
 
 from tldw_chatbook.Backup_Recovery import raw_participants as raw
 from tldw_chatbook.Backup_Recovery.async_file_participants import _FileJob
@@ -164,7 +164,7 @@ async def test_installed_history_running_cancel_holds_native_until_bookkeeping(
         assert not task.done()
         assert not participant.drain(time.monotonic() + 0.02)
         assert not pause.drain(time.monotonic() + 0.02)
-        assert not select.select([observer.stdout], [], [], 0.04)[0]
+        assert not pipe_readable(observer.stdout, 0.04)
         finish.set()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -366,12 +366,12 @@ async def test_startup_native_exclusion_and_pending_cover_event_loop_bookkeeping
             observer = launch(hold.authority.control_root, "maintenance", hold.names)
             pause = storage._begin_local_pause()
             assert not pause.drain(time.monotonic() + 0.03)
-            assert not select.select([observer.stdout], [], [], 0.05)[0]
+            assert not pipe_readable(observer.stdout, 0.05)
             installed_history._entries = [{"input": "committed", "timestamp": 0.0}]
         assert pause.drain(time.monotonic() + 0.2)
         # Task10 has not enabled startup retirement; completed per-source IO
         # cannot cause a supported external maintainer to cross this hold.
-        assert not select.select([observer.stdout], [], [], 0.05)[0]
+        assert not pipe_readable(observer.stdout, 0.05)
     finally:
         if pause is not None:
             pause.resume()
@@ -441,12 +441,12 @@ _HISTORY_CLOSE_CHILD = r"""
 import asyncio, gc, os, sys, time
 from pathlib import Path
 from contextlib import contextmanager
+from loguru import logger
+logger.remove()
 from tldw_chatbook.Backup_Recovery import bootstrap, raw_participants as raw, storage_admission as storage
 from tldw_chatbook.Chat import prompt_history
 root, destination, failure = sys.argv[1:]
 bootstrap.default_bootstrap_root = lambda: Path(root)
-from loguru import logger
-logger.remove()
 history = prompt_history.PromptHistory(prompt_history.default_prompt_history_path())
 original_file = raw._file
 original_close = os.close
@@ -520,7 +520,7 @@ def test_history_uncertain_native_close_keeps_independent_exclusion(
             child.wait(timeout=5)
             pytest.fail(child.stderr.read())
         observer = launch(authority.control_root, "maintenance", (UNBOUND_NAMESPACE,))
-        assert not select.select([observer.stdout], [], [], 0.05)[0]
+        assert not pipe_readable(observer.stdout, 0.05)
         child.stdin.write("exit\n")
         child.stdin.flush()
         child.wait(timeout=5)
@@ -533,6 +533,27 @@ def test_history_uncertain_native_close_keeps_independent_exclusion(
         child.wait(timeout=5)
         child.stdin.close()
         child.stdout.close()
+        if child.returncode != 0:
+            # The existing physical wait/kill has already completed. Retain the
+            # setup error without extending waits or claiming healthy retirement.
+            stderr = child.stderr.read()
+            receipt = {
+                "diagnostic_only": True,
+                "failure": failure,
+                "child_returncode": child.returncode,
+                "stderr_tail": stderr[-8192:],
+                "original_wait_timeout_seconds": 5,
+                "healthy_child_retirement_claim": False,
+            }
+            try:
+                (tmp_path / "history-uncertain-close-child-failure.json").write_text(
+                    json.dumps(receipt), encoding="utf-8"
+                )
+            except OSError as error:
+                # Keep the original failure priority if the optional receipt
+                # cannot be written in the private test directory.
+                print("history child failure receipt write: " + type(error).__name__)
+            print(json.dumps(receipt))
         child.stderr.close()
 
 
@@ -687,14 +708,14 @@ def test_history_participant_validation_does_not_invert_config_storage_locks(
     participant = raw._raw_participant(history)
     validating = threading.Event()
     failures = []
-    original = raw._participant_state
+    original = raw._participant_identity
 
     def observed(candidate):
         if candidate is participant:
             validating.set()
         return original(candidate)
 
-    monkeypatch.setattr(raw, "_participant_state", observed)
+    monkeypatch.setattr(raw, "_participant_identity", observed)
 
     def close_history():
         try:

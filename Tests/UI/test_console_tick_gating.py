@@ -131,9 +131,9 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
 
         await console._sync_native_console_chat_ui()
         after_third = len(service.list_calls)
-        assert after_third == after_first, (
-            "third back-to-back sync must still be served from the TTL cache"
-        )
+        assert (
+            after_third == after_first
+        ), "third back-to-back sync must still be served from the TTL cache"
 
         # Explicit invalidation forces exactly one more fresh query.
         console._workspace._invalidate_console_persisted_rows_cache()
@@ -143,9 +143,9 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
                 break
             await pilot.pause(0.05)
         after_invalidate = len(service.list_calls)
-        assert after_invalidate > after_third, (
-            "explicit cache invalidation must force a fresh DB query"
-        )
+        assert (
+            after_invalidate > after_third
+        ), "explicit cache invalidation must force a fresh DB query"
 
         # TTL expiry (equivalent to letting monotonic() advance past the TTL)
         # forces exactly one more fresh query even without explicit
@@ -159,9 +159,9 @@ async def test_console_persisted_rows_cache_gates_list_conversations_calls():
                 break
             await pilot.pause(0.05)
         after_ttl = len(service.list_calls)
-        assert after_ttl > after_invalidate, (
-            "a stale (TTL-expired) cache entry must force a fresh DB query"
-        )
+        assert (
+            after_ttl > after_invalidate
+        ), "a stale (TTL-expired) cache entry must force a fresh DB query"
 
 
 @pytest.mark.asyncio
@@ -178,8 +178,8 @@ async def test_console_settings_summary_sync_state_is_noop_when_state_unchanged(
         # Two separately-constructed, value-equal state snapshots (frozen
         # dataclass equality), mirroring how the screen rebuilds state fresh
         # every tick.
-        state_a = console._build_console_settings_summary_state()
-        state_b = console._build_console_settings_summary_state()
+        state_a = console._context_spend._build_console_settings_summary_state()
+        state_b = console._context_spend._build_console_settings_summary_state()
         assert state_a == state_b
 
         update_calls: list[str] = []
@@ -193,9 +193,9 @@ async def test_console_settings_summary_sync_state_is_noop_when_state_unchanged(
             summary.sync_state(state_a)
             first_call_count = len(update_calls)
             summary.sync_state(state_b)
-            assert len(update_calls) == first_call_count, (
-                "re-syncing an equal-value state must not call Static.update()"
-            )
+            assert (
+                len(update_calls) == first_call_count
+            ), "re-syncing an equal-value state must not call Static.update()"
 
 
 @pytest.mark.asyncio

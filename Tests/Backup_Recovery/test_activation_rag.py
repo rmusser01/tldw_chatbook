@@ -5,13 +5,13 @@ import pytest
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
 _SCRIPT = r"""
-import asyncio, os, sys
+import asyncio, json, os, sys
 from pathlib import Path
 from Tests.network_guard import install, blocked_attempts
 install()
 route,state=sys.argv[1:]
 selector=Path(os.environ['TLDW_CONFIG_PATH']);base=selector.parent.parent;data=base/'data'
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+str(data)+'"\n[rag.service]\nfirst_run_import_done=true\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir='+json.dumps(str(data), ensure_ascii=False)+'\n[rag.service]\nfirst_run_import_done=true\n', encoding='utf-8')
 selector.chmod(0o600)
 os.environ.update(RAG_EMBEDDING_MODEL='mock',RAG_PERSIST_DIR=str(data/'vectors'),HF_HUB_CACHE=str(data/'models'))
 from tldw_chatbook.Backup_Recovery import bootstrap,storage_admission as storage

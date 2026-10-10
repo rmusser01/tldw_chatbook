@@ -927,9 +927,46 @@ class RunHooksEngine:
             max_workers=4, thread_name_prefix="run-hook-observe"
         )
 
-    def _matching(self, event: str, tool_name: str | None) -> tuple[HookTarget, ...]:
+    def _attempt_targets(
+        self, authority_read: Any, event: str, tool_name: str | None
+    ) -> tuple[()] | None:
+        """Answer "no hook to launch" from the firing attempt's earlier read.
+
+        ADR-225 decision 3: a Send attempt that already performed one full
+        consent read passes it here instead of having ``_target_provider``
+        repeat it -- but only to learn that nothing matches. Used only when
+        that read came from the very owner whose ``targets`` and
+        ``launch_guard`` this engine was built with, and only when its answer
+        is the empty selection. A non-empty selection from an earlier read
+        could be stale: a hook another process disabled since would still be
+        launched into its fresh ``launch_guard`` and refused, which blocks a
+        blocking event where a fresh selection would just have omitted it.
+        ``None`` (another owner, a stale read, any target or refusal) means
+        the provider's fresh read selects, exactly as without sharing.
+        """
+        owner = getattr(authority_read, "owner", None)
+        select = getattr(owner, "attempt_targets", None)
+        if (
+            select is None
+            or self._target_provider != getattr(owner, "targets", None)
+            or self._launch_guard != getattr(owner, "launch_guard", None)
+        ):
+            return None
+        # The owner already answers only "none"; never launch from a read
+        # even if a future owner answered more.
+        return () if select(authority_read, event, tool_name) == () else None
+
+    def _matching(
+        self, event: str, tool_name: str | None, authority_read: Any = None
+    ) -> tuple[HookTarget, ...]:
         try:
-            targets = self._target_provider(event, tool_name)
+            targets = (
+                self._attempt_targets(authority_read, event, tool_name)
+                if authority_read is not None
+                else None
+            )
+            if targets is None:
+                targets = self._target_provider(event, tool_name)
             if not isinstance(targets, tuple) or not all(
                 isinstance(target, HookTarget) for target in targets
             ):
@@ -970,6 +1007,7 @@ class RunHooksEngine:
         run_id: str | None = None,
         data: dict[str, Any] | None = None,
         cwd: str | None = None,
+        authority_read: Any = None,
     ) -> HookOutcome:
         """Run matching hooks and return the combined outcome. Never raises.
 
@@ -985,12 +1023,22 @@ class RunHooksEngine:
             cwd: Fire-site override for the payload's ``cwd`` (Ruling R18) —
                 the session's bound workspace root when one is resolvable.
                 ``None`` falls back to the engine's cwd_provider.
+            authority_read: The firing Send attempt's own earlier full consent
+                read (``HookAuthorityRead``). While it stands it may answer
+                only that no hook matches; any matching hook is selected by a
+                fresh read, as with ``None``. Launches re-check authority
+                fresh either way.
         """
         try:
             if self._closed.is_set():
                 raise RuntimeError("engine closed")
             return self._fire(
-                event, session_id=session_id, run_id=run_id, data=data, cwd=cwd
+                event,
+                session_id=session_id,
+                run_id=run_id,
+                data=data,
+                cwd=cwd,
+                authority_read=authority_read,
             )
         except HookLaunchRefused as refusal:
             logger.warning("run-hooks: event={} consent refused", event)
@@ -1024,13 +1072,18 @@ class RunHooksEngine:
         data: dict[str, Any] | None,
         cwd: str | None = None,
         targets: tuple[HookTarget, ...] | None = None,
+        authority_read: Any = None,
     ) -> HookOutcome:
         tool_name: str | None = None
         if isinstance(data, dict):
             candidate = data.get("tool_name")
             if isinstance(candidate, str):
                 tool_name = candidate
-        targets = self._matching(event, tool_name) if targets is None else targets
+        targets = (
+            self._matching(event, tool_name, authority_read)
+            if targets is None
+            else targets
+        )
         if not targets:
             return HookOutcome()
         payload = self._payload(

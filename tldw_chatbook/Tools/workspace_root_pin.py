@@ -17,6 +17,8 @@ from tldw_chatbook.Utils.filesystem_identity import (
 )
 from tldw_chatbook.Utils.path_validation import validate_path
 
+_FILE_ID_INFO_CLASS = 18
+
 
 class WorkspaceRootPinError(RuntimeError):
     """Raised when an admitted root cannot be retained and verified safely."""
@@ -255,6 +257,12 @@ def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
             ("nFileIndexLow", wintypes.DWORD),
         ]
 
+    class FileIdInfo(ctypes.Structure):
+        _fields_ = [
+            ("VolumeSerialNumber", ctypes.c_ulonglong),
+            ("FileId", ctypes.c_ubyte * 16),
+        ]
+
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateFileW.argtypes = [
         wintypes.LPCWSTR,
@@ -271,6 +279,13 @@ def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
         ctypes.POINTER(ByHandleFileInformation),
     ]
     kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+    kernel32.GetFileInformationByHandleEx.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    kernel32.GetFileInformationByHandleEx.restype = wintypes.BOOL
 
     file_read_attributes = 0x0080
     share_all = 0x00000001 | 0x00000002 | 0x00000004
@@ -294,12 +309,21 @@ def _windows_open_directory(path: Path) -> tuple[int, DirectoryIdentity, bool]:
     if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(information)):
         _windows_close_handle(handle)
         raise WorkspaceRootPinError("workspace root metadata unavailable")
+    device = int(information.dwVolumeSerialNumber)
     inode = (int(information.nFileIndexHigh) << 32) | int(information.nFileIndexLow)
+    extended = FileIdInfo()
+    if kernel32.GetFileInformationByHandleEx(
+        handle, _FILE_ID_INFO_CLASS, ctypes.byref(extended), ctypes.sizeof(extended)
+    ):
+        # Match CPython's full Windows stat identity on the same retained handle.
+        device = int(extended.VolumeSerialNumber)
+        inode = int.from_bytes(bytes(extended.FileId), "little")
+    # As in CPython, an unsupported extended query keeps the fresh legacy identity.
     reparse = bool(int(information.dwFileAttributes) & 0x00000400)
     return (
         handle,
         DirectoryIdentity(
-            device=int(information.dwVolumeSerialNumber),
+            device=device,
             inode=inode,
             mode=0,
             reparse=reparse,

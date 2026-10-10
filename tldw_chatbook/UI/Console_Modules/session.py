@@ -171,11 +171,11 @@ from ...Chat.console_chat_controller import (
     ProjectInstructionBindingRecovery,
     resolve_project_instruction_binding,
 )
+from ...Chat.console_configuration_capture import capture_console_turn_configuration
 from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextPolicyError,
 )
-from ...Chat.console_dispatch_checkpoint import ConsoleLibraryItemScopeSnapshot
 from ...Chat.console_expression_state import (
     CharacterEmoteHistoryIdentity,
     resolve_console_expression_state,
@@ -230,7 +230,11 @@ from ...Chat.console_switcher_state import (
 )
 from ...Chat.thinking_blocks import normalize_thinking_history_policy
 from ...Chat.console_scratch_space import ConsoleScratchSnapshot
-from ...Chat.console_turn_context import ConsoleTurnConfigurationSnapshot
+from ...Chat.console_turn_context import (
+    ConsoleTurnConfigurationSnapshot,
+    resolve_turn_persona_policy_rules,
+    resolve_turn_tool_policy_profile_id,
+)
 from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import provider_config_key
 from ...Character_Chat.visual_identity import (
@@ -271,10 +275,6 @@ from ...Widgets.Console import (
     ProjectInstructionSetupModal,
     ProjectInstructionSetupResult,
 )
-from ...Widgets.Console.console_reaction_picker_modal import (
-    ConsoleReactionPickerModal,
-    ReactionOption,
-)
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
 from ...Widgets.Console.console_activity_outcome_notice import (
     ConsoleActivityOutcomeNotice,
@@ -298,6 +298,10 @@ if TYPE_CHECKING:
     from ...Chat.conversation_local_marks_service import (
         ConversationLocalMarksService,
         ManualUnreadToken,
+    )
+    from ...Widgets.Console.console_reaction_picker_modal import (
+        ConsoleReactionPickerModal,
+        ReactionOption,
     )
     from ..Screens.chat_screen import ChatScreen
 
@@ -662,6 +666,23 @@ def _persona_session_prompt_seed(
     )
 
 
+def _console_live_runtime_enabled(
+    resident_config: object, fallback_console: Mapping[str, Any]
+) -> bool:
+    """Honor the live runtime switch without replacing other captured settings."""
+    resident_console = (
+        resident_config.get("console", {})
+        if isinstance(resident_config, Mapping)
+        else {}
+    )
+    flag = (
+        resident_console["agent_runtime"]
+        if isinstance(resident_console, Mapping) and "agent_runtime" in resident_console
+        else fallback_console.get("agent_runtime", True)
+    )
+    return coerce_bool_setting(flag, True)
+
+
 def _console_global_user_display_name(app_config: object) -> str:
     """Resolve the current global chat label before Task 5 adds its getter."""
     chat_defaults = (
@@ -771,6 +792,8 @@ def _visual_identity_options_for_db(
         return ()
     if graph is None:
         return ()
+    from ...Widgets.Console.console_reaction_picker_modal import ReactionOption
+
     return tuple(
         ReactionOption(
             expression_key=str(asset["expression_key"]),
@@ -853,6 +876,7 @@ class ConsoleSessionController:
         chat_store_accessor: Callable[[], ConsoleChatStore],
         current_chat_store_accessor: Callable[[], ConsoleChatStore | None],
         ensure_console_chat_controller: Callable[[], Any],
+        read_recovery_controller: Callable[[], Any] | None = None,
         current_chat_controller_accessor: Callable[[], Any],
         build_current_provider_selection: Callable[[], Any],
         build_settings_summary: Callable[[], Any],
@@ -870,6 +894,7 @@ class ConsoleSessionController:
         sync_chat_core_state: Callable[[], Any],
         sync_temporary_chip: Callable[[], None],
         sync_settings_summary: Callable[[], None],
+        sync_system_prompt_preview: Callable[[], None],
         sync_control_bar: Callable[[], None],
         sync_command_popup: Callable[[], None],
         note_follow_intent: Callable[[], None],
@@ -891,6 +916,7 @@ class ConsoleSessionController:
             [], ConsoleReactionPreviewCoordinator
         ],
         refresh_character_avatar: Callable[..., Any],
+        sync_reaction_label: Callable[[], None],
         screen_mounted_accessor: Callable[[], bool],
         first_chat_presentation_snapshot: Callable[[], tuple[Any, Any, object | None]],
         apply_first_chat_control_selection: Callable[[Any, Any], None],
@@ -989,6 +1015,8 @@ class ConsoleSessionController:
                 orchestration controller, used only by
                 `_activate_native_console_session` for its shared
                 `controller.store`/`controller.switch_session` sequence.
+            read_recovery_controller: Optional late-bound display-only accessor;
+                defaults to the live ensure path for custom controller callers.
             composer_accessor: `ChatScreen._console_composer_or_none` (DOM);
                 same shape as `dictation.py`'s/`hands_free.py`'s own
                 `composer_accessor`.
@@ -1011,6 +1039,8 @@ class ConsoleSessionController:
                 (DOM).
             sync_settings_summary: `ChatScreen._sync_console_settings_
                 summary` (DOM).
+            sync_system_prompt_preview: Publish the accepted local system-prompt
+                text without waiting for checked readiness presentation.
             sync_control_bar: `ChatScreen._sync_console_control_bar` (DOM);
                 the moved body calls it with no arguments, matching the
                 original `self._sync_console_control_bar()` call shape.
@@ -1066,6 +1096,8 @@ class ConsoleSessionController:
             reaction_preview_coordinator_accessor: Current app's shared reaction
                 preview single-flight coordinator. Late-bound so replacement
                 Console screens cannot escape an older screen's draining work.
+            sync_reaction_label: Publish accepted manual reaction state before
+                background avatar resolution.
             refresh_character_avatar: Late-bound forced avatar refresh after
                 a validated manual reaction change.
             screen_mounted_accessor: Late-bound presentation-only mounted state.
@@ -1087,6 +1119,11 @@ class ConsoleSessionController:
         self._chat_store_accessor = chat_store_accessor
         self._current_chat_store_accessor = current_chat_store_accessor
         self._ensure_console_chat_controller_fn = ensure_console_chat_controller
+        self._read_recovery_controller = (
+            ensure_console_chat_controller
+            if read_recovery_controller is None
+            else read_recovery_controller
+        )
         self._current_chat_controller_accessor = current_chat_controller_accessor
         self._build_current_provider_selection_fn = build_current_provider_selection
         self._build_settings_summary_fn = build_settings_summary
@@ -1104,6 +1141,7 @@ class ConsoleSessionController:
         self._sync_chat_core_state_fn = sync_chat_core_state
         self._sync_temporary_chip_fn = sync_temporary_chip
         self._sync_settings_summary_fn = sync_settings_summary
+        self._sync_system_prompt_preview = sync_system_prompt_preview
         self._sync_control_bar_fn = sync_control_bar
         self._sync_command_popup_fn = sync_command_popup
         self._note_follow_intent_fn = note_follow_intent
@@ -1128,6 +1166,7 @@ class ConsoleSessionController:
             reaction_preview_coordinator_accessor
         )
         self._refresh_character_avatar_fn = refresh_character_avatar
+        self._sync_reaction_label = sync_reaction_label
         self._screen_mounted_accessor = screen_mounted_accessor
         self._first_chat_presentation_snapshot_fn = first_chat_presentation_snapshot
         self._apply_first_chat_control_selection_fn = apply_first_chat_control_selection
@@ -1138,6 +1177,7 @@ class ConsoleSessionController:
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_visible_draft_session_id: str | None = None
+        self._initial_composer_sync_pending = False
         self._visible_agent_handoff_draft: (
             tuple[str, str, int, ComposerDraftSnapshot] | None
         ) = None
@@ -2181,6 +2221,10 @@ class ConsoleSessionController:
                 "This actor has no reaction pack.", severity="information"
             )
             return
+        from ...Widgets.Console.console_reaction_picker_modal import (
+            ConsoleReactionPickerModal,
+        )
+
         self.push_screen(
             ConsoleReactionPickerModal(
                 options=options,
@@ -2233,10 +2277,12 @@ class ConsoleSessionController:
 
     async def _apply_console_reaction_selection(self, option: ReactionOption) -> None:
         if await self._select_console_reaction(option):
+            self._sync_reaction_label()
             await self._refresh_character_avatar_fn()
 
     def _dispatch_console_reaction_clear(self) -> None:
         if self._clear_current_console_reaction():
+            self._sync_reaction_label()
             self.run_app_worker(
                 self._refresh_character_avatar_fn(),
                 group="console-reaction-selection",
@@ -4294,6 +4340,49 @@ class ConsoleSessionController:
         except KeyError:
             return None
 
+    def _resolve_turn_tool_policy_profile_id(self, workspace_id: str | None) -> str:
+        """Resolve the workspace's named tool-permission profile id.
+
+        Workspace assistant defaults (Task 7): the owning session's
+        workspace may pin a ``tool_policy_profile_id`` in its assistant
+        defaults; that profile is what THIS turn's tool gates resolve
+        under. Any absence -- no workspace, no registry, no workspace
+        record, no defaults, empty id -- degrades to ``"default"``, the
+        single-profile behavior. Never raises.
+        """
+        return resolve_turn_tool_policy_profile_id(
+            getattr(self, "app_instance", None), workspace_id
+        )
+
+    def _resolve_turn_persona_policy_rules(
+        self, session_id: str
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Resolve the owning session's persona policy rules.
+
+        Workspace assistant defaults (Task 7): only a session whose durable
+        assistant identity is a persona carries rules -- the session record's
+        ``assistant_kind == "persona"`` resolves ``assistant_id`` through the
+        app's local persona service (``get_persona_profile``), whose view
+        already normalizes ``policy_rules``. Every failure (no store, no
+        session, non-persona assistant, unknown persona, malformed rules)
+        degrades to ``()`` -- the identity posture. Never raises.
+        """
+        try:
+            store = self._console_chat_store
+            if store is None:
+                return ()
+            session = next(
+                (item for item in store.sessions() if item.id == session_id), None
+            )
+            return resolve_turn_persona_policy_rules(self.app_instance, session)
+        except Exception as exc:  # noqa: BLE001 -- posture degrades, never blocks
+            logger.warning(
+                "Console turn context: persona policy rules resolution failed; "
+                "running with no persona rules; error_type={}",
+                type(exc).__name__,
+            )
+        return ()
+
     def _workspace_default_for_new_session(
         self, workspace_id: str | None = None
     ) -> tuple[str, str, str, str] | None:
@@ -4339,96 +4428,173 @@ class ConsoleSessionController:
             "assistant_default_notice": startup.notice,
         }
 
-    def _build_console_turn_execution_context(
-        self, session_id: str
-    ) -> ConsoleTurnConfigurationSnapshot:
-        """Capture one detached configuration snapshot for an owning session.
-
-        TASK-33620.15: the service-owned values (MCP, skills, project and
-        review roots, scratch space, RAG depth, ...) come from
-        ``turn_admission``: precaptured on a worker for the send being
-        launched when its inputs still match, otherwise read here.
-        """
-        from ...Chat.attachment_core import max_history_images
-        from ...model_capabilities import is_vision_capable
-        from ...Chat.console_agent_bridge import console_run_budget
-        from ..Screens.settings_library_rag_defaults import (
-            load_direct_library_tools,
+    def _build_console_turn_capture_selection(self, session_id: str, *, scratch_owner):
+        """Select detached view values only for the qualified stock capture route."""
+        from types import MethodType
+        from ...Chat.console_configuration_preparation import (
+            ConsoleTurnCaptureSelection,
         )
-        from .turn_admission import authority_for, authority_inputs
+        from ..Console_Modules.wiring import _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+        from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 
+        scratch = self._scratch_snapshot_provider
+        scratch_function, scratch_code = _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+        if (
+            type(scratch) is not partial
+            or scratch.func is not scratch_function
+            or scratch_function.__code__ is not scratch_code
+            or len(scratch.args) != 1
+            or scratch.keywords
+        ):
+            return None
+        for name, original, code in _CONSOLE_CAPTURE_POLICY_ADAPTERS:
+            callback = getattr(self, name, None)
+            if not (
+                isinstance(callback, MethodType)
+                and callback.__self__ is self
+                and callback.__func__ is original
+                and original.__code__ is code
+            ):
+                return None
+        screen = scratch.args[0]
+        if (
+            getattr(screen, "_session", None) is not self
+            or screen.app_instance is not self.app_instance
+        ):
+            return None
+        runtime = screen._console_runtime()
+        if runtime._scratch_spaces is not scratch_owner:
+            return None
         app_config = self._provider_readiness_app_config()
         selection = self._build_provider_selection_fn(session_id)
-        store = self._ensure_console_chat_store()
-        settings = store.effective_session_settings(session_id)
-        model = selection.explicit_model or selection.configured_model
         console_config = (
             app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
         )
         if not isinstance(console_config, Mapping):
             console_config = {}
-        presentation_context = store.presentation_context(
-            session_id,
-            _console_global_user_display_name(app_config),
+        store = self._ensure_console_chat_store()
+        session = next((row for row in store.sessions() if row.id == session_id), None)
+        if session is None:
+            raise KeyError(session_id)
+        agent_runtime_enabled = _console_live_runtime_enabled(
+            getattr(self.app_instance, "app_config", None), console_config
         )
+        return ConsoleTurnCaptureSelection(
+            provider_selection=selection,
+            presentation_context=store.presentation_context(
+                session_id, _console_global_user_display_name(app_config)
+            ),
+            rag_defaults={
+                "source_types": tuple(self._rag_source_types_accessor()),
+                "top_k": self._rag_top_k_accessor(),
+            },
+            tool_configuration={
+                "session_ephemeral": bool(session.ephemeral),
+                "agent_runtime_enabled": agent_runtime_enabled,
+                "native_tool_calls_enabled": coerce_bool_setting(
+                    console_config.get("native_tool_calls", True), True
+                ),
+                "local_tools_enabled": coerce_bool_setting(
+                    console_config.get("local_tools_enabled", False), False
+                ),
+                "direct_library_tools": load_direct_library_tools(app_config),
+                "project_instructions_startup_max_bytes": coerce_int_setting(
+                    console_config.get(
+                        "project_instructions_startup_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                "project_instructions_nested_max_bytes": coerce_int_setting(
+                    console_config.get(
+                        "project_instructions_nested_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                "exchange_capture_enabled": coerce_bool_setting(
+                    console_config.get("exchange_capture", True), True
+                ),
+            },
+            skill_workspace_id=None,
+            project_bindings_eligible=bool(
+                agent_runtime_enabled
+                and not store.session_one_shot_prefill(session_id)
+                and session.assistant_kind != "character"
+            ),
+            agent_runtime_enabled=agent_runtime_enabled,
+        )
+
+    def _build_console_turn_execution_context(
+        self,
+        session_id: str,
+        *,
+        mcp_definition_maximum: Mapping[str, str] | None = None,
+    ) -> ConsoleTurnConfigurationSnapshot:
+        """Resolve mounted inputs, consuming matched worker authority once."""
+        from types import MethodType
+        from ...Chat.console_agent_bridge import console_run_budget
+        from .turn_admission import authority_for, authority_inputs
+        from ..Screens.settings_library_rag_defaults import load_direct_library_tools
+
+        app_config = self._provider_readiness_app_config()
+        selection = self._build_provider_selection_fn(session_id)
+        console_config = (
+            app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
+        )
+        if not isinstance(console_config, Mapping):
+            console_config = {}
+        store = self._ensure_console_chat_store()
+        workspace_id = store.session_workspace_id(session_id)
         session = next(item for item in store.sessions() if item.id == session_id)
-        authority = authority_for(self, authority_inputs(self, session_id))
-        held_scope = session.rag_scope_holder.scope
-        library_scope = ConsoleLibraryItemScopeSnapshot(
-            note_ids=tuple(
-                str(item.source_id)
-                for item in held_scope.items
-                if item.source_type == "note"
-            )
-            if held_scope is not None
-            else (),
-            media_ids=tuple(
-                str(item.source_id)
-                for item in held_scope.items
-                if item.source_type == "media"
-            )
-            if held_scope is not None
-            else (),
-            conversations_allowed=held_scope is None,
+        authority = authority_for(
+            self,
+            authority_inputs(self, session_id),
+            mcp_definition_maximum=mcp_definition_maximum,
         )
-        # Workspace assistant defaults (Task 7): the tool posture -- the
-        # workspace's named permission profile and the persona policy rules
-        # -- degrades to the identity posture on any failure; posture is
-        # narrowing-only, so a degraded read can never widen access.
-        return ConsoleTurnConfigurationSnapshot.capture(
-            session_id=session_id,
+        policy_values = {}
+        for name, original, code in _CONSOLE_CAPTURE_POLICY_ADAPTERS:
+            callback = getattr(self, name)
+            stock = (
+                isinstance(callback, MethodType)
+                and callback.__self__ is self
+                and callback.__func__ is original
+                and original.__code__ is code
+            )
+            if name == "_resolve_turn_tool_policy_profile_id":
+                policy_values[name] = (
+                    authority.tool_policy_profile_id
+                    if stock
+                    else callback(workspace_id)
+                )
+            else:
+                policy_values[name] = (
+                    authority.persona_policy_rules if stock else callback(session_id)
+                )
+        app_instance = getattr(self, "app_instance", None)
+        agent_runtime_enabled = _console_live_runtime_enabled(
+            getattr(app_instance, "app_config", None), console_config
+        )
+        return capture_console_turn_configuration(
+            app_instance,
+            store,
+            session_id,
             provider_selection=selection,
             scratch_space=authority.scratch_space,
-            session_settings=settings,
-            workspace_roots=authority.workspace_roots,
-            change_review_root_aliases=authority.change_review_root_aliases,
-            change_review_skipped_roots=authority.change_review_skipped_roots,
-            persona_policy_rules=authority.persona_policy_rules,
-            tool_policy_profile_id=authority.tool_policy_profile_id,
-            presentation_context=presentation_context,
-            library_policy_maximum=session.library_policy_holder.snapshot,
-            library_scope_maximum=library_scope,
-            project_authority=authority.project_authority,
-            character_authority=authority.character_authority,
-            prompt_transform_inputs=authority.prompt_transform_inputs,
-            skill_context_maximum=authority.skill_context_maximum,
-            mcp_tool_maximum=authority.mcp_definition_maximum,
-            mcp_definition_maximum=authority.mcp_definition_maximum,
-            capabilities={
-                "vision": bool(model)
-                and is_vision_capable(selection.provider, model or ""),
-                "max_history_images": max_history_images(selection.provider, model),
-            },
+            presentation_context=store.presentation_context(
+                session_id, _console_global_user_display_name(app_config)
+            ),
             rag_defaults={
                 "source_types": tuple(self._rag_source_types_accessor()),
                 "top_k": authority.rag_top_k,
             },
             tool_configuration={
                 "session_ephemeral": bool(session.ephemeral),
-                "agent_runtime_enabled": coerce_bool_setting(
-                    console_config.get("agent_runtime", True),
-                    True,
-                ),
+                "agent_runtime_enabled": agent_runtime_enabled,
                 "native_tool_calls_enabled": coerce_bool_setting(
                     console_config.get("native_tool_calls", True),
                     True,
@@ -4461,22 +4627,34 @@ class ConsoleSessionController:
                     console_config.get("exchange_capture", True), True
                 ),
             },
-            provider_payload_settings={
-                "streaming": selection.streaming,
-                "temperature": selection.temperature,
-                "top_p": selection.top_p,
-                "min_p": selection.min_p,
-                "top_k": selection.top_k,
-                "max_tokens": selection.max_tokens,
-                "seed": selection.seed,
-                "presence_penalty": selection.presence_penalty,
-                "frequency_penalty": selection.frequency_penalty,
-                "reasoning_effort": selection.reasoning_effort,
-                "reasoning_summary": selection.reasoning_summary,
-                "verbosity": selection.verbosity,
-                "thinking_effort": selection.thinking_effort,
-                "thinking_budget_tokens": selection.thinking_budget_tokens,
-            },
+            project_authority=authority.project_authority,
+            skill_workspace_id=None,
+            character_repository=getattr(
+                (
+                    self._ensure_console_chat_controller()
+                    if hasattr(self, "_ensure_console_chat_controller_fn")
+                    else None
+                ),
+                "_visual_identity_repository",
+                None,
+            ),
+            tool_policy_profile_id=policy_values[
+                "_resolve_turn_tool_policy_profile_id"
+            ],
+            persona_policy_rules=policy_values["_resolve_turn_persona_policy_rules"],
+            mcp_definition_maximum=(
+                authority.mcp_definition_maximum
+                if mcp_definition_maximum is None
+                else mcp_definition_maximum
+            ),
+            _change_review_admission=(
+                authority.workspace_roots,
+                authority.change_review_root_aliases,
+                authority.change_review_skipped_roots,
+            ),
+            _character_authority=authority.character_authority,
+            _prompt_transform_inputs=authority.prompt_transform_inputs,
+            _skill_context_maximum=authority.skill_context_maximum,
         )
 
     #: Cross-pass memo for `_default_console_session_settings`, as
@@ -4635,6 +4813,8 @@ class ConsoleSessionController:
         self,
         store: ConsoleChatStore,
         session: ConsoleChatSession,
+        *,
+        checked_config: Mapping | None = None,
     ) -> ConsoleSessionSettings | None:
         """Converge a pristine session on the currently saved defaults.
 
@@ -4648,15 +4828,27 @@ class ConsoleSessionController:
         after a Settings save or first-run setup (TASK-33001.5). Sessions
         with work, source-owned sessions (no baseline) and sessions created
         before a Console "Make default for new chats" are never touched.
+
+        Presentation scopes only reuse established settings. Their worker
+        handoff may pass ``checked_config`` after verifying its actual source
+        and session owner; unscoped callers otherwise obtain live config.
         """
         settings = session.settings
+        projection = getattr(self._screen, "_console_readiness_projection_active", None)
+        if projection is not None and projection[0] == threading.get_ident():
+            # Display reuse, including expired data, never owns durable defaults.
+            return settings
         if (
             session.new_chat_default_generation
             < self._console_new_chat_default_generation()
         ):
             return settings
         if settings is None:
-            settings = self._blank_console_session_settings()
+            settings = (
+                blank_console_session_settings(checked_config)
+                if checked_config is not None
+                else self._blank_console_session_settings()
+            )
             store.replace_session_settings(
                 session.id,
                 settings,
@@ -4680,7 +4872,11 @@ class ConsoleSessionController:
         # This path is different: full Settings may have updated the config
         # cache without replacing ``app.app_config``, so read the fresh
         # mapping and converge without an app restart (task-177).
-        app_config = self._provider_readiness_app_config()
+        app_config = (
+            checked_config
+            if checked_config is not None
+            else self._provider_readiness_app_config()
+        )
         # This runs on every provider/model display rebuild and composer
         # keystroke. A published config write replaces the mapping, so one
         # derivation per (session, mapping) is exact between two saves.
@@ -4814,6 +5010,7 @@ class ConsoleSessionController:
                 "could not be saved -- it may not survive a reload.",
                 severity="warning",
             )
+        self._sync_system_prompt_preview()
         self._sync_console_chat_core_state()
         self._sync_console_settings_summary()
         self._sync_console_control_bar()
@@ -5476,6 +5673,23 @@ class ConsoleSessionController:
         if composer is None:
             self._console_draft_switch_snapshot = None
             return
+        store = self._console_chat_store
+        visible = self._console_visible_draft_session_id
+        known_revision = getattr(self._screen, "_console_visible_draft_revision", None)
+        if store is not None and visible is not None and known_revision is not None:
+            try:
+                actual_revision = store.session_input_snapshot(visible).draft_revision
+            except KeyError:
+                pass
+            else:
+                if known_revision != actual_revision:
+                    # Hydrate a newer domain revision before banking the old view.
+                    # Later settle-window edits still use the snapshot below.
+                    project = getattr(
+                        self._screen, "_project_console_received_input", None
+                    )
+                    if callable(project):
+                        project(visible)
         self._console_draft_switch_snapshot = (
             self._console_visible_draft_session_id,
             composer.draft_text(),
@@ -5507,6 +5721,35 @@ class ConsoleSessionController:
             # widget generation, authored revision and segment identity fenced.
             if composer.commit_captured_draft(composer.capture_draft_for_send()):
                 self._console_draft_switch_snapshot = None
+
+    def initialize_composer_draft(self, composer: Any) -> None:
+        """Bind the initial visible draft before the composer accepts edits."""
+        store = self._console_chat_store
+        session = self._active_native_console_session()
+        if store is None or session is None:
+            return
+        try:
+            draft = store.session_draft(session.id)
+            revision = store.session_input_snapshot(session.id).draft_revision
+        except KeyError:
+            return
+        composer.load_draft(draft)
+        composer.restore_undo_history(self._console_undo_histories.get(session.id))
+        self._console_visible_draft_session_id = session.id
+        self._screen._console_visible_draft_revision = revision
+        self._visible_agent_handoff_draft = (
+            (
+                session.id,
+                session.incarnation_id,
+                session.agent_handoff_revision,
+                composer.capture_draft_snapshot(),
+            )
+            if session.agent_handoff_state == "pending"
+            else None
+        )
+        # Mount-time config work may defer the first full sync. Its UI/hook
+        # effects still run there, but early typing already has an exact owner.
+        self._initial_composer_sync_pending = True
 
     def _sync_console_session_draft(self) -> None:
         """Reconcile the composer draft with the active runtime Console session.
@@ -5549,18 +5792,34 @@ class ConsoleSessionController:
         self._consume_visible_agent_handoff(store, composer)
         visible_session_id = self._console_visible_draft_session_id
         if visible_session_id == active_session_id:
+            known_revision = getattr(
+                self._screen, "_console_visible_draft_revision", None
+            )
+            actual_revision = store.session_input_snapshot(
+                active_session_id
+            ).draft_revision
+            if known_revision is not None and known_revision != actual_revision:
+                project = getattr(self._screen, "_project_console_received_input", None)
+                if callable(project):
+                    project(active_session_id)
             self._restore_banked_raw_cli_stashes_fn(active_session_id, composer)
             if visible_session_id is not None:
                 try:
                     store.set_session_draft(visible_session_id, composer.draft_text())
                 except KeyError:
                     pass
+            if self._initial_composer_sync_pending:
+                self._sync_console_command_popup()
+                if self._on_draft_session_changed is not None:
+                    self._on_draft_session_changed()
+                self._initial_composer_sync_pending = False
             return
         snapshot = self._console_draft_switch_snapshot
         self._console_draft_switch_snapshot = None
         live_text = composer.draft_text()
         save_text = live_text
         typed_suffix = ""
+        resident_draft_changed = False
         if snapshot is not None and snapshot[0] == visible_session_id:
             snap_text, snap_serial = snapshot[1], snapshot[2]
             if composer.edit_serial != snap_serial and live_text.startswith(snap_text):
@@ -5571,6 +5830,16 @@ class ConsoleSessionController:
                 # save-the-live-text semantics.)
                 save_text = snap_text
                 typed_suffix = live_text[len(snap_text) :]
+            known_revision = getattr(
+                self._screen, "_console_visible_draft_revision", None
+            )
+            if live_text.startswith(snap_text) and known_revision is not None:
+                current = store.session_input_snapshot(visible_session_id)
+                if current.draft_revision != known_revision:
+                    # A completed Send may have consumed the old prefix while
+                    # suffix keystrokes still belong to the incoming session.
+                    save_text = current.draft
+                    resident_draft_changed = True
         if visible_session_id is not None:
             try:
                 store.set_session_draft(visible_session_id, save_text)
@@ -5580,9 +5849,14 @@ class ConsoleSessionController:
             # session's draft -- bank its undo/redo history under the
             # session it actually belongs to before the swap below discards
             # it, so a later switch back can restore it.
-            self._console_undo_histories[visible_session_id] = (
-                composer.export_undo_history()
-            )
+            if resident_draft_changed:
+                self._console_undo_histories.pop(visible_session_id, None)
+            else:
+                self._console_undo_histories[visible_session_id] = (
+                    composer.export_undo_history()
+                )
+        observer = getattr(composer, "_authored_draft_observer", None)
+        composer._authored_draft_observer = None
         try:
             composer.load_draft(store.session_draft(active_session_id))
         except KeyError:
@@ -5603,6 +5877,23 @@ class ConsoleSessionController:
         ):
             self._on_draft_session_changed()
         self._console_visible_draft_session_id = active_session_id
+        self._initial_composer_sync_pending = False
+        composer._authored_draft_observer = observer
+        self._screen._console_visible_draft_revision = store.session_input_snapshot(
+            active_session_id
+        ).draft_revision
+        if typed_suffix:
+            store.set_session_draft(
+                active_session_id,
+                composer.draft_text(),
+                authored_token=(
+                    composer.capture_draft_snapshot().generation,
+                    composer.edit_serial,
+                ),
+            )
+            self._screen._console_visible_draft_revision = store.session_input_snapshot(
+                active_session_id
+            ).draft_revision
         self._visible_agent_handoff_draft = (
             (
                 session.id,
@@ -6551,7 +6842,7 @@ class ConsoleSessionController:
     def _console_trace_recovery_state(self) -> Any:
         """Project the active pre-dispatch pause, with a context hold's numbers."""
 
-        controller = self._ensure_console_chat_controller()
+        controller = self._read_recovery_controller()
         preparation = controller.trace_call_recovery_preparation()
         return self._read_trace_recovery_state()(
             preparation,
@@ -6561,3 +6852,26 @@ class ConsoleSessionController:
                 else None
             ),
         )
+
+
+# Preserve the concrete builder contract before any custom class replacement.
+_CONSOLE_TURN_CONTEXT_BUILDER = (
+    ConsoleSessionController._build_console_turn_execution_context
+)
+
+
+_CONSOLE_TURN_CAPTURE_SELECTOR = (
+    ConsoleSessionController._build_console_turn_capture_selection,
+    ConsoleSessionController._build_console_turn_capture_selection.__code__,
+)
+_CONSOLE_CAPTURE_POLICY_ADAPTERS = tuple(
+    (
+        name,
+        getattr(ConsoleSessionController, name),
+        getattr(ConsoleSessionController, name).__code__,
+    )
+    for name in (
+        "_resolve_turn_tool_policy_profile_id",
+        "_resolve_turn_persona_policy_rules",
+    )
+)

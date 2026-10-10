@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from html import escape as html_escape
 from pathlib import PurePath
 from typing import Any, Literal, Mapping, Optional, Sequence
@@ -1400,6 +1401,24 @@ class ConsoleRetrievalScopeState:
 
 
 @dataclass(frozen=True)
+class _ConsoleInspectorPendingInputs:
+    provider: str
+    model: str
+    sources: str
+    tools: int
+    live_work_title: str
+
+    def recipe(self, approvals: int, scope_item_count: int | None) -> str:
+        value = (
+            f"{self.provider} / {self.model} / sources {self.sources} / "
+            f"tools {self.tools} / approvals {approvals}"
+        )
+        if scope_item_count is not None and scope_item_count > 0:
+            value = f"{value} / scope {scope_item_count} items"
+        return value
+
+
+@dataclass(frozen=True)
 class ConsoleInspectorState:
     """Display state for Console run/readiness inspection."""
 
@@ -1430,6 +1449,128 @@ class ConsoleInspectorState:
     pending_approval_count: int = 0
     scope_item_count: int | None = None
     ephemeral: bool = False
+    _pending_inputs: _ConsoleInspectorPendingInputs | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    # A current pending observation has no complete readiness or recipe authority.
+    pending_only: bool = False
+
+    @classmethod
+    def from_pending_facts(
+        cls, approval_count: int, pending_copy: str
+    ) -> "ConsoleInspectorState":
+        """Show only fresh pending facts; unrelated display fields stay unknown."""
+        if (
+            type(approval_count) is not int  # noqa: E721 - hostile metaclass equality must not run.
+            or approval_count < 0
+            or type(pending_copy) is not str  # noqa: E721 - no metaclass equality dispatch.
+        ):
+            raise ValueError("invalid_pending_display_facts")
+        if pending_copy not in (
+            "",
+            "Waiting for your approval",
+            "Waiting for your answer",
+            "Waiting for your confirmation",
+        ):
+            raise ValueError("invalid_pending_display_copy")
+        live = (
+            "Waiting for your approval"
+            if approval_count
+            else pending_copy or "Refreshing…"
+        )
+        unknown = "Refreshing…"
+        rows = (
+            ConsoleDisplayRow(
+                "Run recipe",
+                f"{unknown} / {unknown} / sources {unknown} / tools {unknown} / approvals {approval_count} / scope {unknown}",
+                status="running",
+            ),
+            ConsoleDisplayRow(
+                "Live work",
+                live,
+                status="blocked" if approval_count or pending_copy else "running",
+            ),
+            ConsoleDisplayRow(
+                "Approvals",
+                f"{approval_count} pending",
+                status="blocked" if approval_count else "running",
+            ),
+            *(
+                ConsoleDisplayRow(label, unknown, status="running")
+                for label in (
+                    "Provider",
+                    "Retrieval",
+                    "Tools",
+                    "MCP",
+                    "Evidence",
+                    "Authority",
+                    "Artifacts",
+                    "Workspace",
+                    "Selected conversation",
+                )
+            ),
+        )
+        return cls(
+            rows=rows,
+            actions=(
+                ConsoleInspectorAction(
+                    widget_id=CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
+                    label="Review",
+                    enabled=bool(approval_count or pending_copy),
+                    disabled_reason="No decision is pending.",
+                ),
+            ),
+            has_pending_approval=approval_count > 0,
+            pending_approval_count=approval_count,
+            pending_only=True,
+        )
+
+    def with_pending_facts(
+        self, approval_count: int, pending_copy: str
+    ) -> "ConsoleInspectorState | None":
+        """Replace only current in-memory pending display facts in this base."""
+        if self.pending_only:
+            return None
+        inputs = self._pending_inputs
+        if type(inputs) is not _ConsoleInspectorPendingInputs or type(
+            inputs.live_work_title
+        ) not in (str,):
+            return None
+        count = coerce_non_negative_int(approval_count)
+        live = (
+            "Waiting for your approval"
+            if count > 0
+            else _clean(pending_copy, "")
+            or ("Generating…" if self.run_active else inputs.live_work_title)
+        )
+        rows = tuple(
+            replace(row, value=inputs.recipe(count, self.scope_item_count))
+            if row.label == "Run recipe"
+            else replace(row, value=live)
+            if row.label == "Live work"
+            else replace(
+                row,
+                value=f"{count} pending",
+                status="blocked" if count > 0 else "ready",
+            )
+            if row.label == "Approvals"
+            else row
+            for row in self.rows
+        )
+        actions = tuple(
+            replace(action, enabled=count > 0)
+            if action.widget_id == CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID
+            else action
+            for action in self.actions
+        )
+        return replace(
+            self,
+            rows=rows,
+            actions=actions,
+            has_pending_approval=count > 0,
+            pending_approval_count=count,
+        )
 
     @classmethod
     def from_values(
@@ -1543,16 +1684,20 @@ class ConsoleInspectorState:
         # "Tools: 4 ready". That is the third instance of this divergence:
         # TASK-1843 (see the `Tools` row's own comment) already fixed it on
         # the status chip and then on the row, and missed the recipe line.
-        run_recipe = (
-            f"{provider_value} / {model_value} / sources {source_summary} / "
-            f"tools {effective_tool_count} / approvals {normalized_approval_count}"
+        stock_title = live_work_title is None or type(live_work_title) in (str,)
+        recipe_inputs = _ConsoleInspectorPendingInputs(
+            provider_value,
+            model_value,
+            source_summary,
+            effective_tool_count,
+            _clean(live_work_title, "No active work")
+            if stock_title
+            else "No active work",
         )
-        # task-9: an active conversation RAG retrieval scope surfaces on the
-        # run recipe line ("... / scope N items"). ``None`` (unscoped, the
-        # overwhelming common case) leaves the line unchanged; a scope with
-        # zero items never reaches here (see ``ConsoleRetrievalScopeState``).
-        if scope_item_count is not None and scope_item_count > 0:
-            run_recipe = f"{run_recipe} / scope {scope_item_count} items"
+        # A customized title keeps the original complete-render coercion, but
+        # is never retained for another call after that checked body retires.
+        pending_inputs = recipe_inputs if stock_title else None
+        run_recipe = recipe_inputs.recipe(normalized_approval_count, scope_item_count)
         rows = [
             ConsoleDisplayRow("Run recipe", run_recipe),
             ConsoleDisplayRow(
@@ -1656,6 +1801,7 @@ class ConsoleInspectorState:
             run_blocked_reason=_clean(run_blocked_reason, ""),
             staged_source_count=coerce_non_negative_int(staged_source_count),
             pending_approval_count=normalized_approval_count,
+            _pending_inputs=pending_inputs,
             scope_item_count=scope_item_count,
             ephemeral=ephemeral,
         )
@@ -2339,3 +2485,94 @@ def format_diff_feedback_disclosure(notes: Sequence[dict]) -> str:
             location = f"{note['path']} {note['hunk_header']}"
         lines.append(f'📝 Diff feedback attached — {location}: "{note["note"]}"')
     return "\n".join(lines)
+
+
+_CONSOLE_PENDING_MODEL_SOURCES = tuple(
+    (
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+    for function in (
+        ConsoleInspectorState.with_pending_facts,
+        _ConsoleInspectorPendingInputs.recipe,
+        _clean,
+        coerce_non_negative_int,
+        ConsoleInspectorState.from_pending_facts.__func__,
+        ConsoleInspectorState.__init__,
+        ConsoleDisplayRow.__init__,
+        ConsoleInspectorAction.__init__,
+        ConsoleInspectorState.__setattr__,
+        ConsoleInspectorState.__delattr__,
+        ConsoleDisplayRow.__setattr__,
+        ConsoleDisplayRow.__delattr__,
+        ConsoleInspectorAction.__setattr__,
+        ConsoleInspectorAction.__delattr__,
+    )
+)
+
+_CONSOLE_PENDING_MODEL_SLOTS = (
+    (
+        ConsoleInspectorState,
+        "with_pending_facts",
+        ConsoleInspectorState.with_pending_facts,
+    ),
+    (_ConsoleInspectorPendingInputs, "recipe", _ConsoleInspectorPendingInputs.recipe),
+    (
+        ConsoleInspectorState,
+        "from_pending_facts",
+        vars(ConsoleInspectorState)["from_pending_facts"],
+    ),
+    (ConsoleInspectorState, "__init__", ConsoleInspectorState.__init__),
+    (ConsoleDisplayRow, "__init__", ConsoleDisplayRow.__init__),
+    (ConsoleInspectorAction, "__init__", ConsoleInspectorAction.__init__),
+    (ConsoleInspectorState, "__dict__", vars(ConsoleInspectorState)["__dict__"]),
+    (ConsoleInspectorState, "pending_only", False),
+    (ConsoleInspectorState, "_pending_inputs", None),
+    (
+        _ConsoleInspectorPendingInputs,
+        "__dict__",
+        vars(_ConsoleInspectorPendingInputs)["__dict__"],
+    ),
+)
+
+_CONSOLE_PENDING_MODEL_CLASSES = tuple(
+    (name, globals()[name])
+    for name in (
+        "ConsoleInspectorState",
+        "ConsoleDisplayRow",
+        "ConsoleInspectorAction",
+        "_ConsoleInspectorPendingInputs",
+    )
+)
+
+_CONSOLE_PENDING_MODEL_ABSENT_FIELD = object()
+_CONSOLE_PENDING_MODEL_CONSTRUCTION = tuple(
+    (
+        owner,
+        owner.__bases__,
+        tuple(
+            (
+                name,
+                inspect.getattr_static(
+                    owner, name, _CONSOLE_PENDING_MODEL_ABSENT_FIELD
+                ),
+            )
+            for name in (
+                "__new__",
+                "__setattr__",
+                "__delattr__",
+                "__getattribute__",
+                "__dict__",
+                "__slots__",
+                *owner.__dataclass_fields__,
+            )
+        ),
+    )
+    for owner in (ConsoleInspectorState, ConsoleDisplayRow, ConsoleInspectorAction)
+)

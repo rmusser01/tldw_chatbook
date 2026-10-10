@@ -110,7 +110,6 @@ from ...Constants import (
 )
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...DB.VisualIdentity_DB import VisualIdentityRepository
-from ...Media_Creation.generation_templates import GenerationTemplate, get_template
 from ...Persona_Visual.assets import load_persona_visual_asset
 from ...Persona_Visual.authoring import (
     PersonaVisualAuthoringDraft,
@@ -174,7 +173,6 @@ from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
     ConsoleImageViewerModal,
 )
-from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import (
@@ -376,6 +374,7 @@ from ...Character_Chat.character_generation_controller import (
 from ..Persona_Modules.personas_preview_controller import PersonasPreviewController
 
 if TYPE_CHECKING:
+    from ...Media_Creation.generation_templates import GenerationTemplate
     from ...Character_Chat.expression_set_io import ExpressionSetApplyResult
     from ...Chat.console_image_view import ConsoleImageRenderCache
     from ...Image_Generation.capabilities import ResolvedReferenceImage
@@ -13555,6 +13554,10 @@ class PersonasScreen(BaseAppScreen):
             if not self._local_character_actions_allowed():
                 return
             try:
+                from ...Widgets.Console.console_style_picker_modal import (
+                    ConsoleStylePickerModal,
+                )
+
                 choice = await self.app.push_screen_wait(ConsoleStylePickerModal())
             except Exception:
                 logger.opt(exception=True).warning(
@@ -13562,6 +13565,8 @@ class PersonasScreen(BaseAppScreen):
                 )
                 return
             if choice is not None:
+                from ...Media_Creation.generation_templates import get_template
+
                 style_id = str(choice.get("id") or "")
                 self._expression_generate_style = get_template(style_id)
                 self._update_expression_style_readout()

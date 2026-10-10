@@ -284,19 +284,43 @@ async def test_enter_after_a_tab_round_trip_during_admission_sends_the_draft_onc
     Enter was held as a new press, the first send's commit failed closed,
     and the replay sent the draft a second time.
 
-    With nothing typed since the first capture the reloaded draft is that
-    capture, and it leaves the composer. With a key typed in tab B the
-    composer cannot tell the reload from a new draft: the sent text stays,
-    the user is told it was sent, and the held press, captured before that,
-    is not sent.
+    A tab reload does not reauthor A. The accepted capture leaves A empty
+    in both variants, B retains its own edits, and the held repeat Enter
+    does not resend A or produce a misleading sent/kept warning.
     """
+    from Tests.UI.test_console_approval_compact_layout import (
+        _wait_for_reconciled_console,
+    )
+    from Tests.UI.test_console_send_acknowledgement import (
+        ConsoleComposerBar,
+        _wait_for_selector,
+        paint_state,
+    )
+    from Tests.UI.test_console_turn_resend_ui import _select_ready_llamacpp_console
+
     host, gateway, _timeline = build()
     _allow_second_turns(host)
     async with host.run_test(size=(160, 45)) as pilot:
         with eager_tasks():
-            console, composer = await ready_console(host, pilot, gateway)
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-composer")
+            await _wait_for_reconciled_console(console, pilot)
+            await _select_ready_llamacpp_console(console, pilot)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             session_a, session_b = await _second_tab(console, pilot, ready=True)
+            await _wait_for_reconciled_console(console, pilot)
+            await _select_ready_llamacpp_console(console, pilot)
             store = console._ensure_console_chat_store()
+            composer.load_draft(DRAFT)
+            composer.focus()
+            await until(
+                lambda: composer.draft_text() == DRAFT
+                and store.session_draft(session_a) == DRAFT
+                and console._console_visible_draft_session_id == session_a
+                and store.active_session_id == session_a
+                and host.focused is composer
+                and paint_state(host).draft_in_composer
+            )
             notices = _record_notices(host)
             tail = _hold_first_send_tail(console)
             hold = HeldMcpRead(host.app_instance.unified_mcp_service)
@@ -329,15 +353,14 @@ async def test_enter_after_a_tab_round_trip_during_admission_sends_the_draft_onc
             await pilot.pause(0.5)
             assert _sent_or_queued(console, session_a) == [DRAFT]
             assert gateway.stream_calls == 1
-            told = [n for n in notices if "was sent" in n]
-            if typed_in_b:
-                assert composer.draft_text() == DRAFT
-                assert told, notices
-                assert store.session_draft(session_b) == B_DRAFT + "q"
-            else:
-                assert composer.draft_text() == ""
-                assert not told, notices
-                assert store.session_draft(session_b) == B_DRAFT
+            assert composer.draft_text() == ""
+            assert store.session_draft(session_a) == ""
+            assert store.session_draft(session_b) == B_DRAFT + (
+                "q" if typed_in_b else ""
+            )
+            assert not [
+                notice for notice in notices if "was sent" in notice or "kept" in notice
+            ], notices
 
 
 @pytest.mark.asyncio

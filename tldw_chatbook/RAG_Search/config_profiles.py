@@ -1406,3 +1406,16 @@ def reset_profile_manager_cache() -> None:
     global _GLOBAL_PROFILE_MANAGER
     with _profile_manager_lock:
         _GLOBAL_PROFILE_MANAGER = None
+
+
+# TASK-34404: defining-module originals, retained before helper lazy import.
+_SENSITIVE_INPUT_ORIGINALS = (
+    globals(),
+    tuple(
+        (name, globals()[name], globals()[name].__globals__, globals()[name].__code__)
+        for name in (
+            "default_rag_profiles_dir",
+            "get_user_data_dir",
+        )
+    ),
+)

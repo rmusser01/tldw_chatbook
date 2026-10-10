@@ -268,9 +268,9 @@ async def test_send_does_not_stall_event_loop_while_write_lock_is_held(
     max_stall = max(stalls) if stalls else 0.0
     # The send itself must have waited for the artificial lock holder --
     # otherwise the probe proved nothing about contention.
-    assert elapsed >= hold_seconds * 0.5, (
-        f"send finished in {elapsed:.3f}s; the 2s lock holder never contended"
-    )
+    assert (
+        elapsed >= hold_seconds * 0.5
+    ), f"send finished in {elapsed:.3f}s; the 2s lock holder never contended"
     assert result.accepted is True
     assert gateway.calls == 1
     # The event loop must never have been blocked for a contention-scale
@@ -327,21 +327,13 @@ async def test_cancel_during_offloaded_commit_leaves_consistent_state(
     request: pytest.FixtureRequest,
     tmp_path: Path,
 ) -> None:
-    """Shutdown-path walk: cancelling a send mid-commit corrupts nothing.
+    """TASK-34563.8: cancellation retains the actual save through settlement.
 
-    ``asyncio.to_thread`` survives task cancellation, so the commit thread
-    runs its single transaction to completion. The DB must end atomically
-    consistent (the whole turn, or nothing), the provider must never have
-    been called, no unretrieved-exception noise may leak, and the restore
-    reconcile must recognize the committed checkpoint — the same
-    crash-window recovery the checkpoint machinery already owns.
+    This deliberately replaces the previous detached-thread assertion: the
+    caller must remain pending while SQLite still owns its issued save.
     """
-
-    import gc
-
     db, store, controller, gateway = _controller(tmp_path)
     db_path = str(tmp_path / "controller.sqlite")
-
     acquired = threading.Event()
     release = threading.Event()
 
@@ -358,40 +350,31 @@ async def test_cancel_during_offloaded_commit_leaves_consistent_state(
     blocker = threading.Thread(target=hold, daemon=True)
     blocker.start()
     assert acquired.wait(timeout=5)
-
     loop = asyncio.get_running_loop()
     unhandled: list[dict[str, Any]] = []
+    previous_handler = loop.get_exception_handler()
     loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+    task = asyncio.create_task(
+        controller.submit_draft("cancelled mid-commit", session_id="session-1")
+    )
     try:
-        task = asyncio.create_task(
-            controller.submit_draft("cancelled mid-commit", session_id="session-1")
-        )
-        # Wait until the durable commit is genuinely in flight (reservation
-        # registered; the worker thread is blocked on the held write lock)
-        # so the cancellation deterministically lands mid-commit.
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and not store._durable_commit_in_flight:
             await asyncio.sleep(0.01)
-        assert store._durable_commit_in_flight, (
-            "the durable commit never started; the probe cancelled too early"
-        )
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+        assert store._durable_commit_in_flight, "the durable commit never started"
+        for _ in range(2):
+            task.cancel()
+            await asyncio.sleep(0.05)
+            assert not task.done(), "cancellation detached an issued SQLite save"
+            assert store._durable_commit_in_flight
+            assert gateway.calls == 0
         release.set()
         blocker.join(timeout=5)
-        # Give the surviving commit thread time to finish its transaction.
-        fresh = sqlite3.connect(db_path, timeout=5)
-        fresh.row_factory = sqlite3.Row
-        try:
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                checkpoints = fresh.execute(
-                    "SELECT COUNT(*) FROM console_dispatch_checkpoints"
-                ).fetchone()[0]
-                if checkpoints:
-                    break
-                await asyncio.sleep(0.05)
+        result = await asyncio.wait_for(asyncio.shield(task), timeout=5)
+        assert result.accepted is True
+        assert result.provider_started is False
+        assert not store._durable_commit_in_flight
+        with sqlite3.connect(db_path, timeout=5) as fresh:
             counts = {
                 table: fresh.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                 for table in (
@@ -400,31 +383,25 @@ async def test_cancel_during_offloaded_commit_leaves_consistent_state(
                     "console_dispatch_checkpoints",
                 )
             }
-        finally:
-            fresh.close()
-        del task
-        gc.collect()
-        await asyncio.sleep(0.05)
     finally:
-        loop.set_exception_handler(None)
+        release.set()
+        blocker.join(timeout=5)
+        await asyncio.gather(task, return_exceptions=True)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and store._durable_commit_in_flight:
+            await asyncio.sleep(0.01)
+        loop.set_exception_handler(previous_handler)
 
-    assert gateway.calls == 0, "dispatch must never precede a settled commit"
+    assert gateway.calls == 0
     assert unhandled == [], f"cancellation leaked loop exceptions: {unhandled!r}"
-    # The surviving thread committed the whole turn atomically: the exact
-    # crash-window state (commit durable, dispatch never started).
-    assert counts["console_dispatch_checkpoints"] == 1
-    assert counts["conversations"] == 1
-    assert counts["messages"] == 2
-    repository = store.persistence.console_dispatch_repository
-    conversation_id = (
-        db.get_connection().execute("SELECT id FROM conversations").fetchone()["id"]
-    )
-    state = repository.reconcile_for_session(conversation_id)
-    assert state is not None, (
-        "restore reconcile must surface the committed-but-undispatched "
-        "turn as a recovery owner"
-    )
-    assert state.kind is not ConsoleDispatchRecoveryKind.QUARANTINED
+    assert counts == {
+        "conversations": 1,
+        "messages": 2,
+        "console_dispatch_checkpoints": 0,
+    }
+    assistant = db.get_message_by_id(result.assistant_message_id)
+    assert assistant is not None
+    assert assistant["assistant_generation_state"] == "failed"
 
 
 def _traced_statements(db: CharactersRAGDB) -> list[str]:
@@ -475,9 +452,9 @@ def test_clean_restore_reconcile_takes_no_write_lock(tmp_path: Path) -> None:
     assert state is None
     begins = [s for s in statements if s.strip().upper().startswith("BEGIN")]
     assert begins, "reconcile must still read under a transaction"
-    assert not any("IMMEDIATE" in s.upper() for s in begins), (
-        f"clean restore reconcile took the write lock: {begins!r}"
-    )
+    assert not any(
+        "IMMEDIATE" in s.upper() for s in begins
+    ), f"clean restore reconcile took the write lock: {begins!r}"
 
 
 def test_valid_checkpoint_reconcile_takes_no_write_lock(tmp_path: Path) -> None:
@@ -499,9 +476,9 @@ def test_valid_checkpoint_reconcile_takes_no_write_lock(tmp_path: Path) -> None:
     assert state.assistant_message_id == commit.assistant_message_id
     begins = [s for s in statements if s.strip().upper().startswith("BEGIN")]
     assert begins, "reconcile must still read under a transaction"
-    assert not any("IMMEDIATE" in s.upper() for s in begins), (
-        f"read-only reconcile took the write lock: {begins!r}"
-    )
+    assert not any(
+        "IMMEDIATE" in s.upper() for s in begins
+    ), f"read-only reconcile took the write lock: {begins!r}"
 
 
 def test_terminal_checkpoint_reconcile_still_deletes_under_write_lock(

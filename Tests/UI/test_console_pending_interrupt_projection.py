@@ -131,6 +131,21 @@ async def _assert_projection(console, pilot, assistant_id, copy, approval_count)
     assert copy in text, text
     assert str(console.query_one("#console-run-chip").render()) == f"Run: {copy}."
     inspector = console.query_one("#console-run-inspector-state", ConsoleRunInspector)
+    await _wait(
+        pilot,
+        lambda: all(
+            any(row.is_mounted for row in inspector.query(f"#{row_id}"))
+            for row_id in (
+                "console-inspector-live-work",
+                "console-inspector-approvals",
+            )
+        )
+        and f"Live work: {copy}"
+        in "\n".join(str(row.render()) for row in inspector.query(Static))
+        and f"Approvals: {approval_count} pending"
+        in "\n".join(str(row.render()) for row in inspector.query(Static))
+        and inspector.state.pending_approval_count == approval_count,
+    )
     rendered = "\n".join(str(row.render()) for row in inspector.query(Static))
     assert f"Live work: {copy}" in rendered, rendered
     assert f"Approvals: {approval_count} pending" in rendered, rendered
@@ -356,6 +371,21 @@ async def _verify_review_routes_reach_visible_skill_confirm_before_queued_approv
                 if entry_point == "shortcut":
                     await pilot.press("alt+a")
                 elif entry_point == "inspector":
+                    # Row/count publication can precede replacement actions.
+                    # Button.press silently declines a hidden or disabled button.
+                    def review_action_ready():
+                        button = next(
+                            iter(console.query("#console-inspector-review-approval")),
+                            None,
+                        )
+                        return (
+                            button is not None
+                            and button.is_mounted
+                            and button.display
+                            and not button.disabled
+                        )
+
+                    await _wait(pilot, review_action_ready)
                     console.query_one(
                         "#console-inspector-review-approval", Button
                     ).press()
@@ -724,6 +754,23 @@ async def _verify_legacy_tool_approval_counts_in_the_mounted_view(request, tmp_p
     workers = []
     async with app.run_test(size=(160, 48)) as pilot:
         console, controller, store, session_id = await _seed_console(app, pilot)
+        runtime = console._console_runtime()
+        attachment_generation = runtime._attached_generation
+        # This journey produces an approval for an already mounted view.
+        await _wait(
+            pilot,
+            lambda: (
+                console._console_attach_reconciled
+                and not console._console_attach_reconcile_running
+                and runtime.view is console
+                and runtime._attached_generation == attachment_generation
+                and runtime._reconciled_view is console
+                and runtime.has_answerable_view()
+            ),
+        )
+        assert runtime.chat_controller is controller
+        assert runtime.chat_store is store
+        assert store.active_session_id == session_id
         _start_live_turn(console, controller, store, session_id)
         try:
             worker, result = _arm(controller, None, call=_risk_row())

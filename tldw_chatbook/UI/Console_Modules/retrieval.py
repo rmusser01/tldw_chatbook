@@ -17,6 +17,7 @@ from ...Chat.console_display_state import (
     ConsoleRetrievalScopeState,
 )
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
+from ...Chat.console_preparation_reads import await_finite_read as _await_finite_display
 from ...Chat.console_turn_context import ConsoleTurnExecutionContext
 from ...Chat.rag_scope import (
     RagScope,
@@ -242,7 +243,9 @@ class ConsoleRetrievalController:
         self, session: ConsoleChatSession
     ) -> ConsoleRetrievalScopeState:
         """Resolve and cache the conversation/workspace effective scope."""
-        resolution = await resolve_scope_for_session(self.app_instance, session)
+        resolution = await resolve_scope_for_session(
+            self.app_instance, session, retain_display_reads=True
+        )
         if session.persisted_conversation_id is not None:
             self._console_retrieval_scope_cache[session.persisted_conversation_id] = (
                 resolution.conv_scope
@@ -472,11 +475,25 @@ class ConsoleRetrievalController:
             self._active_dictionaries_summary = {"dictionaries": []}
         else:
             try:
-                summary = await asyncio.to_thread(
+                from ...Backup_Recovery.dictionary_source_job import supports
+                from ...Character_Chat.chat_dictionary_scope_service import (
+                    ChatDictionaryScopeService,
+                )
+
+                stock = type(service) is ChatDictionaryScopeService and supports(
+                    service.local_service,
+                    getattr(
+                        service.local_service, "summarize_active_dictionaries", None
+                    ),
+                )
+                operation = asyncio.to_thread(
                     _run_dictionary_summary_off_thread,
                     service,
                     conversation_id,
                     character_id,
+                )
+                summary = (
+                    await _await_finite_display(operation) if stock else await operation
                 )
             except Exception:
                 logger.opt(exception=True).warning(
@@ -539,11 +556,16 @@ class ConsoleRetrievalController:
             from ...Character_Chat.world_info_resolver import (
                 summarize_active_world_books,
             )
+            from ...DB.ChaChaNotes_DB import CharactersRAGDB
             from ...DB.base_db import run_owned_db_call
 
-            summary = await run_owned_db_call(
+            operation = run_owned_db_call(
                 db, summarize_active_world_books, db, conversation_id, None
             )
+            if type(db) is CharactersRAGDB and not db.is_memory_db:
+                summary = await _await_finite_display(operation)
+            else:
+                summary = await operation
         except Exception:
             logger.opt(exception=True).warning(
                 "Could not summarize active world books for the Console inspector."

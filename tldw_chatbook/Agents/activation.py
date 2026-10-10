@@ -94,6 +94,11 @@ def guarded(function):
 
     @wraps(function)
     def call(self, *args, **kwargs):
+        scoped = None
+        if function.__name__ == "run_turn":
+            from .run_log import capture_scoped_log_source, scoped_log_source
+
+            scoped = capture_scoped_log_source(self, function)
         sources = tuple(
             source
             for name in ("builtin_gate", "mcp_provider")
@@ -102,8 +107,13 @@ def guarded(function):
         log_dir = getattr(kwargs.get("run_log_writer"), "log_dir", None)
         if log_dir is not None:
             sources += (("agents.history", profile_paths.lexical_path(log_dir)),)
+        if scoped is not None:
+            sources += (("agents.history", scoped.root),)
         with execution(self, sources=sources):
             if function.__name__ == "run_turn":
+                if scoped is not None:
+                    with scoped_log_source(scoped):
+                        return function(self, *args, **kwargs)
                 from .run_log import resolve_log_root
 
                 # This installed selector consults the admitted workspace DB.

@@ -16,10 +16,9 @@ touches an ``MCPClient`` session) is submitted to the main loop via
 (``gate_tool_test``, ``record_tool_decision``, ``is_session_approved``,
 ``approve_for_session``, ``set_tool_state``, ``get_kill_switch``,
 ``effective_tool_states``) do small, atomic file I/O with no event-loop
-affinity, so this provider calls them *directly* from whichever thread it is
-currently running on (worker thread for ``invoke()``/``pending_gate_for()``,
-main loop for ``compose_catalog()``) rather than paying a second
-cross-thread round trip for each one.
+affinity. Invocation gates read them directly on their calling worker.
+Catalog composition offloads its synchronous store reads to finite workers;
+the async catalog service and publication stay on the main loop.
 
 ``compose_catalog()`` is the one method that itself performs async I/O
 (:meth:`UnifiedMCPControlPlaneService.local_external_catalog`) — it is
@@ -41,11 +40,14 @@ import asyncio
 import concurrent.futures
 import contextlib
 import json
+import sys
 import threading
 import time
+import weakref
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, replace
+from types import FunctionType, MethodType
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -101,6 +103,7 @@ from .tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 # so the module stays off the UI-ready census path.
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
+    from tldw_chatbook.MCP.console_tool_preparation import ConsoleToolPreparation
 
 @dataclass(frozen=True)
 class MCPBridgeObservation:
@@ -478,6 +481,7 @@ class MCPToolProvider:
         maximum_tool_ids: frozenset[str] | None = None,
         maximum_definition_hashes: Mapping[str, str] | None = None,
         owned_profile_ids: frozenset[str] = frozenset(),
+        _freeze_definition_maximum_on_compose: bool = False,
     ) -> None:
         """Build an uncomposed provider; call `compose_catalog()` before use.
 
@@ -537,6 +541,32 @@ class MCPToolProvider:
         # gate resolution; None keeps every pre-feature call identical.
         self._persona_policy_provider = persona_policy_provider
         self._runtime_source_provider = runtime_source_provider
+        if not isinstance(_freeze_definition_maximum_on_compose, bool):
+            raise TypeError("MCP composition ceiling flag must be bool")
+        if _freeze_definition_maximum_on_compose and (
+            maximum_tool_ids is not None
+            or maximum_definition_hashes is not None
+            or not _controller_factory_current(type(self))
+        ):
+            raise PermissionError("mcp_catalog_source_changed")
+        self._composition_definition_ceiling = _freeze_definition_maximum_on_compose
+        self._freeze_definition_maximum_on_compose = (
+            _freeze_definition_maximum_on_compose
+        )
+        # Retain the raw ceiling decision: normalization must not qualify
+        # custom or non-frozen inputs for omission of an external dependency.
+        self._maximum_needs_external_catalog = True
+        if type(maximum_tool_ids) is frozenset and _controller_factory_current(
+            type(self)
+        ):
+            from tldw_chatbook.MCP import console_tool_preparation as preparation_source
+
+            if _console_preparation_pipeline_current(preparation_source):
+                self._maximum_needs_external_catalog = (
+                    preparation_source.hub_catalog.maximum_needs_external_catalog(
+                        maximum_tool_ids
+                    )
+                )
         self._maximum_tool_ids = (
             frozenset(str(value) for value in maximum_tool_ids)
             if maximum_tool_ids is not None
@@ -599,7 +629,37 @@ class MCPToolProvider:
 
     # -- composition (main loop, once per registration) -------------------
 
-    async def compose_catalog(self) -> None:
+    async def compose_catalog(self, *, _controller_composition=None) -> None:
+        """Compose on the actual supplied loop with finite standard custody."""
+        from tldw_chatbook.MCP.console_snapshot import standard_console_catalog_sources
+
+        service = self._service
+        _captured_sources = None
+        if _controller_composition is not None:
+            if (
+                type(_controller_composition) is not _ControllerCatalogComposition
+                or _controller_composition not in _CONTROLLER_COMPOSITIONS
+            ):
+                raise PermissionError("mcp_catalog_source_changed")
+            _controller_composition.require_current(type(self), self)
+            _captured_sources = _controller_composition.captured
+        if standard_console_catalog_sources(service):
+            if asyncio.get_running_loop() is not self._main_loop:
+                raise PermissionError("mcp_catalog_owner_loop_changed")
+            with service._producer_lifetime.operation():
+                if _captured_sources is None:
+                    await self._compose_catalog()
+                else:
+                    await self._compose_catalog(
+                        _captured_sources=_captured_sources,
+                        _controller_composition=_controller_composition,
+                    )
+        else:
+            await self._compose_catalog()
+
+    async def _compose_catalog(
+        self, *, _captured_sources=None, _controller_composition=None
+    ) -> None:
         """Build the eligible tool catalog. MAIN LOOP, called once at registration.
 
         Kill switch on -> empty catalog (the provider is effectively inert;
@@ -614,6 +674,15 @@ class MCPToolProvider:
         uniqueness), and cache both the `ToolCatalogEntry` list and the
         `{llm_name: (HubTool, EffectiveToolState)}` lookup table.
         """
+        if _controller_composition is not None:
+            if (
+                type(_controller_composition) is not _ControllerCatalogComposition
+                or _controller_composition not in _CONTROLLER_COMPOSITIONS
+                or _controller_composition.captured is not _captured_sources
+            ):
+                raise PermissionError("mcp_catalog_source_changed")
+            _controller_composition.require_current(type(self), self)
+
         # Clear stale stamped decisions from prior catalogs to prevent
         # auto-approval of tools not in the new catalog (Finding 3). Every
         # run's slice, deliberately: this runs at registration time, before
@@ -621,14 +690,78 @@ class MCPToolProvider:
         with self._decisions_lock:
             self._stamped_decisions.clear()
 
-        if self._service.get_kill_switch():
-            self._catalog = []
-            self._entry_by_llm_name = {}
-            self._not_connected_count = 0
+        from tldw_chatbook.MCP.console_snapshot import (
+            capture_console_effective_states,
+            read_console_kill_switch,
+            standard_console_catalog_sources,
+            _CapturedSources,
+        )
+
+        service = self._service
+        local = getattr(service, "local_service", None)
+        standard = standard_console_catalog_sources(service)
+        if self._composition_definition_ceiling and (
+            not standard or not _controller_factory_current(type(self))
+        ):
+            raise PermissionError("mcp_catalog_source_changed")
+        captured = (
+            _captured_sources
+            if _captured_sources is not None
+            else _CapturedSources(service, capture_catalog=True)
+            if standard
+            else None
+        )
+
+        def require_current():
+            if self._service is not service:
+                raise PermissionError("mcp_catalog_owner_changed")
+            if self._composition_definition_ceiling and (
+                not standard_console_catalog_sources(service)
+                or not _controller_factory_current(type(self))
+            ):
+                raise PermissionError("mcp_catalog_source_changed")
+            if _controller_composition is not None:
+                _controller_composition.require_current(type(self), self)
+            elif captured is not None:
+                captured.require_current()
+
+        kill_switch = (
+            await read_console_kill_switch(service, _captured_sources=captured)
+            if standard
+            else await asyncio.to_thread(service.get_kill_switch)
+        )
+        require_current()
+        if kill_switch:
+            if self._composition_definition_ceiling:
+                self._install_console_catalog([], {}, require_current)
+            else:
+                self._catalog = []
+                self._entry_by_llm_name = {}
+                self._not_connected_count = 0
             return
 
         hub_tools: list[HubTool] = []
-        records = await self._service.local_external_catalog()
+        include_external_catalog = True
+        if (
+            standard
+            and not self._maximum_needs_external_catalog
+            and _controller_factory_current(type(self))
+        ):
+            from tldw_chatbook.MCP import console_tool_preparation as preparation_source
+
+            include_external_catalog = not _console_preparation_pipeline_current(
+                preparation_source
+            )
+        records = (
+            await (
+                captured.catalog_callback()
+                if captured is not None
+                else service.local_external_catalog()
+            )
+            if include_external_catalog
+            else []
+        )
+        require_current()
         for record in records:
             if (
                 record.get("plugin_owner") is not None
@@ -637,16 +770,37 @@ class MCPToolProvider:
                 continue
             hub_tools.extend(local_tools_from_record(record))
 
-        local_service = getattr(self._service, "local_service", None)
-        get_inventory = getattr(local_service, "get_inventory", None)
+        local_service = local if standard else getattr(service, "local_service", None)
+        get_inventory = (
+            captured.inventory_reader
+            if captured is not None
+            else getattr(local_service, "get_inventory", None)
+        )
         if callable(get_inventory):
             try:
-                inventory = get_inventory()
+                from tldw_chatbook.MCP.local_control_service import (
+                    LocalMCPControlService,
+                )
+
+                if (
+                    standard
+                    and getattr(get_inventory, "__func__", None)
+                    is LocalMCPControlService.get_inventory
+                ):
+                    if asyncio.get_running_loop() is not self._main_loop:
+                        raise PermissionError("mcp_catalog_owner_loop_changed")
+                    inventory = get_inventory()
+                else:
+                    inventory = await asyncio.to_thread(get_inventory)
+                require_current()
             except Exception as exc:  # noqa: BLE001 -- never abort composition
                 logger.warning(
                     f"MCPToolProvider: built-in inventory read failed: {exc}"
                 )
                 inventory = None
+            if _controller_composition is not None:
+                # Inventory failure cannot swallow a qualified source refusal.
+                require_current()
             if isinstance(inventory, Mapping):
                 # TASK-34100.5: the built-in source runs in the direct runtime,
                 # which always refuses these -- never offer them to the agent.
@@ -670,9 +824,90 @@ class MCPToolProvider:
                     ]
                 hub_tools.extend(builtin_tools)
 
-        effective = self._service.effective_tool_states(
-            hub_tools, **self._profile_kwargs()
+        # Profile callbacks can be session/UI-owned; resolve them on this loop.
+        # Only the documented worker-safe file read crosses the await. The
+        # invocation gate still re-reads its current permission store.
+        profile_kwargs = self._profile_kwargs()
+        effective = (
+            await capture_console_effective_states(
+                service, hub_tools, _captured_sources=captured, **profile_kwargs
+            )
+            if standard
+            else await asyncio.to_thread(
+                service.effective_tool_states, hub_tools, **profile_kwargs
+            )
         )
+        require_current()
+        self._install_console_catalog(hub_tools, effective, require_current)
+
+    def adopt_console_preparation(
+        self,
+        preparation: "ConsoleToolPreparation",
+        *,
+        _controller_composition: "_ControllerCatalogComposition",
+    ) -> None:
+        """Install source-owned composition data on this provider's owning loop.
+
+        The shared observation supplies catalog data only. Invocation retains
+        its existing fresh policy checks.
+        """
+        from tldw_chatbook.MCP import console_tool_preparation as preparation_source
+
+        composition = _controller_composition
+        if (
+            type(preparation) is not preparation_source.ConsoleToolPreparation
+            or type(composition) is not _ControllerCatalogComposition
+            or composition not in _CONTROLLER_COMPOSITIONS
+            or asyncio.get_running_loop() is not self._main_loop
+        ):
+            raise PermissionError("mcp_catalog_source_changed")
+        composition.require_current(type(self), self)
+        if not _console_preparation_pipeline_current(preparation_source):
+            raise PermissionError("mcp_catalog_source_changed")
+        preparation.require_current(self._service)
+        if preparation.profile_id != self._profile_id():
+            raise PermissionError("mcp_catalog_profile_changed")
+        if (
+            self._maximum_needs_external_catalog
+            and not preparation._includes_external_catalog
+        ):
+            raise PermissionError("mcp_catalog_maximum_changed")
+        if (
+            preparation._builtin_raw_name_exclusions
+            != self._builtin_raw_name_exclusions
+            or preparation._owned_profile_ids != self._owned_profile_ids
+        ):
+            raise PermissionError("mcp_catalog_consumer_changed")
+        previous = _PREPARATION_COMPOSITIONS.get(preparation)
+        if previous is not None and previous != (composition, self):
+            raise PermissionError("mcp_catalog_operation_changed")
+        _PREPARATION_COMPOSITIONS[preparation] = (composition, self)
+
+        def require_current():
+            composition.require_current(type(self), self)
+            preparation.require_current(self._service)
+            if preparation.profile_id != self._profile_id():
+                raise PermissionError("mcp_catalog_profile_changed")
+
+        with self._decisions_lock:
+            self._stamped_decisions.clear()
+        if preparation.kill_switch:
+            if self._composition_definition_ceiling:
+                self._install_console_catalog([], {}, require_current)
+            else:
+                self._catalog = []
+                self._entry_by_llm_name = {}
+                self._not_connected_count = 0
+            return
+        tools = [tool.to_hub_tool() for tool in preparation.tools]
+        effective = {
+            (tool.server_key, tool.name): tool.effective
+            for tool in preparation.tools
+        }
+        self._install_console_catalog(tools, effective, require_current)
+
+    def _install_console_catalog(self, hub_tools, effective, require_current):
+        """Apply the ordinary narrowing, naming and run-owned cache contract."""
         from tldw_chatbook.MCP.permission_store import definition_hash
 
         eligible = [
@@ -715,6 +950,23 @@ class MCPToolProvider:
             )
             entry_by_llm_name[llm_name] = (tool, state)
 
+        if self._freeze_definition_maximum_on_compose:
+            from tldw_chatbook.MCP.hub_tool_catalog import (
+                maximum_needs_external_catalog,
+            )
+
+            maximum_hashes = {
+                tool.tool_id: definition_hash(tool.description, tool.input_schema)
+                for tool in eligible
+            }
+            maximum_ids = frozenset(maximum_hashes)
+            needs_external = maximum_needs_external_catalog(maximum_ids)
+        require_current()
+        if self._freeze_definition_maximum_on_compose:
+            self._maximum_tool_ids = maximum_ids
+            self._maximum_definition_hashes = maximum_hashes
+            self._maximum_needs_external_catalog = needs_external
+            self._freeze_definition_maximum_on_compose = False
         self._catalog = catalog
         self._entry_by_llm_name = entry_by_llm_name
 
@@ -1899,3 +2151,277 @@ class MCPToolProvider:
                 error="mcp_result_format_failed",
                 dispatch_state=dispatch_state,
             )
+
+
+def _capture_controller_inputs(function):
+    keyword_defaults = function.__kwdefaults__
+    closure = function.__closure__
+    return (
+        function.__defaults__,
+        keyword_defaults,
+        tuple(dict.items(keyword_defaults)) if keyword_defaults is not None else (),
+        closure,
+        tuple((cell, cell.cell_contents) for cell in closure or ()),
+    )
+
+
+def _controller_inputs_current(function, inputs):
+    defaults, keyword_defaults, keyword_items, closure, cells = inputs
+    if (
+        function.__defaults__ is not defaults
+        or function.__kwdefaults__ is not keyword_defaults
+        or function.__closure__ is not closure
+    ):
+        return False
+    if keyword_defaults is not None:
+        if type(keyword_defaults) is not dict:  # noqa: E721 -- exact built-in inputs
+            return False
+        current_items = tuple(dict.items(keyword_defaults))
+        if len(current_items) != len(keyword_items) or not all(
+            current_key is key and current_value is value
+            for (current_key, current_value), (key, value) in zip(
+                current_items, keyword_items
+            )
+        ):
+            return False
+    if len(closure or ()) != len(cells):
+        return False
+    try:
+        return all(
+            current_cell is cell and current_cell.cell_contents is contents
+            for current_cell, (cell, contents) in zip(closure or (), cells)
+        )
+    except ValueError:
+        return False
+
+
+_CONTROLLER_INPUTS_CHECK = (
+    _controller_inputs_current,
+    _controller_inputs_current.__code__,
+    _controller_inputs_current.__globals__,
+)
+
+
+def _controller_inputs_checker_current():
+    original, code, namespace = _CONTROLLER_INPUTS_CHECK
+    return (
+        type(_controller_inputs_current) is FunctionType
+        and _controller_inputs_current is original
+        and original.__code__ is code
+        and original.__globals__ is namespace
+        and namespace is globals()
+        and original.__defaults__ is None
+        and original.__kwdefaults__ is None
+        and original.__closure__ is None
+    )
+
+
+# TASK-34561: captured at defining-module completion, before consumer imports.
+_CONTROLLER_COMPOSE_MODULE = sys.modules[__name__]
+_CONTROLLER_COMPOSE_FACTORY = MCPToolProvider
+_CONTROLLER_COMPOSITIONS = weakref.WeakSet()
+_PREPARATION_COMPOSITIONS = weakref.WeakKeyDictionary()
+_CONTROLLER_COMPOSE_METHODS = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__globals__,
+        _capture_controller_inputs(function),
+    )
+    for name in (
+        "__init__",
+        "_init_decision_state",
+        "compose_catalog",
+        "_compose_catalog",
+        "adopt_console_preparation",
+        "_install_console_catalog",
+        "list_catalog",
+    )
+    for function in (vars(MCPToolProvider)[name],)
+)
+_CONTROLLER_COMPOSE_COUNT_PROPERTY = vars(MCPToolProvider)["not_connected_count"]
+_CONTROLLER_COMPOSE_COUNT_GETTER = (
+    _CONTROLLER_COMPOSE_COUNT_PROPERTY.fget,
+    _CONTROLLER_COMPOSE_COUNT_PROPERTY.fget.__code__,
+    _CONTROLLER_COMPOSE_COUNT_PROPERTY.fget.__globals__,
+    _capture_controller_inputs(_CONTROLLER_COMPOSE_COUNT_PROPERTY.fget),
+)
+
+
+def _controller_factory_current(factory) -> bool:
+    if (
+        sys.modules.get(__name__) is not _CONTROLLER_COMPOSE_MODULE
+        or MCPToolProvider is not _CONTROLLER_COMPOSE_FACTORY
+        or factory is not _CONTROLLER_COMPOSE_FACTORY
+        or not all(
+            vars(owner).get(name) is function
+            and type(function) is FunctionType
+            and function.__code__ is code
+            and function.__globals__ is namespace
+            and namespace is vars(_CONTROLLER_COMPOSE_MODULE)
+            for owner, name, function, code, namespace, _inputs in _CONTROLLER_COMPOSE_HELPERS
+        )
+        or not _controller_inputs_checker_current()
+        or not all(
+            _controller_inputs_current(function, inputs)
+            for _owner, _name, function, _code, _namespace, inputs in _CONTROLLER_COMPOSE_HELPERS
+        )
+    ):
+        return False
+    for name, original, code, namespace, inputs in _CONTROLLER_COMPOSE_METHODS:
+        current = vars(factory).get(name)
+        if not (
+            type(current) is FunctionType
+            and current is original
+            and current.__code__ is code
+            and current.__globals__ is namespace
+            and namespace is vars(_CONTROLLER_COMPOSE_MODULE)
+            and _controller_inputs_current(current, inputs)
+        ):
+            return False
+    descriptor = vars(factory).get("not_connected_count")
+    getter, code, namespace, inputs = _CONTROLLER_COMPOSE_COUNT_GETTER
+    return (
+        descriptor is _CONTROLLER_COMPOSE_COUNT_PROPERTY
+        and type(descriptor) is property
+        and descriptor.fget is getter
+        and getter.__code__ is code
+        and getter.__globals__ is namespace
+        and namespace is vars(_CONTROLLER_COMPOSE_MODULE)
+        and _controller_inputs_current(getter, inputs)
+    )
+
+
+def _console_preparation_pipeline_current(preparation_source, binding=None):
+    """Qualify detached-data methods before executing a supplied result callback."""
+    binding = binding or preparation_source._CONSOLE_PREPARATION_CHECK
+    checker, code, namespace, inputs = binding
+    return (
+        sys.modules.get(preparation_source.__name__) is preparation_source
+        and preparation_source._CONSOLE_PREPARATION_CHECK is binding
+        and preparation_source.preparation_pipeline_current is checker
+        and type(checker) is FunctionType
+        and checker.__code__ is code
+        and checker.__globals__ is namespace
+        and namespace is vars(preparation_source)
+        and _controller_inputs_checker_current()
+        and _controller_inputs_current(checker, inputs)
+        and checker()
+    )
+
+
+class _ControllerCatalogComposition:
+    """Strong provenance for one composition; never stores a kill decision."""
+
+    def __init__(self, factory, service, snapshot, captured):
+        self.factory = factory
+        self.service = service
+        self.snapshot = snapshot
+        self.captured = captured
+        self.pipeline_checker = snapshot._CONTROLLER_PIPELINE_CHECK
+
+    def require_current(self, factory, provider=None):
+        checker, code, namespace, inputs = self.pipeline_checker
+        if not (
+            _controller_factory_current(factory)
+            and factory is self.factory
+            and sys.modules.get(self.snapshot.__name__) is self.snapshot
+            and self.snapshot.controller_precheck_pipeline_current is checker
+            and checker.__code__ is code
+            and checker.__globals__ is namespace
+            and namespace is vars(self.snapshot)
+            and checker()
+            and self.snapshot._controller_inputs_current(checker, inputs)
+            and self.snapshot.standard_console_catalog_sources(self.service)
+        ):
+            raise PermissionError("mcp_catalog_source_changed")
+        self.captured.require_current()
+        for field, slot in (
+            ("catalog_reader", "store.bundle"),
+            ("store_loader", "store.load"),
+            ("inventory_reader", "local.inventory"),
+            ("effective_reader", "service.effective"),
+            ("audit_writer", "service.audit"),
+            ("permission_reader", "permission.load"),
+        ):
+            if not self.snapshot._same_callback(
+                getattr(self.captured, field), self.captured.method_bindings[slot]
+            ):
+                raise PermissionError("mcp_catalog_source_changed")
+        if provider is not None:
+            if (
+                type(provider) is not self.factory
+                or provider._service is not self.service
+            ):
+                raise PermissionError("mcp_catalog_owner_changed")
+            for (
+                name,
+                original,
+                _code,
+                _namespace,
+                _inputs,
+            ) in _CONTROLLER_COMPOSE_METHODS:
+                if name.startswith("__"):
+                    continue
+                callback = getattr(provider, name, None)
+                if not (
+                    isinstance(callback, MethodType)
+                    and callback.__self__ is provider
+                    and callback.__func__ is original
+                ):
+                    raise PermissionError("mcp_catalog_source_changed")
+
+
+def capture_standard_controller_composition(factory, service):
+    """Qualify the one stock route whose own compose performs a fresh switch read."""
+    if not _controller_factory_current(factory):
+        return None
+    from tldw_chatbook.MCP import console_snapshot as snapshot
+
+    checker, code, namespace, inputs = snapshot._CONTROLLER_PIPELINE_CHECK
+    if not (
+        snapshot.controller_precheck_pipeline_current is checker
+        and type(checker) is FunctionType
+        and checker.__code__ is code
+        and checker.__globals__ is namespace
+        and namespace is vars(snapshot)
+        and checker()
+        and snapshot._controller_inputs_current(checker, inputs)
+        and snapshot.standard_console_catalog_sources(service)
+    ):
+        return None
+    captured = snapshot._CapturedSources(service, capture_catalog=True)
+    owner = _ControllerCatalogComposition(factory, service, snapshot, captured)
+    owner.require_current(factory)
+    _CONTROLLER_COMPOSITIONS.add(owner)
+    return owner
+
+
+_CONTROLLER_CAPTURE_ORIGINAL = (
+    capture_standard_controller_composition,
+    capture_standard_controller_composition.__code__,
+    capture_standard_controller_composition.__globals__,
+    _capture_controller_inputs(capture_standard_controller_composition),
+)
+_CONTROLLER_COMPOSITION_CLASS = _ControllerCatalogComposition
+_CONTROLLER_COMPOSE_HELPERS = tuple(
+    (
+        owner,
+        name,
+        function,
+        function.__code__,
+        function.__globals__,
+        _capture_controller_inputs(function),
+    )
+    for owner, name in (
+        (_CONTROLLER_COMPOSE_MODULE, "_controller_inputs_current"),
+        (_CONTROLLER_COMPOSE_MODULE, "_controller_inputs_checker_current"),
+        (_CONTROLLER_COMPOSE_MODULE, "_controller_factory_current"),
+        (_CONTROLLER_COMPOSE_MODULE, "_console_preparation_pipeline_current"),
+        (_CONTROLLER_COMPOSE_MODULE, "capture_standard_controller_composition"),
+        (_ControllerCatalogComposition, "__init__"),
+        (_ControllerCatalogComposition, "require_current"),
+    )
+    for function in (vars(owner)[name],)
+)

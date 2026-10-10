@@ -287,3 +287,34 @@ async def test_pending_creation_revalidates_ownership_and_form(
             assert host.compositions == 1
     finally:
         registry.db.close()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_inactive_profile_guard_skips_lazy_permission_store(request, tmp_path):
+    """A declined original wiring path must not initialize unused policy IO."""
+    host = Host(tmp_path)
+    registry = host.workspace_registry_service
+    original = host.unified_mcp_service.permission_store
+    reads = []
+
+    class LazyPermissionFacade:
+        @property
+        def permission_store(self):
+            reads.append("permission_store")
+            return original
+
+    host.unified_mcp_service = LazyPermissionFacade()
+    try:
+        assert isinstance(
+            registry.tool_profile_guard, DeferredWorkspaceToolProfileGuard
+        )
+        assert registry.tool_profile_guard.active_guard is None
+        host._wire_workspace_agent_provisioning()
+        assert host.personas() == []
+        assert not registry.db.is_agent_backfill_complete()
+        assert (
+            reads == []
+        ), "inactive workspace wiring initialized an unused permission store"
+    finally:
+        registry.db.close()

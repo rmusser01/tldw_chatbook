@@ -6,7 +6,7 @@ from Tests.Backup_Recovery.test_home_citation_retirement import _run
 from Tests.Backup_Recovery.test_mcp_recovery_review import _APPROVED_SETUP
 
 _SCRIPT = r"""
-import asyncio, os, sys, types
+import asyncio, json, os, sys, types
 from pathlib import Path
 from types import SimpleNamespace
 from Tests.network_guard import install, blocked_attempts
@@ -18,7 +18,7 @@ from tldw_chatbook.Backup_Recovery.control_records import admission_authority, r
 route, state = sys.argv[1:]
 selector = Path(os.environ['TLDW_CONFIG_PATH'])
 base = selector.parent.parent
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(base/'data') + '"\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir=' + json.dumps(str(base/'data'), ensure_ascii=False) + '\n', encoding='utf-8')
 selector.chmod(0o600)
 from tldw_chatbook import config
 data = config.get_user_data_dir()

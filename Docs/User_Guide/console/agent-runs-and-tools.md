@@ -781,6 +781,14 @@ marker stays the durable pointer to what finished.
 - A successful multi-prompt drain reports one final background completion;
   intermediate queued turns do not add completion toasts or finished markers.
 
+While any run is live, the transcript (including streaming text and the
+turn-activity line), the tab markers and the "Run:" chip update several times
+a second. The rails and the Inspector — the fleet summary line, the Agent
+section, `Live work` and the other rail rows — refresh at least every two
+seconds, and at once when a run finishes, when you switch chats, and after
+the last live run ends. Keeping that heavier refresh off every tick is what
+keeps typing and Send responsive while replies stream.
+
 ### Named agents
 
 Beyond a plain, generic sub-agent, the supervisor can delegate to a **named

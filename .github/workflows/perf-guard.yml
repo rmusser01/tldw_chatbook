@@ -104,14 +104,36 @@ jobs:
       # ratchet exists to catch. Same rule as above: never remove it from
       # here. TASK-33643: every run prints its measured census (pass or
       # fail), the record Linux os.open ceilings are pinned from.
+      - name: Verify original missing-profile companion metadata controls
+        if: always()
+        run: |
+          pytest Tests/Backup_Recovery/test_config_companion_missing_record_evidence.py \
+            -q --timeout=180 --junitxml="${{ runner.temp }}/companion-missing-profile.xml"
+      - name: Retain missing-profile companion evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-missing-profile-controls
+          path: ${{ runner.temp }}/companion-missing-profile.xml
+          if-no-files-found: error
+
       - name: Run Console storage-unit ratchet
         env:
           TLDW_STORAGE_UNIT_CENSUS_LOG: ${{ runner.temp }}/storage-unit-census.jsonl
         run: |
           status=0
           pytest "Tests/Performance/test_console_keystroke_work_census.py::test_console_storage_units_stay_within_their_ratchets" \
-            -v --timeout=300 || status=$?
+            -v --timeout=300 --junitxml="${{ runner.temp }}/storage-unit-ratchet.xml" || status=$?
           echo "::group::Console storage-unit census"
           cat "$TLDW_STORAGE_UNIT_CENSUS_LOG" 2>/dev/null || echo "(no census written)"
           echo "::endgroup::"
           exit "$status"
+      - name: Retain Console storage-unit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-storage-unit-evidence
+          path: |
+            ${{ runner.temp }}/storage-unit-census.jsonl
+            ${{ runner.temp }}/storage-unit-ratchet.xml
+          if-no-files-found: ignore

@@ -74,6 +74,7 @@ import pytest
 async def test_scheduler_holds_dispatch_when_stopped(tmp_path):
     from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
     from datetime import datetime, timezone
+    from types import SimpleNamespace
 
     popped = {"count": 0}
 
@@ -82,9 +83,11 @@ async def test_scheduler_holds_dispatch_when_stopped(tmp_path):
             popped["count"] += 1
             return []
 
-    loop = SchedulerLoop.__new__(SchedulerLoop)
+    # Real construction retains ownership for the sentinel read worker.
+    loop = SchedulerLoop(
+        SimpleNamespace(), {}, emergency_stop_path=tmp_path / "estop.json"
+    )
     loop.queue = _Queue()
-    loop._emergency_stop_path = tmp_path / "estop.json"
 
     # not stopped -> pops
     await loop._dispatch_due(datetime.now(timezone.utc))

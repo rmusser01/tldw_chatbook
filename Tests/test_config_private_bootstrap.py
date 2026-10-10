@@ -651,6 +651,12 @@ def test_config_rewrite_refuses_to_commit_a_serialization_that_would_duplicate_a
         encoding="utf-8",
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    import sys
+    from Tests.Backup_Recovery.config_test_support import install_config_source
+
+    monkeypatch.setattr(
+        sys.modules[__name__], "config_module", install_config_source(monkeypatch)
+    )
     _clear_config_cache()
 
     # Pass 1: a legitimate settings write through the real rewrite path.

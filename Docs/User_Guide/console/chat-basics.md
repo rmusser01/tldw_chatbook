@@ -398,6 +398,9 @@ statistics tools.
   with **Restore**.
   Slash commands, typed `! ` commands, Enter during a run (which queues) and
   a send behind a **Blocked** turn (which is refused) skip this step.
+- The status progresses from **Sending…** to **Waiting for reply…** to
+  **Streaming reply…** and stays visible when status details are collapsed.
+  More specific approval and tool messages take precedence.
 - Console stays responsive while it prepares the turn. Enter sends exactly
   what the composer held when you pressed it; anything you type afterwards
   stays in the composer for your next message. An Enter on an empty composer

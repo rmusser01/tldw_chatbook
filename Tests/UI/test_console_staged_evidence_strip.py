@@ -797,7 +797,7 @@ async def test_context_estimate_counts_staged_evidence_before_send() -> None:
         screen = pilot.app.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-native-composer")
 
-        baseline = screen._active_console_settings_context_estimate()
+        baseline = screen._context_spend._active_console_settings_context_estimate()
         assert baseline.used_tokens is not None
 
         large_source = EvidenceReference(
@@ -825,7 +825,7 @@ async def test_context_estimate_counts_staged_evidence_before_send() -> None:
         screen._retrieval._stage_console_library_rag_launch(launch)
         await pilot.pause()
 
-        staged = screen._active_console_settings_context_estimate()
+        staged = screen._context_spend._active_console_settings_context_estimate()
         assert staged.used_tokens is not None
         assert staged.used_tokens > baseline.used_tokens
         assert "1 source staged" in staged.label

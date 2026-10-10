@@ -12,7 +12,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -36,9 +36,8 @@ from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.private_paths import (
     PrivateFileWritePrecondition,
     atomic_private_write_text,
-    create_private_text,
     open_private_binary,
-    open_private_text_append_stream,
+    open_private_lock_stream,
 )
 
 _STORE_MAX_BYTES = 4 * 1024 * 1024
@@ -76,6 +75,43 @@ class HookReviewSnapshot:
     @property
     def pending_count(self) -> int:
         return sum(row.state in {"pending", "invalid", "recovery"} for row in self.rows)
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class HookAuthorityRead:
+    """One full reconciled read, kept only by the Send attempt that made it.
+
+    ADR-225 decision 3: one attempt's pre-commit preparation consumers share
+    one immutable authority observation instead of each repeating the config
+    write lock, config read, store lock and raw admission. The owner never
+    stores or reuses this object; the attempt passes it explicitly to its own
+    later consumers, which re-validate it in memory
+    (``attempt_read_current``) and fall back to their fresh read on any
+    mismatch. It authorizes no effect: every hook launch still enters
+    ``launch_guard`` (a fresh read) immediately before process creation, and
+    the final pre-dispatch admission stays a fresh read.
+
+    It only ever answers "nothing to do": admission that it does not refuse,
+    and hook selections (legacy targets, v2 grants) that are empty. Anything
+    that would select, build or refuse from it is decided by a fresh read,
+    because a consent change made by another process after this read is
+    invisible in memory -- a target selected from it could reach its launch
+    guard stale and be refused (blocking the Send) where a fresh selection
+    would have omitted it.
+
+    Attributes:
+        owner: The exact consent owner that performed the read.
+        snapshot: The review state the read reconciled and published.
+        targets: The grant targets published together with ``snapshot``, or
+            ``None`` when another read published in between (unusable).
+        config_identity: ``config.current_config_identity()`` taken before
+            the read, or ``None`` when it could not be observed (unusable).
+    """
+
+    owner: HookPermissions = field(repr=False)
+    snapshot: HookReviewSnapshot = field(repr=False)
+    targets: tuple[HookTarget, ...] | None = field(repr=False)
+    config_identity: tuple[int, str] | None = field(repr=False)
 
 
 def default_hook_permissions_path() -> Path:
@@ -190,13 +226,7 @@ class HookPermissions:
             self, "hook_permissions", writing=True, selected_read=path
         ):
             lock_path = path.with_name(path.name + ".lock")
-            try:
-                create_private_text(
-                    lock_path, "", application_owned_directory=path.parent
-                )
-            except FileExistsError:
-                pass
-            stream = open_private_text_append_stream(
+            stream = open_private_lock_stream(
                 lock_path, application_owned_directory=path.parent
             )
             try:
@@ -430,6 +460,10 @@ class HookPermissions:
                 path = cfg.profile_data_dir / "hook_permissions.json"
                 # Raw admission also checks this exact selected_read against the
                 # bound cache; a throttled previous profile must never supply grants.
+                # Not derivable from ``cfg``: ``profile_data_dir`` comes from the
+                # raw file read under this lock, while this follows the runtime's
+                # cached selection (and its posture checks). Comparing the two
+                # IS the selection check, so the second lookup stays.
                 if default_hook_permissions_path() != path:
                     raise RecoveryRequired("raw_source_selection_changed")
                 stack.enter_context(self._store_lock(path))
@@ -606,6 +640,147 @@ class HookPermissions:
                 None,
                 "Hook configuration or permission state unavailable; retry.",
             )
+
+    def authority_read(self) -> HookAuthorityRead:
+        """``snapshot()`` plus the exact grant targets published with it.
+
+        One Send attempt's first full read (ADR-225 decision 3). It runs the
+        unchanged ``snapshot()`` -- the same reconciliation, locks, errors and
+        review state -- and additionally keeps the targets ``_make_snapshot``
+        published atomically with that snapshot. When another read published
+        in between, the targets are unknown and the result is unusable for
+        sharing; the caller still gets the snapshot it read.
+
+        Returns:
+            The attempt-bound read; never stored by this owner.
+        """
+        try:
+            # Taken before the read: any later reload or retarget, including
+            # one racing the read itself, makes the result unusable.
+            identity = config.current_config_identity()
+        except Exception:  # noqa: BLE001 -- unobservable identity only disables sharing
+            identity = None
+        snapshot = self.snapshot()
+        with self._cache_lock:
+            targets = self._published_targets if self._published is snapshot else None
+        return HookAuthorityRead(self, snapshot, targets, identity)
+
+    def attempt_read_current(self, read: HookAuthorityRead) -> bool:
+        """Whether an attempt's earlier full read still stands for that attempt.
+
+        In memory only (no I/O, no lock wait beyond ``_cache_lock``). A read is
+        usable only when it was ready, error-free and read this owner's store,
+        and nothing this process has since observed or done moved it: the
+        latest published read must have the same config file, section stamp,
+        profile and store revision; no runtime refresh may be pending; no
+        definition of that scope may be sealed by an in-flight decision; the
+        owner must be open; and the effective config must be the same
+        generation and file. Any mismatch returns False and the consumer
+        performs its own fresh read. This is a narrowing check, never a grant:
+        a change only another process has made is invisible here, which is
+        why a standing read still answers only "nothing to do"
+        (``attempt_targets``, ``attempt_v2_configuration``) and why the final
+        admission and every launch's ``launch_guard`` read fresh.
+
+        Args:
+            read: A read this owner produced for the asking attempt.
+
+        Returns:
+            Whether the attempt may use ``read`` instead of a fresh read.
+        """
+        if type(read) is not HookAuthorityRead or read.owner is not self:
+            return False
+        snapshot = read.snapshot
+        try:
+            identity_current = (
+                read.config_identity is not None
+                and config.current_config_identity() == read.config_identity
+            )
+        except Exception:  # noqa: BLE001 -- unknown currency falls back to a fresh read
+            return False
+        if (
+            not identity_current
+            or read.targets is None
+            or not snapshot.ready
+            or snapshot.store_revision == ("", 0)
+            or any(row.state == "recovery" for row in snapshot.rows)
+        ):
+            return False
+        scope = (str(snapshot.store_path), str(snapshot.config.config_path))
+        with self._cache_lock:
+            published = self._published
+            return (
+                not self._closed.is_set()
+                and published is not None
+                and published.config.config_path == snapshot.config.config_path
+                and published.config.section_stamp == snapshot.config.section_stamp
+                and published.config.profile_data_dir
+                == snapshot.config.profile_data_dir
+                and published.store_path == snapshot.store_path
+                and published.store_revision == snapshot.store_revision
+                and scope not in self._refresh_pending
+                and not any(sealed[:2] == scope for sealed in self._sealed)
+            )
+
+    def attempt_v2_configuration(
+        self, read: HookAuthorityRead
+    ) -> tuple[HookReviewSnapshot, tuple[()]] | None:
+        """``v2_configuration()``'s answer from the attempt's read, if it is "none".
+
+        Like ``attempt_targets``, an earlier read may only answer that there is
+        nothing to authorize. A v2 grant captured from it could be stale --
+        another process may have disabled, removed or revoked the handler since
+        -- and an engine built around it would have that handler refused by its
+        fresh authority check (blocking the Send when the handler is required)
+        where a fresh read would simply not configure it. So any read that
+        grants a v2 handler is left to the fresh ``v2_configuration()``.
+
+        Args:
+            read: The asking attempt's earlier full read.
+
+        Returns:
+            The read's review state with its (empty) v2 grant selection, or
+            ``None`` when the read no longer stands (``attempt_read_current``)
+            or grants any v2 handler, and a fresh read is required.
+        """
+        if not self.attempt_read_current(read) or any(
+            not isinstance(target.spec, HookSpec) for target in read.targets
+        ):
+            return None
+        return read.snapshot, ()
+
+    def attempt_targets(
+        self, read: HookAuthorityRead, event: str, tool_name: str | None
+    ) -> tuple[()] | None:
+        """``targets()``'s answer from the attempt's read, if it selects nothing.
+
+        An earlier read may only answer "no hook to launch". A target selected
+        from it could be stale: if another process disabled, removed or
+        revoked that hook since, the target still reaches its fresh
+        ``launch_guard``, whose refusal blocks a blocking event such as
+        UserPromptSubmit -- where a fresh selection would simply have omitted
+        the hook and the Send proceeded. Likewise a refusal derived from the
+        earlier read is never issued from it. Both go to the fresh
+        ``targets()`` read, which reproduces the existing selection and
+        refusals exactly; only a firing with nothing to launch saves the read.
+
+        Args:
+            read: The asking attempt's earlier full read.
+            event: Lifecycle event being fired.
+            tool_name: Tool name for tool events, else ``None``.
+
+        Returns:
+            ``()`` when the standing read selects no target and refuses
+            nothing; ``None`` when it no longer stands, selects any target or
+            would refuse, and a fresh read is required.
+        """
+        if not self.attempt_read_current(read):
+            return None
+        try:
+            selected = self._select(read.snapshot, read.targets, event, tool_name)
+        except HookLaunchRefused:
+            return None
+        return None if selected else ()
 
     @staticmethod
     def _expect_current(
