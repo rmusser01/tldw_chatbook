@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 import pytest
 from textual import events
 from textual.pilot import _get_mouse_message_arguments
+from textual.widgets import Button
 
 from Tests.UI.test_console_native_chat_flow import _select_llamacpp_console
 from Tests.UI.test_console_send_acknowledgement import press, until
@@ -155,6 +156,11 @@ def _record_notices(console) -> list[str]:
     return notices
 
 
+def _refused(notices: list[str]) -> bool:
+    """Whether the send guard refused a send (TASK-33622.7 AC#3)."""
+    return any("nothing was sent" in notice.lower() for notice in notices)
+
+
 def _record_trace_opens(console) -> list[str]:
     opened: list[str] = []
     console._review_selection.open_trajectory_view = lambda: opened.append("trace")
@@ -236,6 +242,7 @@ async def test_enter_after_a_tab_click_during_a_sync_pass_sends_to_the_clicked_c
             chats.b,
         )
         dispatched = _record_dispatch(console)
+        notices = _record_notices(console)
         held_pass = _hold_sync_pass(console)
         console.run_worker(
             console._sync_native_console_chat_ui(),
@@ -253,13 +260,15 @@ async def test_enter_after_a_tab_click_during_a_sync_pass_sends_to_the_clicked_c
         # The click is answered while the pass is still in flight.
         seen = _facts(console, composer, a, b)
         await pilot.press("x", "enter")
-        await until(lambda: bool(dispatched))
+        await until(lambda: bool(dispatched) or _refused(notices))
         seen["dispatched"] = _named(dispatched, a, b)
+        seen["refused"] = _refused(notices)
         assert seen == {
             "draft owner": "A",
             "highlighted tabs": ["A"],
             "composer": A_OWN,
             "dispatched": [("A", A_OWN + "x")],
+            "refused": False,
         }
 
         held_pass.release.set()
@@ -343,8 +352,55 @@ async def test_keys_typed_during_a_held_tab_activation_reach_the_new_chat_compos
 
 
 @pytest.mark.asyncio
-async def test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsewhere():
-    """AC#3: a composer still bound to another chat never sends there."""
+async def test_pressing_a_session_tab_leaves_the_keyboard_in_the_composer():
+    """AC#5: the mouse-down on a tab, before any activation runs, keeps focus.
+
+    Live, a busy screen can take a moment to handle the click. On dev the
+    mouse-down alone moved focus to the tab button, so a "y" typed then
+    opened Trace and the other letters were lost.
+    """
+    host = _host()
+    async with _running(host) as pilot:
+        chats = await _two_chats(host, pilot)
+        console, composer, store, a, b = (
+            chats.console,
+            chats.composer,
+            chats.store,
+            chats.a,
+            chats.b,
+        )
+        traces = _record_trace_opens(console)
+        tab = console.query_one(f"#console-session-tab-{a.id}")
+        event = events.MouseDown(**_get_mouse_message_arguments(tab, (2, 0), button=1))
+        event.set_sender(host)
+        host._driver.send_message(event)
+        await pilot.pause()
+        focused = console.app.focused
+        press(host, "y", "y")
+        await pilot.pause()
+        assert {
+            "focused": getattr(focused, "id", focused),
+            "trace opened": traces,
+            "composer": composer.draft_text(),
+            "active": store.active_session_id == b.id,
+        } == {
+            "focused": "console-native-composer",
+            "trace opened": [],
+            "composer": B_LEFTOVER + "y",
+            "active": True,
+        }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("send", ["enter", "send_button"])
+async def test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsewhere(
+    send,
+):
+    """AC#3: a composer still bound to another chat never sends there.
+
+    ``send_button`` is the call the Send button and the spoken "Console,
+    send." both make (``handle_console_send_message``).
+    """
     host = _host()
     async with _running(host) as pilot:
         chats = await _two_chats(host, pilot)
@@ -369,11 +425,15 @@ async def test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsew
         store.switch_session(a.id)
         assert console._console_visible_draft_session_id == b.id
 
-        await pilot.press("enter")
+        if send == "enter":
+            await pilot.press("enter")
+        else:
+            button = console.query_one("#console-send-message", Button)
+            assert not await console.handle_console_send_message(Button.Pressed(button))
         await pilot.pause()
         assert dispatched == []
         assert composer.draft_text() == B_LEFTOVER
-        assert any("nothing was sent" in notice.lower() for notice in notices), notices
+        assert _refused(notices), notices
 
         held_pass.release.set()
         await _sync_idle(console)
