@@ -25,6 +25,7 @@ import toml
 
 import tldw_chatbook.config as cfg
 from Tests.Backup_Recovery.config_test_support import select_config_source
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Utils.config_encryption import config_encryption
 
 
@@ -201,7 +202,11 @@ def test_enable_config_encryption_write_is_atomic(tmp_path, monkeypatch):
     cfg._CONFIG_CACHE_SOURCE = None
 
 
-def test_app_quit_save_writes_active_file_not_default(isolated_config_paths):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_app_quit_save_writes_active_file_not_default(
+    isolated_config_paths, request
+):
     """Regression test for task-851 review finding 1.
 
     ``enable_config_encryption``/``disable_config_encryption``/

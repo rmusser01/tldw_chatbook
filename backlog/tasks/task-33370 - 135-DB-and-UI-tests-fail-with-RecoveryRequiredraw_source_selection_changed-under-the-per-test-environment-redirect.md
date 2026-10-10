@@ -43,6 +43,8 @@ These tests are blind: they report the recovery bootstrap, not the behaviour the
 3. Run the affected original assertions and meaningful isolation regressions; document any distinct failures with named owners.
 4. Run scoped lint/format/Bandit and independent review, record evidence and prepare reviewable changes.
 ADR required: no. Test fixture correction preserves ADR-126; reference backlog/decisions/126-complete-local-backup-and-recovery.md.
+
+2026-10-10 PR review follow-up: retain the selected config source for the automatic app-quit encryption regression through the existing private-profile interpreter helper; reproduce the mixed-file import failure, then rerun the changed test selection and preflight. ADR required: no. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: test lifetime repair preserves production admission and persistence contracts.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -102,6 +104,8 @@ All19 unique original cases passed across two nonoverlapping phases (12 painted-
 2026-10-03 current-dev qualification: The approved 25 compatibility selectors ran in four separate private processes for their existing fixture-owned profiles. All 27 actual cases passed at UI runtime ae2956966b2d712cc0e842dc4c69214ca1e70b0e, based on dev e355b58c1e95fe467e9161184c3341abc02feda3: Hooks reuse/refusal, mounted Settings, Console pause and durable recovery, database deletion/undo, canonical F9 source composition and changed budget guards. Zero failures, errors, skips or parent network attempts. The initial mixed invocation had three collection errors and ran no selected cases; its unsuccessful receipt is retained. Independent actual JUnit/source/import/byte-and-stat review passed: /private/tmp/backup-workstream-deve355-functional-review.md (JSON SHA256 85b970d775e35b2867d6c1380d747f1ebef4f1bc57b7441e8dcd3e314005a7ef). F9 composition is source-run evidence, not installed/native qualification; the earlier 19 Console cases retain runtime 0c78c1759ff094891230ca76cc31100b2dece6e3.
 
 Normal latest-dev carry: e355..f0ffcf9e819b577bd38c416f38550969c75fb5a0 changes seven Task records only, with no own-path overlap and no new runtime requirement solely for that delta. Independent addendum /private/tmp/backup-workstream-devf0ff-addendum.md passed. Normal rebase produced 01e6bcab14b4da91ab2108dc1c85caf684dbd9e7 with all 22 patches and 34 own blob/mode entries unchanged. Evidence will be committed normally; integration still requires review and fresh exact published-head CI. No full suite, native rerun, deadline change, numerical waiver or relabelled runtime receipt.
+
+2026-10-10 review follow-up on dev cc46cc7300: the mixed changed-file run initially passed330 with one app-quit encryption fixture refusal, while the exact case passed alone. That case now uses the existing private-profile interpreter helper so imported app/config consumers share one owned lifetime. The final19 changed test files pass all331 cases in104.11s; the paired app/encryption selection passes22. Preflight, undefined-name checks, formatting and whitespace checks pass. The informational warm-read thread still emits one pytest warning; no full suite or native qualification was repeated. Independent pinned code review found no introduced P1/P2; final fixture diff remains reviewable. ADR-126 is unchanged.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
