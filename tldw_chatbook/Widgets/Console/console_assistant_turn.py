@@ -389,11 +389,29 @@ class ConsoleActivityDisclosure(Vertical):
 
     async def replace_detail_widgets(self, detail_widgets: Iterable[Widget]) -> None:
         """Replace lazy detail children without replacing the disclosure."""
+
+        def detail_is_live() -> bool:
+            return (
+                not self._closing
+                and not self._pruning
+                and self.is_attached
+                and self.detail_stack.parent is self
+                and not self.detail_stack._closing
+                and not self.detail_stack._pruning
+                and self.detail_stack.is_attached
+            )
+
+        if not detail_is_live():
+            return
         replacements = tuple(detail_widgets)
         if self.detail_stack.children:
             await self.detail_stack.remove_children()
+            if not detail_is_live():
+                return
         if replacements:
             await self.detail_stack.mount(*replacements)
+            if not detail_is_live():
+                return
         self._has_detail = bool(replacements)
         self.header.sync_header(
             self.label,
