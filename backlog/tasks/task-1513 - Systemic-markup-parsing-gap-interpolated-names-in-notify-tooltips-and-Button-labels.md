@@ -3,11 +3,11 @@ id: TASK-1513
 title: >-
   Systemic markup-parsing gap: interpolated names in notify, tooltips, and
   Button labels
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-30 14:00'
-updated_date: '2026-10-10 20:49'
+updated_date: '2026-10-10 20:52'
 labels:
   - evals
   - ux
@@ -177,4 +177,10 @@ RED before the workflow edit: 2 failed / 20 passed in the contract file, specifi
 The actual production guard passed with the unchanged 543 pinned occurrences. Complete preflight passed (175 UI gate entries); Black 25.1.0 checked the modified inventory block, focused Ruff 0.13.1 error checks and whitespace checks passed. AC4 is checked. Independent review of this new workflow step is pending, so task remains In Progress. No full suite, remote Actions run, push or PR creation.
 stack_parent: 595618f4592a3495a251ae0e187980b793c12e74
 ADR required: no; routine integration of this existing guard into its existing required job. The inherited 41-occurrence census limitation remains unchanged.
+
+Required CI independent review closeout (2026-10-10)
+Reviewer review_3029 cleared immutable commit 123ee2a7db312cce8b0a3e5379047bf33e13b1df: verification mode, checker order, failure propagation and !cancelled() are correct; required contexts and lanes remain unchanged. No actionable findings remain in this scope. All four acceptance criteria are checked; task is Done.
+The distinct required-CI receipt remains 749 Tests/CI cases passed in 8.44s after the contract RED (2 failed / 20 passed). This is separate from the 231-test stack interaction run and the earlier 218/49/50 receipts. Guard, preflight and focused static checks passed as recorded above. No full suite, remote Actions run or push.
+stack_parent: 595618f4592a3495a251ae0e187980b793c12e74 (the reviewed integration boundary; retained for the later carry onto the merged sequence).
+ADR required: no; routine integration of the existing guard into its existing required job.
 <!-- SECTION:NOTES:END -->
