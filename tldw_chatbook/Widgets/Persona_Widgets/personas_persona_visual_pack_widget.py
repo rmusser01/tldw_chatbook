@@ -310,6 +310,12 @@ class PersonasPersonaVisualPackWidget(Vertical):
                 id="personas-persona-visual-character-archive",
                 classes="console-action-secondary",
             )
+            yield Button(
+                "Buddy workbench…",
+                id="personas-persona-visual-buddy",
+                classes="console-action-secondary",
+                tooltip="Open the Buddy workbench for this saved, unchanged pack.",
+            )
 
             yield Button(
                 "Petdex…",
@@ -509,6 +515,9 @@ class PersonasPersonaVisualPackWidget(Vertical):
         self.query_one(
             "#personas-persona-visual-character-archive", Button
         ).disabled = not (available and idle)
+        self.query_one("#personas-persona-visual-buddy", Button).disabled = not (
+            available and idle and not self._dirty
+        )
         self.query_one("#personas-persona-visual-petdex", Button).disabled = not (
             available and idle and not self._dirty
         )
