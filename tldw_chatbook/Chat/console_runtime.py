@@ -4283,38 +4283,51 @@ class ConsoleRuntime:
         # (controller-only) construction, tests included, unchanged.
         kwargs.setdefault("ensure_run_hooks", self.ensure_run_hooks)
         kwargs.setdefault("hook_permissions_accessor", self.ensure_hook_permissions)
-        kwargs.update(
-            chat_dictionary_applier=functools.partial(
+        runtime_owned = {
+            "chat_dictionary_applier": functools.partial(
                 _apply_chat_dictionaries_for_app, self._app
             ),
-            world_info_applier=functools.partial(
+            "world_info_applier": functools.partial(
                 _apply_world_info_for_app, self._app
             ),
             # The LIVE seam (two arguments). Every turn this runtime admits
             # carries its frozen capture and release explicitly
             # (``staged_evidence_capture`` / ``staged_evidence_release``);
             # the controller no longer looks for them by name (TASK-34352).
-            rag_capture_provider=self._capture_console_staged_rag,
-            staged_evidence_provider=self._has_staged_evidence,
-            default_session_settings=functools.partial(
+            "rag_capture_provider": self._capture_console_staged_rag,
+            "staged_evidence_provider": self._has_staged_evidence,
+            "default_session_settings": functools.partial(
                 _default_session_settings_for_app,
                 self._app,
             ),
-            library_provider_factory=functools.partial(
+            "library_provider_factory": functools.partial(
                 _library_provider_for_app, self._app
             ),
-            global_user_display_name=functools.partial(
+            "global_user_display_name": functools.partial(
                 _global_user_display_name_for_app, self._app
             ),
-            turn_context_provider=None,
-            provider_config=functools.partial(_provider_config_for_app, self._app),
-            confirm_project_instruction_dispatch=(
+            "turn_context_provider": None,
+            "provider_config": functools.partial(_provider_config_for_app, self._app),
+            "confirm_project_instruction_dispatch": (
                 self._confirm_project_instruction_dispatch
             ),
-            select_project_instruction_binding=(
+            "select_project_instruction_binding": (
                 self._select_project_instruction_binding
             ),
-        )
+        }
+        # TASK-34667: everything in ``runtime_owned`` overwrites whatever a
+        # caller passed. Surface that at debug level instead of swallowing
+        # it -- an always-overwritten caller copy is the
+        # ``_library_provider_for_app`` drift precedent, where a stale copy
+        # silently shadowed (and differed from) the live binding and cost
+        # 24 Library tools behind one swallowed warning.
+        ignored = runtime_owned.keys() & kwargs.keys()
+        if ignored:
+            logger.debug(
+                "ensure_chat_controller: ignoring runtime-owned kwargs "
+                f"supplied by caller: {sorted(ignored)}"
+            )
+        kwargs.update(runtime_owned)
         kwargs.setdefault("buddy_sink", self.persona_buddy_sink)
         kwargs.setdefault("scratch_spaces", self._scratch_spaces)
         kwargs.setdefault("activity_receipts", self._activity_receipts)

@@ -756,10 +756,6 @@ CONSOLE_ACTION_HINTS_COPY = ""
 CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL = "Set up provider"
 CONSOLE_PROVIDER_ACTION_ARROW = " ---------------------->"
 NATIVE_CONSOLE_STATE_VERSION = "1.0"
-# Roleplay P1h: bounds passed to `Chat_Dictionary_Lib.apply_active_chatdicts_to_text`
-# for the native Console send-path applier (`_console_chat_dictionary_applier`).
-_CHATDICT_MAX_TOKENS = 500
-_CHATDICT_STRATEGY = "sorted_evenly"
 _CONSOLE_RAIL_PREFERENCE_WRITE_LOCK = threading.Lock()
 _RESUME_LOCAL_CONVERSATION_ID_MAX_LENGTH = 256
 # Statuses during which the 0.2s transcript poll is actively ticking
@@ -9800,8 +9796,11 @@ class ChatScreen(BaseAppScreen):
                 agent_bridge=self._ensure_console_agent_bridge(),
                 agent_runtime_enabled=self._console_agent_runtime_enabled(),
                 skills_service=getattr(self.app_instance, "skills_scope_service", None),
-                chat_dictionary_applier=self._console_chat_dictionary_applier,
-                world_info_applier=self._console_world_info_applier,
+                # TASK-34667: no dictionary/world-info appliers are passed
+                # here -- `ensure_chat_controller` unconditionally binds the
+                # runtime-owned `_apply_*_for_app` seams over any
+                # caller-supplied copy, so the screen-level appliers this
+                # call used to pass were dead on every path and are removed.
                 rag_capture_provider=self._retrieval._capture_console_staged_rag,
                 default_session_settings=self._session._blank_console_session_settings,
                 library_provider_factory=self._library_activity.build_provider,
@@ -14223,55 +14222,6 @@ class ChatScreen(BaseAppScreen):
     def _dictionary_scope_service(self) -> Any:
         """The app-level chat-dictionary scope service, or None when absent."""
         return getattr(self.app_instance, "chat_dictionary_scope_service", None)
-
-    def _console_chat_dictionary_applier(
-        self, conversation_id: str | None, text: str
-    ) -> str:
-        """Bound applier handed to the native Console controller: apply the
-        active CONVERSATION chat dictionaries to a send's text (never raises).
-
-        Resolves the db lazily (at call time), so a controller built before the
-        db is ready still works. Conversation-only: ``char_data`` is ``None``
-        (native sessions carry no character card yet).
-        """
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if db is None or not conversation_id or not isinstance(text, str):
-            return text
-        from ...Character_Chat import Chat_Dictionary_Lib as cdl
-
-        return cdl.apply_active_chatdicts_to_text(
-            db,
-            conversation_id,
-            None,
-            text,
-            max_tokens=_CHATDICT_MAX_TOKENS,
-            strategy=_CHATDICT_STRATEGY,
-        )
-
-    def _console_world_info_applier(
-        self, conversation_id: str | None, message_text: str, history: list
-    ) -> str:
-        """Bound applier handed to the native Console controller: inject the
-        active CONVERSATION world-info into a send's text (never raises).
-
-        Resolves the db lazily. Conversation-only: ``char_data`` is ``None``
-        (native sessions carry no character card). Honors the same
-        ``[character_chat] enable_world_info`` gate as the legacy send path
-        (the `[character_chat]` table).
-        """
-        db = getattr(self.app_instance, "chachanotes_db", None)
-        if (
-            db is None
-            or not conversation_id
-            or not isinstance(message_text, str)
-            or not get_cli_setting("character_chat", "enable_world_info", True)
-        ):
-            return message_text
-        from ...Character_Chat.world_info_resolver import apply_world_info_to_message
-
-        return apply_world_info_to_message(
-            db, conversation_id, None, message_text, history or []
-        )
 
     async def _console_dictionary_attach_worker(self) -> None:
         """Pick and attach a chat dictionary to the active Console conversation.

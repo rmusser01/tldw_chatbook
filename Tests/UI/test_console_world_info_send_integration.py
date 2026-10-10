@@ -2,12 +2,17 @@
 active CONVERSATION world-info to the model-bound payload while the
 persisted transcript keeps the raw text (Roleplay P2g-1 Task 3).
 
-Exercises the real ``ChatScreen`` -> ``_ensure_console_chat_controller``
-wiring (``world_info_applier=self._console_world_info_applier``) end to end:
+Exercises the real ``ChatScreen`` -> ``_ensure_console_chat_controller`` ->
+``ConsoleRuntime.ensure_chat_controller`` wiring end to end:
 a real ``CharactersRAGDB`` seeded with a conversation-attached world book (the
 ``WorldBookManager`` attach seam), a native session pinned to that
 conversation, and a capturing double standing in for the provider transport
-so the actual outbound payload can be inspected.
+so the actual outbound payload can be inspected. The applier in effect is
+the runtime-owned frozen-input applier ``_apply_world_info_for_app`` that
+``ensure_chat_controller`` always binds (TASK-34667 removed the dead
+screen-level applier copy this docstring used to name --
+``ensure_chat_controller``'s ``kwargs.update`` had overwritten it on every
+path).
 
 Mirrors ``Tests/UI/test_console_dictionary_send_integration.py``'s harness,
 swapping the chat-dictionary seam for the world-book seam.
@@ -15,6 +20,8 @@ swapping the chat-dictionary seam for the world-book seam.
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_dictionary_send_integration import (
     _CapturingGateway,
     _final_user_content,
@@ -23,11 +30,10 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
-from Tests.UI.app_factory import attach_chachanotes_db
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.config import save_setting_to_cli_config
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 
 @pytest.fixture
@@ -57,7 +63,10 @@ async def _bind_existing_console_conversation(console, conversation_id: str):
 
 
 @pytest.mark.asyncio
-async def test_native_send_applies_conversation_world_info_provider_branch(wb_db):
+@private_profile_test
+async def test_native_send_applies_conversation_world_info_provider_branch(
+    wb_db, request
+):
     assert save_setting_to_cli_config("console", "agent_runtime", False)
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -101,8 +110,9 @@ async def test_native_send_applies_conversation_world_info_provider_branch(wb_db
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_native_send_world_info_disabled_by_config_not_injected(
-    wb_db, monkeypatch
+    wb_db, monkeypatch, request
 ):
     assert save_setting_to_cli_config("console", "agent_runtime", False)
     app = _build_test_app()
@@ -120,16 +130,23 @@ async def test_native_send_world_info_disabled_by_config_not_injected(
     gateway = _CapturingGateway()
     app.console_provider_gateway_factory = lambda: gateway
 
-    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    # TASK-34667: the live gate is read inside
+    # `capture_prompt_transform_inputs` (console_chat_controller.py) and the
+    # runtime-owned applier's db fallback (console_runtime.py), both via a
+    # call-time `from tldw_chatbook.config import get_cli_setting` -- so the
+    # config module is the one monkeypatch target that covers them. The old
+    # target (the chat_screen module's binding) only reached the dead
+    # screen-level applier that `ensure_chat_controller` always overwrote.
+    import tldw_chatbook.config as config_module
 
-    real_get_cli_setting = chat_screen_module.get_cli_setting
+    real_get_cli_setting = config_module.get_cli_setting
 
     def _fake_get_cli_setting(section, key, default=None):
         if section == "character_chat" and key == "enable_world_info":
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(chat_screen_module, "get_cli_setting", _fake_get_cli_setting)
+    monkeypatch.setattr(config_module, "get_cli_setting", _fake_get_cli_setting)
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
@@ -149,20 +166,30 @@ async def test_native_send_world_info_disabled_by_config_not_injected(
 
 def test_console_world_info_applier_honors_enable_world_info_setting(monkeypatch):
     """Focused unit test of the gate itself (belt-and-braces alongside the
-    end-to-end disabled-config test above): the bound applier must return the
+    end-to-end disabled-config test above): the applier must return the
     text unchanged, without ever reaching ``apply_world_info_to_message``,
-    when ``[character_chat] enable_world_info`` is falsy."""
-    from tldw_chatbook.Character_Chat import world_info_resolver
-    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+    when ``[character_chat] enable_world_info`` is falsy.
 
-    real_get_cli_setting = chat_screen_module.get_cli_setting
+    TASK-34667 retargeted this test from the dead screen-level copy
+    (``ChatScreen._console_world_info_applier``, removed) to the LIVE
+    applier ``_apply_world_info_for_app`` that
+    ``ConsoleRuntime.ensure_chat_controller`` always binds: the screen copy
+    had been unconditionally overwritten by that method's ``kwargs.update``
+    on every path, so the test was pinning unreachable behavior while the
+    live gate ran uncovered at unit level.
+    """
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.Character_Chat import world_info_resolver
+    from tldw_chatbook.Chat.console_runtime import _apply_world_info_for_app
+
+    real_get_cli_setting = config_module.get_cli_setting
 
     def _fake_get_cli_setting(section, key, default=None):
         if section == "character_chat" and key == "enable_world_info":
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(chat_screen_module, "get_cli_setting", _fake_get_cli_setting)
+    monkeypatch.setattr(config_module, "get_cli_setting", _fake_get_cli_setting)
 
     def _fail_if_called(*args, **kwargs):
         raise AssertionError(
@@ -177,12 +204,7 @@ def test_console_world_info_applier_honors_enable_world_info_setting(monkeypatch
     class _FakeApp:
         chachanotes_db = object()  # non-None so the earlier guards pass
 
-    class _FakeScreen:
-        app_instance = _FakeApp()
-
-    # Bind the real method to a lightweight stand-in with just app_instance.
-    applier = chat_screen_module.ChatScreen._console_world_info_applier.__get__(
-        _FakeScreen()
-    )
-    result = applier("conv-1", "a dragon appears", [])
+    # Call the module-level function directly with the app it would be
+    # partial-bound over in production (frozen inputs absent: the db path).
+    result = _apply_world_info_for_app(_FakeApp(), "conv-1", "a dragon appears", [])
     assert result == "a dragon appears"

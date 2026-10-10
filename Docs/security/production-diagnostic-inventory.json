@@ -540,8 +540,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 40,
-      "diagnostic_digest": "a040dd2f126813d4cd6f",
+      "call_count": 41,
+      "diagnostic_digest": "bfc6112f795ddb27b10e",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_runtime.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
