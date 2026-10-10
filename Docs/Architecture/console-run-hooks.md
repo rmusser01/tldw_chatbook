@@ -1,8 +1,8 @@
 # Console run hooks
 
-This document describes the user-configured external-command hook subsystem: the six lifecycle events, deny-only semantics, execution mechanics (argv-only, process-group kill, bounded capture), and the consent layer. Governed by ADR-148 as amended by ADR-197.
+The Console supports the six legacy argv-command events and the implemented v2 runtime with structured effects and MCP-backed handlers. Legacy behavior follows ADR-148/197; v2 lifecycle and authority contracts follow ADR-163.
 
-## Authoritative files
+## Legacy authoritative files
 
 | File | Role |
 | --- | --- |
@@ -11,9 +11,9 @@ This document describes the user-configured external-command hook subsystem: the
 | `Chat/console_chat_controller.py` | Fire sites: `UserPromptSubmit` on manual submit, `Stop` on terminal run-state transition, `ApprovalRequested` when a permission round is admitted |
 | `Chat/console_agent_bridge.py` | Fire sites: `PreToolUse` via `wrap_review` (guard), `PostToolUse` via the dispatch-loop dependency, `SubagentStop` when a child settles |
 
-Decisions: `backlog/decisions/148-console-run-hooks.md`, `197-console-hook-configuration-review.md`, `163-expanded-console-hook-runtime.md` (accepted, implementation pending). Specs: `Docs/superpowers/specs/2026-09-11-console-run-hooks-design.md`, `2026-09-27-console-hook-settings-and-review-design.md`.
+Decisions: `backlog/decisions/148-console-run-hooks.md`, `197-console-hook-configuration-review.md`, `163-expanded-console-hook-runtime.md` (the status line predates the live v2 wiring; the modules below implement that contract). Specs: `Docs/superpowers/specs/2026-09-11-console-run-hooks-design.md`, `2026-09-27-console-hook-settings-and-review-design.md`.
 
-## Configuration
+## Legacy configuration
 
 Hooks live under `[hooks]` in `config.toml`:
 
@@ -30,7 +30,7 @@ timeout_s = 10.0                              # default 10; must be positive and
 
 Invalid entries fail loud: a warning is logged and that hook is disabled; a non-bool `enabled` disables all hooks. Project-shipped hooks are rejected outright (ADR-069 trust rule — untrusted project files cannot configure hooks).
 
-## The six lifecycle events
+## The six legacy lifecycle events
 
 | Event | Kind | Fires | Blocking? | Failure mode |
 | --- | --- | --- | --- | --- |
@@ -47,7 +47,7 @@ Invalid entries fail loud: a warning is logged and that hook is disabled; a non-
 - `PreToolUse`: crash, nonzero/non-2 exit, timeout, stdout-capture overflow, or engine error all deny. Engine-level failure returns "hooks engine; failing closed". Denied calls are excluded from the approval card entirely.
 - `PostToolUse`: receives the still-uncapped result (truncated to budget here); built on `notify` so a slow hook never stalls dispatch.
 
-## Execution mechanics
+## Legacy execution mechanics
 
 - **Payload**: JSON on stdin — `{hook_event, session_id, run_id, timestamp, cwd, data}`. `cwd` defaults to `[console] workspace_root`, else the app cwd, overridable per fire. Tool arguments are summarized for notification events (never `str()`-coerced); guard events receive arguments verbatim.
 - **Process model**: `subprocess_exec` argv with `start_new_session=True` (process group); timeout kills the whole group (`killpg` SIGKILL; `taskkill /F /T` on Windows), then a bounded 5 s reap. Escaped descendants are outside the guarantee.
@@ -58,9 +58,17 @@ Invalid entries fail loud: a warning is logged and that hook is disabled; a non-
 
 ## Consent layer (ADR-197)
 
-Every enabled hook requires explicit user consent before the next manual Send (background submissions require consent without UI). Grants are scoped to (config file, hook identity, a versioned fingerprint of event+argv+matcher+timeout) and stored in a private atomic local JSON store owned by the shared runtime. Consent failure is restrictive — it cannot inherit `UserPromptSubmit`'s fail-open behavior. Revocation seals current-runtime admission before persistence. ADR-162 (managed plugins) and ADR-163 (expanded runtime) are outside the implemented scope.
+Every enabled hook requires explicit user consent before the next manual Send (background submissions require consent without UI). Grants are scoped to (config file, hook identity, a versioned fingerprint of event+argv+matcher+timeout) and stored in a private atomic local JSON store owned by the shared runtime. Consent failure is restrictive — it cannot inherit `UserPromptSubmit`'s fail-open behavior. Revocation seals current-runtime admission before persistence. The live v2 runtime and managed-plugin hook contributions have separate ownership and validation; legacy grants do not widen v2 authority.
 
-## Dataflow
+## Implemented v2 runtime (ADR-163)
+
+`Agents/hooks_v2/` owns normalized definitions/results, validation, matching, budgets, command and MCP executors, tool phases, lifecycle checkpoints, context and continuations. `ConsoleRuntime.ensure_hooks_v2()` owns session engines; `prepare_hooks_v2()` binds a live conversation/workspace hook set and completes `SessionStart` before dependent work. The controller wires send and compaction boundaries; the bridge supplies the engine and lifecycle to `AgentService`. Tab focus does not initialize a new session.
+
+In addition to the legacy event names, v2 handles `SessionStart`, `SessionEnd`, `SubagentStart`, `PostToolUseFailure`, `PreCompact`, `PostCompact` and `Interrupt`. Accepted effects are event-specific: context, deny, validated tool-input proposals, narrowing child limits and bounded Stop continuations. Handlers declare `required` and `require_context`; host-owned checkpoint stores accept current effects and release dependent work together. Failed required events block subsequent input/use while retaining settled results. Revocation and owner retirement suppress late effects.
+
+Tool phases transform input, validate final arguments, then apply normal permission review and fresh dispatch checks. MCP-backed hooks retain ordinary tool schemas, approvals, cancellation and causal-cycle checks. A hook cannot bypass permission authority. Stop continuations use bounded scheduler ownership rather than recursive execution. V2 output is parsed through its closed protocol; legacy stdout is never inferred to be v2.
+
+## Legacy dataflow
 
 1. `load_hooks_config` parses `[hooks]`; `ConsoleRuntime.ensure_run_hooks()` builds one engine (an unconfigured engine returns `None` and does not latch — configuring hooks later in the same app run works).
 2. The controller wires the engine at bridge construction: `guard_tool_calls = engine.wrap_review(...)`, `post_tool_call = engine.post_tool_dep(...)`.

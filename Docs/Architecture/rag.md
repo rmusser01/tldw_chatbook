@@ -15,7 +15,7 @@ This document describes the RAG stack: the shared RAG service (embeddings + vect
 | `RAG_Search/simplified/embeddings_wrapper.py` + `Embeddings/Embeddings_Lib.py` | `EmbeddingsServiceWrapper` over `EmbeddingFactory` — exactly two providers: local HuggingFace transformers and OpenAI API |
 | `RAG_Search/chunking_service.py` | `ChunkingService` — the only door from RAG into `Chunking/` |
 | `DB/RAG_Indexing_DB.py` | `RAGIndexingDB` — incremental-indexing **state** DB (not the vector store) |
-| `RAG_Search/reranker.py` | Reranker families incl. `CrossEncoderReranker` (the only local/offline strategy) |
+| `RAG_Search/reranker.py` | Reranker families incl. `CrossEncoderReranker` (local model reranking) |
 | `RAG_Search/fusion.py` | RRF + interleaving used by the Library keyword merge |
 | `Library/library_local_rag_search_service.py` | The Library Search/RAG canvas backend: four keyword seams + semantic leg |
 | `Library/library_rag_answer_service.py` | `generate_library_rag_answer()` — grounded answer generation |
@@ -46,7 +46,7 @@ This document describes the RAG stack: the shared RAG service (embeddings + vect
 
 ## Rerankers
 
-Families: cross-encoder (local, offline — loads with `local_files_only=True`; a missing model degrades to retrieval order rather than downloading mid-search; a chat-model name in the config falls back to a measured default), plus pointwise/pairwise/listwise (each spends one provider call per search). Construction is via `create_reranker_from_config`; the profile must carry the reranking section or rerankers silently disappear (see gotchas).
+Families: cross-encoder (local, offline — loads with `local_files_only=True`; a missing model degrades to retrieval order rather than downloading mid-search; a chat-model name in the config falls back to a measured default), plus pointwise (one scoring request per candidate), pairwise (repeated comparison requests while merging), and listwise (one ranking request per search). These counts describe uncached scoring/ranking operations before retries; pointwise caching can avoid requests and `top_k_to_rerank` caps the pool. Construction is via `create_reranker_from_config`; the profile must carry the reranking section or rerankers silently disappear (see gotchas).
 
 ## Config keys
 
@@ -60,7 +60,7 @@ Families: cross-encoder (local, offline — loads with `local_files_only=True`; 
 - `RAG_Search/simplified/` owns the engine; `RAG_Search/chunking_service.py` is the only door into `Chunking/`; `DB/RAG_Indexing_DB.py` owns incremental bookkeeping, not vectors.
 - `ingestion_indexing.py` is the **only** constructor of the shared service (two-lock + generation design so a frozen UI can never hold the fast lock during a build).
 - The Library service owns the four-seam keyword path and UI recovery states; answer generation deliberately lives outside it as a pure seam with an injected `chat` callable.
-- `RAG_Search/search_service.py` exposes MCP-facing search that falls back to keyword FTS when the RAG runtime is unavailable (fallback rows carry `score: None`, never a fabricated 1.0).
+- `RAG_Search/simplified/search_service.py` exposes MCP-facing search that falls back to keyword FTS when the RAG runtime is unavailable (fallback rows carry `score: None`, never a fabricated 1.0).
 
 ## Governing decisions and docs
 
@@ -73,4 +73,4 @@ ADR-005 (invest in local RAG mirroring tldw server), ADR-013 (plain-text vs FTS 
 3. Chroma `add` keeps existing ids — re-index paths must delete first.
 4. Hybrid cache keys must include the **resolved** fusion params.
 5. `SeamState` enum members are all truthy — compare with `is`, never truthiness.
-6. Cross-encoder is the only local/offline rerank strategy; the LLM-based ones cost a provider call per search.
+6. Cross-encoder runs a local model; LLM strategies use the configured provider, which may also be local. Request counts depend on the strategy and candidate pool.

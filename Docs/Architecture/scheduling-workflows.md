@@ -1,6 +1,6 @@
 # Schedules and workflows
 
-This document describes the unified scheduler (reminders, watchlist checks, briefings, automations), the transfer/ownership model with the server, the Schedules workbench, and the honest state of the Workflows destination (decided in ADR-138, **not implemented**). Meetings is a capture surface outside the scheduler and is covered briefly at the end.
+This document describes the unified scheduler (reminders, watchlist checks, briefings, automations), the transfer/ownership model with the server, the Schedules workbench, and the session-scoped execution exposed by the Workflows destination (ADR-138). Meetings is a capture surface outside the scheduler and is covered briefly at the end.
 
 ## Authoritative files
 
@@ -39,12 +39,12 @@ This document describes the unified scheduler (reminders, watchlist checks, brie
 
 `owner_id = "server:<user_id>"` rows are the server's to execute — the local loop never arms them, and manual run-now refuses them and any row mid-transfer. Transfers CAS `transfer_state` (e.g. `to_server_sent`); `recover_inflight_transfers` un-sticks crashed transfers at startup. Server-scoped history is server-authoritative — the local run ledger skips those rows.
 
-## Workflows: local authoring shipped; run gated off
+## Workflows: local authoring and session execution
 
 ADR-138 (`backlog/decisions/138-portable-workflow-definitions-and-local-execution.md`) governs portable workflow definitions and local execution. The current state on this branch:
 
 - **Authoring is live.** The `Workflows/` package provides the model (`Revision` — immutable saved definitions with portable identity and lineage; `Draft`), a step catalog (contracts, field specs, discovery), the `DocumentService`, a draft-session service with confirmation versions, expressions, and `WorkflowAuthoring`. The app exposes them lazily (`ensure_workflow_authoring()` populating `app.workflow_documents` / `app.workflow_drafts`); the screen degrades to an "authoring owner unavailable" panel when they are absent. `WorkflowsScreen` is a library/navigator/editor authoring surface with save-revision, validate, import, and export.
-- **Run is explicitly unavailable in this authoring release** — the Run button ships disabled with the roadmap copy "Sequential v1; branching v2; parallel v3." Execution machinery exists underneath (one app-owned, **in-memory** sequential workflow session with no execution persistence, blocking local step effects for a retained worker, session permissions), matching the approved first-sequential-workflow execution design — but the UI does not expose running.
+- **Saved revisions can run.** `_run_saved()` opens setup and confirmation, then uses `app.ensure_workflow_session()` to compose one app-owned, in-memory sequential session. Run is enabled after the required services and saved-revision checks; an unsaved draft prompts for which revision to run. The supported execution path is keyless llama.cpp to Local Note, with existing session permissions and worker ownership. Execution is session-only, without persisted run recovery; the roadmap copy describes later branching/parallel scope.
 - The `Image|Video_Generation/workflows/*.json` files are provider pipeline payloads, unrelated to this destination. `Docs/User_Guide/workflows.md` is a self-declared stub.
 
 Specs: `Docs/superpowers/specs/2026-09-14-workflows-authoring-compatibility.md`, `2026-09-14-workflows-authoring-dev.md`, `2026-09-16-workflows-first-run-design.md` ("first sequential workflow: execution design checkpoint").
@@ -70,7 +70,7 @@ Specs: `Docs/superpowers/specs/2026-09-14-workflows-authoring-compatibility.md`,
 
 ## Governing decisions
 
-ADR-018 (`018-local-server-hybrid-scheduled-tasks.md`), ADR-019 (watchlist scheduler migration), ADR-077 (`077-server-offloaded-scheduled-agent-tasks.md`), ADR-099 (`099-schedule-editor-shape.md`), ADR-112 (`112-per-task-schedule-ownership-transfer.md`), ADR-116 (`116-schedules-inspector-editing.md`), ADR-138 (workflows — unimplemented). User guide: `Docs/User_Guide/schedules.md` (the authoritative behavior copy for liveness, preflight, incidents, lateness, run-now, transfers, timeouts).
+ADR-018 (`018-local-server-hybrid-scheduled-tasks.md`), ADR-019 (watchlist scheduler migration), ADR-077 (`077-server-offloaded-scheduled-agent-tasks.md`), ADR-099 (`099-schedule-editor-shape.md`), ADR-112 (`112-per-task-schedule-ownership-transfer.md`), ADR-116 (`116-schedules-inspector-editing.md`), ADR-138 (workflow definitions and session execution). User guide: `Docs/User_Guide/schedules.md` (the authoritative behavior copy for liveness, preflight, incidents, lateness, run-now, transfers, timeouts).
 
 ## Verified gotchas
 

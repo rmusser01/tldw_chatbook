@@ -7,7 +7,7 @@ This document describes the agent execution loop: the pure control loop in `Agen
 | File | Role |
 | --- | --- |
 | `Agents/agent_runtime.py` | The PURE control loop — no Textual, app, DB, or I/O imports. `run_agent_loop()`, `LoopDeps` |
-| `Agents/agent_service.py` | The only impure `Agents/` module: provider calls, permission gate, sub-agent spawning, `AgentRunsDB` persistence. `AgentService.run_turn()` |
+| `Agents/agent_service.py` | The loop composition/service layer: provider calls, permission gate, sub-agent spawning, `AgentRunsDB` persistence. `AgentService.run_turn()` |
 | `Agents/agent_models.py` | Step-kind and outcome constants (`RUN_DONE`/`RUN_STUCK`/`RUN_CANCELLED`/`RUN_ERROR`/`RUN_SUPERSEDED`, `STEP_*`, `TOOL_OUTCOME_*`), `AgentConfig`, `RunBudget`, `ToolCall`, `ToolResult` |
 | `Agents/fleet_coordinator.py` | `FleetCoordinator` / `FleetHandle` — concurrent sub-agents |
 | `Agents/run_context.py` | ContextVars (`current_run_id`, `use_run_actor`, `use_tool_call_id`) — how run identity reaches providers without a run parameter |

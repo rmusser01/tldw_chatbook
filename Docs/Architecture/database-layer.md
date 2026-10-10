@@ -7,13 +7,13 @@ This document describes the SQLite layer: the `BaseDB` infrastructure (private c
 | File | Role |
 | --- | --- |
 | `DB/base_db.py` | `BaseDB` ABC (path handling, `':memory:'`, client ids, private connections, vacuum, integrity check) plus process-wide machinery: `SQLiteConnectionQuiescenceRegistry`, quiescent connection/cursor wrappers, `_SemanticMutationAuthorization` + `register_semantic_mutation_guard` |
-| `DB/ChaChaNotes_DB.py` | `CharactersRAGDB` — conversations, messages, characters, notes, keywords, world books, learning tables, console policy columns. Schema **v78** (`_CURRENT_SCHEMA_VERSION` — the figure drifts; trust the constant) |
+| `DB/ChaChaNotes_DB.py` | `CharactersRAGDB` — conversations, messages, characters, notes, keywords, world books, learning tables, console policy columns. Schema version is defined by `_CURRENT_SCHEMA_VERSION` |
 | `DB/Client_Media_DB_v2.py` | `MediaDatabase` — media items, chunks, transcripts, document versions, chunking templates. Schema v9 |
 | `DB/migrations/chachanotes_vN_to_vN+1_*.sql` | File-backed ChaChaNotes migration steps (v16→v67+ present) |
 | `DB/sql_validation.py` | Identifier validation (`escape_identifier`, `validate_table_name`, `validate_column_name`) |
 | `DB/Prompts_DB.py`, `Evals_DB.py`, `Subscriptions_DB.py`, `AgentRuns_DB.py`, `Library_*_DB.py`, `RAG_Indexing_DB.py`, `Workspace_DB.py`, `VisualIdentity_DB.py`, `Chunking_Lab_DB.py` | Satellite databases |
 
-Note: the "schema v37" figure that circulates in older docs is stale — the live ChaChaNotes schema version is v78 (verify `_CURRENT_SCHEMA_VERSION` in `DB/ChaChaNotes_DB.py` when this matters).
+Note: the "schema v37" figure that circulates in older docs is stale — read `_CURRENT_SCHEMA_VERSION` in `DB/ChaChaNotes_DB.py` for the current version.
 
 ## BaseDB infrastructure
 

@@ -26,7 +26,7 @@ It complements the other doc families:
 - [tool-catalog.md](./tool-catalog.md) — `ToolCatalogRegistry` provider seam, namespacing and shadowing, per-run composition, local `fs_*` tools, skills, runtime tools
 - [mcp-hub.md](./mcp-hub.md) — MCP hub, external stdio servers, permission store semantics, standalone server, gateway runtime
 - [console-file-authority.md](./console-file-authority.md) — per-chat scratch, workspace bindings, admitted roots, AGENTS.md project instructions and the activation ledger, workspace assistant defaults
-- [console-run-hooks.md](./console-run-hooks.md) — the six hook lifecycle events, deny-only semantics, execution mechanics, consent layer
+- [console-run-hooks.md](./console-run-hooks.md) — legacy and v2 hook lifecycle events, structured effects, permission/checkpoint ownership and consent
 
 ### Providers and retrieval
 
@@ -36,7 +36,7 @@ It complements the other doc families:
 
 ### Data and pipelines
 
-- [database-layer.md](./database-layer.md) — `BaseDB` infrastructure, ChaChaNotes schema v78 and migrations, Media DB, cross-DB patterns, satellite DBs
+- [database-layer.md](./database-layer.md) — `BaseDB` infrastructure, ChaChaNotes schema and migrations, Media DB, cross-DB patterns, satellite DBs
 - [notes-sync.md](./notes-sync.md) — review-first bidirectional notes sync, root leases, recovery-first executor, session file-notes and guarded git
 - [media-ingestion.md](./media-ingestion.md) — parse-without-DB worker model, per-type extraction, single write seam, chunk stamping
 - [media-generation.md](./media-generation.md) — image/video adapter registries, secrets precedence, validation choke point, chat integration, ephemeral video store
@@ -45,7 +45,7 @@ It complements the other doc families:
 
 - [library-shell.md](./library-shell.md) — Library destination: rail/canvas navigation, adaptive reader, read-it-later, collections, the durable ingest job queue
 - [subscriptions-watchlists.md](./subscriptions-watchlists.md) — source polling, single-flight run claims, items and briefings, the artifact chain
-- [scheduling-workflows.md](./scheduling-workflows.md) — unified scheduler (reminders, watchlist checks, briefings, automations), server ownership/transfer, workflows authoring (run gated off), meetings
+- [scheduling-workflows.md](./scheduling-workflows.md) — unified scheduler (reminders, watchlist checks, briefings, automations), server ownership/transfer, workflow authoring and session execution, meetings
 - [evals.md](./evals.md) — classic evals orchestration, word bench, character probe engines, EvalsDB
 - [speech.md](./speech.md) — TTS service and adapter registry, voice profiles, PCM playback, dictation, hands-free loop
 - [personal-context.md](./personal-context.md) — encrypted profile store, bounded snapshot injection, agent lessons and human-reviewed promotion
