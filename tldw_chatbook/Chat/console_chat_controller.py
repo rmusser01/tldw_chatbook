@@ -347,6 +347,8 @@ from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnExecutionContext,
 )
 from tldw_chatbook.Chat.console_turn_preparation import (
+    LIBRARY_PAUSE_CANCELLED_COPY,
+    library_pause_copy,
     ConsolePreparationPauseKind,
     ConsolePreparationTransition,
     ContextCompactionHold,
@@ -7938,7 +7940,12 @@ class ConsoleChatController:
             preparation_id,
             expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
         )
-        return self._prepared_action_refusal(None, "Library preparation canceled.")
+        # TASK-33621.20: a cancelled Library pause no longer reads "Blocked".
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STOPPED, LIBRARY_PAUSE_CANCELLED_COPY),
+            session_id=preparation.session_id,
+        )
+        return self._prepared_action_refusal(None, LIBRARY_PAUSE_CANCELLED_COPY)
 
     def _cancel_temporary_capture_preparation(
         self,
@@ -10481,16 +10488,16 @@ class ConsoleChatController:
                     preparation.preparation_id
                 )
                 if preparation_outcome.state is not ConsoleTurnPreparationState.READY:
+                    # TASK-33621.20: say why, and name the paused preparation
+                    # so the unsent turn's Restore/Discard can release it.
+                    paused_copy = library_pause_copy(preparation_outcome.error_code)
                     self._set_run_state(
-                        ConsoleRunState.blocked(
-                            "Library preparation paused before provider dispatch."
-                        ),
-                        session_id=session.id,
+                        ConsoleRunState.blocked(paused_copy), session_id=session.id
                     )
                     return ConsoleSubmitResult(
                         False,
                         False,
-                        "Library preparation paused before provider dispatch.",
+                        paused_copy,
                         session_id=session.id,
                         origin=origin,
                         queue_entry_id=queue_entry_id,
