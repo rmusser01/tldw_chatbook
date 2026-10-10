@@ -1666,6 +1666,17 @@ assert the literal type (`Text`/`Content`) when the surface cannot be painted in
 test, and prove the test red on the unfixed code. Tests:
 `Tests/UI/test_roleplay_hostile_names.py`, `Tests/UI/test_roleplay_hostile_text_surfaces.py`.
 
+**Toasts are invisible to Pilot by default (TASK-34751, 2026-10-10).** Every Study
+widget sink was fixed and green in Pilot, yet the live app still exited the moment a
+deck named `bd9st Bio [/b] deck` was created: `LocalStudyService.create_deck` raises a
+"deck created" toast through `NotificationDispatchService`, and `Toast.render` parses a
+markup-on `notify()` message. `App.run_test()` defaults to `notifications=False` (and
+`tooltips=False`), so no `ToastRack` exists and the sink never drew -- and the test
+app's Study service had no dispatcher wired either. A hostile-text test for a flow that
+notifies must pass `run_test(..., notifications=True)` and wire the real dispatcher;
+the live repro took an instrumented `_handle_exception` (traceback to a scratch file)
+because the profile log records only the exception type and site.
+
 ## A coroutine handed to `app.call_later` is awaited on the app pump: Enter froze every key, a click did not (TASK-33622.16, 2026-10-03)
 
 **Incident.** Found live during TASK-33622.15: after **Enter** sent

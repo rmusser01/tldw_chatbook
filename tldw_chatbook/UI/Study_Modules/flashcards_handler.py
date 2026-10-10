@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
+from textual.content import Content
 from textual.css.query import NoMatches, QueryError
 from textual.widgets import (
     Button,
@@ -37,6 +38,16 @@ FLASHCARD_SELECT_DECK_DELETE_TOOLTIP = "Select a deck before deleting it."
 FLASHCARD_DELETE_DECK_SERVER_TOOLTIP = "Server mode does not support deck deletion. Delete cards individually or switch to local mode."
 
 
+def _literal_deck_name(deck: dict[str, Any]) -> Content:
+    """A deck name for a `Select` prompt, shown as typed.
+
+    TASK-34751: a deck name is user text. A `str` prompt is parsed as Textual
+    markup by both the picker's label and its dropdown, so `Bio [/b]` raised
+    `MarkupError` while the picker was drawn, which exits the app.
+    """
+    return Content(str(deck.get("name") or "Unnamed deck"))
+
+
 class StudyFlashcardsController:
     """Own flashcards deck/card/review interactions inside the Study screen."""
 
@@ -66,6 +77,9 @@ class StudyFlashcardsController:
         # compounding, so a second submission for the SAME presentation is a
         # double-submit, not a second review -- see `submit_rating`.
         self._reviewed_presentation: Optional[int] = None
+        # TASK-34751: which write of `#card-list` owns it -- see
+        # `_claim_card_list`.
+        self._card_list_generation: int = 0
 
     def _current_mode(self) -> str:
         getter = getattr(self.app_instance, "get_authoritative_runtime_source", None)
@@ -314,6 +328,9 @@ class StudyFlashcardsController:
             deck_select.clear()
         except Exception:
             pass
+        # Emptying the list is a write too: a rebuild still loading the old
+        # scope's cards must not repopulate it.
+        self._claim_card_list()
         try:
             list_view = self.window.query_one("#card-list", ListView)
             list_view.remove_children()
@@ -348,7 +365,7 @@ class StudyFlashcardsController:
 
         selected_deck_id = self._selected_deck_id()
         options = [
-            (str(deck.get("name") or "Unnamed deck"), str(deck.get("backing_id")))
+            (_literal_deck_name(deck), str(deck.get("backing_id")))
             for deck in self.current_decks
             if deck.get("backing_id") not in {None, "", selected_deck_id}
         ]
@@ -590,7 +607,7 @@ class StudyFlashcardsController:
 
         deck_select = self.window.query_one("#deck-select", Select)
         options = [
-            (str(deck.get("name") or "Unnamed deck"), str(deck.get("backing_id")))
+            (_literal_deck_name(deck), str(deck.get("backing_id")))
             for deck in decks
             if deck.get("backing_id") not in {None, ""}
         ]
@@ -620,6 +637,56 @@ class StudyFlashcardsController:
 
         self._update_lifecycle_controls()
 
+    def _claim_card_list(self) -> int:
+        """Make the caller the one writer of `#card-list`; return its token.
+
+        TASK-34751: the list has several writers that can be in flight at
+        once. `refresh_decks` selects a deck through `Select.value`, which
+        posts `Select.Changed`, and `StudyWindow.handle_deck_select_changed`
+        rebuilds the list in its own worker while the caller (`create_deck`,
+        `delete_selected_deck`, `initialize_view`) rebuilds it too; Create /
+        Delete / Move Card and the Refresh button are writers on their own
+        workers. Worker groups cannot serialise all of them, and whether a
+        `Select.Changed` fires depends on Textual internals (`set_options`
+        resets the value), so the rule lives here instead: the most recent
+        claim owns the list, and an older rebuild stops at its next
+        checkpoint without writing. Unguarded, two rebuilds interleaved their
+        clears and per-row appends -- 7 rows for a 4-card deck.
+        """
+        self._card_list_generation += 1
+        return self._card_list_generation
+
+    def _owns_card_list(self, generation: int, list_view: ListView) -> bool:
+        """May the rebuild holding `generation` still write `list_view`?
+
+        No once a newer claim exists, and no once the list has left the app:
+        a sub-view switch removed it, or the app is shutting down
+        (`is_attached` is False and a mount would raise `MountError`).
+        """
+        return generation == self._card_list_generation and list_view.is_attached
+
+    @staticmethod
+    def _card_list_rows(cards: list[dict[str, Any]]) -> list[ListItem]:
+        """The `#card-list` rows for `cards`, or the one empty-state row.
+
+        Fronts are user text, so rows are not markup (TASK-34751): the queue
+        state `[new]` used to vanish as a style tag, and a front such as
+        `What does [/b] do?` raised `MarkupError` while drawn.
+        """
+        if not cards:
+            empty_item = ListItem(Label("No cards in this deck."))
+            empty_item.study_card_record = None
+            return [empty_item]
+        rows: list[ListItem] = []
+        for index, card in enumerate(cards):
+            queue_state = str(card.get("queue_state") or "unknown")
+            label = f"{card.get('front', '')} [{queue_state}]"
+            list_item = ListItem(Label(label, markup=False))
+            list_item.study_card_record = card
+            list_item.study_card_index = index
+            rows.append(list_item)
+        return rows
+
     async def refresh_cards(self, *, preserve_review_panel: bool = False) -> None:
         service = self._scope_service()
         if service is None:
@@ -629,8 +696,13 @@ class StudyFlashcardsController:
             self.handle_scope_changed()
             return
 
+        # Every `await` below is followed by an ownership check: a newer
+        # rebuild (or a scope reset) has cleared the list and owns it now.
+        generation = self._claim_card_list()
         list_view = self.window.query_one("#card-list", ListView)
         await list_view.clear()
+        if not self._owns_card_list(generation, list_view):
+            return
         self.current_cards = []
         self.selected_card_record = None
 
@@ -660,27 +732,20 @@ class StudyFlashcardsController:
             limit=100,
             offset=0,
         )
+        if not self._owns_card_list(generation, list_view):
+            return
         self.current_cards = list(cards)
-
-        if not cards:
-            empty_item = ListItem(Label("No cards in this deck."))
-            empty_item.study_card_record = None
-            await list_view.append(empty_item)
-            if not preserve_review_panel:
-                self.reset_review_panel("No cards due for review.")
-            self._update_lifecycle_controls()
+        # One mount for the whole deck: an `await` per row was a gap for
+        # every other writer to interleave into.
+        await list_view.extend(self._card_list_rows(self.current_cards))
+        if not self._owns_card_list(generation, list_view):
             return
 
-        for index, card in enumerate(cards):
-            queue_state = str(card.get("queue_state") or "unknown")
-            label = f"{card.get('front', '')} [{queue_state}]"
-            list_item = ListItem(Label(label))
-            list_item.study_card_record = card
-            list_item.study_card_index = index
-            await list_view.append(list_item)
-
         if not preserve_review_panel:
-            self._set_review_status("Ready to review selected deck.")
+            if cards:
+                self._set_review_status("Ready to review selected deck.")
+            else:
+                self.reset_review_panel("No cards due for review.")
         self._update_lifecycle_controls()
 
     async def create_deck(self) -> None:

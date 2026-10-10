@@ -128,9 +128,16 @@ class _FakeApp:
     def __init__(self):
         self.notify_calls = []
 
-    def notify(self, message, severity="information", timeout=None):
+    def notify(self, message, severity="information", timeout=None, markup=True):
+        # `markup` mirrors Textual's `App.notify`; dispatched text arrives with
+        # it off (TASK-34751).
         self.notify_calls.append(
-            {"message": message, "severity": severity, "timeout": timeout}
+            {
+                "message": message,
+                "severity": severity,
+                "timeout": timeout,
+                "markup": markup,
+            }
         )
 
 
@@ -152,6 +159,7 @@ async def test_reminder_handler_integration_persists_and_toasts_through_real_dis
 
     assert len(app.notify_calls) == 1
     assert "Pay rent" in app.notify_calls[0]["message"]
+    assert app.notify_calls[0]["markup"] is False  # a reminder title is user text
 
     # No-app case: still persists, but never attempts toast delivery.
     handler_no_app = ReminderHandler(dispatch_service=service, app_getter=None)

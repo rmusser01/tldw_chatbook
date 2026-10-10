@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
+from textual.content import Content
 from textual.widgets import Input, Label, ListItem, ListView, Select, Static, TextArea
 
 from ...Study_Interop import LocalQuizService, QuizScopeService, ServerQuizService
@@ -384,8 +385,13 @@ class StudyQuizzesController:
         )
 
         quiz_select = self.window.query_one("#quiz-select", Select)
+        # TASK-34751: a quiz name is user text; a `str` prompt is parsed as
+        # markup by the picker, so `[/b]` in a name raised `MarkupError`.
         options = [
-            (str(quiz.get("name") or "Unnamed quiz"), str(quiz.get("backing_id")))
+            (
+                Content(str(quiz.get("name") or "Unnamed quiz")),
+                str(quiz.get("backing_id")),
+            )
             for quiz in quizzes
             if quiz.get("backing_id") not in {None, ""}
         ]
@@ -451,7 +457,8 @@ class StudyQuizzesController:
         else:
             for question in questions:
                 label = str(question.get("question_text") or "Untitled question")
-                await list_view.append(ListItem(Label(label)))
+                # Question text is user text, not markup (TASK-34751).
+                await list_view.append(ListItem(Label(label, markup=False)))
             list_view.index = 0
 
         if self.current_attempt_id is None:

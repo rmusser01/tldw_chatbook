@@ -53,8 +53,12 @@ def show_notification(
             persistent=(timeout is None),
         )
     else:
-        # Fallback to built-in notify
-        app.notify(message, severity=severity, timeout=timeout)
+        # Fallback to built-in notify. The message is plain text, not markup
+        # (TASK-34751): callers compose it from user data -- a deck, quiz or
+        # source name -- and `Toast.render` parses a markup-on message, so a
+        # name such as `Bio [/b]` raised `MarkupError` while the toast was
+        # drawn, which exits the app.
+        app.notify(message, severity=severity, timeout=timeout, markup=False)
 
 
 #

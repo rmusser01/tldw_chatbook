@@ -60,11 +60,19 @@ class QuizSessionWidget(Widget):
     def compose(self) -> ComposeResult:
         with Vertical(id="quiz-session"):
             yield Static("Quiz Session", classes="quiz-session-title")
+            # TASK-34751: these show user text (workspace and quiz names, the
+            # quiz status line), so they are not markup -- `[/b]` in a quiz
+            # name raised `MarkupError` when drawn.
             yield Static(
-                "Global study", id="quiz-scope-summary", classes="quiz-session-meta"
+                "Global study",
+                id="quiz-scope-summary",
+                classes="quiz-session-meta",
+                markup=False,
             )
-            yield Static("Select a quiz to begin.", id="quiz-session-summary")
-            yield Static("", id="quiz-session-status")
+            yield Static(
+                "Select a quiz to begin.", id="quiz-session-summary", markup=False
+            )
+            yield Static("", id="quiz-session-status", markup=False)
             with Horizontal(classes="quiz-session-actions"):
                 yield Button(
                     "Start quiz",

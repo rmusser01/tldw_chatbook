@@ -203,6 +203,20 @@ def _is_blank(value: Any) -> bool:
     return value in {None, "", False} or str(value).startswith("Select.")
 
 
+def _study_workers_pending(app) -> bool:
+    """True while a Study worker (e.g. a ``#card-list`` rebuild) is queued or running.
+
+    ``create_deck`` selects the new deck, and that ``Select.Changed`` makes
+    ``StudyWindow.handle_deck_select_changed`` rebuild ``#card-list`` a second
+    time in a "study-refresh-cards" worker, which is usually still running
+    when ``create_deck()`` returns.
+    """
+    return any(
+        str(worker.group).startswith("study-") and not worker.is_finished
+        for worker in app.workers
+    )
+
+
 def _card_list_labels(list_view: ListView) -> list[str]:
     labels: list[str] = []
     for item in list_view.children:
@@ -253,6 +267,14 @@ async def test_real_service_create_deck_select_deck_and_add_card_in_local_mode()
         assert db.get_deck(deck_id)["name"] == "Cell biology"
 
         card_list = app.screen.query_one("#card-list", ListView)
+        # Not read the instant create_deck() returns: the deck switch's own
+        # rebuild of #card-list is still in flight, and reading between its
+        # clear and its append saw `[]` (CI UI Fast Lane, 2026-10-10).
+        await _wait_until(
+            pilot,
+            lambda: not _study_workers_pending(app),
+            what="the deck switch's card-list rebuild to finish",
+        )
         assert _card_list_labels(card_list) == ["No cards in this deck."]
 
         app.screen.query_one("#card-front", TextArea).text = "What is a ribosome?"

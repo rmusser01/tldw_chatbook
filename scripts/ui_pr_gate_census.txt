@@ -202,3 +202,10 @@ Tests/UI/test_roleplay_frame_state.py
 Tests/UI/test_roleplay_stylesheet.py
 Tests/UI/test_workbench_fitted_text.py
 Tests/UI/test_roleplay_hostile_text_surfaces.py
+
+# TASK-34751: Study ▸ Flashcards' #card-list has one writer -- overlapping
+# rebuilds (deck switch + caller, two refreshes, a slowed create-deck, a
+# rebuild whose list leaves mid-fetch) list each card once (4 tests, about
+# 16 s pytest / 19 s wall locally). The literal-user-text suite
+# (test_study_user_text_literal.py, about 27 s) stays outside the lane.
+Tests/UI/test_study_card_list_single_writer.py

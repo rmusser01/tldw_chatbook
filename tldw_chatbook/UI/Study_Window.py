@@ -272,12 +272,17 @@ class AnkiFlashcardsWidget(Widget):
             # Review section
             with Vertical(classes="review-area"):
                 yield Label("Review Cards:", classes="subsection-title")
-                yield Static("Create a deck to begin studying.", id="review-status")
-                yield Static("", id="review-front")
-                review_back = Static("", id="review-back")
+                # TASK-34751: these show user text (deck names in the status
+                # line, card fronts/backs), so they are not markup -- a front
+                # such as `What does [/b] do?` raised `MarkupError` when drawn.
+                yield Static(
+                    "Create a deck to begin studying.", id="review-status", markup=False
+                )
+                yield Static("", id="review-front", markup=False)
+                review_back = Static("", id="review-back", markup=False)
                 review_back.display = False
                 yield review_back
-                yield Static("", id="review-next-intervals")
+                yield Static("", id="review-next-intervals", markup=False)
                 yield Button("Show Answer", id="show-answer-button")
                 yield Button("Start Review", id="start-review-btn", variant="success")
                 with Horizontal(classes="review-actions"):
@@ -378,10 +383,14 @@ class QuizzesWidget(Widget):
 
             with Vertical(classes="quiz-attempt-area"):
                 yield Label("Attempt Quiz:", classes="subsection-title")
+                # TASK-34751: quiz names, question text and answers are user
+                # text -- not markup (see the flashcards review panel).
                 yield Static(
-                    "Create a quiz to begin practicing.", id="quiz-attempt-status"
+                    "Create a quiz to begin practicing.",
+                    id="quiz-attempt-status",
+                    markup=False,
                 )
-                yield Static("", id="quiz-attempt-question")
+                yield Static("", id="quiz-attempt-question", markup=False)
                 yield Label("Attempt History:", classes="subsection-title")
                 with Horizontal(classes="form-row"):
                     yield Select(
@@ -391,7 +400,7 @@ class QuizzesWidget(Widget):
                         id="quiz-attempt-history-select",
                     )
                     yield Button("Load Attempt", id="load-quiz-attempt-history-button")
-                yield Static("", id="quiz-attempt-history-summary")
+                yield Static("", id="quiz-attempt-history-summary", markup=False)
                 with Horizontal(classes="form-row"):
                     yield Label("Your Answer:", classes="form-label")
                     yield Input(
@@ -730,7 +739,10 @@ class StudyWindow(Container):
                     "Workspace Study", id="study-scope-title", classes="section-title"
                 )
                 yield Static(
-                    "", id="study-scope-workspace-name", classes="study-scope-row"
+                    "",
+                    id="study-scope-workspace-name",
+                    classes="study-scope-row",
+                    markup=False,  # TASK-34751: a workspace name is user text
                 )
                 yield Static(
                     "", id="study-scope-backend-status", classes="study-scope-row"
