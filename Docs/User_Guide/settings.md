@@ -1495,6 +1495,13 @@ and toggle again to retry. Pending writes keep your latest choice when you leave
 Settings. **Saved. Reload settings to refresh.** means the file was saved but
 live settings could not refresh; use **Diagnostics → Reload Config** or restart.
 
+While a reply is running, Console's status chips, settings summary and
+Inspector refresh their settings-based parts when something they show changes
+(a saved setting, another chat, the run starting, finishing or waiting on you)
+and otherwise about once a second. A change made to `config.toml` outside the
+app (in a text editor, say) can therefore take up to about a second longer to
+appear there during a run.
+
 Permission-summary results appear inside their group. **Changes not saved** keeps
 your edits when you switch categories or reopen Settings; correct the config-file
 problem and choose **Retry**. The previously saved choice remains active until a
