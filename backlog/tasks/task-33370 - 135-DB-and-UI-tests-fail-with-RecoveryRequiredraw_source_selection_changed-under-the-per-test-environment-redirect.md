@@ -3,10 +3,10 @@ id: TASK-33370
 title: >-
   135 DB and UI tests fail with RecoveryRequired('raw_source_selection_changed')
   under the per-test environment redirect
-status: In Progress
+status: Done
 assignee: []
 created_date: '2026-09-28 20:12'
-updated_date: '2026-10-10 21:07'
+updated_date: '2026-10-10 21:10'
 labels:
   - testing
   - backup-recovery
@@ -127,6 +127,10 @@ Fresh GREEN: complete concurrency module 5 passed in 0.91s; exact prior 19-modul
 Black 25.1.0 and full default Ruff 0.13.1 checks passed on the changed test; diff checks and complete preflight passed (502 markup occurrences pinned, 175 UI gate entries). The existing lesson records why thread termination plus negative barrier checks cannot prove positive completion. No full suite, production guard change, rebase, push or native/performance qualification. Task remains In Progress pending independent review of this correction.
 stack_parent: 732d1de8c29ede5c03d0a0263d4f9cacf29e0321
 ADR required: no. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: test-only completion of the selected-source and writer-entry oracle under the existing admission contract.
+
+2026-10-10 immutable independent review and closeout
+Independent reviewer review_3029 cleared source range 75d3d1c30f7d75149953e14fe49166572ab44547..510b534ac10516e485885cc17791ceabf70f057e with no actionable introduced findings. The exact three-file commit matches the reviewed correction: the owned selected path reaches the unchanged real guarded writer, captured errors and positive entry close the refusal blind spot, and existing negative ordering assertions and deadlines remain. Reviewer independently inspected the RED RecoveryRequired capture, module GREEN5 and affected331 plus one strict TASK-34700 xfail receipts.
+All existing acceptance criteria remain checked. Source and verification receipts are unchanged; this is metadata-only closeout after independent review. No test rerun is attributed to these notes. stack_parent remains 732d1de8c29ede5c03d0a0263d4f9cacf29e0321. No rebase or push. ADR-126 is unchanged; no new ADR is required for this test-only repair.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
