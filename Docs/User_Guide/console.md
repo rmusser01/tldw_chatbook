@@ -273,6 +273,11 @@ provider with the API key field in focus. Type or paste the key, press **Esc**
 then **s** to save, and focus moves to **Return to Console**: **Enter** there
 brings you back to this chat with the composer ready (see
 [Settings — Coming back from a provider fix](settings.md#coming-back-from-a-provider-fix)).
+For Anthropic signed in with a Claude subscription whose credential is missing
+or expired, the button reads **Review credentials** instead. That is fixed
+outside the app, by logging in with Claude Code, so Settings opens with the API
+key field disabled and focus on **Return to Console**: **Enter** there comes
+back to this chat.
 **Choose provider** and
 **Choose model** open **Switch model**, where a model is always picked as a
 provider·model pair (Choose model opens with Find on this chat's provider, so

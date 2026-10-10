@@ -105,6 +105,35 @@ def return_outcome(screen: SettingsScreen) -> Outcome | None:
     return Outcome.WITHOUT_SAVING
 
 
+def route_focus(screen: SettingsScreen, selector: str | None) -> str | None:
+    """Where focus goes when Settings opens on a provider route.
+
+    The field the route names, while it can take focus. Two routes have no
+    such field: one that names none (a cloud Retry), and one whose field is
+    disabled (the API key while a Claude subscription signs in). Both arrive
+    on the return when it is offered, so one Enter goes back. A disabled field
+    with no return offered gives way to Sign in with, the control that says
+    why the key is not asked for.
+
+    A registry-locked provider's key is disabled too, but it has neither
+    landing: no return can name it, and Sign in with is Anthropic's alone and
+    disabled for it. Its focus stays where it was, as before.
+
+    Args:
+        screen: The Settings screen holding the return target and its outcome.
+        selector: The named field's selector, or None when the route names none.
+
+    Returns:
+        The selector to focus, or None to leave focus where it is.
+    """
+    disabled = bool(selector) and any(w.disabled for w in screen.query(selector))
+    if selector and not disabled:
+        return selector
+    if return_outcome(screen) is not None:
+        return "#settings-provider-return"
+    return "#settings-provider-auth-source" if disabled else None
+
+
 def can_return_without_saving(screen: SettingsScreen) -> bool:
     """Whether Return without saving is offered.
 

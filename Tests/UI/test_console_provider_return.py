@@ -5,8 +5,9 @@ provider_return.py``) and the Settings offer and copy (``Settings_Modules/
 provider_return.py``) with the real handoff store and the real Console chat
 store. The private-profile tests run the real app: card -> Settings -> key ->
 save -> Enter, the saved model an untouched chat comes back on, Return without
-saving in every unsaved state, the return offered on arrival, a return that
-lapses when the user walks back by hand, and edits made after the save.
+saving in every unsaved state, the return offered on arrival, where focus
+arrives when the route names no field or a disabled one, a return that lapses
+when the user walks back by hand, and edits made after the save.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
@@ -26,6 +28,10 @@ from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Constants import TAB_CHAT, TAB_SETTINGS
+from tldw_chatbook.LLM_Calls import anthropic_subscription
+from tldw_chatbook.LLM_Provider_Catalog import (
+    openai_compatible_model_discovery as discovery_module,
+)
 from tldw_chatbook.UI.Console_Modules.model_switcher import open_provider_setup
 from tldw_chatbook.UI.Console_Modules.provider_return import (
     MISSING_CHAT_COPY,
@@ -497,8 +503,11 @@ def _fully_on_screen(screen, widget) -> bool:
     return placed is not None and placed[1].contains_region(placed[0])
 
 
-def _cloud_app_without_a_key(monkeypatch):
-    """The real app on its scratch profile: OpenAI is the default, keyless."""
+def _cloud_app(monkeypatch, **saved):
+    """The real app on its scratch profile: OpenAI is the default, keyless.
+
+    ``saved`` lays config sections over that, such as a saved key.
+    """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_production_app(configured_default="chat")
     assert config_module.save_settings_to_cli_config(
@@ -507,6 +516,7 @@ def _cloud_app_without_a_key(monkeypatch):
             "splash_screen": {"enabled": False},
             "chat_defaults": {"provider": "openai", "model": "gpt-5"},
             "api_settings.openai": {"api_key": ""},
+            **saved,
         }
     )
     app.app_config = config_module.load_settings(force_reload=True)
@@ -533,7 +543,7 @@ async def test_recovery_round_trip_returns_to_the_chat_on_one_enter(
     """AC#9 (R41): the real store, the real Settings screen and the real
     router on a scratch config. Card -> Settings -> key -> Esc, s -> Enter
     ends in the same chat, composer focused, ready to send."""
-    app = _cloud_app_without_a_key(monkeypatch)
+    app = _cloud_app(monkeypatch)
 
     async with app.run_test(size=(211, 44)) as pilot:
         console, session, settings = await _recover_from_the_card(app, pilot)
@@ -613,7 +623,7 @@ async def test_the_returning_chat_follows_a_newly_saved_model_only_while_untouch
     saves another default model as well as the key. An untouched chat comes
     back on the saved provider · model; a chat that holds work keeps its own.
     The return adds no convergence code, so this is the Console's own sync."""
-    app = _cloud_app_without_a_key(monkeypatch)
+    app = _cloud_app(monkeypatch)
     app.providers_models = {"openai": ["gpt-5", "gpt-4.1"]}
 
     async with app.run_test(size=(211, 44)) as pilot:
@@ -662,7 +672,7 @@ async def test_recovery_return_without_saving_lands_on_the_same_chat_unchanged(
     """AC#4: Return without saving asks before discarding, then lands on the
     same chat, still blocked, with nothing written. R38: both return labels
     say Console. R34: the Console kind survives a fresh Settings screen."""
-    app = _cloud_app_without_a_key(monkeypatch)
+    app = _cloud_app(monkeypatch)
 
     async with app.run_test(size=(211, 44)) as pilot:
         console, session, settings = await _recover_from_the_card(app, pilot)
@@ -731,7 +741,7 @@ async def test_every_unsaved_recovery_state_offers_return_without_saving(
     A save of only the snapshot preference is not the recovery's save: it
     sets no outcome, moves no focus and leaves the way back as it was before
     that edit, so the next edit asks first again."""
-    app = _cloud_app_without_a_key(monkeypatch)
+    app = _cloud_app(monkeypatch)
 
     async with app.run_test(size=(211, 44)) as pilot:
         console, session, settings = await _recover_from_the_card(app, pilot)
@@ -824,7 +834,7 @@ async def test_a_route_that_names_no_model_keeps_settings_own_model(
     """A NEEDS SETUP row of a provider that lists no models routes no model.
     The return-bearing route must then leave Settings' own model in the
     field, as the one-way route did; only a routed model replaces it."""
-    app = _cloud_app_without_a_key(monkeypatch)
+    app = _cloud_app(monkeypatch)
 
     async with app.run_test(size=(211, 44)) as pilot:
         await _until(
@@ -855,7 +865,7 @@ async def test_a_recovery_that_saves_nothing_returns_from_the_arrival_action(
     """Parent AC#3: a recovery that needs no save (a cloud Retry's key test)
     still goes back in one action. The arrival return asks nothing, writes
     nothing and lands on the chat that opened Settings."""
-    app = _cloud_app_without_a_key(monkeypatch)
+    app = _cloud_app(monkeypatch)
 
     async with app.run_test(size=(211, 44)) as pilot:
         console, session, settings = await _recover_from_the_card(app, pilot)
@@ -884,18 +894,41 @@ async def test_a_recovery_that_saves_nothing_returns_from_the_arrival_action(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("keyed", [False, True], ids=["first-run-card", "saved-key"])
 @private_profile_test
-async def test_a_route_that_names_no_field_arrives_on_the_return(monkeypatch, request):
+async def test_a_route_that_names_no_field_arrives_on_the_return(
+    monkeypatch, request, keyed: bool
+):
     """A cloud Retry names no field: the user tests the key with t and goes
-    back. With no field to put focus in, the offered return takes it, so
-    after the test one Enter returns (parent AC#3)."""
-    app = _cloud_app_without_a_key(monkeypatch)
+    back. With no field to put focus in, the offered return takes it, and t
+    leaves it there, so after the test one Enter returns (parent AC#3).
+
+    Back in the Console focus is where the chat continues: the Get started
+    card's action while it blocks (no key), the composer once a key is saved.
+    Only the saved key can be tested, through a stubbed transport."""
+    listed: list[httpx.Request] = []
+
+    def listing(request: httpx.Request) -> httpx.Response:
+        listed.append(request)
+        return httpx.Response(200, json={"data": [{"id": "gpt-5"}]})
+
+    monkeypatch.setattr(
+        discovery_module,
+        "build_httpx_async_client",
+        lambda **kwargs: httpx.AsyncClient(
+            transport=httpx.MockTransport(listing), **kwargs
+        ),
+    )
+    app = _cloud_app(
+        monkeypatch, **({"api_settings.openai": {"api_key": _KEY}} if keyed else {})
+    )
+    resting = "console-native-composer" if keyed else "console-setup-modal-action"
 
     async with app.run_test(size=(211, 44)) as pilot:
         await _until(
             pilot,
-            lambda: getattr(app.focused, "id", None) == "console-setup-modal-action",
-            "the Get started card's action to hold focus",
+            lambda: getattr(app.focused, "id", None) == resting,
+            f"{resting} to hold focus",
         )
         console = app._navigation_outgoing_screen()
         session_id = console._ensure_console_chat_store().active_session_id
@@ -908,7 +941,111 @@ async def test_a_route_that_names_no_field_arrives_on_the_return(monkeypatch, re
             ),
             "Settings to open with focus on Return to Console",
         )
-        assert app.screen._provider_return_target.field is None
+        settings = app.screen
+        assert settings._provider_return_target.field is None
+
+        if keyed:
+            result = settings.query_one("#settings-provider-test-result", Static)
+            await pilot.press("t")
+            # A bounded poll: the screen's other workers outlive the listing.
+            await _until(
+                pilot,
+                lambda: "model listing reached" in str(result.renderable),
+                "the key test to report its listing",
+            )
+            assert len(listed) == 1 and listed[0].url.path.endswith("/models")
+            assert app.focused.id == "settings-provider-return"
+            assert app.focused.display is True
+        assert bool(listed) is keyed
+
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console and getattr(app.focused, "id", None) == resting
+            ),
+            f"the Console's {resting} to hold focus again",
+        )
+        assert console._ensure_console_chat_store().active_session_id == session_id
+        assert not app.pending_handoffs.has_pending(CHANNEL)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "from_console", [True, False], ids=["console", "chat-settings"]
+)
+@private_profile_test
+async def test_a_route_whose_named_field_is_disabled_arrives_where_it_can_act(
+    monkeypatch, request, from_console: bool
+):
+    """A Claude subscription whose credential is missing is fixed outside the
+    app (log in with Claude Code), so this recovery saves nothing either. The
+    card's Review credentials names the API key, and Settings disables that
+    field while the subscription signs in. A field that cannot take focus is
+    no field (AC#1): the offered return takes it and one Enter goes back.
+
+    Chat settings' Configure credential names the same field and offers no
+    return before a save, so there focus goes to Sign in with, the control
+    that says why no key is asked for."""
+    # Stubbed, so the user's own Claude Code credential is never read.
+    monkeypatch.setattr(
+        anthropic_subscription,
+        "subscription_credential_status",
+        lambda **_kwargs: "missing",
+    )
+    app = _cloud_app(
+        monkeypatch,
+        **{
+            "chat_defaults": {"provider": "anthropic", "model": "claude-sonnet-5"},
+            "api_settings.anthropic": {"auth_source": "claude_subscription"},
+        },
+    )
+    app.providers_models = {"anthropic": ["claude-sonnet-5"]}
+    arrives_on = (
+        "settings-provider-return" if from_console else "settings-provider-auth-source"
+    )
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "console-setup-modal-action",
+            "the Get started card's action to hold focus",
+        )
+        assert str(app.focused.label) == "Review credentials"
+        console = app._navigation_outgoing_screen()
+        session_id = console._ensure_console_chat_store().active_session_id
+
+        if not from_console:
+            assert await console._open_console_settings() is True
+            await _until(
+                pilot,
+                lambda: bool(
+                    app.screen.query("#console-settings-configure-credential")
+                ),
+                "Chat settings to offer Configure credential",
+            )
+            app.screen.query_one("#console-settings-configure-credential").focus()
+            await pilot.pause()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and getattr(app.focused, "id", None) == arrives_on
+            ),
+            f"Settings to open with focus on {arrives_on}",
+        )
+        settings = app.screen
+        target = settings._provider_return_target
+        assert target is not None and target.field == "api_key"
+        assert (target.session_id == session_id) is from_console
+        assert settings.query_one("#settings-provider-api-key", Input).disabled
+        continuation = settings.query_one("#settings-provider-return-continuation")
+        assert continuation.display is from_console
+        if not from_console:
+            assert target.session_id is None  # Chat settings' kind: after a save.
+            return
+        assert str(app.focused.label) == "Return to Console"
 
         await pilot.press("enter")
         await _until(
@@ -935,7 +1072,7 @@ async def test_an_unused_return_lapses_when_the_user_walks_back_by_hand(
     The same walk measures the guide's snapshot exception to "leaving keeps
     the draft": the screen alone holds an unsaved snapshot preference, so
     leaving Settings by the nav bar drops it."""
-    app = _cloud_app_without_a_key(monkeypatch)
+    app = _cloud_app(monkeypatch)
 
     async with app.run_test(size=(211, 44)) as pilot:
         console, _session, settings = await _recover_from_the_card(app, pilot)
@@ -1000,7 +1137,7 @@ async def test_a_field_edited_after_the_save_waits_in_settings_as_an_unsaved_edi
     recovery's save: the page moves on to its provider as on arrival, with
     focus in the named field, not on the button, and the next edit asks first
     again."""
-    app = _cloud_app_without_a_key(monkeypatch)
+    app = _cloud_app(monkeypatch)
     later_key = _KEY[::-1]
 
     def offered(screen) -> tuple[bool, bool]:

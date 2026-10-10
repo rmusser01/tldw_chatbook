@@ -24694,13 +24694,11 @@ class SettingsScreen(BaseAppScreen):
             "credential_env_var": "#settings-provider-credential-env-var",
             "reasoning": "#settings-model-profile-reasoning-effort",
         }
-        selector = field_selectors.get(str(field or "").strip())
-        if not selector:
-            from ..Settings_Modules.provider_return import return_outcome
+        from ..Settings_Modules.provider_return import route_focus
 
-            if return_outcome(self) is None:
-                return
-            selector = "#settings-provider-return"  # No field named: the way back.
+        selector = route_focus(self, field_selectors.get(str(field or "").strip()))
+        if not selector:
+            return
         self._pending_navigation_focus_selector = selector
         try:
             self.query_one(selector).focus()

@@ -431,6 +431,13 @@ named field (API key or Endpoint) in focus, and it remembers the way back. The
 way back is a status line, a return button and **Stay in Settings**, under the
 Default model's **Applies to** row.
 
+A named field that is disabled cannot take focus. The API key is, while **Sign
+in with** is **Claude subscription**: a missing or expired subscription
+credential is fixed outside the app, by logging in with Claude Code, but the
+Console's **Review credentials** and Chat settings' **Configure credential…**
+still name the API key for such a chat. Focus then starts on the return button
+when it is showing, and on **Sign in with** when it is not.
+
 From Chat settings nothing shows until you save; the button then reads **Return
 to Chat settings** and reopens the dialog with your unsaved edits. From the
 Console the button reads **Return to Console** and is there as soon as you
@@ -438,7 +445,9 @@ arrive, so a visit that saves nothing, such as a key test with **t**, can go
 straight back: the status names the chat, as in "No unsaved changes. Return to
 Console to continue in “Chat 1”.". Focus stays in the named field; when the
 recovery names none, as a cloud **Retry connection** does, focus starts on the
-button, so **t** then **Enter** tests the key and goes back. Until you save,
+button, so **t** then **Enter** tests the key and goes back. It starts on the
+button for **Review credentials** too, whose field is disabled: log in with
+Claude Code, then **Enter** goes back. Until you save,
 the button hides while you have unsaved edits to Providers & Models, and
 **Return without saving** takes its place until they are saved or reverted, so
 from the Console one way back is always there.
