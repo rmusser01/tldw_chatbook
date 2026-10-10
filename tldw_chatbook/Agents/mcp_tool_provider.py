@@ -554,6 +554,9 @@ class MCPToolProvider:
         # lookup (task-201's don't-re-list-per-lookup note).
         self._entry_by_llm_name: dict[str, tuple[HubTool, EffectiveToolState]] = {}
         self._not_connected_count = 0
+        # TASK-33620.15.1: ``((profile_id, plugin_owned, is_connected), ...)``
+        # as ``compose_catalog`` last saw them; None until it has run.
+        self.composed_servers: tuple[tuple[Any, bool, bool], ...] | None = None
         self._init_decision_state()
 
     def _init_decision_state(self) -> None:
@@ -599,7 +602,7 @@ class MCPToolProvider:
 
     # -- composition (main loop, once per registration) -------------------
 
-    async def compose_catalog(self) -> None:
+    async def compose_catalog(self, *, kill_switch_engaged: bool | None = None) -> None:
         """Build the eligible tool catalog. MAIN LOOP, called once at registration.
 
         Kill switch on -> empty catalog (the provider is effectively inert;
@@ -613,6 +616,11 @@ class MCPToolProvider:
         binding T1 handoff note: incremental dedupe breaks global
         uniqueness), and cache both the `ToolCatalogEntry` list and the
         `{llm_name: (HubTool, EffectiveToolState)}` lookup table.
+
+        Args:
+            kill_switch_engaged: The kill switch as the caller read it at this
+                same point (TASK-33620.15.1: Console run start reads it once
+                for MCP and local tools). ``None`` reads it here.
         """
         # Clear stale stamped decisions from prior catalogs to prevent
         # auto-approval of tools not in the new catalog (Finding 3). Every
@@ -621,13 +629,19 @@ class MCPToolProvider:
         with self._decisions_lock:
             self._stamped_decisions.clear()
 
-        if self._service.get_kill_switch():
+        if (
+            self._service.get_kill_switch()
+            if kill_switch_engaged is None
+            else kill_switch_engaged
+        ):
             self._catalog = []
             self._entry_by_llm_name = {}
             self._not_connected_count = 0
+            self.composed_servers = ()
             return
 
         hub_tools: list[HubTool] = []
+        servers = []
         records = await self._service.local_external_catalog()
         for record in records:
             if (
@@ -636,6 +650,16 @@ class MCPToolProvider:
             ):
                 continue
             hub_tools.extend(local_tools_from_record(record))
+            servers.append(
+                (
+                    record.get("profile_id"),
+                    record.get("plugin_owner") is not None,
+                    bool(record.get("is_connected")),
+                )
+            )
+        # TASK-33620.15.1: the servers this catalog used, with the connection
+        # state it saw (a cached catalog is reused only while those still hold).
+        self.composed_servers = tuple(servers)
 
         local_service = getattr(self._service, "local_service", None)
         get_inventory = getattr(local_service, "get_inventory", None)
@@ -717,6 +741,44 @@ class MCPToolProvider:
 
         self._catalog = catalog
         self._entry_by_llm_name = entry_by_llm_name
+
+    def composition_key(self) -> tuple:
+        """This provider's own inputs to ``compose_catalog`` (TASK-33620.15.1).
+
+        The permission profile, plugin ownership, built-in exclusions and the
+        run's tool and definition maxima; with an unchanged store fingerprint,
+        equal keys compose equal catalogs.
+        """
+        return (
+            self._profile_kwargs(),
+            frozenset(self._owned_profile_ids or ()),
+            self._builtin_raw_name_exclusions,
+            self._maximum_tool_ids,
+            None
+            if self._maximum_definition_hashes is None
+            else frozenset(self._maximum_definition_hashes.items()),
+        )
+
+    def composition(self) -> tuple:
+        """The composed catalog, to install into a later run's provider."""
+        return (
+            tuple(self._catalog),
+            dict(self._entry_by_llm_name),
+            self._not_connected_count,
+        )
+
+    def install_composition(self, composition: tuple) -> None:
+        """Take an earlier provider's composition with an equal input key.
+
+        Does what ``compose_catalog`` does besides reading: clears stamped
+        decisions and installs the catalog (entries are frozen dataclasses).
+        """
+        catalog, entries, not_connected = composition
+        with self._decisions_lock:
+            self._stamped_decisions.clear()
+        self._catalog = list(catalog)
+        self._entry_by_llm_name = dict(entries)
+        self._not_connected_count = not_connected
 
     @property
     def not_connected_count(self) -> int:

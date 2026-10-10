@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -41,6 +42,11 @@ CONSOLE_CHARACTER_ROW_LIMIT = 5
 CONSOLE_CHARACTER_SEARCH_LIMIT = 8
 CONSOLE_CHARACTER_REPAIR_CANDIDATE_LIMIT = 20
 _SCOPE_CAPTURE_ATTEMPTS = 3
+#: TASK-33620.15.1: during a run, check the scope's database at most this
+#: often. Every 0.2 s tick made two or more worker DB calls, each worker opening
+#: a fresh connection (a private SQLite helper process) -- the busiest worker
+#: work, live, between a send's acceptance and its provider call.
+SCOPE_RECHECK_DURING_RUN_SECONDS = 1.0
 
 
 class ConsoleCharacterOperationPhase(StrEnum):
@@ -257,8 +263,10 @@ class ConsoleCharacterContextController:
         ),
         query_handoff_capability: ConsoleCharacterQueryHandoffCapability | None = None,
         query_handoff: Callable[[ConsoleCharacterQueryHandoff], None] | None = None,
+        run_active: Callable[[], bool] | None = None,
     ) -> None:
         self._progress_counts = progress_counts
+        self._run_active = run_active
         self._database_accessor = database_accessor
         self._current_character_accessor = current_character_accessor
         self._open_conversation_accessor = open_conversation_accessor
@@ -280,6 +288,8 @@ class ConsoleCharacterContextController:
         self.return_reveal = False
         self._browse_snapshot: ConsoleCharacterBrowseSnapshot | None = None
         self._activation_cancellation: asyncio.Event | None = None
+        self._scope_checked: tuple[float, Any, tuple[int, str] | None, str] | None = None
+        self._scope_invalidations = 0
         self.state = ConsoleCharacterContextState()
 
     def _publish(self, state: ConsoleCharacterContextState) -> None:
@@ -433,20 +443,74 @@ class ConsoleCharacterContextController:
         """Fence work and force the next lifecycle check to reload."""
 
         self._generation += 1
+        self._scope_invalidations += 1
+        self._scope_checked = None
         self._publish(replace(self.state, scope_fingerprint=None))
 
+    def _mark_checked(self, started: tuple, invalidations: int) -> None:
+        """Start the run recheck interval unless the scope was invalidated since."""
+        if self._scope_invalidations == invalidations:
+            self._scope_checked = started
+
+    def _checked_recently(self) -> bool:
+        """Whether a run's sync may skip the database scope check (TASK-33620.15.1).
+
+        During a run the database scope is checked at most once per
+        ``SCOPE_RECHECK_DURING_RUN_SECONDS``, whatever the last check found:
+        every message write bumps the conversation revision, so each 0.2 s
+        tick of a send reloaded (or failed to settle) the browser. A skip
+        needs the ambient scope (database handle, current character, open
+        chat) the last check started from. Outside a run, after any ambient
+        change or an invalidated scope, every sync checks.
+        """
+        checked = self._scope_checked
+        if checked is None or self._run_active is None or not self._run_active():
+            return False
+        checked_at, database, current, open_conversation_id = checked
+        return time.monotonic() - checked_at < (
+            SCOPE_RECHECK_DURING_RUN_SECONDS
+        ) and self._ambient_scope_matches(database, current, open_conversation_id)
+
     async def refresh_if_scope_changed(self, *, force: bool = False) -> bool:
+        """Reload the projection when its scope changed.
+
+        During a run the database scope is checked at most once per
+        ``SCOPE_RECHECK_DURING_RUN_SECONDS`` (``_checked_recently``).
+
+        Args:
+            force: Reload even when the scope is unchanged.
+
+        Returns:
+            True when a reload ran.
+        """
+        if not force and self._checked_recently():
+            # Keep the yield the skipped worker read gave the sync tick: the
+            # tick's synchronous stretch must not grow by the read's absence.
+            await asyncio.sleep(0)
+            return False
+        started = (
+            time.monotonic(),
+            self._database_accessor(),
+            self._current_character_identity(),
+            self._open_conversation_identity(),
+        )
+        self._scope_checked = None
+        invalidations = self._scope_invalidations
         try:
             snapshot = await self._capture_scope()
         except _ConsoleCharacterScopeChanged:
             self.invalidate_scope()
+            invalidations = self._scope_invalidations
         except _ConsoleCharacterScopeReadError:
             await self.refresh()
+            self._mark_checked(started, invalidations)
             return True
         else:
             if not force and snapshot.fingerprint == self.state.scope_fingerprint:
+                self._mark_checked(started, invalidations)
                 return False
         await self.refresh()
+        self._mark_checked(started, invalidations)
         return True
 
     @staticmethod

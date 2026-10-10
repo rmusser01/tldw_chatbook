@@ -98,6 +98,9 @@ saved local character
 conversations and never sends titles or transcript text to a network service.
 Each search result keeps its title, character name, and Local/age metadata
 on separate lines so the metadata remains readable in the narrow rail.
+While a reply is running, the section checks saved character chats for
+changes about once a second (a different open chat or character is picked up
+at once), and it catches up as soon as the reply ends.
 When a Context search is active, **Continue search in Character chats** opens
 that same validated query in Ctrl+K's complete local Character-chat results.
 Enter or double-click opens an exact saved conversation in its Console tab;

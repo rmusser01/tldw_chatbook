@@ -32,6 +32,64 @@ of inferring it from the counter. Test the fence across each of those
 operations, not only across typing. `Tests/UI/test_console_send_resend_guard.py`
 (the round-trip and clear-after-press cases) is the worked example.
 
+## Work moved off the UI loop runs slower when the freed loop starts other work (TASK-33620.15.1, 2026-10-09)
+
+**Incident.** Run start's MCP composition (kill switch, catalog, permission
+states, every read a storage-admission scope) moved from the UI loop into one
+worker hop. Input waits after acceptance dropped (paired median 188 -> 142 ms).
+But each app's first send reached the provider 97-249 ms later than the base
+build in 5 of 6 pairs. On the loop the composition took a 130 ms stretch. In
+the hop it took 300-430 ms. The loop it no longer blocked was now running sync
+ticks, and those started worker reads for the UI (conversation list, Character
+refresh, unread marks). The syscall-heavy hop then waited on the GIL behind
+them. Warm sends and the overall median did not regress.
+
+**What to do.** When you move work off the loop, time the critical path (Enter
+to provider call) in its own paired probe-free rounds. Split first sends from
+warm ones, because the first send is where the freed loop starts the most
+competing work. Report the first-send number even when the median is flat.
+
+**Outcome.** The hop was replaced by composing on the loop and reusing the
+catalog while nothing it read changed. Over 10 paired launches, first sends
+then reached the provider a median 88 ms sooner than the base.
+
+## The guard, not the read, was the cost: a correct cache keeps paying the guard (TASK-33620.15.1, 2026-10-09)
+
+**Incident.** Live, a Console run start spent 19-21 main-thread samples
+composing its MCP catalog. 180 of 265 sampled frames were storage admission
+working out, inside every store read, which store generation is selected and
+whether it is admitted. Reading and parsing the store files was 12. A cache
+checked by file stamps alone would have removed all of it. It would also have
+removed what the guard decides: a storage pause, a changed store selection or
+an unreviewed restored store makes the guarded read refuse or return defaults,
+and none of them changes the stamps of the files. So the check that kept the
+old semantics reads each store once through the same guard and hashes the
+bytes. Later run starts fell to 5-8 samples, not to zero, because two guard
+entries remain where the composition had six.
+
+**What to do.** Before you cache a guarded read, sample where its time goes.
+If the guard is the cost, the cache's own check must pass the same guard, so
+count guard entries, not reads, when you estimate the saving. Skipping the
+guard itself changes what the guard protects; leave that decision to the
+guard's owner.
+
+## asyncio's task stack shows only the outer coroutine: walk `cr_await` (TASK-33620.15.1, 2026-10-09)
+
+**Incident.** A dev test timed out with `_console_sync_in_progress=True` while
+`asyncio.all_tasks()` showed no task in `_sync_native_console_chat_ui`.
+`Task.print_stack()` prints only the task's top coroutine frame. The sync was
+nested inside a Textual worker's `_run`. Walking each task's coroutine chain
+(`coro.cr_await` down to the leaf future) found the culprit: the test's own
+patched `_sync_console_native_session_tabs` held a sync the screen had started
+itself. The test had assumed its own task would reach the hold first.
+Instrumenting the product with prints or `traceback.format_stack()` hid the race
+in 14 of 14 runs.
+
+**What to do.** To find where a coroutine is stuck, walk
+`cr_await`/`gi_yieldfrom` from `task.get_coro()`, not `print_stack()`. Probe
+from the test side, at the moment it fails, so the product's timing is left
+alone.
+
 ## Moving blocking work to a thread frees nothing if a pump awaits the caller (TASK-33620.15, 2026-10-05)
 
 **Incident.** A Console send's admission read MCP, skill and project

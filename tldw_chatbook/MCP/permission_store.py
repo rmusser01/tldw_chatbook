@@ -1403,6 +1403,32 @@ class MCPPermissionStore:
         """
         return sorted(_as_mapping(self.load().get("profiles")).keys())
 
+    @mcp_sources.guarded
+    def catalog_fingerprint(self) -> tuple:
+        """Identify exactly what :meth:`load` would return now, without parsing.
+
+        TASK-33620.15.1: the Console reuses a run's composed MCP catalog while
+        nothing it read has changed. This passes the same admission scope,
+        path fence and recovery readability check as ``load()`` (a refusal
+        raises as ``load()`` would) and hashes the bytes ``load()`` would parse.
+
+        Returns:
+            ``("fresh",)`` when ``load()`` returns the default payload without
+            reading (an inactive store or no file); otherwise ``("file",
+            sha256, stamp)``, ``stamp`` being the read file's ``(st_dev,
+            st_ino, st_size, st_mtime_ns, st_ctime_ns)``.
+        """
+        from .recovery_activation import readable
+
+        with self.mutation_fence():
+            if not readable(self, "mcp.permissions") or not self.path.exists():
+                return ("fresh",)
+            with mcp_sources.reader(self) as handle:
+                raw = handle.buffer.read()
+                info = os.fstat(handle.fileno())
+        stamp = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        return ("file", hashlib.sha256(raw).hexdigest(), stamp)
+
     # -- kill switch -----------------------------------------------------
 
     @mcp_sources.guarded
