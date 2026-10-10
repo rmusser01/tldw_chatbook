@@ -204,8 +204,14 @@ class SmartContentTree(Container):
         self.app.call_from_thread(self._populate_tree, content_data)
 
     def _report_load_failure(self, error: Exception) -> None:
-        """Surface a load failure on the UI thread."""
-        self.notify(f"Error loading content: {str(error)}", severity="error")
+        """Surface a load failure on the UI thread.
+
+        The exception text renders literally (``markup=False``, TASK-1513):
+        a ``[/b]`` in it must not raise ``MarkupError`` in the toast.
+        """
+        self.notify(
+            f"Error loading content: {error}", severity="error", markup=False
+        )
 
     async def load_all_content(self) -> None:
         """Load all content into the tree (legacy async entry point)."""
@@ -216,7 +222,7 @@ class SmartContentTree(Container):
             self._populate_tree(self.load_content_callback())
         except Exception as e:
             logger.error(f"Error loading content: {e}")
-            self.notify(f"Error loading content: {str(e)}", severity="error")
+            self._report_load_failure(e)
 
     @staticmethod
     def _build_search_text(item: ContentNodeData) -> str:
