@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import gc
 import logging
+import os
 import queue
 import sys
 import threading
 import time
+import weakref
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -388,3 +393,210 @@ def freeze_long_lived_heap(reason: str) -> int:
     frozen = gc.get_freeze_count()
     logging.getLogger(__name__).debug("gc heap frozen (%s): %d objects", reason, frozen)
     return frozen
+
+
+def refreeze_long_lived_heap(reason: str) -> int:
+    """Collect the unfrozen heap, then freeze what survives (TASK-33620.15.3).
+
+    The idle re-freeze's seam (ADR-198 amendment). Unlike the boot freeze it
+    runs a FULL collection first, so cyclic garbage that already reached the
+    old generation is reclaimed instead of frozen forever. Frozen objects are
+    never scanned, so the pass costs what the next automatic generation-2
+    pass would have cost on the UI loop, paid at an idle moment instead.
+
+    Args:
+        reason: What asked for the re-freeze, for the DEBUG log line.
+
+    Returns:
+        How many objects this call moved into the permanent generation. A
+        full collection leaves every unfrozen survivor in generation 2.
+    """
+    gc.collect()
+    added = len(gc.get_objects(generation=2))
+    gc.freeze()
+    logging.getLogger(__name__).debug("gc heap re-frozen (%s): +%d objects", reason, added)
+    return added
+
+
+#: Quiet time an idle re-freeze waits for after its request and after the
+#: last user input, so it never lands in a send window or while typing.
+REFREEZE_QUIET_SECONDS = 2.0
+#: Quiet time a compaction waits for. It collects the whole heap, frozen boot
+#: heap included -- the 130-420 ms pass ADR-198 kept off ``_ui_ready``.
+COMPACTION_QUIET_SECONDS = 5.0
+#: Compact once re-freezes have added this fraction of the permanent
+#: generation's size after the last compaction: CPython's own rule for a full
+#: collection (``long_lived_pending < long_lived_total / 4``), applied to the
+#: frozen set. Frozen cyclic garbage is never collected, so this bounds it.
+COMPACTION_GROWTH_RATIO = 0.25
+#: Floor on that growth, so a small heap is not compacted at every re-freeze.
+COMPACTION_MIN_GROWTH = 50_000
+
+
+def _idle_refreeze_enabled() -> bool:
+    """On by default; off under pytest; ``TLDW_IDLE_HEAP_REFREEZE`` overrides.
+
+    The same gate as the screen pre-import (``PYTEST_CURRENT_TEST``): the
+    suite's many ``run_test()`` apps would otherwise freeze test objects at
+    timing-dependent moments.
+    """
+    override = os.environ.get("TLDW_IDLE_HEAP_REFREEZE")
+    if override is not None:
+        return override.strip().lower() not in ("", "0", "false", "no")
+    return "PYTEST_CURRENT_TEST" not in os.environ
+
+
+class IdleHeapRefreezer:
+    """Re-freeze the long-lived heap at idle moments (TASK-33620.15.3, ADR-198).
+
+    Live, every send paid ~70 ms of generation-2 collection on the UI loop,
+    because only the boot heap was frozen and each pass rescanned everything
+    the Console built after boot. An owner (the Console) requests a re-freeze
+    when it has painted a conversation or a run has settled; it runs once the
+    owner says it is not busy and no input arrived for ``quiet_seconds``.
+
+    ``gc.freeze()`` never collects a frozen object, and Textual widgets are
+    cyclic, so whatever is frozen live and dropped later (a switched-away
+    transcript, a recomposed rail) would leak. Re-freezes therefore count what
+    they add; once that reaches ``growth_ratio`` of the permanent generation
+    after the last compaction (and at least ``min_growth``), the next idle
+    moment of ``compaction_quiet_seconds`` compacts instead: unfreeze, collect
+    the whole heap, freeze the survivors. No re-freeze runs while a compaction
+    is due, so frozen garbage never exceeds that budget plus one re-freeze.
+    The collector is never disabled and its thresholds are never touched.
+    """
+
+    def __init__(
+        self,
+        *,
+        quiet_seconds: float = REFREEZE_QUIET_SECONDS,
+        compaction_quiet_seconds: float = COMPACTION_QUIET_SECONDS,
+        growth_ratio: float = COMPACTION_GROWTH_RATIO,
+        min_growth: int = COMPACTION_MIN_GROWTH,
+        clock: Callable[[], float] = time.monotonic,
+        enabled: Callable[[], bool] = _idle_refreeze_enabled,
+        refreeze: Callable[[str], int] = refreeze_long_lived_heap,
+        unfreeze: Callable[[], None] = gc.unfreeze,
+        freeze_count: Callable[[], int] = gc.get_freeze_count,
+    ) -> None:
+        """Create a refreezer with nothing requested.
+
+        Args:
+            quiet_seconds: Quiet time before a re-freeze.
+            compaction_quiet_seconds: Quiet time before a compaction.
+            growth_ratio: Frozen growth, as a fraction of the permanent
+                generation after the last compaction, that makes one due.
+            min_growth: The smallest growth that makes a compaction due.
+            clock: Monotonic clock, injectable for tests.
+            enabled: Whether requests are honoured at all.
+            refreeze: Collects the unfrozen heap, freezes the survivors and
+                returns how many it froze.
+            unfreeze: Moves the permanent generation back into generation 2.
+            freeze_count: Size of the permanent generation (walks it: called
+                once to set the first baseline, never per re-freeze).
+        """
+        self._quiet = quiet_seconds
+        self._compaction_quiet = compaction_quiet_seconds
+        self._growth_ratio = growth_ratio
+        self._min_growth = min_growth
+        self._clock = clock
+        self._enabled = enabled
+        self._refreeze = refreeze
+        self._unfreeze = unfreeze
+        self._freeze_count = freeze_count
+        self._last_input = float("-inf")
+        self._requested_at = float("-inf")
+        self._request: tuple[str, weakref.ref[Any], Callable[[Any], bool]] | None = None
+        self._generation = 0
+        self._baseline: int | None = None
+        self._growth = 0
+        #: ``(action, reason)`` of each maintenance run, newest last.
+        self.actions: deque[tuple[str, str]] = deque(maxlen=32)
+
+    def note_input(self) -> None:
+        """Record that the user just typed, clicked or pasted."""
+        self._last_input = self._clock()
+
+    def request(self, reason: str, owner: Any, busy: Callable[[Any], bool]) -> None:
+        """Ask for a re-freeze once ``owner`` is idle and the user is quiet.
+
+        A later request replaces an earlier one. Only a weak reference to
+        ``owner`` is kept, so a departed screen is never pinned.
+
+        Args:
+            reason: Why, for the actions log and the DEBUG line.
+            owner: Supplies ``set_timer(delay, callback)``; its timers die
+                with it.
+            busy: ``busy(owner)`` is True while a re-freeze must not run (a
+                send in flight, a run streaming). A busy owner drops the
+                request; it asks again when it next settles.
+        """
+        if not self._enabled():
+            return
+        self._requested_at = self._clock()
+        self._request = (reason, weakref.ref(owner), busy)
+        self._arm(owner, self._quiet)
+
+    def compaction_due(self) -> bool:
+        """Whether re-freezes have added enough since the last compaction."""
+        if self._baseline is None:
+            return False
+        return self._growth >= max(self._min_growth, self._growth_ratio * self._baseline)
+
+    def maintain(self, reason: str) -> str:
+        """Re-freeze or, when one is due, compact now. Returns which ran."""
+        if self._baseline is None:
+            self._baseline = self._freeze_count()
+        if self.compaction_due():
+            self._unfreeze()
+            self._baseline = self._refreeze(f"compact:{reason}")
+            self._growth = 0
+            action = "compact"
+        else:
+            self._growth += self._refreeze(reason)
+            action = "refreeze"
+        self.actions.append((action, reason))
+        return action
+
+    def _arm(self, owner: Any, delay: float) -> None:
+        self._generation += 1
+        generation = self._generation
+        owner.set_timer(max(0.0, delay), lambda: self._fire(generation))
+
+    def _fire(self, generation: int) -> None:
+        # A Textual timer callback: anything raised here would end the app.
+        if generation != self._generation or self._request is None:
+            return
+        reason, owner_ref, busy = self._request
+        owner = owner_ref()
+        try:
+            if owner is None or busy(owner):
+                self._request = None
+                return
+            quiet = self._clock() - max(self._last_input, self._requested_at)
+            if self._baseline is None:
+                self._baseline = self._freeze_count()
+            need = self._compaction_quiet if self.compaction_due() else self._quiet
+            if quiet < need:
+                self._arm(owner, need - quiet)
+                return
+            self._request = None
+            self.maintain(reason)
+        except Exception:
+            self._request = None
+            logging.getLogger(__name__).warning(
+                "Idle heap re-freeze skipped (%s)", reason, exc_info=True
+            )
+
+
+_HEAP_REFREEZER = IdleHeapRefreezer()
+
+
+def heap_refreezer() -> IdleHeapRefreezer:
+    """Return the process's refreezer: the frozen generation is per process."""
+    return _HEAP_REFREEZER
+
+
+def note_user_input() -> None:
+    """Stamp a user input for the idle re-freeze's quiet check."""
+    _HEAP_REFREEZER.note_input()

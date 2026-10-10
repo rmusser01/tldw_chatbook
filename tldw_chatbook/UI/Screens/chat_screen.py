@@ -157,7 +157,11 @@ from ..Console_Modules.retrieval import (
     sanitize_console_library_rag_query as _sanitize_console_library_rag_query,
     source_mentions_rag as _source_mentions_rag,
 )
-from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
+from ..Console_Modules.transcript import (
+    _ConsoleTranscriptReadingState,
+    note_console_conversation_painted,
+    request_console_heap_refreeze,
+)
 from ..Console_Modules import console_spend_projection as spend
 from ..Console_Modules import inspector_data
 from ..Console_Modules import skill as skill_controller
@@ -17086,6 +17090,7 @@ class ChatScreen(BaseAppScreen):
                 messages,
                 session_id=self._ensure_console_chat_store().active_session_id,
             )
+            note_console_conversation_painted(self)  # TASK-33620.15.3
             # Live turn-activity line. `apply_turn_activity` hands back the
             # EFFECTIVE value ("" unless a row is actually in flight), which
             # is what joins the refresh key below -- so an idle transcript
@@ -17934,6 +17939,7 @@ class ChatScreen(BaseAppScreen):
                 # the browser promptly instead of waiting out the TTL.
                 self._workspace._invalidate_console_persisted_rows_cache()
                 self._stop_console_transcript_sync_timer()
+                request_console_heap_refreeze(self, "run_settled")  # TASK-33620.15.3
                 # PR3a-2 Task 4 (task-15664): this stop edge is EXACTLY
                 # where the UI used to go blind on a surviving sub-agent
                 # -- no run occupies a slot, so this poll dies while a

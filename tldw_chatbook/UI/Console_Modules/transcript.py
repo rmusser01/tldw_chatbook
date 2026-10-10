@@ -98,6 +98,7 @@ from textual.containers import Vertical
 from textual.css.query import QueryError
 from textual.widget import Widget
 
+from ...Utils.ui_responsiveness import heap_refreezer
 from ...Widgets.Console import ConsoleTranscript
 from .frame import frame_console_region
 
@@ -417,3 +418,63 @@ class ConsoleTranscriptRegion(Vertical):
         if transcript is None:
             return
         transcript.note_follow_intent()
+
+
+#: Screen attribute: the ``(session, conversation)`` the transcript last
+#: showed when an idle heap re-freeze was requested for it.
+_REFREEZE_PAINTED_ATTRIBUTE = "_console_heap_refreeze_painted"
+
+
+def request_console_heap_refreeze(screen: Any, reason: str) -> None:
+    """Ask for an idle heap re-freeze once this Console is quiet (TASK-33620.15.3).
+
+    Called when a run settles and when the transcript shows a different
+    conversation: the two moments the Console's long-lived heap changes. The
+    re-freeze itself runs later, only while :func:`_console_heap_busy` is
+    False and no input arrived for the quiet period (ADR-198 amendment).
+
+    Args:
+        screen: The Console ``ChatScreen``; its timer runs the re-freeze.
+        reason: ``run_settled`` or ``conversation_painted``.
+    """
+    heap_refreezer().request(reason, screen, _console_heap_busy)
+
+
+def note_console_conversation_painted(screen: Any) -> None:
+    """Request a re-freeze when the transcript shows a different conversation.
+
+    Args:
+        screen: The Console ``ChatScreen`` whose transcript was just synced.
+    """
+    store = screen._console_chat_store
+    key = (
+        store.active_session_id if store is not None else None,
+        screen._current_console_conversation_id(),
+    )
+    if getattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, None) == key:
+        return
+    setattr(screen, _REFREEZE_PAINTED_ATTRIBUTE, key)
+    request_console_heap_refreeze(screen, "conversation_painted")
+
+
+def _console_heap_busy(screen: Any) -> bool:
+    """Whether a re-freeze must wait: from Enter to a settled run, or off screen.
+
+    A visible send is in flight from its press (``_console_send_flight``)
+    until its turn is accepted; from acceptance the run is in custody or
+    active, which keeps the transcript poll running. A Console that is not
+    the screen on top (another screen, a modal) is busy too, so a re-freeze
+    never freezes a transient screen's widgets.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import _console_screen_is_torn_down
+
+    if _console_screen_is_torn_down(screen) or screen.app.screen is not screen:
+        return True
+    flight = getattr(screen, "_console_send_flight", None)
+    if flight is not None and (flight.tasks or flight.deferred is not None):
+        return True
+    if getattr(screen, "_console_pending_send", None) is not None:
+        return True
+    if getattr(screen, "_console_transcript_sync_timer", None) is not None:
+        return True
+    return bool(screen._console_transcript_poll_needed())

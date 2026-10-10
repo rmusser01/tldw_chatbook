@@ -1,10 +1,11 @@
 """App-level guards for Textual defects, composed into ``TextualAppGuards``.
 
-Two guards live here, and ``TldwCli`` carries both through the one
+Three App mixins live here, and ``TldwCli`` carries them through the one
 ``TextualAppGuards`` base: ``TextSelectionCrashGuard`` (task-14903, this
-docstring) and ``ThreadWorkerContextGuard`` (TASK-33264, see its class). They
-share a module so a new App-level guard costs neither another ``app.py`` line
-(size ratchet) nor another boot-path module (ADR-097 census).
+docstring), ``ThreadWorkerContextGuard`` (TASK-33264, see its class) and
+``UserInputTap`` (TASK-33620.15.3: keeps the idle heap re-freeze off typing).
+They share a module so a new App-level guard costs neither another ``app.py``
+line (size ratchet) nor another boot-path module (ADR-097 census).
 
 The bug (present in Textual 8.2.8, the newest 8.x at the time of writing --
 no fixed patch release exists inside this app's ``>=8.0.0,<9`` pin):
@@ -64,11 +65,14 @@ from typing import Any, Callable, Optional
 from loguru import logger
 from textual import events
 
+from tldw_chatbook.Utils.ui_responsiveness import note_user_input
+
 __all__ = [
     "FreshContextExecutor",
     "TextSelectionCrashGuard",
     "TextualAppGuards",
     "ThreadWorkerContextGuard",
+    "UserInputTap",
     "match_selection_begin_container_crash",
 ]
 
@@ -208,5 +212,23 @@ class ThreadWorkerContextGuard:
             previous.shutdown(wait=False)
 
 
-class TextualAppGuards(TextSelectionCrashGuard, ThreadWorkerContextGuard):
+#: What counts as the user acting: typing, clicking, scrolling or pasting.
+_USER_INPUT = (events.InputEvent, events.Paste)
+
+
+class UserInputTap:
+    """App mixin: stamp each user input for the idle heap re-freeze (TASK-33620.15.3).
+
+    The re-freeze (ADR-198 amendment) must never land while the user types.
+    ``App.on_event`` sees every input event before it is forwarded, so one
+    timestamp here covers every screen and modal.
+    """
+
+    async def on_event(self, event: events.Event) -> None:
+        if isinstance(event, _USER_INPUT):
+            note_user_input()
+        await super().on_event(event)  # type: ignore[misc]
+
+
+class TextualAppGuards(TextSelectionCrashGuard, UserInputTap, ThreadWorkerContextGuard):
     """Every guard in this module; add BEFORE ``App`` in the base list."""
