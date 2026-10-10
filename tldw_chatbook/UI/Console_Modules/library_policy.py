@@ -43,6 +43,7 @@ class ConsoleLibraryPolicyController:
         direct_library_tools: Callable[[], bool],
         push_screen: Callable[[Any], Any],
         request_control_bar_sync: Callable[[], None],
+        console_owns_screen_stack: Callable[[], bool],
     ) -> None:
         self.app_instance = app_instance
         self._active_session = active_session
@@ -50,6 +51,7 @@ class ConsoleLibraryPolicyController:
         self._direct_library_tools = direct_library_tools
         self._push_screen = push_screen
         self._request_control_bar_sync = request_control_bar_sync
+        self._console_owns_screen_stack = console_owns_screen_stack
 
     def _display_state(
         self,
@@ -63,7 +65,19 @@ class ConsoleLibraryPolicyController:
         )
 
     def open_access(self) -> None:
-        """Open the policy-only modal for the currently active session."""
+        """Open the policy-only modal for the currently active session.
+
+        Only from an uncovered Console (TASK-34720). Every Enter or Space on
+        the focused Library chip posts its own request, and typed text queues
+        them all before the first dialog is on screen -- closing the dialog
+        hands focus back to the chip, so a user typing a message lands there.
+        Each request used to push another dialog: a typed sentence stacked
+        about twenty, and Textual's nested render of translucent modals
+        exceeded the recursion limit and exited the app. The first request's
+        dialog now covers the Console, so the queued rest are refused here.
+        """
+        if not self._console_owns_screen_stack():
+            return
         session = self._active_session()
         if session is None:
             self.app_instance.notify(
