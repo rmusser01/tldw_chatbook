@@ -398,6 +398,8 @@ def test_inspector_push_captures_immutable_revision_target() -> None:
         ),
         _ensure_console_chat_controller=lambda: controller,
         _console_active_session_is_ephemeral=lambda: False,
+        # TASK-34720: the inspector is pushed only while the Console is on top.
+        _owns_console_screen_stack=lambda: True,
         app=SimpleNamespace(push_screen=pushed),
     )
 

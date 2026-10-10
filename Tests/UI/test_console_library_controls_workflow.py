@@ -245,9 +245,10 @@ async def test_a_sentence_typed_on_the_library_chip_does_not_crash_the_console()
     every translucent modal over the one beneath it, one nested render per
     stacked screen (about 20 Python frames each, measured), so the live app
     passed Python's recursion limit and exited with RecursionError in
-    ``Compositor.render_strips``. The headless harness renders from a
-    shallower stack and survives 21, so the stack itself is what this pins:
-    the depth that crashed is the depth that can no longer be built.
+    ``Compositor.render_strips``. Headless, the 21-dialog stack overflows
+    only on some runs (it renders from a shallower Python stack), so the
+    stack itself is what this pins: the depth that crashed can no longer be
+    built.
     """
     app = _build_test_app()
     _configure_native_ready_console(app)
