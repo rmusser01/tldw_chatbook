@@ -25,8 +25,10 @@ would build at the same point.
 A composition is kept only when it provably read what its fingerprint
 describes: the store files keep their stamps across it, each was last changed
 at least ``SETTLE_NS`` before the fingerprint (storage admission's own rule
-before it trusts file stamps), the admission epoch did not move, and the
-servers it saw are still in the connection state it saw.
+before it trusts file stamps), the admission epoch did not move, the servers
+it saw are still in the connection state it saw, and its key is still the one
+it read after its await. Only a plain ``MCPToolProvider`` is reused or kept:
+a subclass (a plugin provider) composes from more than the key covers.
 """
 
 from __future__ import annotations
@@ -39,6 +41,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
+
+from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 
 #: A store file changed less than this long before the fingerprint is not
 #: trusted to keep its stamp (storage admission waits 1 s; timestamps can be
@@ -151,9 +155,10 @@ async def compose_run_mcp_provider(
     servers = entry.servers if entry is not None else ()
     observed_at = time.time_ns()
     epoch = _admission_epoch()
+    plain = type(provider) is MCPToolProvider  # Anything else always composes.
     fingerprint = None
     try:
-        fingerprint = await service.run_catalog_fingerprint(servers)
+        fingerprint = await service.run_catalog_fingerprint(servers) if plain else None
     except Exception as caught:  # noqa: BLE001 -- the reads below meet any refusal
         logger.debug(
             "Console MCP catalog check failed ({}); composing from the stores",
@@ -184,13 +189,15 @@ async def compose_run_mcp_provider(
     _fill(local_read, engaged, error)
     if not engaged:
         try:
-            await provider.compose_catalog(kill_switch_engaged=False)
+            compose = provider.compose_catalog
+            await (compose(kill_switch_engaged=False) if plain else compose())
         except Exception:  # noqa: BLE001 -- a composition failure must not abort the send
             logger.opt(exception=True).warning(
                 "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run"
             )
             return None
-    if error is None and fingerprint is not None:
+    # The composition read its key after an await: keep it only under that key.
+    if error is None and fingerprint is not None and provider.composition_key() == key:
         try:
             _keep(service, provider, fingerprint, key, engaged, observed_at, epoch)
         except Exception as caught:  # noqa: BLE001 -- not keeping is always safe
@@ -214,6 +221,7 @@ def _keep(service, provider, fingerprint, key, engaged, observed_at, epoch) -> N
         return
     servers = tuple((profile_id, owned) for profile_id, owned, _seen in composed)
     seen = tuple(connected for _id, _owned, connected in composed)
+    # Defense in depth: reuse compares these too, but never keep a stale view.
     if service.local_service.connection_states(servers) != seen:
         return
     with _lock:
