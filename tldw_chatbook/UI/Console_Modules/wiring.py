@@ -984,6 +984,7 @@ def build_console_controllers(
         ),
         push_screen=lambda modal: screen.app.push_screen(modal),
         request_control_bar_sync=lambda: screen._request_console_control_bar_sync(),
+        console_owns_screen_stack=lambda: screen._owns_console_screen_stack(),
     )
 
     screen._skill = ConsoleSkillController(
