@@ -279,10 +279,19 @@ def test_library_pane_frames_clear_non_text_contrast(theme: Theme) -> None:
 
 
 WORKFLOWS_SHEET = CSS_ROOT / "features/_workflows.tcss"
+FORMS_SHEET = CSS_ROOT / "components/_forms.tcss"
 WORKFLOW_PANES = {
     "WorkflowLibrary#workflows-library": "#workflows-library",
     "WorkflowNavigator#workflows-navigator": "#workflows-navigator",
 }
+WORKFLOW_FIELD_FOCUS = "WorkflowLibrary#workflows-library Input:focus"
+
+
+def _assert_ink_readable(theme: Theme, table: dict, token: str, on: Color, what: str) -> None:
+    """``$token`` painted as text on the ``on`` colour reads at 4.5:1."""
+    ink = _resolve_color(_painted(table, token), on)
+    ratio = _ratio(ink.hex, on.hex)
+    assert ratio >= AA, f"{theme.name}: {what} {ink.hex} is {ratio:.2f}:1 on {on.hex} (needs {AA}:1)"
 
 
 @pytest.mark.bootstrap_profile
@@ -291,26 +300,45 @@ def test_workflow_pane_edges_clear_non_text_contrast(theme: Theme) -> None:
     """TASK-33003.15 AC#3: the Workflows pane edges set no fill and sat on
     $background, where no line colour is pinned. Moving $ds-column-line to the
     boundary colour took litestep from 3.64:1 to 1.32:1 there. Each edge reads
-    at 3:1 on the fill its own rule sets."""
+    at 3:1 on the fill its own rule sets.
+
+    Review round 3: the text is gated here too, on every theme. The rule's
+    `color` reads at 4.5:1 on that fill. So does the ink of a focused control:
+    the house focus tint is translucent, and over $panel it took that ink
+    under 4.5:1 on five themes (catppuccin-frappe 4.12:1). A focused button's
+    fill is measured over the pane's; the focused search field's tint sits on
+    an opaque base of its own."""
     table = _painted_variables(theme)
+    focus_ink = _rule_token(WORKFLOWS_SHEET, ".workflow-compact:focus", "color")
     for selector in WORKFLOW_PANES:
         edge = _rule_token(WORKFLOWS_SHEET, selector, "border-right")
         fill = _rule_token(WORKFLOWS_SHEET, selector, "background")
         _assert_edge_visible(theme, table, edge, fill)
+        pane = Color.parse(_painted(table, fill))
+        ink = _rule_token(WORKFLOWS_SHEET, selector, "color")
+        _assert_ink_readable(theme, table, ink, pane, f"{selector} text")
+        button = f"{selector} .workflow-compact:focus"
+        focused = Color.parse(_painted(table, _rule_token(WORKFLOWS_SHEET, button, "background")))
+        _assert_ink_readable(theme, table, focus_ink, _over(pane, focused), button)
+    field = [
+        Color.parse(_painted(table, _rule_token(WORKFLOWS_SHEET, WORKFLOW_FIELD_FOCUS, prop)))
+        for prop in ("background", "background-tint")
+    ]
+    assert field[0].a == 1, f"{theme.name}: the pane's fill shows through {WORKFLOW_FIELD_FOCUS}"
+    typed = _rule_token(FORMS_SHEET, "Input:focus", "color")
+    _assert_ink_readable(theme, table, typed, _over(*field), WORKFLOW_FIELD_FOCUS)
 
 
-def _painted_text(app, widget) -> set[tuple[str, str]]:
-    """{(fg hex, bg hex)} of the letters and digits painted straight on
-    ``widget``'s fill: cells inside a descendant that sets its own fill (a
-    list, a field, a button) are skipped, since that fill is not the pane's."""
-    own = [child.region for child in widget.walk_children() if child.styles.background.a > 0]
-    region, cells = widget.region, set()
+def _text_cells(app, region, skip=()) -> set[tuple[str, str]]:
+    """{(fg hex, bg hex)} of the letters and digits painted in ``region``,
+    outside the ``skip`` regions."""
+    cells = set()
     for y in range(region.y, region.bottom):
         position = 0
         for segment in app.screen._compositor.render_strips()[y]:
             for glyph in segment.text:
                 inside = region.x <= position < region.right and glyph.isalnum()
-                if inside and not any(box.contains(position, y) for box in own):
+                if inside and not any(box.contains(position, y) for box in skip):
                     style = segment.style
                     cells.add(
                         (
@@ -322,6 +350,15 @@ def _painted_text(app, widget) -> set[tuple[str, str]]:
     return cells
 
 
+def _painted_text(app, widget) -> set[tuple[str, str]]:
+    """The text cells painted on ``widget``'s fill. Cells inside a descendant
+    with an opaque fill of its own (a list, a field, a resting button) are
+    skipped: that fill is not the pane's. A translucent one (the focus tint)
+    is read, because the pane's fill shows through it."""
+    opaque = [child.region for child in widget.walk_children() if child.styles.background.a == 1]
+    return _text_cells(app, widget.region, opaque)
+
+
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -330,6 +367,9 @@ def _painted_text(app, widget) -> set[tuple[str, str]]:
         # The edge on $background: the two weakest of the six themes under 3:1.
         "litestep",
         "apricot",
+        # The focus tint on $panel under a focused control's text: the weakest
+        # of the five themes under 4.5:1 (atom-one-dark, below, is another).
+        "catppuccin-frappe",
         # The pane headings on $panel in the theme's $foreground: under 4.5:1.
         "atom-one-dark",
         "tokyo-night",
@@ -346,8 +386,15 @@ async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> 
     under them (litestep 1.32:1 and apricot 2.63:1 on $background). The panel
     fill that fixes the edge also sits under the pane headings, which
     inherited $foreground: atom-one-dark fell from 6.57:1 to 3.45:1 there, so
-    text painted straight on the fill is read as well."""
+    text painted straight on the fill is read as well.
+
+    Review round 3: at rest and with each control focused in turn. The fill
+    also sat under the translucent focus tint, and the focused buttons and
+    text typed in the search field fell under 4.5:1 on five themes. The field
+    is read with a typed value: its placeholder ink is under 4.5:1 on the
+    tint on 48 themes, as it was before the panes had a fill."""
     from textual.containers import Horizontal
+    from textual.widgets import Button, Input, OptionList
 
     from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
     from tldw_chatbook.UI.Workflows_Modules.library import WorkflowLibrary
@@ -364,6 +411,9 @@ async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> 
         for theme in ALL_THEMES:
             app.register_theme(theme)
         app.theme = theme_name
+        for button in app.query(Button):
+            button.disabled = False  # Previous and Next: no page to turn here
+        app.set_focus(None)  # the search field takes focus on mount
         await pilot.pause(0.3)
         edges, text = {}, {}
         for selector in WORKFLOW_PANES.values():
@@ -375,6 +425,17 @@ async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> 
                 for cell in _painted_line(app, y, pane.right - 1, pane.right, "│")
             }
             text[selector] = _painted_text(app, widget)
+            for control in [child for child in widget.walk_children() if child.focusable]:
+                app.set_focus(control)
+                await pilot.pause()
+                if isinstance(control, Input):
+                    # Typed once the focus has landed: focusing selects a value.
+                    control.value = "typed 123"
+                    await pilot.pause()
+                own = _text_cells(app, control.region)
+                # The lists are empty here, and their fill is opaque either way.
+                assert own or isinstance(control, OptionList), f"no #{control.id} text"
+                text[f"{selector} with #{control.id} focused"] = own | _painted_text(app, widget)
     for selector, cells in edges.items():
         assert cells, f"{theme_name}: no {selector} edge cells painted"
         for edge, fill in cells:

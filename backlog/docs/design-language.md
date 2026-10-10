@@ -152,7 +152,11 @@ Every interactive control must define, at minimum:
   two fills only, and on `$background` it fell to 1.32:1 on litestep
   (Workflows, TASK-33003.15). Text that sits straight on that fill takes
   `$ds-text-primary`, not the inherited `$foreground`, which reads under
-  4.5:1 on `$panel` in nine themes (atom-one-dark 3.45:1).
+  4.5:1 on `$panel` in nine themes (atom-one-dark 3.45:1). The pane's fill
+  also shows through a translucent fill inside it: the house focus tint over
+  `$panel` reads under 4.5:1 on five themes (catppuccin-frappe 4.12:1). In
+  the Workflows rails a focused button takes `$tldw-focus-fill`, and the
+  focused search field lays its tint on an opaque `$background`.
 
 ## 3. Interaction rules (binding on all screens)
 

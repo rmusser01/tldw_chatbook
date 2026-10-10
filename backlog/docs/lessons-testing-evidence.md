@@ -18623,12 +18623,26 @@ on `$background` (atom-one-dark 6.57:1 to 3.45:1, tokyo-night 8.10:1 to
 4.23:1). The edge gate was green the whole time. A rendered sweep of the text
 cells found it, and the panes now also set `color: $ds-text-primary`.
 
+**Update, review round 3.** That sweep skipped every descendant with a fill of
+its own, and it read the rest state only. The house focus tint
+(`$ds-focus-bg`, primary at 30%) is a fill of its own and translucent, so the
+new `$panel` showed through it: the four focused rail buttons and text typed
+in the focused search field fell under 4.5:1 on five themes
+(catppuccin-frappe 5.82:1 to 4.12:1). The sweep also never saw that the
+search field takes focus on mount, so its "rest" frame had one focused
+control in it. The focused buttons now take the guarded `$tldw-focus-fill`,
+and the field's tint sits on an opaque `$background`.
+
 **What to do, as well.** A fill added under a line sits under everything
-transparent inside the widget too. After adding one, read the text cells
-painted straight on it (skip descendants that set their own fill) on every
-theme, and compare with the fill they sat on before. A theme whose `$panel`
-equals its `$surface` (solarized) makes "cells whose background is the pane's
-fill" match a list's own cells: select by widget region, not by colour.
+inside the widget that is transparent or translucent. After adding one, read
+the text cells painted on it on every theme, and compare with the fill they
+sat on before. Skip a descendant only when its own fill is opaque
+(`background.a == 1`). Clear the focus for the rest frame, then focus each
+control in turn (enable the disabled ones first) and read its text again: a
+focus or hover tint is where a translucent fill usually comes from. A theme
+whose `$panel` equals its `$surface` (solarized) makes "cells whose
+background is the pane's fill" match a list's own cells: select by widget
+region, not by colour.
 
 ## A colour built in Python with `dim` is measured on one theme only (TASK-33004.6, 2026-09-30)
 
