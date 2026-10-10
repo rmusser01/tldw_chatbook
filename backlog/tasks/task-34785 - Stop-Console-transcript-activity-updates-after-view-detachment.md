@@ -1,11 +1,11 @@
 ---
 id: TASK-34785
 title: Stop Console transcript activity updates after view detachment
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-10 20:50'
-updated_date: '2026-10-10 21:19'
+updated_date: '2026-10-10 21:22'
 labels:
   - console
   - bug
@@ -26,9 +26,9 @@ The required UI lane can crash while a pending question/approval journey removes
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A real Console view removal during an awaited activity update produces no MountError or further mounts into retired widgets.
-- [ ] #2 Mounted activity updates and the existing pending question/approval sibling/remount journey retain their behavior.
-- [ ] #3 A deterministic regression fails before repair; targeted checks, static analysis, preflight and independent review verify the fix.
+- [x] #1 A real Console view removal during an awaited activity update produces no MountError or further mounts into retired widgets.
+- [x] #2 Mounted activity updates and the existing pending question/approval sibling/remount journey retain their behavior.
+- [x] #3 A deterministic regression fails before repair; targeted checks, static analysis, preflight and independent review verify the fix.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,4 +62,8 @@ The broader current-source selection is NON-GREEN: 119 passed and 18 failed in 2
 CI-checker static qualification: two inherited Ruff findings (EXE001 and PIE810), zero new findings; fatal diagnostics pass. Its existing formatter drift is unchanged from fbe (32 formatting change-lines), so the checker formatter check remains NON-GREEN and no incidental reformat is included. Runtime/test scoped static receipts above remain valid. Git diff whitespace check passes.
 
 Independent immutable runtime review by review_3029 found no actionable defect in fbe14192c7147450e7dfdbe88b9eee10e7b94403: first-mount/recompose projection retention and post-await detach guards preserve unconsumed signatures. The peer also provisionally verified this CI diff, exact old-entry preservation, 13-case collection, 218 contract passes and all 18 baseline failures. Final immutable CI review and task closeout remain under root ownership; status stays In Progress and acceptance criteria remain unchecked.
+
+Root qualification on immutable fbe14192c7147450e7dfdbe88b9eee10e7b94403: the original nine trace/dispatch modules pass all45 cases. The broader12-module selection is retained as NON-GREEN119PASS/18FAIL in211.99s, with no collection errors. Its119 passes include all13 new lifecycle cases,47 existing Assistant-turn cases and the real pending question/approval sibling-view/remount journey (13 pending-projection cases pass). All18 failures stop at real config admission before UI assertions and reproduce with exact case IDs, identical12-module collection context and immutable c2 lifecycle methods; they remain inherited profile-harness failures, not suppressed or claimed repaired. XML/log: /private/tmp/tldw-pr2882-lifecycle-integrated.{xml,log}; exact baseline proof: /private/tmp/pr2882-profile-baseline-all18.xml. Artifact preflight passes on both runtimefbe and CI follow-upb2d; the final178-node census and218 CI contract cases pass.
+
+Independent review_3029 clears immutable runtimefbe14192c7147450e7dfdbe88b9eee10e7b94403 and CI-onlyb2d24076ca1af97b4a020aa7d90448da9420d547. Runtime/Textual composition and retirement boundaries, screen cached-key preservation, all old census/shard positions, new13-case collection and exact baseline scope are reviewed. All acceptance criteria are qualified. This final task closeout changes metadata only; runtime/test bytes remain identical to reviewedfbe and census/checker bytes to reviewedb2d. Required hosted CI still gates publication integration; no full suite or live provider call was run.
 <!-- SECTION:NOTES:END -->
