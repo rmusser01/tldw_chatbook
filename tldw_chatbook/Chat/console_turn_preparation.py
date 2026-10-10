@@ -87,6 +87,30 @@ class ContextCompactionHold:
     estimated: bool
 
 
+#: TASK-33621.20: why an Automatic Library search paused a send, keyed by the
+#: preparation's error code. The shelf prefixes it with "Not sent: ", so it
+#: stays short and names no query or source.
+LIBRARY_PAUSE_COPY: Mapping[str, str] = MappingProxyType(
+    {
+        "library_retrieval_timeout": "Library search timed out",
+        "library_retrieval_failed": "Library search failed",
+    }
+)
+LIBRARY_PAUSE_CANCELLED_COPY = "Library search canceled; nothing was sent."
+
+
+def library_pause_copy(error_code: str | None) -> str:
+    """Return the visible reason for a Library-paused send.
+
+    Args:
+        error_code: The preparation outcome's bounded error code, if any.
+
+    Returns:
+        A short reason; a generic one for an unknown or missing code.
+    """
+    return LIBRARY_PAUSE_COPY.get(error_code or "", "Library search did not finish")
+
+
 PAUSE_ACTIONS: Mapping[ConsolePreparationPauseKind, tuple[str, ...]] = MappingProxyType(
     {
         ConsolePreparationPauseKind.RETRIEVAL: ("retry", "bypass", "cancel"),
