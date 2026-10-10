@@ -18,6 +18,7 @@ sync outside a run checks at once, as before.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -157,3 +158,47 @@ async def test_sync_ticks_during_a_run_check_the_character_scope_once_a_second(
             await _tick(console)
             await _tick(console)
             assert scope["reads"] >= idle + 2
+
+
+@pytest.mark.asyncio
+async def test_a_scope_invalidated_during_a_run_check_is_checked_at_once():
+    """An invalidation while a check's reload is in flight is not overwritten.
+
+    The check's "checked" mark is written after its awaited reload; had it
+    overwritten the invalidation, the run's ticks would skip the scope read
+    for up to ``SCOPE_RECHECK_DURING_RUN_SECONDS`` after the scope changed.
+    """
+    from Tests.UI.test_console_character_context import _controller
+
+    reads = {"count": 0}
+
+    def counted_revision() -> int:
+        reads["count"] += 1
+        return 7
+
+    database = SimpleNamespace(
+        get_local_authority_id=lambda: "authority",
+        get_character_conversation_search_revision=counted_revision,
+    )
+    controller = _controller(
+        database_accessor=lambda: database, run_active=lambda: True
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held_refresh() -> None:
+        entered.set()
+        await release.wait()
+
+    controller.refresh = held_refresh
+    pending = asyncio.create_task(controller.refresh_if_scope_changed())
+    await entered.wait()
+    controller.invalidate_scope()  # The scope changes under the in-flight check.
+    release.set()
+    assert await pending is True
+    checked = reads["count"]
+    await controller.refresh_if_scope_changed()
+    assert reads["count"] > checked, "an invalidated scope waited out the interval"
+    # Control: with no invalidation, the run tick after a check skips the read.
+    checked = reads["count"]
+    await controller.refresh_if_scope_changed()
+    assert reads["count"] == checked

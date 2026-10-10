@@ -289,6 +289,7 @@ class ConsoleCharacterContextController:
         self._browse_snapshot: ConsoleCharacterBrowseSnapshot | None = None
         self._activation_cancellation: asyncio.Event | None = None
         self._scope_checked: tuple[float, Any, tuple[int, str] | None, str] | None = None
+        self._scope_invalidations = 0
         self.state = ConsoleCharacterContextState()
 
     def _publish(self, state: ConsoleCharacterContextState) -> None:
@@ -442,8 +443,14 @@ class ConsoleCharacterContextController:
         """Fence work and force the next lifecycle check to reload."""
 
         self._generation += 1
+        self._scope_invalidations += 1
         self._scope_checked = None
         self._publish(replace(self.state, scope_fingerprint=None))
+
+    def _mark_checked(self, started: tuple, invalidations: int) -> None:
+        """Start the run recheck interval unless the scope was invalidated since."""
+        if self._scope_invalidations == invalidations:
+            self._scope_checked = started
 
     def _checked_recently(self) -> bool:
         """Whether a run's sync may skip the database scope check (TASK-33620.15.1).
@@ -488,20 +495,22 @@ class ConsoleCharacterContextController:
             self._open_conversation_identity(),
         )
         self._scope_checked = None
+        invalidations = self._scope_invalidations
         try:
             snapshot = await self._capture_scope()
         except _ConsoleCharacterScopeChanged:
             self.invalidate_scope()
+            invalidations = self._scope_invalidations
         except _ConsoleCharacterScopeReadError:
             await self.refresh()
-            self._scope_checked = started
+            self._mark_checked(started, invalidations)
             return True
         else:
             if not force and snapshot.fingerprint == self.state.scope_fingerprint:
-                self._scope_checked = started
+                self._mark_checked(started, invalidations)
                 return False
         await self.refresh()
-        self._scope_checked = started
+        self._mark_checked(started, invalidations)
         return True
 
     @staticmethod
