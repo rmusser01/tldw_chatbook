@@ -1,5 +1,7 @@
 import inspect
 
+import pytest
+
 from tldw_chatbook.UI.Screens.settings_appearance_defaults import (
     SettingsAppearanceDefaults,
     build_appearance_save_sections,
@@ -8,12 +10,17 @@ from tldw_chatbook.UI.Screens.settings_appearance_defaults import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _disable_model_catalog_refresh():
+    """These pure helpers do not mount an app or start its catalog refresh."""
+
+
 def test_load_appearance_defaults_uses_safe_defaults():
     defaults = load_appearance_defaults({})
 
     assert defaults.default_theme == "textual-dark"
     assert defaults.palette_theme_limit == 1
-    assert defaults.font_size == 12
+    assert defaults.font_size == 16
     assert defaults.density == "normal"
     assert defaults.animations_enabled is True
     assert defaults.smooth_scrolling is True

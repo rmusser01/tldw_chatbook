@@ -6566,7 +6566,7 @@ enabled = true  # Enable web server functionality
 host = "localhost"  # Host address to bind to
 port = 8000  # Port to bind to
 title = "tldw chatbook"  # Title for the web page
-font_size = 12  # Browser terminal font size; 12 keeps Textual Web close to native terminal density
+font_size = 16  # Browser terminal font size in CSS pixels (16px is approximately 12pt)
 debug = false  # Enable debug mode for development
 # Remote access is denied unless a dedicated credential resolves in this order:
 # TLDW_CHATBOOK_WEB_ACCESS_TOKEN, this access_token field, then the OS keyring
