@@ -4616,6 +4616,23 @@ says nothing about whether the sheet itself parses. Grepping the variable
 name against the theme sheets costs one second and catches the
 typo-class outright.
 
+**Fifth instance, a defined name this time (TASK-33641.1, wave 1
+integration, 2026-10-10).** The tab bar's widget-tier rules gained
+`$tldw-boundary` and `$tldw-active-edge`, the first guard names in
+`widget_defaults_*.tcss`. No tcss defines them: `TldwCli` gets them from
+`ThemeVariableDefaultsMixin`, and every in-process harness from
+Tests/conftest.py importing the themes module. The rider's own gates were
+green (`Tests/UI/test_theme_contrast.py`, 1,510 nodes, and the CSS build
+files).
+`Tests/Wizards/test_first_run_backup_restore.py::test_restore_entry_returns_to_same_first_run_surface`
+starts `ConsolidatedCSSApp` in a subprocess, where no conftest runs, and
+both its nodes failed the parse on `$tldw-boundary`. They were found only
+because another task of the wave ran `Tests/Wizards` whole: a grep for the
+changed symbols cannot name a file that reaches the sheet through the
+shared harness. `ConsolidatedCSSApp` now carries the mixin, as `TldwCli`
+does. **What to do:** when a widget-tier sheet gains a `$tldw-*` name, run
+one test that starts the harness in a subprocess (that file takes 8 s).
+
 **Fourth instance (2026-08-07, task-2859 item 10, padding not clipping this time).** A
 `.library-rag-result-snippet { padding: 0 1; }` bundle rule (fixing a snippet sitting
 flush against its card border) tested green with `snippet.region.x ==
