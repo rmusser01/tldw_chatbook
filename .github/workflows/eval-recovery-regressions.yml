@@ -76,6 +76,7 @@ jobs:
           New-Item -ItemType Directory -Path $evalTemp -Force | Out-Null
           "TEMP=$evalTemp" >> $env:GITHUB_ENV
           "TMP=$evalTemp" >> $env:GITHUB_ENV
+          "TMPDIR=$evalTemp" >> $env:GITHUB_ENV
       - name: Verify override classification and recovery lifetimes
         working-directory: ${{ env.EVAL_SOURCE_ROOT }}
         run: >-
