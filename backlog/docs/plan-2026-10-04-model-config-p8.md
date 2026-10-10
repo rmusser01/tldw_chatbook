@@ -76,7 +76,7 @@ After this phase, task-1379 re-runs the Settings critique.
 - Tests always run in parallel (xdist, `-n 6 --dist loadfile`); serial only for Tests/Architecture.
 - Per task, run the test files that cover what you changed, once, at HEAD. The phase runs ONE base-vs-head comparison at its end, both trees at once.
 - Evidence is the test names plus the command and its summary line in the report. Commit no per-task captures or evidence files; the Capture phase captures every changed surface once.
-- Execution order: Tasks 3 and 5 run in parallel worktrees, then Task 4. Tasks 1 and 2 wait until Phase 7 (TASK-33007) is merged and this branch is rebased onto it.
+- Execution order: Tasks 3 and 5 run in parallel worktrees, then Task 4. Tasks 1 and 2 run after them, in that order (Task 2 reuses Task 1's return route). Their Phase 7 dependency is met: this branch is stacked on Phase 7's final head (PR #3057, CI fixes included) and is rebased onto dev once #3057 merges.
 
 ## Task 1: Return to the originating Console chat after provider recovery in Settings (TASK-33008.1)
 
