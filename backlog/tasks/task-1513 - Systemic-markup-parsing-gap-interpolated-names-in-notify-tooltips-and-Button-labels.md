@@ -3,11 +3,11 @@ id: TASK-1513
 title: >-
   Systemic markup-parsing gap: interpolated names in notify, tooltips, and
   Button labels
-status: Done
+status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-30 14:00'
-updated_date: '2026-10-10 20:41'
+updated_date: '2026-10-10 20:49'
 labels:
   - evals
   - ux
@@ -28,6 +28,7 @@ Found during the 2026-07-30 Evals UAT fix batch (Task 2 review, reproduced again
 - [x] #1 A repo-wide convention exists (helper or lint) for user-derived text reaching notify/tooltips/labels
 - [x] #2 The Evals rail's bench/dataset/classic row labels are safe for markup-metacharacter names
 - [x] #3 A regression test pins at least one representative surface per widget kind (toast, tooltip, Button label)
+- [x] #4 Required CI rejects new or grown production markup-census sites
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -85,6 +86,15 @@ Independent review correction (2026-10-10)
 ADR required: no
 ADR path: N/A
 Reason: complete the existing guard exemption; no runtime or UI boundary change.
+
+Required CI integration completion (2026-10-10)
+1. Reopen this task and add AC4 for the existing production markup-census guard to reject new/grown sites in required CI.
+2. Register the guard after timestamp writers in the workflow CHECKERS contract first and observe the unchanged workflow fail that contract.
+3. Add the same guard to the existing derived-artifacts job between timestamp writers and the UI census with the existing !cancelled() policy.
+4. Run Tests/CI, the actual markup guard, preflight and focused formatter/static checks; preserve the distinct 231-test integration receipt and append new evidence. Keep In Progress pending independent review of this step.
+ADR required: no
+ADR path: N/A
+Reason: routine wiring of the existing guard into its existing required job; no lane, status-context, runtime or dependency choice changes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -160,4 +170,11 @@ Verification head: 7d9b32474269b0b30a39db72c5e01de011a4036d (rebased C follow-up
 Fresh combined interaction run: 231 passed in 20.47s across the guard, real widget parser pins, real SQLite media dedup, fusion, citation capture, and TestMediaLegScopeEnforcement/TestCustomPipelineInheritance/TestChatEntryPointScopedE2E. This is a separate run from the earlier 218 base-fix, 49 post-format and 50 correction receipts.
 Black 25.1.0 checked all four follow-up Python files; focused Ruff 0.13.1 and stack-diff whitespace checks passed. Complete preflight passed (543 markup occurrences pinned; 175 Tests/UI gate entries). No full suite, push or PR creation. Task remains Done; no runtime behavior was changed during integration.
 ADR required: no; rebase and verification of previously reviewed routine fixes, with existing boundaries unchanged.
+
+Required CI integration implemented (2026-10-10)
+The maintainer owner note above is now fulfilled: the existing derived-artifacts required job invokes python scripts/check_markup_interpolation.py between timestamp writers and the UI census with the same !cancelled() policy. The workflow CHECKERS contract registers it in the matching position; no lane, required status-context, runtime or dependency choice changed.
+RED before the workflow edit: 2 failed / 20 passed in the contract file, specifically the absent markup command and 11 checker steps versus 12. GREEN after the edit: all Tests/CI passed (749 passed in 8.44s). This is separate from the earlier 231-test combined stack verification and the retained 218/49/50 receipts.
+The actual production guard passed with the unchanged 543 pinned occurrences. Complete preflight passed (175 UI gate entries); Black 25.1.0 checked the modified inventory block, focused Ruff 0.13.1 error checks and whitespace checks passed. AC4 is checked. Independent review of this new workflow step is pending, so task remains In Progress. No full suite, remote Actions run, push or PR creation.
+stack_parent: 595618f4592a3495a251ae0e187980b793c12e74
+ADR required: no; routine integration of this existing guard into its existing required job. The inherited 41-occurrence census limitation remains unchanged.
 <!-- SECTION:NOTES:END -->
