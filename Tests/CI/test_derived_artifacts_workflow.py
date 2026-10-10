@@ -46,6 +46,8 @@ CHECKERS = (
     # helper: datetime.utcnow() is forbidden and naive datetime.now().isoformat()
     # is ratcheted.
     "scripts/check_timestamp_writers.py",
+    # TASK-1513. The production markup census must gate new or grown sites.
+    "scripts/check_markup_interpolation.py",
     # TASK-32908. Tests/UI gated nothing on a PR; a verified-green subset now
     # runs in the ui-fast-lane job, and this checker is what stops that subset
     # from being quietly edited away instead of fixed.

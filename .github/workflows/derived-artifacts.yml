@@ -506,6 +506,13 @@ jobs:
           # or grown naive-timestamp writer. Pure AST scan, no database built.
           python scripts/check_timestamp_writers.py
 
+      - name: Production markup interpolation matches its reviewed census
+        if: ${{ !cancelled() }}
+        run: |
+          # TASK-1513. Reject new or grown interpolated notify, tooltip and
+          # Button-label sites unless their markup input is safe.
+          python scripts/check_markup_interpolation.py
+
       - name: The gated Tests/UI census is intact
         if: ${{ !cancelled() }}
         run: |
