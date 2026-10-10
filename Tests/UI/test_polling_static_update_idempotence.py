@@ -198,7 +198,7 @@ async def test_buddy_conversation_poll_keeps_unchanged_text(monkeypatch, unavail
         try:
             if unavailable:
                 host.console_runtime = None
-            modal.refresh_projection()
+            modal.refresh_projection(force=False)
             calls = observe_updates(
                 monkeypatch,
                 {
@@ -217,11 +217,11 @@ async def test_buddy_conversation_poll_keeps_unchanged_text(monkeypatch, unavail
 
             monkeypatch.setattr(modal.coordinator, "resolve", resolve)
             for _ in range(8):
-                modal.refresh_projection()
+                modal.refresh_projection(force=False)
             assert len(resolutions) >= 8
             assert calls == [], f"Unchanged conversation repaints: {calls}"
             modal.coordinator.notices[binding] = "Changed notice"
-            modal.refresh_projection()
+            modal.refresh_projection(force=False)
             assert (
                 str(modal.query_one("#buddy-reply-notice", Static).renderable)
                 == "Changed notice"

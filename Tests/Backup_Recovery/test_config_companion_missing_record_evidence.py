@@ -184,6 +184,18 @@ def test_real_profile_enrollment_waits_for_old_hold_then_uses_new_companion_guar
     authority.register("profile", (selected, source.get_user_data_dir()))
     _, _, old = _warm_missing(source)
     was_confirmed = _cache_fact(old, selected)
+    # Collection admitted this distinct source before the temporary-root fixture.
+    inherited_keys = set(storage._startups) - {old.key}
+    assert len(inherited_keys) == 1
+    inherited_key = inherited_keys.pop()
+    inherited_startup = storage._startups[inherited_key]
+    inherited_hold = storage._holds[inherited_key]
+    inherited_names = inherited_hold.names
+    inherited_selection = inherited_startup._execution_selection
+    assert inherited_startup._key == inherited_key
+    assert inherited_selection is not None and storage._hold_serving(inherited_hold)
+    assert inherited_hold.count == 1
+    assert storage._live_leases == {storage._startups[old.key], inherited_startup}
     with pytest.raises(
         bootstrap.RecoveryRequired, match="close_unenrolled_clients_and_restart"
     ):
@@ -214,7 +226,21 @@ def test_real_profile_enrollment_waits_for_old_hold_then_uses_new_companion_guar
             )
     assert state.companion_guard is None and selected.read_bytes() == before
     assert operation not in raw._states and operation not in storage._raw_operations
-    assert not storage._live_leases and not storage._holds
+    assert all(
+        lease not in storage._live_leases and lease._key is None for lease in leases
+    )
+    local_hold = state.holds[0]
+    assert local_hold.stop.is_set() and not local_hold.thread.is_alive()
+    assert local_hold not in storage._retiring_holds
+    assert old.key not in storage._startups and old.key not in storage._holds
+    # Preserve only this exact borrowed owner; never close collection authority here.
+    assert storage._startups == {inherited_key: inherited_startup}
+    assert storage._holds == {inherited_key: inherited_hold}
+    assert storage._live_leases == {inherited_startup}
+    assert inherited_startup._key == inherited_key
+    assert inherited_startup._execution_selection is inherited_selection
+    assert inherited_hold.names == inherited_names and inherited_hold.count == 1
+    assert storage._hold_serving(inherited_hold)
     request.node.user_properties.append(
         ("negative_metadata_before_enrollment", was_confirmed)
     )
