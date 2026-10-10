@@ -146,12 +146,13 @@ def test_node_id_entries_for_defined_tests_pass(tmp_path, capsys):
     m = _checker(
         tmp_path,
         [
-            "Tests/UI/test_p0.py::test_stop_is_reachable",
+            # (Not also the bare test: a test beside one of its own
+            # parametrizations overlaps -- review round 4.)
             "Tests/UI/test_p0.py::test_stop_is_reachable[80x24]",
             "Tests/UI/test_p0.py::TestSaveMarkdown::test_escape_closes",
             "Tests/UI/test_other.py",
         ],
-        floor=4,
+        floor=3,
         root=root,
     )
     assert m.main() == 0, capsys.readouterr().err
@@ -343,3 +344,123 @@ def test_disjoint_pytest_targets_have_no_overlap():
 )
 def test_overlapping_pytest_targets_are_named(targets):
     assert _overlaps(targets), targets
+
+
+# ---- review round 4: ids pytest 8.4.2 actually generates ------------------
+# Each expected id below was read from `pytest --collect-only` (8.4.2) on this
+# exact source, so the checker is held to pytest's own output, not to a
+# re-reading of its code.
+
+_PYTEST_TRUTH_SOURCE = """import pytest
+
+@pytest.mark.parametrize('x', [pytest.param(1, id='p'), 2], ids=['L1', 'L2'])
+def test_precedence(x):
+    pass
+
+@pytest.mark.parametrize('b', [b'ab', b'\\xc3\\xa9', b'a\\nb'])
+def test_bytes(b):
+    pass
+
+@pytest.mark.parametrize('c', [1j, 2+3j])
+def test_complex(c):
+    pass
+
+@pytest.mark.parametrize('s', ['\\u00e9', 'tab\\there'])
+def test_unicode_values(s):
+    pass
+
+@pytest.mark.parametrize('s', [1, 2], ids=['\\u00fc', 'plain'])
+def test_unicode_list_ids(s):
+    pass
+
+@pytest.mark.parametrize('s', [pytest.param(1, id='\\u00f1')])
+def test_unicode_param_id(s):
+    pass
+
+@pytest.mark.parametrize('d', ['a', 'a', 'x1', 'x1'])
+def test_duplicates(d):
+    pass
+
+@pytest.fixture(params=['vanilla', 'mint'])
+def flavour(request):
+    return request.param
+
+@pytest.mark.parametrize('n', [1])
+def test_uses_param_fixture(n, flavour):
+    pass
+"""
+
+
+def _resolve_truth(tmp_path: Path, node: str):
+    path = tmp_path / "test_truth.py"
+    path.write_text(_PYTEST_TRUTH_SOURCE, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(f"cen_t_{tmp_path.name}", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.resolve_node(path, node)
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        "test_precedence[p]",  # pytest.param(id=...) wins over ids=[...]
+        "test_precedence[L2]",
+        "test_bytes[ab]",
+        "test_bytes[\\xc3\\xa9]",
+        "test_bytes[a\\nb]",
+        "test_complex[1j]",
+        "test_complex[(2+3j)]",
+        "test_unicode_values[\\xe9]",
+        "test_unicode_values[tab\\there]",
+        "test_unicode_list_ids[\\xfc]",
+        "test_unicode_list_ids[plain]",
+        "test_unicode_param_id[\\xf1]",
+        "test_duplicates[a0]",
+        "test_duplicates[a1]",
+        "test_duplicates[x1_0]",
+        "test_duplicates[x1_1]",
+    ],
+)
+def test_ids_match_what_pytest_generates(tmp_path, node):
+    assert _resolve_truth(tmp_path, node) is None
+
+
+@pytest.mark.parametrize(
+    ("node", "reason"),
+    [
+        ("test_precedence[L1]", "no parametrize id"),  # never generated
+        ("test_complex[c0]", "no parametrize id"),
+        ("test_unicode_values[é]", "no parametrize id"),  # pytest escapes it
+        ("test_duplicates[a]", "no parametrize id"),
+        ("test_uses_param_fixture[vanilla-1]", "parametrized fixture"),
+        ("test_uses_param_fixture[1]", "parametrized fixture"),
+    ],
+)
+def test_ids_pytest_never_generates_are_refused(tmp_path, node, reason):
+    problem = _resolve_truth(tmp_path, node)
+    assert problem is not None and reason in problem, problem
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [
+        ["Tests/UI/test_b.py::test_x", "Tests/UI/test_b.py::test_x[1]"],
+        ["Tests/UI/test_b.py::test_x[1]", "Tests/UI/test_b.py::test_x"],
+        ["Tests/UI/test_b.py::TestC", "Tests/UI/test_b.py::TestC::test_y"],
+    ],
+)
+def test_a_target_inside_another_listed_target_is_named(targets):
+    """Review round 4: a test beside one of its own parametrizations, or a
+    class beside one of its methods, collapses the same way a file does."""
+    assert _overlaps(targets), targets
+
+
+def test_prefix_without_a_node_boundary_is_not_an_overlap():
+    assert _overlaps(["Tests/UI/test_b.py::test_x", "Tests/UI/test_b.py::test_xy"]) == []
+
+
+def test_dead_defines_test_is_gone():
+    spec = importlib.util.spec_from_file_location("cen_dead", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert not hasattr(module, "defines_test")

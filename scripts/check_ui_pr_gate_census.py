@@ -306,8 +306,31 @@ def _literal(node: ast.AST, scope: dict[str, ast.AST]):
         raise _Unresolvable(f"value {ast.unparse(node)!r}") from None
 
 
+#: pytest's ``_non_printable_ascii_translate_table`` (``_pytest/compat.py``).
+_NON_PRINTABLE = {i: f"\\x{i:02x}" for i in range(128) if i not in range(32, 127)}
+_NON_PRINTABLE.update({ord("\t"): "\\t", ord("\r"): "\\r", ord("\n"): "\\n"})
+
+
+def _ascii_escaped(value: str | bytes) -> str:
+    """pytest's ``ascii_escaped``: how a str or bytes value appears in an id."""
+    if isinstance(value, bytes):
+        text = value.decode("ascii", "backslashreplace")
+    else:
+        text = value.encode("unicode_escape").decode("ascii")
+    return text.translate(_NON_PRINTABLE)
+
+
+def _scalar_id(value: object) -> str | None:
+    """pytest's ``_idval_from_value`` for a value a literal can hold."""
+    if isinstance(value, (str, bytes)):
+        return _ascii_escaped(value)
+    if value is None or isinstance(value, (float, int, bool, complex)):
+        return str(value)
+    return None
+
+
 def _value_id(node: ast.AST, argname: str, index: int, scope: dict[str, ast.AST]) -> str:
-    """The id pytest gives one parameter value (``_idval`` in pytest 8)."""
+    """The id pytest gives one parameter value (``_idval`` in pytest 8.4)."""
     if isinstance(node, ast.Name) and isinstance(
         scope.get(node.id), (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
     ):
@@ -318,11 +341,27 @@ def _value_id(node: ast.AST, argname: str, index: int, scope: dict[str, ast.AST]
         if isinstance(node, (ast.List, ast.Tuple, ast.Dict, ast.Set)):
             return f"{argname}{index}"
         raise
-    if isinstance(value, str):
-        return value.encode("unicode_escape").decode("ascii")
-    if isinstance(value, _PRIMITIVE):
-        return str(value)
-    return f"{argname}{index}"
+    scalar = _scalar_id(value)
+    return scalar if scalar is not None else f"{argname}{index}"
+
+
+def _unique(ids: list[str]) -> list[str]:
+    """pytest's ``make_unique_parameterset_ids`` suffixing of repeated ids."""
+    counts = {item: ids.count(item) for item in ids}
+    suffixes: dict[str, int] = {}
+    resolved = list(ids)
+    for index, item in enumerate(ids):
+        if counts[item] <= 1:
+            continue
+        sep = "_" if item and item[-1].isdigit() else ""
+        number = suffixes.get(item, 0)
+        candidate = f"{item}{sep}{number}"
+        while candidate in resolved:
+            number += 1
+            candidate = f"{item}{sep}{number}"
+        resolved[index] = candidate
+        suffixes[item] = number + 1
+    return resolved
 
 
 def _is_param_call(node: ast.AST) -> bool:
@@ -347,10 +386,16 @@ def _parametrize_ids(decorator: ast.Call, scope: dict[str, ast.AST]) -> list[str
     if ids_node is not None:
         if not isinstance(ids_node, (ast.List, ast.Tuple, ast.Name)):
             raise _Unresolvable(f"ids={ast.unparse(ids_node)}")
-        explicit = [
-            None if _literal(item, scope) is None else str(_literal(item, scope))
-            for item in _elements(ids_node, scope)
-        ]
+        explicit = []
+        for item in _elements(ids_node, scope):
+            value = _literal(item, scope)
+            if value is None:
+                explicit.append(None)  # pytest falls back to the generated id
+                continue
+            text = _scalar_id(value)
+            if text is None:
+                raise _Unresolvable(f"ids entry {ast.unparse(item)!r}")
+            explicit.append(text)
     ids: list[str] = []
     for index, item in enumerate(_elements(argvalues_node, scope)):
         given = None
@@ -358,12 +403,17 @@ def _parametrize_ids(decorator: ast.Call, scope: dict[str, ast.AST]) -> list[str
         if _is_param_call(item):
             id_keyword = next((k.value for k in item.keywords if k.arg == "id"), None)
             if id_keyword is not None:
-                given = _literal(id_keyword, scope)
+                param_id = _literal(id_keyword, scope)
+                if param_id is not None:
+                    if not isinstance(param_id, str):
+                        raise _Unresolvable(f"pytest.param id {param_id!r}")
+                    given = _ascii_escaped(param_id)
             values = ast.Tuple(elts=list(item.args)) if len(argnames) > 1 else item.args[0]
-        if explicit is not None and index < len(explicit) and explicit[index] is not None:
+        # pytest.param(id=...) wins over ids=[...] (pytest 8.4 _resolve_ids).
+        if given is None and explicit is not None and index < len(explicit):
             given = explicit[index]
         if given is not None:
-            ids.append(str(given))
+            ids.append(given)
             continue
         if len(argnames) == 1:
             ids.append(_value_id(values, argnames[0], index, scope))
@@ -378,9 +428,7 @@ def _parametrize_ids(decorator: ast.Call, scope: dict[str, ast.AST]) -> list[str
                 for element, name in zip(values.elts, argnames)
             )
         )
-    if len(set(ids)) != len(ids):
-        raise _Unresolvable("duplicate ids (pytest would suffix them)")
-    return ids
+    return _unique(ids)
 
 
 def _is_parametrize(node: ast.AST) -> bool:
@@ -391,16 +439,103 @@ def _is_parametrize(node: ast.AST) -> bool:
     )
 
 
+def _fixture_call(decorator: ast.AST) -> ast.Call | None:
+    """The ``@pytest.fixture(...)`` call of a decorator, or None."""
+    target = decorator.func if isinstance(decorator, ast.Call) else decorator
+    name = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", None)
+    if name != "fixture":
+        return None
+    return decorator if isinstance(decorator, ast.Call) else ast.Call(target, [], [])
+
+
+def _fixtures(body: list[ast.stmt]) -> dict[str, tuple[bool, bool, list[str]]]:
+    """Fixtures defined in `body`: name -> (parametrized, autouse, requests)."""
+    found: dict[str, tuple[bool, bool, list[str]]] = {}
+    for item in body:
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in item.decorator_list:
+            call = _fixture_call(decorator)
+            if call is None:
+                continue
+            keywords = {k.arg: k.value for k in call.keywords}
+            name = item.name
+            if isinstance(keywords.get("name"), ast.Constant):
+                name = str(keywords["name"].value)
+            autouse = isinstance(keywords.get("autouse"), ast.Constant) and bool(
+                keywords["autouse"].value
+            )
+            requests = [a.arg for a in item.args.args if a.arg not in {"self", "cls"}]
+            found[name] = ("params" in keywords, autouse, requests)
+    return found
+
+
+def _parametrized_fixture(
+    path: Path, tree: ast.Module, owners: list[ast.AST]
+) -> str | None:
+    """A parametrized fixture the test reaches, if the checker can see one.
+
+    Looks at the test module, its classes, and every ``conftest.py`` from the
+    file's directory up to the repository root; follows fixture requests
+    transitively and counts autouse fixtures. Plugin fixtures are out of
+    sight, which is one reason pytest stays the final check.
+    """
+    available: dict[str, tuple[bool, bool, list[str]]] = {}
+    directory = path.resolve().parent
+    conftests = []
+    while True:
+        candidate = directory / "conftest.py"
+        if candidate.is_file():
+            conftests.append(candidate)
+        if directory == REPO_ROOT or directory.parent == directory:
+            break
+        directory = directory.parent
+    for conftest in reversed(conftests):  # nearer conftests override
+        try:
+            available.update(_fixtures(ast.parse(conftest.read_text(encoding="utf-8")).body))
+        except (OSError, SyntaxError, ValueError):
+            continue
+    available.update(_fixtures(tree.body))
+    for owner in owners[:-1]:
+        available.update(_fixtures(getattr(owner, "body", [])))
+    function = owners[-1]
+    wanted = [a.arg for a in function.args.args if a.arg not in {"self", "cls"}]
+    for decorator in function.decorator_list:
+        if (
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "usefixtures"
+        ):
+            wanted += [a.value for a in decorator.args if isinstance(a, ast.Constant)]
+    wanted += [name for name, (_, autouse, _) in available.items() if autouse]
+    seen: set[str] = set()
+    while wanted:
+        name = wanted.pop()
+        if name in seen or name not in available:
+            continue
+        seen.add(name)
+        parametrized, _, requests = available[name]
+        if parametrized:
+            return name
+        wanted.extend(requests)
+    return None
+
+
 def resolve_node(path: Path, node: str) -> str | None:
     """Check that `path` still defines the test a node id names.
 
     Static on purpose: the census check runs install-free, so it cannot import
-    the test module. A bracketed id (``test_x[enter-80x24]``) is resolved from
-    the function's literal ``@pytest.mark.parametrize`` decorators -- closest
-    decorator first, as pytest joins them -- because a renamed id makes pytest
-    exit 4 and the whole shard runs nothing (TASK-33621.27 review). An id built
-    by code (a computed list, ``ids=lambda ...``) cannot be checked here, so it
-    is refused: gate the whole test, or give it literal ids.
+    the test module. A bracketed id (``test_x[enter-80x24]``) is worked out
+    from the function's literal ``@pytest.mark.parametrize`` decorators the
+    way pytest 8.4 builds ids -- closest decorator first; ``pytest.param(id=)``
+    before ``ids=[...]``; str/bytes ascii-escaped; repeated ids suffixed --
+    because a renamed id makes pytest exit 4 and the whole shard runs nothing
+    (TASK-33621.27 review). This is a fast pre-check, not proof: pytest's own
+    collection stays the final word (a ``pytest_make_parametrize_id`` hook, for
+    one, can change an id). What it cannot see it refuses rather than accepts:
+    ids built by code (a computed list, ``ids=lambda ...``), class- or
+    module-level parametrize, and parametrized fixtures, which add their own
+    id components. Gate the whole test instead, or give it literal ids.
 
     Args:
         path: The test file.
@@ -451,6 +586,13 @@ def resolve_node(path: Path, node: str) -> str | None:
             f"parametrize id [{wanted}] cannot be resolved statically: module- or "
             "class-level parametrize. Gate the whole test instead."
         )
+    fixture = _parametrized_fixture(path, tree, owners)
+    if fixture is not None:
+        return (
+            f"parametrize id [{wanted}] cannot be resolved statically: the test "
+            f"uses the parametrized fixture {fixture!r}, whose ids pytest adds "
+            "to the node id. Gate the whole test instead."
+        )
     scope = _module_values(tree)
     decorators = [d for d in reversed(match.decorator_list) if _is_parametrize(d)]
     if not decorators:
@@ -471,11 +613,6 @@ def resolve_node(path: Path, node: str) -> str | None:
     return None
 
 
-def defines_test(path: Path, node: str) -> bool:
-    """Whether `path` defines the test (and parametrize id) a node id names."""
-    return resolve_node(path, node) is None
-
-
 def overlapping_targets(targets: list[str] | tuple[str, ...]) -> list[str]:
     """Pytest arguments that overlap another in the same invocation.
 
@@ -493,23 +630,28 @@ def overlapping_targets(targets: list[str] | tuple[str, ...]) -> list[str]:
     """
     problems: list[str] = []
     seen: set[str] = set()
-    wholes = {target.rstrip("/") for target in targets if "::" not in target}
-    directories = {target for target in wholes if not target.endswith(".py")}
     for target in targets:
         if target in seen:
             problems.append(f"duplicate entry: {target}")
         seen.add(target)
-        file_part = target.split("::", 1)[0].rstrip("/")
-        if "::" in target and file_part in wholes:
-            problems.append(
-                f"node id overlaps a whole-file entry: {target}\n"
-                f"    {file_part} is already listed whole; pytest collapses "
-                "overlapping arguments (ADR-103). Drop one of the two."
-            )
-        for directory in sorted(directories):
-            if file_part != directory and file_part.startswith(directory + "/"):
+    unique = list(dict.fromkeys(targets))
+    for outer in unique:
+        outer_path = outer.rstrip("/")
+        directory = "::" not in outer and not outer_path.endswith(".py")
+        for inner in unique:
+            if inner == outer:
+                continue
+            inner_file = inner.split("::", 1)[0].rstrip("/")
+            if inner.startswith(outer_path + "::") or inner.startswith(outer_path + "["):
+                kind = "whole-file entry" if "::" not in outer else "listed target"
                 problems.append(
-                    f"{target} sits under the listed directory {directory}; "
+                    f"node id overlaps a {kind}: {inner}\n"
+                    f"    {outer} is also listed and contains it; pytest collapses "
+                    "overlapping arguments (ADR-103). Drop one of the two."
+                )
+            elif directory and inner_file.startswith(outer_path + "/"):
+                problems.append(
+                    f"{inner} sits under the listed directory {outer_path}; "
                     "pytest collapses overlapping arguments (ADR-103)."
                 )
     return problems

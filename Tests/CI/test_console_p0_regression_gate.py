@@ -203,41 +203,45 @@ def _file(target: str) -> str:
     return target.split("::", 1)[0].rstrip("/")
 
 
-def _under(path: str, directory: str) -> bool:
-    return path.startswith(directory.rstrip("/") + "/")
+def _contains(outer: str, inner: str) -> bool:
+    """Whether running `outer` runs all of `inner`.
+
+    True for the same target, a node id under `outer` at a ``::`` or ``[``
+    boundary (a file and its tests, a test and its parametrizations, a class
+    and its methods), or anything under `outer` when it is a directory.
+    """
+    outer = outer.rstrip("/")
+    if inner == outer or inner.startswith(outer + "::") or inner.startswith(outer + "["):
+        return True
+    directory = "::" not in outer and not outer.endswith(".py")
+    return directory and _file(inner).startswith(outer + "/")
 
 
 def _selected_by(target: str, lane_targets: tuple[str, ...]) -> bool:
-    """A lane runs `target` if it lists it, its file, or a directory above it."""
-    return any(
-        target == listed or _file(target) == listed or _under(_file(target), listed)
-        for listed in lane_targets
-    )
+    """A lane runs all of `target`: it lists `target` or something containing it."""
+    return any(_contains(listed, target) for listed in lane_targets)
 
 
 def _overlaps(target: str, lane_targets: tuple[str, ...]) -> bool:
-    """A lane runs some of `target`'s tests: either direction of containment.
+    """A lane runs some of `target`'s tests: containment in either direction.
 
-    Unlike `_selected_by`, a whole-file `target` also overlaps a lane that
-    lists one of its node ids (that node would run twice), and a node id
-    overlaps a lane listing its file or a directory above it.
+    A whole-file `target` also overlaps a lane listing one of its node ids
+    (that node would run twice), and ``file::test_x`` overlaps
+    ``file::test_x[1]`` and vice versa.
     """
-    for listed in lane_targets:
-        if listed == target or _selected_by(target, (listed,)):
-            return True
-        if "::" not in target and (_file(listed) == target or _under(_file(listed), target)):
-            return True
-    return False
+    return any(
+        _contains(listed, target) or _contains(target, listed) for listed in lane_targets
+    )
 
 
-def _conftest_bootstrap_filenames() -> frozenset[str]:
+def _conftest_bootstrap_filenames(conftest: Path = CONFTEST) -> frozenset[str]:
     """File names ``Tests/conftest.py`` keeps on the bootstrap profile.
 
     Read from its ``keep_bootstrap_profile`` expression: every string set it
     compares ``request.node.path.name`` against. A file in that set behaves
     like a ``bootstrap_profile``-marked one without carrying the marker.
     """
-    tree = ast.parse(CONFTEST.read_text(encoding="utf-8"))
+    tree = ast.parse(conftest.read_text(encoding="utf-8"))
     names: set[str] = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Assign) and any(
@@ -271,15 +275,15 @@ def _marks_bootstrap(node: ast.AST) -> bool:
     )
 
 
-def _uses_bootstrap_profile(target: str) -> bool:
+def _uses_bootstrap_profile(target: str, root: Path = PROJECT_ROOT) -> bool:
     """Whether any test `target` selects runs on the bootstrap profile.
 
     The conftest's real rule: the ``bootstrap_profile`` marker (module
     ``pytestmark``, a class or the function's decorators -- read by AST, so a
     comment naming it does not count) or a file name in its bootstrap set.
     """
-    path = PROJECT_ROOT / _file(target)
-    if path.name in _conftest_bootstrap_filenames():
+    path = root / _file(target)
+    if path.name in _conftest_bootstrap_filenames(root / "Tests" / "conftest.py"):
         return True
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -298,13 +302,15 @@ def _uses_bootstrap_profile(target: str) -> bool:
     if names:
         names[-1] = names[-1].split("[", 1)[0]
     body = tree.body
-    for name in names:  # a node id: only its own class/function decorators
+    for name in names:  # a node id: only its own class/function marks
         match = next(
             (item for item in body if getattr(item, "name", None) == name), None
         )
         if match is None:
             return False
         if any(_marks_bootstrap(d) for d in getattr(match, "decorator_list", [])):
+            return True
+        if isinstance(match, ast.ClassDef) and _class_pytestmark(match):
             return True
         body = getattr(match, "body", [])
     if names:
@@ -313,6 +319,18 @@ def _uses_bootstrap_profile(target: str) -> bool:
         _marks_bootstrap(decorator)
         for item in ast.walk(tree)
         for decorator in getattr(item, "decorator_list", [])
+    ) or any(
+        _class_pytestmark(item) for item in ast.walk(tree) if isinstance(item, ast.ClassDef)
+    )
+
+
+def _class_pytestmark(cls: ast.ClassDef) -> bool:
+    """A ``pytestmark = ...bootstrap_profile...`` in a class body (review r4)."""
+    return any(
+        isinstance(item, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in item.targets)
+        and _marks_bootstrap(item.value)
+        for item in cls.body
     )
 
 
@@ -377,6 +395,11 @@ def test_overlap_check_sees_both_directions():
     assert _overlaps(node, (whole,))
     assert _overlaps(node, ("Tests/Chat",))
     assert not _overlaps(node, ("Tests/Chat/test_x.py::test_z",))
+    # Review round 4: a test and its parametrizations, a class and its methods.
+    assert _overlaps(node, (node + "[1]",))
+    assert _overlaps(node + "[1]", (node,))
+    assert _overlaps("Tests/Chat/test_x.py::TestC", ("Tests/Chat/test_x.py::TestC::test_y",))
+    assert not _overlaps(node, ("Tests/Chat/test_x.py::test_yz",))
 
 
 def test_bootstrap_detection_uses_the_conftest_rule_not_a_substring():
@@ -388,3 +411,23 @@ def test_bootstrap_detection_uses_the_conftest_rule_not_a_substring():
     assert not _uses_bootstrap_profile("Tests/CI/test_console_p0_regression_gate.py")
     # Node-level marker: only the marked node of a mixed file is bootstrap.
     assert _uses_bootstrap_profile("Tests/Chat/test_console_compaction_failure.py")
+
+
+
+def test_bootstrap_detection_reads_a_class_body_pytestmark(tmp_path):
+    """Review round 4: a ``pytestmark`` inside a class marks its methods."""
+    (tmp_path / "Tests").mkdir()
+    (tmp_path / "Tests" / "conftest.py").write_text("", encoding="utf-8")
+    (tmp_path / "Tests" / "test_cls.py").write_text(
+        "import pytest\n\n"
+        "class TestBoot:\n"
+        "    pytestmark = [pytest.mark.bootstrap_profile]\n\n"
+        "    def test_a(self):\n        pass\n\n"
+        "class TestPlain:\n"
+        "    # pytest.mark.bootstrap_profile in a comment is not a mark\n"
+        "    def test_b(self):\n        pass\n",
+        encoding="utf-8",
+    )
+    assert _uses_bootstrap_profile("Tests/test_cls.py::TestBoot::test_a", tmp_path)
+    assert _uses_bootstrap_profile("Tests/test_cls.py", tmp_path)
+    assert not _uses_bootstrap_profile("Tests/test_cls.py::TestPlain::test_b", tmp_path)
