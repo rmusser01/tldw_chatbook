@@ -163,6 +163,14 @@ async def test_existing_activation_stops_after_losing_authority(boundary):
             allowed = False
 
     fake = SimpleNamespace(
+        # TASK-33622.7: the read visit is claimed before the switch and its
+        # token read after it; the composer is bound before the first await.
+        _claim_manual_read_visit=Mock(return_value=None),
+        _read_claimed_visit=AsyncMock(return_value=None),
+        _bind_composer_to_active_session=Mock(),
+        complete_manual_read_visit=Mock(),
+        _screen=SimpleNamespace(_console_sync_requested=False),
+        _console_tab_click_snapshot=None,
         _ensure_console_chat_controller=lambda: controller,
         _hide_console_activity_notice=Mock(),
         _capture_console_draft_switch_snapshot=Mock(),
@@ -191,10 +199,17 @@ async def test_existing_activation_stops_after_losing_authority(boundary):
         fake, "session-a", activate_if=lambda: allowed
     )
     fake._focus_console_composer_if_needed.assert_not_called()
+    fake.complete_manual_read_visit.assert_not_called()
     if boundary in {"before", "scope"}:
         fake._sync_native_console_chat_ui.assert_not_called()
+    # TASK-33622.7: a switch already shown is repainted by the next sync pass.
+    assert fake._screen._console_sync_requested is (boundary == "scope")
     if boundary == "before":
         controller.switch_session.assert_not_called()
+        fake._claim_manual_read_visit.assert_not_called()
+        fake._bind_composer_to_active_session.assert_not_called()
+    else:
+        fake._bind_composer_to_active_session.assert_called_once_with()
 
 
 @pytest.mark.asyncio

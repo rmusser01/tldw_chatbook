@@ -262,6 +262,12 @@ async def redirect_from_draft(screen: Any) -> None:
             severity="warning",
         )
         return
+    # TASK-33622.7: Redirect corrects the ACTIVE chat's run, so the draft must
+    # be that chat's own -- not one left over from a chat being switched away.
+    if screen._session.refuse_send_from_unbound_composer(
+        strict=True, action="redirected"
+    ):
+        return
     controller = screen._ensure_console_chat_controller()
     refusal = controller.redirect_active_run(text)
     if refusal is not None:

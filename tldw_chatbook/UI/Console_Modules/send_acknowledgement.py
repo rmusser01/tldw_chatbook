@@ -451,6 +451,8 @@ def request_visible_send(
         guard: Enter's check that the Send action is available, run when the
             send is scheduled; ``False`` releases the capture unsent.
     """
+    if screen._session.refuse_send_from_unbound_composer():  # TASK-33622.7
+        return
     session_id = screen._console_visible_send_session_id()
     if session_id is None:
         screen.app_instance.notify("Console send is unavailable.", severity="error")
