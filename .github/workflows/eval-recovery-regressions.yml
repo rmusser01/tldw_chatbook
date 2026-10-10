@@ -46,7 +46,7 @@ jobs:
           $privateSource = Join-Path $env:USERPROFILE ('.config/eval-recovery-source-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
           if (Test-Path -LiteralPath $privateSource) { throw 'Private source target already exists' }
           New-Item -ItemType Directory -Path (Split-Path -Parent $privateSource) -Force | Out-Null
-          git clone --local --no-hardlinks $checkoutRoot $privateSource
+          git clone --local --no-hardlinks --config core.longpaths=true $checkoutRoot $privateSource
           if ($LASTEXITCODE -ne 0) { throw 'Private source clone failed' }
           git -C $privateSource checkout --detach $checkoutCommit
           if ($LASTEXITCODE -ne 0) { throw 'Selecting the exact reviewed commit failed' }

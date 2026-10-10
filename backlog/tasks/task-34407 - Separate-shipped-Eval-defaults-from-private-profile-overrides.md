@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 17:58'
-updated_date: '2026-10-10 01:56'
+updated_date: '2026-10-10 02:02'
 labels: []
 dependencies: []
 ---
@@ -59,6 +59,8 @@ Linux follow-up reached 75 passing cases with one remaining stale full-App oracl
 Precise Windows child evidence identifies the remaining full-App inventory refusal in bundled chat.prompt templates and persona artwork under the Actions checkout, whose native owner is Administrators rather than TokenUser. Linux/macOS are genuinely runner-owned and pass all 76 cases. The Windows workflow now assigns the disposable checkout to the actual authenticated runner using the native ownership operation, verified to be the resolved Git workspace. This changes real fixture ownership, not metadata projections, production policy, guards, file contents, or test deadlines. The original refusal evidence is retained; one more exact-head run will confirm the fixture correction.
 
 Windows packaged-resource roots remain unavailable after leaf/checkout ownership correction because the Actions source is beneath the shared D:\a workspace ancestry. Stage the same Git commit using a no-hardlinks clone beneath the runner profile private ancestor, verify the exact commit, assign real runner ownership there, and install/run from that source so isolated subprocess imports match it. POSIX remains on its original checkout. This preserves every native parent/privacy check and file identity qualification rather than authorizing a shared ancestor. The full refusal records are retained in the owned child-log artifact.
+
+The private Windows clone failed before Python setup because long Backlog filenames exceed Git for Windows default path handling. The clone now sets core.longpaths=true before checkout. The completed job log is preserved; no test deadline, test selection, safety gate or production code changed. Rebased cleanly onto latest dev ec83a5565a (merge-queue tooling only); final platform verification remains pending.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering Provenance
