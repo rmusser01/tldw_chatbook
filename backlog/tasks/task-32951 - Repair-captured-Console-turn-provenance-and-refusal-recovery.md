@@ -1,11 +1,11 @@
 ---
 id: TASK-32951
 title: Repair captured Console turn provenance and refusal recovery
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-25 16:16'
-updated_date: '2026-10-10 16:16'
+updated_date: '2026-10-10 20:22'
 labels: []
 dependencies: []
 references:
@@ -124,4 +124,5 @@ Review follow-up (2026-10-10): restored exact recovery-boundary rebinding and pr
 Defects were reproduced before repair. Final affected identity and mounted surface/dispatch cases: 15 passed. The earlier trace/recovery run passed 39 cases and exposed six later repaired cases; these separate receipts are retained without relabelling them as one green run. Undefined-name checks and scoped diff whitespace checks pass; all derived-artifact preflight checks passed on the rebased branch. Final rebased targeted verification and protected CI remain integration gates. Independent review cleared the prior five repairs; the added owner-marker fix receives a final read before merge. No full suite or live external provider was used. ADR required: no new ADR; existing ADR-097/ADR-079 contracts apply.
 
 Final current-dev review verification (2026-10-10, dev cc46cc7300): the combined nine-file trace/model-retry and mounted recovery selection passes all 45 tests in 125.35 seconds. Derived-artifact preflight and undefined-name checks pass. Independent final review also clears the thinking-owner normalization and its changed-content/changed-owner refusal controls. No full suite or live paid provider. Protected merge remains contingent on exact-head required CI.
+Final pre-integration verification (2026-10-10, dev 6ef97bdbd059): all 45 affected tests pass in 91.94 seconds, derived-artifact preflight passes, and all six historical review threads are resolved. Independent review is complete. Final integration still requires the protected CI checks after the preceding PR merges.
 <!-- SECTION:NOTES:END -->
