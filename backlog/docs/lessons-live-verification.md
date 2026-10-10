@@ -476,16 +476,15 @@ keeps the config participant from draining until the next successful write.
 **"Before any operation opens" held for the lock, not for two of its callers
 (second review, 2026-10-10).** The check was the first line of
 `_config_write_lock`, and the notes said the refusal recorded nothing.
-`read_cli_config_snapshot` and `replace_cli_config_serialized`, the Settings
-raw editor's read and save, open an operation of their own and then take the
-lock. For those two the refusal was raised inside an entered operation and the
-flag was set; under a holder that does not write
-(`locked_hooks_config_snapshot`) nothing cleared it. The test asserted the
-claim for `save_setting_to_cli_config` only, the one caller that had been
-read. Both now run the check (`_refuse_config_write_lock_reentry`) ahead of
-their own operation. The decorated one is split into a plain entry and a
-`_guarded` body, because `@guarded` opens the operation before the body's
-first line. The test runs all three calls and counts the operations the
+`read_cli_config_snapshot` and `replace_cli_config_serialized` open an
+operation of their own and then take the lock. For those two the refusal was
+raised inside an entered operation and the flag was set; under a holder that
+does not write (`locked_hooks_config_snapshot`) nothing cleared it. The test
+asserted the claim for `save_setting_to_cli_config` only, the one caller that
+had been read. Both now run the check (`_refuse_config_write_lock_reentry`)
+ahead of their own operation. The decorated one is split into a plain entry
+and a `_guarded` body, because `@guarded` opens the operation before the
+body's first line. The test runs all three calls and counts the operations the
 refused task opened.
 
 **Both file guards were keyed by something other than the lock they stand in
@@ -497,6 +496,24 @@ resolved path (`/var/...` and `/private/var/...` are one lock) and, for a
 settings source, by its bound root whichever file the scope selects: two
 `EvalConfigLoader` objects, one saving and one exporting, both got in. The
 scope's state now carries the lock's own key and the guard compares that.
+
+**Those two entry points were then given a caller they do not have (third
+review, 2026-10-10).** The round 2 texts called the pair "the Settings raw
+editor's read and save". Only the read is the editor's, and
+`settings_advanced_config.py` runs it through `asyncio.to_thread`, on a worker
+thread that is not inside the write transaction. `replace_cli_config_serialized`
+is reached only through `SettingsConfigAdapter.replace_serialized`, which
+nothing calls, tests included. The editor saves through
+`replace_cli_config_snapshot`, also on a worker thread; that one opens no
+operation ahead of the lock, so the lock's own first line was already early
+enough for it. Neither round 2 refusal can fire from the UI today: the change
+is correct, and defensive. The adapter does wrap both functions; the callers of
+its methods had not been grepped, nor the thread they run on. The wrong label
+then did two things. It told the Capture phase that opening the editor and
+saving once would cover both changed entry points, when that run never calls
+the changed save. And it credited the change with one passing run of an
+intermittent test, `test_console_artifacts_roundtrip.py`, which calls neither
+function (logged: no call in a failing run, none in a passing one).
 
 **What to do.** Count the stub's requests before reading the card: zero means
 discovery did not run, not that nothing answered. A test that injects the
@@ -510,7 +527,9 @@ it, not by where it is taken: follow every `yield` and every callback parameter
 out of the module. A check that must run before an operation opens goes ahead
 of each caller's outermost operation: list the callers and mark the ones that
 open one first, decorators included. A guard that stands in for a lock compares
-the lock's own key, not a value that usually equals it. Send a human gap between
+the lock's own key, not a value that usually equals it. Before writing which
+surface uses a function, follow it to a real call site: grep the callers of its
+wrapper too, and note the thread each one runs on. Send a human gap between
 keys when driving Enter, Enter (`send-keys Enter`, ~150 ms, `send-keys
 Enter`): two keys in one tmux write reach the card before Switch model mounts,
 and the second is dropped.
