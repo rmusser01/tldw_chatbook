@@ -559,6 +559,13 @@ class LifecycleMixin:
         """
         task = self._console_runtime_shutdown_task
         if task is None:
+            runtime = getattr(self, "console_runtime", None)
+            view = getattr(runtime, "view", None)
+            image = getattr(view, "_image", None)
+            if view is not None:
+                view._console_chat_tearing_down = True
+            if image is not None:
+                image._recovered_images_close_admission()
 
             async def settle_view_and_dispose() -> None:
                 from .UI.Console_Modules.view_workers import (
@@ -569,11 +576,11 @@ class LifecycleMixin:
                 # Preserve the original App manager-wide selected group scope;
                 # Runtime.detach_view can precede a retired view's awaited cleanup.
                 captured = capture_console_view_workers(self)
-                runtime = getattr(self, "console_runtime", None)
-                view = getattr(runtime, "view", None)
-                if view is not None:
-                    view._console_chat_tearing_down = True
-                await drain_console_view_workers(captured)
+                try:
+                    await drain_console_view_workers(captured)
+                finally:
+                    if image is not None:
+                        await image._recovered_images_close()
                 await dispose_console_runtime(self)
 
             task = asyncio.create_task(
@@ -581,7 +588,15 @@ class LifecycleMixin:
                 name="shutdown_console_runtime",
             )
             self._console_runtime_shutdown_task = task
-        await asyncio.shield(task)
+        cancellation = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+        task.result()
+        if cancellation is not None:
+            raise cancellation
         plugin_service = getattr(self, "_plugin_service", None)
         if plugin_service is not None:
             await plugin_service.aclose()

@@ -1859,3 +1859,22 @@ assertions like `"Session summary" in svg` fail on fully-rendered text.
 **Card modals: fixed width. Screenshot asserts: normalize `&#160;`/`\xa0`
 to spaces first, and pair any screen-popped assertion with a render
 assertion so it cannot pass vacuously.**
+
+---
+
+## Deferring draft cleanup can also defer polling (PR #3050, 2026-10-09)
+
+**Incident.** The protected Console fallback moved draft consumption from runtime
+custody to durable saved acceptance so a failed save retained the original draft.
+Its existing cleanup callback also started transcript polling. Deferring that
+callback therefore left an accepted turn without a poll while the controller's
+start was held. Dev's unchanged regression returned no poll decisions on both
+Windows and Linux. The original held entry and exact custody checks had passed.
+
+**What to do.** Keep lifecycle publication at its own acceptance boundary when
+deferring destructive cleanup. The successful fallback admission now starts the
+existing poll only for its exact attached runtime and captured generation; draft
+cleanup stays at durable acceptance. The original three-True-decisions test and
+25 related controls pass on `073f3b99be`. The worked example is
+`test_console_poll_outlives_a_turn_the_controller_has_not_started`; the change
+adds no timer owner or timeout and does not establish general teardown health.

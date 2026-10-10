@@ -15970,6 +15970,7 @@ class ChatScreen(BaseAppScreen):
 
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
+        self._image._recovered_images_close_admission()
         self._hooks.cancel_pending()
         self._release_claimed_conversation_settings_return()
         runtime = self._console_runtime()
@@ -15989,7 +15990,10 @@ class ChatScreen(BaseAppScreen):
         # ahead of every other awaited teardown step below -- several can
         # raise, and a raised exception must not strand an unpersisted
         # toggle-then-quit.
-        await self._flush_sidebar_state_now()
+        try:
+            await self._flush_sidebar_state_now()
+        finally:
+            await self._image._recovered_images_close()
         self._terminal.detach_workspace()
         self._message.invalidate_console_speech_context()
         self._console_auto_speak.unmount()

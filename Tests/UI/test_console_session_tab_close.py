@@ -109,7 +109,14 @@ class ProductionConsoleHarness(ConsoleHarness):
             captured = capture_console_view_workers(self)
             view = self.screen
             view._console_chat_tearing_down = True
-            await drain_console_view_workers(captured)
+            image = getattr(view, "_image", None)
+            if image is not None:
+                image._recovered_images_close_admission()
+            try:
+                await drain_console_view_workers(captured)
+            finally:
+                if image is not None:
+                    await image._recovered_images_close()
         except BaseException as error:
             drain_error = error
         try:

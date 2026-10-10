@@ -28,6 +28,7 @@ _GROUPS = frozenset(
         "console-character-context-refresh",
         "console-annotation-previews",
         "console-persisted-browser-cache",
+        "console-recovered-images",
     }
 )
 _CANCEL, _WAIT = Worker.cancel, Worker.wait

@@ -192,7 +192,18 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "staged_evidence_launch",
         "one_shot_prefill",
         "one_shot_prefill_revision",
+        # Original pressed input and presentation handles share this custody.
+        "_pressed_inputs",
+        "_pressed_stash",
+        "_pressed_attachment_generation",
     }
+    pressed_fields = {
+        field.name: field
+        for field in fields(ConsoleTurnCustodyRequest)
+        if field.name.startswith("_pressed_")
+    }
+    assert all(getattr(request, name) is None for name in pressed_fields)
+    assert all(not field.repr for field in pressed_fields.values())
     assert {field.name for field in fields(type(record))} == {
         "turn_id",
         "session_id",

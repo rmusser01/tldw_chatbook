@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-10-08 11:20'
-updated_date: '2026-10-08 11:20'
+updated_date: '2026-10-10 05:16'
 labels:
   - performance
   - console
@@ -41,6 +41,7 @@ Console Send on native Windows takes ~6 s (warm) to ~7 s (cold) from the Send ac
 - [ ] #19 Any adopted finite Windows SQLite preparation shares redundant parent work while preserving fresh pre-effect mutation checks, optional-generation bounds, final current-name association, exact native/admission retirement and custom routes; original work counts and sequential whole-Send comparisons determine adoption.
 - [ ] #20 Any adopted finite MCP admission consolidates repeated source observations while preserving fresh proof before operation use/effects, current issued custody, custom-route contracts and exact native retirement; the explicit pre-lock refusal refinement follows ADR126, and original work counts plus sequential whole-Send evidence determine adoption.
 - [ ] #21 Qualified stock owned capture avoids initial MCP policy/catalog reads and establishes a frozen ID/hash ceiling at each existing execution consumer's fresh composition under ADR225; explicit empty/custom/plugin contracts, invocation authority, saved-draft behavior and native retirement remain verified, with source-stable sequential whole-Send evidence.
+- [ ] #22 Issued recovered-image native reads settle before screen/runtime and database teardown, including repeated cancellation; shutdown closes their existing admission first and never treats a timed-out drain or forced database close as retirement.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -179,6 +180,12 @@ Reason: explicitly revise pre-lock refusal ordering while preserving the before-
 
 39. Follow Docs/superpowers/plans/2026-10-09-console-composition-tool-ceiling.md under ADR225. Shared lane owns detached mode/owned capture, integration lane owns controller/provider publication, baseline lane owns new original-body and boundary tests. Root owns plan review, original RED, integration, all targeted native checks and final sequential ABBA. Explicitly move the ceiling to each existing execution consumer; do not add a versioned cache or silently reuse None/empty semantics.
 
+40. Correct the existing recovered-image shutdown boundary under ADR225/226. Close admission synchronously, capture/cancel the exact image-owner tasks and retain their actual completion before screen/runtime and file-backed database teardown, including repeated cancellation. Reuse the existing Textual WorkerManager and add the image group to existing view-worker capture so both current and detached views drain. Retain the exact Task in the existing image set and preserve nonfatal unexpected-error policy, native-read custody and original timeout/refusal semantics. Wire ordinary app, Screen and test-host boundaries without a new registry. Establish focused real held-read shutdown controls and rerun the strict Close retirement case. Root alone runs local native checks. This is required correctness closeout, with no latency optimization, forced DB close or new task registry.
+
+ADR required for step40: no new ADR.
+ADR path: backlog/decisions/225-console-send-preparation-and-io-ownership.md; backlog/decisions/226-console-polling-and-full-state-reconciliation.md.
+Reason: direct implementation of existing finite-read retirement at the existing image owner and host shutdown boundaries.
+
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -272,6 +279,8 @@ checkpoint-policy change or timeout adjustment. Product qualification is pending
   Observer123/123 paired, no caps/unmatched/unfinished; original helper restored.
   Detailed receipt/caveats in the optimization ledger. This is not whole-Send
   qualification; the overall latency target remains open.
+
+- **Recovered-image shutdown correctness (AC22):** both original-product current/detached lifecycle controls fail their final sealed-admission and cancelled-caller-waited facts after the actual payload read and owner cleanup (`recovered-image-shutdown-red-1`, 073f3). The reviewed correction uses the existing Textual WorkerManager/image task set and joins actual completion before runtime teardown, including repeated caller cancellation; unexpected image errors remain nonfatal. Source/static checks pass, but native GREEN and current-head CI remain pending. The actual Linux CharactersRAGDB Close refusal is retained; this source-proven image-owner gap does not by itself identify that CI operation's issuer. No forced database close, new registry or deadline change is introduced.
 
 <!-- SECTION:NOTES:END -->
 

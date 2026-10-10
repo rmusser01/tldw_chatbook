@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sqlite3
+import sys
 from contextlib import nullcontext
 from pathlib import Path
 import threading
@@ -149,7 +150,7 @@ class PreparedCloseOwnedResources:
                 )
             )
 
-        def thread_facts(thread):
+        def thread_facts(thread, *, live_stack=False):
             # Original stdlib Thread fields only; opaque/custom owners stay unknown.
             stock = type(thread) in {
                 threading.Thread,
@@ -157,7 +158,7 @@ class PreparedCloseOwnedResources:
                 threading._DummyThread,
             }
             values = vars(thread) if stock else {}
-            return {
+            facts = {
                 "object_id": None if thread is None else id(thread),
                 "stock_thread": stock,
                 "ident": values.get("_ident") if stock else None,
@@ -165,6 +166,25 @@ class PreparedCloseOwnedResources:
                 "creator_same": thread is self.creator,
                 "current_same": thread is threading.current_thread(),
             }
+            if live_stack:
+                facts["live_owner_functions"] = None
+                ident = values.get("_ident")
+                live_type = type(thread) in (threading.Thread, threading._MainThread)
+                if live_type and threading._active.get(ident) is thread:
+                    rows = []
+                    frame = sys._current_frames().get(ident)
+                    try:
+                        for _ in range(8):
+                            if frame is None:
+                                break
+                            module = frame.f_globals.get("__name__")
+                            rows.append((module, frame.f_code.co_name, frame.f_lineno))
+                            frame = frame.f_back
+                    finally:
+                        del frame
+                    if threading._active.get(ident) is thread:
+                        facts["live_owner_functions"] = rows
+            return facts
 
         def census(participant, expected_path, *, detailed=False):
             # Caller already holds the original storage lock. Pre-close is scalar;
@@ -222,7 +242,8 @@ class PreparedCloseOwnedResources:
                             "resource_thread": thread_facts(
                                 lease.resource_thread
                                 if type(lease) is storage.StorageLease
-                                else None
+                                else None,
+                                live_stack=status == "open",
                             ),
                         }
                     )
