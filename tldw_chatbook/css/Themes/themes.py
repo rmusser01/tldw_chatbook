@@ -19,7 +19,8 @@
 #   Tests/UI/test_theme_contrast.py.
 # - TASK-33003.6: `GUARD_VARIABLES` are the app's own such names
 #   (`$ds-grid-line`/`$ds-column-line`/`$ds-control-edge` -> BOUNDARY_VARIABLE, `Button:focus`
-#   -> FOCUS_FILL_VARIABLE), so EVERY theme must carry them (an undefined
+#   -> FOCUS_FILL_VARIABLE, the active top tab's outline -> ACTIVE_EDGE_VARIABLE),
+#   so EVERY theme must carry them (an undefined
 #   `$name` fails the stylesheet parse). ensure_readable_text_hues sets them
 #   on the shipped, built-in and user-theme load paths, and
 #   ThemeVariableDefaultsMixin supplies them for any theme that skipped it.
@@ -140,8 +141,12 @@ _NON_TEXT_RATIO = 3.0
 FOCUS_FILL_VARIABLE = "tldw-focus-fill"
 #: task-31284's floor: a focus fill shifts the pane it sits on at least 1.25x.
 _FOCUS_SHIFT = 1.25
+#: TASK-33641.1: the active top tab's outline (components/_navigation.tcss),
+#: 3:1 on the tab's $primary-darken-1 fill. $primary, which painted it,
+#: measured 1.19 to 1.34:1 there on every theme.
+ACTIVE_EDGE_VARIABLE = "tldw-active-edge"
 #: The names the guard generates that no tcss defines and the tcss references.
-GUARD_VARIABLES = (BOUNDARY_VARIABLE, FOCUS_FILL_VARIABLE)
+GUARD_VARIABLES = (BOUNDARY_VARIABLE, FOCUS_FILL_VARIABLE, ACTIVE_EDGE_VARIABLE)
 
 #: Review finding #3: ensure_readable_text_hues records the keys it wrote on
 #: the Theme under this attribute. A key a theme set by hand (22 shipped
@@ -303,11 +308,15 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     way until it clears 3:1 (WCAG 1.4.11) on both surfaces; an explicit
     entry below that floor is replaced. ``FOCUS_FILL_VARIABLE`` is the house
     focus tint wherever that keeps a focused default button at least as far
-    from its card as at rest (``_focus_fill``). Themes whose surfaces cannot
-    be resolved (ANSI palettes, an 'auto NN%' surface) still get both, because
-    the tcss references them: the first of the old values
-    (``surface-lighten-2``, the focus tint) and Textual's ANSI ``border-blurred``
-    and ``ansi-background`` that paints a colour (Qodo #2937).
+    from its card as at rest (``_focus_fill``). TASK-33641.1:
+    ``ACTIVE_EDGE_VARIABLE`` (the active top tab's outline) starts from the
+    theme's own entry or ``primary`` and blends toward white or black,
+    whichever first reaches 3:1 on the tab's ``primary-darken-1`` fill.
+    Themes whose surfaces cannot be resolved (ANSI palettes, an 'auto NN%'
+    surface) still get all three, because the tcss references them: the first
+    of the old values (``surface-lighten-2``, the focus tint, ``primary``) and
+    Textual's ANSI ``border-blurred`` and ``ansi-background`` that paints a
+    colour (Qodo #2937).
     The entries the guard reads (``text``, the focus tint,
     ``surface-lighten-2``) are measured as Textual paints them, the
     '<colour> NN%' form included; one with no colour to measure ('auto NN%'
@@ -338,6 +347,7 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
         sources = (
             ("surface-lighten-2", "border-blurred"),
             ("block-cursor-blurred-background", "ansi-background"),
+            ("primary",),
         )
         for name, keys in zip(GUARD_VARIABLES, sources):
             if name not in variables:
@@ -366,6 +376,18 @@ def ensure_readable_text_hues(theme: Theme) -> Theme:
     if fill is not None:
         pinned.add(FOCUS_FILL_VARIABLE)
         variables[FOCUS_FILL_VARIABLE] = fill
+    tab = surfaces[0] + _measured("primary-darken-1", generated, defaults)
+
+    def outlines(color: Color) -> bool:
+        return _contrast_ratio(color, tab) >= _NON_TEXT_RATIO
+
+    outline = _opaque(variables.get(ACTIVE_EDGE_VARIABLE))
+    if outline is None or not outlines(outline):
+        start = outline or surfaces[0] + _measured("primary", generated, defaults)
+        # White or black always clears 3:1 on any fill, so a step is found.
+        found = _blend_until(start, (Color(255, 255, 255), Color(0, 0, 0)), outlines)
+        pinned.add(ACTIVE_EDGE_VARIABLE)
+        variables[ACTIVE_EDGE_VARIABLE] = (found or pole).hex
     theme.variables = variables
     setattr(theme, _PINNED_ATTR, frozenset(pinned))
     return theme

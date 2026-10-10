@@ -231,14 +231,19 @@ class MainNavigationBar(Container):
     Replaces the tab-based navigation with screen-based navigation.
     """
 
+    # TASK-33641.1: the bar paints the surface its tabs rest on, so its
+    # separator can be the 3:1 grid line ($surface-lighten-2 on $background
+    # was 1.75:1, and no line colour is pinned against $background). The
+    # clip-ghost rules below, and their app-tier copy in
+    # css/components/_navigation.tcss, paint the same fill.
     BUNDLED_CSS = """
     MainNavigationBar {
         height: 3;
         min-height: 3;
         width: 100%;
         dock: top;
-        background: $background;
-        border-bottom: solid $surface-lighten-2;
+        background: $surface;
+        border-bottom: solid $ds-grid-line;
         layout: horizontal;
         overflow: hidden;
     }
@@ -319,7 +324,7 @@ class MainNavigationBar(Container):
        `*:disabled:can-focus { opacity: 0.7; }` and, every `Button`'s own
        default variant class, `Button.-style-default:disabled {
        text-opacity: 0.6; }`) -- without this the ghosted color blends
-       toward transparent instead of staying pixel-exact on `$background`.
+       toward transparent instead of staying pixel-exact on the bar's `$surface`.
        `!important` is required, not decorative: `Button.-style-default:
        disabled` carries an extra TYPE-selector component (`Button`) that
        `.nav-button.nav-button-clip-ghost:disabled` (two classes, no type)
@@ -390,8 +395,8 @@ class MainNavigationBar(Container):
     .nav-button.nav-button-clip-ghost.is-active,
     .nav-button.nav-button-clip-ghost.is-active:focus,
     .nav-button.nav-button-clip-ghost:disabled {
-        background: $background !important;
-        color: $background !important;
+        background: $surface !important;
+        color: $surface !important;
         text-style: none;
         opacity: 100% !important;
         text-opacity: 100% !important;

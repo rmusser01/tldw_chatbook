@@ -1872,10 +1872,17 @@ FileSystemPickerScreen #listing-progress {
 
 
 
+.nav-button.is-active,
+.nav-button.is-active:focus {
+    background: $primary-darken-1;
+    border: round $tldw-active-edge;
+}
+
+
 .nav-button.nav-button-clip-ghost:disabled {
     opacity: 100%;
-    background: $background;
-    color: $background;
+    background: $surface;
+    color: $surface;
 }
 
 
@@ -4848,7 +4855,7 @@ Collapsible {
     height: auto;
     min-height: $ds-size-3;
     margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    border: round $surface-lighten-1;
+    border: round $ds-grid-line;
     background: $surface;
 }
 

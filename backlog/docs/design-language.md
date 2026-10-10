@@ -122,7 +122,10 @@ Every interactive control must define, at minimum:
   `$primary`), and a focus cue that is an edge must reach 3:1 against the
   row it marks (TASK-33003.6: the Settings rail edge is `$ds-active-fg`).
   A default Button's focus fill is `$tldw-focus-fill`, never closer to its
-  card than the resting fill (themes.py `FOCUS_FILL_VARIABLE`)
+  card than the resting fill (themes.py `FOCUS_FILL_VARIABLE`). The active
+  top tab keeps its `$primary-darken-1` fill hovered and focused, because
+  its outline `$tldw-active-edge` is pinned at 3:1 against that fill only
+  (themes.py `ACTIVE_EDGE_VARIABLE`, TASK-33641.1)
 - **disabled:** `$ds-disabled-bg` + `$ds-text-disabled-readable` at full
   opacity (never opacity-stacked — see §2.5); hover on disabled keeps the
   disabled surface

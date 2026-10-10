@@ -546,7 +546,7 @@ DetailValueRow .detail-value-row-error {
 
 /* 31712 AC#4: Collapsible body chrome -- Textual's widget-tier
  * `padding-bottom: 1` plus components/_widgets.tcss's app-wide
- * `Collapsible { margin-bottom: 1; border: round $surface-lighten-1 }` and
+ * `Collapsible { margin-bottom: 1; border: round $ds-grid-line }` and
  * `Collapsible > Contents { padding: 1 }` -- costs blank rows per EXPANDED
  * group before any real content is drawn (measured in 31712: a 4-row
  * Frequency group rendered at height 13; that count also included the

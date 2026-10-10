@@ -329,6 +329,7 @@ fields (task-1586):
 - **Default:** `$panel` background and `$text-muted` labels.
 - **Hover:** `$panel-lighten-1` background and `$text`.
 - **Active:** `$accent` background or `$accent` text with bold weight, depending on whether the nav is button-based or link-based.
+- **Top tab bar lines (TASK-33641.1):** the bar paints `$surface` and its separator is `$ds-grid-line`. The active tab keeps its `$primary-darken-1` fill hovered and focused (bold underline carries focus), and its outline is `$tldw-active-edge`, which `ensure_readable_text_hues` (themes.py `ACTIVE_EDGE_VARIABLE`) works out per theme at 3:1 on that fill.
 - **Overflow:** use command palette or explicit compact hints, never hidden mystery navigation.
 
 ### Destination Header

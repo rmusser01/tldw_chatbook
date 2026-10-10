@@ -18573,6 +18573,27 @@ at production cost before you rank anything else.
 ~1 ms in production too; a first visit still pays ~400 ms. The probe advice
 stands: without `TLDW_TEST_CSS_CACHE=0` the test cache hides first-visit cost.
 
+## A contrast gate that reads rules measures the resting state only (TASK-33641.1, 2026-10-09)
+
+**What happened.** The active top tab's outline was re-pinned to 3:1 against
+the tab's `$primary-darken-1` fill. A gate in the style of
+`test_theme_contrast.py` (rule token, theme table, ratio) passed on all 89
+measurable themes. The first rendered run then failed: textual-light painted
+the new outline `#5986A7` on `#97ACBB`, 1.66:1. The harness had auto-focused
+the active tab, and the app tier's `Button:focus` fill replaces the widget
+tier's `.nav-button.is-active:focus` fill whatever its specificity. The old
+outline read 4.21:1 on that focus fill, so the fix would have made the
+focused tab worse on light themes while every token test stayed green. A
+second rendered version, with separate hover and focus steps, still passed
+with its `:focus` selector deleted: only hover and focus together reach
+`Button:hover:focus`, which outranks a two-class rule.
+
+**What to do.** When a line or an ink is pinned against one fill, list the
+states that can change that fill (hover, focus, both at once, disabled) and
+paint each of them under the production stylesheet, on a light theme as well
+as the default. Then delete each selector of the fix in turn and check that
+the rendered test fails.
+
 ## A colour built in Python with `dim` is measured on one theme only (TASK-33004.6, 2026-09-30)
 
 **What happened.** Pick-only Switch model painted its disabled NEEDS SETUP

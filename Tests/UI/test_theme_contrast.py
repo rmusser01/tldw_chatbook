@@ -209,11 +209,21 @@ def _painted(table: dict, token: str) -> str:
     return value
 
 
-def _rule_token(sheet: Path, selector: str, prop: str) -> str:
+#: MainNavigationBar.BUNDLED_CSS, read on use (the widget tier's nav rules).
+NAV_BAR_CSS = "MainNavigationBar.BUNDLED_CSS"
+
+
+def _rule_token(sheet: Path | str, selector: str, prop: str) -> str:
     """The `$token` (last word) a rule in ``sheet`` sets ``prop`` to."""
     from Tests.UI.test_non_obscuring_focus_contract import css_block
 
-    block = css_block(sheet.read_text(encoding="utf-8"), selector)
+    if sheet == NAV_BAR_CSS:
+        from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+
+        text = MainNavigationBar.BUNDLED_CSS
+    else:
+        text = sheet.read_text(encoding="utf-8")
+    block = css_block(text, selector)
     match = re.search(rf"^\s*{prop}:\s*([^;]+);", block, re.MULTILINE)
     assert match, f"{selector} sets no {prop}"
     return match.group(1).split()[-1].lstrip("$")
@@ -265,6 +275,133 @@ def test_library_pane_frames_clear_non_text_contrast(theme: Theme) -> None:
         token = _rule_token(LIBRARY_SHEET, selector, "border")
         for key in ("surface", "panel"):
             _assert_edge_visible(theme, table, token, key)
+
+
+WIDGETS_SHEET = CSS_ROOT / "components/_widgets.tcss"
+NAVIGATION_SHEET = CSS_ROOT / "components/_navigation.tcss"
+CONSOLE_SHEET = CSS_ROOT / "features/_console.tcss"
+_RAIL_HEADER = ".console-rail-section-header"
+_TAB = ".nav-button.is-active"
+
+#: TASK-33641.1: line -> (the rule and property that set its colour, the fills
+#: it sits on). A fill is a rule whose `background` is read, or a surface name.
+CHROME_LINES = {
+    "tab-bar separator": (
+        (NAV_BAR_CSS, "MainNavigationBar", "border-bottom"),
+        [(NAV_BAR_CSS, "MainNavigationBar")],
+    ),
+    "active tab outline": ((NAVIGATION_SHEET, _TAB, "border"), [(NAVIGATION_SHEET, _TAB)]),
+    "Collapsible frame": (
+        (WIDGETS_SHEET, "Collapsible", "border"),
+        [(WIDGETS_SHEET, "Collapsible")],
+    ),
+    "Console rail section rule": (
+        (CONSOLE_SHEET, _RAIL_HEADER, "border-top"),
+        [(CONSOLE_SHEET, _RAIL_HEADER)],
+    ),
+    # No fill of its own: it sits on the rail.
+    "Console conversations rule": (
+        (CONSOLE_SHEET, ".console-workspace-conversations-header", "border-top"),
+        ["surface", "panel"],
+    ),
+}
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("line", CHROME_LINES)
+@pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)
+def test_app_chrome_lines_clear_non_text_contrast(theme: Theme, line: str) -> None:
+    """TASK-33641.1 AC#1: the lines every screen shares read at 3:1 on what
+    they sit on. In textual-dark the tab-bar separator measured 1.75:1, the
+    active tab's outline 1.29:1, the Collapsible frame 1.21:1 and the Console
+    rail's section rules 1.56:1."""
+    rule, fills = CHROME_LINES[line]
+    table = _painted_variables(theme)
+    token = _rule_token(*rule)
+    for fill in fills:
+        on = fill if isinstance(fill, str) else _rule_token(*fill, "background")
+        _assert_edge_visible(theme, table, token, on)
+
+
+def _painted_line(app, y: int, x0: int, x1: int, glyphs: str) -> list[tuple[str, str]]:
+    """[(fg hex, bg hex)] of the cells on row y, columns x0..x1, that draw a line."""
+    cells, position = [], 0
+    for segment in app.screen._compositor.render_strips()[y]:
+        for glyph in segment.text:
+            if x0 <= position < x1 and glyph in glyphs:
+                style = segment.style
+                cells.append(
+                    (
+                        Color.from_rich_color(style.color).hex,
+                        Color.from_rich_color(style.bgcolor).hex,
+                    )
+                )
+            position += 1
+    return cells
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("theme_name", ["textual-dark", "textual-light", "pastel_dreams"])
+async def test_app_chrome_lines_paint_at_non_text_contrast(theme_name: str) -> None:
+    """TASK-33641.1 AC#1, rendered under the production stylesheet: the gate
+    above reads rules, and the rule a sheet names is not always the one that
+    paints. Each line's cells are read from the frame and measured."""
+    from textual.widgets import Collapsible, Static
+
+    from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+    from tldw_chatbook.UI.Navigation.main_navigation import MainNavigationBar
+
+    class Chrome(ConsolidatedCSSApp):
+        def compose(self):
+            yield MainNavigationBar(active="home")
+            yield Collapsible(Static("body"), title="Group", id="probe-frame")
+            yield Static("Section", classes=_RAIL_HEADER[1:], id="probe-rule")
+
+    app = Chrome(css_path=[str(path) for path in APP_STYLESHEETS])
+    async with app.run_test(size=(211, 44)) as pilot:
+        for theme in ALL_THEMES:
+            app.register_theme(theme)
+        app.theme = theme_name
+        await pilot.pause(0.3)
+        bar = app.query_one(MainNavigationBar).region
+        tab = app.query_one("#nav-home").region
+        frame = app.query_one("#probe-frame").region
+        rule = app.query_one("#probe-rule").region
+
+        def outline() -> list[tuple[str, str]]:
+            return [
+                *_painted_line(app, tab.y, tab.x, tab.right, "╭─╮"),
+                *_painted_line(app, tab.y + 1, tab.x, tab.right, "│"),
+            ]
+
+        lines = {
+            "tab-bar separator": _painted_line(app, bar.bottom - 1, bar.x, bar.right, "─"),
+            "Collapsible frame": _painted_line(app, frame.y, frame.x, frame.right, "╭─╮"),
+            "Console rail section rule": _painted_line(app, rule.y, rule.x, rule.right, "─"),
+        }
+        # The shared Button:hover and Button:focus fills once replaced the
+        # tab's own, and the outline is pinned against the tab's fill only.
+        active = app.query_one("#nav-home")
+        app.set_focus(None)
+        await pilot.pause()
+        lines["active tab outline"] = outline()
+        await pilot.hover("#nav-home")
+        await pilot.pause()
+        assert active.mouse_hover
+        lines["active tab outline, hovered"] = outline()
+        app.set_focus(active)
+        await pilot.pause()
+        lines["active tab outline, hovered and focused"] = outline()
+        await pilot.hover("#probe-rule")
+        await pilot.pause()
+        assert active.has_focus and not active.mouse_hover
+        lines["active tab outline, focused"] = outline()
+    for line, cells in lines.items():
+        assert cells, f"{theme_name}: no {line} cells painted"
+        for edge, fill in set(cells):
+            ratio = _ratio(edge, fill)
+            assert ratio >= NON_TEXT, f"{theme_name}: {line} {edge} on {fill} is {ratio:.2f}:1"
 
 
 def test_user_saved_themes_get_visible_boundaries(tmp_path) -> None:
@@ -372,7 +509,8 @@ def test_focused_default_button_never_loses_contrast(theme: Theme) -> None:
 #: Every theme-generated name the app's tcss references (themes.py).
 _GUARD_PROBE_CSS = (
     "\nScreen { border-left: solid $ds-grid-line;"
-    " border-right: solid $ds-control-edge; background: $tldw-focus-fill; }\n"
+    " border-right: solid $ds-control-edge; background: $tldw-focus-fill;"
+    " border-top: round $tldw-active-edge; }\n"
 )
 
 

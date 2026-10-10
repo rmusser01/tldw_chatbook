@@ -711,8 +711,8 @@
     MainNavigationBar .nav-button.nav-button-clip-ghost.is-active,
     MainNavigationBar .nav-button.nav-button-clip-ghost.is-active:focus,
     MainNavigationBar .nav-button.nav-button-clip-ghost:disabled {
-        background: $background !important;
-        color: $background !important;
+        background: $surface !important;
+        color: $surface !important;
         text-style: none;
         opacity: 100% !important;
         text-opacity: 100% !important;
