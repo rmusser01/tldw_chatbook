@@ -1,5 +1,5 @@
 ---
-id: TASK-34414
+id: TASK-34784
 title: Uncorrelate Library conversation content search
 status: Done
 created_date: 2026-10-07 02:40
@@ -37,3 +37,7 @@ Replaced the correlated content-LIKE EXISTS branch in search_library_conversatio
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+PR3029 integration exposed a collision with the older Library sync-readiness task created 2026-10-06. This conversation-search task was created 2026-10-07 and moves from TASK-34414 to TASK-34784 under the older-arrival rule. The fresh 2026-10-10 sweep covered 493 local/remote refs and managed checkouts; maximum34783 was the architecture-review task. Its original implementation and evidence are unchanged; code/plan references follow the new ID.

@@ -1401,6 +1401,12 @@ class ConsoleSessionSwitcherModal(
     async def _query_submitted(self, event: Input.Submitted) -> None:
         """Commit the exact query before applying its explicit candidate."""
         event.stop()
+        if (
+            self._query_pending
+            and self._activation_task is not None
+            and not self._activation_task.done()
+        ):
+            return
         self._cancel_query_debounce()
         query = self._validated_query(event.value)
         if query is None:

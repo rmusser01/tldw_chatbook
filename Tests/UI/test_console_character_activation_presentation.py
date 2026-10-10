@@ -442,7 +442,7 @@ async def test_character_open_under_quit_question_explains_only_owned_interrupti
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "change", [None, "deleted", "query", "mode", "overlay", "close"]
+    "change", [None, "deleted", "deleted-enter", "query", "mode", "overlay", "close"]
 )
 async def test_interrupted_retry_refreshes_only_the_same_live_target(change):
     """A refreshed neighbor or a changed visit cannot inherit the Retry action."""
@@ -471,7 +471,11 @@ async def test_interrupted_retry_refreshes_only_the_same_live_target(change):
         if calls > 1:
             entered.set()
             await asyncio.wait_for(release.wait(), 5)
-        rows = (neighbor,) if calls > 1 and change == "deleted" else (exact, neighbor)
+        rows = (
+            (neighbor,)
+            if calls > 1 and change in ("deleted", "deleted-enter")
+            else (exact, neighbor)
+        )
         return CharacterConversationPage(rows, len(rows), None, calls)
 
     async def activate(request, _cancellation):
@@ -492,6 +496,10 @@ async def test_interrupted_retry_refreshes_only_the_same_live_target(change):
         modal._committed_character_result = modal._entries[0]
         modal._activation_interrupted_by_quit = True
         modal._show_activation_failure(ConsoleActivationResultKind.FAILED)
+        submitted = None
+        if change == "deleted-enter":
+            modal.query_one("#console-switcher-query", Input).focus()
+            await pilot.pause()
         retry = asyncio.create_task(
             modal._recover_character_activation(
                 Button.Pressed(modal.query_one("#console-switcher-recovery", Button))
@@ -500,6 +508,9 @@ async def test_interrupted_retry_refreshes_only_the_same_live_target(change):
         try:
             await asyncio.wait_for(entered.wait(), 5)
             refresh_attempt = modal._activation_task
+            if change == "deleted-enter":
+                submitted = asyncio.create_task(pilot.press("enter"))
+                await _until(lambda: submitted.done() or calls > 2)
             if change == "query":
                 modal.query_one("#console-switcher-query", Input).value = "Other"
             elif change == "mode":
@@ -511,6 +522,8 @@ async def test_interrupted_retry_refreshes_only_the_same_live_target(change):
             release.set()
             await asyncio.wait_for(retry, 5)
             await asyncio.wait_for(refresh_attempt, 5)
+            if submitted is not None:
+                await asyncio.wait_for(submitted, 5)
             await pilot.pause()
             if change is None:
                 await asyncio.wait_for(modal._activation_task, 5)
@@ -522,6 +535,8 @@ async def test_interrupted_retry_refreshes_only_the_same_live_target(change):
         finally:
             release.set()
             await asyncio.gather(retry, return_exceptions=True)
+            if submitted is not None:
+                await asyncio.gather(submitted, return_exceptions=True)
 
 
 @pytest.mark.asyncio
