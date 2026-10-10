@@ -965,12 +965,21 @@ sent"), the run chip reads **Run: Blocked — Library timeout** (or *error* /
   finishes, sends the message with what it found.
 - **Send once without Library** skips automatic retrieval for only this
   message and sends it; the Auto setting is unchanged.
-- **Cancel send** sends nothing and puts the message back in the composer
-  (when the composer is empty).
+- **Cancel send** sends nothing and puts the message back in the composer,
+  attachments included (when the composer is empty).
+
+If Retry or Send once without Library then finds the provider not ready (a
+local server that is down, or a model you switched to meanwhile), the send
+pauses again and the card says so ("Provider not ready or changed; your
+message was not sent", chip **Blocked — check provider**). It then offers
+**Retry send** and **Cancel send**.
 
 The paused message is also listed as an **unsent turn** above the composer.
 Its **Restore** and **Discard** release the paused send too, so the next
-message you send in that conversation goes through. Nothing is silently
+message you send in that conversation goes through. Once you act on the card,
+the message leaves that list while the card handles it, so the same message is
+never offered in two places. If Cancel finds text already in the composer, the
+message goes back on the list for **Restore** later. Nothing is silently
 downgraded to an ungrounded send.
 
 The Inspector tray is not the only place staged evidence shows up: a
