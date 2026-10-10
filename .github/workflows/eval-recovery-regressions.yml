@@ -52,8 +52,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Selecting the exact reviewed commit failed' }
           if ((git -C $privateSource rev-parse HEAD) -ne $checkoutCommit) { throw 'Private source commit differs' }
           $checkoutOwner = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-          icacls $privateSource /setowner $checkoutOwner /T /Q
-          if ($LASTEXITCODE -ne 0) { throw 'Native fixture source ownership could not be established' }
+          icacls $privateSource /setowner $checkoutOwner /Q
+          if ($LASTEXITCODE -ne 0) { throw 'Native fixture root ownership could not be established' }
+          foreach ($runtimeDirectory in @('tldw_chatbook', 'packages')) {
+            $runtimeRoot = Join-Path $privateSource $runtimeDirectory
+            icacls $runtimeRoot /setowner $checkoutOwner /T /Q
+            if ($LASTEXITCODE -ne 0) { throw 'Native runtime resource ownership could not be established' }
+          }
           "EVAL_SOURCE_ROOT=$privateSource" >> $env:GITHUB_ENV
       - uses: actions/setup-python@v5
         with:
