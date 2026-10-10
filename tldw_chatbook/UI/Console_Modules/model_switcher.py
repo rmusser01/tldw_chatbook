@@ -303,7 +303,8 @@ def open_provider_setup(
     (``_open_console_provider_recovery``). TASK-33008.1: it stages a return
     to the active chat, naming only that chat, so Settings offers "Return to
     Console". A provider or model the return cannot name opens Settings one
-    way, as before; a navigation that never leaves takes its return back.
+    way, as before; a navigation that never leaves takes its return back, and
+    so does a Console the user reaches again by hand (``provider_return.py``).
     Either way Settings keeps its own model field when no model is routed.
 
     Args:
@@ -350,7 +351,9 @@ def open_provider_setup(
     revision = handoffs.stage(channel, intent)
 
     def settle(succeeded: bool) -> None:
-        if not succeeded:
+        if succeeded:  # Settings has the screen: remember what to take back.
+            screen._pending_console_provider_return = (revision, intent)
+        else:
             handoffs.discard_pending_exact(channel, revision, intent)
 
     navigation = NavigateToScreen(

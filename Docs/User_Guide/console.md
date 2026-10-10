@@ -332,10 +332,11 @@ unlocks; if not, a "still unreachable" notice says so. A cloud provider's
 key check (Settings **t**) that timed out or could not connect is the
 exception: the Console never contacts a cloud provider itself, so **Retry
 connection** opens **Settings ▸ Providers & Models** at that provider and
-says "Press t to test \<provider\> again". If you save a change there, such
-as a new key, **Return to Console** appears and **Enter** on it comes back to
-this chat; a test alone saves nothing, so no return button shows and you go
-back to Console yourself. Every test sends the
+says "Press t to test \<provider\> again". Settings opens with focus on
+**Return to Console**, under the Default model's **Applies to** row: press
+**t** to test, then **Enter** to come back to this chat. If you change
+something first, such as the key, the button hides until you save, and the
+save puts focus back on it. Every test sends the
 API key a message would use, so a local server started with a key (vLLM's
 `--api-key`, for example) is tested with it, and "key rejected" means that
 key was refused (a 401). A 403 from any model listing, local or cloud, means

@@ -1,10 +1,11 @@
 """TASK-33008.1: a Console provider recovery returns to the chat it left.
 
 The unit tests drive the Console's consumer (``Console_Modules/
-provider_return.py``) and the Settings copy (``Settings_Modules/
+provider_return.py``) and the Settings offer and copy (``Settings_Modules/
 provider_return.py``) with the real handoff store and the real Console chat
-store. The two private-profile tests run the real app: card -> Settings ->
-key -> save -> Enter, and Return without saving.
+store. The private-profile tests run the real app: card -> Settings -> key ->
+save -> Enter, Return without saving, the return offered on arrival, and a
+return that lapses when the user walks back by hand.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app as _build_production_app
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Constants import TAB_CHAT, TAB_SETTINGS
 from tldw_chatbook.UI.Console_Modules.model_switcher import open_provider_setup
 from tldw_chatbook.UI.Console_Modules.provider_return import (
     MISSING_CHAT_COPY,
@@ -35,6 +37,7 @@ from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
     ConversationSettingsReturnOutcome,
     ProviderSettingsNavigationTarget,
 )
+from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     HandoffChannel,
     PendingHandoffStore,
@@ -43,13 +46,16 @@ from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Settings_Modules.provider_return import (
     INACTIVE_COPY,
+    console_return_lapsed,
     continuation_copy,
     fitted_chat_title,
+    return_outcome,
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 CHANNEL = HandoffChannel.CONVERSATION_SETTINGS_RETURN
 SAVED = ConversationSettingsReturnOutcome.CREDENTIAL_SAVED
+UNSAVED = ConversationSettingsReturnOutcome.WITHOUT_SAVING
 
 
 def _console(store: ConsoleChatStore, *, blocking: bool = False, owns: bool = True):
@@ -236,13 +242,118 @@ def test_return_is_kept_until_the_console_owns_the_screen() -> None:
     workers[0].close()
 
 
-def _settings(target, outcome, store=None):
-    """What the Settings copy reads from its screen."""
+@pytest.mark.parametrize("newer", [None, "console", "modal"])
+def test_an_unused_return_is_taken_back_when_the_console_is_reached_by_hand(
+    newer: str | None,
+) -> None:
+    """A return the user did not take must not stay armed: once Settings has
+    had the screen and the Console gets it back with no return, the Console
+    discards exactly the revision it staged. A newer request stays."""
+    store = ConsoleChatStore()
+    origin = store.create_session(title="Origin")
+    screen, events, workers = _console(store)
+    posted: list[NavigateToScreen] = []
+    screen.post_message = posted.append
+    handoffs = screen.app_instance.pending_handoffs
+
+    open_provider_setup(screen, "openai", "gpt-5", field="api_key")
+    (navigation,) = posted
+    revision = navigation.screen_context["return_revision"]
+    # The Console still has the screen: a consumer that runs now (the mount
+    # hedge) must leave the return it has only just staged.
+    ChatScreen._consume_pending_conversation_settings_return(screen)
+    assert handoffs.exact_revision_status(CHANNEL, revision) == "pending"
+
+    navigation.commit_target_ownership()  # Settings has the screen.
+    screen._owns_console_screen_stack = lambda: False
+    ChatScreen._consume_pending_conversation_settings_return(screen)
+    assert handoffs.exact_revision_status(CHANNEL, revision) == "pending"
+    if newer == "console":
+        handoffs.stage(CHANNEL, ConsoleProviderReturnIntent(origin.id))
+    elif newer == "modal":
+        handoffs.stage(
+            CHANNEL, ConversationSettingsReturnIntent(origin.id, 1, "model", None)
+        )
+
+    screen._owns_console_screen_stack = lambda: True  # Back, with no return.
+    ChatScreen._consume_pending_conversation_settings_return(screen)
+
+    assert screen._pending_console_provider_return is None
+    assert handoffs.has_pending(CHANNEL) is (newer is not None)
+    assert handoffs.exact_revision_status(CHANNEL, revision) == (
+        "settled" if newer is None else "superseded"
+    )
+    assert workers == [] and events == []  # Nothing lands, nothing is said.
+
+
+def _settings(target, outcome, store=None, *, dirty=False, conflict=None):
+    """What the Settings offer and copy read from their screen."""
     return SimpleNamespace(
         _provider_return_target=target,
         _provider_return_outcome=outcome,
+        _provider_navigation_conflict_target=conflict,
+        _category_has_unsaved_changes=lambda _category: dirty,
         _custom_endpoints_store=lambda: store,
     )
+
+
+def test_a_console_return_is_offered_before_any_save_and_the_modals_is_not() -> None:
+    """Parent AC#3: a recovery that saves nothing (a key test) still has its
+    return, so the Console kind is offered on arrival and names the chat. An
+    unsaved edit or a provider conflict withdraws it, because Return without
+    saving and the conflict panel answer those. Chat settings' return shows
+    after a save only, as before (AC#7)."""
+    store = ConsoleChatStore()
+    chat = store.create_session(title="Chat 1")
+    console = ProviderSettingsNavigationTarget(
+        "providers-models", "openai", "gpt-5", "api_key", 2, chat.id
+    )
+    modal = replace(console, session_id=None)
+    arrival = "No unsaved changes. Return to Console to continue in “Chat 1”."
+
+    on_arrival = _settings(console, None, store)
+    assert return_outcome(on_arrival) is UNSAVED
+    assert continuation_copy(on_arrival) == arrival
+    for withdrawn in (
+        _settings(console, None, store, dirty=True),
+        _settings(console, None, store, conflict=console),
+        _settings(modal, None, store),
+        _settings(None, None, store),
+    ):
+        assert return_outcome(withdrawn) is None
+        assert continuation_copy(withdrawn) == INACTIVE_COPY
+    # A save's outcome is what the return sends, whatever is unsaved since.
+    assert return_outcome(_settings(console, SAVED, store, dirty=True)) is SAVED
+    assert return_outcome(_settings(modal, SAVED, store)) is SAVED
+    store.close_session(chat.id)
+    assert continuation_copy(on_arrival) == "No unsaved changes. Return to Console."
+
+
+def test_a_kept_console_return_lapses_with_its_handoff() -> None:
+    """A Console return kept across Settings visits is dropped once its exact
+    revision is no longer pending (taken back, used or superseded); Chat
+    settings' return is never checked."""
+    handoffs = PendingHandoffStore()
+    screen = SimpleNamespace(app_instance=SimpleNamespace(pending_handoffs=handoffs))
+    intent = ConsoleProviderReturnIntent("session-1")
+    revision = handoffs.stage(CHANNEL, intent)
+    console = ProviderSettingsNavigationTarget(
+        "providers-models", "openai", "gpt-5", "api_key", revision, "session-1"
+    )
+    modal = replace(console, session_id=None)
+
+    assert console_return_lapsed(screen, console) is False
+    newer = handoffs.stage(CHANNEL, intent)
+    assert console_return_lapsed(screen, console) is True  # superseded
+    assert console_return_lapsed(screen, replace(console, return_revision=newer)) is (
+        False
+    )
+    assert handoffs.discard_pending_exact(CHANNEL, newer, intent)
+    assert console_return_lapsed(screen, replace(console, return_revision=newer))
+    assert console_return_lapsed(screen, modal) is False
+    no_store = SimpleNamespace(app_instance=SimpleNamespace())
+    assert console_return_lapsed(no_store, console) is True
+    assert console_return_lapsed(no_store, modal) is False
 
 
 def test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy() -> None:
@@ -278,7 +389,7 @@ def test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy() -> None
         "Provider settings saved. Return to Chat settings to check "
         "readiness; generation is not yet verified."
     )
-    assert continuation_copy(_settings(console, None, store)) == INACTIVE_COPY
+    assert continuation_copy(_settings(modal, None, store)) == INACTIVE_COPY
     assert fitted_chat_title("   ") == "untitled"
     for target, destination in ((console, "Console"), (modal, "Chat settings")):
         screen = SimpleNamespace(_provider_return_target=target)
@@ -382,10 +493,17 @@ async def test_recovery_round_trip_returns_to_the_chat_on_one_enter(
 
     async with app.run_test(size=(211, 44)) as pilot:
         console, session, settings = await _recover_from_the_card(app, pilot)
-        # R37: nothing to return with until something is saved.
-        assert settings.query_one("#settings-provider-return-continuation").display is (
-            False
+        # The return is offered on arrival and names the chat, and focus
+        # stays in the field the blocker named (AC#1, AC#2).
+        continuation = settings.query_one("#settings-provider-return-continuation")
+        status = settings.query_one(
+            "#settings-provider-return-continuation-status", Static
         )
+        assert continuation.display is True
+        assert str(status.renderable) == (
+            f"No unsaved changes. Return to Console to continue in “{session.title}”."
+        )
+        assert app.focused.id == "settings-provider-api-key"
 
         # Another chat is active by the time Settings returns, so only the
         # Console's consumer can put the user back on the chat they left.
@@ -394,6 +512,10 @@ async def test_recovery_round_trip_returns_to_the_chat_on_one_enter(
         assert store.active_session_id == other.id != session.id
 
         await pilot.press(*_KEY)
+        # An unsaved key withdraws it: Return without saving asks first.
+        await _until(
+            pilot, lambda: not continuation.display, "the unsaved key to hide it"
+        )
         await pilot.press("escape")  # leave the field, so s is Save
         await pilot.press("s")
         await _until(
@@ -402,9 +524,6 @@ async def test_recovery_round_trip_returns_to_the_chat_on_one_enter(
             "focus on the Return to Console action after the save",
         )
         assert str(app.focused.label) == "Return to Console"
-        status = settings.query_one(
-            "#settings-provider-return-continuation-status", Static
-        )
         assert str(status.renderable) == (
             f"Credential saved. Return to Console to continue in “{session.title}”; "
             "provider acceptance is not yet verified."
@@ -521,3 +640,120 @@ async def test_a_route_that_names_no_model_keeps_settings_own_model(
         assert target is not None and target.model is None
         assert app.screen.query_one("#settings-model-value", Input).value == "gpt-5"
         assert target.pins_model is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_recovery_that_saves_nothing_returns_from_the_arrival_action(
+    monkeypatch, request
+):
+    """Parent AC#3: a recovery that needs no save (a cloud Retry's key test)
+    still goes back in one action. The arrival return asks nothing, writes
+    nothing and lands on the chat that opened Settings."""
+    app = _cloud_app_without_a_key(monkeypatch)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        console, session, settings = await _recover_from_the_card(app, pilot)
+        assert settings.query_one("#settings-provider-return-continuation").display
+        # Keyboard only: Tab walks from the named field on to the return.
+        tabs = 0
+        while getattr(app.focused, "id", None) != "settings-provider-return":
+            assert tabs < 12, f"Tab never reached the return; at {app.focused!r}"
+            await pilot.press("tab")
+            tabs += 1
+        assert str(app.focused.label) == "Return to Console"
+
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console
+                and getattr(app.focused, "id", None) == "console-setup-modal-action"
+            ),
+            "the Console's card to hold focus again",
+        )
+        assert console._ensure_console_chat_store().active_session_id == session.id
+        assert not _saved_openai_key()
+        assert not app.pending_handoffs.has_pending(CHANNEL)
+        assert settings._provider_return_target is None
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_route_that_names_no_field_arrives_on_the_return(monkeypatch, request):
+    """A cloud Retry names no field: the user tests the key with t and goes
+    back. With no field to put focus in, the offered return takes it, so
+    after the test one Enter returns (parent AC#3)."""
+    app = _cloud_app_without_a_key(monkeypatch)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "console-setup-modal-action",
+            "the Get started card's action to hold focus",
+        )
+        console = app._navigation_outgoing_screen()
+        session_id = console._ensure_console_chat_store().active_session_id
+        open_provider_setup(console, "openai", "gpt-5", field="")
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and getattr(app.focused, "id", None) == "settings-provider-return"
+            ),
+            "Settings to open with focus on Return to Console",
+        )
+        assert app.screen._provider_return_target.field is None
+
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console
+                and getattr(app.focused, "id", None) == "console-setup-modal-action"
+            ),
+            "the Console's card to hold focus again",
+        )
+        assert console._ensure_console_chat_store().active_session_id == session_id
+        assert not app.pending_handoffs.has_pending(CHANNEL)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_unused_return_lapses_when_the_user_walks_back_by_hand(
+    monkeypatch, request
+):
+    """A return that was not taken does not stay armed. Walking back to the
+    Console by hand takes the handoff back, and the next Settings visit no
+    longer holds a return, so a later save cannot offer one to the old chat."""
+    app = _cloud_app_without_a_key(monkeypatch)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        console, _session, settings = await _recover_from_the_card(app, pilot)
+
+        settings.post_message(NavigateToScreen(TAB_CHAT))  # as the nav bar does
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console and not app.pending_handoffs.has_pending(CHANNEL)
+            ),
+            "the Console to take its unused return back",
+        )
+        assert console._pending_console_provider_return is None
+
+        console.post_message(NavigateToScreen(TAB_SETTINGS))
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and app.screen is not settings
+                and bool(app.screen.query("#settings-provider-return-continuation"))
+                and bool(app.screen.query("#settings-provider-value SelectOverlay"))
+            ),
+            "a fresh Settings screen on Providers & Models",
+        )
+        await pilot.pause()  # Let the fresh screen finish mounting before exit.
+        assert app.screen._provider_return_target is None
+        assert not app.screen.query_one(
+            "#settings-provider-return-continuation"
+        ).display

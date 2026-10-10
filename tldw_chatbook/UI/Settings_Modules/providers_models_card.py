@@ -98,7 +98,7 @@ from ..Screens.settings_screen import (
     _ProviderTestResult,
     env_var_echo,
 )
-from .provider_return import fitted_chat_title
+from .provider_return import continuation_copy, fitted_chat_title, return_outcome
 from .settings_field_rows import (
     BUILT_IN,
     EDITED,
@@ -1990,10 +1990,10 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 disabled=screen._provider_return_actions_disabled(),
             )
         continuation = Vertical(id="settings-provider-return-continuation")
-        continuation.display = screen._provider_return_outcome is not None
+        continuation.display = return_outcome(screen) is not None
         with continuation:
             yield Static(
-                screen._provider_return_continuation_copy(),
+                continuation_copy(screen),
                 id="settings-provider-return-continuation-status",
                 classes="settings-status-row",
                 markup=False,

@@ -10,6 +10,12 @@ It applies nothing. A Providers & Models save sets the new-chat default, and
 D1's pristine refresh moves an untouched chat onto it in the sync below; a chat
 that holds work keeps its own settings (ADR-095).
 
+A return the user does not take must not stay armed. Once Settings has the
+screen, ``open_provider_setup`` leaves the staged ``(revision, intent)`` on
+the Console. If the Console gets the screen back with no return (the user
+walked back by hand), it discards exactly that revision, so Settings stops
+offering a return to a chat the user is no longer coming from.
+
 ADR-097: ``ChatScreen`` imports this only when a return arrives.
 """
 
@@ -61,19 +67,28 @@ def consume_provider_return(screen: ChatScreen) -> None:
     nothing (AC#6); so does a chat that has closed. Until the Console owns the
     screen the return is kept, and the mount and resume consumers call again.
 
+    When Settings sent no return, what is kept is the ``(revision, intent)``
+    this Console staged: the user came back by hand, so that exact revision
+    is discarded. A newer request of either kind is not touched.
+
     Args:
         screen: The Console screen holding the return.
     """
     target = getattr(screen, "_pending_console_provider_return", None)
     handoffs = getattr(screen.app_instance, "pending_handoffs", None)
     if (
-        not isinstance(target, ConsoleProviderReturnTarget)
+        target is None
         or not isinstance(handoffs, PendingHandoffStore)
         or not screen.is_mounted
         or not screen._owns_console_screen_stack()
     ):
         return
     screen._pending_console_provider_return = None
+    if not isinstance(target, ConsoleProviderReturnTarget):
+        handoffs.discard_pending_exact(
+            HandoffChannel.CONVERSATION_SETTINGS_RETURN, *target
+        )
+        return
     claim = handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
     if (
         claim is None

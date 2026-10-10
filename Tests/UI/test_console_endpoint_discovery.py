@@ -1333,7 +1333,7 @@ async def test_a_cloud_key_check_failure_retries_in_settings_not_chat_settings()
     [message] = posted
     assert isinstance(message, NavigateToScreen)
     # TASK-33008.1 (R32): the retry leaves with a way back to this chat; a
-    # key check names no field, so Settings focuses none.
+    # key check names no field, so Settings puts focus on the return.
     assert message.screen_context == {
         "category": "providers-models",
         "provider": "openai",

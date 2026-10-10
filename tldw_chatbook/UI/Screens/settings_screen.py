@@ -4601,7 +4601,9 @@ class SettingsScreen(BaseAppScreen):
             )
         except (TypeError, ValueError):
             return
-        if conflict and outcome is not None:
+        from ..Settings_Modules.provider_return import console_return_lapsed
+
+        if (conflict and outcome is not None) or console_return_lapsed(self, target):
             return
         self._provider_return_target = target
         self._provider_navigation_conflict_target = target if conflict else None
@@ -13772,11 +13774,6 @@ class SettingsScreen(BaseAppScreen):
         )
         return f"Discard changes and configure {provider}"
 
-    def _provider_return_continuation_copy(self) -> str:
-        from ..Settings_Modules.provider_return import continuation_copy
-
-        return continuation_copy(self)
-
     def _provider_return_destination(self) -> str:
         """Where the return goes: a recovery's Console chat, or Chat settings."""
         target = self._provider_return_target
@@ -13800,6 +13797,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _update_provider_return_widgets(self) -> None:
         """Refresh the bounded handoff regions without recomposing provider inputs."""
+        from ..Settings_Modules import provider_return
 
         try:
             existing = self.query_one(
@@ -13816,10 +13814,10 @@ class SettingsScreen(BaseAppScreen):
                 "#settings-provider-conflict-discard", Button
             ).label = self._provider_conflict_discard_label()
             continuation = self.query_one("#settings-provider-return-continuation")
-            continuation.display = self._provider_return_outcome is not None
+            continuation.display = provider_return.return_outcome(self) is not None
             self.query_one(
                 "#settings-provider-return-continuation-status", Static
-            ).update(self._provider_return_continuation_copy())
+            ).update(provider_return.continuation_copy(self))
             self.query_one(
                 "#settings-provider-return-without-save", Button
             ).display = self._provider_can_return_without_saving()
@@ -24701,7 +24699,11 @@ class SettingsScreen(BaseAppScreen):
         }
         selector = field_selectors.get(str(field or "").strip())
         if not selector:
-            return
+            from ..Settings_Modules.provider_return import return_outcome
+
+            if return_outcome(self) is None:
+                return
+            selector = "#settings-provider-return"  # No field named: the way back.
         self._pending_navigation_focus_selector = selector
         try:
             self.query_one(selector).focus()
@@ -31191,8 +31193,10 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#settings-provider-return")
     def handle_provider_return(self, event: Button.Pressed) -> None:
+        from ..Settings_Modules.provider_return import return_outcome
+
         event.stop()
-        outcome = self._provider_return_outcome
+        outcome = return_outcome(self)  # A Console return needs no save first.
         if outcome is not None:
             self._return_to_conversation_settings(outcome)
 
