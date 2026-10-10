@@ -1,11 +1,11 @@
 ---
 id: TASK-34407
 title: Separate shipped Eval defaults from private profile overrides
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 17:58'
-updated_date: '2026-10-04 20:12'
+updated_date: '2026-10-10 00:20'
 labels: []
 dependencies: []
 ---
@@ -22,6 +22,7 @@ Allow startup from a writable checkout while evaluation settings inherit current
 - [x] #2 Sparse private overrides inherit updated defaults and preserve explicit values, mutable drafts, failed writes, and YAML null values.
 - [x] #3 Runtime and recovery select the same effective-config-owned override file; missing overrides are normal and legacy retained definitions keep existing provenance and activation gates.
 - [x] #4 Targeted native checks, integration regressions, static analysis, and configuration documentation verify the change.
+- [x] #5 Recovery treats only genuinely absent canonical overrides as unused; nonregular or unreadable override paths block complete backup.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -34,6 +35,8 @@ Reason: clarify evaluation configuration ownership while preserving ADR-029, ADR
 2. Add regressions for shipped defaults and private sparse overlays.
 3. Split resource and override selectors; adapt the existing loader and recovery binding.
 4. Verify native lifecycle and legacy retention behavior; update docs and implementation notes.
+
+2026-10-09 PR review follow-up:
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -46,6 +49,8 @@ Limits: two file-symlink cases skip only actual WinError 1314 because this Windo
 Updated files: Evals selectors/loader/recovery/README; raw/settings participant integration; override, owner/lifetime/retention regressions; design, plan, ADR and incident-backed testing lessons. TASK-34408 carries the independent Windows protocol/helper corrections.
 PR preparation: feature branch fast-forwarded to dev a7d9bca5da; no upstream file overlaps. Fresh focused PR check: 38 passed in 9.11s (pipe helper, pending durability, private Eval overrides). Backlog ID/frontmatter guards pass after the documented voluntary renumbering.
 Diagnostic artifact review: the existing loaded-selected-path info message became debug and gained the word evaluation; the interpolation remains selected, with no config contents or secrets added. The five-call count and persistent sinks are unchanged. Regenerated Docs/security/production-diagnostic-inventory.json from clean tracked current-dev sources plus the PR; the only owner delta is Evals/config_loader.py, and all metadata/topology/candidate projections are unchanged. The clean tracked profile-owned path census also passed (54 occurrences, 22 files, 51 exceptions).
+
+2026-10-09 PR #3018 review follow-up: the single delegated read-only reviewer found an existing nonregular canonical override was silently classified unused. Discovery now probes link metadata, keeps nonregular objects missing_required and metadata/read errors unavailable, and reserves unused for genuine absence. Added directory/dangling-link/FIFO/unreadable regressions; meaningful native RED was 2 failed/2 capability skips, then the focused rebased override/durability/pipe run was 40 passed/2 skips. The Windows account cannot create file symlinks and has no FIFO primitive; a focused Windows/Linux/macOS CI job also covers retained/selective/rollback/later-snapshot paths. Changed Python files pass formatting and lint with the two existing exact-type E721 checks retained. The published PR was rebased onto dev a190654d4c; append-only documentation conflicts preserve both versions. Three unrelated unpublished Console documentation commits stay in the original checkout. No new ADR: this restores ADR-220/126 absence and blocking-inventory semantics. Final CI is pending; the task remains In Progress until those results arrive.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering Provenance

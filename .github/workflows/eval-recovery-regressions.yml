@@ -1,0 +1,63 @@
+name: Eval recovery regressions
+
+on:
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'tldw_chatbook/Evals/**'
+      - 'tldw_chatbook/Backup_Recovery/**'
+      - 'Tests/Backup_Recovery/test_eval*.py'
+      - 'Tests/Backup_Recovery/test_pending_directory_durability.py'
+      - 'Tests/subprocess_pipes.py'
+      - 'Tests/test_subprocess_pipes.py'
+      - '.github/workflows/eval-recovery-regressions.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  eval-recovery:
+    name: Eval recovery (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e ".[dev]"
+      - name: Select a private Windows temporary ancestor
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $evalTemp = Join-Path $env:USERPROFILE '.config/eval-recovery-temp'
+          New-Item -ItemType Directory -Path $evalTemp -Force | Out-Null
+          "TEMP=$evalTemp" >> $env:GITHUB_ENV
+          "TMP=$evalTemp" >> $env:GITHUB_ENV
+      - name: Verify override classification and recovery lifetimes
+        run: >-
+          python -m pytest
+          Tests/Backup_Recovery/test_eval_private_overrides.py
+          Tests/Backup_Recovery/test_pending_directory_durability.py
+          Tests/test_subprocess_pipes.py
+          Tests/Backup_Recovery/test_eval_retained_definitions.py
+          Tests/Backup_Recovery/test_eval_selective_retention.py
+          Tests/Backup_Recovery/test_eval_rollback_retention.py
+          Tests/Backup_Recovery/test_eval_later_snapshot.py
+          -q --timeout=180 --junitxml=${{ runner.temp }}/eval-recovery.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-recovery-${{ matrix.os }}
+          path: ${{ runner.temp }}/eval-recovery.xml
+          if-no-files-found: error
