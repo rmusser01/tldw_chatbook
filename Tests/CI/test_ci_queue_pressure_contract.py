@@ -82,12 +82,14 @@ FAST_LANE_TARGETS = (
     "Tests/Library/test_ingest_analysis_load_settings.py",
     "Tests/test_config_load_settings_table_guard.py",
     "Tests/Architecture/test_study_handler_service_keywords.py",
-    # TASK-33621.27: the plain-unit Console P0 regression files -- the Save
-    # .md export seam, the trace row sources behind the refused sends, and
-    # the wizard lifecycle guard. About 6 s together under load.
+    # TASK-33621.27: the plain Console P0 regression files -- the Save .md
+    # export seam, the trace row sources behind the refused sends, the wizard
+    # lifecycle guard, and the compaction failure_reason column and its
+    # repository contract. About 18 s together under load.
     "Tests/Console/test_console_markdown_export.py",
     "Tests/Chat/test_console_trace_row_sources.py",
     "Tests/Architecture/test_wizard_lifecycle_guards.py",
+    "Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py",
 )
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
 #: production runtime). They are ``bootstrap_profile``, so they run in the

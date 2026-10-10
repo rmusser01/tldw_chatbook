@@ -143,12 +143,13 @@ jobs:
             Tests/Console/test_console_markdown_export.py \
             Tests/Chat/test_console_trace_row_sources.py \
             Tests/Architecture/test_wizard_lifecycle_guards.py \
+            Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py \
             --timeout=180 \
             --tb=short
 
       # TASK-33621.27: the Console review's P0 regression tests. The last
-      # three files of the step above are plain unit tests (about 6 s
-      # together). The block the step below lists before
+      # four files of the step above are plain unit and DB tests (about 18 s
+      # together under load). The block the step below lists before
       # test_console_capacity_refusal_copy.py is bootstrap_profile, so it runs
       # there. A whole file is gated where it measured ~30 s or less locally;
       # a slower file only by the node ids that pin the P0 itself. The mounted

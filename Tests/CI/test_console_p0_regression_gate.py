@@ -18,8 +18,6 @@ the node ids that pin the P0 itself.
 Measured at TASK-33621.27 (2026-10-10). Left out on purpose, so a reader does
 not re-add them blind:
 
-* ``test_chachanotes_v74_auxiliary_failure_reason.py`` (TASK-33621.3's
-  migration) has a red schema-version pin on ``dev`` (asserts 77, is 80).
 * ``test_console_tray_rebuild_focus.py`` pins a focus restore, not the Save
   .md crash, and measured 218 s for 30 tests under load.
 
@@ -73,6 +71,8 @@ P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
     # Automatic compaction never succeeded live and re-billed every send.
     "TASK-33621.3": (
         "Tests/Chat/test_console_compaction_failure.py",
+        # The failure_reason column and its repository contract (12 s).
+        "Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py",
         _LIVE + "test_live_automatic_compaction_commits_memory_and_the_send_replies",
         _LIVE + "test_live_compact_now_succeeds_after_real_durable_sends",
         _LIVE + "test_live_failed_compaction_records_reason_and_discloses_spend",
