@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-30 14:00'
-updated_date: '2026-10-10 20:52'
+updated_date: '2026-10-10 21:47'
 labels:
   - evals
   - ux
@@ -183,4 +183,13 @@ Reviewer review_3029 cleared immutable commit 123ee2a7db312cce8b0a3e5379047bf33e
 The distinct required-CI receipt remains 749 Tests/CI cases passed in 8.44s after the contract RED (2 failed / 20 passed). This is separate from the 231-test stack interaction run and the earlier 218/49/50 receipts. Guard, preflight and focused static checks passed as recorded above. No full suite, remote Actions run or push.
 stack_parent: 595618f4592a3495a251ae0e187980b793c12e74 (the reviewed integration boundary; retained for the later carry onto the merged sequence).
 ADR required: no; routine integration of the existing guard into its existing required job.
+
+Reviewed sequence carry qualification (2026-10-10)
+stack_parent: 3810f8aab9a8c318003281f51f5e47b8e1b72570 (exact drop boundary for later publication onto the actual merged sequence).
+Verification source: cf57afa64d373517788c5ee3419495f18e1a6ea3. Carried the six follow-up patches from c08aa049ed2b7d50188e63a105d15e74de60c715 / parent 595618f4592a3495a251ae0e187980b793c12e74 without conflicts or runtime edits. Complete --no-renames correspondence: ten own paths, nine identical nonlesson blob/mode entries, and exact upstream-plus-own lesson union; all six range-diff patches equal. Source proof: /private/tmp/pr3040-3810-correspondence.json and pr3040-3810-range-diff.log.
+Fresh functional interaction qualification: 231 passed in 24.71s in the same guard/widget/media/fusion/citation and selected scoped-media/custom-pipeline/chat cases. Separately, all Tests/CI passed: 749 in 9.97s. Both XML receipts have zero failures, errors and skips; logs have no warnings. These are distinct from the historical 218/49/50, 231 in 20.47s and 749 in 8.44s receipts above. Logs/XML: /private/tmp/pr3040-3810-targeted.{log,xml} and pr3040-3810-ci.{log,xml}; complete counts in pr3040-3810-evidence-summary.json.
+Preflight passed: 543 markup pins (396 notify, 84 Button labels, 63 tooltips), 175 UI gate entries, all derived guards green. Black 25.1.0 checked four functional Python files and the modified CHECKERS block; syntax and focused Ruff 0.13.1 fatal checks passed for all five owned Python files. Whitespace checks passed and all 5104 task files were readable. Receipts: /private/tmp/pr3040-3810-preflight.log and pr3040-3810-static.log.
+Independent reviewer review_3029 cleared immutable cf57afa64d373517788c5ee3419495f18e1a6ea3 onto the exact 3810 parent: source correspondence, connected callers, required failure-propagating guard and final preflight remain correct; no actionable introduced findings. All acceptance criteria remain checked and the task remains Done. This closeout changes metadata only; verified source is unchanged.
+The census still includes exactly 41 inherited occurrences across 36 symbols (40 label assignments and one pre-escaped Watchlist parser). Pins are baseline migration debt, not runtime safety approvals; the scanner is syntactic without dataflow. No broad UI cleanup, full suite, hosted Actions, push or PR creation was performed. The preparatory 175-entry local gate is not an exact published-head 178-entry or hosted-CI qualification. Publication remains after original PR3038 merges; later reviewed architecture-copy changes arrive via the actual base.
+ADR required: no. ADR path: N/A. Reason: source-equivalent carry and fresh verification of existing routine fixes; no schema, authority, runtime, lane or required-context decision changed.
 <!-- SECTION:NOTES:END -->
