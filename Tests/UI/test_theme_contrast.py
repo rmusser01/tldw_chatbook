@@ -291,6 +291,13 @@ CHROME_LINES = {
         [(NAV_BAR_CSS, "MainNavigationBar")],
     ),
     "active tab outline": ((NAVIGATION_SHEET, _TAB, "border"), [(NAVIGATION_SHEET, _TAB)]),
+    # The app tier above is what paints in the app; a harness that loads the
+    # widget tier alone paints these two, so both tiers name the same outline.
+    "active tab outline, widget tier": ((NAV_BAR_CSS, _TAB, "border"), [(NAV_BAR_CSS, _TAB)]),
+    "focused active tab outline, widget tier": (
+        (NAV_BAR_CSS, _TAB + ":focus", "border"),
+        [(NAV_BAR_CSS, _TAB + ":focus")],
+    ),
     "Collapsible frame": (
         (WIDGETS_SHEET, "Collapsible", "border"),
         [(WIDGETS_SHEET, "Collapsible")],
@@ -382,9 +389,13 @@ async def test_app_chrome_lines_paint_at_non_text_contrast(theme_name: str) -> N
         }
         # The shared Button:hover and Button:focus fills once replaced the
         # tab's own, and the outline is pinned against the tab's fill only.
+        # The focused active tab keeps its fill and its outline, so the bold
+        # underline is the only focus cue: it is read where it paints (the
+        # widget tier's own text-style is overridden by this tier).
         active = app.query_one("#nav-home")
         app.set_focus(None)
         await pilot.pause()
+        assert not active.rich_style.underline, f"{theme_name}: resting tab is underlined"
         lines["active tab outline"] = outline()
         await pilot.hover("#nav-home")
         await pilot.pause()
@@ -392,10 +403,12 @@ async def test_app_chrome_lines_paint_at_non_text_contrast(theme_name: str) -> N
         lines["active tab outline, hovered"] = outline()
         app.set_focus(active)
         await pilot.pause()
+        assert active.rich_style.underline, f"{theme_name}: hovered focus shows no underline"
         lines["active tab outline, hovered and focused"] = outline()
         await pilot.hover("#probe-rule")
         await pilot.pause()
         assert active.has_focus and not active.mouse_hover
+        assert active.rich_style.underline, f"{theme_name}: focus shows no underline"
         lines["active tab outline, focused"] = outline()
     for line, cells in lines.items():
         assert cells, f"{theme_name}: no {line} cells painted"

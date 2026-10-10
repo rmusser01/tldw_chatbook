@@ -683,14 +683,14 @@
 
     MainNavigationBar .nav-button.is-active {
         background: $primary-darken-1;
-        border: solid $primary;
+        border: round $tldw-active-edge;
         text-style: bold;
         color: $text;
     }
 
     MainNavigationBar .nav-button.is-active:focus {
         background: $primary-darken-1;
-        border: solid $primary;
+        border: round $tldw-active-edge;
         text-style: bold underline;
         color: $text;
         outline: none;

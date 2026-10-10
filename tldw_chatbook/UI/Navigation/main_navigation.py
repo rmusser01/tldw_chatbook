@@ -235,7 +235,9 @@ class MainNavigationBar(Container):
     # separator can be the 3:1 grid line ($surface-lighten-2 on $background
     # was 1.75:1, and no line colour is pinned against $background). The
     # clip-ghost rules below, and their app-tier copy in
-    # css/components/_navigation.tcss, paint the same fill.
+    # css/components/_navigation.tcss, paint the same fill. The active tab's
+    # outline is $tldw-active-edge here as in that app-tier rule, which is the
+    # one that paints in the app; $primary on this fill was 1.29:1.
     BUNDLED_CSS = """
     MainNavigationBar {
         height: 3;
@@ -286,14 +288,14 @@ class MainNavigationBar(Container):
 
     .nav-button.is-active {
         background: $primary-darken-1;
-        border: solid $primary;
+        border: round $tldw-active-edge;
         text-style: bold;
         color: $text;
     }
 
     .nav-button.is-active:focus {
         background: $primary-darken-1;
-        border: solid $primary;
+        border: round $tldw-active-edge;
         text-style: bold underline;
         color: $text;
         outline: none;
