@@ -478,7 +478,7 @@ def guarded(function):
         "_get_runtime_config_snapshot_guarded",
         "get_user_data_dir",
         "get_model_cache_dir",
-        "replace_cli_config_serialized",
+        "_replace_cli_config_serialized_guarded",
     }
     if function.__name__ not in allowed:
         raise ValueError("config_source_not_supported")

@@ -8,11 +8,13 @@ Only config is entered by a second task here. A task that enters any other
 source, or any other file, that another task of its thread is in the middle of
 is still refused: ``test_mcp_source_lifetimes.py::
 test_history_private_helpers_reject_other_paths_and_foreign_task`` for one
-source object, and the last test here for two objects bound to one file.
+source object, and the last two tests here for two objects that share a lock:
+one file, or one settings root.
 
 A config write is the one thing a second task cannot wait for: the OS file
 lock is not reentrant, and its holder cannot run while the waiter sleeps on
-their shared thread. That write is refused at once.
+their shared thread. Every call that takes the write lock is refused at once,
+before it opens an operation.
 """
 
 import asyncio
@@ -146,8 +148,21 @@ async def test_task_started_eagerly_inside_a_config_scope_reads_under_its_own_op
     assert set(storage._raw_operations) == before
 
 
+_WRITE_LOCK_CALLS = {
+    "save_setting": lambda source: source.save_setting_to_cli_config(
+        "general", "users_name", "nested"
+    ),
+    # These two open an operation of their own around the write lock.
+    "read_snapshot": lambda source: source.read_cli_config_snapshot(),
+    "replace_serialized": lambda source: source.replace_cli_config_serialized(
+        '[general]\nusers_name = "nested"\n', create_backup=False
+    ),
+}
+
+
+@pytest.mark.parametrize("call", _WRITE_LOCK_CALLS)
 async def test_config_write_from_a_task_started_inside_the_write_lock_is_refused_at_once(
-    source, monkeypatch
+    source, monkeypatch, call
 ):
     """The write lock runs caller code (a mutation builder, a hooks snapshot).
 
@@ -155,8 +170,20 @@ async def test_config_write_from_a_task_started_inside_the_write_lock_is_refused
     then sleep on the OS file lock its own thread holds: the loop frozen for
     good. The write is refused before it enters anything, as it was when a
     second task could not enter config at all (before TASK-33641.6).
+
+    A refusal raised inside an operation the call had already opened is
+    recorded as a failed config operation, and the config participant then
+    cannot drain until the next write that succeeds.
     """
     path = source.get_cli_config_path()
+    opened = []
+    open_operation = config_participants.operation
+
+    def operation(*args, **kwargs):
+        opened.append(asyncio.current_task())
+        return open_operation(*args, **kwargs)
+
+    monkeypatch.setattr(config_participants, "operation", operation)
     original = source.portalocker.lock
 
     def lock(*args, **kwargs):
@@ -168,10 +195,11 @@ async def test_config_write_from_a_task_started_inside_the_write_lock_is_refused
     monkeypatch.setattr(source.portalocker, "lock", lock)
 
     async def writer():
-        return (
-            asyncio.current_task(),
-            source.save_setting_to_cli_config("general", "users_name", "nested"),
-        )
+        try:
+            outcome = _WRITE_LOCK_CALLS[call](source)
+        except bootstrap.RecoveryRequired as refusal:
+            outcome = refusal.args
+        return asyncio.current_task(), outcome
 
     loop = asyncio.get_running_loop()
     previous = loop.get_task_factory()
@@ -183,10 +211,16 @@ async def test_config_write_from_a_task_started_inside_the_write_lock_is_refused
             error = source._CONFIG_PERSISTENCE_ERROR
             started = asyncio.create_task(writer())
             assert started.done(), "the writer's first step ran outside the lock"
-            writing_task, saved = started.result()
+            writing_task, outcome = started.result()
             assert writing_task is started is not asyncio.current_task()
-            assert saved is False
+            # The save reports a refusal as False; the other two raise it.
+            assert outcome == (
+                False
+                if call == "save_setting"
+                else ("raw_operation_provenance_invalid",)
+            )
             # Refused before entry: no operation opened, no failure recorded.
+            assert started not in opened
             assert set(storage._raw_operations) == registered
             assert source._CONFIG_PERSISTENCE_ERROR is error
             # The holder still owns its operation and the lock.
@@ -231,4 +265,38 @@ async def test_second_task_is_refused_a_file_another_source_object_holds(
         assert raw._check(operation).task is asyncio.current_task()
     # Control: it was the other task's hold that refused it, not the object.
     with raw._scope(second, "service", writing=True) as operation:
+        assert raw._check(operation).source is second
+
+
+async def test_second_task_is_refused_another_file_under_one_settings_root(
+    tmp_path, local_root
+):
+    """A settings source's lock is keyed by its bound root, not by the file.
+
+    Two loaders on one config file share one reentrant lock whichever file each
+    scope selects, so comparing the selected files cannot tell them apart.
+    """
+    from tldw_chatbook.Evals.config_loader import EvalConfigLoader
+
+    bound = tmp_path / "eval.yaml"
+    first, second = EvalConfigLoader(str(bound)), EvalConfigLoader(str(bound))
+    export = tmp_path / "export.yaml"
+
+    async def other():
+        with (
+            pytest.raises(
+                bootstrap.RecoveryRequired, match="raw_operation_provenance_invalid"
+            ),
+            raw._scope(second, "eval_config", writing=True, selected_read=export),
+        ):
+            pytest.fail("a second task entered a settings root another task is in")
+
+    with raw._scope(first, "eval_config", writing=True) as operation:
+        assert raw._selected(operation) != export
+        await asyncio.create_task(other())
+        assert raw._check(operation).task is asyncio.current_task()
+    # Control: it was the other task's hold that refused it, not the export.
+    with raw._scope(
+        second, "eval_config", writing=True, selected_read=export
+    ) as operation:
         assert raw._check(operation).source is second

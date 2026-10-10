@@ -383,6 +383,8 @@ class _State:
     pid: int
     thread: object
     task: object
+    # The key of the path lock this scope holds; None when it takes none.
+    source_key: str | None = None
     pinned: bool = True
     identities: dict = field(default_factory=dict)
     leases: list = field(default_factory=list)
@@ -996,11 +998,16 @@ def _scope(
                 for state in _states.values()
             ):
                 raise bootstrap.RecoveryRequired("raw_resources_not_retired")
-            # The lock just taken is keyed by file, not by source object: the
-            # refusal above must also cover a second object bound to this file.
+            # The lock just taken is keyed by resolved file, or by a settings
+            # source's bound root, never by source object: the refusal above
+            # must also cover a second object under that key. A route with no
+            # path lock has only its selected file to compare.
             if route not in config_files.ROUTES and any(
                 state.active
-                and state.selected == selected
+                and (
+                    state.selected == selected
+                    or (source_key is not None and state.source_key == source_key)
+                )
                 and state.thread is thread
                 and state.task is not task
                 for state in _states.values()
@@ -1018,6 +1025,7 @@ def _scope(
             os.getpid(),
             threading.current_thread(),
             storage._task_identity(),
+            source_key=source_key,
             pinned=pinned,
             temporary=temporary,
             temporaries=temporaries,

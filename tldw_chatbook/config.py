@@ -7408,29 +7408,47 @@ del _bind_config_interprocess_lock
 _CONFIG_WRITE_LOCK_HOLDERS: dict[Path, _threading.Thread] = {}
 
 
+def _refuse_config_write_lock_reentry(config_path: Path) -> Path:
+    """Refuse the calling thread a write transaction it is already inside.
+
+    A caller that opens an operation of its own around the write lock calls
+    this first: a refusal raised inside an entered operation is recorded as a
+    failed config operation, which keeps the config participant from draining
+    until the next write that succeeds.
+
+    Returns:
+        The key the write lock records its holder under.
+
+    Raises:
+        RecoveryRequired: The calling thread is already inside this file's
+            write transaction, in an outer frame or in another asyncio task.
+            Waiting would block the holder for good (TASK-33641.6).
+    """
+
+    # Keyed as the operation compares its target with the selection.
+    holder_key = profile_paths.lexical_path(config_path)
+    if _CONFIG_WRITE_LOCK_HOLDERS.get(holder_key) is _threading.current_thread():
+        raise RecoveryRequired("raw_operation_provenance_invalid")
+    return holder_key
+
+
 @contextmanager
 def _config_write_lock(config_path: Path) -> Iterator[None]:
     """Serialize one config write transaction within and across processes.
 
     Raises:
         RecoveryRequired: The calling thread is already inside this file's
-            write transaction, in an outer frame or in another asyncio task.
-            Waiting would block the holder for good, so the write is refused
-            before it enters anything (TASK-33641.6).
+            write transaction; refused before anything is entered.
     """
 
-    # Keyed as the operation below compares its target with the selection.
-    holder_key = profile_paths.lexical_path(config_path)
-    thread = _threading.current_thread()
-    if _CONFIG_WRITE_LOCK_HOLDERS.get(holder_key) is thread:
-        raise RecoveryRequired("raw_operation_provenance_invalid")
+    holder_key = _refuse_config_write_lock_reentry(config_path)
     with _config_participants.operation(sys.modules[__name__], target=config_path):
         with (
             _settings_rebuild_lock(),
             _config_file_lock(),
             _config_interprocess_lock(config_path),
         ):
-            _CONFIG_WRITE_LOCK_HOLDERS[holder_key] = thread
+            _CONFIG_WRITE_LOCK_HOLDERS[holder_key] = _threading.current_thread()
             try:
                 yield
             finally:
@@ -8182,6 +8200,7 @@ class ConfigPostCommitError(RuntimeError):
 def read_cli_config_snapshot() -> ConfigFileSnapshot:
     """Read exact serialized config without parsing or creating a missing file."""
 
+    _refuse_config_write_lock_reentry(get_cli_config_path())
     with _config_participants.operation(sys.modules[__name__]):
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
@@ -8238,7 +8257,6 @@ def read_cli_config_backup_serialized() -> str:
             return opened.stream.read().decode("utf-8")
 
 
-@_config_participants.guarded
 def replace_cli_config_serialized(
     serialized: str,
     *,
@@ -8248,7 +8266,23 @@ def replace_cli_config_serialized(
 
     Raises:
         ConfigPostCommitError: Replacement succeeded but post-save refresh failed.
+        RecoveryRequired: The calling thread is already inside this file's
+            write transaction; refused before the guarded body opens.
     """
+
+    _refuse_config_write_lock_reentry(get_cli_config_path())
+    return _replace_cli_config_serialized_guarded(
+        serialized, create_backup=create_backup
+    )
+
+
+@_config_participants.guarded
+def _replace_cli_config_serialized_guarded(
+    serialized: str,
+    *,
+    create_backup: bool,
+) -> tuple[dict[str, Any], Path | None]:
+    """Guarded body of :func:`replace_cli_config_serialized`."""
 
     loaded, backup_path, _ = _replace_cli_config_serialized(
         serialized, create_backup=create_backup

@@ -468,10 +468,35 @@ runs under the lock is not: `locked_hooks_config_snapshot` yields it to
 `Agents/hook_permissions.py` and `Chat/console_runtime.py`, and the
 literal-settings transaction calls its callers' `mutation_builder`,
 `before_replace` and `after_replace`. `_config_write_lock` now refuses a thread
-that is already inside the same file's write transaction. It refuses before
-opening an operation: the same refusal raised from inside one left
+that is already inside the same file's write transaction. The refusal has to
+come before any operation opens: raised from inside one, it left
 `_CONFIG_PERSISTENCE_ERROR` set to `config_operation_failed` (measured), which
 keeps the config participant from draining until the next successful write.
+
+**"Before any operation opens" held for the lock, not for two of its callers
+(second review, 2026-10-10).** The check was the first line of
+`_config_write_lock`, and the notes said the refusal recorded nothing.
+`read_cli_config_snapshot` and `replace_cli_config_serialized`, the Settings
+raw editor's read and save, open an operation of their own and then take the
+lock. For those two the refusal was raised inside an entered operation and the
+flag was set; under a holder that does not write
+(`locked_hooks_config_snapshot`) nothing cleared it. The test asserted the
+claim for `save_setting_to_cli_config` only, the one caller that had been
+read. Both now run the check (`_refuse_config_write_lock_reentry`) ahead of
+their own operation. The decorated one is split into a plain entry and a
+`_guarded` body, because `@guarded` opens the operation before the body's
+first line. The test runs all three calls and counts the operations the
+refused task opened.
+
+**Both file guards were keyed by something other than the lock they stand in
+for (same two reviews).** A second task is refused a file another task of its
+thread is in, because the path lock is reentrant and cannot make it wait. The
+first guard compared source objects, but every object on one file shares the
+lock. The second compared the selected path, but the lock is keyed by the
+resolved path (`/var/...` and `/private/var/...` are one lock) and, for a
+settings source, by its bound root whichever file the scope selects: two
+`EvalConfigLoader` objects, one saving and one exporting, both got in. The
+scope's state now carries the lock's own key and the guard compares that.
 
 **What to do.** Count the stub's requests before reading the card: zero means
 discovery did not run, not that nothing answered. A test that injects the
@@ -482,7 +507,10 @@ then does a task run inside its creator. When a change admits code that used to
 be refused, list every lock that code can now reach, and ask of each whether
 its holder can run while the newcomer waits. Audit a lock by what runs under
 it, not by where it is taken: follow every `yield` and every callback parameter
-out of the module. Send a human gap between
+out of the module. A check that must run before an operation opens goes ahead
+of each caller's outermost operation: list the callers and mark the ones that
+open one first, decorators included. A guard that stands in for a lock compares
+the lock's own key, not a value that usually equals it. Send a human gap between
 keys when driving Enter, Enter (`send-keys Enter`, ~150 ms, `send-keys
 Enter`): two keys in one tmux write reach the card before Switch model mounts,
 and the second is dropped.
