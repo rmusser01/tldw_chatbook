@@ -66,6 +66,33 @@ _RETAIN_REOPEN = _replace(
 )
 
 
+_RETAIN_REOPEN = _replace(
+    _RETAIN_REOPEN,
+    "    assert preview.complete,",
+    """    if not preview.complete:
+        print('preview issues:', preview.issues, flush=True)
+        for item in preview.items:
+            print(item.owner, item.logical_id, item.status, item.path,
+                  'dependencies=', item.dependencies,
+                  'shared_group=', item.shared_group,
+                  'metadata=', item.metadata, flush=True)
+        from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+        from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
+        owners = {adapter.owner_id: adapter for adapter in install_adapters()}
+        diagnostic_owners = {'db.workspaces', 'db.agent_runs',
+                             'db.chachanotes.primary', 'db.subscriptions', 'recovered.media'}
+        with _preview_reads():
+            for item in preview.items:
+                if item.owner in diagnostic_owners and item.path is not None:
+                    try:
+                        reason = owners[item.owner].validate(item.path)
+                    except Exception as error:
+                        reason = type(error).__name__ + ': ' + str(error)
+                    print('validator:', item.owner, item.logical_id, reason, flush=True)
+    assert preview.complete,""",
+)
+
+
 def test_complete_rebackup_retains_eval_after_source_and_candidate_removal(tmp_path):
     original = tmp_path / "original"
     original.mkdir()

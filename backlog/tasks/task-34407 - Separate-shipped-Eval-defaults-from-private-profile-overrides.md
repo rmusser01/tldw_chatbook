@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 17:58'
-updated_date: '2026-10-10 02:43'
+updated_date: '2026-10-10 03:07'
 labels: []
 dependencies: []
 ---
@@ -67,6 +67,8 @@ Git long-path checkout succeeds. The native icacls recursion then fails on long 
 Final pre-budget CI on aca49d97e1: Linux 76 passed, macOS 76 passed; Windows 74 passed, 1 FIFO skip, 1 full-App outer timeout. Genuine private source ownership fixes complete inventory. The same read-only reviewer traced the remaining failure: at least 30.476s of startup/media setup occur before capture, leaving less than 15s of the inherited 45s process deadline for a capture with its own 30s watchdog. Admission/readmission/maintenance/capture/Windows facade are unchanged from dev; the waiting readmission is expected while capture holds its exclusive gate, and no holder cycle is demonstrated. Only this full-App Windows capture/reopen case now has a 90s overall cold-start budget. Capture still has its original 30s watchdog, pytest retains its 180s case bound, POSIX and all other child defaults remain 45s, and every functional assertion is retained. Qualification under the corrected budget is pending.
 
 The 90s Windows run completes original capture and isolated restore, confirming the outer-budget remedy, then exposes a later fixture mismatch: the direct reopen subprocess sets HOME but inherits the pytest session USERPROFILE, so Windows Path.home() looks for restored.json in the wrong profile. Reopen now sets USERPROFILE to the same actual restored home. The two sibling direct reopens in the shared temporary-media fixture receive the same one-line correction. No product selector, custody, capture limit or retention assertion changes. Final pipeline verification is pending.
+
+Restored-home selection is corrected and reopened App starts, but Windows rebackup preview now refuses restored agents, persona, subscriptions and recovered-media owners. The same reviewer confirms their discovery, validators and preview/classification code are unchanged from dev. The current assertion omits validator reasons, so no production cause or common metadata cause is established. Add test-only failure diagnostics using existing item metadata/dependencies and owner validators under the existing preview-read scope; upload the owned reopened/restore logs as well as original-capture output. All assertions and qualification gates remain intact; no production repair is guessed.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering Provenance
