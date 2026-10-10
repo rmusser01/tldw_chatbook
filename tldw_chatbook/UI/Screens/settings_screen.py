@@ -4609,7 +4609,7 @@ class SettingsScreen(BaseAppScreen):
         if not conflict:
             self._navigation_provider = target.provider
             self._navigation_model = target.model
-            self._navigation_model_is_explicit = True
+            self._navigation_model_is_explicit = target.pins_model
             self._navigation_field = target.field
 
     def _register_footer_shortcuts(self) -> None:
@@ -24550,7 +24550,9 @@ class SettingsScreen(BaseAppScreen):
         self._provider_navigation_conflict_target = None
         self._navigation_provider = provider
         self._navigation_model = model
-        self._navigation_model_is_explicit = return_target is not None
+        self._navigation_model_is_explicit = (
+            return_target is not None and return_target.pins_model
+        )
         self._navigation_field = field
         self._select_category(category_value, restore_focus=True)
         self._after_category_panes(
@@ -31169,7 +31171,7 @@ class SettingsScreen(BaseAppScreen):
         self._provider_navigation_conflict_target = None
         self._navigation_provider = target.provider
         self._navigation_model = target.model
-        self._navigation_model_is_explicit = True
+        self._navigation_model_is_explicit = target.pins_model
         self._navigation_field = target.field
         self._apply_navigation_provider_context(
             target.provider,
@@ -33800,7 +33802,7 @@ class SettingsScreen(BaseAppScreen):
                     self._provider_return_outcome = None
                     self._navigation_provider = conflict_target.provider
                     self._navigation_model = conflict_target.model
-                    self._navigation_model_is_explicit = True
+                    self._navigation_model_is_explicit = conflict_target.pins_model
                     self._navigation_field = conflict_target.field
                     self._apply_navigation_provider_context(
                         conflict_target.provider,

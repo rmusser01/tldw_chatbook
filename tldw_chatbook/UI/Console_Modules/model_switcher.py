@@ -304,6 +304,7 @@ def open_provider_setup(
     to the active chat, naming only that chat, so Settings offers "Return to
     Console". A provider or model the return cannot name opens Settings one
     way, as before; a navigation that never leaves takes its return back.
+    Either way Settings keeps its own model field when no model is routed.
 
     Args:
         screen: The Console screen that opens Settings.

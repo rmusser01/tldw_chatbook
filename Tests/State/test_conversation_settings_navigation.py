@@ -137,6 +137,21 @@ def test_provider_target_matches_only_its_own_return_kind() -> None:
     assert not modal_target.matches(ConsoleProviderReturnIntent("session-1"))
 
 
+def test_a_console_recovery_pins_the_model_only_when_it_names_one() -> None:
+    """A route with no model (a provider that lists none) leaves Settings'
+    own model in the field; Chat settings routes its draft's, even none."""
+
+    def target(model: str | None, session_id: str | None):
+        return ProviderSettingsNavigationTarget(
+            "providers-models", "openai", model, "api_key", 2, session_id
+        )
+
+    assert target("gpt-5", "session-1").pins_model is True
+    assert target(None, "session-1").pins_model is False
+    assert target("gpt-5", None).pins_model is True
+    assert target(None, None).pins_model is True
+
+
 def test_console_provider_return_target_is_strict_and_disjoint_from_the_modal() -> None:
     """R36: ``{session_id, return_revision, outcome}`` and nothing else."""
     target = ConsoleProviderReturnIntent("session-1").return_target(

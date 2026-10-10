@@ -89,6 +89,7 @@ def consume_provider_return(screen: ChatScreen) -> None:
         _land(screen, handoffs, claim),
         exclusive=False,
         group="console-provider-return",
+        exit_on_error=False,  # A failed landing must not end the app.
     )
 
 

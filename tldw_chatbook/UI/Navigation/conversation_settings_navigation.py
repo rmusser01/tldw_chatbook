@@ -5,9 +5,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+)
 
 from ...Utils.input_validation import (
     validate_navigation_context_text,
@@ -65,6 +72,20 @@ class ConversationSettingsReturnOutcome(StrEnum):
     WITHOUT_SAVING = "without_saving"
 
 
+def _session_id_text(value: str) -> str:
+    return validate_navigation_context_text(value, name="session_id", max_length=256)
+
+
+#: A Console chat id as a navigation context carries it: bounded, one line.
+_SessionId = Annotated[
+    str, Field(min_length=1, max_length=256), AfterValidator(_session_id_text)
+]
+#: ``ConversationSettingsReturnOutcome``'s values, as a context spells them.
+_ReturnOutcome = Literal[
+    "credential_saved", "provider_settings_saved", "without_saving"
+]
+
+
 class _StrictNavigationContext(BaseModel):
     """Pydantic boundary shared by all external navigation payloads."""
 
@@ -100,7 +121,7 @@ class _ProviderSettingsNavigationContext(_StrictNavigationContext):
     model: str | None = Field(default=None, max_length=512)
     field: Literal["api_key", "endpoint"] | None
     return_revision: int = Field(ge=1)
-    session_id: str | None = Field(default=None, min_length=1, max_length=256)
+    session_id: _SessionId | None = None
 
     @field_validator("provider")
     @classmethod
@@ -118,47 +139,19 @@ class _ProviderSettingsNavigationContext(_StrictNavigationContext):
             max_length=512,
         )
 
-    @field_validator("session_id")
-    @classmethod
-    def _validate_session_id(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return validate_navigation_context_text(
-            value,
-            name="session_id",
-            max_length=256,
-        )
-
 
 class _ConsoleProviderReturnIntentContext(_StrictNavigationContext):
-    session_id: str = Field(min_length=1, max_length=256)
-
-    @field_validator("session_id")
-    @classmethod
-    def _validate_session_id(cls, value: str) -> str:
-        return validate_navigation_context_text(
-            value,
-            name="session_id",
-            max_length=256,
-        )
+    session_id: _SessionId
 
 
 class _ConsoleProviderReturnContext(_ConsoleProviderReturnIntentContext):
     return_revision: int = Field(ge=1)
-    outcome: Literal[
-        "credential_saved",
-        "provider_settings_saved",
-        "without_saving",
-    ]
+    outcome: _ReturnOutcome
 
 
 class _ConsoleSettingsReturnContext(_ConversationSettingsReturnIntentContext):
     return_revision: int = Field(ge=1)
-    outcome: Literal[
-        "credential_saved",
-        "provider_settings_saved",
-        "without_saving",
-    ]
+    outcome: _ReturnOutcome
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +264,15 @@ class ProviderSettingsNavigationTarget:
     def destination(self) -> str:
         """Where the return goes, as its button names it."""
         return "Chat settings" if self.session_id is None else "Console"
+
+    @property
+    def pins_model(self) -> bool:
+        """Whether the routed model replaces the one Settings would show.
+
+        Chat settings routes its draft's model, even none. A Console recovery
+        that names no model (a provider that lists none) leaves Settings' own.
+        """
+        return self.session_id is None or self.model is not None
 
     def matches(self, intent: object) -> bool:
         """Whether a claimed return intent is the one this target routes back to.

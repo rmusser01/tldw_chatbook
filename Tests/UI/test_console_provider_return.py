@@ -16,12 +16,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app as _build_production_app
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.UI.Console_Modules.model_switcher import open_provider_setup
 from tldw_chatbook.UI.Console_Modules.provider_return import (
     MISSING_CHAT_COPY,
     STALE_RETURN_COPY,
@@ -55,9 +56,14 @@ def _console(store: ConsoleChatStore, *, blocking: bool = False, owns: bool = Tr
     """A Console stand-in over the real stores, recording what a return does."""
     events: list[object] = []
     workers: list[object] = []
+    worker_options: list[dict[str, object]] = []
 
     async def sync() -> None:
         events.append("sync")
+
+    def run_worker(coroutine, **options) -> None:
+        workers.append(coroutine)
+        worker_options.append(options)
 
     def focus_card() -> bool:
         if blocking:
@@ -80,7 +86,8 @@ def _console(store: ConsoleChatStore, *, blocking: bool = False, owns: bool = Tr
             ("notice", message)
         ),
         call_after_refresh=lambda callback, *args: events.append("scheduled"),
-        run_worker=lambda coroutine, **_kwargs: workers.append(coroutine),
+        run_worker=run_worker,
+        worker_options=worker_options,
     )
     return screen, events, workers
 
@@ -139,6 +146,34 @@ async def test_return_to_a_closed_chat_stays_put_with_a_notice() -> None:
     assert store.active_session_id == other.id
     assert events[1:] == [("notice", MISSING_CHAT_COPY)]
     assert not screen.app_instance.pending_handoffs.has_pending(CHANNEL)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_landing_settles_its_claim_and_never_ends_the_app() -> None:
+    """A landing that raises must not exit the app just after the user saved
+    a key: the worker is started with exit_on_error off, as the rest of
+    Console_Modules does, and the claim still settles."""
+    store = ConsoleChatStore()
+    origin = store.create_session(title="Origin")
+    screen, _events, workers = _console(store)
+
+    async def failing_sync() -> None:
+        raise RuntimeError("sync failed")
+
+    screen._sync_native_console_chat_ui = failing_sync
+    context = _stage_return(screen, origin.id)
+
+    assert capture_provider_return(screen, context) is True
+    consume_provider_return(screen)
+    (landing,) = workers
+    assert screen.worker_options[0]["exit_on_error"] is False
+    with pytest.raises(RuntimeError, match="sync failed"):
+        await landing
+
+    handoffs = screen.app_instance.pending_handoffs
+    assert handoffs.exact_revision_status(CHANNEL, context["return_revision"]) == (
+        "settled"
+    )
 
 
 @pytest.mark.parametrize("newer", ["console", "modal", "settled", "other-chat"])
@@ -280,7 +315,10 @@ async def _recover_from_the_card(app, pilot):
         "the Get started card's action to hold focus",
     )
     console = app._navigation_outgoing_screen()
-    session = console._ensure_console_chat_store().ensure_session()
+    store = console._ensure_console_chat_store()
+    # Read, never ensure: with no active chat the real route goes one way.
+    assert store.active_session_id is not None
+    session = next(s for s in store.sessions() if s.id == store.active_session_id)
     await pilot.press("enter")
     await _until(
         pilot,
@@ -349,6 +387,12 @@ async def test_recovery_round_trip_returns_to_the_chat_on_one_enter(
             False
         )
 
+        # Another chat is active by the time Settings returns, so only the
+        # Console's consumer can put the user back on the chat they left.
+        store = console._ensure_console_chat_store()
+        other = store.create_session(title="Other")
+        assert store.active_session_id == other.id != session.id
+
         await pilot.press(*_KEY)
         await pilot.press("escape")  # leave the field, so s is Save
         await pilot.press("s")
@@ -378,7 +422,6 @@ async def test_recovery_round_trip_returns_to_the_chat_on_one_enter(
             return console._is_descendant_or_self(app.focused, composer)
 
         await _until(pilot, back_in_the_composer, "the composer to hold focus")
-        store = console._ensure_console_chat_store()
         assert store.active_session_id == session.id
         _settings_now, readiness = console._active_console_settings_readiness()
         assert readiness.operability == "ready_to_send"
@@ -447,3 +490,34 @@ async def test_recovery_return_without_saving_lands_on_the_same_chat_unchanged(
         assert console._console_setup_modal_blocking()
         assert not _saved_openai_key()
         assert not app.pending_handoffs.has_pending(CHANNEL)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_route_that_names_no_model_keeps_settings_own_model(
+    monkeypatch, request
+):
+    """A NEEDS SETUP row of a provider that lists no models routes no model.
+    The return-bearing route must then leave Settings' own model in the
+    field, as the one-way route did; only a routed model replaces it."""
+    app = _cloud_app_without_a_key(monkeypatch)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "console-setup-modal-action",
+            "the Get started card's action to hold focus",
+        )
+        open_provider_setup(app._navigation_outgoing_screen(), "openai")
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and getattr(app.focused, "id", None) == "settings-provider-api-key"
+            ),
+            "Settings to open with focus in the API key field",
+        )
+        target = app.screen._provider_return_target
+        assert target is not None and target.model is None
+        assert app.screen.query_one("#settings-model-value", Input).value == "gpt-5"
+        assert target.pins_model is False
