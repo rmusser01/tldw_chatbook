@@ -1591,6 +1591,48 @@ async def test_deck_change_and_refresh_do_not_interleave_the_card_list():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_two_awaited_card_list_rebuilds_do_not_interleave():
+    """The awaited rebuilds share one lock with the worker rebuilds.
+
+    `create_deck`, `create_card` and three other controller paths await
+    `refresh_cards()` directly, outside the exclusive `study-refresh-cards`
+    worker group. `create_deck` also changes `#deck-select`, whose worker
+    rebuilds the list again, so two rebuilds ran together: the list showed
+    empty between one rebuild's clear and the other's append (#3057's UI
+    lane), or held both rebuilds' rows.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#view-flashcards-btn")
+        await pilot.pause(0.3)
+        window = app.screen.query_one(StudyWindow)
+        controller = window.flashcards_controller
+        scope.gate.set()
+        await pilot.pause(0.3)
+        app.screen.query_one("#deck-select", Select).value = "deck-local-1"
+        await pilot.pause(0.3)
+
+        # Hold both awaited rebuilds open together.
+        scope.gate.clear()
+        first = asyncio.ensure_future(controller.refresh_cards())
+        second = asyncio.ensure_future(controller.refresh_cards())
+        await pilot.pause(0.1)
+        scope.gate.set()
+        await asyncio.gather(first, second)
+        await pilot.pause(0.1)
+
+        rows = len(window.query_one("#card-list", ListView).children)
+        assert rows == len(controller.current_cards) > 0, (
+            f"#card-list holds {rows} rows against "
+            f"{len(controller.current_cards)} cards -- two rebuilds interleaved"
+        )
+
+
+@pytest.mark.asyncio
 async def test_double_press_on_one_card_applies_sm2_once(tmp_path):
     """TASK-19559 review R3: SM-2 is compounding, so a double-submit doubles it.
 

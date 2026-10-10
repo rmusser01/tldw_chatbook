@@ -56,6 +56,10 @@ class StudyFlashcardsController:
         # TASK-19559: rating submissions are serialised, never cancelled --
         # see `submit_rating`.
         self._review_submit_lock = asyncio.Lock()
+        # One `#card-list` rebuild at a time: five paths await
+        # `refresh_cards()` outside the exclusive `study-refresh-cards` worker
+        # group, and `create_deck` also triggers that group's rebuild.
+        self._refresh_cards_lock = asyncio.Lock()
         # TASK-19559 review: a monotonic token for "which card is on screen
         # right now". It is bumped every time the presented card changes and
         # every time the panel is torn down, so a rating that finishes saving
@@ -621,6 +625,18 @@ class StudyFlashcardsController:
         self._update_lifecycle_controls()
 
     async def refresh_cards(self, *, preserve_review_panel: bool = False) -> None:
+        """Rebuild `#card-list`; concurrent rebuilds run one after another.
+
+        Interleaved, one rebuild's clear landed between the other's clear and
+        appends, so the list held both rebuilds' rows.
+        """
+        async with self._refresh_cards_lock:
+            # The view can be removed while this rebuild waits its turn.
+            if not getattr(self.window, "is_mounted", True):
+                return
+            await self._rebuild_card_list(preserve_review_panel=preserve_review_panel)
+
+    async def _rebuild_card_list(self, *, preserve_review_panel: bool) -> None:
         service = self._scope_service()
         if service is None:
             self.reset_review_panel("Study flashcards backend is unavailable.")
@@ -630,6 +646,9 @@ class StudyFlashcardsController:
             return
 
         list_view = self.window.query_one("#card-list", ListView)
+        # Read before the first await: a lookup that resumes after one can
+        # find its subtree removed.
+        search_value = self.window.query_one("#flashcard-search-input", Input).value
         await list_view.clear()
         self.current_cards = []
         self.selected_card_record = None
@@ -645,7 +664,6 @@ class StudyFlashcardsController:
             self._update_lifecycle_controls()
             return
 
-        search_value = self.window.query_one("#flashcard-search-input", Input).value
         # TASK-34000.6 (S-05): no scope keywords here. A card list is scoped by
         # its deck on both backends (`LocalStudyService.list_flashcards(deck_id=
         # ...)`, `ServerStudyService.list_flashcards(deck_id=...)`), and the deck
