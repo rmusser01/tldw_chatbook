@@ -12800,13 +12800,17 @@ class ConsoleChatController:
                     or not callable(verify_recovery)
                 ):
                     raise TraceCallPersistenceError()
-                await self._run_durable_db_call(
+                recovered_boundary = await self._run_durable_db_call(
                     verify_recovery,
                     continuation,
                     self._trace_call_boundaries_by_preparation.get(preparation_id),
                     continuation.stream_signals,
                     capture_mode_override or continuation.trace_capture_mode,
                 )
+                if recovered_boundary is None:
+                    self._trace_call_boundaries_by_preparation.pop(preparation_id, None)
+                else:
+                    self._trace_call_boundaries_by_preparation[preparation_id] = recovered_boundary
                 # This only proves the missing provider effect may be retried.
                 # Keep the completed checkpoint CAS and its attempt unchanged;
                 # gateway recovery independently checks the newly prepared bytes.

@@ -69,17 +69,8 @@ _TOKEN_FIELDS = frozenset(
         # Hyphenated, like every other id in this app's CSS -- a token, not an
         # identifier.
         "widget_id",
-    
-        # tasks-32951/32953: trace-surface refusal fields (tokens).
         "surface_refusal_kind",
-        "surface_prefix",
-        "surface_suffix",
-        "surface_incoming_changed",
-        "surface_active_changed",
-        "surface_replacement_span",
-        "surface_start_sequence",
-        "surface_end_sequence",
-        "surface_domains",}
+    }
 )
 # TASK-32533: the raising frame of an `unhandled_exception` record -- module
 # and function name of the frame that raised (`raise_*`) and of the deepest
@@ -105,6 +96,13 @@ _IDENTIFIER_FIELDS = frozenset(
 )
 _INTEGER_FIELDS = frozenset(
     {
+        "surface_prefix",
+        "surface_suffix",
+        "surface_incoming_changed",
+        "surface_active_changed",
+        "surface_replacement_span",
+        "surface_start_sequence",
+        "surface_end_sequence",
         "status_code",
         "payload_length",
         "duration_ms",
@@ -140,6 +138,7 @@ _INTEGER_FIELDS = frozenset(
 _BOOLEAN_FIELDS = frozenset({"cache_hit", "streaming", "cancelled", "capture_enabled"})
 _LIST_FIELDS = frozenset(
     {
+        "surface_domains",
         "argument_names",
         # TASK-18908: active timer/worker diagnostic names at stall time.
         # Values are the same code-side token names record_timer_created /
@@ -150,7 +149,11 @@ _LIST_FIELDS = frozenset(
     }
 )
 _ALLOWED_FIELDS = (
-    _TOKEN_FIELDS | _IDENTIFIER_FIELDS | _INTEGER_FIELDS | _BOOLEAN_FIELDS | _LIST_FIELDS
+    _TOKEN_FIELDS
+    | _IDENTIFIER_FIELDS
+    | _INTEGER_FIELDS
+    | _BOOLEAN_FIELDS
+    | _LIST_FIELDS
 )
 
 

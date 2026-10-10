@@ -5,11 +5,13 @@ from dataclasses import replace
 from xml.etree import ElementTree
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 from textual.widgets import Button
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_native_chat_flow import _persist_console_provider_config
-from Tests.UI.test_destination_shells import _wait_for_selector
+from Tests.UI.test_destination_shells import _wait_for_selector, _wait_for_visible_text
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
@@ -24,8 +26,9 @@ from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["retry", "send-without", "cancel"])
+@private_profile_test
 async def test_surface_refusal_recovers_the_existing_accepted_user(
-    tmp_path, monkeypatch, action
+    tmp_path, monkeypatch, action, request
 ):
     app = _build_test_app()
     database = CharactersRAGDB(tmp_path / "chat.sqlite", "surface-recovery")
@@ -91,6 +94,7 @@ async def test_surface_refusal_recovers_the_existing_accepted_user(
             await asyncio.wait_for(tasks[0], 10)
             await console._sync_native_console_chat_ui()
             await pilot.pause()
+            await _wait_for_visible_text(console, pilot, "Trace capture blocked")
             card = console.query_one(TraceCallRecoveryCallout)
             assert card.display and not adapter_calls and refusals == [True]
             frame = " ".join(
