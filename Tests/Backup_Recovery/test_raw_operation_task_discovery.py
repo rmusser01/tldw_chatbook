@@ -5,9 +5,14 @@ slot was a plain thread-local, so every other asyncio task on that thread found
 the owner's operation and had its own guarded IO refused by ``_check``.
 
 Only config is entered by a second task here. A task that enters any other
-source another task of its thread is in the middle of is still refused:
-``test_mcp_source_lifetimes.py::
-test_history_private_helpers_reject_other_paths_and_foreign_task``.
+source, or any other file, that another task of its thread is in the middle of
+is still refused: ``test_mcp_source_lifetimes.py::
+test_history_private_helpers_reject_other_paths_and_foreign_task`` for one
+source object, and the last test here for two objects bound to one file.
+
+A config write is the one thing a second task cannot wait for: the OS file
+lock is not reentrant, and its holder cannot run while the waiter sleeps on
+their shared thread. That write is refused at once.
 """
 
 import asyncio
@@ -56,7 +61,8 @@ async def test_guarded_config_read_ignores_a_scope_another_task_holds_across_an_
             owner.update(operation=operation, task=asyncio.current_task())
             held.set()
             await release.wait()
-            # The owner's discovery and its strict check survive the other task.
+            # The owner's discovery and its strict check survive the other
+            # task's read and its write.
             assert raw._local.operation is operation
             assert raw._check(operation).task is asyncio.current_task()
         assert raw._local.operation is None
@@ -70,6 +76,11 @@ async def test_guarded_config_read_ignores_a_scope_another_task_holds_across_an_
             assert state.participant is not None, "the held scope is not registered"
             seen.clear()
             text = source.read_cli_config_serialized()
+            # The holder has a read scope, not the write lock, so a setting
+            # saved in this window lands. Before, it was dropped (False).
+            saved = source.save_setting_to_cli_config(
+                "general", "users_name", "second task"
+            )
             discoveries = list(seen)
             assert raw._local.operation is None
             assert raw._runtime_operation() is None
@@ -78,14 +89,18 @@ async def test_guarded_config_read_ignores_a_scope_another_task_holds_across_an_
                 bootstrap.RecoveryRequired, match="raw_operation_provenance_invalid"
             ):
                 raw._check(operation)
-            return asyncio.current_task(), text, discoveries
+            return asyncio.current_task(), text, saved, discoveries
         finally:
             release.set()
 
-    _, (reading_task, text, discoveries) = await asyncio.gather(holder(), reader())
+    _, (reading_task, text, saved, discoveries) = await asyncio.gather(
+        holder(), reader()
+    )
 
     assert 'users_name = "configured"' in text
-    assert discoveries, "the read never reached guarded IO"
+    assert saved is True
+    assert 'users_name = "second task"' in source.get_cli_config_path().read_text()
+    assert discoveries, "neither the read nor the save reached guarded IO"
     assert reading_task is not owner["task"]
     for operation, owning_task, caller in discoveries:
         assert operation is not owner["operation"]
@@ -129,3 +144,91 @@ async def test_task_started_eagerly_inside_a_config_scope_reads_under_its_own_op
         assert owning_task is started and caller is started
     assert raw._local.operation is None
     assert set(storage._raw_operations) == before
+
+
+async def test_config_write_from_a_task_started_inside_the_write_lock_is_refused_at_once(
+    source, monkeypatch
+):
+    """The write lock runs caller code (a mutation builder, a hooks snapshot).
+
+    A task that code starts eagerly could reenter both thread locks, and would
+    then sleep on the OS file lock its own thread holds: the loop frozen for
+    good. The write is refused before it enters anything, as it was when a
+    second task could not enter config at all (before TASK-33641.6).
+    """
+    path = source.get_cli_config_path()
+    original = source.portalocker.lock
+
+    def lock(*args, **kwargs):
+        try:
+            return original(*args, **kwargs)
+        except source.portalocker.exceptions.AlreadyLocked:
+            pytest.fail("the write waited for a lock its own thread holds")
+
+    monkeypatch.setattr(source.portalocker, "lock", lock)
+
+    async def writer():
+        return (
+            asyncio.current_task(),
+            source.save_setting_to_cli_config("general", "users_name", "nested"),
+        )
+
+    loop = asyncio.get_running_loop()
+    previous = loop.get_task_factory()
+    loop.set_task_factory(asyncio.eager_task_factory)
+    try:
+        with source._config_write_lock(path):
+            operation = raw._local.operation
+            registered = set(storage._raw_operations)
+            error = source._CONFIG_PERSISTENCE_ERROR
+            started = asyncio.create_task(writer())
+            assert started.done(), "the writer's first step ran outside the lock"
+            writing_task, saved = started.result()
+            assert writing_task is started is not asyncio.current_task()
+            assert saved is False
+            # Refused before entry: no operation opened, no failure recorded.
+            assert set(storage._raw_operations) == registered
+            assert source._CONFIG_PERSISTENCE_ERROR is error
+            # The holder still owns its operation and the lock.
+            assert raw._local.operation is operation
+            assert raw._check(operation).task is asyncio.current_task()
+    finally:
+        loop.set_task_factory(previous)
+
+    assert "nested" not in path.read_text()
+    # Nothing is left held: the next write gets the lock.
+    assert source.save_setting_to_cli_config("general", "users_name", "after")
+    assert 'users_name = "after"' in path.read_text()
+
+
+async def test_second_task_is_refused_a_file_another_source_object_holds(
+    tmp_path, local_root
+):
+    """Source locks are keyed by file, not by source object.
+
+    Two objects bound to one file share one reentrant lock, the store and its
+    ``.tmp`` member. The second task is refused, as with a single object.
+    """
+    from tldw_chatbook.Feedback_Interop.local_feedback_service import (
+        LocalFeedbackService,
+    )
+
+    store = tmp_path / "feedback.json"
+    first = LocalFeedbackService(store_path=store)
+    second = LocalFeedbackService(store_path=store)
+
+    async def other():
+        with (
+            pytest.raises(
+                bootstrap.RecoveryRequired, match="raw_operation_provenance_invalid"
+            ),
+            raw._scope(second, "service", writing=True),
+        ):
+            pytest.fail("a second task entered a file another task is writing")
+
+    with raw._scope(first, "service", writing=True) as operation:
+        await asyncio.create_task(other())
+        assert raw._check(operation).task is asyncio.current_task()
+    # Control: it was the other task's hold that refused it, not the object.
+    with raw._scope(second, "service", writing=True) as operation:
+        assert raw._check(operation).source is second

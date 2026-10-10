@@ -772,6 +772,7 @@ def _scope(
     user_template=True,
     selected_read=None,
 ):
+    thread, task = threading.current_thread(), storage._task_identity()
     if route not in config_files.ROUTES:
         # Source locks are reentrant on a thread, so nothing can make this task
         # wait for another task of its own thread: a source that task is in
@@ -780,8 +781,8 @@ def _scope(
             if any(
                 state.active
                 and state.source is source
-                and state.thread is threading.current_thread()
-                and state.task is not storage._task_identity()
+                and state.thread is thread
+                and state.task is not task
                 for state in _states.values()
             ):
                 raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
@@ -995,6 +996,16 @@ def _scope(
                 for state in _states.values()
             ):
                 raise bootstrap.RecoveryRequired("raw_resources_not_retired")
+            # The lock just taken is keyed by file, not by source object: the
+            # refusal above must also cover a second object bound to this file.
+            if route not in config_files.ROUTES and any(
+                state.active
+                and state.selected == selected
+                and state.thread is thread
+                and state.task is not task
+                for state in _states.values()
+            ):
+                raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
         operation = object.__new__(_RawOperation)
         state = _State(
             source,

@@ -450,18 +450,39 @@ renders, and that render reaches `run_worker`. `App.run_async` installs
 pump task's operation and `_check` refused it. `App.run_test` installs no eager
 factory, so the mounted real-discovery test stayed green. The slot is now kept
 per thread and task (`raw_participants._TaskLocal`) and `_check` is unchanged;
-a task that enters a source other than config while another task of its thread
-is in the middle of it is still refused. The un-hopped launcher then found the
-server on its first launch. A plain `ContextVar` would not have fixed it:
-`create_task` copies the creator's context, and the eager worker read the
+a task that enters a source or a file other than config while another task of
+its thread is in the middle of it is still refused. The un-hopped launcher then
+found the server on its first launch. A plain `ContextVar` would not have fixed
+it: `create_task` copies the creator's context, and the eager worker read the
 owner's value.
+
+**Letting the second task in turned one refusal into a freeze (TASK-33641.6
+review, 2026-10-10).** Before that change a second task of the thread could not
+enter config at all, so it never reached a lock. After it, a config write from
+a task started under `_config_write_lock` reentered both thread RLocks and then
+slept on the OS file lock in 50 ms steps, on the loop thread. That lock is
+taken on a fresh descriptor, so it is not reentrant, and its holder was the
+thread now sleeping. The first report had passed this because "all 18 holders
+are in `config.py`, which starts no task". The holders are there. The code that
+runs under the lock is not: `locked_hooks_config_snapshot` yields it to
+`Agents/hook_permissions.py` and `Chat/console_runtime.py`, and the
+literal-settings transaction calls its callers' `mutation_builder`,
+`before_replace` and `after_replace`. `_config_write_lock` now refuses a thread
+that is already inside the same file's write transaction. It refuses before
+opening an operation: the same refusal raised from inside one left
+`_CONFIG_PERSISTENCE_ERROR` set to `config_operation_failed` (measured), which
+keeps the config participant from draining until the next successful write.
 
 **What to do.** Count the stub's requests before reading the card: zero means
 discovery did not run, not that nothing answered. A test that injects the
 discovery seam does not cover the real entry point. A guard that compares tasks
 needs a test under `loop.set_task_factory(asyncio.eager_task_factory)`
 (`Tests/Backup_Recovery/test_raw_operation_task_discovery.py`), because only
-then does a task run inside its creator. Send a human gap between
+then does a task run inside its creator. When a change admits code that used to
+be refused, list every lock that code can now reach, and ask of each whether
+its holder can run while the newcomer waits. Audit a lock by what runs under
+it, not by where it is taken: follow every `yield` and every callback parameter
+out of the module. Send a human gap between
 keys when driving Enter, Enter (`send-keys Enter`, ~150 ms, `send-keys
 Enter`): two keys in one tmux write reach the card before Switch model mounts,
 and the second is dropped.

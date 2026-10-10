@@ -7402,17 +7402,39 @@ _config_interprocess_lock = _bind_config_interprocess_lock(_LOCK_STREAM_SELECTOR
 del _bind_config_interprocess_lock
 
 
+# The thread inside each config file's write transaction. The OS lock is taken
+# on a fresh descriptor every time, so unlike the RLocks beside it, it is not
+# reentrant: the holding thread can never get it a second time.
+_CONFIG_WRITE_LOCK_HOLDERS: dict[Path, _threading.Thread] = {}
+
+
 @contextmanager
 def _config_write_lock(config_path: Path) -> Iterator[None]:
-    """Serialize one config write transaction within and across processes."""
+    """Serialize one config write transaction within and across processes.
 
+    Raises:
+        RecoveryRequired: The calling thread is already inside this file's
+            write transaction, in an outer frame or in another asyncio task.
+            Waiting would block the holder for good, so the write is refused
+            before it enters anything (TASK-33641.6).
+    """
+
+    # Keyed as the operation below compares its target with the selection.
+    holder_key = profile_paths.lexical_path(config_path)
+    thread = _threading.current_thread()
+    if _CONFIG_WRITE_LOCK_HOLDERS.get(holder_key) is thread:
+        raise RecoveryRequired("raw_operation_provenance_invalid")
     with _config_participants.operation(sys.modules[__name__], target=config_path):
         with (
             _settings_rebuild_lock(),
             _config_file_lock(),
             _config_interprocess_lock(config_path),
         ):
-            yield
+            _CONFIG_WRITE_LOCK_HOLDERS[holder_key] = thread
+            try:
+                yield
+            finally:
+                _CONFIG_WRITE_LOCK_HOLDERS.pop(holder_key, None)
 
 
 def _current_config_file_stamp(config_path: Path) -> Optional[tuple[int, int]]:
