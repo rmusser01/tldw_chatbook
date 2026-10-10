@@ -540,6 +540,9 @@ async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> 
                 f"{theme_name}: {focused} fill {fill} is {shift:.2f}x from the pane's "
                 f"{pane_fill} and its frame {edge} is {ratio:.2f}:1 on it"
             )
+    # Every field gate above and below runs only for a focusable Input: with
+    # none, the frame, hint, selection and caret would all go unread and pass.
+    assert marks, f"{theme_name}: the search field was not read"
     for focused, (own, marked, carets) in marks.items():
         (field,) = {fill for _, fill in own}
         assert len(marked) > 1 and len(carets) == 2, f"{theme_name}: {focused}, no selection or no caret"
