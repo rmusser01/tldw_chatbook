@@ -214,11 +214,19 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # test_settings_providers_models_card_geometry.py (2 cases; the card's
 # hit-test net from the region-module move) were left out of the lane.
 # The capture review's items 9-11 (p7cf-b) raised it to 143:
-# test_settings_console_behavior_grammar.py (4 cases) pins Console
-# Behavior's one frame, one control column and its labels.
 # test_settings_console_behavior_grammar.py (5 cases) pins Console
 # Behavior's one frame, one control column, its labels and prose inset.
-MINIMUM_FILES = 171
+# TASK-33007 (CI on #3057) raised it to 170: test_settings_connect_rows.py
+# ran 15+ min of one 20-min shard on CI (61 cases, each mounting the whole
+# Settings screen) and timed the shard out. It is split by topic into itself
+# (the Provider control), _tab_budget.py, _key_rows.py and _paint.py, listed
+# together so round-robin puts each part in a different shard; the lane went
+# to six shards in the same commit. The four sit after
+# test_settings_default_model_picker.py: replaying per-file seconds from
+# #3057's five shard logs, that spot gives at most 12.8 min of pytest in one
+# of six shards, where right after test_settings_anthropic_auth_source.py
+# stacked three of the slowest Settings files in one shard (15.6 min).
+MINIMUM_FILES = 174
 
 
 def read_census(path: Path) -> list[str]:

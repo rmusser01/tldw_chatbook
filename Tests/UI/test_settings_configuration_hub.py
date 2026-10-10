@@ -10319,7 +10319,7 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
         assert clear_button.disabled is False
         # TASK-33007.2 (owner ruling 2026-10-04), rewritten on purpose: Clear
         # is not a Tab stop; its key on the API key field presses it. Which
-        # key is test_settings_connect_rows.py's to pin.
+        # key is test_settings_connect_key_rows.py's to pin.
         screen.query_one("#settings-provider-api-key", Input).focus()
         await pilot.pause()
         await pilot.press(API_KEY_CLEAR_KEY)
