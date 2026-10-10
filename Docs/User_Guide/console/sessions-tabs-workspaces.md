@@ -122,7 +122,7 @@ On a local-only setup the server lines collapse into one line:
 
 | Control | What it does |
 |---|---|
-| "New tab" (strip or control bar) / Ctrl+T | Opens a fresh chat tab |
+| "New tab" (strip or control bar) / Ctrl+T | Opens a fresh chat tab, with its own empty draft in the composer straight away |
 | Click a tab | Switches to it at once, even while another tab's agent is running: the tab lights up and its own draft is in the composer before anything else repaints, and the composer keeps the keyboard, so you can type straight away. A second click on the active tab opens "Rename Chat Tab" |
 | Middle-click a tab | Closes it, exactly like its "✕", without switching to it first |
 | "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, a live agent run, delegated sub-agents, queued prompts), a dialog naming the tab first shows only what closing would discard or cancel, including pending approvals, questions, chat-creation confirmations, skill confirmations and worktree-merge confirmations: "Close" closes the tab, "Stay" keeps it |
@@ -132,10 +132,15 @@ On a local-only setup the server lines collapse into one line:
 Once a tab starts closing, pending requests to create another chat are declined, and previously confirmed requests cannot start from that tab. A creation still in progress cannot open a new tab after its source closes.
 
 Each tab keeps its own unsent draft: switch tabs mid-thought and the
-half-typed message is still in the composer when you come back. A message
-is only ever sent to the tab on screen. If you press Enter while the
-composer has not yet caught up with a switch, nothing is sent: a "Still
-switching chats" notice appears and your draft stays where it is.
+half-typed message is still in the composer when you come back. Keys you
+type straight after clicking a tab go into that tab's draft, even if the
+click is still being handled. Clicking a tab, its "✕", "New tab" or
+"Temporary" leaves the keyboard in the composer, so a letter typed next is
+text, not a shortcut. A message is only ever sent to the tab on screen. If
+you press Enter while the composer has not yet caught up with a switch,
+nothing is sent: a "Still switching chats" notice appears and your draft
+stays where it is. **Redirect** is stricter: it only uses the draft of the
+chat whose run it corrects, and otherwise shows the same notice.
 
 ### "Switch Session" (Ctrl+K)
 
