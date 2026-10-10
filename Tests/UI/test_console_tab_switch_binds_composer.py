@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import sqlite3
 from dataclasses import dataclass, field
 
 import pytest
@@ -67,13 +68,22 @@ async def _running(host):
     A red assertion inside a held activation would otherwise leave the
     screen's pump awaiting forever and hang the app's teardown.
     """
-    async with host.run_test(size=(160, 48)) as pilot:
-        try:
-            yield pilot
-        finally:
-            for gate in _GATES:
-                gate.release.set()
-            _GATES.clear()
+    try:
+        async with host.run_test(size=(160, 48)) as pilot:
+            try:
+                yield pilot
+            finally:
+                for gate in _GATES:
+                    gate.release.set()
+                _GATES.clear()
+    finally:
+        # ConsoleHarness stops the view, while its borrowed app owns storage.
+        app = host.app_instance
+        await app._shutdown_app_owned_lifecycles()
+        await app.evaluation_orchestrator.aclose()
+        app.local_workspace_db.close()
+        app.local_library_collections_db.close()
+        app.subscriptions_db.close()
 
 
 @dataclass
@@ -92,6 +102,33 @@ def _host() -> ConsoleHarness:
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     return ConsoleHarness(app)
+
+
+async def test_running_harness_retires_actual_borrowed_database_connections():
+    """Host shutdown must not leave the borrowed app's SQLite owners live."""
+    host = _host()
+    app = host.app_instance
+    runtime = app.console_runtime
+    repositories = (
+        app.evaluation_orchestrator.db,
+        app.local_workspace_db,
+        app.local_library_collections_db,
+        app.subscriptions_db,
+    )
+    connections = []
+    for repository in repositories:
+        native = tuple(repository._maintenance_participant.connections)
+        assert len(native) == 1
+        assert not native[0].in_transaction
+        connections.extend(native)
+
+    async with _running(host) as pilot:
+        await _wait_for_selector(host.screen, pilot, "#console-native-composer")
+
+    for connection in connections:
+        with pytest.raises(sqlite3.ProgrammingError):
+            _ = connection.in_transaction
+    assert runtime._disposed
 
 
 async def _two_chats(host, pilot) -> Chats:
