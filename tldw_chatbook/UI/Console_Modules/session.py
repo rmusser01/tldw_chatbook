@@ -4341,6 +4341,49 @@ class ConsoleSessionController:
         except KeyError:
             return None
 
+    def _resolve_turn_tool_policy_profile_id(self, workspace_id: str | None) -> str:
+        """Resolve the workspace's named tool-permission profile id.
+
+        Workspace assistant defaults (Task 7): the owning session's
+        workspace may pin a ``tool_policy_profile_id`` in its assistant
+        defaults; that profile is what THIS turn's tool gates resolve
+        under. Any absence -- no workspace, no registry, no workspace
+        record, no defaults, empty id -- degrades to ``"default"``, the
+        single-profile behavior. Never raises.
+        """
+        return resolve_turn_tool_policy_profile_id(
+            getattr(self, "app_instance", None), workspace_id
+        )
+
+    def _resolve_turn_persona_policy_rules(
+        self, session_id: str
+    ) -> tuple[Mapping[str, Any], ...]:
+        """Resolve the owning session's persona policy rules.
+
+        Workspace assistant defaults (Task 7): only a session whose durable
+        assistant identity is a persona carries rules -- the session record's
+        ``assistant_kind == "persona"`` resolves ``assistant_id`` through the
+        app's local persona service (``get_persona_profile``), whose view
+        already normalizes ``policy_rules``. Every failure (no store, no
+        session, non-persona assistant, unknown persona, malformed rules)
+        degrades to ``()`` -- the identity posture. Never raises.
+        """
+        try:
+            store = self._console_chat_store
+            if store is None:
+                return ()
+            session = next(
+                (item for item in store.sessions() if item.id == session_id), None
+            )
+            return resolve_turn_persona_policy_rules(self.app_instance, session)
+        except Exception as exc:  # noqa: BLE001 -- posture degrades, never blocks
+            logger.warning(
+                "Console turn context: persona policy rules resolution failed; "
+                "running with no persona rules; error_type={}",
+                type(exc).__name__,
+            )
+        return ()
+
     def _workspace_default_for_new_session(
         self, workspace_id: str | None = None
     ) -> tuple[str, str, str, str] | None:
