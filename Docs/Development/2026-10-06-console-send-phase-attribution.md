@@ -2084,7 +2084,8 @@ candidates remain in `console-optimization-review-list.md`.
 Post-rebase integration preserves the landed captured-press acknowledgement:
 `Sending…` and its pending USER row paint before received-custody preparation,
 then `Preparing` reflects the real held configuration reader. The same press
-snapshot/body/revision reaches the received owner; later draft edits survive.
+snapshot/body/revision reaches the stock received owner; its tested later draft
+edits survive. This does not qualify legacy/custom fallback draft consumption.
 The exact dispatching acknowledgement may pass its own disabled-composer
 presentation, while unrelated acknowledgements and every source, setup,
 recovery and authority gate retain their original refusal.
@@ -2100,3 +2101,79 @@ was 2.55/3.16ms and its supplied frame 11.78/8.52ms. The corrected test keeps th
 natural Preparing while held, and exact pending-row linkage; it records these
 endpoints separately. These remain headless supplied-frame observations, not
 physical terminal flush or real-provider first-token measurements.
+
+Historical post-rebase qualification is separate from the 42 pre-rebase cases:
+`post-rebase-ui-final-1` at 1867ef2fb9 passed 37 functional cases and failed two
+unchanged 100 ms gates. Enter/button Sending frames were 112.28/67.86 ms;
+pending USER frames 111.91/67.60 ms; input frames 112.74/263.75 ms. The same-head
+domain selection passed 136 custody/configuration/durability cases. These earlier
+results do not qualify the later compatibility source or establish consistent
+100 ms feedback. OPT30 preserves both timing receipts; latency reduction is paused.
+
+### Pre-correction compatibility limits
+
+The cc499 source-frozen receipts pass 20 configuration controls (14 capture,
+six worker lifetime) and 41 of 42 legacy Send compatibility cases. The remaining
+`typed_in_b` failure is the old retention oracle after only B was edited, not
+confirmed loss of a newly authored A draft. Its focused follow-up failed before
+Send at initial draft painting and provides no final retention evidence.
+
+The separate `post-rebase-fallback-and-close-isolation-1` establishes two
+meaningful custom/legacy fallback REDs: newer identical A is erased at revision
+23 -> 24 while visible and 24 -> 25 while hidden. Both pressed drafts send exactly
+once, and hidden B stays intact. These are the original generation-join failures; the later correction receipts
+are recorded below. Stock received-path draft preservation
+must not be generalized to fallback. AC2 and AC3 remain open.
+
+Windows Close qualification is unresolved. The fleet group still fails original
+chat-create arming within 10 seconds despite completed initial reconciliation.
+The standalone third journey also fails its original enrichment-entry predicate
+before actual Close or the cleanup census. It neither proves nor refutes the
+prior resource-retirement concern; no further retry or deadline extension is
+planned. Linux cc499 fleet PASS is separate-host evidence. The latest focused
+legacy-approval group passed all internal journeys, but earlier Linux/native
+first-card failures remain unexplained; FOLLOWUP-04 preserves the unselected
+legacy-delivery question without claiming a replay fix.
+
+These receipts record stable cc499 HEAD and unchanged selected sources within
+each run; dirty test bytes differ across runs. Exact failed nodes, XML hashes and
+limits are in the external `pr3050-closeout/evidence-update-20261009/summary.json`.
+Temporary delivery/tab/thread/draft diagnostics and the standalone Close node
+are archived externally and removed; original semantic and physical-retirement
+oracles remain. Final fix/rebase source, targeted outcomes and CI must be recorded by the
+integration owner. There is no combined all-green, consistent 100 ms, current
+whole-Send, physical-terminal-flush or real-provider TTFT qualification here.
+
+### Captured fallback draft ownership qualification before final rebase
+
+The fallback now carries the original pressed input snapshot through existing
+runtime custody. Its revision protects controller clearing and cancellation;
+draft consumption uses the existing durable-acceptance callback rather than
+clearing at custody. The UI keeps the shared snapshot-aware hidden-draft guard,
+queued transaction effects and custom callback ABI. No new draft owner or timer
+was added.
+
+`fallback-draft-ownership-qualification-1` passed 15 cases and failed two: both
+newer-identical visible/hidden controls, all ten physical save controls (including
+Stop, replaced store and real SQLite rollback), and all three custom capture
+worker controls passed. Both original repeated-Enter journeys exposed a duplicate
+Send, so the first correction was not accepted as complete. A separate original
+switch-window RED proved that successful A draft CAS erased B-intended typing.
+
+The follow-on spends the exact still-shown accepted reload before hydration,
+settles typing through the existing tab-switch owner, preserves a newer resident
+old-prefix revision and discards its stale undo bank. A defining-time dispatch
+witness preserves custom class callback compatibility. `fallback-projection-
+regressions-1` passed all eleven focused cases in 96.71 seconds: repeated Enter
+twice, switch-window projection once, newer-identical visible/hidden twice and
+six API boundaries. Selected source hashes and cc499 HEAD stayed fixed within
+each run; the dirty product bytes differ between the first and follow-on runs.
+
+The latter receipt retains one PytestUnraisableExceptionWarning from a Textual
+Worker ContextVar during the switch control despite runtime disposal. No pending
+canvas output remained; this warning was not suppressed or treated as full
+lifecycle qualification. Temporary observers and isolated Close probes are
+archived externally and removed from the stable tests. Final rebased source,
+targeted verification and required CI remain outstanding. AC2 and AC3 stay open
+until their respective qualification is complete; the 100 ms gates are unchanged
+and latency reduction remains paused.

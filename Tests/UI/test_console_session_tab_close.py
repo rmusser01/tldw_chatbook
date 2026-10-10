@@ -45,6 +45,9 @@ from Tests.UI.app_factory import (
     drain_created_dirs,
 )
 from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
+from Tests.UI.test_console_approval_compact_layout import (
+    _wait_for_reconciled_console,
+)
 from Tests.UI.test_console_button_routing import (
     _mounted_console,
     _wait_for_confirmation,
@@ -1006,6 +1009,7 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
                 console = await _mounted_console(
                     host, pilot, "#console-native-composer"
                 )
+                await _wait_for_reconciled_console(console, pilot)
                 controller = console._ensure_console_chat_controller()
                 app.call_from_thread = host.call_from_thread
                 store = controller.store
@@ -1181,6 +1185,7 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                 console = await _mounted_console(
                     host, pilot, "#console-native-composer"
                 )
+                await _wait_for_reconciled_console(console, pilot)
                 controller = console._ensure_console_chat_controller()
                 app.call_from_thread = host.call_from_thread
                 store = controller.store
@@ -1268,6 +1273,7 @@ async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
         host = ProductionConsoleHarness(app)
         async with host.run_test(size=_SIZE) as pilot:
             console = await _mounted_console(host, pilot, "#console-native-composer")
+            await _wait_for_reconciled_console(console, pilot)
             controller = console._ensure_console_chat_controller()
             app.call_from_thread = host.call_from_thread
             keeper = controller.store.active_session_id

@@ -18690,6 +18690,31 @@ class ChatScreen(BaseAppScreen):
         finally:
             composer._authored_draft_observer = observer
 
+    def _project_console_saved_input(
+        self, session_id: str, *, _captured_stash, _captured_inputs
+    ) -> None:
+        """Project a successful draft CAS after settling its current view owner."""
+        store = self._console_chat_store
+        if self._console_visible_draft_session_id != store.active_session_id:
+            self._session._sync_console_session_draft()
+        composer = self._console_composer_or_none()
+        if (
+            composer is not None
+            and self._console_visible_draft_session_id == session_id
+            and store.active_session_id == session_id
+            and composer.draft_text() == _captured_inputs.draft
+        ):
+            # A tab reload creates a new capture of the same accepted draft.
+            # Spend it before hydration so a held Enter cannot send it again.
+            composer.spend_captured_draft(composer.capture_draft_for_send())
+            self._session._console_undo_histories.pop(session_id, None)
+            self._project_console_received_input(session_id)
+        self._project_console_received_input(
+            session_id,
+            _captured_stash=_captured_stash,
+            _captured_inputs=_captured_inputs,
+        )
+
     async def _dispatch_console_draft_send(
         self,
         draft: str,
@@ -18737,13 +18762,65 @@ class ChatScreen(BaseAppScreen):
                         or getattr(outcome, "applied", False)
                     )
                 return False
+            from ..Console_Modules.prompt_queue import (
+                ConsolePromptDispatchResult,
+                ConsolePromptDispatchStatus,
+                ConsolePromptQueueUIController,
+                _CONSOLE_PROMPT_QUEUE_DISPATCH,
+            )
+
+            fallback_kwargs = {}
+            queue_owner = self._prompt_queue
+            dispatch_function, dispatch_code = _CONSOLE_PROMPT_QUEUE_DISPATCH
+            adapters = getattr(self, "_console_received_live_adapters", ())
+            if (
+                _captured_inputs is not None
+                and type(self._prompt_queue) is ConsolePromptQueueUIController
+                and getattr(self._prompt_queue.dispatch, "__func__", None)
+                is dispatch_function
+                and dispatch_function.__code__ is dispatch_code
+                and any(
+                    target is self._prompt_queue
+                    and name == "_launch_chain_async"
+                    and getattr(target, name, None) is original
+                    for target, name, original in adapters
+                )
+                and all(
+                    getattr(target, name, None) is original
+                    for target, name, original in adapters
+                    if target is self._prompt_queue
+                )
+            ):
+                fallback_kwargs["_captured_inputs"] = _captured_inputs
+
+            async def dispatch_fallback():
+                if fallback_kwargs and (
+                    self._prompt_queue is not queue_owner
+                    or getattr(self._prompt_queue.dispatch, "__func__", None)
+                    is not dispatch_function
+                    or dispatch_function.__code__ is not dispatch_code
+                    or not all(
+                        getattr(target, name, None) is original
+                        for target, name, original in adapters
+                        if target is queue_owner
+                    )
+                ):
+                    detail = "Draft or chat changed; Send again."
+                    self.app_instance.notify(detail, severity="warning")
+                    return ConsolePromptDispatchResult(
+                        ConsolePromptDispatchStatus.REFUSED,
+                        session_id=session_id,
+                        detail=detail,
+                    )
+                return await self._prompt_queue.dispatch(
+                    draft, session_id=session_id, stash=stash, **fallback_kwargs
+                )
+
             result = await self._hooks.dispatch(
                 draft,
                 session_id=session_id,
                 stash=stash,
-                dispatch=lambda: self._prompt_queue.dispatch(
-                    draft, session_id=session_id, stash=stash
-                ),
+                dispatch=dispatch_fallback,
             )
             diagnostic.outcome = result.status.value
             return result.accepted

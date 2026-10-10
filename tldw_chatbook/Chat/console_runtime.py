@@ -2599,10 +2599,23 @@ class ConsoleRuntime:
         store = self._chat_store
         if store is None:
             raise RuntimeError("Console chat store is unavailable.")
+        pressed = request._pressed_inputs
+        if pressed is not None:
+            from .console_received_intent import ConsoleSessionInputSnapshot
+
+            if (
+                type(pressed) is not ConsoleSessionInputSnapshot
+                or pressed._store_ref() is not store
+                or pressed.session_id != request.session_id
+                or not store.session_inputs_are_current(pressed, include_draft=False)
+            ):
+                raise RuntimeError("Pressed Console input changed before admission.")
         claim = store.claim_received_turn(
             request.session_id,
             request.turn_id,
             origin=origin,
+            draft_revision=pressed.draft_revision if pressed is not None else None,
+            _allow_draft_change=pressed is not None,
         )
         if claim is None:
             raise RuntimeError(
@@ -2776,22 +2789,36 @@ class ConsoleRuntime:
             cancel_reviews(session_id)
         return cancelled
 
-    def _project_received_input(self, record) -> None:
+    def _project_received_input(self, record, *, draft_committed=False) -> None:
         """Project a domain CAS into only the original attached composer."""
         intent = record.received_intent
-        view = self.view
-        if (
-            intent is None
-            or self._attached_generation != intent.view_attachment_generation
-        ):
+        request = record.request
+        if intent is not None:
+            inputs, stash = intent._pressed_inputs, intent._pressed_stash
+            generation = intent.view_attachment_generation
+        elif request is not None and request._pressed_inputs is not None:
+            inputs, stash = request._pressed_inputs, request._pressed_stash
+            generation = request._pressed_attachment_generation
+        else:
             return
-        project = getattr(view, "_project_console_received_input", None)
+        if self._attached_generation != generation:
+            return
+        project = getattr(self.view, "_project_console_received_input", None)
         if callable(project):
-            if intent._pressed_inputs is not None:
+            if intent is None and draft_committed:
+                saved_project = getattr(self.view, "_project_console_saved_input", None)
+                if callable(saved_project):
+                    saved_project(
+                        record.session_id,
+                        _captured_stash=stash,
+                        _captured_inputs=inputs,
+                    )
+                    return
+            if inputs is not None:
                 project(
                     record.session_id,
-                    _captured_stash=intent._pressed_stash,
-                    _captured_inputs=intent._pressed_inputs,
+                    _captured_stash=stash,
+                    _captured_inputs=inputs,
                 )
             else:
                 project(record.session_id)
@@ -2891,7 +2918,13 @@ class ConsoleRuntime:
         def mark_durable_acceptance() -> None:
             record.inputs.durable_accepted = True
             intent = record.received_intent
-            if intent is not None:
+            captured = intent.inputs if intent is not None else request._pressed_inputs
+            pressed = (
+                intent._pressed_inputs
+                if intent is not None
+                else request._pressed_inputs
+            )
+            if captured is not None:
                 try:
                     store, claim = record.store, record.received_claim
                     # Saved acceptance is a fact even when its original owner
@@ -2917,9 +2950,9 @@ class ConsoleRuntime:
                         or not controller._ordinary_native_commit_current(native_owner)
                     ):
                         return
-                    committed = store.commit_session_input_draft(intent.inputs)
-                    if committed or intent._pressed_inputs is not None:
-                        self._project_received_input(record)
+                    committed = store.commit_session_input_draft(captured)
+                    if committed or pressed is not None:
+                        self._project_received_input(record, draft_committed=committed)
                 except Exception as error:
                     logger.debug(
                         "Received input projection failed (exception_type={})",

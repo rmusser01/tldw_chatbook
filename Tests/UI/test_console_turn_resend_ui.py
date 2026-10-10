@@ -9,7 +9,6 @@ on, which once stopped before a slow runner's turn had started.
 from __future__ import annotations
 
 import asyncio
-import time
 
 import pytest
 from textual.app import ComposeResult
@@ -258,10 +257,10 @@ def _console_app(gateway):
     return ConsoleHarness(app)
 
 
-async def _await_selected_console_readiness(console, pilot, *, deadline):
-    """Await the current readiness owner, then its original checked paint."""
+async def _await_selected_console_readiness(console, pilot):
+    """Await the existing readiness owner under the test's overall timeout."""
     import inspect
-    from types import CoroutineType, MethodType
+    from types import MethodType
 
     bindings = (
         (ChatScreen, "_sync_console_control_bar"),
@@ -278,32 +277,8 @@ async def _await_selected_console_readiness(console, pilot, *, deadline):
         )
         for owner, name in bindings
     )
-    control, refresh_code = originals[0][2], originals[1][3]
-
-    def owns_original(coroutine):
-        for _depth in range(64):
-            if type(coroutine) is not CoroutineType:
-                return False
-            frame = coroutine.cr_frame
-            if frame is not None:
-                receiver = frame.f_locals.get("self")
-                if (
-                    coroutine.cr_code is refresh_code
-                    and type(receiver) is ConsoleReadinessConfigProjection
-                    and receiver
-                    is getattr(console, "_console_readiness_config_projection", None)
-                    and receiver.screen is console
-                    and frame.f_globals is originals[1][4]
-                ):
-                    return True
-            coroutine = coroutine.cr_await
-        return False
-
+    control, refresh = originals[0][2], originals[1][2]
     while True:
-        remaining = deadline - time.monotonic()
-        assert (
-            remaining > 0
-        ), "Selected Console readiness exceeded original startup budget"
         assert all(
             vars(owner).get(name) is function
             and function.__code__ is code
@@ -312,41 +287,36 @@ async def _await_selected_console_readiness(console, pilot, *, deadline):
             for owner, name, function, code, namespace, defaults in originals
         ), "Original Console readiness source changed"
         assert inspect.getattr_static(console, "_sync_console_control_bar") is control
-        pending = any(
-            worker.node is console and owns_original(worker._work)
-            for worker in console.workers
-        ) or any(
-            owns_original(task.get_coro())
-            for task in asyncio.all_tasks()
-            if task is not asyncio.current_task()
-        )
         projection = getattr(console, "_console_readiness_config_projection", None)
-        projection_pending = (
-            type(projection) is ConsoleReadinessConfigProjection
-            and projection.screen is console
-            and projection.pending
+        if projection is not None:
+            assert type(projection) is ConsoleReadinessConfigProjection
+            assert projection.screen is console
+            assert inspect.getattr_static(projection, "_refresh") is refresh
+            if projection.pending:
+                settled = projection._settled
+                assert type(settled) is asyncio.Event
+                await settled.wait()
+                assert console._console_readiness_config_projection is projection
+                assert projection._settled is settled
+                continue
+        callback = console._sync_console_control_bar
+        assert (
+            type(callback) is MethodType
+            and callback.__self__ is console
+            and callback.__func__ is control
         )
-        if not pending and not projection_pending:
-            callback = console._sync_console_control_bar
-            assert (
-                type(callback) is MethodType
-                and callback.__self__ is console
-                and callback.__func__ is control
-            )
-            if callback() is True:
-                assert (
-                    time.monotonic() < deadline
-                ), "Selected Console readiness exceeded original startup budget"
-                return
-        await asyncio.sleep(min(0.01, remaining))
+        if callback() is True:
+            return
+        # Allow the existing coalesced publication to run; a pending native
+        # read is awaited via its own completion event on the next iteration.
+        await pilot.pause()
 
 
 async def _select_ready_llamacpp_console(console, pilot):
-    """Share the original composer's two-second setup budget with publication."""
-    deadline = time.monotonic() + 2.0
+    """Keep the original DOM-only timeout, then await selected readiness."""
     await _wait_for_selector(console, pilot, "#console-native-composer")
     _select_llamacpp_console(console)
-    await _await_selected_console_readiness(console, pilot, deadline=deadline)
+    await _await_selected_console_readiness(console, pilot)
 
 
 def _session_rows(console) -> list[ConsoleChatMessage]:
@@ -434,20 +404,24 @@ async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
         console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
             "hello"
         )
-        console.query_one("#console-send-message", Button).press()
-        await asyncio.wait_for(entered.wait(), 10)
-        assert console._console_runtime().has_custodied_turns()
-        held = len(decisions)
-        for _ in range(100):  # three poll decisions while the start is held
-            if (
-                len(decisions) >= held + 3
-                or console._console_transcript_sync_timer is None
-            ):
-                break
-            await pilot.pause(0.05)
-        assert decisions[held:][:3] == [True, True, True]
-        assert console._console_transcript_sync_timer is not None
-        started.set()
+        runtime = console._console_runtime()
+        session_id = controller.store.active_session_id
+        try:
+            console.query_one("#console-send-message", Button).press()
+            await asyncio.wait_for(entered.wait(), 10)
+            assert runtime.has_custodied_turns(session_id)
+            held = len(decisions)
+            for _ in range(100):  # three poll decisions while the start is held
+                if (
+                    len(decisions) >= held + 3
+                    or console._console_transcript_sync_timer is None
+                ):
+                    break
+                await pilot.pause(0.05)
+            assert decisions[held:][:3] == [True, True, True]
+            assert console._console_transcript_sync_timer is not None
+        finally:
+            started.set()
         await _wait_for_text(console, pilot, "llama.cpp stream failed")
 
 

@@ -458,6 +458,9 @@ class ConsoleTurnCustodyRequest:
         default=None,
         repr=False,
     )
+    _pressed_inputs: Any | None = field(default=None, repr=False)
+    _pressed_stash: Any | None = field(default=None, repr=False)
+    _pressed_attachment_generation: int | None = field(default=None, repr=False)
 
 
 def _detached_configuration(

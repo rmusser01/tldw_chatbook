@@ -4,7 +4,7 @@ Maintained for the user's request to preserve every considered optimization that
 has not been used or implemented, for review after the main speed and stability
 work. Scope: the current Console Send investigation and its integration lane.
 
-Current integration (2026-10-09): combined draft PR #3050, including PR #3049, the final watch correction, OPT-79, OPT-81 the OPT-86 duplicate-flush cleanup and OPT-89 single-manifest parse. 97 stable optimization IDs and 16 follow-ups are retained. Fresh native comparisons and their limits are recorded below; OPT-31 was rejected and its implementation removed. The one-second Send target and consistent sub-100 ms rendered feedback remain open.
+Current integration (2026-10-09): combined PR #3050, including PR #3049, the final watch correction, OPT-79, OPT-81 the OPT-86 duplicate-flush cleanup and OPT-89 single-manifest parse. 99 stable optimization IDs and 16 follow-ups are retained. Fresh native comparisons and their limits are recorded below; OPT-31 was rejected and its implementation removed. The one-second Send target and consistent sub-100 ms rendered feedback remain open.
 
 Historical checkpoint retained from the prior integration lane: Latest reported polling correctness evidence is `116628850f`: exact timer RED-to-GREEN, eleven attach passes, survivor pass, original late-FULL activation pass and actual two-saved-turn terminal/background pass. Broader polling narrowing and Send speed remain unqualified. Latest reported local publication evidence is `2d65a328ad` (seven status/recovery/action controls pass), following `5800bdc47d` (eleven targeted controls pass); original video controls pass at `41ab023e31`. Inspected prior failures are retained below. Census evidence is `435f948c56`, startup timing is `cee8faf944`, and the latest quiet whole-Send comparison is `36c6fb431a` to `fa3dad2d82` (below). Earlier `b4a284513b5837998017c12e146aea58b0356a7d`, task27/28 helper results and saved hook intervals remain historical evidence; none is an isolated comparison against the latest integrated sources.
 
@@ -291,6 +291,23 @@ proof. Preserve real actions and original dismissal/draft assertions when
 reproducing. Separately, `style-rewind-imports-and-prompt-1.log` reports pending
 `console-canvas-policy-watch/read` tasks and an unawaited `to_thread`; clean
 process/pipe retirement does not qualify app-internal cleanup.
+
+The existing action/lifetime follow-up also retains **early unscoped legacy
+approval delivery before reconciliation**. `request_mcp_approvals(...,
+session_id=None)` can register a live round before its view is answerable;
+the original detached branch can announce attention without calling the attached
+setter, and typed remount does not establish replay of that legacy card. This
+behavior and the mounted-counts fixture exist in dev a190. The later focused
+cc499 group passed without failed-delivery facts; earlier Linux/native first-card
+failures remain unclassified. The fixture's reconciled-attachment precondition
+is separate from any replay fix. No replay implementation or speed benefit is
+selected. Revisit only with a deterministic original early-delivery/settled-
+before-attachment control or a qualified failing-branch receipt, preserving round
+ownership, settlement, cancellation and typed-decision precedence. Source owners:
+`InterruptRoundHost._approval_view_is_detached/run_round` and
+`ConsoleRuntime.has_answerable_view/finish_view_reconciliation/remount_pending_approval`.
+The external `required-fixture-triage/legacy-mounted-ready/deferred-ledger-note.md`
+retains the unselected design. This extends FOLLOWUP-04; it adds no optimization ID.
 
 **FOLLOWUP-05 — video save expectation must match native capabilities.**
 The original Windows cancel-control failure at `435f948c56` is a timeout after
@@ -2190,3 +2207,37 @@ whole stage is established. Seven ordinary starts and92 hook/raw ancestry misses
 remain explicit; monitoring retires and recorded context/generator maps are
 complete. The composition plan links exact receipts. Existing OPT96/99 require
 new lifecycle/invalidation decisions; neither is silently implemented here.
+
+### OPT30 deferred follow-up: first feedback and input paint after rebase
+
+Historical post-rebase acknowledgement samples painted Sending and a pending
+USER row before received preparation. `post-rebase-smoke-3` (1eddc7a4a8) and
+`post-rebase-ui-final-1` (1867ef2fb9) retain different outcomes with unchanged
+production bytes; the latter has 37 functional passes and 2 timing failures.
+
+| Natural supplied-frame/input milliseconds, Enter/button | Smoke3 | UI final1 |
+| --- | ---: | ---: |
+| Sending feedback | 87.21 / 92.11 | 112.28 / 67.86 |
+| Exact pending USER cells | 86.88 / 196.47 | 111.91 / 67.60 |
+| Typing mutation | 2.55 / 3.16 | 96.06 / 226.03 |
+| Typing supplied frame | 11.78 / 8.52 | 112.74 / 263.75 |
+
+The 100 ms Sending/input gates remain unchanged and consistent qualification is
+open. The pending USER endpoint is separate from receipt/Preparing and the
+older stored-USER measurements; there is no button-USER <=100 ms claim. Review is
+deferred while latency reduction is paused. No cause, new cache or scheduler
+is selected from these samples. Raw XML/log/run receipts remain under the task's
+`claude-watch-final-gate-review` directory. These headless/stub-provider samples
+do not establish physical terminal flush, real provider TTFT or current whole-
+Send latency; the older OPT98 2.718 s ABBA result remains historical.
+
+The custom-fallback newer-draft REDs led to an original pressed-snapshot
+ownership correction. Before the final rebase, two visible/hidden draft controls,
+ten physical saved-acceptance controls and three custom-worker controls passed.
+The first correction exposed duplicate repeated Sends and lost switch-window
+typing; both REDs are retained. Its bounded follow-on passed all eleven focused
+repeat, switch, newer-draft and callback-boundary controls in 96.71 seconds.
+One Textual Worker ContextVar warning remains recorded. This does not close
+consistent 100 ms feedback or final post-rebase qualification. See the phase
+report for Windows Close and early legacy-approval limits; no further latency
+work is selected.

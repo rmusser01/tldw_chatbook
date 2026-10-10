@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import time
 import warnings
 
 import pytest
@@ -15,7 +16,11 @@ from Tests.UI.app_factory import (
     drain_active_service_patches,
     drain_created_dirs,
 )
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_native_chat_flow import (
+    _ASYNC_SETTLE_TIMEOUT,
+    _POLL_INTERVAL_SECONDS,
+    _configure_native_ready_console,
+)
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -29,6 +34,29 @@ class ProductionConsoleHarness(ConsoleHarness):
     """Use shipping Console startup sheets and inherited widget/modal defaults."""
 
     CSS_PATH = TldwCli.CSS_PATH
+
+
+async def _wait_for_reconciled_console(console, pilot):
+    """Finish original startup before publishing a fixture-only decision card."""
+    runtime = console._console_runtime()
+    generation = console._console_runtime_attachment_generation
+
+    def ready():
+        return (
+            console._console_attach_reconciled
+            and not console._console_attach_reconcile_running
+            and runtime.view is console
+            and runtime._attached_generation == generation
+            and runtime._reconciled_view is console
+            and runtime.has_answerable_view()
+        )
+
+    deadline = time.monotonic() + _ASYNC_SETTLE_TIMEOUT
+    while not ready() and time.monotonic() < deadline:
+        await pilot.pause(_POLL_INTERVAL_SECONDS)
+    assert ready(), "Console initial reconciliation did not finish"
+    await pilot.pause()
+    assert ready(), "Console initial attachment changed before the approval fixture"
 
 
 def _pending_card(console, round_id="compact-round"):
@@ -86,6 +114,7 @@ async def _verify_every_approval_action_is_painted_and_focusable(request):
     async with host.run_test(size=(80, 24)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_reconciled_console(console, pilot)
         for size, inspect_open in (
             ((80, 24), True),
             ((90, 30), True),
@@ -132,6 +161,7 @@ async def _verify_reflow_preserves_decision_and_reused_round_controls(request):
     async with host.run_test(size=(80, 24)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_reconciled_console(console, pilot)
         console._set_console_rail_preference(left_open=False, right_open=True)
         _pending_card(console)
         await pilot.pause(0.3)
@@ -180,6 +210,7 @@ async def _verify_height_only_resize_reflows_existing_controls(request):
     async with host.run_test(size=(80, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _wait_for_reconciled_console(console, pilot)
         console._set_console_rail_preference(left_open=False, right_open=False)
         _pending_card(console)
         await pilot.pause(0.3)

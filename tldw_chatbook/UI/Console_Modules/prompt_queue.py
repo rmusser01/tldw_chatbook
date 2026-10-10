@@ -64,6 +64,7 @@ def commit_queued_draft_transaction(
     store: Any,
     sync_command_popup: Callable[[], None],
     notify: Callable[[str], None] | None = None,
+    _captured_inputs: Any = None,
 ) -> None:
     """Clear only the admitted draft while keeping unsent text out of history.
 
@@ -83,6 +84,7 @@ def commit_queued_draft_transaction(
         undo_histories=undo_histories,
         notify=notify or (lambda _text: None),
         verb="queued",
+        captured_inputs=_captured_inputs,
     )
     if visible_session_id == session_id and composer is not None:
         sync_command_popup()
@@ -1125,6 +1127,7 @@ class ConsolePromptQueueUIController:
         *,
         session_id: str | None = None,
         stash: "ConsoleDraftStash | None" = None,
+        _captured_inputs: Any = None,
     ) -> ConsolePromptDispatchResult:
         """Send now, queue behind accepted work, or refuse without draft loss.
 
@@ -1137,6 +1140,11 @@ class ConsolePromptQueueUIController:
         the gate, which reads the VISIBLE chat, is read first: in the stretch
         where the hook gate checked that this send's chat is the visible one.
         """
+        callbacks = (
+            self._launch_chain_async,
+            self._commit_captured_draft,
+            self._commit_queued_draft,
+        )
         blocked_reason = self._blocked_reason_accessor().strip()
         if blocked_reason:
             setup_reason = self._setup_blocked_reason_accessor().strip()
@@ -1175,6 +1183,63 @@ class ConsolePromptQueueUIController:
         chat_start = getattr(controller, "_chat_start", None)
         if chat_start is not None:
             await chat_start.withdraw_for_manual(session_id)
+
+        def require_pressed_current():
+            if _captured_inputs is None:
+                return
+            from tldw_chatbook.Widgets.Console.console_composer_bar import (
+                ConsoleDraftStash,
+            )
+            from .sent_draft import as_typed
+
+            image_only = stash is None and not draft and not _captured_inputs.draft
+            if not image_only and (
+                type(stash) is not ConsoleDraftStash
+                or stash.text != draft
+                or as_typed(stash).text != _captured_inputs.draft
+            ):
+                raise RuntimeError("Pressed Console draft changed.")
+            if (
+                self._chat_controller_accessor() is not controller
+                or any(
+                    original is not current
+                    for original, current in zip(
+                        callbacks,
+                        (
+                            self._launch_chain_async,
+                            self._commit_captured_draft,
+                            self._commit_queued_draft,
+                        ),
+                    )
+                )
+                or not controller.store.session_inputs_are_current(
+                    _captured_inputs, include_draft=False
+                )
+            ):
+                raise RuntimeError("Pressed Console inputs or callbacks changed.")
+
+        def queue_kwargs():
+            if _captured_inputs is None:
+                return {}
+            from tldw_chatbook.Chat.console_chat_controller import (
+                _CONSOLE_RECEIVED_QUEUE_METHOD,
+            )
+            from tldw_chatbook.Chat.console_received_dispatch import (
+                stock_native_methods,
+            )
+
+            function, code = _CONSOLE_RECEIVED_QUEUE_METHOD
+
+            def before_admission():
+                require_pressed_current()
+                if not stock_native_methods(
+                    controller, (("queue_prompt", function, code),)
+                ):
+                    raise RuntimeError("Pressed Console queue source changed.")
+
+            before_admission()
+            return {"_before_admission": before_admission}
+
         snapshot = controller.prompt_queue_registry.snapshot(session_id)
         activity = controller.activity_for(session_id)
 
@@ -1203,18 +1268,42 @@ class ConsolePromptQueueUIController:
                     session_id=session_id,
                     detail=detail,
                 )
-            queued = await controller.queue_prompt(
-                session_id,
-                text=draft,
-                expected_revision=snapshot.revision,
-                configuration=configuration,
-            )
+            try:
+                queued = await controller.queue_prompt(
+                    session_id,
+                    text=draft,
+                    expected_revision=snapshot.revision,
+                    configuration=configuration,
+                    **queue_kwargs(),
+                )
+            except (RuntimeError, ValueError) as exc:
+                if _captured_inputs is None:
+                    raise
+                detail = _preparation_refusal_detail(exc)
+                self._notify(detail, "warning")
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    session_id=session_id,
+                    detail=detail,
+                )
             if queued.status is QueueMutationStatus.REROUTE_NORMAL_SEND:
                 return await self._stage_normal_chain(
-                    controller, session_id, draft, stash, prepared
+                    controller,
+                    session_id,
+                    draft,
+                    stash,
+                    prepared,
+                    _captured_inputs=_captured_inputs,
+                    _require_pressed_current=require_pressed_current,
+                    _queue_kwargs=queue_kwargs,
                 )
             if queued.applied:
-                self._commit_queued_draft(session_id, stash)
+                if _captured_inputs is None:
+                    self._commit_queued_draft(session_id, stash)
+                else:
+                    self._commit_queued_draft(
+                        session_id, stash, _captured_inputs=_captured_inputs
+                    )
                 await self._sync_ui()
                 return ConsolePromptDispatchResult(
                     ConsolePromptDispatchStatus.QUEUED, session_id=session_id
@@ -1230,7 +1319,14 @@ class ConsolePromptQueueUIController:
                 detail=refusal,
             )
         return await self._stage_normal_chain(
-            controller, session_id, draft, stash, prepared
+            controller,
+            session_id,
+            draft,
+            stash,
+            prepared,
+            _captured_inputs=_captured_inputs,
+            _require_pressed_current=require_pressed_current,
+            _queue_kwargs=queue_kwargs,
         )
 
     def _dispatch_builds_turn(self, session_id: str) -> bool:
@@ -1253,6 +1349,10 @@ class ConsolePromptQueueUIController:
         draft: str,
         stash: "ConsoleDraftStash | None",
         prepared: Callable[[], AbstractContextManager[None]] = contextlib.nullcontext,
+        *,
+        _captured_inputs=None,
+        _require_pressed_current=None,
+        _queue_kwargs=None,
     ) -> ConsolePromptDispatchResult:
         # Re-check the controller gate at the exact manual/queue boundary.
         # An accepted-turn race is retried as queue admission once, while a
@@ -1286,14 +1386,31 @@ class ConsolePromptQueueUIController:
                     session_id=session_id,
                     detail=detail,
                 )
-            queued = await controller.queue_prompt(
-                session_id,
-                text=draft,
-                expected_revision=snapshot.revision,
-                configuration=configuration,
-            )
+            try:
+                queued = await controller.queue_prompt(
+                    session_id,
+                    text=draft,
+                    expected_revision=snapshot.revision,
+                    configuration=configuration,
+                    **(_queue_kwargs() if _queue_kwargs is not None else {}),
+                )
+            except (RuntimeError, ValueError) as exc:
+                if _captured_inputs is None:
+                    raise
+                detail = _preparation_refusal_detail(exc)
+                self._notify(detail, "warning")
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    session_id=session_id,
+                    detail=detail,
+                )
             if queued.applied:
-                self._commit_queued_draft(session_id, stash)
+                if _captured_inputs is None:
+                    self._commit_queued_draft(session_id, stash)
+                else:
+                    self._commit_queued_draft(
+                        session_id, stash, _captured_inputs=_captured_inputs
+                    )
                 await self._sync_ui()
                 return ConsolePromptDispatchResult(
                     ConsolePromptDispatchStatus.QUEUED, session_id=session_id
@@ -1306,7 +1423,19 @@ class ConsolePromptQueueUIController:
                 self._launch_chain_async is not None
                 and self._launch_chain is self._async_launch_sync_source
             ):
-                await self._launch_chain_async(draft, session_id, stash, controller)
+                if _captured_inputs is None:
+                    await self._launch_chain_async(draft, session_id, stash, controller)
+                else:
+                    _require_pressed_current()
+                    await self._launch_chain_async(
+                        draft,
+                        session_id,
+                        stash,
+                        controller,
+                        _captured_inputs=_captured_inputs,
+                    )
+            elif _captured_inputs is not None:
+                raise RuntimeError("Pressed Console launch changed.")
             else:
                 with prepared():
                     self._launch_chain(draft, session_id)
@@ -1318,7 +1447,8 @@ class ConsolePromptQueueUIController:
                 session_id=session_id,
                 detail=detail,
             )
-        self._commit_captured_draft(session_id, stash)
+        if _captured_inputs is None:
+            self._commit_captured_draft(session_id, stash)
         return ConsolePromptDispatchResult(
             ConsolePromptDispatchStatus.SENT, session_id=session_id
         )
@@ -1345,6 +1475,12 @@ class ConsolePromptQueueUIController:
             session_id=session_id,
             detail=detail,
         )
+
+
+_CONSOLE_PROMPT_QUEUE_DISPATCH = (
+    ConsolePromptQueueUIController.dispatch,
+    ConsolePromptQueueUIController.dispatch.__code__,
+)
 
 
 __all__ = [

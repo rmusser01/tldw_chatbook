@@ -739,6 +739,23 @@ async def _verify_legacy_tool_approval_counts_in_the_mounted_view(request, tmp_p
     workers = []
     async with app.run_test(size=(160, 48)) as pilot:
         console, controller, store, session_id = await _seed_console(app, pilot)
+        runtime = console._console_runtime()
+        attachment_generation = runtime._attached_generation
+        # This journey produces an approval for an already mounted view.
+        await _wait(
+            pilot,
+            lambda: (
+                console._console_attach_reconciled
+                and not console._console_attach_reconcile_running
+                and runtime.view is console
+                and runtime._attached_generation == attachment_generation
+                and runtime._reconciled_view is console
+                and runtime.has_answerable_view()
+            ),
+        )
+        assert runtime.chat_controller is controller
+        assert runtime.chat_store is store
+        assert store.active_session_id == session_id
         _start_live_turn(console, controller, store, session_id)
         try:
             worker, result = _arm(controller, None, call=_risk_row())

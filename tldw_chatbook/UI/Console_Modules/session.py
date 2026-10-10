@@ -5819,6 +5819,7 @@ class ConsoleSessionController:
         live_text = composer.draft_text()
         save_text = live_text
         typed_suffix = ""
+        resident_draft_changed = False
         if snapshot is not None and snapshot[0] == visible_session_id:
             snap_text, snap_serial = snapshot[1], snapshot[2]
             if composer.edit_serial != snap_serial and live_text.startswith(snap_text):
@@ -5829,6 +5830,16 @@ class ConsoleSessionController:
                 # save-the-live-text semantics.)
                 save_text = snap_text
                 typed_suffix = live_text[len(snap_text) :]
+            known_revision = getattr(
+                self._screen, "_console_visible_draft_revision", None
+            )
+            if live_text.startswith(snap_text) and known_revision is not None:
+                current = store.session_input_snapshot(visible_session_id)
+                if current.draft_revision != known_revision:
+                    # A completed Send may have consumed the old prefix while
+                    # suffix keystrokes still belong to the incoming session.
+                    save_text = current.draft
+                    resident_draft_changed = True
         if visible_session_id is not None:
             try:
                 store.set_session_draft(visible_session_id, save_text)
@@ -5838,9 +5849,12 @@ class ConsoleSessionController:
             # session's draft -- bank its undo/redo history under the
             # session it actually belongs to before the swap below discards
             # it, so a later switch back can restore it.
-            self._console_undo_histories[visible_session_id] = (
-                composer.export_undo_history()
-            )
+            if resident_draft_changed:
+                self._console_undo_histories.pop(visible_session_id, None)
+            else:
+                self._console_undo_histories[visible_session_id] = (
+                    composer.export_undo_history()
+                )
         observer = getattr(composer, "_authored_draft_observer", None)
         composer._authored_draft_observer = None
         try:

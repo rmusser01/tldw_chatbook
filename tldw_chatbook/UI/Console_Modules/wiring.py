@@ -741,6 +741,8 @@ async def _prepare_console_turn_to_runtime(
     session_id: str,
     stash: Any = None,
     expected_controller: Any = None,
+    *,
+    _captured_inputs=None,
 ) -> str:
     """Prepare one exact UI turn, then transfer custody without another await."""
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
@@ -749,6 +751,28 @@ async def _prepare_console_turn_to_runtime(
     pressed_capture = type(stash) is ConsoleDraftStash and stash.text == draft
 
     runtime = screen._console_runtime()
+    attachment_generation = screen._console_runtime_attachment_generation
+    queue_owner = screen._prompt_queue
+    callbacks = (
+        tuple(
+            row
+            for row in screen._console_received_live_adapters
+            if row[0] is screen._prompt_queue
+        )
+        if _captured_inputs is not None
+        else ()
+    )
+
+    def pressed_callbacks_current():
+        return (
+            screen._prompt_queue is queue_owner
+            and bool(callbacks)
+            and all(
+                getattr(target, name, None) is original
+                for target, name, original in callbacks
+            )
+        )
+
     store = screen._ensure_console_chat_store()
     session = next(item for item in store.sessions() if item.id == session_id)
     visible = screen._console_visible_draft_session_id == session_id
@@ -756,6 +780,20 @@ async def _prepare_console_turn_to_runtime(
     composer_snapshot = (
         composer.capture_draft_snapshot() if composer is not None else None
     )
+    if _captured_inputs is not None:
+        from .sent_draft import as_typed
+
+        image_only = stash is None and not draft and not _captured_inputs.draft
+        if (
+            not pressed_callbacks_current()
+            or not (pressed_capture or image_only)
+            or (stash is not None and as_typed(stash).text != _captured_inputs.draft)
+            or not store.session_inputs_are_current(
+                _captured_inputs, include_draft=False
+            )
+        ):
+            raise RecoveryRequired("console_snapshot_owner_changed")
+        pressed_capture = pressed_capture or image_only
     if composer is not None:
         # Button capture can precede the ordinary poll's in-memory draft mirror.
         # Establish that mirror before waiting. A captured press keeps its
@@ -782,6 +820,15 @@ async def _prepare_console_turn_to_runtime(
         or next((item for item in store.sessions() if item.id == session_id), None)
         is not session
         or (not pressed_capture and store.session_draft(session_id) != stored_draft)
+        or (
+            _captured_inputs is not None
+            and (
+                not pressed_callbacks_current()
+                or not store.session_inputs_are_current(
+                    _captured_inputs, include_draft=False
+                )
+            )
+        )
         or store.session_one_shot_prefill_snapshot(session_id) != prefill
         or tuple(item.attachment_id for item in current_attachments) != attachment_ids
         or len(current_attachments) != len(attachments)
@@ -818,6 +865,11 @@ async def _prepare_console_turn_to_runtime(
         one_shot_prefill=prefill[0],
         one_shot_prefill_revision=prefill[1],
         staged_evidence_launch=evidence[0],
+        _pressed_inputs=_captured_inputs,
+        _pressed_stash=stash if _captured_inputs is not None else None,
+        _pressed_attachment_generation=(
+            attachment_generation if _captured_inputs is not None else None
+        ),
     )
     return _admit_console_turn_to_runtime(
         screen,
@@ -864,33 +916,10 @@ def _commit_sent_console_draft(
     screen: Any, session_id: str, stash: Any, *, _captured_inputs=None
 ) -> None:
     """Take a sent draft out of the chat it was sent from (TASK-33620.15.2)."""
-    from .sent_draft import SENT_DRAFT_KEPT_IN, chat_label, take_out_sent_draft
+    from .sent_draft import take_out_sent_draft
 
     store = screen._ensure_console_chat_store()
     composer = screen._console_composer_or_none()
-    if _captured_inputs is not None and screen._console_visible_draft_session_id != session_id:
-        session = _captured_inputs._session_ref()
-        token = getattr(session, "_draft_authored_token", None)
-        current = store.session_input_snapshot(session_id)
-        # A hidden prefix is removable only with the same authored generation.
-        # A replaced/retyped or unknown draft keeps the domain CAS's protection.
-        if (
-            _captured_inputs._store_ref() is not store
-            or current._session_ref() is not session
-            or type(token) is not tuple
-            or len(token) != 2
-            or token[0] != stash.generation
-            or (current.draft == _captured_inputs.draft
-                and current.draft_revision != _captured_inputs.draft_revision)
-        ):
-            if composer is not None:
-                composer.spend_captured_draft(stash)
-            if stash.text in current.draft:
-                screen.app_instance.notify(
-                    SENT_DRAFT_KEPT_IN.format(verb="sent", chat=chat_label(store, session_id)),
-                    severity="warning",
-                )
-            return
     take_out_sent_draft(
         session_id,
         stash,
@@ -899,6 +928,7 @@ def _commit_sent_console_draft(
         store=store,
         undo_histories=screen._console_undo_histories,
         notify=lambda text: screen.app_instance.notify(text, severity="warning"),
+        captured_inputs=_captured_inputs,
     )
     screen._start_console_transcript_sync_timer()
 
@@ -2994,8 +3024,15 @@ def build_console_controllers(
             lambda draft,
             session_id,
             stash=None,
-            controller=None: _prepare_console_turn_to_runtime(
-                screen, draft, session_id, stash, controller
+            controller=None,
+            *,
+            _captured_inputs=None: _prepare_console_turn_to_runtime(
+                screen,
+                draft,
+                session_id,
+                stash,
+                controller,
+                _captured_inputs=_captured_inputs,
             )
         ),
         ensure_active_session=(
@@ -3023,7 +3060,10 @@ def build_console_controllers(
             )
         ),
         commit_queued_draft=(
-            lambda session_id, stash: commit_queued_draft_transaction(
+            lambda session_id,
+            stash,
+            *,
+            _captured_inputs=None: commit_queued_draft_transaction(
                 session_id,
                 stash,
                 composer=screen._console_composer_or_none(),
@@ -3031,6 +3071,7 @@ def build_console_controllers(
                 undo_histories=screen._console_undo_histories,
                 store=screen._ensure_console_chat_store(),
                 sync_command_popup=screen._sync_console_command_popup,
+                _captured_inputs=_captured_inputs,
                 notify=lambda text: screen.app_instance.notify(
                     text, severity="warning"
                 ),
@@ -3142,6 +3183,8 @@ def build_console_controllers(
                     "_capture_configuration_async",
                     "_launch_chain",
                     "_launch_chain_async",
+                    "_commit_captured_draft",
+                    "_commit_queued_draft",
                     "_blocked_reason_accessor",
                     "_setup_blocked_reason_accessor",
                 ),
