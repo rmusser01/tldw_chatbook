@@ -115,6 +115,10 @@ def test_the_formerly_silent_vetoes_say_something_honest():
 
     assert files.startswith("Can't open Console yet — ")
     assert "Folder files" in files
+    # Review 1 Minor 5: the workspace also refuses for a folder change or a
+    # git action in flight, when the file IS saved -- never claim "isn't saved".
+    assert "isn't saved" not in files
+    assert "isn't settled yet" in files and "still running" in files
     assert prompt.startswith("Can't open Console yet — ")
     assert "prompt" in prompt.lower() and "in progress" in prompt
     assert library_prompt_mutation_veto_notice(destination="").startswith(
