@@ -7,7 +7,7 @@ from threading import Event
 
 import pytest
 
-from Tests.Backup_Recovery.conftest import helper_resource_root as helper_resource_root
+from Tests.Backup_Recovery import conftest as recovery_fixtures
 from Tests.Backup_Recovery.test_held_sqlite_rollback import replacement_case
 from tldw_chatbook.Backup_Recovery import bootstrap, crypto, publication, replacement
 from tldw_chatbook.Backup_Recovery.journal import Journal
@@ -18,6 +18,9 @@ from tldw_chatbook.Backup_Recovery.models import (
     StorageItem,
 )
 from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
+
+
+helper_resource_root = recovery_fixtures.helper_resource_root
 
 
 @pytest.fixture

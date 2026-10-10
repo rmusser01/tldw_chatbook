@@ -9,11 +9,14 @@ from threading import Event
 
 import pytest
 
-from Tests.Backup_Recovery.conftest import helper_resource_root as helper_resource_root
+from Tests.Backup_Recovery import conftest as recovery_fixtures
 from Tests.Backup_Recovery import test_eval_rollback_retention
 from tldw_chatbook.Backup_Recovery.later_rollback import preview_rollback
 from tldw_chatbook.Backup_Recovery.models import Inventory
 from tldw_chatbook.Backup_Recovery.plan_records import load_plan
+
+
+helper_resource_root = recovery_fixtures.helper_resource_root
 
 rolled_back_eval = test_eval_rollback_retention.rolled_back_eval
 
