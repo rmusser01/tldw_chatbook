@@ -37,6 +37,11 @@ CHAT_TITLE_LIMIT = 24
 INACTIVE_COPY = "Provider settings handoff is inactive."
 #: A Console return offered with nothing saved: going back loses nothing.
 ARRIVAL_COPY = "No unsaved changes."
+#: Where focus goes from a disabled named field: the first shown and enabled.
+_DISABLED_FIELD_LANDINGS = (
+    "#settings-provider-auth-source",
+    "#settings-provider-edit-custom-endpoint",
+)
 #: outcome -> (what was saved, what the save does not prove).
 _SAVED_COPY = {
     Outcome.CREDENTIAL_SAVED: (
@@ -110,14 +115,17 @@ def route_focus(screen: SettingsScreen, selector: str | None) -> str | None:
 
     The field the route names, while it can take focus. Two routes have no
     such field: one that names none (a cloud Retry), and one whose field is
-    disabled (the API key while a Claude subscription signs in). Both arrive
-    on the return when it is offered, so one Enter goes back. A disabled field
-    with no return offered gives way to Sign in with, the control that says
-    why the key is not asked for.
+    disabled (the API key while a Claude subscription signs in; the API key
+    or Endpoint of a named custom endpoint, which Settings locks). Both arrive
+    on the return when it is offered, so one Enter goes back.
 
-    A registry-locked provider's key is disabled too, but it has neither
-    landing: no return can name it, and Sign in with is Anthropic's alone and
-    disabled for it. Its focus stays where it was, as before.
+    A disabled field with no return offered gives way to the control that acts
+    in its place, the first of these that is shown and enabled: Sign in with,
+    which says why no key is asked for, then Edit this endpoint in Custom
+    endpoints, where a custom endpoint's key and Endpoint are changed. No
+    return can name a custom endpoint, so that button is where its routes
+    land. With neither control (a custom endpoint id whose entry is gone, so
+    the button is hidden) focus stays where it is.
 
     Args:
         screen: The Settings screen holding the return target and its outcome.
@@ -131,7 +139,13 @@ def route_focus(screen: SettingsScreen, selector: str | None) -> str | None:
         return selector
     if return_outcome(screen) is not None:
         return "#settings-provider-return"
-    return "#settings-provider-auth-source" if disabled else None
+    if not disabled:
+        return None
+    for landing in _DISABLED_FIELD_LANDINGS:
+        # display, not focusable: the Edit button is hidden through display.
+        if any(w.display and not w.disabled for w in screen.query(landing)):
+            return landing
+    return None
 
 
 def can_return_without_saving(screen: SettingsScreen) -> bool:

@@ -59,6 +59,7 @@ from tldw_chatbook.UI.Settings_Modules.provider_return import (
     continuation_copy,
     fitted_chat_title,
     return_outcome,
+    route_focus,
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
@@ -395,6 +396,37 @@ def test_a_kept_console_return_lapses_with_its_handoff() -> None:
     no_store = SimpleNamespace(app_instance=SimpleNamespace())
     assert console_return_lapsed(no_store, console) is True
     assert console_return_lapsed(no_store, modal) is False
+
+
+def test_a_disabled_named_field_gives_way_to_the_first_control_that_can_act() -> None:
+    """Where focus goes from a named field that is disabled: the return when
+    it is offered, otherwise the first of Sign in with and Edit this endpoint
+    in Custom endpoints that is shown and enabled. The rule reads no field
+    name, so a custom endpoint's Endpoint lands as its API key does. The Edit
+    button is hidden through display, which Textual's focusable does not read:
+    for a custom endpoint id whose entry is gone nothing takes focus."""
+    field = "#settings-provider-endpoint-value"
+    sign_in = "#settings-provider-auth-source"
+    edit = "#settings-provider-edit-custom-endpoint"
+
+    def landing(
+        *, field_disabled=True, sign_in_enabled=False, edit_shown=True, outcome=None
+    ):
+        widgets = {
+            field: SimpleNamespace(disabled=field_disabled),
+            sign_in: SimpleNamespace(display=True, disabled=not sign_in_enabled),
+            edit: SimpleNamespace(display=edit_shown, disabled=False),
+        }
+        screen = _settings(None, outcome)
+        screen.query = lambda selector: [widgets[selector]]
+        return route_focus(screen, field)
+
+    assert landing(field_disabled=False) == field
+    assert landing(sign_in_enabled=True) == sign_in
+    assert landing() == edit
+    assert landing(edit_shown=False) is None
+    # A return that is offered comes first; after a save it is, for either kind.
+    assert landing(outcome=SAVED) == "#settings-provider-return"
 
 
 def test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy() -> None:
@@ -955,7 +987,8 @@ async def test_a_route_that_names_no_field_arrives_on_the_return(
             )
             assert len(listed) == 1 and listed[0].url.path.endswith("/models")
             assert app.focused.id == "settings-provider-return"
-            assert app.focused.display is True
+            # Settings shows and hides the return through its container.
+            assert settings.query_one("#settings-provider-return-continuation").display
         assert bool(listed) is keyed
 
         await pilot.press("enter")
@@ -970,13 +1003,42 @@ async def test_a_route_that_names_no_field_arrives_on_the_return(
         assert not app.pending_handoffs.has_pending(CHANNEL)
 
 
+_SUBSCRIPTION_CHAT = {
+    "chat_defaults": {"provider": "anthropic", "model": "claude-sonnet-5"},
+    "api_settings.anthropic": {"auth_source": "claude_subscription"},
+}
+_LAB_KEY_ENV = "P8_RETURN_LAB_KEY"  # Never set: the endpoint's key is missing.
+_CUSTOM_ENDPOINT_CHAT = {
+    "chat_defaults": {"provider": "custom-ep:lab", "model": "lab-model"},
+    "custom_endpoints.lab": {
+        "display_name": "Lab",
+        "family": "openai_compatible",
+        "base_url": "http://127.0.0.1:9/v1",
+        "models": ["lab-model"],
+        "api_key_env": _LAB_KEY_ENV,
+    },
+}
+#: route -> (saved config, the card's action, the control focus arrives on).
+_ROUTES_TO_A_DISABLED_FIELD = {
+    "console": (_SUBSCRIPTION_CHAT, "Review credentials", "settings-provider-return"),
+    "chat-settings": (
+        _SUBSCRIPTION_CHAT,
+        "Review credentials",
+        "settings-provider-auth-source",
+    ),
+    "custom-endpoint": (
+        _CUSTOM_ENDPOINT_CHAT,
+        "Set up provider",
+        "settings-provider-edit-custom-endpoint",
+    ),
+}
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "from_console", [True, False], ids=["console", "chat-settings"]
-)
+@pytest.mark.parametrize("route", list(_ROUTES_TO_A_DISABLED_FIELD))
 @private_profile_test
 async def test_a_route_whose_named_field_is_disabled_arrives_where_it_can_act(
-    monkeypatch, request, from_console: bool
+    monkeypatch, request, route: str
 ):
     """A Claude subscription whose credential is missing is fixed outside the
     app (log in with Claude Code), so this recovery saves nothing either. The
@@ -986,24 +1048,25 @@ async def test_a_route_whose_named_field_is_disabled_arrives_where_it_can_act(
 
     Chat settings' Configure credential names the same field and offers no
     return before a save, so there focus goes to Sign in with, the control
-    that says why no key is asked for."""
+    that says why no key is asked for.
+
+    A chat on a named custom endpoint whose key is missing names the API key
+    too. Settings locks that provider's key and Endpoint, Sign in with is
+    Anthropic's alone, and no return can name a custom endpoint (R35). Focus
+    goes to Edit this endpoint in Custom endpoints, where the locked fields
+    are changed, and Enter there opens the editor."""
+    saved, action, arrives_on = _ROUTES_TO_A_DISABLED_FIELD[route]
+    from_console = route == "console"
     # Stubbed, so the user's own Claude Code credential is never read.
     monkeypatch.setattr(
         anthropic_subscription,
         "subscription_credential_status",
         lambda **_kwargs: "missing",
     )
-    app = _cloud_app(
-        monkeypatch,
-        **{
-            "chat_defaults": {"provider": "anthropic", "model": "claude-sonnet-5"},
-            "api_settings.anthropic": {"auth_source": "claude_subscription"},
-        },
-    )
-    app.providers_models = {"anthropic": ["claude-sonnet-5"]}
-    arrives_on = (
-        "settings-provider-return" if from_console else "settings-provider-auth-source"
-    )
+    monkeypatch.delenv(_LAB_KEY_ENV, raising=False)
+    app = _cloud_app(monkeypatch, **saved)
+    if saved is _SUBSCRIPTION_CHAT:
+        app.providers_models = {"anthropic": ["claude-sonnet-5"]}
 
     async with app.run_test(size=(211, 44)) as pilot:
         await _until(
@@ -1011,11 +1074,11 @@ async def test_a_route_whose_named_field_is_disabled_arrives_where_it_can_act(
             lambda: getattr(app.focused, "id", None) == "console-setup-modal-action",
             "the Get started card's action to hold focus",
         )
-        assert str(app.focused.label) == "Review credentials"
+        assert str(app.focused.label) == action
         console = app._navigation_outgoing_screen()
         session_id = console._ensure_console_chat_store().active_session_id
 
-        if not from_console:
+        if route == "chat-settings":
             assert await console._open_console_settings() is True
             await _until(
                 pilot,
@@ -1037,11 +1100,23 @@ async def test_a_route_whose_named_field_is_disabled_arrives_where_it_can_act(
         )
         settings = app.screen
         target = settings._provider_return_target
-        assert target is not None and target.field == "api_key"
-        assert (target.session_id == session_id) is from_console
         assert settings.query_one("#settings-provider-api-key", Input).disabled
         continuation = settings.query_one("#settings-provider-return-continuation")
         assert continuation.display is from_console
+        if route == "custom-endpoint":
+            # R35: no return can name a custom-ep: id, so this route goes one way.
+            assert target is None and not app.pending_handoffs.has_pending(CHANNEL)
+            assert settings._provider_widget_value() == "custom-ep:lab"
+            assert settings.query_one("#settings-provider-auth-source").disabled
+            await pilot.press("enter")
+            await _until(
+                pilot,
+                lambda: getattr(app.focused, "id", None) == "settings-cep-edit-url",
+                "the Custom endpoints editor to open on the endpoint's URL",
+            )
+            return
+        assert target is not None and target.field == "api_key"
+        assert (target.session_id == session_id) is from_console
         if not from_console:
             assert target.session_id is None  # Chat settings' kind: after a save.
             return

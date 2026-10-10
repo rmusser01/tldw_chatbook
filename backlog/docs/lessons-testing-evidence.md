@@ -5785,6 +5785,28 @@ display-managed widget needs the target to be focusable, or a fallback.
 
 ---
 
+## `focus()` on a disabled widget does nothing, and `focusable` is True for a `display: none` widget
+
+**TASK-33008.1, 2026-10-10.** A provider recovery opens Settings with focus in
+the field its blocker names. Two routes name a field that Settings disables: the
+API key under a Claude subscription, and the key of a named custom endpoint. The
+focus call did nothing there, so focus stayed on the screen's first widget, the
+nav bar's Home button, and the next Enter opened Home. Each route took its own
+review round to find, because every test drove a route whose field was enabled.
+The first fix fell back to one control, which is disabled for every other
+provider, so the second route failed the same way. A probe then tested the
+fallback candidates with `focusable` and passed, yet `focusable` reads `visible`
+(the `visibility` rule), not `display`: `Button("x").display = False` leaves it
+True (Textual 8.2.8), and one candidate is hidden through `display`.
+
+**What to do.** Before focusing a widget that a route names, ask whether it can
+be disabled, and give the rule a landing for that case. Test fallback candidates
+with `w.display and not w.disabled`, not `focusable`. When one disabled-field
+route turns up, list every state that disables the named fields and drive each
+one before closing the finding.
+
+---
+
 ## A responsive focus handoff must cover both directions of widget replacement
 
 **TASK-16220, 2026-08-14.** The first Console rail fix moved focus from a rail

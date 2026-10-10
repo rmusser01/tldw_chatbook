@@ -438,6 +438,15 @@ Console's **Review credentials** and Chat settings' **Configure credential…**
 still name the API key for such a chat. Focus then starts on the return button
 when it is showing, and on **Sign in with** when it is not.
 
+The API key and Endpoint of a named custom endpoint are disabled too: its own
+entry holds them (see [Custom endpoints](#custom-endpoints)). The Console's
+**Set up provider** still names the API key for a chat on such an endpoint
+whose key is missing. Settings remembers no way back for a custom endpoint, so
+none of the return buttons described below ever shows for one. Focus starts on
+**Edit this endpoint in Custom endpoints**, and **Enter** there opens the
+entry's editor with focus on its **Endpoint**. When the endpoint is fixed, go
+back to the Console yourself.
+
 From Chat settings nothing shows until you save; the button then reads **Return
 to Chat settings** and reopens the dialog with your unsaved edits. From the
 Console the button reads **Return to Console** and is there as soon as you

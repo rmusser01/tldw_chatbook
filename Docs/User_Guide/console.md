@@ -278,6 +278,11 @@ or expired, the button reads **Review credentials** instead. That is fixed
 outside the app, by logging in with Claude Code, so Settings opens with the API
 key field disabled and focus on **Return to Console**: **Enter** there comes
 back to this chat.
+For a chat on a named custom endpoint whose key is missing, the button reads
+**Set up provider** as well, but that page cannot save a custom endpoint: the
+API key field is disabled, no **Return to Console** shows, and focus starts on
+**Edit this endpoint in Custom endpoints**. **Enter** there opens the
+endpoint's editor; come back to the Console yourself when it is fixed.
 **Choose provider** and
 **Choose model** open **Switch model**, where a model is always picked as a
 provider·model pair (Choose model opens with Find on this chat's provider, so
