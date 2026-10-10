@@ -32,7 +32,29 @@ def test_notification_dispatch_service_persists_then_notifies(tmp_path):
         "Watchlist source deleted: Server source deleted within restore window.",
         severity="warning",
         timeout=None,
+        markup=False,
     )
+
+
+def test_notification_dispatch_service_delivers_names_as_plain_text(tmp_path):
+    """TASK-34751: dispatched text is composed from user data (deck, quiz and
+    source names), so it reaches `notify` with markup off -- a markup-on toast
+    parsed `Bio [/b]` and raised `MarkupError` while drawn, exiting the app."""
+    store = ClientNotificationsDB(tmp_path / "notifications.db")
+    app = SimpleNamespace(notify=Mock())
+    service = NotificationDispatchService(store=store)
+
+    service.dispatch(
+        app=app,
+        category="study",
+        title="Local study deck created",
+        message="Bio [/b] [@click=app.quit]x[/]",
+        severity="info",
+    )
+
+    args, kwargs = app.notify.call_args
+    assert args == ("Local study deck created: Bio [/b] [@click=app.quit]x[/]",)
+    assert kwargs["markup"] is False
 
 
 def test_notification_dispatch_service_uses_toast_when_available(tmp_path):
