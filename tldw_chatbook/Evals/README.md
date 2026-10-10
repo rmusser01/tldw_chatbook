@@ -559,7 +559,7 @@ returned by `get()` are also captured on save. YAML nulls remain nulls.
 profile draft saved. `EvalConfigLoader(custom_path)` retains its full-file
 configuration contract.
 
-Backup recovery discovers the same private override path. Older retained Eval
+Backup recovery discovers the same private override path. Only a genuinely absent override is unused; a directory, dangling link, other non-file object, or unreadable path blocks complete backup. Older retained Eval
 definition files keep their existing authenticated provenance and inactive state;
 they are not automatically imported or rewritten as overrides. See
 [ADR-220](../../backlog/decisions/220-evaluation-defaults-and-private-overrides.md).
