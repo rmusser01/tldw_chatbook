@@ -5675,6 +5675,9 @@ class ConsoleSessionController:
         pass can show one chat while the composer holds another chat's
         draft. Sending then would queue the draft into the chat that is no
         longer on screen, so the send is refused visibly and the draft kept.
+        Until the active chat's tab or transcript is painted, the composer's
+        chat is still the one on screen and the send goes there (a display
+        rebuild can create a blank active session first; TASK-4).
 
         Returns:
             True when the send was refused.
@@ -5682,6 +5685,15 @@ class ConsoleSessionController:
         bound = self._console_visible_draft_session_id
         active = self._ensure_console_chat_store().active_session_id
         if bound is None or active is None or bound == active:
+            return False
+        surface = self._session_surface_accessor()
+        highlighted = (
+            surface.highlighted_session_id()
+            if surface is not None and surface.is_mounted
+            else None
+        )
+        transcript = getattr(self._screen, "_last_native_transcript_session_id", None)
+        if active not in (highlighted, transcript):
             return False
         logger.warning(
             "Console send refused: composer bound to {} while {} is active",

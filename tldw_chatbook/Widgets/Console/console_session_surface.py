@@ -720,6 +720,17 @@ class ConsoleSessionSurface(Vertical):
             if (child.id or "").startswith("console-session-tab-"):
                 child.set_class(child.id == active_id, "console-session-tab-active")
 
+    def highlighted_session_id(self) -> str | None:
+        """The session whose tab carries the active highlight, if any."""
+        try:
+            tab_strip = self.query_one("#console-native-tab-strip", HorizontalScroll)
+        except NoMatches:
+            return None
+        for child in tab_strip.children:
+            if child.has_class("console-session-tab-active"):
+                return (child.id or "").removeprefix("console-session-tab-") or None
+        return None
+
     def _record_mount_churn(self, *, mounted: int = 0, removed: int = 0) -> None:
         """Best-effort tab churn diagnostic hook."""
         try:
