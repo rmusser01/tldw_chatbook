@@ -192,11 +192,14 @@ async def test_a_slow_library_search_is_shown_and_stop_pauses_the_send():
             await until(lambda: _paused_retrieval(controller))
             await until(lambda: _shelf_offers_unsent_turn(console))
             assert gateway.stream_calls == 0
-            assert controller._preparation_outcomes[
-                controller.store.preparation_for_session(
-                    controller.store.active_session_id
-                ).preparation_id
-            ].error_code == "library_retrieval_stopped"
+            assert (
+                controller._preparation_outcomes[
+                    controller.store.preparation_for_session(
+                        controller.store.active_session_id
+                    ).preparation_id
+                ].error_code
+                == "library_retrieval_stopped"
+            )
             library.release.set()
 
 

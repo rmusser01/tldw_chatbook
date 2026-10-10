@@ -7685,7 +7685,7 @@ class ConsoleChatController:
         result, error_code = await automatic_search_outcome(
             self, preparation.session_id, request
         )
-        results =tuple(getattr(result, "results", ()) or ()) if result else ()
+        results = tuple(getattr(result, "results", ()) or ()) if result else ()
         status = str(getattr(result, "status", "") or "") if result else ""
         if error_code is None and status not in {"ready", "empty"}:
             error_code = "library_retrieval_failed"
