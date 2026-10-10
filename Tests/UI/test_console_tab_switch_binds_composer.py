@@ -39,6 +39,7 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.UI.Console_Modules import composer_run_controls as run_controls
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -157,8 +158,26 @@ def _record_notices(console) -> list[str]:
 
 
 def _refused(notices: list[str]) -> bool:
-    """Whether the send guard refused a send (TASK-33622.7 AC#3)."""
-    return any("nothing was sent" in notice.lower() for notice in notices)
+    """Whether the switch guard refused a send or redirect (TASK-33622.7 AC#3)."""
+    return any("still switching chats" in notice.lower() for notice in notices)
+
+
+def _record_redirects(console, recorded: list[tuple[str | None, str]]) -> None:
+    """Record each Redirect into the chat it targets, instead of redirecting."""
+    controller = console._ensure_console_chat_controller()
+    store = controller.store
+
+    def redirect(text):
+        recorded.append((store.active_session_id, text))
+        return None
+
+    controller.redirect_active_run = redirect
+
+
+def _add_chat(store, like, title: str, draft: str):
+    session = store.create_session(title=title, settings=like.settings, activate=False)
+    store.set_session_draft(session.id, draft)
+    return session
 
 
 def _record_trace_opens(console) -> list[str]:
@@ -392,7 +411,7 @@ async def test_pressing_a_session_tab_leaves_the_keyboard_in_the_composer():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("send", ["enter", "send_button"])
+@pytest.mark.parametrize("send", ["enter", "send_button", "spoken", "redirect"])
 async def test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsewhere(
     send,
 ):
@@ -403,8 +422,10 @@ async def test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsew
     draft before the switch, then paints A's tab and transcript, so A is on
     screen while the composer still holds B's draft.
 
-    ``send_button`` is the call the Send button and the spoken "Console,
-    send." both make (``handle_console_send_message``).
+    Enter and the Send button both go through ``request_visible_send``;
+    ``spoken`` is the spoken "Console, send." (``handle_console_send_message``);
+    ``redirect`` is the Redirect button and palette entry, which take the
+    composer draft as the correction for the active chat's run.
     """
     host = _host()
     async with _running(host) as pilot:
@@ -441,11 +462,16 @@ async def test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsew
             "composer": B_LEFTOVER,
         }
 
+        _record_redirects(console, dispatched)
+        button = console.query_one("#console-send-message", Button)
         if send == "enter":
             await pilot.press("enter")
-        else:
-            button = console.query_one("#console-send-message", Button)
+        elif send == "send_button":
+            button.press()
+        elif send == "spoken":
             await console.handle_console_send_message(Button.Pressed(button))
+        else:
+            await run_controls.redirect_from_draft(console)
         await until(lambda: bool(dispatched) or _refused(notices))
         assert {
             "dispatched": _named(dispatched, a, b),
@@ -461,3 +487,310 @@ async def test_send_refuses_and_keeps_the_draft_when_the_composer_is_bound_elsew
             "composer": composer.draft_text(),
             "B stored draft": store.session_draft(b.id),
         } == {"dispatched": [], "composer": A_OWN, "B stored draft": B_LEFTOVER}
+
+
+async def _store_moves_to_a_while_a_pass_is_held(console, store, a) -> Gate:
+    """A switch that leaves the rebind to the sync pass, with nothing painted.
+
+    The pass is held at its first await, after its draft sync, so the
+    composer stays bound to B and B's tab and transcript stay on screen.
+    """
+    held_pass = _hold_sync_pass(console)
+    console.run_worker(
+        console._sync_native_console_chat_ui(),
+        exclusive=True,
+        group="console-sync",
+    )
+    await until(held_pass.entered.is_set)
+    store.switch_session(a.id)
+    return held_pass
+
+
+@pytest.mark.asyncio
+async def test_redirect_refuses_while_the_store_has_moved_before_anything_is_painted():
+    """Redirect targets the store's active chat, so it needs the strict check.
+
+    Enter may still send B's draft to B here (B is on screen), but Redirect
+    would put B's draft into A's run as a correction.
+    """
+    host = _host()
+    async with _running(host) as pilot:
+        chats = await _two_chats(host, pilot)
+        console, composer, store, a, b = (
+            chats.console,
+            chats.composer,
+            chats.store,
+            chats.a,
+            chats.b,
+        )
+        redirected: list[tuple[str | None, str]] = []
+        _record_redirects(console, redirected)
+        notices = _record_notices(console)
+        held_pass = await _store_moves_to_a_while_a_pass_is_held(console, store, a)
+        assert _active_tabs(console) == [b.id]
+
+        await run_controls.redirect_from_draft(console)
+        await pilot.pause()
+        assert {
+            "redirected": _named(redirected, a, b),
+            "composer": composer.draft_text(),
+            "refused": _refused(notices),
+        } == {"redirected": [], "composer": B_LEFTOVER, "refused": True}
+        held_pass.release.set()
+        await _sync_idle(console)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["ctrl_t", "browser"])
+async def test_a_switch_during_a_sync_pass_binds_the_composer_at_once(path):
+    """FOLLOW-UP #4: Ctrl+T and opening an open tab from the browser bind now.
+
+    Both left the rebind to the coalescable sync pass, so with a pass in
+    flight the new chat showed B's leftover draft, and Enter sent it (plus
+    the typed key) to B.
+    """
+    host = _host()
+    async with _running(host) as pilot:
+        chats = await _two_chats(host, pilot)
+        console, composer, store, a, b = (
+            chats.console,
+            chats.composer,
+            chats.store,
+            chats.a,
+            chats.b,
+        )
+        dispatched = _record_dispatch(console)
+        notices = _record_notices(console)
+        held_pass = _hold_sync_pass(console)
+        console.run_worker(
+            console._sync_native_console_chat_ui(),
+            exclusive=True,
+            group="console-sync",
+        )
+        await until(held_pass.entered.is_set)
+
+        if path == "ctrl_t":
+            console.action_new_console_tab()
+            await until(lambda: store.active_session_id not in (a.id, b.id))
+            target, own = store.active_session_id, ""
+        else:
+            opened = await console._workspace.open_console_workspace_conversation(
+                f"native:{a.id}"
+            )
+            assert opened is True
+            target, own = a.id, A_OWN
+        await pilot.pause()
+        names = {a.id: "A", b.id: "B", target: "new" if path == "ctrl_t" else "A"}
+        assert {
+            "draft owner": names.get(console._console_visible_draft_session_id),
+            "composer": composer.draft_text(),
+            "B stored draft": store.session_draft(b.id),
+        } == {
+            "draft owner": names[target],
+            "composer": own,
+            "B stored draft": B_LEFTOVER,
+        }
+        # A new Ctrl+T tab starts on the default provider, so the first-run
+        # setup card takes the keyboard there; type only in the browser case.
+        typed = "x" if path == "browser" else ""
+        if typed:
+            await pilot.press(typed)
+        # What Enter would pin the send to, right now, with the pass in flight.
+        assert {
+            "pinned": names.get(console._console_visible_send_session_id()),
+            "composer": composer.draft_text(),
+            "refused": console._session.refuse_send_from_unbound_composer(),
+        } == {"pinned": names[target], "composer": own + typed, "refused": False}
+        held_pass.release.set()
+        await _sync_idle(console)
+        await pilot.pause()
+        if typed:
+            await pilot.press("enter")
+            await until(lambda: bool(dispatched) or _refused(notices))
+            assert _named(dispatched, a, b) == [("A", A_OWN + "x")]
+
+
+@pytest.mark.asyncio
+async def test_keys_typed_after_a_second_quick_tab_click_go_to_that_tab():
+    """FOLLOW-UP #3: click A, then C before A's activation has finished.
+
+    C's Pressed message waits behind A's activation on the screen, while the
+    keys typed after the click on C reach the composer, which is bound to A
+    by then. The click on C records the composer, so its activation moves
+    those keys to C and A keeps its own draft.
+    """
+    host = _host()
+    async with _running(host) as pilot:
+        chats = await _two_chats(host, pilot)
+        console, store, a, b = (
+            chats.console,
+            chats.store,
+            chats.a,
+            chats.b,
+        )
+        c = _add_chat(store, b, "Chat C", "c-own:")
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(console, pilot, f"#console-session-tab-{c.id}")
+        await pilot.pause()
+        dispatched = _record_dispatch(console)
+        held = _hold_activation(console)
+        _click(host, console.query_one(f"#console-session-tab-{a.id}"))
+        await until(held.entered.is_set)
+        # No pause: the keys are queued to the app right behind the click.
+        _click(host, console.query_one(f"#console-session-tab-{c.id}"))
+        for key in ("h", "i"):
+            press(host, key, key)
+        await asyncio.sleep(0.2)
+
+        held.release.set()
+        await until(lambda: store.active_session_id == c.id)
+        await _sync_idle(console)
+        await pilot.pause()
+        await pilot.press("enter")
+        await until(lambda: bool(dispatched))
+        names = {a.id: "A", b.id: "B", c.id: "C"}
+        assert {
+            "A stored draft": store.session_draft(a.id),
+            "B stored draft": store.session_draft(b.id),
+            "dispatched": [(names.get(sid, sid), text) for sid, text in dispatched],
+        } == {
+            "A stored draft": A_OWN,
+            "B stored draft": B_LEFTOVER,
+            "dispatched": [("C", "c-own:hi")],
+        }
+
+
+@pytest.mark.asyncio
+async def test_send_refuses_when_the_composer_chat_is_off_screen_after_two_switches():
+    """MINOR #5: B bound, A painted, then a second unbound switch to D.
+
+    Nothing shows D yet, but the composer's chat B is not on screen either:
+    A is. Sending would put B's draft into B while A is shown.
+    """
+    host = _host()
+    async with _running(host) as pilot:
+        chats = await _two_chats(host, pilot)
+        console, composer, store, a, b = (
+            chats.console,
+            chats.composer,
+            chats.store,
+            chats.a,
+            chats.b,
+        )
+        dispatched = _record_dispatch(console)
+        notices = _record_notices(console)
+        held_pass = await _store_moves_to_a_while_a_pass_is_held(console, store, a)
+        held_pass.release.set()
+        await _sync_idle(console)
+        await pilot.pause()
+        assert _active_tabs(console) == [a.id]
+        assert console._console_visible_draft_session_id == b.id
+        d = _add_chat(store, b, "Chat D", "d-own:")
+        store.switch_session(d.id)
+
+        await pilot.press("enter")
+        await until(lambda: bool(dispatched) or _refused(notices))
+        assert {
+            "dispatched": _named(dispatched, a, b),
+            "composer": composer.draft_text(),
+            "refused": _refused(notices),
+        } == {"dispatched": [], "composer": B_LEFTOVER, "refused": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "button_id", ["close-a", "console-new-chat-tab", "console-new-temporary-tab"]
+)
+async def test_pressing_tab_strip_buttons_leaves_the_keyboard_in_the_composer(
+    button_id,
+):
+    """MINOR #8: the tab ✕, "New tab" and "Temporary" keep the keyboard too.
+
+    A mouse-down on any of them moved focus off the composer, so a "y" typed
+    straight after it opened Trace.
+    """
+    host = _host()
+    async with _running(host) as pilot:
+        chats = await _two_chats(host, pilot)
+        console, composer, a = chats.console, chats.composer, chats.a
+        traces = _record_trace_opens(console)
+        if button_id == "close-a":
+            button_id = f"console-close-session-tab-{a.id}"
+        button = console.query_one(f"#{button_id}")
+        event = events.MouseDown(
+            **_get_mouse_message_arguments(button, (1, 0), button=1)
+        )
+        event.set_sender(host)
+        host._driver.send_message(event)
+        await pilot.pause()
+        focused = console.app.focused
+        press(host, "y", "y")
+        await pilot.pause()
+        assert {
+            "focused": getattr(focused, "id", focused),
+            "trace opened": traces,
+            "composer": composer.draft_text(),
+        } == {
+            "focused": "console-native-composer",
+            "trace opened": [],
+            "composer": B_LEFTOVER + "y",
+        }
+
+
+@pytest.mark.asyncio
+async def test_an_activation_that_loses_authority_after_switching_asks_for_a_repaint():
+    """MINOR #7: the switch and bind happen before the read-visit await.
+
+    An archive resume that loses its claim during that await stops, but the
+    store has switched and the composer is bound, so the next sync pass must
+    repaint the tabs and transcript instead of leaving the old chat shown.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+
+    allowed = True
+    store = SimpleNamespace(active_session_id="old")
+    controller = SimpleNamespace(
+        store=store,
+        switch_session=Mock(
+            side_effect=lambda sid: setattr(store, "active_session_id", sid)
+        ),
+    )
+
+    async def visit(claim):
+        nonlocal allowed
+        await asyncio.sleep(0)
+        allowed = False
+
+    fake = SimpleNamespace(
+        _claim_manual_read_visit=Mock(return_value=None),
+        _read_claimed_visit=AsyncMock(side_effect=visit),
+        _bind_composer_to_active_session=Mock(),
+        complete_manual_read_visit=Mock(),
+        _screen=SimpleNamespace(_console_sync_requested=False),
+        _ensure_console_chat_controller=lambda: controller,
+        _hide_console_activity_notice=Mock(),
+        _capture_console_draft_switch_snapshot=Mock(),
+        _note_console_follow_intent=Mock(),
+        _set_active_workspace_for_session=Mock(),
+        _refresh_console_effective_scope_and_sync=AsyncMock(),
+        _sync_native_console_chat_ui=AsyncMock(),
+        _focus_console_composer_if_needed=Mock(),
+        _console_tab_click_snapshot=None,
+    )
+    await ConsoleSessionController._activate_native_console_session(
+        fake, "session-a", activate_if=lambda: allowed
+    )
+    assert {
+        "switched": store.active_session_id,
+        "bound": fake._bind_composer_to_active_session.call_count,
+        "synced inline": fake._sync_native_console_chat_ui.await_count,
+        "repaint requested": fake._screen._console_sync_requested,
+    } == {
+        "switched": "session-a",
+        "bound": 1,
+        "synced inline": 0,
+        "repaint requested": True,
+    }
