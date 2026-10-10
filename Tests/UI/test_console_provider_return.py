@@ -560,6 +560,16 @@ def _fully_on_screen(screen, widget) -> bool:
     return placed is not None and placed[1].contains_region(placed[0])
 
 
+def _editing_the_endpoint(app, settings) -> bool:
+    """Whether the endpoint editor's URL field holds focus and is painted.
+
+    The field sits in the Custom endpoints disclosure, which is closed until
+    the Edit button opens it: the id alone would also pass on a field nobody
+    sees."""
+    on_url = getattr(app.focused, "id", None) == "settings-cep-edit-url"
+    return on_url and _fully_on_screen(settings, app.focused)
+
+
 def _cloud_app(monkeypatch, **saved):
     """The real app on its scratch profile: OpenAI is the default, keyless.
 
@@ -1141,8 +1151,8 @@ async def test_a_route_whose_named_field_is_disabled_arrives_where_it_can_act(
             await pilot.press("enter")
             await _until(
                 pilot,
-                lambda: getattr(app.focused, "id", None) == "settings-cep-edit-url",
-                "the Custom endpoints editor to open on the endpoint's URL",
+                lambda: _editing_the_endpoint(app, settings),
+                "the Custom endpoints editor to open on the endpoint's URL, painted",
             )
             return
         assert target is not None and target.field == "api_key"
@@ -1203,13 +1213,15 @@ async def test_a_custom_endpoint_row_that_names_no_field_arrives_where_it_can_ac
 
     With its entry in place focus goes to Edit this endpoint in Custom
     endpoints, and Enter there opens the editor. With the entry gone that
-    button is hidden, and focus goes to the Provider control, where another
-    provider is chosen: Enter there does nothing until its list is open.
+    button is hidden, and focus goes to the Provider control: Enter there does
+    nothing until its list is open. The deleted id is the saved default here,
+    so the route ends when another provider is chosen and saved.
 
-    The landing must be painted. Focus also lands on a widget inside a hidden
-    row (Textual's focusable does not read an ancestor's display), and the
-    Select that backs the Provider control is one: its id took focus, Enter
-    opened a list nobody saw, and Down then Enter picked a provider blind."""
+    Each landing must be painted, the editor's URL field too. Focus also lands
+    on a widget inside a hidden row (Textual's focusable does not read an
+    ancestor's display), and the Select that backs the Provider control is
+    one: its id took focus, Enter opened a list nobody saw, and Down then
+    Enter picked a provider blind."""
     saved, action, arrives_on = _CUSTOM_ENDPOINT_ROWS[row]
     provider = saved["chat_defaults"]["provider"]
     app = _cloud_app(monkeypatch, **saved)
@@ -1278,20 +1290,40 @@ async def test_a_custom_endpoint_row_that_names_no_field_arrives_where_it_can_ac
         if row == "no-models":
             await _until(
                 pilot,
-                lambda: getattr(app.focused, "id", None) == "settings-cep-edit-url",
-                "the Custom endpoints editor to open on the endpoint's URL",
+                lambda: _editing_the_endpoint(app, settings),
+                "the Custom endpoints editor to open on the endpoint's URL, painted",
             )
             return
         # Enter chooses only from the open list: no Home, and nothing edited.
         await pilot.pause()
         assert app.screen is settings and app.focused.id == arrives_on
-        assert not settings._category_has_unsaved_changes(
-            settings._active_category_id()
-        )
+        category = settings._active_category_id()
+        assert not settings._category_has_unsaved_changes(category)
         providers = settings.query_one("#settings-provider-picker")
         assert not providers.display
         await pilot.press("down")
         await _until(pilot, lambda: providers.display, "the Provider list to open")
+        # The route ends where another provider is chosen, not at the open list.
+        await pilot.press(*"OpenAI")
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                settings._provider_widget_value() == "openai"
+                and settings._category_has_unsaved_changes(category)
+            ),
+            "OpenAI to be the chosen provider, as an unsaved edit",
+        )
+        await pilot.press("escape")  # leave the control, so s is Save
+        await pilot.press("s")
+        await _until(
+            pilot,
+            lambda: (
+                _saved_config()["chat_defaults"]["provider"] == "openai"
+                and not settings._category_has_unsaved_changes(category)
+            ),
+            "the saved default to be OpenAI, with nothing left unsaved",
+        )
 
 
 @pytest.mark.asyncio

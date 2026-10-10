@@ -448,8 +448,11 @@ buttons described below ever shows for one. On each of these routes focus
 starts on **Edit this endpoint in Custom endpoints**, and **Enter** there opens
 the entry's editor with focus on its **Endpoint**. When the endpoint is fixed,
 go back to the Console yourself. If the entry was deleted, the row still opens
-Settings but that button is hidden: focus starts on **Provider**, where you
-choose another provider.
+Settings but that button is hidden, and focus starts on **Provider**. If the
+deleted endpoint is your saved default, choose another provider there and
+save. If instead the chat keeps its own settings on it while the default is
+another provider, nothing on this page changes that chat: go back to the
+Console and move the chat to another model in Switch model (**Alt+M**).
 
 From Chat settings nothing shows until you save; the button then reads **Return
 to Chat settings** and reopens the dialog with your unsaved edits. From the
