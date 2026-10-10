@@ -17940,6 +17940,7 @@ class ChatScreen(BaseAppScreen):
                 and not self._console_transcript_poll_asked
                 and not self._console_transcript_poll_needed()
             ):
+                config_sync.settle_stopped_poll(self, _console_screen_is_torn_down)
                 # TASK-251: the run just left an active status -- invalidate
                 # so the finalized conversation's title/timestamps appear in
                 # the browser promptly instead of waiting out the TTL.

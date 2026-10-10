@@ -10,9 +10,10 @@ busiest seconds, while input waited.
 
 The poll now runs them only when an input changed (the installed config or
 settings, the config selector, a local storage pause, the active chat, a run
-state) or an explicit sync asked, and during a run at least once a second as
-a backstop. When it runs, it runs as before: same locks, same refusal and
-deferral during a local storage pause.
+state) or an explicit sync asked, and at least once a second as a backstop
+while it ticks (only while run work is live); when the poll stops itself on
+a skipped tick, the stop renders. When it runs, it runs as before: same
+locks, same refusal and deferral during a local storage pause.
 
 These tests drive the real ChatScreen poll callback (the timer's own
 coroutine) on the mounted send harness and count, per tick, the calls into
@@ -181,7 +182,12 @@ async def _held_run(host, pilot, gateway):
 async def test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_run(
     monkeypatch,
 ):
-    """(a) unchanged ticks skip it; (c) the backstop runs during a run only."""
+    """(a) unchanged ticks skip it; (c) the backstop, in a run and its tail; (e) stop.
+
+    The poll ticks only while run work is live, which outlasts the run
+    status; ticks in that tail get the backstop too, and the tick on which
+    the poll stops itself leaves the controls rendered.
+    """
     from tldw_chatbook.UI.Console_Modules import config_sync
 
     clock = _Clock()
@@ -220,17 +226,48 @@ async def test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_ru
                 gateway.validation_release.set()
             await _run_over(console)
 
-            # (a) Outside a run there is no backstop: only a change projects.
+            # (c) The run's tail: its status is terminal, but the poll still
+            # ticks (a custodied turn, a wake delivery, a finishing run
+            # worker). Unchanged ticks skip; the backstop still runs.
             tick = _Poll(console)
-            await _explicit_sync(console, seen)
-            idle = seen.calls
-            clock.now += 10.0
-            for _ in range(3):
-                await tick()
-            tick.release()
-            assert seen.calls == idle, (
-                f"{seen.calls - idle} checked config operations in 3 idle ticks"
+            console._console_transcript_poll_needed = lambda: True
+            try:
+                await _explicit_sync(console, seen)
+                tail = seen.calls
+                for _ in range(3):
+                    await tick()
+                assert seen.calls == tail, (
+                    f"{seen.calls - tail} checked config operations in 3 "
+                    "unchanged ticks of the run's tail"
+                )
+                await tick.right_after(lambda: setattr(clock, "now", clock.now + 1.0))
+                assert seen.calls == tail + 1, "no backstop in the run's tail"
+            finally:
+                del console._console_transcript_poll_needed
+
+            # (e) The poll stops itself on a tick that skips (nothing moved
+            # within the second); the stop renders what it skipped, so the
+            # Console is left as current as an always-rendering last tick
+            # left it.
+            await until(
+                lambda: not console._console_transcript_poll_needed(), timeout=30
             )
+            stops: list[None] = []
+            stop = console._stop_console_transcript_sync_timer
+            console._stop_console_transcript_sync_timer = lambda: (
+                stops.append(None),
+                stop(),
+            )
+            try:
+                before = (seen.calls, seen.renders)
+                await tick()
+                assert stops, "the poll did not stop itself"
+                assert (seen.calls, seen.renders) == (before[0] + 1, before[1] + 1), (
+                    "the stopping poll's last tick left the controls unrendered"
+                )
+            finally:
+                del console._stop_console_transcript_sync_timer
+                tick.release()
 
 
 @pytest.mark.asyncio
@@ -308,6 +345,10 @@ async def test_a_local_storage_pause_still_defers_the_tick_projection(monkeypatc
         with eager_tasks():
             console, _composer = await ready_console(host, pilot, gateway)
             tick = _Poll(console)
+            # A live poll (it would stop itself, and settle, with no run work).
+            monkeypatch.setattr(
+                console, "_console_transcript_poll_needed", lambda: True
+            )
             seen = _Projections(monkeypatch, console)
             await _explicit_sync(console, seen)
             for _ in range(3):
@@ -328,7 +369,9 @@ async def test_a_local_storage_pause_still_defers_the_tick_projection(monkeypatc
                 tick.release()
             rendered = seen.renders_anywhere
             await until(
-                lambda: seen.renders_anywhere > rendered
-                and not console._console_control_bar_replay_whole_sync,
+                lambda: (
+                    seen.renders_anywhere > rendered
+                    and not console._console_control_bar_replay_whole_sync
+                ),
                 timeout=30,
             )

@@ -3,7 +3,8 @@
 TASK-33620.15.1 (owner decision 2026-10-09). The 0.2 s poll runs the
 config-dependent projections (rail state, settings summary, control bar) only
 when one of their inputs changed since the last projection, when an explicit
-sync asked, or once a second during a run. Each input here is changed alone
+sync asked, or once a second while the poll ticks; a poll stopping on a
+skipped tick renders at the stop. Each input here is changed alone
 and must cause exactly one projection on the next poll tick, and none on the
 tick after it. The mounted counterpart, over the real ChatScreen poll, is
 ``test_console_config_sync_cadence.py``.
@@ -49,6 +50,11 @@ class _Screen:
         self.active = False
         self.projections = 0
         self.result: bool | Exception = True
+        self.torn_down = False
+        self._console_sync_in_progress = False
+        self._console_sync_maintenance_paused = False
+        self._console_control_bar_replay_whole_sync = False
+        self._console_sync_requested = False
 
     def _console_run_active(self) -> bool:
         return self.active
@@ -196,7 +202,9 @@ def test_the_poll_mark_does_not_reach_work_its_sync_starts(clock):
 
     async def spawning_sync() -> None:
         config_sync.begin_console_sync(screen)
-        started.append(asyncio.ensure_future(_Screen._sync_native_console_chat_ui(screen)))
+        started.append(
+            asyncio.ensure_future(_Screen._sync_native_console_chat_ui(screen))
+        )
         config_sync.project_console_tick(screen)
 
     async def run() -> None:
@@ -208,18 +216,31 @@ def test_the_poll_mark_does_not_reach_work_its_sync_starts(clock):
     assert screen.projections - projections_before == 1  # Only the spawned one.
 
 
-def test_the_backstop_runs_once_a_second_during_a_run_only(clock):
+def test_the_backstop_runs_once_a_second_on_every_poll_tick(clock):
+    """Every tick of the poll gets the backstop, not only an active status's.
+
+    The poll ticks only while run work is live, and that outlasts the run
+    statuses: a custodied turn, a wake delivery, a change-review publication
+    or a finishing run worker keep it ticking after the status went terminal.
+    Gating the backstop on the status left that tail rendering nothing that
+    is not an input (the cost chip, the Inspector) for as long as it lasted.
+    """
     screen = _settled(clock)
-    screen.active = True
-    assert _tick(screen) == 1  # A run started: a run-activity change.
+    # A finished run whose poll still ticks: no status is active.
+    screen._console_chat_controller.states["s1"] = ConsoleRunState(
+        ConsoleRunStatus.COMPLETED
+    )
+    assert _tick(screen) == 1  # The change itself.
     clock.now += 0.75
     assert _tick(screen) == 0
     clock.now += 0.25
-    assert _tick(screen) == 1
+    assert _tick(screen) == 1, "no backstop while the poll ticks after a run"
     assert _tick(screen) == 0
+    # A run going (viewed or background) keeps the same cadence.
+    screen.active = True
+    assert _tick(screen) == 1  # A run-activity change.
     clock.now += 1.0
     assert _tick(screen) == 1
-    # A background chat's run keeps the backstop too.
     screen.active = False
     screen._console_chat_controller.states["s2"] = ConsoleRunState(
         ConsoleRunStatus.STREAMING
@@ -227,13 +248,71 @@ def test_the_backstop_runs_once_a_second_during_a_run_only(clock):
     assert _tick(screen) == 1  # The change itself.
     clock.now += 1.0
     assert _tick(screen) == 1
-    # Outside any run there is no backstop.
-    screen._console_chat_controller.states["s2"] = ConsoleRunState(
-        ConsoleRunStatus.COMPLETED
-    )
-    assert _tick(screen) == 1
-    clock.now += 60.0
     assert _tick(screen) == 0
+
+
+def _stop(screen: _Screen) -> int:
+    """The poll stops itself; returns how many projections that ran."""
+    before = screen.projections
+    config_sync.settle_stopped_poll(screen, lambda s: s.torn_down)
+    return screen.projections - before
+
+
+def test_a_stopping_poll_renders_what_its_last_ticks_skipped(clock):
+    """The poll's last tick used to render; a skipped one is rendered at stop.
+
+    After the poll stops nothing renders until some other sync, so whatever
+    a skipped tick left unrendered (cost, Inspector, a late settings read)
+    would stay stale for as long as the Console sits idle.
+    """
+    screen = _settled(clock)  # Ends on three skipped ticks.
+    assert _stop(screen) == 1
+    assert _stop(screen) == 0, "settled twice"
+    assert _tick(screen) == 0
+    # A tick that rendered leaves nothing owed.
+    screen._console_chat_store.active_session_id = "s2"
+    assert _tick(screen) == 1
+    assert _stop(screen) == 0
+    # As does an explicit sync after a skipped tick.
+    assert _tick(screen) == 0
+    assert _explicit(screen) == 1
+    assert _stop(screen) == 0
+
+
+def test_a_stopping_poll_leaves_an_owed_render_to_the_sync_that_owns_it(clock):
+    """A running sync, a pending replay or a pause owns the render; no second one."""
+    screen = _settled(clock)
+    screen._console_sync_in_progress = True  # It renders when it gets there.
+    assert _stop(screen) == 0
+    screen._console_sync_in_progress = False
+    screen._console_control_bar_replay_whole_sync = True  # The replay renders.
+    assert _stop(screen) == 0
+    screen._console_control_bar_replay_whole_sync = False
+    screen._console_sync_maintenance_paused = True  # The resume replays it.
+    assert _stop(screen) == 0
+    assert screen._console_sync_requested, "the pause's resume was not asked"
+    screen._console_sync_maintenance_paused = False
+    screen.torn_down = True
+    assert _stop(screen) == 0
+    screen.torn_down = False
+    assert _stop(screen) == 1  # Still owed: none of those rendered it.
+
+
+@pytest.mark.parametrize("outcome", [False, RuntimeError("render failed")])
+def test_a_deferred_or_failed_stop_render_stays_owed(clock, outcome):
+    """A deferral hands the render to the whole-sync replay, as a tick's does."""
+    screen = _settled(clock)
+    screen.result = outcome
+    if isinstance(outcome, Exception):
+        with pytest.raises(RuntimeError):
+            _stop(screen)
+    else:
+        assert _stop(screen) == 1
+        assert screen._console_control_bar_replay_whole_sync
+        screen._console_control_bar_replay_whole_sync = False
+    screen.result = True
+    assert _stop(screen) == 1
+    assert _stop(screen) == 0
 
 
 @pytest.mark.parametrize("outcome", [False, RuntimeError("render failed")])

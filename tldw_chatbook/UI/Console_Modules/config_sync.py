@@ -9,8 +9,9 @@ from contextlib import ExitStack
 from contextvars import ContextVar
 from typing import Any
 
-#: TASK-33620.15.1 (owner decision 2026-10-09): during a run, the poll's
-#: config projections run at least this often even when no input changed.
+#: TASK-33620.15.1 (owner decision 2026-10-09): while the poll ticks (it
+#: ticks only while run work is live), its config projections run at least
+#: this often even when no input changed.
 RUN_BACKSTOP_SECONDS = 1.0
 _clock = time.monotonic
 _POLL_TICK: ContextVar[bool] = ContextVar("console_poll_tick", default=False)
@@ -175,6 +176,7 @@ class _Cadence:
         self.objects: tuple = ()  # Compared by identity (and kept alive).
         self.values: tuple | None = None
         self.at = 0.0
+        self.owed = False  # A poll tick skipped since the last projection.
 
 
 def _cadence(screen: Any) -> _Cadence:
@@ -217,26 +219,22 @@ def begin_console_sync(screen: Any) -> None:
         _cadence(screen).requested += 1
 
 
-def _projection_inputs(screen: Any) -> tuple[tuple, tuple, bool]:
-    """What the tick's config projections read, cheaply; and whether a run is on.
+def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
+    """What the tick's config projections read, cheaply.
 
     Returns:
         Objects compared by identity (the installed config, settings and
-        persistence error: every install is a new object), values compared by
-        equality, and whether any chat has a run going (the backstop's gate).
+        persistence error: every install is a new object) and values compared
+        by equality.
     """
     from tldw_chatbook import config
     from tldw_chatbook.Backup_Recovery import storage_admission
-    from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
 
     store = getattr(screen, "_console_chat_store", None)
     controller = getattr(screen, "_console_chat_controller", None)
     session_id = getattr(store, "active_session_id", None)
     states = controller.run_states() if controller is not None else {}
     viewed_active = controller is not None and bool(screen._console_run_active())
-    run_active = viewed_active or any(
-        state.status in FEEDBACK_ACTIVE_RUN_STATUSES for state in states.values()
-    )
     approvals = (
         controller.pending_round_count(session_id or "")
         if controller is not None
@@ -256,34 +254,39 @@ def _projection_inputs(screen: Any) -> tuple[tuple, tuple, bool]:
         viewed_active,
         approvals,
     )
-    return objects, values, run_active
+    return objects, values
 
 
-def project_console_tick(screen: Any) -> bool:
+def project_console_tick(screen: Any, *, force: bool = False) -> bool:
     """Run the tick's checked config projections unless nothing they read moved.
 
     TASK-33620.15.1 (owner decision 2026-10-09): the 0.2 s poll paid one
     checked config operation per tick (median 6-10 ms, max 44-80 ms live,
     over half of it the operation's entry and exit) to re-render unchanged
     state. The projections now run when a sync other than the poll's asked,
-    when an input changed since the last projection, or once a second while
-    a run is going. When they run, ``_sync_console_rail_and_controls`` is
-    unchanged: same locks, refusal and deferral. A deferred or failed
-    projection records nothing, so the next tick tries again. A config file
-    edited outside the app is noticed by the projection's own config reads,
-    so during a run it reaches the controls about a second later than it
-    did; outside a run it waits for the next other sync or input change
-    (the poll itself stops once no run work is left).
+    when an input changed since the last projection, or at least once a
+    second while the poll ticks, which it does only while run work is live
+    (a run, and its tail: a custodied turn, a wake delivery, a review
+    publication, a finishing run worker); ``settle_stopped_poll`` renders
+    what a skipped last tick left. When they run,
+    ``_sync_console_rail_and_controls`` is unchanged: same locks, refusal and
+    deferral. A deferred or failed projection records nothing, so the next
+    tick tries again. Anything the projections show that is not an input (a
+    config file edited outside the app, the cost chip, the Inspector)
+    reaches the screen up to a second later than it did while the poll
+    ticks; when it does not tick there was no poll to render it before
+    either.
 
     Args:
         screen: The Console screen whose sync tick is running.
+        force: Run the projections even when nothing moved.
 
     Returns:
         False when the projection was deferred (the caller's existing replay
         owns it); True when it rendered or was not needed.
     """
     cadence = _cadence(screen)
-    objects, values, run_active = _projection_inputs(screen)
+    objects, values = _projection_inputs(screen)
     requested = cadence.requested
     unchanged = (
         requested == cadence.served
@@ -291,12 +294,40 @@ def project_console_tick(screen: Any) -> bool:
         and len(objects) == len(cadence.objects)
         and all(now is then for now, then in zip(objects, cadence.objects))
     )
-    if unchanged and not (
-        run_active and _clock() - cadence.at >= RUN_BACKSTOP_SECONDS
-    ):
+    if not force and unchanged and _clock() - cadence.at < RUN_BACKSTOP_SECONDS:
+        cadence.owed = True
         return True
     if screen._sync_console_rail_and_controls() is False:
         return False
     cadence.served = requested
     cadence.objects, cadence.values, cadence.at = objects, values, _clock()
+    cadence.owed = False
     return True
+
+
+def settle_stopped_poll(screen: Any, torn_down: Callable[[Any], bool]) -> None:
+    """Render, as the poll stops itself, what its skipped ticks left unrendered.
+
+    The poll's last tick used to render; once it stops nothing renders until
+    some other sync, so a skipped last tick would leave the controls as they
+    were up to a second before the run work ended, for as long as the
+    Console then sits idle. A running sync, a pending whole-sync replay or a
+    maintenance pause owns that render instead (the pause's resume replays a
+    requested sync), exactly as for a tick's own deferral.
+
+    Args:
+        screen: The Console screen whose poll is stopping itself.
+        torn_down: The screen's teardown predicate; a closing screen renders
+            nothing.
+    """
+    if not _cadence(screen).owed or torn_down(screen):
+        return
+    if getattr(screen, "_console_sync_maintenance_paused", False):
+        screen._console_sync_requested = True
+        return
+    if getattr(screen, "_console_sync_in_progress", False) or getattr(
+        screen, "_console_control_bar_replay_whole_sync", False
+    ):
+        return
+    if project_console_tick(screen, force=True) is False:
+        screen._console_control_bar_replay_whole_sync = True
