@@ -1,9 +1,9 @@
 ---
 id: TASK-34667
 title: Remove dead screen-level chat appliers overwritten by ensure_chat_controller
-status: Done
+status: In Progress
 created_date: 2026-10-09 06:27
-updated_date: 2026-10-10 04:52
+updated_date: 2026-10-10 04:53
 ---
 
 ## Description
