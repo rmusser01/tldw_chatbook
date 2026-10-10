@@ -51,7 +51,7 @@ assert not source.exists()""",
 _RETAIN_REOPEN = _replace(
     _REOPEN,
     "definitions = [",
-    "assert (data / 'eval_config.yaml').is_file()\n    definitions = [",
+    "assert len(receipt['eval_sources']) == 1\n    definitions = [",
 )
 
 

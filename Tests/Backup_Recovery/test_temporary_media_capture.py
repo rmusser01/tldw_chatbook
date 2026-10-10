@@ -309,7 +309,7 @@ def test_native_video_identity_reader_bounds_and_legacy_container(tmp_path, kind
 
 
 _PUBLIC = r"""
-import asyncio, json, os, sqlite3, sys, threading
+import asyncio, hashlib, json, os, sqlite3, sys, threading
 from pathlib import Path
 from Tests.network_guard import install, blocked_attempts
 install()
@@ -466,18 +466,19 @@ for row in doc.directories:
         mapping[row.logical_id] = destination / 'persona-assets' if owner == 'persona.visual_identity_builtin' else data / leaves[owner]
 mapping[f'profile:{profile}:paths.data_dir'] = destination / 'data'
 if second_cycle:
-    assert len(eval_roots) == 2
-    assert len({mapping[key] for key in eval_roots}) == 2
+    assert len(eval_roots) == len({f.root_id for f in doc.files if f.owner_id == 'eval.definitions'})
+    assert len({mapping[key] for key in eval_roots}) == len(eval_roots)
 plan = plan_restore(sealed, mode='isolated', destinations=mapping, target=None, profile_names={profile:'restored'})
 restored = restore_isolated(sealed, plan, home / 'control', Event())
 source.rename(source.with_name('source-home-removed'))
-(home / 'restored.json').write_text(json.dumps({'profile':restored,'source_profile':profile,'data':str(data)}))
+eval_sources = [{'path':str(dict(plan.restore)[f.logical_id]),'sha256':f.sha256} for f in doc.files if f.owner_id=='eval.definitions']
+(home / 'restored.json').write_text(json.dumps({'profile':restored,'source_profile':profile,'data':str(data),'eval_sources':eval_sources}))
 assert not blocked_attempts()
 print('retired and reopened')
 """
 
 _REOPEN = r"""
-import asyncio, json, os, sqlite3, sys, threading
+import asyncio, hashlib, json, os, sqlite3, sys, threading
 from pathlib import Path
 from Tests.network_guard import install, blocked_attempts
 install()
@@ -540,11 +541,15 @@ async def main():
     from tldw_chatbook.Evals import _override_config_path
     canonical = _override_config_path(selector)
     definitions = [i for i in preview.items if i.owner == 'eval.definitions' and i.status == 'included']
-    expected = {data/'eval_config.yaml'} if (data/'eval_config.yaml').is_file() else set()
+    retained_sources = {Path(row['path']):row['sha256'] for row in receipt['eval_sources']}
+    assert len(retained_sources) == len(receipt['eval_sources'])
+    for path, digest in retained_sources.items():
+        assert path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == digest
+    expected = set(retained_sources)
     if canonical.is_file():
         expected.add(canonical)
     assert {i.path for i in definitions} == expected
-    assert canonical != data/'eval_config.yaml'
+    assert canonical not in retained_sources
     canonical_rows = [i for i in preview.items if i.owner == 'eval.definitions' and i.path == canonical]
     assert len(canonical_rows) == 1
     assert canonical_rows[0].status == ('included' if canonical.is_file() else 'unused')
@@ -572,9 +577,11 @@ async def main():
                 assert deleted_asset+'.payload' not in {f['relative_path'] for f in members}
         assert captured.inventory.complete and manifest['consistency']=='coherent'
         retained = [f for f in manifest['files'] if f['owner_id']=='eval.definitions']
-        assert len(retained) == 2
-        for f in retained:
-            assert (captured.root/f['payload']).read_bytes() == (data/'eval_config.yaml').read_bytes()
+        expected_digests = list(retained_sources.values())
+        if canonical.is_file():
+            expected_digests.append(hashlib.sha256(canonical.read_bytes()).hexdigest())
+        assert len(retained) == len(expected_digests)
+        assert sorted(hashlib.sha256((captured.root/f['payload']).read_bytes()).hexdigest() for f in retained) == sorted(expected_digests)
         from tldw_chatbook.Backup_Recovery.archive_writer import write_archive
         for _ in range(500):
             if storage._pause is None and app._backup_runtime_maintenance is None:
