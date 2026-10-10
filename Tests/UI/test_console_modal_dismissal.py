@@ -24,7 +24,7 @@ from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
 )
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
 from tldw_chatbook.Chat.console_chat_models import ConsoleContextSnapshot
@@ -1930,6 +1930,10 @@ class _Task2Harness(ConsolidatedCSSApp):
 
 
 class _SettingsMROHarness(App[None]):
+    # TASK-33006.17: the Model view's row grammar lives in the app bundle
+    # since TASK-33006.1. Without it a field's label takes the whole row and
+    # every control sits one cell wide, outside the modal's right edge.
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]  # noqa: RUF012 - Textual reads a class-level list
     CSS = """
     ConsoleSettingsModal { align: center middle; }
     ConsoleSettingsModal #console-settings-modal { width: 100; height: 90%; }
