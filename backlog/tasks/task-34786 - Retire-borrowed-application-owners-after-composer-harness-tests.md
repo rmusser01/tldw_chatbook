@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-10 22:43'
-updated_date: '2026-10-10 22:44'
+updated_date: '2026-10-10 22:49'
 labels:
   - testing
   - console
@@ -38,5 +38,6 @@ Reason: repair a local test harness lifetime using established ownership APIs; n
 1. Preserve the 90-case FD warning and constructor/mounted controls identifying native owners retained after ConsoleHarness exits.
 2. Add one actual-owner resource regression that fails with the existing local _running teardown.
 3. Extend only the session-tab composer module teardown: release held gates, finish Textual shutdown, drain borrowed application owners, then call their existing public close/aclose routes before fixture profile cleanup.
-4. Verify the new regression and all 17 composer cases, static analysis and preflight; independently review the fixture change before publication.
+4. Append the resource regression node to the required UI census and raise its literal floor to179, preserving existing entries and shard placements.
+5. Verify the new regression and all17 composer cases, CI census contracts, static analysis and preflight; independently review the fixture and CI wiring before publication.
 <!-- SECTION:PLAN:END -->
