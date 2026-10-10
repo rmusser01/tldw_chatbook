@@ -5,7 +5,7 @@ Also decides how often the 0.2 s poll pays for it (TASK-33620.15.1).
 
 import time
 from collections.abc import Awaitable, Callable
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from contextvars import ContextVar
 from typing import Any
 
@@ -219,40 +219,108 @@ def begin_console_sync(screen: Any) -> None:
         _cadence(screen).requested += 1
 
 
+def _pending_rounds(store: Any, controller: Any) -> tuple:
+    """Every chat's outstanding interrupt rounds, by kind, and the fleet counts.
+
+    Approvals, questions and confirmations on any chat: the active chat's
+    show in the controls and Inspector, a background chat's in the Agent
+    rail's fleet line (``fleet_summary_counts``).
+    """
+    sessions = store.sessions() if store is not None else ()
+    rounds = tuple(
+        (session.id, kind, controller.pending_round_count(session.id, kind=kind))
+        for session in sessions
+        for kind in sorted(controller.pending_round_kinds(session.id))
+    )
+    return rounds, controller.fleet_summary_counts()
+
+
+def _cost_inputs(store: Any, controller: Any, agent: Any, session_id: str) -> tuple:
+    """What moves the cost chip: settled rows and usage, fleet spend, cache TTL.
+
+    Streaming rows are left out of the chip's total, so these move when a
+    row settles or usage lands (the display revision), not per chunk. The
+    cache TTL contributes its displayed second while warm.
+    """
+    warm_until, had_activity = controller.cache_ttl_snapshot(session_id)
+    remaining = None
+    if had_activity and warm_until is not None:
+        remaining = max(int(warm_until - time.monotonic()), -1)
+    return (
+        store.display_projection_revision(session_id),
+        store.payload_revision(session_id),
+        store.session_settings_revision(session_id),
+        agent._console_agent_fleet_token_total() if agent is not None else 0,
+        controller.unattributed_fleet_tokens(session_id),
+        had_activity,
+        remaining,
+    )
+
+
 def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
-    """What the tick's config projections read, cheaply.
+    """What the tick's projections read, cheaply, including what moves on its own.
+
+    Review round (2026-10-10): besides config, the projections render things
+    that change during a run with no sync asking -- the Agent rail's status,
+    step and fleet rows (elapsed time and token totals included), the cost
+    chip's running total, the readiness evidence and the tool counts. Those
+    are inputs too, as the text or counter the screen shows, so they keep
+    the parent's tick rate; only config-driven text waits for the backstop.
+    Public accessors only (a renamed private global must not reach a live
+    tick), except the installed config and settings, read by identity with
+    a default.
 
     Returns:
-        Objects compared by identity (the installed config, settings and
-        persistence error: every install is a new object) and values compared
-        by equality.
+        Objects compared by identity (the installed config and settings, the
+        dictionary and world-book summaries) and values compared by equality.
     """
     from tldw_chatbook import config
     from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.Chat.provider_test_evidence import shared_connection_evidence
 
     store = getattr(screen, "_console_chat_store", None)
     controller = getattr(screen, "_console_chat_controller", None)
+    agent = getattr(screen, "_agent", None)
+    app = getattr(screen, "app_instance", None)
     session_id = getattr(store, "active_session_id", None)
     states = controller.run_states() if controller is not None else {}
     viewed_active = controller is not None and bool(screen._console_run_active())
-    approvals = (
-        controller.pending_round_count(session_id or "")
-        if controller is not None
-        else 0
-    )
+    error = getattr(config, "_CONFIG_PERSISTENCE_ERROR", None)
+    evidence = shared_connection_evidence(lambda: screen.app)
+    run: tuple = ()
+    if controller is not None:
+        run = (_pending_rounds(store, controller),)
+        if session_id is not None:
+            run += (_cost_inputs(store, controller, agent, session_id),)
+    if agent is not None:
+        run += (
+            agent._console_agent_section_lines(),
+            agent._console_agent_fleet_rows(),
+        )
     objects = (
-        config._CONFIG_CACHE,
-        config._SETTINGS_CACHE,
-        config._CONFIG_PERSISTENCE_ERROR,
+        getattr(config, "_CONFIG_CACHE", None),
+        getattr(config, "_SETTINGS_CACHE", None),
+        getattr(screen, "_active_dictionaries_summary", None),
+        getattr(screen, "_active_world_books_summary", None),
     )
     values = (
-        config._CONFIG_GENERATION,
-        config._get_effective_config_path(),
-        storage_admission._pause is not None,
+        config.current_config_identity(),
+        None if error is None else (type(error).__name__, str(error)),
+        storage_admission.local_pause_active(),
         session_id,
         tuple(states.items()),
         viewed_active,
-        approvals,
+        tuple(
+            getattr(app, name, None)
+            for name in (
+                "console_tool_count",
+                "console_mcp_tool_count",
+                "console_mcp_not_connected_count",
+                "console_provider_ready",
+            )
+        ),
+        evidence.version if evidence is not None else None,
+        run,
     )
     return objects, values
 
@@ -271,11 +339,14 @@ def project_console_tick(screen: Any, *, force: bool = False) -> bool:
     what a skipped last tick left. When they run,
     ``_sync_console_rail_and_controls`` is unchanged: same locks, refusal and
     deferral. A deferred or failed projection records nothing, so the next
-    tick tries again. Anything the projections show that is not an input (a
-    config file edited outside the app, the cost chip, the Inspector)
-    reaches the screen up to a second later than it did while the poll
-    ticks; when it does not tick there was no poll to render it before
-    either.
+    tick tries again. What changes on its own during a run (the Agent rail,
+    the cost chip, readiness evidence, tool counts, pending rounds) is an
+    input, so it renders on the next tick as before. What reaches the
+    screen up to a second later is what the projections derive from config
+    that no input sees change: a config value read fresh inside them, and
+    the context estimate, which itself refreshes once a second while
+    streaming. When the poll does not tick there was no poll to render it
+    before either.
 
     Args:
         screen: The Console screen whose sync tick is running.
@@ -329,5 +400,9 @@ def settle_stopped_poll(screen: Any, torn_down: Callable[[Any], bool]) -> None:
         screen, "_console_control_bar_replay_whole_sync", False
     ):
         return
-    if project_console_tick(screen, force=True) is False:
+    workspace = getattr(screen, "_workspace", None)
+    scope = getattr(workspace, "tick_workspace_build_scope", nullcontext)
+    with scope():  # One workspace-context build, as on a tick.
+        projected = project_console_tick(screen, force=True)
+    if projected is False:
         screen._console_control_bar_replay_whole_sync = True

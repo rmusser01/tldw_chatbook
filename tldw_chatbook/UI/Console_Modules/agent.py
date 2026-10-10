@@ -1250,7 +1250,9 @@ class ConsoleAgentController:
         sub-agent, that run's durable record) via the Console agent bridge --
         the same bridge whose ``AgentRunsDB`` backs resume re-derivation, so
         this always reflects the latest known state without any extra event
-        plumbing (the 0.2s Console poll re-calls this on every tick).
+        plumbing: every 0.2s poll tick reads this (with the fleet rows) as a
+        projection input and re-renders the rail on the tick it changes
+        (``config_sync._projection_inputs``, TASK-33620.15.1).
 
         Finding B: none of this text is escaped -- every string returned
         here is rendered into a ``markup=False`` Static (see the compose

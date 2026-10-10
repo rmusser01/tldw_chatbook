@@ -119,6 +119,13 @@ class _Poll:
     No tick runs that the test did not ask for: the timer is stopped and
     restarting it is suppressed until ``release`` hands it back (the
     transcript only paints a reply through it).
+
+    Nor does any sync the app starts from another task (a worker, a replay,
+    the send path), until ``unhold`` or ``release``: those share the
+    cadence's state with the test's ticks, and one landing between two
+    counted ticks resets when the last projection ran and what it saw, so a
+    loaded runner could move a backstop count (review MINOR 6). Held syncs
+    are dropped and counted in ``dropped``.
     """
 
     def __init__(self, console) -> None:
@@ -129,6 +136,17 @@ class _Poll:
         self._poll = timer._callback
         console._stop_console_transcript_sync_timer()
         console._start_console_transcript_sync_timer = lambda: None
+        owner = asyncio.current_task()
+        real = console._sync_native_console_chat_ui
+        self.dropped = 0
+
+        async def held() -> None:
+            if asyncio.current_task() is owner:
+                await real()
+            else:
+                self.dropped += 1
+
+        console._sync_native_console_chat_ui = held
 
     async def __call__(self) -> None:
         await _settle(self.console)
@@ -149,7 +167,12 @@ class _Poll:
         await self._poll()
         return result
 
+    def unhold(self) -> None:
+        """Let syncs the app starts from other tasks run again."""
+        vars(self.console).pop("_sync_native_console_chat_ui", None)
+
     def release(self) -> None:
+        self.unhold()
         del self.console._start_console_transcript_sync_timer
         self.console._start_console_transcript_sync_timer()
 
@@ -357,6 +380,8 @@ async def test_a_local_storage_pause_still_defers_the_tick_projection(monkeypatc
                 f"{seen.calls - 1} checked config operations in 3 unchanged ticks"
             )
             assert not console._console_control_bar_replay_whole_sync
+            # The pause half needs the app's own delayed replay to run.
+            tick.unhold()
             pause = await tick.right_after(storage_admission._begin_local_pause)
             try:
                 assert (seen.calls, seen.deferred, seen.renders) == (2, 1, 1)
@@ -375,3 +400,99 @@ async def test_a_local_storage_pause_still_defers_the_tick_projection(monkeypatc
                 ),
                 timeout=30,
             )
+
+
+@pytest.mark.asyncio
+async def test_agent_progress_and_cost_total_project_on_the_next_tick(monkeypatch):
+    """What changes on its own during a run keeps the parent's tick rate.
+
+    Review round (2026-10-10): the Agent rail's status and step lines and
+    the cost chip's running total render only inside these projections, so
+    a skipped tick left them up to a second late. Both are inputs now. The
+    clock stands still, so only the change itself can project.
+    """
+    from tldw_chatbook.UI.Console_Modules import config_sync
+
+    monkeypatch.setattr(config_sync, "_clock", _Clock(), raising=False)
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console = await _held_run(host, pilot, gateway)
+            tick = _Poll(console)
+            seen = _Projections(monkeypatch, console)
+            agent = console._agent
+            try:
+                await _explicit_sync(console, seen)
+                await tick()
+                assert seen.calls == 1, "an unchanged tick projected"
+
+                # A step: the bridge publishes the run's next step. The send
+                # harness has no agent bridge, so the rail's own reader
+                # answers what a published step would make it show.
+                step = ("Agent: running · step 2", "· ⚙ web_search", "")
+                await tick.right_after(
+                    lambda: monkeypatch.setattr(
+                        agent, "_console_agent_section_lines", lambda: step
+                    )
+                )
+                assert seen.calls == 2, "an Agent rail step change waited"
+                await tick()
+                assert seen.calls == 2
+
+                # The running total: a sub-agent bills tokens.
+                monkeypatch.setattr(
+                    agent, "_console_agent_fleet_token_total", lambda: 1_204
+                )
+                await tick()
+                assert seen.calls == 3, "a cost-total change waited"
+                await tick()
+                assert (seen.calls, seen.renders) == (3, 3)
+            finally:
+                tick.release()
+                gateway.validation_release.set()
+            await _run_over(console)
+
+
+@pytest.mark.asyncio
+async def test_a_skipped_tick_under_a_native_pause_request_runs_its_later_steps_safely(
+    monkeypatch,
+):
+    """A tick that skips the projection still runs the sync's later steps.
+
+    The parent's tick always entered the checked operation first, so a
+    pause requested by another process refused it at entry and the sync
+    returned before its later steps. A skipped tick runs them with no
+    operation around them. They read only warm state: no raw-participant
+    scope (the only place a native pause request refuses) is entered, so
+    nothing raises. A local pause or a config cache miss are inputs, so
+    those ticks still attempt (and defer) the projection as before.
+    """
+    from tldw_chatbook.Backup_Recovery import admission
+    from tldw_chatbook.UI.Console_Modules import config_sync
+
+    monkeypatch.setattr(config_sync, "_clock", _Clock(), raising=False)
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console = await _held_run(host, pilot, gateway)
+            tick = _Poll(console)
+            seen = _Projections(monkeypatch, console)
+            try:
+                await _explicit_sync(console, seen)
+                probes: list[tuple[str, ...]] = []
+
+                def requested(self, names):
+                    probes.append(names)
+                    return True  # Another process asked to pause storage.
+
+                monkeypatch.setattr(admission.Admission, "pause_requested", requested)
+                # The heaviest later path: re-render the transcript (receipts).
+                console._last_native_transcript_refresh_key = None
+                await tick()
+                assert seen.calls == 1, "the tick did not skip"
+                assert probes == [], f"later steps entered {len(probes)} scopes"
+            finally:
+                monkeypatch.undo()
+                tick.release()
+                gateway.validation_release.set()
+            await _run_over(console)

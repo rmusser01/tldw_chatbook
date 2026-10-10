@@ -16,6 +16,9 @@ console_chat_ui`` runs, so these tests read the decision alone, fast.
 from __future__ import annotations
 
 import asyncio
+import gc
+import weakref
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -32,21 +35,84 @@ pytestmark = pytest.mark.bootstrap_profile
 class _Controller:
     def __init__(self) -> None:
         self.states: dict[str, ConsoleRunState] = {}
-        self.pending = 0
+        self.rounds: dict[str, dict[str, int]] = {}  # session -> kind -> count
+        self.fleet = (0, 0)
+        self.unattributed = 0
+        self.ttl: tuple[float | None, bool] = (None, False)
 
     def run_states(self) -> dict[str, ConsoleRunState]:
         return dict(self.states)
 
-    def pending_round_count(self, session_id: str) -> int:
-        return self.pending
+    def pending_round_kinds(self, session_id: str) -> frozenset[str]:
+        return frozenset(k for k, n in self.rounds.get(session_id, {}).items() if n)
+
+    def pending_round_count(self, session_id: str, *, kind: str = "approval") -> int:
+        return self.rounds.get(session_id, {}).get(kind, 0)
+
+    def fleet_summary_counts(self) -> tuple[int, int]:
+        return self.fleet
+
+    def unattributed_fleet_tokens(self, session_id: str) -> int:
+        return self.unattributed
+
+    def cache_ttl_snapshot(self, session_id: str) -> tuple[float | None, bool]:
+        return self.ttl
+
+
+class _Store:
+    def __init__(self) -> None:
+        self.active_session_id = "s1"
+        self.session_ids = ["s1", "s9"]
+        self.display = self.payload = self.settings = 0
+
+    def sessions(self) -> list:
+        return [SimpleNamespace(id=session_id) for session_id in self.session_ids]
+
+    def display_projection_revision(self, session_id: str) -> int:
+        return self.display
+
+    def payload_revision(self, session_id: str) -> int:
+        return self.payload
+
+    def session_settings_revision(self, session_id: str) -> int:
+        return self.settings
+
+
+class _Agent:
+    """What the Agent rail shows: its lines, fleet rows and fleet tokens."""
+
+    def __init__(self) -> None:
+        self.lines = ("Agent: running · step 1", "· Thinking…", "")
+        self.rows: tuple = ()
+        self.tokens = 0
+
+    def _console_agent_section_lines(self) -> tuple[str, str, str]:
+        return self.lines
+
+    def _console_agent_fleet_rows(self) -> tuple:
+        return self.rows
+
+    def _console_agent_fleet_token_total(self) -> int:
+        return self.tokens
 
 
 class _Screen:
     """Runs the sync's two cadence hooks around a counted projection."""
 
     def __init__(self) -> None:
-        self._console_chat_store = SimpleNamespace(active_session_id="s1")
+        self._console_chat_store = _Store()
         self._console_chat_controller = _Controller()
+        self._agent = _Agent()
+        self.app_instance = SimpleNamespace(
+            console_tool_count=0,
+            console_mcp_tool_count=None,
+            console_mcp_not_connected_count=0,
+            console_provider_ready=None,
+        )
+        self._active_dictionaries_summary = None
+        self._active_world_books_summary = None
+        self.scopes = 0
+        self._workspace = SimpleNamespace(tick_workspace_build_scope=self._scope)
         self.active = False
         self.projections = 0
         self.result: bool | Exception = True
@@ -59,8 +125,17 @@ class _Screen:
     def _console_run_active(self) -> bool:
         return self.active
 
+    @contextmanager
+    def _scope(self):
+        self.scopes += 1
+        try:
+            yield
+        finally:
+            self.scopes -= 1
+
     def _sync_console_rail_and_controls(self) -> bool:
         self.projections += 1
+        self.scoped = self.scopes > 0
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -151,7 +226,80 @@ def _run_activity(monkeypatch, screen):
 
 
 def _approval(monkeypatch, screen):
-    screen._console_chat_controller.pending = 1
+    screen._console_chat_controller.rounds["s1"] = {"approval": 1}
+
+
+# Review round (2026-10-10): what the projections show that changes on its
+# own during a run, and every pending round on every chat.
+def _question_round(monkeypatch, screen):
+    screen._console_chat_controller.rounds["s1"] = {"question": 1}
+
+
+def _background_chat_round(monkeypatch, screen):
+    screen._console_chat_controller.rounds["s9"] = {"approval": 1}
+
+
+def _fleet_counts(monkeypatch, screen):
+    screen._console_chat_controller.fleet = (1, 1)
+
+
+def _agent_step(monkeypatch, screen):
+    screen._agent.lines = ("Agent: running · step 2", "· ⚙ web_search", "")
+
+
+def _fleet_row_progress(monkeypatch, screen):
+    screen._agent.rows = (("child-1", "running · 3s", "1,204 tokens"),)
+
+
+def _fleet_tokens(monkeypatch, screen):
+    screen._agent.tokens = 1_204
+
+
+def _usage_landed(monkeypatch, screen):
+    screen._console_chat_store.display += 1
+
+
+def _payload_changed(monkeypatch, screen):
+    screen._console_chat_store.payload += 1
+
+
+def _session_settings(monkeypatch, screen):
+    screen._console_chat_store.settings += 1
+
+
+def _unattributed_tokens(monkeypatch, screen):
+    screen._console_chat_controller.unattributed = 40
+
+
+def _cache_warmed(monkeypatch, screen):
+    import time
+
+    screen._console_chat_controller.ttl = (time.monotonic() + 300, True)
+
+
+def _tool_count(monkeypatch, screen):
+    screen.app_instance.console_tool_count = 7
+
+
+def _mcp_tool_count(monkeypatch, screen):
+    screen.app_instance.console_mcp_tool_count = 3
+
+
+def _provider_ready(monkeypatch, screen):
+    screen.app_instance.console_provider_ready = False
+
+
+def _connection_evidence(monkeypatch, screen):
+    from tldw_chatbook.Chat import provider_test_evidence
+
+    evidence = SimpleNamespace(version=5)
+    monkeypatch.setattr(
+        provider_test_evidence, "shared_connection_evidence", lambda app: evidence
+    )
+
+
+def _dictionaries_summary(monkeypatch, screen):
+    screen._active_dictionaries_summary = object()
 
 
 @pytest.mark.parametrize(
@@ -168,6 +316,22 @@ def _approval(monkeypatch, screen):
         _background_run_state,
         _run_activity,
         _approval,
+        _question_round,
+        _background_chat_round,
+        _fleet_counts,
+        _agent_step,
+        _fleet_row_progress,
+        _fleet_tokens,
+        _usage_landed,
+        _payload_changed,
+        _session_settings,
+        _unattributed_tokens,
+        _cache_warmed,
+        _tool_count,
+        _mcp_tool_count,
+        _provider_ready,
+        _connection_evidence,
+        _dictionaries_summary,
     ],
 )
 def test_each_input_change_is_one_projection_on_the_next_tick(
@@ -340,4 +504,62 @@ def test_a_screen_without_a_chat_controller_still_projects(clock):
     screen._console_chat_store = None
     screen._console_chat_controller = None
     assert _explicit(screen) == 1
+    assert _tick(screen) == 0
+
+
+def test_a_live_elapsed_counter_projects_once_per_displayed_second(clock):
+    """A running sub-agent's elapsed text is an input: each new second projects.
+
+    The rows carry the text the rail shows; between two displayed seconds
+    nothing projects, as the parent's re-render of identical text showed
+    nothing new.
+    """
+    screen = _settled(clock)
+    for second in (1, 2, 3):
+        screen._agent.rows = (("child-1", f"running · {second}s", "10 tokens"),)
+        assert _tick(screen) == 1, f"elapsed {second}s did not project"
+        assert _tick(screen) == 0
+
+
+def test_the_stop_render_runs_inside_the_tick_workspace_build_scope(clock):
+    """Like the tick's own projection, so it shares one workspace build."""
+    screen = _settled(clock)
+    screen.scoped = None
+    assert _stop(screen) == 1
+    assert screen.scoped is True
+
+
+def test_the_cadence_keeps_no_persistence_error_object_alive(clock):
+    """A failure (and its traceback) is not held by the last projection's inputs.
+
+    Assigned directly, not through ``monkeypatch``: its undo stack would hold
+    the replaced value itself.
+    """
+
+    class _WriteFailed(Exception):
+        pass
+
+    screen = _settled(clock)
+    original = config._CONFIG_PERSISTENCE_ERROR
+    try:
+        error = _WriteFailed("write failed")
+        config._CONFIG_PERSISTENCE_ERROR = error
+        assert _tick(screen) == 1
+        witness = weakref.ref(error)
+        config._CONFIG_PERSISTENCE_ERROR = None
+        del error
+        gc.collect()
+        assert witness() is None, "the cadence kept the persistence error alive"
+        assert _tick(screen) == 1  # The error clearing is itself a change.
+    finally:
+        config._CONFIG_PERSISTENCE_ERROR = original
+
+
+def test_the_inputs_read_the_public_config_and_pause_accessors(clock, monkeypatch):
+    """Renaming a private global must not reach a live tick (review MINOR 3)."""
+    screen = _settled(clock)
+    monkeypatch.setattr(config, "current_config_identity", lambda: (99, "/x.toml"))
+    assert _tick(screen) == 1
+    monkeypatch.setattr(storage_admission, "local_pause_active", lambda: True)
+    assert _tick(screen) == 1
     assert _tick(screen) == 0
