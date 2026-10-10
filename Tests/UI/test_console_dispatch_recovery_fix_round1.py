@@ -6,6 +6,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 from textual.widgets import Button, Static
 
 from Tests.Chat.test_console_dispatch_queue_recovery import (
@@ -32,7 +34,10 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
 @pytest.mark.asyncio
-async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_queue():
+@private_profile_test
+async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_queue(
+    request,
+):
     _app, host = _ready_host()
     async with host.run_test(size=(100, 34)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -70,6 +75,7 @@ async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_q
             runtime_active=True,
         )
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        store.set_session_draft(session.id, "must remain blocked")
         composer.load_draft("must remain blocked")
 
         # A healthy accepted turn permits queue admission and has no recovery UI.
@@ -124,7 +130,10 @@ async def test_mounted_recovery_is_literal_actionable_and_owns_send_with_empty_q
 
 
 @pytest.mark.asyncio
-async def test_mounted_queued_recovery_has_one_action_surface_and_drains_exact_owner():
+@private_profile_test
+async def test_mounted_queued_recovery_has_one_action_surface_and_drains_exact_owner(
+    request,
+):
     _app, host = _ready_host()
     async with host.run_test(size=(100, 34)) as pilot:
         console = await _mounted_console(host, pilot)
@@ -263,7 +272,8 @@ async def test_mounted_queued_recovery_has_one_action_surface_and_drains_exact_o
 
 
 @pytest.mark.asyncio
-async def test_mounted_recovery_action_is_pinned_to_the_displayed_session():
+@private_profile_test
+async def test_mounted_recovery_action_is_pinned_to_the_displayed_session(request):
     _app, host = _ready_host()
     async with host.run_test(size=(100, 34)) as pilot:
         console = await _mounted_console(host, pilot)

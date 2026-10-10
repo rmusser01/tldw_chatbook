@@ -1,11 +1,11 @@
 ---
 id: TASK-32953
 title: Verify and repair restored Console dispatch recovery
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-25 16:19'
-updated_date: '2026-09-25 16:27'
+updated_date: '2026-10-10 16:16'
 labels: []
 dependencies: []
 references:
@@ -35,6 +35,13 @@ Investigate GitHub issue #2708 and verify that Retry anyway and Discard release 
 ADR required: no
 ADR path: backlog/decisions/079-console-library-conversation-authority.md
 Reason: Repair existing explicit source-device recovery behavior and action liveness; no schema, authority, service boundary, or visual design change.
+
+Review follow-up (2026-10-10):
+1. Retain token-guarded completion and synchronous exception release while acknowledging new equal-valued snapshots; repair callback assertions and add stale/synchronous-failure regressions.
+2. Reproduce defects before fixing, run targeted trace/recovery/privacy tests and required preflight, then obtain independent final review.
+ADR required: no
+ADR path: backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md (32951); backlog/decisions/079-console-library-conversation-authority.md (32953)
+Reason: restore existing refusal ownership, safe diagnostics, and callback contracts without changing boundaries or storage.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -47,4 +54,8 @@ ConsoleDispatchRecoveryRegion now acknowledges a new immutable store snapshot in
 Validation: both mounted cases failed before the repair; loading the original HEAD widget through a temporary pytest plugin also makes the new equal-snapshot callback test fail without editing the checkout. Final targeted run: 75 passed in 63.15s across Tests/Chat/test_console_dispatch_recovery.py and four recovery UI modules. Ruff lint and format checks pass for all four touched Python files; scoped git diff --check passes. Self review found no remaining issue. Existing pytest temporary-directory cleanup warnings remain. No full suite, paid provider, real user profile change, staging or commit.
 
 ADR required: no new ADR. Existing backlog/decisions/079-console-library-conversation-authority.md governs the unchanged source-device recovery contract.
+
+Review follow-up (2026-10-10): restored exact recovery-boundary rebinding and private thinking-owner marker comparison, safe numeric/list refusal diagnostics, token-guarded recovery completion and synchronous exception release. Rebase preserves dev's failed-call retry fences and bootstrap imports. Added stale-completion/exception controls; callback assertions now inspect the completion argument. Real mounted tests use the existing per-case private-profile owner, and the trace identity module retains its collection-bound private config source. Fixture drafts survive authoritative projection refresh, and callout assertions wait for actual visible paint.
+
+Defects were reproduced before repair. Final affected identity and mounted surface/dispatch cases: 15 passed. The earlier trace/recovery run passed 39 cases and exposed six later repaired cases; these separate receipts are retained without relabelling them as one green run. Undefined-name checks and scoped diff whitespace checks pass; all derived-artifact preflight checks passed on the rebased branch. Final rebased targeted verification and protected CI remain integration gates. Independent review cleared the prior five repairs; the added owner-marker fix receives a final read before merge. No full suite or live external provider was used. ADR required: no new ADR; existing ADR-097/ADR-079 contracts apply.
 <!-- SECTION:NOTES:END -->

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 from textual.widgets import Button
 
 from Tests.Chat.test_console_durable_turn_fix_round1 import (
@@ -17,9 +19,11 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_retry_resumes_interrupted_postcommit_on_app_owned_controller(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
+    request,
 ) -> None:
     _app, host = _ready_host()
     async with host.run_test(size=(100, 34)) as pilot:

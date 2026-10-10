@@ -1,11 +1,11 @@
 ---
 id: TASK-32951
 title: Repair captured Console turn provenance and refusal recovery
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-25 16:16'
-updated_date: '2026-09-25 16:45'
+updated_date: '2026-10-10 16:16'
 labels: []
 dependencies: []
 references:
@@ -39,6 +39,13 @@ Reason: Repair recording and recovery within the existing revision, sidecar, fro
 3. Add safe structural refusal diagnostics at both existing surface fences without storing content or private identifiers.
 4. Exercise existing refusal recovery and stopped-tool successors, asserting one accepted user and immutable historical traces; coordinate mounted recovery coverage with the parallel recovery investigation.
 5. Run only related test modules and targeted static checks, review the delta against the pre-existing working tree, then record findings and limitations.
+
+Review follow-up (2026-10-10):
+1. Restore private thinking-owner marker spelling comparison without changing owner/content identity; repair structural diagnostic field types and consume the verified recovery boundary in controller rebinding; retain new dev failed-call guards during rebase.
+2. Reproduce defects before fixing, run targeted trace/recovery/privacy tests and required preflight, then obtain independent final review.
+ADR required: no
+ADR path: backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md (32951); backlog/decisions/079-console-library-conversation-authority.md (32953)
+Reason: restore existing refusal ownership, safe diagnostics, and callback contracts without changing boundaries or storage.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -111,4 +118,8 @@ ADR required: no new ADR. This implements existing
 The owner-marker incident is recorded in
 `backlog/docs/lessons-console-wiring.md`. Pre-edit snapshots and isolated diffs
 are under `/tmp/tldw-2829-baseline/`; pre-existing workspace changes are preserved.
+
+Review follow-up (2026-10-10): restored exact recovery-boundary rebinding and private thinking-owner marker comparison, safe numeric/list refusal diagnostics, token-guarded recovery completion and synchronous exception release. Rebase preserves dev's failed-call retry fences and bootstrap imports. Added stale-completion/exception controls; callback assertions now inspect the completion argument. Real mounted tests use the existing per-case private-profile owner, and the trace identity module retains its collection-bound private config source. Fixture drafts survive authoritative projection refresh, and callout assertions wait for actual visible paint.
+
+Defects were reproduced before repair. Final affected identity and mounted surface/dispatch cases: 15 passed. The earlier trace/recovery run passed 39 cases and exposed six later repaired cases; these separate receipts are retained without relabelling them as one green run. Undefined-name checks and scoped diff whitespace checks pass; all derived-artifact preflight checks passed on the rebased branch. Final rebased targeted verification and protected CI remain integration gates. Independent review cleared the prior five repairs; the added owner-marker fix receives a final read before merge. No full suite or live external provider was used. ADR required: no new ADR; existing ADR-097/ADR-079 contracts apply.
 <!-- SECTION:NOTES:END -->

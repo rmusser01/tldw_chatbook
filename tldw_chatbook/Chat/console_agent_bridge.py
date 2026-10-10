@@ -2972,7 +2972,18 @@ class ConsoleAgentTraceRequestFactory:
             descriptor: TraceProvenance | None = None
             for index in range(search_from, len(base_rows)):
                 candidate = base_descriptors[index]
-                if base_rows[index] == frozen_message and _agent_can_reuse_descriptor(
+                base_message = base_rows[index]
+                if (
+                    base_message.get("role") == "assistant"
+                    and "_tldw_thinking_owner" in base_message
+                    and "_tldw_call_thinking_owner" not in base_message
+                ):
+                    # Agent transport renames this marker; its owner stays exact.
+                    base_message = dict(base_message)
+                    base_message["_tldw_call_thinking_owner"] = base_message.pop(
+                        "_tldw_thinking_owner"
+                    )
+                if base_message == frozen_message and _agent_can_reuse_descriptor(
                     candidate,
                     message,
                 ):

@@ -6,6 +6,8 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 from textual.widgets import Button
 
 from Tests.Chat.test_console_dispatch_recovery import (
@@ -38,17 +40,61 @@ def test_recovery_polling_does_not_rearm_an_unclaimed_duplicate_intent():
     region.on_button_pressed(Button.Pressed(discard))
     region.sync_recovery("restored-session", state)
     region.on_button_pressed(Button.Pressed(discard))
-    assert intents == [("restored-session", "assistant-1", "discard")]
+    assert [intent[:3] for intent in intents] == [
+        ("restored-session", "assistant-1", "discard")
+    ]
 
     # Store claim/release may happen between paints and return an equal value.
     released = replace(state)
     region.sync_recovery("restored-session", released)
     region.on_button_pressed(Button.Pressed(discard))
-    assert intents == [("restored-session", "assistant-1", "discard")] * 2
+    assert [intent[:3] for intent in intents] == [
+        ("restored-session", "assistant-1", "discard")
+    ] * 2
 
     region.sync_recovery("restored-session", released.with_in_flight(True))
     region.on_button_pressed(Button.Pressed(discard))
     assert len(intents) == 2
+
+
+def test_stale_completion_cannot_release_a_new_recovery_intent():
+    state = _state(started=True)
+    intents = []
+    region = ConsoleDispatchRecoveryRegion(
+        state,
+        session_id="first-session",
+        on_action=lambda *intent: intents.append(intent),
+    )
+    discard = Button("Discard", id="console-dispatch-recovery-discard")
+    region.on_button_pressed(Button.Pressed(discard))
+    region.sync_recovery(
+        "second-session", replace(state, assistant_message_id="assistant-2")
+    )
+    region.on_button_pressed(Button.Pressed(discard))
+    intents[0][3]()
+    region.on_button_pressed(Button.Pressed(discard))
+    assert len(intents) == 2
+    intents[1][3]()
+    region.on_button_pressed(Button.Pressed(discard))
+    assert len(intents) == 3
+
+
+def test_synchronous_action_failure_releases_the_exact_click():
+    calls = []
+
+    def fail_once(*intent):
+        calls.append(intent)
+        if len(calls) == 1:
+            raise RuntimeError("synthetic dispatch failure")
+
+    region = ConsoleDispatchRecoveryRegion(
+        _state(started=True), session_id="restored-session", on_action=fail_once
+    )
+    discard = Button("Discard", id="console-dispatch-recovery-discard")
+    with pytest.raises(RuntimeError, match="synthetic dispatch failure"):
+        region.on_button_pressed(Button.Pressed(discard))
+    region.on_button_pressed(Button.Pressed(discard))
+    assert len(calls) == 2
 
 
 class _UnavailableGateway(_NoReplayGateway):
@@ -62,7 +108,10 @@ class _UnavailableGateway(_NoReplayGateway):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("first_action", ["retry_anyway", "discard"])
-async def test_restored_recovery_can_discard_after_refusal(tmp_path, first_action):
+@private_profile_test
+async def test_restored_recovery_can_discard_after_refusal(
+    tmp_path, first_action, request
+):
     """A fast failed action must not leave the visible buttons locally latched."""
     db, conversation_id, repository = _database(tmp_path / "restored.sqlite")
     _start(repository, _insert(db, repository, _acceptance(conversation_id)))
@@ -136,10 +185,7 @@ async def test_restored_recovery_can_discard_after_refusal(tmp_path, first_actio
             # Qodo round: read through the transaction() context manager --
             # raw get_connection().execute() bypasses the DB contract.
             with db.transaction() as _conn:
-                assert (
-                    _conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-                    == 2
-                )
+                assert _conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 2
                 assert (
                     _conn.execute(
                         "SELECT COUNT(*) FROM console_dispatch_checkpoints"

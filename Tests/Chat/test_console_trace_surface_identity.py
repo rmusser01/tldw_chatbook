@@ -10,6 +10,10 @@ from Tests.Chat.test_console_trace_sidecar_replay import (
 from tldw_chatbook.Chat.console_trace_provenance import SavedRevisionTraceProvenance
 
 
+# These real controllers read the collection-bound config participant.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("replay_harness", [(True, "thinking")], indirect=True)
 async def test_thinking_history_keeps_saved_revision_owner(replay_harness, monkeypatch):
