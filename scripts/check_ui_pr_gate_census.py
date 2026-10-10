@@ -204,7 +204,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-34785 (2026-10-10) raised it by three, to 178: the transcript
 # detach/lock/composition regressions enter as three node IDs (13 cases),
 # preserving every existing file/node and its shard placement.
-MINIMUM_FILES = 178
+# TASK-34786 (2026-10-10) adds the actual native-owner retirement regression
+# as one node, preserving all earlier shard placements.
+MINIMUM_FILES = 179
 
 
 def read_census(path: Path) -> list[str]:

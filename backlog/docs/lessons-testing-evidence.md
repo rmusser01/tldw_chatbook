@@ -1,5 +1,11 @@
 # Lessons: what counts as evidence a change works
 
+## A Console host does not retire the borrowed application (TASK-34786, 2026-10-10)
+
+**Incident.** A 90-case Console review run passed but grew by203 file descriptors. The new session-tab composer harness contributed161: it constructed a real TldwCli, then stopped only ConsoleHarness. A constructor-only control retained SQLite owners even after garbage collection; a real mounted control reduced descriptors from34 to21 only after draining the borrowed runtime and closing its four actual database owners.
+
+**What to do.** A harness borrowing an application must retire that application through its existing ownership APIs before the private-profile fixture resets paths. Check the actual native connections are closed, rather than relying on Textual shutdown, garbage collection or registry bookkeeping. The local `_running` context and its resource regression in `Tests/UI/test_console_tab_switch_binds_composer.py` are the worked example.
+
 ## A counter that a reload also bumps calls the same draft new (TASK-33620.15.2, 2026-10-09)
 
 **Incident.** TASK-33620.15 decided whether a held Enter repeated the
