@@ -33,9 +33,17 @@ from tldw_chatbook.Widgets.Console.console_library_access_modal import (
 from tldw_chatbook.Widgets.Console.console_library_search_modal import (
     ConsoleLibrarySearchModal,
 )
+from tldw_chatbook.Widgets.Console.console_character_picker_modal import (
+    ConsoleCharacterOption,
+)
 from tldw_chatbook.Widgets.Console.console_status_chips import (
+    ConsoleAssistantChip,
+    ConsoleCostChip,
     ConsoleLibraryChip,
+    ConsoleModelChip,
+    ConsoleScopeChip,
     ConsoleStatusChips,
+    ConsoleSystemPromptChip,
 )
 
 
@@ -263,3 +271,79 @@ async def test_a_sentence_typed_on_the_library_chip_does_not_crash_the_console()
         modals = _library_access_modals(host)
         assert len(modals) == 1, f"stacked {len(modals)} Library access dialogs"
         assert host.screen_stack[-1] is modals[0]
+
+
+#: Every status-strip chip whose activation opens a dialog over the Console.
+#: Each Enter/Space/click posts one request, so all of them stacked under a
+#: burst the same way the Library chip did (TASK-34720). The Sources, Tools
+#: and Run chips reveal the Inspector rail and the Approvals chip moves focus;
+#: none of them pushes a screen, so they are not listed.
+_DIALOG_CHIPS = (
+    pytest.param(
+        "#console-library-chip", ConsoleLibraryChip.OpenRequested, id="library"
+    ),
+    pytest.param(
+        "#console-provider-chip", ConsoleModelChip.OpenRequested, id="provider"
+    ),
+    pytest.param("#console-model-chip", ConsoleModelChip.OpenRequested, id="model"),
+    pytest.param(
+        "#console-system-prompt-chip",
+        ConsoleSystemPromptChip.OpenRequested,
+        id="system-prompt",
+    ),
+    pytest.param(
+        "#console-assistant-chip", ConsoleAssistantChip.OpenRequested, id="assistant"
+    ),
+    pytest.param("#console-scope-chip", ConsoleScopeChip.OpenRequested, id="scope"),
+    pytest.param(
+        "#console-cost-chip", ConsoleCostChip.ConsoleCostChipPressed, id="cost"
+    ),
+)
+
+
+async def _settle(pilot, rounds: int = 20) -> None:
+    """Let queued requests, their off-thread reads and their pushes finish."""
+    for _ in range(rounds):
+        await pilot.pause(0.02)
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(("selector", "request_type"), _DIALOG_CHIPS)
+async def test_a_burst_of_chip_activations_opens_one_dialog(
+    selector: str, request_type: type, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-34720: one dialog per burst, from every dialog-opening chip.
+
+    Four requests are posted from the chip back to back -- exactly what four
+    queued Enter/Space keys on the focused chip post -- before the Console
+    handles the first. Each used to push its own dialog. The Scope and Cost
+    chips are hidden until there is a scope or a cost, but their requests
+    reach the same handlers, so they are posted from the hidden chip.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 45)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, selector)
+        if request_type is ConsoleAssistantChip.OpenRequested:
+            # The picker opens only when a character card exists; seed one
+            # at the read seam instead of writing a card into the profile.
+            monkeypatch.setattr(
+                console._character,
+                "_console_character_picker_options",
+                lambda: (ConsoleCharacterOption(character_id=7, name="Ada"),),
+            )
+        chip = console.query_one(selector)
+
+        for _ in range(4):
+            chip.post_message(request_type())
+        await _settle(pilot)
+
+        dialogs = host.screen_stack[host.screen_stack.index(console) + 1 :]
+        assert len(dialogs) == 1, (
+            f"{selector} stacked {len(dialogs)} dialogs: "
+            f"{[type(screen).__name__ for screen in dialogs]}"
+        )
