@@ -6,12 +6,14 @@ import json
 import sqlite3
 import threading
 import time
+import weakref
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Union
 
 from ..Utils.timestamps import utc_now_iso
 from .base_db import BaseDB
+from .private_sqlite import connect_private_sqlite
 
 
 #: Upper bound for any list read the UI pages through.
@@ -40,6 +42,23 @@ class DreamsSchemaError(RuntimeError):
         super().__init__(reason)
 
 
+class _HeldConnectionState:
+    """Mutable per-thread slot for one held connection.
+
+    ``threading.local`` attributes cannot be cleared from another thread, so
+    each thread's slot is a small holder object referenced strongly by the
+    thread's local storage and weakly by the DB-wide registry
+    (:attr:`DreamsDB._conn_states`). ``close()`` clears every slot through
+    the registry; a dead thread's holder (and its connection) is dropped by
+    the weakref instead.
+    """
+
+    __slots__ = ("__weakref__", "conn")
+
+    def __init__(self) -> None:
+        self.conn: sqlite3.Connection | None = None
+
+
 class DreamsDB(BaseDB):
     """Database wrapper for the Dreams subsystem (Phase 1 discovery loop).
 
@@ -50,7 +69,9 @@ class DreamsDB(BaseDB):
     reached both from the UI thread and from ``asyncio.to_thread`` cycle
     workers, so each thread owns exactly one long-lived connection. Writes
     go through ``transaction()`` (``BEGIN IMMEDIATE``); single-statement
-    reads use ``connection()``.
+    reads use ``connection()``. Every held connection is tracked in a
+    weakref registry so :meth:`close` can sweep all of them, not just the
+    calling thread's (task-33166, the fd-growth sentinel root cause).
 
     Date-bucket idempotency: one ``dreams_collections`` row per local date
     (UNIQUE index) is the race guard between scheduler fire, boot catch-up,
@@ -170,6 +191,13 @@ class DreamsDB(BaseDB):
         # Must precede super().__init__: BaseDB.__init__ calls
         # _initialize_schema(), which already needs the held connection.
         self._thread_local = threading.local()
+        # Weak registry of every thread's held-connection slot, so close()
+        # can sweep worker-thread connections from the closing thread.
+        # Entries vanish when their owning thread dies (the weakref drops
+        # the holder and CPython closes the connection on dealloc).
+        self._conn_states: weakref.WeakSet[_HeldConnectionState] = (
+            weakref.WeakSet()
+        )
         super().__init__(
             database_path, client_id if client_id is not None else "default"
         )
@@ -179,7 +207,16 @@ class DreamsDB(BaseDB):
     # ------------------------------------------------------------------
 
     def _get_connection(self) -> sqlite3.Connection:
-        conn = super()._get_connection()
+        # check_same_thread=False follows the ChaChaNotes held-connection
+        # precedent ("Required for threading.local approach"): USAGE stays
+        # per-thread (each thread only touches its own held connection),
+        # but sqlite3 refuses ANY cross-thread call on a default connection
+        # — close() included — and close() must be able to sweep worker-
+        # thread connections from the closing thread (task-33166).
+        conn = connect_private_sqlite(
+            "db.base", self.db_path_str, check_same_thread=False
+        )
+        conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         if not self.is_memory_db:
             self._enable_wal(conn)
@@ -207,7 +244,15 @@ class DreamsDB(BaseDB):
 
     def _held_connection(self) -> sqlite3.Connection:
         """Return this thread's held connection, opening or reviving it."""
-        conn = getattr(self._thread_local, "conn", None)
+        state = getattr(self._thread_local, "state", None)
+        if state is None:
+            state = _HeldConnectionState()
+            self._thread_local.state = state
+        # Re-add on every call: close() clears the registry, and a holder
+        # reused afterwards must be tracked again so a later close() also
+        # sweeps the revived connection.
+        self._conn_states.add(state)
+        conn = state.conn
         if conn is not None:
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
@@ -225,7 +270,7 @@ class DreamsDB(BaseDB):
                     conn = None
         if conn is None:
             conn = self._get_connection()
-            self._thread_local.conn = conn
+            state.conn = conn
         self._thread_local.conn_last_used = time.monotonic()
         return conn
 
@@ -262,14 +307,30 @@ class DreamsDB(BaseDB):
             conn.commit()
 
     def close(self) -> None:
-        """Close the current thread's held connection, if any."""
-        conn = getattr(self._thread_local, "conn", None)
-        self._thread_local.conn = None
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001 - best-effort teardown
-                pass
+        """Close every held connection, across all threads (task-33166).
+
+        The thread-local idiom keeps one connection per thread that ever
+        touched this DB (UI thread plus ``asyncio.to_thread`` workers);
+        closing only the caller's leaked the rest until process exit, each
+        pinning a file descriptor and private_sqlite admission state — the
+        test-suite fd-growth sentinel root cause.
+
+        Best-effort and idempotent: each close is guarded (an already-closed
+        or internally-closed handle must not raise), the registry is cleared
+        at the end, and any thread's next use transparently opens a fresh
+        connection (:meth:`_held_connection` re-registers it). Call this
+        when the DB is quiescent (teardown): a connection concurrently
+        mid-statement is finalized by SQLite as the statement ends.
+        """
+        for state in list(self._conn_states):
+            conn = state.conn
+            state.conn = None
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001 - best-effort teardown
+                    pass
+        self._conn_states.clear()
 
     def _initialize_schema(self) -> None:
         """Atomically initialize the Dreams schema (additive, idempotent)."""

@@ -1,6 +1,7 @@
 # Tests/Dreams/test_dreams_db.py
 """DreamsDB schema v1 behavior: date bucketing, story rows, seen ledger, usage."""
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
 import pytest
@@ -78,3 +79,69 @@ def test_fail_stale_generating_marks_only_old_generating_rows(db):
     assert db.fail_stale_generating(cutoff) == 1
     assert db.get_collection_by_date("2026-09-22")["status"] == "failed"
     assert db.get_collection_by_date("2026-09-23")["status"] == "generating"
+
+
+def test_close_sweeps_every_thread_local_connection(tmp_path):
+    """close() from one thread releases every held connection, not just its own.
+
+    Regression test for the fd-growth sentinel root cause (task-33166): the
+    thread-local idiom keeps one connection per thread that ever touched the
+    DB (UI thread plus ``asyncio.to_thread`` workers), and close() used to
+    close only the calling thread's, leaking the rest until process exit.
+
+    Closed-ness is probed from each connection's OWNING thread: a cross-thread
+    ``execute`` is not a reliable signal while connections are thread-bound,
+    and an fd-count assertion is flaky on CI.
+    """
+    database = DreamsDB(tmp_path / "dreams.sqlite", "test-client")
+    thread_count = 4
+    conns: dict[int, object] = {}
+    created = [threading.Event() for _ in range(thread_count)]
+    probe = [threading.Event() for _ in range(thread_count)]
+    probe_results: dict[int, str] = {}
+
+    def hold_connection(idx: int) -> None:
+        connection = database._held_connection()
+        conns[idx] = connection
+        created[idx].set()
+        assert probe[idx].wait(timeout=10)
+        try:
+            connection.execute("SELECT 1")
+        except sqlite3.ProgrammingError:
+            probe_results[idx] = "closed"
+        else:
+            probe_results[idx] = "open"
+
+    threads = [
+        threading.Thread(
+            target=hold_connection, args=(idx,), name=f"dreams-holder-{idx}"
+        )
+        for idx in range(thread_count)
+    ]
+    try:
+        for thread in threads:
+            thread.start()
+        for event in created:
+            assert event.wait(timeout=10)
+        # The idiom holds one DISTINCT connection per touching thread, so a
+        # main-thread close must sweep thread_count worker connections plus
+        # the main thread's own.
+        assert len({id(conn) for conn in conns.values()}) == thread_count
+
+        database.close()  # from the main thread, while workers hold theirs
+        assert not database._conn_states  # registry cleared by the sweep
+    finally:
+        for event in probe:
+            event.set()
+        for thread in threads:
+            thread.join(timeout=10)
+    assert not any(thread.is_alive() for thread in threads)
+    assert probe_results == {idx: "closed" for idx in range(thread_count)}
+
+    # Idempotent: a second close must not raise on already-closed handles.
+    database.close()
+    # Transparent rebuild: any thread's next use opens a fresh connection,
+    # preserving the pre-sweep semantics where close() was not terminal.
+    with database.connection() as conn:
+        assert conn.execute("SELECT 1").fetchone()[0] == 1
+    database.close()
