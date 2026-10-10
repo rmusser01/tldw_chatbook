@@ -426,9 +426,20 @@ class ThemeVariableDefaultsMixin:
 _VARIABLE_NAME = re.compile(r"[a-z0-9-]+")
 _TEXT_STYLES = frozenset({"bold", "italic", "underline", "reverse", "strike", "dim", "none"})
 _ALPHA_SUFFIX = re.compile(r"(.+) (\d{1,3})%")
+#: TASK-33003.16: Textual's CSS takes 'auto NN%' as a text colour only; as a
+#: background or a border colour it is a stylesheet error. The names Textual
+#: itself sets to auto (text, text-muted, link-color, ...) are safe wherever
+#: a stylesheet uses them, and a name no stylesheet knows paints nothing.
+#: Every other name Textual generates, and the guard's own, may be painted as
+#: a background (this app paints text-primary as one), so auto is dropped there.
+_NO_AUTO_NAMES = frozenset(GUARD_VARIABLES) | {
+    name
+    for name, value in Theme(name="_", primary="#000000").to_color_system().generate().items()
+    if not str(value).startswith("auto")
+}
 
 
-def _is_safe_variable_value(value: object) -> bool:
+def _is_safe_variable_value(name: str, value: object) -> bool:
     # Color.parse accepts "#fff\n"; nothing non-printable is a CSS value.
     if not isinstance(value, str) or not value or not value.isprintable():
         return False
@@ -436,7 +447,7 @@ def _is_safe_variable_value(value: object) -> bool:
         return True
     match = _ALPHA_SUFFIX.fullmatch(value)
     if match and match.group(1) == "auto":
-        return True
+        return name not in _NO_AUTO_NAMES
     try:
         Color.parse(match.group(1) if match else value)
     except Exception:  # noqa: BLE001 - anything unparseable is dropped
@@ -452,7 +463,9 @@ def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
     ``"red; } Screen { display: none"`` or a bare number escapes every
     try/except and kills the app (every launch, if it is the default theme).
     Kept: lowercase-hyphen names whose value is a colour (optionally
-    ``" NN%"``), ``"auto NN%"``, or space-separated text-style keywords.
+    ``" NN%"``), space-separated text-style keywords, or ``"auto NN%"`` on a
+    name that can take it (TASK-33003.16: not one a stylesheet may paint as
+    a background, ``_NO_AUTO_NAMES``).
 
     Args:
         variables: The raw ``[variables]`` table from a theme file.
@@ -467,7 +480,7 @@ def sanitize_theme_variables(variables: object, source: str) -> dict[str, str]:
         return {}
     safe: dict[str, str] = {}
     for key, value in variables.items():
-        if isinstance(key, str) and _VARIABLE_NAME.fullmatch(key) and _is_safe_variable_value(value):
+        if isinstance(key, str) and _VARIABLE_NAME.fullmatch(key) and _is_safe_variable_value(key, value):
             safe[key] = value
         else:
             # Name only (truncated), never the value: file content must not

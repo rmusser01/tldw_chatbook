@@ -87,6 +87,92 @@ async def test_malformed_user_theme_survives_css_refresh(tmp_path):
     assert app.return_code in (None, 0)
 
 
+_AUTO_VARIABLES_THEME = """[theme]
+name = "auto_probe"
+dark = true
+[colors]
+primary = "#3366CC"
+background = "#101010"
+surface = "#181818"
+panel = "#202020"
+foreground = "#E0E0E0"
+[variables]
+surface-lighten-2 = "auto 50%"
+block-cursor-blurred-background = "auto 30%"
+text-primary = "auto 80%"
+tldw-boundary = "auto 40%"
+text-muted = "auto 70%"
+scrollbar-color = "auto 50%"
+"""
+_AUTO_DROPPED = (
+    "surface-lighten-2",
+    "block-cursor-blurred-background",
+    "text-primary",
+    "tldw-boundary",
+)
+
+
+def test_load_user_themes_drops_auto_on_a_background_variable(tmp_path):
+    """TASK-33003.16: Textual's CSS takes 'auto NN%' as a text colour only.
+    On a name a stylesheet paints as a background or a border it is a
+    stylesheet error, so the loader drops it with a warning. It is kept on a
+    name Textual itself sets to auto (text-muted) and on a name no stylesheet
+    knows (scrollbar-color)."""
+    from loguru import logger
+
+    _write(tmp_path, "auto_probe", _AUTO_VARIABLES_THEME)
+    messages: list[str] = []
+    sink = logger.add(lambda m: messages.append(m.record["message"]), level="WARNING")
+    try:
+        [theme] = load_user_themes(tmp_path)
+    finally:
+        logger.remove(sink)
+
+    for name in _AUTO_DROPPED:
+        assert not str(theme.variables.get(name, "")).startswith("auto"), name
+        assert any(f"dropping invalid variable {name!r}" in m for m in messages), name
+    assert theme.variables["text-muted"] == "auto 70%"
+    assert theme.variables["scrollbar-color"] == "auto 50%"
+    assert len(messages) == len(_AUTO_DROPPED), messages
+
+
+async def test_auto_on_a_background_variable_survives_css_refresh(tmp_path):
+    """TASK-33003.16 AC#1: the loaded theme applies where the stylesheet
+    paints those names as a background, a border and a text colour."""
+    from textual.app import App
+    from textual.widgets import Static
+
+    _write(tmp_path, "auto_probe", _AUTO_VARIABLES_THEME)
+    [theme] = load_user_themes(tmp_path)
+
+    class Painted(App):
+        CSS = """
+        Screen { background: $surface-lighten-2; }
+        Static {
+            background: $block-cursor-blurred-background;
+            border: solid $tldw-boundary;
+            border-left: thick $text-primary;
+            color: $text-muted;
+        }
+        """
+
+        def compose(self):
+            yield Static("probe")
+
+    app = Painted()
+    async with app.run_test() as pilot:
+        app.register_theme(theme)
+        app.theme = "auto_probe"
+        await pilot.pause()
+        app.refresh_css()
+        await pilot.pause()
+        assert app.theme == "auto_probe"
+        probe = app.query_one(Static)
+        assert probe.styles.auto_color, "text-muted's auto was not kept"
+        assert probe.styles.background.a > 0
+    assert app.return_code in (None, 0)
+
+
 def test_theme_from_file_data_refuses_non_colour_keys():
     """R32: `variables`/`dark` are Theme kwargs, not colours; accepting them
     built a theme whose generate() raised AttributeError."""

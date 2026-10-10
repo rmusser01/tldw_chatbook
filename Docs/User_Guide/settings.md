@@ -1281,7 +1281,7 @@ filename-safe, contains `[`, contains control characters, or starts with
 nothing. The reason shows inside the Import prompt, which stays open with
 the path you typed; invalid TOML names the parser's line and column ("File
 is not valid TOML (line 3, column 1)"). A `[variables]` entry that isn't a colour
-(or `auto NN%`, or a text style) is dropped with a warning instead, the same
+(or `auto NN%` on a text colour, or a text style) is dropped with a warning instead, the same
 as Save. Importing a name you already have asks first ("Replace the saved
 theme '\<Name\>' (\<file\>.toml)?"); Cancel leaves the existing file byte-for-byte
 unchanged. On success the picker highlights the new theme and shows
@@ -1321,7 +1321,11 @@ through Try, Save and Export — they are stored in a `[variables]` table in
 the TOML. They are tuned for that palette, so once you change any base
 colour or the dark flag they are dropped and derived from your colours
 instead. A `[variables]` entry that is not a colour (or `auto NN%`, or a text
-style) is skipped with a warning when the theme loads. **Back** — or **Esc**
+style) is skipped with a warning when the theme loads. `auto NN%` is kept only
+on a text colour such as `text` or `text-muted`; on a name the app paints as a
+background or a border (`surface-lighten-2`, `block-cursor-blurred-background`,
+`primary`, `text-primary` and the like) it is skipped the same way, and the
+theme's own colours are used. **Back** — or **Esc**
 twice (the first releases the field you're typing in, the second acts as
 Back) — returns to the picker; with unsaved edits it asks **Stay**, **Discard**, or **Save**
 (Escape stays) — the same prompt appears if you switch to a different

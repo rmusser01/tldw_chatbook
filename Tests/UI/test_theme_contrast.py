@@ -432,19 +432,24 @@ def test_user_saved_themes_get_visible_boundaries(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("name", "value"),
+    ("name", "value", "kept"),
     [
         # Textual's own form (nord: input-selection-background '#81a1c1 35%').
-        ("block-cursor-blurred-background", "#81a1c1 30%"),
-        ("text", "#ffffff 87%"),
-        ("surface-lighten-2", "#2a2a2a 50%"),
+        ("block-cursor-blurred-background", "#81a1c1 30%", True),
+        ("text", "#ffffff 87%", True),
+        ("surface-lighten-2", "#2a2a2a 50%", True),
         # Kept by sanitize_theme_variables, but no colour to measure.
-        ("block-cursor-blurred-background", "auto 30%"),
-        ("surface-lighten-2", "auto 50%"),
-        ("text", "bold"),
+        ("text", "auto 60%", True),
+        ("text", "bold", True),
+        # TASK-33003.16, rewritten on purpose (both were kept): 'auto NN%' on
+        # a name painted as a background is dropped.
+        ("block-cursor-blurred-background", "auto 30%", False),
+        ("surface-lighten-2", "auto 50%", False),
     ],
 )
-def test_user_theme_with_any_kept_variable_form_still_loads(tmp_path, name, value) -> None:
+def test_user_theme_with_any_kept_variable_form_still_loads(
+    tmp_path, name, value, kept
+) -> None:
     """Task 6 review round 2: the guard read `text`, the house focus tint and
     `surface-lighten-2` with a bare Color.parse, which raises ColorParseError
     (not a ValueError) on the '<colour> NN%' and 'auto NN%' forms
@@ -462,8 +467,8 @@ def test_user_theme_with_any_kept_variable_form_still_loads(tmp_path, name, valu
         encoding="utf-8",
     )
     (theme,) = load_user_themes(tmp_path)
-    assert theme.variables[name] == value
-    if not value.startswith(("auto", "bold")):
+    assert theme.variables.get(name) == (value if kept else None)
+    if not (kept and value.startswith(("auto", "bold"))):
         _assert_boundaries_visible(theme)
         _assert_button_focus_keeps_contrast(theme)
 
@@ -664,10 +669,7 @@ def test_guard_colours_are_visible_on_every_registered_theme(theme: Theme) -> No
 @pytest.mark.parametrize(
     ("section", "name", "value"),
     [
-        # sanitize_theme_variables keeps both forms on any name (TASK-33003.16).
         ("variables", "surface", "#181818 50%"),
-        ("variables", "surface", "auto 50%"),
-        ("variables", "panel", "auto 10%"),
         ("colors", "surface", "#18181880"),
     ],
 )
@@ -697,4 +699,28 @@ def test_user_theme_with_unmeasurable_surfaces_keeps_visible_guard_colours(
     )
     (theme,) = load_user_themes(tmp_path)
     assert not _measurable(theme)
+    _assert_guard_colours_visible(theme)
+
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(("name", "value"), [("surface", "auto 50%"), ("panel", "auto 10%")])
+def test_user_theme_with_auto_on_a_surface_stays_measurable(tmp_path, name, value) -> None:
+    """TASK-33003.16, rewritten on purpose: these were two rows of the test
+    above, where the kept 'auto NN%' left the surface with nothing to measure
+    (and nothing to paint). The sanitiser now drops it, so the surface keeps
+    its [colors] value and the guard pins real boundaries."""
+    from tldw_chatbook.css.Themes.themes import load_user_themes
+
+    (tmp_path / "probe.toml").write_text(
+        '[theme]\nname = "auto_surface_probe"\ndark = true\n'
+        '[colors]\nprimary = "#3366CC"\nbackground = "#101010"\n'
+        'surface = "#181818"\npanel = "#202020"\nforeground = "#E0E0E0"\n'
+        f'[variables]\n{name} = "{value}"\n',
+        encoding="utf-8",
+    )
+    (theme,) = load_user_themes(tmp_path)
+    assert name not in theme.variables
+    assert _measurable(theme)
+    _assert_boundaries_visible(theme)
     _assert_guard_colours_visible(theme)
