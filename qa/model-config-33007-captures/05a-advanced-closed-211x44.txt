@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │                                                                                                                            │  │  │ No unsaved changes                      │
+│  Core                        │  │  │   Connect                                                                                                                  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │  Provider                │ OpenAI                             new-chat default 3 of 60 configured · listed first           │  │  │  Save (s) — no changes                  │
+│    > Providers & Models      │  │  │  API key                 │ Paste to replace           Clear   saved in config  masked · (t) test · (ctrl+l) clear          │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │  Env var                 │ OPENAI_API_KEY                     not set          safer: keeps keys out of config.toml        │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │  Endpoint                │ https://api.openai.com/v1          built-in         blank uses the provider default             │  │  │ file.                                   │
+│  Interface                   │  │  │  Key check                Ready · not tested                                                                  Test (t)     │  │  │  Focused setting: None — Tab to a       │
+│      Appearance              │  │  │   Provider settings reverted to last loaded values.                                                                        │  │  │  setting                                │
+│      Theme                   │  │  │                                                                                                                            │  │  │  Purpose: Configure the default         │
+│      Splash Screen           │  │  │   Default model for new chats                                                                                              │  │  │  provider, model, endpoint, and         │
+│      Console Behavior        │  │  │  Model                   │ gpt-5.6-terra                      new-chat default type to search · Custom ID for others       │  │  │  credential source.                   ▁ │
+│  Data & Privacy              │  │  │  Applies to               new chats; open chat “Chat 1” is unused and will use OpenAI · gpt-5.6-terra.                     │  │  │  Save: staged - press s to save, r to   │
+│      Storage                 │  │  │   ▼ Model defaults · OpenAI · gpt-5.6-terra                                                                                │  │  │  revert                                 │
+│      Workspaces              │  │  │  Temperature             │ 0.0 - 2.0      Console Behavior inherits 0.6                                                    │  │  │  Validation: test provider readiness    │
+│      Tool Profiles           │  │  │  Max tokens              │ tokens         provider         inherits 4096                                                   │  │  │  before saving these defaults           │
+│      Privacy & Security      │  │  │  Streaming               │ Inherit     ▼  provider         inherits Off                                                    │  │  │  ▶ config key                           │
+│      Network                 │  │  │  Reasoning effort        │ Inherit     ▼  provider         blank = provider default                                        │  │  │ Key                                     │
+│      My Profile              │  │  │  Reasoning summary       │ Inherit     ▼  provider         blank = provider default                                        │  │  │  Provider readiness: OpenAI /           │
+│  Troubleshooting             │  │  │  Verbosity               │ Inherit     ▼  provider         blank = provider default                                        │  │  │  gpt-5.6-terra                          │
+│      Diagnostics (view)      │  │  │   ▶ Sampling · all inherit · OpenAI does not accept 4 fields (open to list them)                                           │  │  │  Checks the settings, then lists      ▃ │
+│      About (view)            │  │  │                                                                                                                            │  │  │  models without generating: a cloud     │
+│      Agents                  │  │  │   Advanced                                                                                                                 │  │  │  provider's listing checks the API      │
+│  Expert                      │  │  │   ▶ Context window · unknown, 32,000 assumed · enter the model's documented limit                                          │  │  │  key, a local server's shows it         │
+│      Hooks                   │  │  │   ▶ Saved model list · 14 saved in config · none discovered                                                                │  │  │  answers. Nothing is saved.             │
+│      Internal Prompts        │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │ Configuration check has not run.        │
+│      Advanced Config         │  │  │   ▶ Session summary on quit · applies immediately · Off                                                                    │  │  │  Runtime owner: Settings persisted      │
+│   Domain Defaults ▸ (11)     │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  defaults; Console runtime selection    │
+│                              │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │  Writes allowed: Yes                    │
+│                              │  │  │                                                                                                                            │  │  │  Owns: chat_defaults.provider           │
+│                              │  │  │                                                                                                                            │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Open dashboard, notifications, and active work.
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

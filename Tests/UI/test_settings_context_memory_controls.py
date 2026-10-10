@@ -441,6 +441,43 @@ def test_model_context_window_state_distinguishes_detection_from_override() -> N
     assert configured.configured_override_tokens == 256000
 
 
+@pytest.mark.parametrize(
+    ("provider", "model", "detected", "assumed"),
+    [
+        # A catalog/table answer is known: Settings detects it.
+        ("openai", "gpt-4o", 128000, None),
+        # ADR-052's application fallback is a guess (TASK-33007 #12): the
+        # Console budgets with 32,000, so Settings names it as assumed.
+        ("openai", "gpt-5.6-terra", None, 32000),
+        # The provider fallbacks Settings used to ignore, direct and through
+        # OpenRouter's upstream.
+        ("anthropic", "claude-unlisted-9", None, 200000),
+        ("openrouter", "anthropic/claude-unlisted-9", None, 200000),
+    ],
+)
+def test_settings_context_window_reads_the_shared_resolver(
+    provider, model, detected, assumed
+) -> None:
+    """TASK-33007 #12: Settings and Chat settings answer from one resolver.
+
+    Settings' detected window is the shared resolver's verified answer and
+    its assumed window is the resolver's fallback, never staged as a value.
+    """
+    from tldw_chatbook.model_capabilities import ModelCapabilities
+    from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+    shared = resolve_context_window(provider, model, capabilities=ModelCapabilities({}))
+    state = model_context_window_state({}, provider, model)
+
+    assert shared.tokens == (detected or assumed)
+    assert shared.verified is (detected is not None)
+    assert (
+        state.effective_tokens,
+        state.detected_tokens,
+        state.assumed_tokens,
+    ) == (detected, detected, assumed)
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_console_memory_controls_mount_stage_and_fit_narrow_settings(
@@ -723,14 +760,20 @@ async def test_provider_context_window_reset_preserves_other_capabilities(
 
         context_input = screen.query_one("#settings-model-context-window", Input)
         status = screen.query_one("#settings-model-context-window-status", Static)
+        source = screen.query_one("#settings-model-context-window-source", Static)
         reset = screen.query_one("#settings-model-context-window-reset", Button)
         assert context_input.value == "256000"
-        assert "Configured override: 256,000" in _static_text(status)
-        assert reset.disabled is False
+        # Captures review note 11, rewritten on purpose: the row's Source
+        # word and one-line help replace the "Configured override" sentence.
+        assert _static_text(source) == "saved in config"
+        assert _static_text(status) == "override · detected 128,000"
+        assert reset.disabled is False and reset.display
 
         reset.press()
         await pilot.pause()
         assert context_input.value == "128000"
+        assert _static_text(source) == "edited *"
+        assert _static_text(status) == "detected 128,000"
         screen.action_settings_save_category(allow_text_entry_focus=True)
         await pilot.pause()
 

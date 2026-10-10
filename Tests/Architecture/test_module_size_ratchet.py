@@ -18,9 +18,10 @@ raise the number, which re-opens the hole this test exists to close.
 
 **Scope.** These are hand-picked god modules, not a directory family, so
 (unlike the Library controller ratchet) there is no glob that auto-adds new
-files. `settings_screen.py` is deliberately absent: its split and its
-missing ratchet row are already tracked by task-1378 / task-31202 — linked,
-not duplicated here (core-review TASK-32809.2 AC#2).
+files. `settings_screen.py` joined on 2026-10-05 (TASK-33007.8, closing
+task-31202), once the model-config redesign's Phase 7 had moved the
+Providers & Models card into `UI/Settings_Modules/`; the rest of its split
+is task-1378.
 
 First recorded 2026-09-19 by core-review TASK-32809.2, each row at its exact
 measured size as of `origin/dev`.
@@ -122,6 +123,36 @@ _BUDGETS: dict[str, int] = {
     # server label on one header row adds 15 lines; the row rises 369 -> 384,
     # never squeezed code.
     "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 384,
+    # TASK-33007.8 (closes task-31202): pinned at its measured size after
+    # model-config Phase 7 moved the Providers & Models card out (34,179 at
+    # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the
+    # split; its new code goes in UI/Settings_Modules/, never in this row.
+    # The Phase 7 final review's fixes, still inside the PR that adds this
+    # row, re-pin it at the PR head's measured size (R4): 33,638. The
+    # full-screen capture fixes (2026-10-09) put their new code in the card
+    # module and re-pin it at 33,647. Moving the Endpoint guide there too
+    # (2026-10-09, it says required as the row does) lowers it to 33,643.
+    # Integrating the capture review's items 9-12 (Console Behavior's rows,
+    # one-row Context window, its unknown help naming the assumed size)
+    # re-pins it at the integrated head's measured 33,645; the checkpoint
+    # review's result-line fix (SettingsResultLine) re-pins it at 33,661.
+    # Rebased onto dev (2026-10-09), which added its quit-time session summary
+    # helpers here (+80 on dev): re-pinned at the rebased head's 33,712, still
+    # under dev's 34,598 for the file; the Provider list's prefix-first
+    # highlight makes it 33,724; dev's #3056 session-summary deferrals add 8
+    # (rebased again): 33,732.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33732,
+    # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
+    # at birth so the split cannot regrow a god module there. New code for
+    # either goes in a sibling module under UI/Settings_Modules/.
+    # providers_models_card.py: the final review's ruff format (+2 reflow)
+    # and fixes re-pin it at the PR head's measured 1,963; the full-screen
+    # capture fixes (2026-10-09: the restored-connection row, the Applies-to
+    # line, Sign in with's row copy) at 2,194; the Endpoint guide that says
+    # required as its row does (2026-10-09) at 2,238; items 11-12 (one-row
+    # Context window, -1; its assumed size, +1) leave it at 2,238 measured.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2300,
+    "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 729,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.

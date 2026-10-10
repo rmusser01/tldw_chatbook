@@ -185,7 +185,55 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # its tests) gates the widget-level hostile-text sinks. B1's mounted Roleplay
 # files are bootstrap-profile and run in the PR Fast Lane's
 # admission-sensitive step instead (TASK-32873).
-MINIMUM_FILES = 163
+# TASK-33007.5 raised it to 136: test_settings_model_defaults_rows.py (~75 s
+# serial) gates Settings' Model defaults rows, the one-row Select rows on
+# Providers & Models and Console Behavior, and a real save of a blanked field.
+# TASK-33007.6 raised it to 137: test_settings_advanced_disclosures.py (~75 s
+# serial) gates the Advanced fold -- order, one-row titles that say their
+# state, state words on every discovered and catalog row, one frame level,
+# and '/' opening the closed disclosure it lands in.
+# TASK-33007.7 raised it to 138: test_settings_console_fallback_rows.py (~45 s
+# serial) gates Console Behavior's global fallbacks -- Model defaults' rows,
+# the On/Off streaming Select, the config-key disclosure and a real save that
+# a new chat and an inheriting model default both follow.
+# TASK-33007.9 raised it to 139: test_settings_connect_rows.py (23 mounted
+# cases, ~6.7 min serial measured at load average 35; 13-25 s a case) gates
+# Connect's one-row rows -- the Provider control's name after a choice or
+# Revert, painted from its head, its open list's box at both full-screen
+# sizes, the key's source words, the Key check row and the Tab budget to Model.
+# TASK-33007.9 (review round 2) raised it to 140:
+# test_settings_default_model_picker.py (12 mounted cases, ~2.1 min serial)
+# gates the Default model picker -- one row, ids grouped by where they came
+# from, Custom ID and its rollback, and a wide id read from its head. The lane
+# went to five shards in the same commit: this phase's five Settings files
+# cost ~10.8 min serial, and replaying per-file seconds from three-shard job
+# logs over dev's census plus them put 19-20.5 min of pytest in one of three
+# shards and 16.6-17.5 in one of four; five give 13.3-14.5 at most.
+# TASK-33007 (final review) raised it to 142: test_settings_save_reach.py
+# (6 cases; the real D1 reach save and Ctrl+T in Console) and
+# test_settings_providers_models_card_geometry.py (2 cases; the card's
+# hit-test net from the region-module move) were left out of the lane.
+# The capture review's items 9-11 (p7cf-b) raised it to 143:
+# test_settings_console_behavior_grammar.py (5 cases) pins Console
+# Behavior's one frame, one control column, its labels and prose inset.
+# TASK-33007 (CI on #3057) raised it to 170: test_settings_connect_rows.py
+# ran 15+ min of one 20-min shard on CI (61 cases, each mounting the whole
+# Settings screen) and timed the shard out. It is split by topic into itself
+# (the Provider control), _tab_budget.py, _key_rows.py and _paint.py, listed
+# together so round-robin puts each part in a different shard; the lane went
+# to six shards in the same commit.
+# Placement (measured on #3057's six shard logs, every file timed): the eleven
+# Phase 7 Settings files are 35.2 of the lane's 71.4 pytest minutes, and where
+# they fall decides the split as much as the shard count does -- listed where
+# they were, one of six shards ran 16.0 min (17.4 with setup, of 20). They now
+# sit at the end of the census, so no earlier file's shard depends on them,
+# ordered by a search over the tail for the flattest split. Rebased over
+# Roleplay frame B1's four files that order gave 13.4 min at best with six
+# shards and 10.8 with seven, so the lane went to seven. A file added above
+# the tail shifts its shards: re-run the replay then.
+# Phase 7's counts above were taken on its own base; over B1's 163 its eleven
+# files make the floor 174.
+MINIMUM_FILES = 174
 
 
 def read_census(path: Path) -> list[str]:

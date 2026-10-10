@@ -512,6 +512,19 @@ def provider_config_key(provider: str | None) -> str:
     return normalize_provider_config_key(provider)
 
 
+def required_base_url_target(provider: str | None) -> str | None:
+    """Name what a provider that ships no base URL needs set (ADR-179).
+
+    Args:
+        provider: A provider id or alias.
+
+    Returns:
+        E.g. "resource host" for Azure, or None when a default URL ships.
+    """
+    recovery = _BASE_URL_RECOVERY.get(provider_config_key(provider))
+    return recovery[1] if recovery else None
+
+
 def _requires_api_key(provider_key: str) -> bool:
     """Return True unless the provider is known to work without credentials."""
     return provider_key not in KEYLESS_PROVIDER_KEYS
@@ -677,6 +690,39 @@ def resolve_provider_credential(
     if env_key is None:
         return None, None, env_var
     return env_key, f"env:{env_var}", env_var
+
+
+def provider_credential_source(
+    provider: str | None,
+    app_config: Mapping[str, object],
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """Say where a provider's key comes from, whether or not it can send yet.
+
+    Readiness drops the source while a send is impossible -- Azure,
+    Cloudflare and Databricks before their base URL is set -- yet the key is
+    saved all the same, so Settings says so, offers Clear and lists the
+    provider as Configured (TASK-33007.2 AC#2, AC#4).
+
+    Args:
+        provider: A provider id or alias; a custom endpoint id has no table.
+        app_config: The configuration holding ``api_settings``.
+        environ: Environment mapping, injectable for tests.
+
+    Returns:
+        ``"config:api_settings.<key>.api_key"``, ``"env:<VAR>"``, or ``None``.
+    """
+    provider_key = provider_config_key((provider or "").strip())
+    try:
+        _validate_provider_key(provider_key)
+        settings = provider_settings_for_key(
+            app_config.get("api_settings", {}), provider_key
+        )
+    except (ValueError, ProviderSettingsError):
+        return None
+    env = os.environ if environ is None else environ
+    return resolve_provider_credential(provider_key, settings, environ=env)[1]
 
 
 def _custom_endpoint_readiness(

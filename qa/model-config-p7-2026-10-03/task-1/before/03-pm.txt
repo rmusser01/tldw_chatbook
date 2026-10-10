@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │  Connect                                                                                                              │  │  │  │                                         │
+│  category search             │  │  │ │ Provider                                                                                                              │▁ │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ ▊  Search providers by name or ID                                                                                   ▎ │  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │  Save (s) — no changes                  │
+│ █  > Providers & Models      │  │  │ │ Local LLM (legacy generic)                                                                                            │  │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │ │ Mistral AI (legacy alias)                                                                                             │  │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │ │ Ollama (legacy alias)                                                                                                 │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ vLLM (legacy alias)                                                                                                   │  │  │  │ Affects Console and provider-backed     │
+│      Appearance              │  │  │ │ Other                                                                                                                 │▁ │  │  │ generation.                             │
+│      Theme                   │  │  │ │ Enter provider ID                                                                                                     │  │  │  │  Provider readiness: OpenAI /           │
+│      Splash Screen           │  │  │ │ Choose a provider or enter a provider ID.                                                                             │  │  │  │  gpt-5.6-terra                          │
+│      Console Behavior        │  │  │ │ Model                   │ gpt-5.6-terra                                                                               │  │  │  │ Focused field guide                     │
+│  Data & Privacy              │  │  │ │ Endpoint                │ https://api.openai.com/v1                                                                   │  │  │  │  Focused setting: None — Tab to a       │
+│      Storage                 │  │  │ │                                                                                                                       │  │  │  │  setting                                │
+│      Workspaces              │  │  │ │  Credentials                                                                                                          │  │  │  │  Purpose: Configure the default         │
+│      Tool Profiles           │  │  │ │  API key source: missing; set OPENAI_API_KEY or paste a local key                                                     │  │  │  │  provider, model, endpoint, and         │
+│      Privacy & Security      │  │  │ │ API key                 │ Paste API key to save locally in config                                                     │  │  │  │  credential source.                     │
+│      Network                 │  │  │ │                          Clear saved key                                                                              │  │  │  │  Saved as: chat_defaults plus           │
+│      My Profile              │  │  │ │ Env var                 │ OPENAI_API_KEY                                                                              │  │  │  │  provider-specific api_settings       ▁ │
+│  Troubleshooting             │  │  │ │  Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.         │  │  │  │  Save: staged - press s to save, r to   │
+│      Diagnostics (view)      │  │  │ │  Review restored OpenAI connection                                                                                    │  │  │  │  revert                                 │
+│      About (view)            │  │  │ │  Test Provider                                                                                                        │  │  │  │  Validation: test provider readiness    │
+│      Agents                  │  │  │ │  Checks the settings, then lists models without generating: a cloud provider's listing checks the API key, a local    │  │  │  │  before saving these defaults           │
+│  Expert                      │  │  │ │  server's shows it answers. Nothing is saved.                                                                         │  │  │  │  Runtime owner: Settings persisted      │
+│      Hooks                   │  │  │ │ Configuration check has not run.                                                                                      │  │  │  │  defaults; Console runtime selection    │
+│      Internal Prompts        │  │  │ │  Provider settings have not been saved this session.                                                                  │  │  │  │  Writes allowed: Yes                    │
+│      Advanced Config         │  │  │ │                                                                                                                       │  │  │  │  Owns: chat_defaults.provider           │
+│   Domain Defaults ▸ (11)     │  │  │ │  Provider readiness                                                                                                   │  │  │  │  chat_defaults.model                    │
+│                              │  │  │ │  Readiness: OpenAI / gpt-5.6-terra                                                                                    │  │  │  │  api_settings.<provider>.               │
+│                              │  │  │ │  Provider source: Saved chat defaults                                                                                 │  │  │  │    endpoint                             │
+│                              │  │  │ │  Model source: Saved chat defaults                                                                                    │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -521,13 +521,17 @@ def build_field_search_index() -> None:
                 ),
             ),
             SettingsCategoryId.PROVIDERS_MODELS: (
-                ("settings-provider-value", "Provider"),
+                # TASK-33007.2: the one-row Provider control; the Select
+                # behind it is a hidden adapter.
+                ("settings-provider-search", "Provider"),
                 ("settings-provider-api-mode", "API mode"),
                 (
                     "settings-provider-api-mode",
                     "api_settings.<provider>.api_mode",
                 ),
-                ("settings-model-value", "Model"),
+                # TASK-33007.3: the picker's field; the Input behind it is a
+                # hidden adapter holding the model id.
+                ("model-search-picker-input", "Model"),
                 ("settings-provider-endpoint-value", "Endpoint"),
                 ("settings-provider-api-key", "API key"),
                 ("settings-provider-credential-env-var", "Credential env var"),
@@ -574,6 +578,10 @@ def build_field_search_index() -> None:
                 ),
                 ("settings-model-profile-thinking-budget-tokens", "Think budget"),
                 ("settings-model-profile-streaming", "Streaming"),
+                # TASK-33007.6: the Prompt-cache snapshots disclosure's fields
+                # (ADR-119); '/' opens the closed disclosure it lands in.
+                ("settings-snapshot-enabled", "Enable prompt-cache snapshots"),
+                ("settings-snapshot-keep", "Snapshot keep count"),
             ),
             SettingsCategoryId.SPEECH_TTS: (
                 ("settings-speech-default-provider", "Default TTS Provider"),

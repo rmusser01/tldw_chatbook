@@ -1081,6 +1081,17 @@ def _static_text(widget: Static) -> str:
     return getattr(renderable, "plain", str(renderable))
 
 
+def _console_config_key_saved_as(screen) -> str:
+    """Console Behavior's "Saved as" row, read inside its closed "config key"
+    disclosure (TASK-33007.7). ``_visible_text`` cannot tell: it checks each
+    Static's own display, not a collapsed ancestor's."""
+    disclosure = screen.query_one("#settings-console-behavior-config-key")
+    assert disclosure.collapsed
+    return _static_text(
+        disclosure.query_one("#settings-console-behavior-config-key-saved-as", Static)
+    )
+
+
 def _visible_text(screen) -> str:
     return " ".join(
         [

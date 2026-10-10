@@ -117,6 +117,42 @@ def test_provider_picker_searches_display_name_and_provider_id():
 
 
 def test_provider_picker_grouping_is_stable_and_empty_search_lists_catalog():
+    """TASK-33007.2 AC#2, rewritten on purpose: configured providers lead.
+
+    The old order (Cloud, Local, Custom & legacy aliases) mixed the few
+    providers a user set up in among the whole catalog. A configured custom
+    slot leads too; a configured legacy alias stays last (ADR-066).
+    """
+    from tldw_chatbook.UI.Screens.settings_provider_view_model import (
+        build_provider_picker_groups,
+    )
+
+    groups = build_provider_picker_groups(
+        _catalog(),
+        "openai",
+        "",
+        configured={"Anthropic", "custom", "LOCAL-OLLAMA"},
+    )
+
+    assert [group.group_id for group in groups] == [
+        "configured",
+        "cloud",
+        "local",
+        "custom",
+        "actions",
+    ]
+    assert groups[0].label == "Configured"
+    assert [option.provider_id for option in groups[0].options] == [
+        "anthropic",
+        "custom",
+    ]
+    assert [option.provider_id for option in groups[1].options] == ["openai"]
+    assert [option.provider_id for option in groups[2].options] == ["ollama"]
+    assert [option.provider_id for option in groups[3].options] == ["local_ollama"]
+    assert groups[3].options[0].label == "Ollama (legacy alias)"
+
+
+def test_provider_picker_without_configured_providers_keeps_catalog_groups():
     from tldw_chatbook.UI.Screens.settings_provider_view_model import (
         build_provider_picker_groups,
     )
@@ -133,11 +169,77 @@ def test_provider_picker_grouping_is_stable_and_empty_search_lists_catalog():
         "anthropic",
         "openai",
     ]
-    assert [option.provider_id for option in groups[1].options] == ["ollama"]
-    assert [option.provider_id for option in groups[2].options] == [
-        "custom",
-        "local_ollama",
-    ]
+
+
+def test_provider_picker_summary_counts_configured_providers_of_all():
+    """Rewritten on purpose (TASK-33007 capture fix 5): naming the providers
+    ("configured: Anthropic, Azure OpenAI +1 · 57 more") was cut at 211x44,
+    and "+1 · 57 more" read as two counts of one thing."""
+    from tldw_chatbook.UI.Screens.settings_provider_view_model import (
+        build_provider_picker_groups,
+        provider_picker_summary,
+    )
+
+    some = build_provider_picker_groups(
+        _catalog(), "openai", "", configured={"anthropic", "ollama"}
+    )
+    many = build_provider_picker_groups(
+        _catalog(),
+        "openai",
+        "",
+        configured={"anthropic", "ollama", "openai", "custom"},
+    )
+    none = build_provider_picker_groups(_catalog(), "openai", "")
+
+    assert provider_picker_summary(some) == "2 of 5 configured · listed first"
+    assert provider_picker_summary(many) == "4 of 5 configured · listed first"
+    assert provider_picker_summary(none) == "none of 5 configured yet"
+
+
+def test_configured_provider_keys_reads_credentials_and_own_endpoints():
+    """A key in config or the shell, or an endpoint the user changed, counts;
+    the shipped template's default localhost endpoints do not."""
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+    from tldw_chatbook.UI.Screens.settings_provider_view_model import (
+        configured_provider_keys,
+    )
+
+    template = DEFAULT_CONFIG_FROM_TOML["api_settings"]
+    app_config = {
+        "api_settings": {
+            "openai": {"api_key": "sk-proj-abcdefghijklmnop1234"},
+            "ollama": dict(template["ollama"]),
+            "llama_cpp": {**template["llama_cpp"], "api_url": "http://10.0.0.9:9099"},
+            # Final review finding 2: readiness drops these keys' source until
+            # a base URL is set; the key still counts.
+            "azure": {"api_key": "sk-proj-abcdefghijklmnop1234"},
+            "databricks": {},
+        }
+    }
+    catalog = (
+        _entry("openai", "OpenAI", requires_api_key=True),
+        _entry("anthropic", "Anthropic", requires_api_key=True),
+        _entry("groq", "Groq", requires_api_key=True),
+        _entry("ollama", "Ollama", requires_api_key=False),
+        _entry("llama_cpp", "llama.cpp", requires_api_key=False),
+        _entry("azure", "Azure OpenAI", requires_api_key=True),
+        _entry("databricks", "Databricks", requires_api_key=True),
+        _entry("cloudflare", "Cloudflare", requires_api_key=True),
+    )
+
+    configured = configured_provider_keys(
+        catalog,
+        app_config,
+        ("api_base_url", "api_url"),
+        environ={
+            "ANTHROPIC_API_KEY": "sk-ant-abcdefghijklmnop1234",
+            "DATABRICKS_TOKEN": "dapi-abcdefghijklmnop1234",
+        },
+    )
+
+    assert configured == frozenset(
+        {"openai", "anthropic", "llama_cpp", "azure", "databricks"}
+    )
 
 
 def test_provider_picker_no_match_keeps_only_honest_manual_action():

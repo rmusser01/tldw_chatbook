@@ -7,7 +7,7 @@ legacy Chat window are deprecated parallels; new settings belong here.
 
 import asyncio
 import copy
-from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 import logging
@@ -35,7 +35,6 @@ from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.selection import Selection
 from textual.strip import Strip
-from textual.suggester import SuggestFromList
 from textual.validation import ValidationResult, Validator
 from textual.worker import get_current_worker
 from textual.widgets import (
@@ -113,6 +112,8 @@ from ...Chat.provider_readiness import (
     ProviderReadiness,
     get_provider_readiness,
     provider_config_key,
+    provider_credential_source,
+    required_base_url_target,
 )
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
@@ -145,6 +146,9 @@ from ...Chat.console_session_settings import (
     _custom_endpoint_declared_credential,
     build_console_settings_readiness,
     build_target_default_console_session_settings,
+    chat_defaults_held_fields,
+    chat_defaults_value,
+    model_default_value,
     normalize_console_model_value,
     readiness_words,
     settings_provider_catalog,
@@ -193,6 +197,7 @@ from ...Chat.provider_catalog import (
     PROVIDER_GROUP_CUSTOM,
     PROVIDER_GROUP_LOCAL,
     PROVIDER_GROUP_ORDER,
+    PROVIDER_LEGACY_ALIAS_KEYS,
     provider_display_name,
 )
 from ...config import (
@@ -239,6 +244,7 @@ from ...config import (
 )
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
+    ModelCatalogSettings,
     load_model_catalog_settings,
 )
 from ...LLM_Calls.qwencloud import normalize_qwencloud_api_mode
@@ -263,10 +269,7 @@ from ...Utils.console_background_effects import (
 )
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
-from .provider_model_resolution import (
-    EffectiveProviderModel,
-    resolve_effective_provider_model,
-)
+from .provider_model_resolution import resolve_effective_provider_model
 from .settings_config_adapter import (
     SettingsConfigAdapter,
     failure_status_text,
@@ -312,10 +315,11 @@ from .settings_provider_view_model import (
     build_entry_edit_mutation,
     build_provider_picker_groups,
     build_settings_overview,
+    configured_provider_keys,
     conversations_referencing_endpoint,
     convert_slot_to_named_endpoint,
-    custom_endpoint_rows,
     detach_and_delete_entry,
+    provider_picker_summary,
 )
 from .settings_config_models import (
     SettingsCategoryId,
@@ -481,6 +485,7 @@ if TYPE_CHECKING:
     from ...Agents.hook_permissions import HookReviewSnapshot
     from ...Tool_Packs.contracts import ToolPackError
     from ...Tool_Packs.service import ToolProfileListing
+    from ...Widgets.model_search_picker import ModelSearchPicker
     from ...Widgets.Settings_Widgets.personal_context_panel import (
         PersonalContextSettingsPanel,
     )
@@ -995,7 +1000,8 @@ CLOSED_ENUM_SELECT_OPTIONS = {
 }
 # Tri-state profile streaming (inherit/on/off) is a closed 3-value enum, so
 # it also renders as a Select; the console-default streaming fallback is a
-# strict boolean and uses the standard Checkbox toggle idiom.
+# strict boolean and offers the same two options without the blank
+# (TASK-33007.7).
 MODEL_PROFILE_STREAMING_SELECT_OPTIONS = (("On", "true"), ("Off", "false"))
 # Model-profile fields rendered as Select instead of free-text Input.
 MODEL_PROFILE_SELECT_FIELD_KEYS = frozenset(
@@ -1007,16 +1013,19 @@ MODEL_PROFILE_SELECT_FIELD_KEYS = frozenset(
         "model_profile_streaming",
     }
 )
+# TASK-33007.5 (AC#4): a placeholder states only a range or unit, short
+# enough for a one-row number field; what a blank field inherits is its
+# row's help line.
 MODEL_PROFILE_INPUT_PLACEHOLDERS = {
     "model_profile_temperature": "0.0 - 2.0",
     "model_profile_top_p": "0.0 - 1.0",
-    "model_profile_min_p": "optional 0.0 - 1.0",
-    "model_profile_top_k": "optional whole number",
-    "model_profile_max_tokens": "optional whole number",
-    "model_profile_seed": "optional whole number",
+    "model_profile_min_p": "0.0 - 1.0",
+    "model_profile_top_k": "integer",
+    "model_profile_max_tokens": "tokens",
+    "model_profile_seed": "integer",
     "model_profile_presence_penalty": "-2.0 - 2.0",
     "model_profile_frequency_penalty": "-2.0 - 2.0",
-    "model_profile_thinking_budget_tokens": "optional >= 1024",
+    "model_profile_thinking_budget_tokens": ">= 1024",
 }
 PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
@@ -1221,6 +1230,18 @@ PROVIDER_SAVE_SCOPE_COPY = (
 #: CATEGORY here ("Appearance defaults", "Storage defaults", "Provider
 #: setup"), which a keyboard user cannot tell apart from a setting's name.
 NO_FOCUSED_SETTING_COPY = "None — Tab to a setting"
+#: TASK-33007.4: the focused-field guide row naming the config key; the
+#: Inspector shows it only inside its closed "config key" disclosure.
+CONFIG_KEY_ROW_LABEL = "Saved as"
+#: Captures review note 11: Context window's one-line help, known and unknown.
+CONTEXT_WINDOW_HELP = "total token capacity, not a chat length"
+CONTEXT_WINDOW_REQUIRED_HELP = "required for Automatic conversation budgets"
+#: TASK-33007.7: the legacy streaming key, said only inside Console
+#: Behavior's "config key" disclosure.
+STREAMING_CONFIG_KEY_FACT = (
+    "chat_defaults.streaming is canonical; enable_streaming is read only "
+    "when streaming is absent"
+)
 #: TASK-33002.12: Providers & Models status for a saved default naming an
 #: ADR-146 registry entry that no longer exists.
 ENDPOINT_NOT_FOUND_SETTINGS_COPY = (
@@ -1233,6 +1254,7 @@ REGISTRY_FIELD_PLACEHOLDER = "Managed in Custom endpoints"
 #: mutation, and both reject a registry id. Enabled for every other provider.
 _REGISTRY_LOCKED_FIELD_SELECTORS = (
     "#settings-model-value",
+    "#settings-model-picker",
     "#settings-provider-endpoint-value",
     "#settings-provider-api-key",
     "#settings-provider-credential-env-var",
@@ -1255,6 +1277,8 @@ _FOCUSED_FIELD_GUIDANCE_METHODS: dict[SettingsCategoryId, str] = {
 MODEL_CATALOG_FIELD_IDS = frozenset(
     MODEL_CATALOG_CHECKBOX_IDS | {"settings-model-catalog-stale-hours"}
 )
+#: The "Review restored OpenAI connection" action; a review applies at once.
+OPENAI_RECONNECT_REVIEW_ID = "settings-openai-reconnect-review"
 
 RAW_CLI_PERMITTED_DRAFT_KEY = "console.raw_cli_permitted"
 CANVAS_ENABLED_DRAFT_KEY = "canvas.enabled"
@@ -1298,6 +1322,21 @@ CONSOLE_DEFAULT_FIELD_NAMES = {
     f"settings-console-default-{name.replace('_', '-')}": name
     for name in GENERATION_FIELD_REQUEST_KEYS
 }
+# Captures review note 10: every [chat_defaults] key the Global fallback
+# defaults rows save, said once in the Inspector's "config key" disclosure.
+CONSOLE_FALLBACK_KEYS_FACT = "chat_defaults: " + ", ".join(
+    ("user_display_name", *GENERATION_FIELD_REQUEST_KEYS)
+)
+# The fallbacks with a built-in value: their controls are never blank at
+# rest, and Save refuses a blank (TASK-33007.7).
+CONSOLE_BUILT_IN_FALLBACK_FIELDS = ("streaming", "temperature", "top_p")
+# Ends the focused guide's Validation row while a fallback row reads
+# "built-in": Save writes only edits, so keeping the value shown takes a
+# change and a change back (the row's help says a provider's comes first).
+CONSOLE_PIN_BUILT_IN_HINT = (
+    "to put the shown value ahead of a provider's own, change it, change it "
+    "back and save"
+)
 
 
 # TASK-18600: the Console agent's run budget, driven by ONE spec table
@@ -1571,17 +1610,6 @@ API_URL_PROVIDER_KEYS = {
     "oobabooga",
     "tabbyapi",
     "vllm",
-}
-SETTINGS_SOURCE_LABELS = {
-    # Keys mirror the source values resolve_effective_provider_model can
-    # return (Provider/provider_model_resolution.py) -- task-648 renamed
-    # console_control to console_session and deleted app_reactive; TASK-1310's
-    # review caught the stale keys here rendering a raw "console session"
-    # fallback label in Settings > Providers.
-    "settings_draft": "Unsaved Settings draft",
-    "console_session": "Console runtime override",
-    "chat_defaults": "Saved chat defaults",
-    "default": "Default fallback",
 }
 PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "anthropic": "https://api.anthropic.com",
@@ -2901,7 +2929,8 @@ class SettingsRegion(Vertical):
     whole-screen recompose instead). Giving the region a ``compose()`` that
     calls back into the screen is what makes a region-scoped rebuild possible.
 
-    The builder is a bound method of the owning screen: the screen outlives
+    The builder is bound to the owning screen (a screen method, or a
+    ``Settings_Modules`` composer partially applied to it): the screen outlives
     its regions (a region rebuild never replaces the screen), and a screen
     recompose mints fresh regions bound to the fresh screen, so it cannot go
     stale.
@@ -3043,6 +3072,29 @@ def _settings_ssh_advisory_probe(
         if still_ready:
             code = getattr(exc, "code", "") or type(exc).__name__
             _record_unreached(f"probe failed ({code})")
+
+
+class SettingsResultLine(Static):
+    """A card's last save or revert result, taking no row until it has one.
+
+    Each card used to open with "… have not been saved this session.": a row
+    saying nothing happened, while the Inspector already says "Save (s) — no
+    changes" (spec: each fact appears once).
+    """
+
+    def __init__(self, text: str = "", **kwargs: object) -> None:
+        super().__init__(text, **kwargs)  # type: ignore[arg-type]
+        self.display = bool(text.strip())
+
+    def update(self, content: object = "", *, layout: bool = True) -> None:
+        """Show the line only while it has something to report.
+
+        Args:
+            content: The new result text.
+            layout: Whether the update may change the layout.
+        """
+        super().update(content, layout=layout)  # type: ignore[arg-type]
+        self.display = bool(str(content).strip())
 
 
 class SettingsScreen(BaseAppScreen):
@@ -3304,6 +3356,8 @@ class SettingsScreen(BaseAppScreen):
         self._openai_reconnect_token = None
         self._openai_reconnect_busy = False
         self._openai_reconnect_prompt_open = False
+        #: Whether a restored OpenAI connection awaits review; None until read.
+        self._openai_reconnect_pending: bool | None = None
         self._local_model_review_token = None
         self._local_model_review_busy = False
         self._local_model_review_prompt_open = False
@@ -3312,9 +3366,11 @@ class SettingsScreen(BaseAppScreen):
             None
         )
         self._provider_subscription_test: tuple[str, int] | None = None
-        self._provider_save_result = (
-            "Provider settings have not been saved this session."
-        )
+        #: TASK-33007.2: providers with a credential or their own endpoint,
+        #: read when the unfiltered provider list is built.
+        self._provider_configured_keys: frozenset[str] | None = None
+        # Empty until a save or revert has a result (SettingsResultLine).
+        self._provider_save_result = ""
         self._vllm_default_claim: (
             HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent] | None
         ) = None
@@ -3326,6 +3382,8 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_status = MODEL_DISCOVERY_IDLE_COPY
         self._model_discovery_models: tuple[object, ...] = ()
         self._model_discovery_selected_model_ids: set[str] = set()
+        # The provider whose discovery listing the Default model picker shows.
+        self._model_picker_overlay_provider = ""
         self._model_discovery_revision = 0
         self._model_catalog_form_values: dict[str, dict[str, object]] | None = None
         self._model_catalog_save_status = ""
@@ -3354,10 +3412,18 @@ class SettingsScreen(BaseAppScreen):
         self._provider_endpoint_suppress_queue: list[str] = []
         self._provider_credential_env_var_suppress_queue: list[str] = []
         self._provider_api_key_suppress_queue: list[str] = []
+        # The draft and provider Clear staged a removal for: an emptied field
+        # then keeps that removal instead of dropping the edit.
+        self._provider_api_key_cleared: tuple[SettingsDraft | None, str] | None = None
         self._provider_context_window_suppress_queue: list[str] = []
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
-        self._generation_defaults_collapsed = True
+        # TASK-33007.5: Model defaults opens expanded; Sampling stays closed.
+        self._generation_defaults_collapsed = False
+        self._sampling_defaults_collapsed = True
+        # TASK-33007.6: the Advanced disclosures the user left open, kept
+        # across a card rebuild; all start closed.
+        self._advanced_disclosures_open: set[str] = set()
         self._syncing_provider_model_value = False
         self._syncing_provider_manual = False
         self._syncing_provider_selection = False
@@ -3606,13 +3672,9 @@ class SettingsScreen(BaseAppScreen):
             "Privacy check: not run",
             "Run Check Privacy or press t to verify redacted secret status.",
         )
-        self._console_behavior_result = (
-            "Console behavior settings have not been saved this session."
-        )
+        self._console_behavior_result = ""
         self._console_behavior_saved_this_session = False
-        self._library_rag_result = (
-            "Library/RAG defaults have not been saved this session."
-        )
+        self._library_rag_result = ""
         self._library_rag_profile_result = "No RAG profile action taken this session."
         # Task 4 (SP3): index status readout + Backfill. The Static renders
         # this placeholder text at compose time -- the real state is fetched
@@ -3660,10 +3722,8 @@ class SettingsScreen(BaseAppScreen):
         #: cold): the entering-first-run transition then fires correctly
         #: the first time a genuinely first-run status lands.
         self._rag_first_run_active = False
-        self._appearance_result = (
-            "Appearance defaults have not been saved this session."
-        )
-        self._storage_result = "Storage defaults have not been saved this session."
+        self._appearance_result = ""
+        self._storage_result = ""
         #: Task 9 (workspace lifecycle card): the workspace row currently
         #: selected in the list, or None when nothing is selected -- the
         #: card renders nothing in that case. Reset whenever the user
@@ -4509,13 +4569,9 @@ class SettingsScreen(BaseAppScreen):
                         f"{row.label}: {_fold_long_tokens(row.value)}",
                     )
             return
-        self._set_static_text(
-            "#settings-provider-key-status", self._provider_key_status(provider)
-        )
-        self._set_static_text(
-            "#settings-provider-credential-status",
-            self._provider_credential_status(provider),
-        )
+        from ..Settings_Modules.providers_models_card import refresh_key_rows
+
+        refresh_key_rows(self, provider)
         tested_draft = self._provider_subscription_test
         if tested_draft is None:
             return
@@ -7013,31 +7069,27 @@ class SettingsScreen(BaseAppScreen):
             return DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE
         return value.strip()
 
-    @staticmethod
-    def _coerce_float_default(
-        value: object,
-        fallback: float,
-        *,
-        minimum: float,
-        maximum: float,
-    ) -> float:
-        if isinstance(value, bool):
-            return fallback
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return fallback
-        if minimum <= number <= maximum:
-            return number
-        return fallback
+    def _loaded_chat_default(self, name: str, built_in: object = "") -> object:
+        """Read a global fallback as a new chat reads it (TASK-33007.7).
+
+        The default chain's own coercion, so a row's value cannot disagree
+        with its Source word (``chat_defaults_held_fields``) on a hand-edited
+        value only one reading accepts.
+
+        Args:
+            name: A generation field, e.g. ``"temperature"``.
+            built_in: Shown when ``[chat_defaults]`` holds no usable value:
+                tldw's own value, or blank for an optional field.
+
+        Returns:
+            The value a new chat takes from ``[chat_defaults]``, else
+            ``built_in``.
+        """
+        value = chat_defaults_value(self._app_config_mapping(), name)
+        return built_in if value is None else value
 
     def _loaded_console_default_streaming(self) -> bool:
-        chat_defaults = self._chat_defaults()
-        if "streaming" in chat_defaults:
-            return coerce_bool_setting(chat_defaults.get("streaming"), True)
-        if "enable_streaming" in chat_defaults:
-            return coerce_bool_setting(chat_defaults.get("enable_streaming"), True)
-        return True
+        return bool(self._loaded_chat_default("streaming", True))
 
     def _loaded_console_default_user_display_name(self) -> str:
         try:
@@ -7052,77 +7104,31 @@ class SettingsScreen(BaseAppScreen):
             return "User"
 
     def _loaded_console_default_temperature(self) -> float:
-        return self._coerce_float_default(
-            self._chat_defaults().get("temperature", 0.7),
-            0.7,
-            minimum=0.0,
-            maximum=2.0,
-        )
+        return float(self._loaded_chat_default("temperature", 0.7))
 
     def _loaded_console_default_top_p(self) -> float:
-        return self._coerce_float_default(
-            self._chat_defaults().get("top_p", 0.95),
-            0.95,
-            minimum=0.0,
-            maximum=1.0,
-        )
+        return float(self._loaded_chat_default("top_p", 0.95))
 
     def _loaded_console_default_min_p(self) -> float | str:
-        return self._loaded_optional_float_default("min_p", minimum=0.0, maximum=1.0)
+        return self._loaded_chat_default("min_p")
 
     def _loaded_console_default_top_k(self) -> int | str:
-        return self._loaded_optional_int_default("top_k", minimum=0)
+        return self._loaded_chat_default("top_k")
 
     def _loaded_console_default_max_tokens(self) -> int | str:
-        return self._loaded_optional_int_default("max_tokens", minimum=1)
+        return self._loaded_chat_default("max_tokens")
 
     def _loaded_console_default_seed(self) -> int | str:
-        return self._loaded_optional_int_default("seed", minimum=0)
+        return self._loaded_chat_default("seed")
 
     def _loaded_console_default_presence_penalty(self) -> float | str:
-        return self._loaded_optional_float_default(
-            "presence_penalty",
-            minimum=-2.0,
-            maximum=2.0,
-        )
+        return self._loaded_chat_default("presence_penalty")
 
     def _loaded_console_default_frequency_penalty(self) -> float | str:
-        return self._loaded_optional_float_default(
-            "frequency_penalty",
-            minimum=-2.0,
-            maximum=2.0,
-        )
-
-    def _loaded_console_default_choice(self, key: str, allowed: frozenset[str]) -> str:
-        value = str(self._chat_defaults().get(key, "") or "").strip().lower()
-        return value if value in allowed else ""
+        return self._loaded_chat_default("frequency_penalty")
 
     def _loaded_console_default_thinking_budget_tokens(self) -> int | str:
-        return self._loaded_optional_int_default("thinking_budget_tokens", minimum=1024)
-
-    def _loaded_optional_float_default(
-        self,
-        key: str,
-        *,
-        minimum: float,
-        maximum: float,
-    ) -> float | str:
-        value = self._chat_defaults().get(key, "")
-        if value is None or str(value).strip() == "":
-            return ""
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return ""
-        return number if minimum <= number <= maximum else ""
-
-    def _loaded_optional_int_default(self, key: str, *, minimum: int) -> int | str:
-        value = self._chat_defaults().get(key, "")
-        if value is None or str(value).strip() == "":
-            return ""
-        invalid_sentinel = minimum - 1
-        coerced = coerce_int_setting(value, invalid_sentinel, minimum=minimum)
-        return coerced if minimum <= coerced else ""
+        return self._loaded_chat_default("thinking_budget_tokens")
 
     def _console_behavior_loaded_values(self) -> dict[str, object]:
         values = {
@@ -7166,22 +7172,12 @@ class SettingsScreen(BaseAppScreen):
             "seed": self._loaded_console_default_seed(),
             "presence_penalty": self._loaded_console_default_presence_penalty(),
             "frequency_penalty": self._loaded_console_default_frequency_penalty(),
-            "reasoning_effort": self._loaded_console_default_choice(
-                "reasoning_effort",
-                REASONING_EFFORT_OPTIONS,
-            ),
-            "reasoning_summary": self._loaded_console_default_choice(
-                "reasoning_summary",
-                REASONING_SUMMARY_OPTIONS,
-            ),
-            "verbosity": self._loaded_console_default_choice(
-                "verbosity",
-                VERBOSITY_OPTIONS,
-            ),
-            "thinking_effort": self._loaded_console_default_choice(
-                "thinking_effort",
-                THINKING_EFFORT_OPTIONS,
-            ),
+            # Unfolded, as a new chat takes them: a hand-edited "High" is
+            # shown as no choice, never as "high" (TASK-33007.7).
+            **{
+                name: self._loaded_chat_default(name)
+                for name in CLOSED_ENUM_SELECT_OPTIONS
+            },
             "thinking_budget_tokens": self._loaded_console_default_thinking_budget_tokens(),
         }
         values.update(load_context_memory_values(self._console_settings()).to_mapping())
@@ -7237,7 +7233,7 @@ class SettingsScreen(BaseAppScreen):
             and not has_unsaved_changes
             and self._console_behavior_result
             in {
-                "Console behavior settings have not been saved this session.",
+                "",
                 "Console behavior settings staged.",
                 "Console behavior settings saved.",
             }
@@ -7254,7 +7250,7 @@ class SettingsScreen(BaseAppScreen):
         ):
             if self._console_behavior_saved_this_session:
                 return "Console behavior settings saved."
-            return "Console behavior settings have not been saved this session."
+            return ""
         return self._console_behavior_result
 
     def _console_behavior_value(self, key: str) -> object:
@@ -7316,8 +7312,12 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _select_option_value(value: object, allowed: tuple[str, ...] = ()) -> object:
-        """Map a staged enum string to a Select value (blank/unknown -> NULL)."""
-        text = str(value or "").strip().lower()
+        """Map a staged enum string to a Select value (blank/unknown -> NULL).
+
+        Only an exact option: a saved "High" is no choice, not "high", because
+        a new chat takes "High" as written (TASK-33007.7 review round 4).
+        """
+        text = str(value or "").strip()
         if not text or (allowed and text not in allowed):
             return Select.NULL
         return text
@@ -7344,21 +7344,6 @@ class SettingsScreen(BaseAppScreen):
             return ""
         return str(value).strip().lower() == "true"
 
-    def _console_default_enum_select(self, key: str) -> Select:
-        """Build the staged closed-enum Select for a console-default field."""
-        return Select(
-            [(value, value) for value in CLOSED_ENUM_SELECT_OPTIONS[key]],
-            value=self._select_option_value(
-                self._console_behavior_value(key),
-                CLOSED_ENUM_SELECT_OPTIONS[key],
-            ),
-            id=f"settings-console-default-{key.replace('_', '-')}",
-            classes="settings-compact-select",
-            allow_blank=True,
-            prompt="Provider default",
-            compact=True,
-        )
-
     def _model_profile_enum_select(
         self, provider: object, draft_key: str, values: dict[str, object]
     ) -> Select:
@@ -7381,7 +7366,7 @@ class SettingsScreen(BaseAppScreen):
             id=f"settings-{draft_key.replace('_', '-')}",
             classes="settings-compact-select",
             allow_blank=True,
-            prompt="Inherit default",
+            prompt="Inherit",
             compact=True,
             disabled=not supported,
         )
@@ -9460,12 +9445,29 @@ class SettingsScreen(BaseAppScreen):
             self._update_guided_action_widgets()
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             self._update_provider_return_widgets()
+            # TASK-33007.4 (AC#3): the next new chat reads saved config, so a
+            # dirty form says its edits wait for s.
+            for note in self.query("#settings-provider-next-chat-note"):
+                note.display = has_unsaved_changes
+            # TASK-33007.6: the context window and snapshot drafts re-say
+            # their Advanced titles here.
+            self._refresh_advanced()
             if self.focused is not None and str(self.focused.id or "").startswith(
                 "settings-model-profile-"
             ):
                 # Dirty/readiness copy above the disclosure can grow while
                 # typing and push the active field past the compact fold.
                 self._reveal_settings_focus_after_refresh()
+        if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
+            # TASK-33007.7: the global fallbacks' Source words follow the
+            # draft ("edited *") and a save or revert ("Console Behavior").
+            from ..Settings_Modules.settings_field_rows import (
+                refresh_console_fallbacks,
+            )
+
+            refresh_console_fallbacks(self)
+            # The focused fallback's guide drops its pin hint once edited.
+            self._refresh_console_behavior_field_guidance()
         if category is SettingsCategoryId.IMAGE_GENERATION:
             # Image Gen's Save/Revert live INSIDE the panel (not the generic
             # top guided-action bar, excluded above like THEME/INTERNAL_
@@ -10341,16 +10343,53 @@ class SettingsScreen(BaseAppScreen):
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
 
+    def _console_unsaved_built_in_fallbacks(self) -> frozenset[str]:
+        """Name the built-in fallbacks ``[chat_defaults]`` holds no value for.
+
+        Returns:
+            The fields whose controls show tldw's own value, not a saved one.
+        """
+        return frozenset(CONSOLE_BUILT_IN_FALLBACK_FIELDS) - chat_defaults_held_fields(
+            self._app_config_mapping(), CONSOLE_BUILT_IN_FALLBACK_FIELDS
+        )
+
     def _stage_console_default_value(self, key: str, value: object) -> None:
         category = SettingsCategoryId.CONSOLE_BEHAVIOR
+        loaded = self._console_behavior_loaded_values().get(key)
+        choices = CLOSED_ENUM_SELECT_OPTIONS.get(key)
+        staged = self._settings_drafts.get(category)
+        if (
+            choices is not None
+            and value == ""
+            and loaded not in choices
+            and key not in (staged.dirty_keys if staged is not None else ())
+        ):
+            # A blank Select over a saved choice it has no option for (a
+            # hand-edited "High") is how that value shows (mount, Revert), so
+            # is no edit; a blank chosen after an option is "default".
+            value = loaded
+        elif (
+            isinstance(value, str)
+            and not isinstance(loaded, str)
+            and value.strip() == self._console_input_value(loaded)
+        ):
+            # An Input repeating a saved value its normaliser refuses (a
+            # hand-edited Temperature of 3.0, shown as a new chat reads it)
+            # is no edit: Save keeps the saved value.
+            value = loaded
+        if key in self._console_unsaved_built_in_fallbacks():
+            # TASK-33007.7: nothing is saved for this field, so its control
+            # shows the built-in value and Save would add the key. Going back
+            # to that value (Off, then On) is therefore still an edit: it
+            # pins On over a provider's own Off. Only a control repeating
+            # what it already shows (mount, a Revert sync) stages nothing.
+            if value == self._console_behavior_value(key):
+                return
+            loaded = None
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
         )
-        draft.set_value(
-            key,
-            self._console_behavior_loaded_values().get(key),
-            value,
-        )
+        draft.set_value(key, loaded, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
 
@@ -10517,13 +10556,15 @@ class SettingsScreen(BaseAppScreen):
                     "Purpose",
                     "Global keeps one arrangement across workspace switches for continuity.",
                 ),
+                # One Consequences row, so the guide keeps the three shown
+                # rows the Inspector composes (Saved as goes in config key).
                 (
                     "Consequences",
-                    "Per workspace restores each workspace's saved arrangement.",
-                ),
-                (
-                    "Retention",
-                    "Prior global and workspace records are retained when modes change.",
+                    (
+                        "Per workspace restores each workspace's saved "
+                        "arrangement. Prior global and workspace records are "
+                        "retained when modes change."
+                    ),
                 ),
                 ("Saved as", "console.rail_layout_scope"),
                 ("Applies", "After Save; the next Console layout read uses it."),
@@ -10681,11 +10722,18 @@ class SettingsScreen(BaseAppScreen):
         name = CONSOLE_DEFAULT_FIELD_NAMES.get(self._active_settings_field_id or "")
         if name is not None:
             spec = MODEL_CONFIG_FIELDS[name]
+            validation = spec.valid_range
+            draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+            if name in self._console_unsaved_built_in_fallbacks() and (
+                draft is None or name not in draft.dirty_keys
+            ):
+                # The row reads "built-in": say how to keep the shown value.
+                validation = f"{validation}; {CONSOLE_PIN_BUILT_IN_HINT}"
             return (
                 ("Focused setting", spec.label),
                 ("Purpose", spec.help),
                 ("Saved as", f"chat_defaults.{name}"),
-                ("Validation", spec.valid_range),
+                ("Validation", validation),
             )
         return (
             (
@@ -10700,15 +10748,20 @@ class SettingsScreen(BaseAppScreen):
     def _refresh_console_behavior_field_guidance(self) -> None:
         if self._active_category_id() is not SettingsCategoryId.CONSOLE_BEHAVIOR:
             return
-        for index, (label, value) in enumerate(
+        shown, config_key = self._split_config_key_row(
             self._console_behavior_field_guidance_rows()
-        ):
+        )
+        # task-1716: compose-time rows fold via _detail_row; this in-place
+        # path must fold too or dotted keys break mid-word.
+        for index, (label, value) in enumerate(shown):
             self._set_static_text(
                 f"#settings-console-behavior-field-guide-{index}",
-                # task-1716: compose-time rows fold via _detail_row; this
-                # in-place path must fold too or dotted keys break mid-word.
                 f"{label}: {_fold_long_tokens(value)}",
             )
+        self._set_static_text(
+            "#settings-console-behavior-config-key-saved-as",
+            f"{CONFIG_KEY_ROW_LABEL}: {_fold_long_tokens(config_key)}",
+        )
 
     @staticmethod
     def _normalise_library_rag_int(value: object) -> int | str:
@@ -12557,20 +12610,16 @@ class SettingsScreen(BaseAppScreen):
 
         return anthropic_auth_source(self._provider_config("anthropic"))
 
-    def _provider_auth_readiness_config(
-        self, provider: object, *, auth_source: str | None = None
-    ) -> Mapping[str, object]:
+    def _provider_auth_readiness_config(self, provider: object) -> Mapping[str, object]:
         """Return readiness config with Anthropic's unsaved sign-in choice applied.
 
         The credential status, placeholder, key status and the subscription
         poller read this, so an unsaved choice shows at once and a cold
-        subscription check is followed to completion (Qodo #2990). Forcing
-        ``auth_source`` to the API key lets the saved-key check see a stored
-        key even while the saved choice is the subscription.
+        subscription check is followed to completion (Qodo #2990). The
+        saved-key check reads the table instead (``provider_credential_source``).
 
         Args:
             provider: The provider the panel shows.
-            auth_source: A choice to apply instead of the current one.
 
         Returns:
             The saved config, or a copy with the choice overlaid.
@@ -12578,7 +12627,7 @@ class SettingsScreen(BaseAppScreen):
         config = self._provider_readiness_app_config()
         if provider_config_key(str(provider or "")) != "anthropic":
             return config
-        value = auth_source or self._provider_auth_source_value(provider)
+        value = self._provider_auth_source_value(provider)
         if value == self._provider_saved_auth_source(provider):
             return config
         save_key, _config = self._provider_config_entry(str(provider))
@@ -12627,33 +12676,25 @@ class SettingsScreen(BaseAppScreen):
 
     def _resolve_provider_model_for_settings(self):
         draft = self._provider_draft()
-        settings_provider = (
-            draft.values["provider"]
-            if draft is not None and "provider" in draft.values
-            else None
-        )
-        settings_model = (
-            draft.values["model"]
-            if draft is not None and "model" in draft.values
-            else None
-        )
+        staged = draft.values if draft is not None else {}
         resolved = resolve_effective_provider_model(
             self._chat_defaults(),
-            settings_provider=settings_provider,
-            settings_model=settings_model,
+            settings_provider=staged.get("provider"),
+            settings_model=staged.get("model"),
         )
-        if (
-            draft is not None
-            and "model" in draft.values
-            and not str(draft.values.get("model") or "").strip()
-        ):
-            return EffectiveProviderModel(
-                provider=resolved.provider,
-                model="",
-                provider_source=resolved.provider_source,
-                model_source="settings_draft",
-            )
-        return resolved
+        if "model" in staged and not str(staged.get("model") or "").strip():
+            resolved = replace(resolved, model="", model_source="settings_draft")
+        # The draft pins provider and model beside any edit, so each reads
+        # edited only when its own value differs from the saved one (captures
+        # 03 and 04: a staged Temperature alone marked both).
+        dirty = draft.dirty_keys if draft is not None else set()
+        return replace(
+            resolved,
+            provider_source=(
+                resolved.provider_source if "provider" in dirty else "chat_defaults"
+            ),
+            model_source=resolved.model_source if "model" in dirty else "chat_defaults",
+        )
 
     def _provider_loaded_setting_values(self) -> dict[str, object]:
         resolved = resolve_effective_provider_model(self._chat_defaults())
@@ -12666,7 +12707,6 @@ class SettingsScreen(BaseAppScreen):
         self, provider: str, model: str
     ) -> dict[str, object]:
         """Read dependent fields from the provider/model that owns the form."""
-        profile = self._provider_model_profile(provider, model)
         return {
             "provider": provider,
             "model": model,
@@ -12677,23 +12717,30 @@ class SettingsScreen(BaseAppScreen):
             "auth_source": self._provider_saved_auth_source(provider),
             "model_context_window": self._provider_model_context_window(provider, model)
             or "",
-            "model_profile_temperature": profile.get("temperature", ""),
-            "model_profile_top_p": profile.get("top_p", ""),
-            "model_profile_min_p": profile.get("min_p", ""),
-            "model_profile_top_k": profile.get("top_k", ""),
-            "model_profile_max_tokens": profile.get("max_tokens", ""),
-            "model_profile_seed": profile.get("seed", ""),
-            "model_profile_presence_penalty": profile.get("presence_penalty", ""),
-            "model_profile_frequency_penalty": profile.get("frequency_penalty", ""),
-            "model_profile_reasoning_effort": profile.get("reasoning_effort", ""),
-            "model_profile_reasoning_summary": profile.get("reasoning_summary", ""),
-            "model_profile_verbosity": profile.get("verbosity", ""),
-            "model_profile_thinking_effort": profile.get("thinking_effort", ""),
-            "model_profile_thinking_budget_tokens": profile.get(
-                "thinking_budget_tokens", ""
-            ),
-            "model_profile_streaming": profile.get("streaming", ""),
+            **self._model_profile_values(provider, model),
         }
+
+    def _model_profile_values(self, provider: str, model: str) -> dict[str, object]:
+        """Read the pair's model defaults as a new chat reads them (TASK-33007.7).
+
+        The default chain's own coercion (``model_default_value``), as Console
+        Behavior reads its twin rows, so a row never shows a value a new chat
+        ignores or misses one it takes (``streaming = "0"`` is Off).
+
+        Args:
+            provider: The provider the card holds.
+            model: The default model the card holds.
+
+        Returns:
+            ``{draft key: value}``, ``""`` where the profile holds no usable
+            value.
+        """
+        profile = self._provider_model_profile(provider, model)
+        values: dict[str, object] = {}
+        for key, name in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items():
+            value = model_default_value(profile, name)
+            values[key] = "" if value is None else value
+        return values
 
     def _provider_setting_values(self) -> dict[str, object]:
         resolved = self._resolve_provider_model_for_settings()
@@ -12727,7 +12774,6 @@ class SettingsScreen(BaseAppScreen):
             if self._navigation_model_is_explicit
             else str(values.get("model") or "").strip()
         )
-        profile = self._provider_model_profile(provider, model)
         display_values = dict(values)
         display_values.update(
             {
@@ -12740,22 +12786,7 @@ class SettingsScreen(BaseAppScreen):
                     provider, model
                 )
                 or "",
-                "model_profile_temperature": profile.get("temperature", ""),
-                "model_profile_top_p": profile.get("top_p", ""),
-                "model_profile_min_p": profile.get("min_p", ""),
-                "model_profile_top_k": profile.get("top_k", ""),
-                "model_profile_max_tokens": profile.get("max_tokens", ""),
-                "model_profile_seed": profile.get("seed", ""),
-                "model_profile_presence_penalty": profile.get("presence_penalty", ""),
-                "model_profile_frequency_penalty": profile.get("frequency_penalty", ""),
-                "model_profile_reasoning_effort": profile.get("reasoning_effort", ""),
-                "model_profile_reasoning_summary": profile.get("reasoning_summary", ""),
-                "model_profile_verbosity": profile.get("verbosity", ""),
-                "model_profile_thinking_effort": profile.get("thinking_effort", ""),
-                "model_profile_thinking_budget_tokens": profile.get(
-                    "thinking_budget_tokens", ""
-                ),
-                "model_profile_streaming": profile.get("streaming", ""),
+                **self._model_profile_values(provider, model),
             }
         )
         return display_values
@@ -12769,12 +12800,28 @@ class SettingsScreen(BaseAppScreen):
             str(model or "").strip(),
         )
 
-    def _provider_model_context_window_status(
+    def _context_window_row_copy(
         self, provider: str, model: str, value: object | None = None
-    ) -> str:
+    ) -> tuple[str, str]:
+        """Say the Context window row's Source word and one-line help.
+
+        Captures review note 11: the row reads Label | field | Source word |
+        help like Model defaults' rows; the long explanation is the focused
+        field guide's.
+
+        Args:
+            provider: The provider the card holds.
+            model: The default model the card holds.
+            value: The field's shown value; ``None`` reads the saved one.
+
+        Returns:
+            ``(Source word, help)``: "detected", "saved in config" (an
+            override), "edited *" (staged) or "not set" (unknown, with the
+            size the Console assumes, e.g. "unknown, 32,000 assumed · ...").
+        """
         model_id = str(model or "").strip()
         if not model_id:
-            return "Choose a model to inspect its context window."
+            return "", "choose a model first"
         state = model_context_window_state(
             self._app_config_mapping(), provider, model_id
         )
@@ -12783,26 +12830,37 @@ class SettingsScreen(BaseAppScreen):
             tokens = int(str(window).strip())
         except (TypeError, ValueError):
             tokens = 0
+        edited = tokens != (state.effective_tokens or 0)
+        if tokens <= 0 and not edited and state.assumed_tokens:
+            # Finding 12: the Console's fallback, in the title's words.
+            assumed = f"unknown, {state.assumed_tokens:,} assumed"
+            return "not set", f"{assumed} · budgets use it until set"
         if tokens <= 0:
-            return (
-                "Context window unknown. Enter the provider's documented token "
-                "limit so Automatic conversation budgets can be verified."
-            )
-        if value is not None and tokens != state.effective_tokens:
-            detected = (
-                f"{state.detected_tokens:,}"
-                if state.detected_tokens is not None
-                else "unknown"
-            )
-            return f"Override staged: {tokens:,} tokens. Detected: {detected}."
+            return ("edited *" if edited else "not set"), CONTEXT_WINDOW_REQUIRED_HELP
+        detected = (
+            f"detected {state.detected_tokens:,}"
+            if state.detected_tokens is not None
+            else "nothing detected"
+        )
+        if edited:
+            return "edited *", detected
         if state.has_configured_override:
-            detected = (
-                f"{state.detected_tokens:,}"
-                if state.detected_tokens is not None
-                else "unknown"
-            )
-            return f"Configured override: {tokens:,} tokens. Detected: {detected}."
-        return f"Detected context window: {tokens:,} tokens."
+            return "saved in config", f"override · {detected}"
+        return "detected", CONTEXT_WINDOW_HELP
+
+    def _show_context_window_row(
+        self, provider: str, model: str, value: object
+    ) -> None:
+        """Re-say the Context window row's Source word and help for ``value``.
+
+        Args:
+            provider: The provider the card holds.
+            model: The default model the card holds.
+            value: The field's shown value.
+        """
+        word, help_line = self._context_window_row_copy(provider, model, value)
+        self._set_static_text("#settings-model-context-window-source", word)
+        self._set_static_text("#settings-model-context-window-status", help_line)
 
     def _clear_navigation_provider_context(self) -> None:
         self._navigation_provider = None
@@ -13267,10 +13325,41 @@ class SettingsScreen(BaseAppScreen):
             provider, model, self._app_config_mapping()
         )
         options = [(value, value) for value in offered]
-        saved_text = str(saved or "").strip().lower()
+        saved_text = str(saved or "").strip()
         if saved_text in REASONING_EFFORT_OPTIONS - {""} - set(offered):
             options.append((f"{saved_text} (not supported here)", saved_text))
         return options
+
+    def _unshown_model_profile_choice(
+        self, provider: str, model: str, draft_key: str
+    ) -> object | None:
+        """Return a saved model-default choice its Select has no option for.
+
+        A hand-edited ``reasoning_effort = "High"`` shows as a blank Select,
+        yet a new chat takes "High"; the row names it, a blank Select over it
+        is no edit, and Save keeps it, as Console Behavior's fallbacks do.
+
+        Args:
+            provider: The provider the card holds.
+            model: The default model the card holds.
+            draft_key: The field's draft key, e.g. ``"model_profile_verbosity"``.
+
+        Returns:
+            The saved value as a new chat reads it, or ``None`` when the
+            field is no closed choice, nothing usable is saved (a ``1`` a new
+            chat ignores), or an option shows it.
+        """
+        name = PROVIDER_MODEL_PROFILE_FIELD_KEYS.get(draft_key)
+        if name not in CLOSED_ENUM_SELECT_OPTIONS:
+            return None
+        saved = model_default_value(self._provider_model_profile(provider, model), name)
+        if saved is None:
+            return None
+        options = self._model_profile_enum_options(provider, model, draft_key, saved)
+        allowed = tuple(value for _label, value in options)
+        if self._select_option_value(saved, allowed) is not Select.NULL:
+            return None
+        return saved
 
     def _model_profile_field_supported(
         self, provider: object, draft_key: str, model: object
@@ -13296,13 +13385,6 @@ class SettingsScreen(BaseAppScreen):
             provider_label = "this provider"
         return f"Unavailable for {provider_label}"
 
-    def _model_profile_input_placeholder(
-        self, provider: object, draft_key: str, model: object
-    ) -> str:
-        if not self._model_profile_field_supported(provider, draft_key, model):
-            return self._unsupported_model_profile_placeholder(provider)
-        return MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key]
-
     def _model_profile_input_value(
         self,
         provider: object,
@@ -13314,35 +13396,47 @@ class SettingsScreen(BaseAppScreen):
             return ""
         return self._profile_input_value(value)
 
-    def _provider_generation_support_copy(self, provider: object, model: object) -> str:
-        """Name the hidden generation rows in one line (task-189, TASK-33001.2).
-
-        Instead of rendering rows of "Unavailable for <provider>" placeholder
-        fields, the Generation defaults disclosure shows this single summary
-        and hides the rows the provider+model request does not carry.
-
-        Returns:
-            Copy such as ``"Hidden for Anthropic: Min P, Seed, Presence,
-            Frequency, ..."`` or ``""`` when every row is supported.
-        """
-        provider_label = self._provider_display_name(str(provider or "").strip())
-        if not provider_label:
-            provider_label = "this provider"
-        hidden = [
-            MODEL_FIELD_LABELS[name]
-            for draft_key, name in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
-            if not self._model_profile_field_supported(provider, draft_key, model)
-        ]
-        if not hidden:
-            return ""
-        return f"Hidden for {provider_label}: {', '.join(hidden)}."
-
     @staticmethod
     def _gated_profile_row_classes(supported: bool) -> str:
         """Return input-row classes, hiding gated rows the provider lacks."""
         if supported:
             return "settings-input-row"
         return "settings-input-row settings-gated-profile-hidden"
+
+    def _model_profile_input_for_save(
+        self,
+        profile: Mapping[str, object],
+        name: str,
+        normalizer: Callable[[object], object],
+    ) -> object:
+        """Read one Model defaults Input for Save, keeping a refused saved value.
+
+        Text repeating a saved value its normaliser refuses (a hand-edited
+        ``seed = -1``, shown as a new chat reads it) is no edit, as its
+        staging already says, so Save keeps that value instead of refusing
+        the whole category over a row the user never touched (TASK-33007.7).
+
+        Args:
+            profile: The saved profile of the pair being saved.
+            name: The field-table name, e.g. ``"seed"``.
+            normalizer: The field's ``_normalise_model_profile_*`` method.
+
+        Returns:
+            The normalised value, or the saved value the text repeats.
+
+        Raises:
+            ValueError: The normaliser refuses text that is a real edit.
+        """
+        text = self.query_one(
+            "#settings-model-profile-" + name.replace("_", "-"), Input
+        ).value
+        try:
+            return normalizer(text)
+        except ValueError:
+            saved = model_default_value(profile, name)
+            if saved is None or text != self._profile_input_value(saved):
+                raise
+            return profile[name]
 
     def _provider_form_values_from_widgets(self) -> dict[str, object]:
         loaded_values = self._provider_loaded_setting_values()
@@ -13390,31 +13484,32 @@ class SettingsScreen(BaseAppScreen):
         model_context_window = self._normalise_model_context_window(
             self.query_one("#settings-model-context-window", Input).value
         )
-        model_profile_temperature = self._normalise_model_profile_temperature(
-            self.query_one("#settings-model-profile-temperature", Input).value
+        profile = self._provider_model_profile(provider, model)
+        model_profile_temperature = self._model_profile_input_for_save(
+            profile, "temperature", self._normalise_model_profile_temperature
         )
-        model_profile_top_p = self._normalise_model_profile_top_p(
-            self.query_one("#settings-model-profile-top-p", Input).value
+        model_profile_top_p = self._model_profile_input_for_save(
+            profile, "top_p", self._normalise_model_profile_top_p
         )
-        model_profile_min_p = self._normalise_model_profile_min_p(
-            self.query_one("#settings-model-profile-min-p", Input).value
+        model_profile_min_p = self._model_profile_input_for_save(
+            profile, "min_p", self._normalise_model_profile_min_p
         )
-        model_profile_top_k = self._normalise_model_profile_top_k(
-            self.query_one("#settings-model-profile-top-k", Input).value
+        model_profile_top_k = self._model_profile_input_for_save(
+            profile, "top_k", self._normalise_model_profile_top_k
         )
-        model_profile_max_tokens = self._normalise_model_profile_max_tokens(
-            self.query_one("#settings-model-profile-max-tokens", Input).value
+        model_profile_max_tokens = self._model_profile_input_for_save(
+            profile, "max_tokens", self._normalise_model_profile_max_tokens
         )
-        model_profile_seed = self._normalise_model_profile_seed(
-            self.query_one("#settings-model-profile-seed", Input).value
+        model_profile_seed = self._model_profile_input_for_save(
+            profile, "seed", self._normalise_model_profile_seed
         )
-        model_profile_presence_penalty = self._normalise_model_profile_presence_penalty(
-            self.query_one("#settings-model-profile-presence-penalty", Input).value
+        model_profile_presence_penalty = self._model_profile_input_for_save(
+            profile, "presence_penalty", self._normalise_model_profile_presence_penalty
         )
-        model_profile_frequency_penalty = (
-            self._normalise_model_profile_frequency_penalty(
-                self.query_one("#settings-model-profile-frequency-penalty", Input).value
-            )
+        model_profile_frequency_penalty = self._model_profile_input_for_save(
+            profile,
+            "frequency_penalty",
+            self._normalise_model_profile_frequency_penalty,
         )
         model_profile_reasoning_effort = self._normalise_model_profile_reasoning_effort(
             self._select_text_value(
@@ -13440,12 +13535,10 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one("#settings-model-profile-thinking-effort", Select).value
             )
         )
-        model_profile_thinking_budget_tokens = (
-            self._normalise_model_profile_thinking_budget_tokens(
-                self.query_one(
-                    "#settings-model-profile-thinking-budget-tokens", Input
-                ).value
-            )
+        model_profile_thinking_budget_tokens = self._model_profile_input_for_save(
+            profile,
+            "thinking_budget_tokens",
+            self._normalise_model_profile_thinking_budget_tokens,
         )
         model_profile_streaming = self._streaming_select_text(
             self.query_one("#settings-model-profile-streaming", Select).value
@@ -13675,6 +13768,7 @@ class SettingsScreen(BaseAppScreen):
             with widget.prevent(Select.Changed):
                 widget.value = value
             widget.disabled = disabled
+        self._sync_model_picker(provider)
 
         self._update_provider_dynamic_widgets()
 
@@ -13777,10 +13871,8 @@ class SettingsScreen(BaseAppScreen):
             self._stage_provider_value("model", intent.model_id)
             self._stage_provider_value("endpoint", intent.api_url)
             self._sync_provider_manual_widget(provider)
-            model_input = self.query_one("#settings-model-value", Input)
+            self._set_model_field_value(intent.model_id, provider=provider)
             endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
-            with model_input.prevent(Input.Changed):
-                model_input.value = intent.model_id
             with endpoint_input.prevent(Input.Changed):
                 endpoint_input.value = intent.api_url
             endpoint_input.placeholder = self._provider_endpoint_placeholder("vllm")
@@ -14318,18 +14410,12 @@ class SettingsScreen(BaseAppScreen):
         return app_config or {}
 
     def _provider_saved_api_key_present(self, provider: str) -> bool:
-        # Qodo #2990: judge the stored key with the API-key path, so a saved
-        # subscription choice cannot hide it (Clear stays usable).
-        readiness = get_provider_readiness(
-            provider,
-            self._provider_auth_readiness_config(
-                provider, auth_source=_anthropic_auth_sources()[0]
-            ),
-            background_credentials=True,
+        # Read from the table, not readiness: neither a saved subscription
+        # choice (Qodo #2990) nor a base URL still to set may hide a saved key.
+        source = provider_credential_source(
+            provider, self._provider_readiness_app_config()
         )
-        return bool(
-            readiness.api_key_source and readiness.api_key_source.startswith("config:")
-        )
+        return (source or "").startswith("config:")
 
     def _provider_api_key_placeholder(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
@@ -14342,38 +14428,15 @@ class SettingsScreen(BaseAppScreen):
             self._provider_auth_readiness_config(provider),
             background_credentials=True,
         )
+        # Capture fix 6: each fits the field (25 cells at 211x44); the row's
+        # Source word already says where a key comes from.
         if readiness.subscription_status is not None:
-            return "Claude subscription selected; API key is not used"
+            return "Subscription in use"
         if not readiness.requires_api_key:
             return "No credential required"
         if self._provider_saved_api_key_present(provider):
-            return "Local config key saved; paste a replacement to change it"
-        return "Paste API key to save locally in config"
-
-    def _provider_credential_status(self, provider: str) -> str:
-        readiness = get_provider_readiness(
-            provider,
-            self._provider_auth_readiness_config(provider),
-            background_credentials=True,
-        )
-        registry_status = self._provider_registry_credential_status(provider, readiness)
-        if registry_status is not None:
-            return registry_status
-        if readiness.subscription_status is not None:
-            return self._subscription_credential_copy(readiness.subscription_status)
-        if readiness.reason == "Invalid provider settings":
-            return "Provider settings invalid; repair in Advanced Config or config.toml"
-        if self._provider_saved_api_key_present(provider):
-            return "API key source: local config key saved"
-        if readiness.api_key_source and readiness.api_key_source.startswith("env:"):
-            return f"API key source: {readiness.api_key_source}"
-        if not readiness.requires_api_key:
-            return "API key source: not required for this provider"
-        if readiness.env_var:
-            return (
-                f"API key source: missing; set {readiness.env_var} or paste a local key"
-            )
-        return "API key source: missing"
+            return "Paste to replace"
+        return "Paste API key"
 
     def _provider_credential_placeholder(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
@@ -14423,13 +14486,6 @@ class SettingsScreen(BaseAppScreen):
             self._provider_readiness_app_config(),
             canonical_custom_endpoint_id(provider),
         )
-
-    def _provider_registry_credential_status(
-        self, provider: str, readiness: ProviderReadiness
-    ) -> str | None:
-        """Markup of :meth:`_provider_registry_credential_text`."""
-        text = self._provider_registry_credential_text(provider, readiness)
-        return None if text is None else escape_markup(text)
 
     def _provider_registry_credential_text(
         self, provider: str, readiness: ProviderReadiness
@@ -14565,8 +14621,15 @@ class SettingsScreen(BaseAppScreen):
         self, query: str = ""
     ) -> tuple[ProviderPickerGroup, ...]:
         provider = str(self._provider_display_setting_values().get("provider") or "")
+        catalog = self._provider_catalog_entries()
+        # TASK-33007.2: configured providers lead. Re-read only for the
+        # unfiltered list (compose, open, close), never per keystroke.
+        if not query.strip() or self._provider_configured_keys is None:
+            self._provider_configured_keys = configured_provider_keys(
+                catalog, self._provider_readiness_app_config(), PROVIDER_ENDPOINT_KEYS
+            )
         return build_provider_picker_groups(
-            self._provider_catalog_entries(), provider, query
+            catalog, provider, query, self._provider_configured_keys
         )
 
     def _provider_picker_options(
@@ -14596,16 +14659,30 @@ class SettingsScreen(BaseAppScreen):
     def _provider_picker_has_catalog_matches(
         groups: tuple[ProviderPickerGroup, ...],
     ) -> bool:
-        return any(group.group_id in {"cloud", "local", "custom"} for group in groups)
+        return any(
+            group.group_id in {"configured", "cloud", "local", "custom"}
+            for group in groups
+        )
 
     def _provider_picker_query(self) -> str:
+        """The open list's filter text; a closed list or the resting name
+        filters nothing (TASK-33007.2)."""
         try:
-            return self.query_one("#settings-provider-search", Input).value
+            value = self.query_one("#settings-provider-search", Input).value
+            picker = self.query_one("#settings-provider-picker", OptionList)
         except QueryError:
             return ""
+        if not picker.display:
+            return ""
+        from ..Settings_Modules.providers_models_card import shown_provider_label
 
-    def _apply_provider_picker_highlight(self, picker: OptionList) -> None:
-        """Highlight the current provider's option, else the first selectable.
+        return "" if value == shown_provider_label(self) else value
+
+    def _apply_provider_picker_highlight(
+        self, picker: OptionList, query: str = ""
+    ) -> None:
+        """Highlight the option named exactly by ``query``, else the current
+        provider's, else the first selectable.
 
         task-16480: factored out of ``_refresh_provider_picker`` so the
         COMPOSE-time picker can carry the right highlight too -- the
@@ -14613,12 +14690,29 @@ class SettingsScreen(BaseAppScreen):
         category body (and the picker) is mounted, its QueryError is
         swallowed, and the fresh picker used to keep the compose default
         (first selectable) instead of the configured provider.
+
+        TASK-33007.9: a display name or id typed exactly wins, so "OpenAI"
+        then Enter chooses OpenAI, not "Azure OpenAI" listed above it. A
+        legacy alias row is highlighted first only by its display name:
+        "mistral" is its id, but typing it means Mistral AI, not the alias
+        listed last, even while the alias is the held provider.
+
+        Args:
+            picker: The provider list, already filled.
+            query: The filter it was built from ("" for none).
         """
-        current_provider = str(
-            self._provider_display_setting_values().get("provider") or ""
+        current_key = provider_config_key(
+            str(self._provider_display_setting_values().get("provider") or "")
         )
+        wanted = query.strip().casefold()
         first_selectable: int | None = None
-        selected_index: int | None = None
+        current_index: int | None = None
+        exact_index: int | None = None
+        # Checkpoint review: a name or id that starts with the typed text
+        # outranks one that only contains it ("llama" means llama.cpp, not
+        # Ollama Cloud, which the Cloud group lists first).
+        prefix_index: int | None = None
+        current_is_prefix = False
         for index in range(picker.option_count):
             option = picker.get_option_at_index(index)
             if option.disabled:
@@ -14626,13 +14720,35 @@ class SettingsScreen(BaseAppScreen):
             if first_selectable is None:
                 first_selectable = index
             option_provider = getattr(option, "provider_id", None)
-            if option_provider is not None and provider_config_key(
-                option_provider
-            ) == provider_config_key(current_provider):
-                selected_index = index
+            if option_provider is None:
+                continue
+            is_alias_id = option_provider in PROVIDER_LEGACY_ALIAS_KEYS and (
+                wanted == option_provider.casefold()
+            )
+            if wanted and (
+                wanted == str(option.prompt).casefold()
+                or (not is_alias_id and wanted == option_provider.casefold())
+            ):
+                exact_index = index
                 break
-        picker.highlighted = (
-            selected_index if selected_index is not None else first_selectable
+            starts = bool(wanted) and (
+                str(option.prompt).casefold().startswith(wanted)
+                or option_provider.casefold().startswith(wanted)
+            )
+            if prefix_index is None and starts:
+                prefix_index = index
+            if current_index is None and not is_alias_id and (
+                provider_config_key(option_provider) == current_key
+            ):
+                current_index = index
+                current_is_prefix = starts
+        order = (
+            (exact_index, current_index, prefix_index, first_selectable)
+            if current_is_prefix
+            else (exact_index, prefix_index, current_index, first_selectable)
+        )
+        picker.highlighted = next(
+            (index for index in order if index is not None), None
         )
 
     def _refresh_provider_picker(self, query: str | None = None) -> None:
@@ -14645,7 +14761,7 @@ class SettingsScreen(BaseAppScreen):
         groups = self._provider_picker_groups(search_query)
         picker.clear_options()
         picker.add_options(self._provider_picker_options(groups))
-        self._apply_provider_picker_highlight(picker)
+        self._apply_provider_picker_highlight(picker, search_query)
 
         normalized_query = search_query.strip()
         if normalized_query and not self._provider_picker_has_catalog_matches(groups):
@@ -14658,8 +14774,13 @@ class SettingsScreen(BaseAppScreen):
                 "This legacy saved provider is not supported here. Choose a listed "
                 "provider to migrate it."
             )
+        elif normalized_query:
+            matches = sum(
+                len(group.options) for group in groups if group.group_id != "actions"
+            )
+            status.update(f"{matches} found · Enter picks · Esc cancels")
         else:
-            status.update("Choose a provider or enter a supported provider alias.")
+            status.update(provider_picker_summary(groups))
 
     def _provider_select_value_for_provider(self, provider: str) -> str:
         catalog_keys = self._provider_catalog_keys()
@@ -14681,10 +14802,22 @@ class SettingsScreen(BaseAppScreen):
         self._provider_context_window_suppress_queue.clear()
 
     def _provider_catalog_model_default(self, provider: str) -> str:
+        return next(iter(self._provider_saved_model_ids(provider)), "")
+
+    def _provider_saved_model_ids(self, provider: str) -> tuple[str, ...]:
+        """Return the model ids saved in config for a provider, in order.
+
+        Args:
+            provider: A provider id or alias.
+
+        Returns:
+            The provider's ``providers_models`` ids, de-duplicated.
+        """
         providers_models = getattr(self.app_instance, "providers_models", None)
         if not isinstance(providers_models, Mapping):
-            return ""
+            return ()
         provider_key = provider_config_key(provider)
+        saved: dict[str, None] = {}
         for configured_provider, configured_models in providers_models.items():
             if provider_config_key(str(configured_provider)) != provider_key:
                 continue
@@ -14696,8 +14829,23 @@ class SettingsScreen(BaseAppScreen):
             for configured_model in configured_models:
                 model = str(configured_model or "").strip()
                 if model and model != "None":
-                    return model
-        return ""
+                    saved[model] = None
+        return tuple(saved)
+
+    @staticmethod
+    def _discovered_model_is_saved(model: object, saved_ids: Collection[str]) -> bool:
+        """Say whether a discovered model is already in the saved list.
+
+        Args:
+            model: A discovered model record.
+            saved_ids: The provider's saved model ids.
+
+        Returns:
+            True when discovery marks it persisted or config already lists it,
+            so Save selected would add nothing for it.
+        """
+        model_id = str(getattr(model, "model_id", "") or "").strip()
+        return bool(getattr(model, "persisted", False)) or model_id in saved_ids
 
     def _provider_model_default(self, provider: str) -> str:
         try:
@@ -14854,19 +15002,17 @@ class SettingsScreen(BaseAppScreen):
         The rows stay visible and keep their values, so switching back to an
         API key loses nothing (TASK-34201).
         """
+        from ..Settings_Modules.providers_models_card import auth_source_row_copy
+
         try:
             row = self.query_one("#settings-provider-auth-source-row", Horizontal)
             selector = self.query_one("#settings-provider-auth-source", Select)
-            guidance = self.query_one(
-                "#settings-provider-auth-source-guidance", Static
-            )
         except QueryError:
             return
         is_anthropic = provider_config_key(provider) == "anthropic"
         value = self._provider_auth_source_value(provider)
         subscription = is_anthropic and value == _anthropic_auth_sources()[1]
         row.set_class(not is_anthropic, "settings-gated-profile-hidden")
-        guidance.set_class(not is_anthropic, "settings-gated-profile-hidden")
         selector.disabled = not is_anthropic
         if is_anthropic and selector.value != value:
             self._syncing_provider_auth_source = True
@@ -14875,11 +15021,11 @@ class SettingsScreen(BaseAppScreen):
                     selector.value = value
             finally:
                 self._syncing_provider_auth_source = False
-        guidance.update(
-            ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
-            if subscription
-            else ANTHROPIC_API_KEY_GUIDANCE_COPY
-        )
+        word, help_line = auth_source_row_copy(self, provider)
+        self._set_static_text("#settings-provider-auth-source-word", word)
+        self._set_static_text("#settings-provider-auth-source-guidance", help_line)
+        if self._active_settings_field_id == "settings-provider-auth-source":
+            self._refresh_provider_field_guidance()
         locked = self._provider_is_registry_id(provider)
         for selector_id in (
             "#settings-provider-api-key",
@@ -14981,7 +15127,25 @@ class SettingsScreen(BaseAppScreen):
         provider: str,
         model: str,
         values: Mapping[str, object],
+        *,
+        dirty_keys: Collection[str],
     ) -> dict[str, object]:
+        """Return the provider's ``model_defaults`` with this model's rows saved.
+
+        Args:
+            provider: The provider being saved.
+            model: The model whose profile the rows edit.
+            values: The rows' values, keyed by draft key (``""`` = blank).
+            dirty_keys: Draft keys the user changed. Required: an empty set
+                would keep every blank row, so a cleared row or Inherit
+                would never delete its override. A row the user did not
+                touch keeps its saved value exactly (``streaming = "0"``, a
+                choice with no option, a ``top_k = 2.5`` a new chat ignores);
+                a blank the user chose deletes it.
+
+        Returns:
+            The whole ``model_defaults`` table to write.
+        """
         model_name = str(model or "").strip()
         model_defaults = copy.deepcopy(dict(self._provider_model_defaults(provider)))
         current_profile = model_defaults.get(model_name, {})
@@ -14996,6 +15160,15 @@ class SettingsScreen(BaseAppScreen):
                 # value saved for it earlier stays exactly as it was.
                 continue
             value = values.get(draft_key, "")
+            if (
+                draft_key not in dirty_keys
+                and profile_key in next_profile
+                and value in ("", model_default_value(next_profile, profile_key))
+            ):
+                # A row the user did not touch shows the saved value as a new
+                # chat reads it, or blank when it cannot show it (a hand-edited
+                # "High", a top_k = 2.5 a new chat ignores); Save keeps it.
+                continue
             if value == "":
                 next_profile.pop(profile_key, None)
             else:
@@ -15109,25 +15282,7 @@ class SettingsScreen(BaseAppScreen):
         api_key_input.value = value
 
     def _sync_provider_model_profile_widgets(self, provider: str, model: str) -> None:
-        profile = self._provider_model_profile(provider, model)
-        input_values = {
-            "model_profile_temperature": profile.get("temperature", ""),
-            "model_profile_top_p": profile.get("top_p", ""),
-            "model_profile_min_p": profile.get("min_p", ""),
-            "model_profile_top_k": profile.get("top_k", ""),
-            "model_profile_max_tokens": profile.get("max_tokens", ""),
-            "model_profile_seed": profile.get("seed", ""),
-            "model_profile_presence_penalty": profile.get("presence_penalty", ""),
-            "model_profile_frequency_penalty": profile.get("frequency_penalty", ""),
-            "model_profile_reasoning_effort": profile.get("reasoning_effort", ""),
-            "model_profile_reasoning_summary": profile.get("reasoning_summary", ""),
-            "model_profile_verbosity": profile.get("verbosity", ""),
-            "model_profile_thinking_effort": profile.get("thinking_effort", ""),
-            "model_profile_thinking_budget_tokens": profile.get(
-                "thinking_budget_tokens", ""
-            ),
-            "model_profile_streaming": profile.get("streaming", ""),
-        }
+        input_values = self._model_profile_values(provider, model)
         self._syncing_provider_model_profile = True
         try:
             for draft_key, value in input_values.items():
@@ -15169,9 +15324,8 @@ class SettingsScreen(BaseAppScreen):
                     except QueryError:
                         continue
                     widget.disabled = not supported
-                    widget.placeholder = self._model_profile_input_placeholder(
-                        provider, draft_key, model
-                    )
+                    # AC#4: a placeholder only states a range or unit.
+                    widget.placeholder = MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key]
                     # task-15740: prevent the posted echo the flag misses.
                     with widget.prevent(Input.Changed):
                         widget.value = (
@@ -15209,17 +15363,18 @@ class SettingsScreen(BaseAppScreen):
                     context_input.value = self._profile_input_value(value)
         finally:
             self._syncing_provider_context_window = False
-        self._set_static_text(
-            "#settings-model-context-window-status",
-            self._provider_model_context_window_status(provider, model, value),
-        )
+        self._show_context_window_row(provider, model, value)
         try:
-            self.query_one("#settings-model-context-window-reset", Button).disabled = (
+            reset = self.query_one("#settings-model-context-window-reset", Button)
+        except QueryError:
+            pass
+        else:
+            reset.disabled = (
                 not state.has_configured_override
                 or self._provider_is_registry_id(provider)
             )
-        except QueryError:
-            pass
+            # Review note 11: nothing to return to while the window is unknown.
+            reset.display = state.effective_tokens is not None
 
     def _set_provider_context_window_input_value(
         self,
@@ -15233,14 +15388,10 @@ class SettingsScreen(BaseAppScreen):
         context_window_input.value = value
 
     def _refresh_generation_support_summary(self, provider: str, model: str) -> None:
-        """Update the one-line gated-controls summary and its visibility."""
-        support_copy = self._provider_generation_support_copy(provider, model)
-        try:
-            summary = self.query_one("#settings-provider-generation-support", Static)
-        except QueryError:
-            return
-        summary.update(support_copy)
-        summary.set_class(not support_copy, "settings-gated-profile-hidden")
+        """Re-say Model defaults' title, Source words, help and Sampling line."""
+        from ..Settings_Modules.settings_field_rows import refresh_model_defaults
+
+        refresh_model_defaults(self, provider, model)
 
     def _provider_endpoint_setting_key(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
@@ -15271,6 +15422,8 @@ class SettingsScreen(BaseAppScreen):
             return PROVIDER_ENDPOINT_PLACEHOLDERS[provider_key]
         if provider_key in API_URL_PROVIDER_KEYS:
             return "https://host:port/v1"
+        if target := required_base_url_target(provider_key):
+            return f"Enter your {target}"
         return "Optional provider endpoint override"
 
     @staticmethod
@@ -15312,26 +15465,6 @@ class SettingsScreen(BaseAppScreen):
             )
         return ""
 
-    def _provider_endpoint_display_value(
-        self, provider: str, endpoint: object | None = None
-    ) -> str:
-        registry = self._provider_registry_endpoint(provider)
-        if registry is not None:
-            return registry[1] or "endpoint not found"
-        provider_key = provider_config_key(provider)
-        endpoint_value = str(
-            endpoint
-            if endpoint is not None
-            else self._provider_endpoint_value(provider)
-        ).strip()
-        if not provider_key:
-            return "provider required before saving"
-        if endpoint_value:
-            return endpoint_value
-        if provider_key in API_URL_PROVIDER_KEYS:
-            return "not configured"
-        return "provider default"
-
     def _provider_endpoint_row(self, provider: str) -> str:
         registry = self._provider_registry_endpoint(provider)
         if registry is not None:
@@ -15341,13 +15474,6 @@ class SettingsScreen(BaseAppScreen):
             return "Endpoint key: provider required"
         endpoint_key = self._provider_endpoint_setting_key(provider)
         return f"Endpoint key: api_settings.{provider_key}.{endpoint_key}"
-
-    @staticmethod
-    def _settings_source_label(source: object) -> str:
-        source_key = str(source or "").strip()
-        if not source_key:
-            return "Unknown"
-        return SETTINGS_SOURCE_LABELS.get(source_key, source_key.replace("_", " "))
 
     @staticmethod
     def _validate_provider_endpoint(endpoint: object) -> str | None:
@@ -15380,27 +15506,6 @@ class SettingsScreen(BaseAppScreen):
     @staticmethod
     def _validate_provider_api_key(api_key: object) -> str | None:
         return provider_api_key_validation_error(api_key)
-
-    def _provider_key_status(self, provider: str) -> str:
-        readiness = get_provider_readiness(
-            provider,
-            self._provider_auth_readiness_config(provider),
-            background_credentials=True,
-        )
-        registry_status = self._provider_registry_credential_status(provider, readiness)
-        if registry_status is not None:
-            return registry_status
-        if readiness.subscription_status is not None:
-            return self._subscription_credential_copy(readiness.subscription_status)
-        if readiness.reason == "Invalid provider settings":
-            return "Provider settings invalid; repair in Advanced Config or config.toml"
-        if readiness.api_key_source:
-            return f"API key: {readiness.api_key_source}"
-        if not readiness.requires_api_key:
-            return "API key: not required for this provider"
-        if readiness.env_var:
-            return f"{readiness.env_var}=missing"
-        return "API key: missing"
 
     def _model_discovery_available(self, provider: str) -> bool:
         return (
@@ -15524,6 +15629,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _model_discovery_selection_options(self) -> list[tuple[str, str, bool]]:
         options: list[tuple[str, str, bool]] = []
+        saved_ids = set(self._provider_saved_model_ids(self._provider_widget_value()))
         for model in self._model_discovery_models:
             model_id = str(getattr(model, "model_id", "") or "").strip()
             if not model_id:
@@ -15532,8 +15638,14 @@ class SettingsScreen(BaseAppScreen):
             capability = str(getattr(model, "capability_status", "unknown"))
             # TASK-387: humanize the row so a first-run user can read it instead
             # of decoding internal enum names (runtime_discovered / capability=…).
+            # TASK-33007.6 (AC#4): the row says in words whether it is
+            # selected and whether it is already saved; the box's colour only
+            # reinforces the word.
+            selected = model_id in self._model_discovery_selected_model_ids
             saved_label = (
-                "saved" if bool(getattr(model, "persisted", False)) else "session"
+                "saved"
+                if self._discovered_model_is_saved(model, saved_ids)
+                else "not saved"
             )
             source_label = {
                 "runtime_discovered": "discovered",
@@ -15541,14 +15653,11 @@ class SettingsScreen(BaseAppScreen):
                 "saved": "saved",
             }.get(source, source.replace("_", " "))
             capability_label = f"capabilities {capability}"
-            label = f"{model_id} · {saved_label} · {source_label} · {capability_label}"
-            options.append(
-                (
-                    label,
-                    model_id,
-                    model_id in self._model_discovery_selected_model_ids,
-                )
+            label = (
+                f"{'selected' if selected else 'not selected'} · {model_id} · "
+                f"{saved_label} · {source_label} · {capability_label}"
             )
+            options.append((label, model_id, selected))
         return options
 
     def _reset_provider_model_discovery_state(
@@ -15561,7 +15670,7 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_models = ()
         self._model_discovery_selected_model_ids = set()
         self._refresh_model_discovery_widgets()
-        self._refresh_model_field_suggester()
+        self._refresh_model_picker_discovered()
 
     def _discovery_status_from_error(self, result: object) -> str:
         error = getattr(result, "error", None)
@@ -15624,8 +15733,10 @@ class SettingsScreen(BaseAppScreen):
                 discovered_list.clear_options()
                 discovered_list.add_options(self._model_discovery_selection_options())
             discovered_list.disabled = not self._model_discovery_models
+            discovered_list.display = bool(self._model_discovery_models)
         except QueryError:
             pass
+        self._refresh_advanced()
 
     def _append_saved_discovered_models(
         self,
@@ -15710,7 +15821,7 @@ class SettingsScreen(BaseAppScreen):
                 f"Discovered {len(models)} model(s) from {provider_list_key}."
             )
             self._refresh_model_discovery_widgets()
-            self._refresh_model_field_suggester()  # TASK-369: enable typeahead
+            self._refresh_model_picker_discovered()
             self.app.notify(
                 "Provider model discovery finished.", severity="information"
             )
@@ -15726,31 +15837,86 @@ class SettingsScreen(BaseAppScreen):
     async def _save_selected_discovered_provider_models_worker(self) -> None:
         await self._save_selected_discovered_provider_models()
 
-    def _model_field_suggester(self) -> SuggestFromList | None:
-        """TASK-369: typeahead of discovered model ids for the Model field.
+    def _refresh_model_picker_discovered(self) -> None:
+        """Merge the current discovery listing into the Default model picker.
 
-        Recognition over recall — while a discovery result is on screen, typing a
-        prefix (e.g. ``gemma``) completes to the full gguf id instead of forcing
-        the user to recall a 56-character filename. Returns ``None`` when there
-        is nothing to suggest.
+        TASK-33007.3 (recognition over recall, TASK-369): the listing shows
+        as visible "Served now" rows, not a ghost completion only a hidden
+        key accepts. Discovery is dropped whenever the provider or its
+        endpoint changes, so the overlay is always this endpoint's own; an
+        earlier provider's overlay is cleared, never left for a return trip.
         """
-        ids = sorted(
-            {
-                str(getattr(model, "model_id", "") or "").strip()
-                for model in self._model_discovery_models
-                if str(getattr(model, "model_id", "") or "").strip()
-            }
-        )
-        return SuggestFromList(ids, case_sensitive=False) if ids else None
-
-    def _refresh_model_field_suggester(self) -> None:
-        """Point the Model field's suggester at the current discovered models."""
         try:
-            self.query_one(
-                "#settings-model-value", Input
-            ).suggester = self._model_field_suggester()
-        except (QueryError, AttributeError):
-            pass
+            picker = self.query_one("#settings-model-picker")
+        except QueryError:
+            return
+        provider = self._provider_widget_value()
+        previous = self._model_picker_overlay_provider
+        if previous and provider_config_key(previous) != provider_config_key(provider):
+            picker.set_discovered_models(previous, (), notify=False)
+        self._model_picker_overlay_provider = provider
+        picker.set_discovered_models(
+            provider,
+            tuple(
+                str(getattr(model, "model_id", "") or "")
+                for model in self._model_discovery_models
+            ),
+            notify=False,
+            served_now=True,
+        )
+
+    def _set_model_field_value(
+        self, value: str, *, provider: str | None = None, quiet: bool = True
+    ) -> None:
+        """Write the Default model value to its adapter and its picker (R8).
+
+        Every programmatic writer of ``#settings-model-value`` goes through
+        here. A quiet write posts no ``Input.Changed``, so the picker would
+        never hear of it on its own.
+
+        Args:
+            value: The model id to show and hold.
+            provider: The provider the form now holds; when given, the picker
+                re-scopes to it, so no earlier provider's model stays listed.
+            quiet: Write without posting ``Input.Changed`` (the caller staged
+                the draft itself); False lets the change handler stage it.
+        """
+        try:
+            adapter = self.query_one("#settings-model-value", Input)
+        except QueryError:
+            return
+        if quiet:
+            with adapter.prevent(Input.Changed):
+                adapter.value = value
+        else:
+            adapter.value = value
+        self._sync_model_picker(provider)
+
+    def _sync_model_picker(
+        self, provider: str | None = None, *, reload: bool = False
+    ) -> None:
+        """Show the adapter's value in the picker (AC#7).
+
+        Args:
+            provider: When given, re-scope the picker to this provider.
+            reload: Re-read the provider's lists, e.g. after Save selected
+                added ids to them.
+        """
+        # Imported here: the picker module stays off the Settings route's
+        # pre-import payload (ADR-097); the card that composes it is lazy too.
+        from ...Widgets.model_search_picker import normalize_model_id
+
+        try:
+            adapter = self.query_one("#settings-model-value", Input)
+            picker = self.query_one("#settings-model-picker")
+        except QueryError:
+            return
+        if provider is not None:
+            picker.refresh_provider(
+                provider, current_model=adapter.value, force=reload
+            )
+        elif picker.value != normalize_model_id(adapter.value):
+            picker.set_model_value(adapter.value)
 
     @staticmethod
     def _model_to_activate_after_save(
@@ -15783,8 +15949,8 @@ class SettingsScreen(BaseAppScreen):
             model_input.value, saved_model_ids
         )
         if next_value and next_value != model_input.value:
-            # Setting .value fires Input.Changed, which stages the model draft.
-            model_input.value = next_value
+            # Not quiet: Input.Changed stages the model draft.
+            self._set_model_field_value(next_value, quiet=False)
 
     async def _save_selected_discovered_provider_models(self) -> None:
         provider = self._provider_widget_value()
@@ -15864,11 +16030,12 @@ class SettingsScreen(BaseAppScreen):
             # retype from memory of a name the cleared discovery list no longer
             # shows.
             self._activate_saved_model_if_field_empty(saved_model_ids)
+            # The saved ids now group as saved in the Default model picker.
+            self._sync_model_picker(provider, reload=True)
             self._model_discovery_status = (
                 message or f"Saved {len(saved_model_ids)} discovered model(s)."
             )
             self._refresh_model_discovery_widgets()
-            self._refresh_model_field_suggester()
             self.app.notify("Discovered models saved.", severity="information")
             return
 
@@ -16032,6 +16199,7 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text(
             "#settings-model-catalog-save-status", self._model_catalog_save_status
         )
+        self._refresh_advanced()
         try:
             retry = self.query_one("#settings-model-catalog-retry", Button)
             if retry.has_focus and not self._model_catalog_save_failed:
@@ -16049,11 +16217,11 @@ class SettingsScreen(BaseAppScreen):
             self._model_catalog_save_status = "Saved. Applies at next startup."
         else:
             self._model_catalog_save_status = (
-                "Automatic refresh changes were not saved. Check that the config "
+                "Catalog refresh changes were not saved. Check that the config "
                 "file is writable, then choose Retry."
             )
             self.app.notify(
-                "Automatic refresh settings were not saved. Retry in Automatic refresh.",
+                "Catalog refresh settings were not saved. Retry in Catalog refresh.",
                 severity="error",
             )
         self._refresh_model_catalog_save_widgets()
@@ -16879,9 +17047,15 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _update_provider_test_result(self) -> None:
+        from ..Settings_Modules.providers_models_card import key_check_verdict
+
         try:
             self.query_one("#settings-provider-test-result", Static).update(
                 self._provider_test_result
+            )
+            # TASK-33007.2: the Key check row states the same verdict.
+            self.query_one("#settings-provider-readiness", Static).update(
+                key_check_verdict(self)
             )
         except (QueryError, AttributeError):
             # QueryError: widget not mounted yet. AttributeError: called on an
@@ -16913,6 +17087,13 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_test_result()
 
     def _update_provider_dynamic_widgets(self) -> None:
+        from ..Settings_Modules.providers_models_card import (
+            AppliesToLine,
+            applies_to_copy,
+            refresh_connect_rows,
+            sync_openai_reconnect_row,
+        )
+
         try:
             provider = self._provider_widget_value()
         except QueryError:
@@ -16931,35 +17112,22 @@ class SettingsScreen(BaseAppScreen):
             model = str(
                 self._provider_setting_values_mapping().get("model") or ""
             ).strip()
-        readiness_label = self._provider_readiness_label()
-        resolved = self._resolve_provider_model_for_settings()
+        # TASK-33007.2: each Connect row says its own source; the separate
+        # readiness block is gone.
+        refresh_connect_rows(self, provider, endpoint)
+        try:
+            self.query_one("#settings-model-applies-to", AppliesToLine).say(
+                *applies_to_copy(self, provider, model)
+            )
+        except QueryError:
+            pass
         self._set_static_text(
-            "#settings-provider-source",
-            f"Provider source: {self._settings_source_label(resolved.provider_source)}",
+            "#settings-provider-inspector-readiness", self._provider_readiness_label()
         )
         self._set_static_text(
-            "#settings-model-source",
-            f"Model source: {self._settings_source_label(resolved.model_source)}",
+            "#settings-provider-endpoint-key", self._provider_endpoint_row(provider)
         )
         try:
-            self.query_one("#settings-provider-readiness", Static).update(
-                f"Readiness: {readiness_label.removeprefix('Provider readiness: ')}"
-            )
-            self.query_one("#settings-provider-inspector-readiness", Static).update(
-                readiness_label
-            )
-            self.query_one("#settings-provider-endpoint-key", Static).update(
-                self._provider_endpoint_row(provider)
-            )
-            self.query_one("#settings-provider-endpoint", Static).update(
-                f"Endpoint: {self._provider_endpoint_display_value(provider, endpoint)}"
-            )
-            self.query_one("#settings-provider-key-status", Static).update(
-                self._provider_key_status(provider)
-            )
-            self.query_one("#settings-provider-credential-status", Static).update(
-                self._provider_credential_status(provider)
-            )
             api_key_input = self.query_one("#settings-provider-api-key", Input)
             api_key_input.placeholder = self._provider_api_key_placeholder(provider)
             clear_button = self.query_one("#settings-provider-api-key-clear", Button)
@@ -16972,12 +17140,7 @@ class SettingsScreen(BaseAppScreen):
             guidance.set_class(not hosted_guidance, "settings-gated-profile-hidden")
         except QueryError:
             pass
-        try:
-            reconnect = self.query_one("#settings-openai-reconnect-review", Button)
-            reconnect.display = provider_config_key(provider) == "openai"
-            reconnect.disabled = self._openai_reconnect_busy
-        except QueryError:
-            pass
+        sync_openai_reconnect_row(self, provider)
         self._refresh_generation_support_summary(provider, model)
         self._sync_provider_api_mode_widget(provider)
         self._sync_provider_registry_lock(provider)
@@ -17008,6 +17171,46 @@ class SettingsScreen(BaseAppScreen):
         return row
 
     @staticmethod
+    def _split_config_key_row(
+        rows: tuple[tuple[str, str], ...],
+    ) -> tuple[tuple[tuple[str, str], ...], str]:
+        """Split a focused-field guide into its shown rows and its config key.
+
+        Args:
+            rows: A guide's ``(label, value)`` rows.
+
+        Returns:
+            The rows without "Saved as", and the "Saved as" value ("" if none).
+        """
+        shown = tuple(row for row in rows if row[0] != CONFIG_KEY_ROW_LABEL)
+        key = next(
+            (value for label, value in rows if label == CONFIG_KEY_ROW_LABEL), ""
+        )
+        return shown, key
+
+    @staticmethod
+    def _config_key_disclosure(*rows: Static, identifier: str) -> Collapsible:
+        """One closed, one-row "config key" disclosure for the Inspector.
+
+        TASK-33007.4: raw config keys stay out of the Inspector's own copy
+        (spec §4 rule 2); this disclosure holds them for whoever wants them.
+
+        Args:
+            *rows: The disclosure's rows, usually ``_detail_row`` Statics.
+            identifier: The disclosure's id.
+
+        Returns:
+            A collapsed Collapsible titled "config key".
+        """
+        return Collapsible(
+            *rows,
+            title="config key",
+            collapsed=True,
+            id=identifier,
+            classes="settings-config-key-disclosure",
+        )
+
+    @staticmethod
     def _with_save_behavior_row(
         rows: tuple[tuple[str, str], ...], save_copy: str
     ) -> tuple[tuple[str, str], ...]:
@@ -17025,7 +17228,8 @@ class SettingsScreen(BaseAppScreen):
         rows = self._provider_field_guidance_rows_base()
         save_copy = (
             INSTANT_APPLY_BEHAVIOR_COPY
-            if self._active_settings_field_id in MODEL_CATALOG_FIELD_IDS
+            if self._active_settings_field_id
+            in {*MODEL_CATALOG_FIELD_IDS, OPENAI_RECONNECT_REVIEW_ID}
             else STAGED_SAVE_BEHAVIOR_COPY
         )
         return self._with_save_behavior_row(rows, save_copy)
@@ -17101,7 +17305,12 @@ class SettingsScreen(BaseAppScreen):
                     "letters, numbers, hyphens, underscores, and provider aliases only",
                 ),
             )
-        if field_id == "settings-model-value":
+        # TASK-33007.3: the adapter is hidden; users focus the picker.
+        if field_id in {
+            "settings-model-value",
+            "model-search-picker-input",
+            "model-search-picker-results",
+        }:
             return (
                 ("Focused setting", "Model"),
                 (
@@ -17131,13 +17340,13 @@ class SettingsScreen(BaseAppScreen):
                 ),
             )
         if field_id == "settings-provider-endpoint-value":
-            endpoint = MODEL_CONFIG_FIELDS["endpoint"]
-            return (
-                ("Focused setting", endpoint.label),
-                ("Purpose", endpoint.help),
-                ("Saved as", endpoint_key),
-                ("Validation", f"{endpoint.valid_range} when set"),
-            )
+            from ..Settings_Modules.providers_models_card import endpoint_field_guide
+
+            return endpoint_field_guide(provider, endpoint_key)
+        from ..Settings_Modules.providers_models_card import connect_field_guide
+
+        if (guide := connect_field_guide(self, field_id)) is not None:
+            return guide
         if field_id == "settings-provider-api-mode":
             purpose = (
                 QWENCLOUD_PROVIDER_TABLE_INVALID_COPY
@@ -17155,7 +17364,10 @@ class SettingsScreen(BaseAppScreen):
                 ("Focused setting", "API key"),
                 (
                     "Purpose",
-                    "Stores a provider API key in local config for Console generation.",
+                    # Precedence sits here, not on a row of its own: the rows
+                    # refresh in place by index, so a fifth drops Validation.
+                    "Stores a provider API key in local config for Console "
+                    "generation. A saved key is used before the env var.",
                 ),
                 ("Saved as", f"{provider_config_prefix}.api_key"),
                 ("Validation", "single-line secret value; visible UI stays masked"),
@@ -17214,7 +17426,7 @@ class SettingsScreen(BaseAppScreen):
             )
         if field_id in MODEL_CATALOG_FIELD_IDS:
             return (
-                ("Focused setting", "Automatic refresh"),
+                ("Focused setting", "Catalog refresh"),
                 (
                     "Purpose",
                     "Gates the background model-catalog list refresh.",
@@ -17238,11 +17450,18 @@ class SettingsScreen(BaseAppScreen):
     def _refresh_provider_field_guidance(self) -> None:
         if self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS:
             return
-        for index, (label, value) in enumerate(self._provider_field_guidance_rows()):
+        shown, config_key = self._split_config_key_row(
+            self._provider_field_guidance_rows()
+        )
+        for index, (label, value) in enumerate(shown):
             self._set_static_text(
                 f"#settings-provider-field-guide-{index}",
                 f"{label}: {_fold_long_tokens(value)}",
             )
+        self._set_static_text(
+            "#settings-provider-config-key-saved-as",
+            f"{CONFIG_KEY_ROW_LABEL}: {_fold_long_tokens(config_key)}",
+        )
 
     def _appearance_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
         return self._with_save_behavior_row(
@@ -17957,946 +18176,51 @@ class SettingsScreen(BaseAppScreen):
                 for label, value in self._overview_ownership_rows():
                     yield self._detail_row(label, value)
 
+    def _refresh_advanced(self) -> None:
+        """Re-say the card's Advanced titles and Catalog refresh words.
+
+        Imported here, as the card module is (ADR-097).
+        """
+        from ..Settings_Modules.providers_models_card import refresh_advanced
+
+        refresh_advanced(self)
+
     def _render_provider_detail(self) -> ComposeResult:
-        from tldw_chatbook.LLM_Management import (
-            snapshot_settings as snapshot_preferences,
+        """Compose the Providers & Models card from its Settings region module.
+
+        TASK-33007.1: the composition lives in
+        ``UI/Settings_Modules/providers_models_card.py`` (DESIGN.md One Home
+        Rule); its handlers stay on this screen. Imported here, not at module
+        scope, so the Settings route's pre-import payload does not grow
+        (ADR-097).
+
+        Yields:
+            The card's section title and the card container.
+        """
+        from ..Settings_Modules.providers_models_card import (
+            compose_providers_models_card,
         )
 
-        if self._snapshot_preferences_loaded is None:
-            try:
-                self._snapshot_preferences_loaded = (
-                    snapshot_preferences.load_snapshot_preferences()
-                )
-            except (ValueError, OSError):
-                self._snapshot_preferences_loaded = None
-            self._snapshot_preferences_unavailable = (
-                self._snapshot_preferences_loaded is None
-            )
-            self._snapshot_preferences_raw = (
-                (
-                    self._snapshot_preferences_loaded.enabled,
-                    str(self._snapshot_preferences_loaded.keep_count),
-                )
-                if self._snapshot_preferences_loaded
-                else (False, "")
-            )
-            self.call_after_refresh(self._update_guided_action_widgets)
-        resolved = self._resolve_provider_model_for_settings()
-        values = self._provider_display_setting_values()
-        provider = str(values["provider"])
-        context_window_state = model_context_window_state(
-            self._app_config_mapping(), provider, str(values["model"])
+        yield from compose_providers_models_card(self)
+
+    def _model_catalog_card_settings(self) -> ModelCatalogSettings:
+        """Return the ``[model_catalog]`` values the card's toggles show.
+
+        Resolved here so ``load_settings`` is looked up in this module, where
+        tests patch it, and a staged form value still wins over the file.
+
+        Returns:
+            The parsed model-catalog settings for the card's toggles.
+        """
+        return load_model_catalog_settings(
+            self._model_catalog_form_values or load_settings()
         )
-        # Qodo #2876: a registry default is edited in Custom endpoints.
-        registry_locked = self._provider_is_registry_id(provider)
-        yield Static(
-            "Providers & Models", classes="destination-section settings-column-title"
-        )
-        provider_card = Vertical(
-            id="settings-providers-models-card", classes="settings-focus-card"
-        )
-        provider_card.disabled = self._vllm_default_recovery() is not None
-        with provider_card:
-            with Collapsible(
-                title="Prompt-cache snapshots",
-                collapsed=True,
-                id="settings-snapshot-controls",
-            ):
-                yield Static(
-                    "Save processed context to reuse later. Restoring does not change your conversations.",
-                    classes="settings-help-copy",
-                )
-                yield Static(
-                    "Enable/disable applies on next launch.",
-                    id="settings-snapshot-launch-scope",
-                    classes="settings-help-copy",
-                )
-                yield Checkbox(
-                    "Enable snapshots",
-                    value=self._snapshot_preferences_raw[0],
-                    disabled=self._snapshot_preferences_unavailable,
-                    id="settings-snapshot-enabled",
-                )
-                yield Static(
-                    "Keep count (1–1000, across all models)",
-                    classes="settings-input-label",
-                )
-                yield Input(
-                    self._snapshot_preferences_raw[1],
-                    disabled=self._snapshot_preferences_unavailable,
-                    id="settings-snapshot-keep",
-                    type="integer",
-                )
-                yield Static(
-                    self._SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY
-                    if self._snapshot_preferences_unavailable
-                    else "Draft — use category Save / Revert. Enable/disable applies on next launch.",
-                    id="settings-snapshot-result",
-                    classes="settings-help-copy",
-                )
-            # task-189: the Connect block (provider, model, endpoint,
-            # credentials, readiness/test) leads; sampling and tuning live in
-            # the collapsed "Generation defaults" disclosure below it.
-            yield Static(
-                "Connect",
-                id="settings-provider-connect-title",
-                classes="destination-section",
-            )
-            with Vertical(id="settings-provider-picker-block"):
-                yield Static("Provider", classes="settings-input-label")
-                yield Input(
-                    id="settings-provider-search",
-                    placeholder="Search providers by name or ID",
-                )
-                picker = OptionList(
-                    *self._provider_picker_options(self._provider_picker_groups()),
-                    id="settings-provider-picker",
-                    compact=True,
-                )
-                # task-16480: compose-time highlight so the configured
-                # provider is selected on the very first paint; the
-                # post-refresh highlight arrives too early (pre-mount) to
-                # serve as the only source.
-                self._apply_provider_picker_highlight(picker)
-                yield picker
-                yield Static(
-                    "Choose a provider or enter a provider ID.",
-                    id="settings-provider-search-status",
-                    classes="settings-help-copy",
-                    markup=False,
-                )
-            with Horizontal(
-                classes="settings-input-row settings-provider-manual-hidden"
-            ):
-                yield Select(
-                    self._provider_select_options(),
-                    value=self._provider_select_value_for_provider(provider),
-                    id="settings-provider-value",
-                    classes="settings-compact-select",
-                    allow_blank=False,
-                    compact=True,
-                )
-            manual_provider_classes = "settings-input-row"
-            if (
-                self._provider_select_value_for_provider(provider)
-                != PROVIDER_MANUAL_SELECT_VALUE
-            ):
-                manual_provider_classes += " settings-provider-manual-hidden"
-            with Horizontal(
-                id="settings-provider-manual-row", classes=manual_provider_classes
-            ):
-                yield Static("Manual", classes="settings-input-label")
-                yield Input(
-                    value=str(values["provider"])
-                    if self._provider_select_value_for_provider(provider)
-                    == PROVIDER_MANUAL_SELECT_VALUE
-                    else "",
-                    id="settings-provider-manual-value",
-                    classes="settings-compact-input",
-                    placeholder="Custom provider key",
-                    disabled=(
-                        self._provider_select_value_for_provider(provider)
-                        != PROVIDER_MANUAL_SELECT_VALUE
-                    ),
-                )
-            edit_endpoint = Button(
-                "Edit this endpoint in Custom endpoints",
-                id="settings-provider-edit-custom-endpoint",
-                tooltip=(
-                    "This provider is a named custom endpoint: its URL, "
-                    "credential, and models are edited there."
-                ),
-            )
-            edit_endpoint.display = registry_locked and (
-                self._provider_registry_entry(provider) is not None
-            )
-            yield edit_endpoint
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Model", classes="settings-input-label")
-                yield Input(
-                    value=str(values["model"]),
-                    id="settings-model-value",
-                    classes="settings-compact-input",
-                    placeholder="Model name",
-                    suggester=self._model_field_suggester(),
-                    disabled=registry_locked,
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Endpoint", classes="settings-input-label")
-                yield SettingsURLInput(
-                    value=str(values["endpoint"]),
-                    id="settings-provider-endpoint-value",
-                    classes="settings-compact-input",
-                    placeholder=self._provider_endpoint_placeholder(provider),
-                    validators=[ProviderEndpointURLValidator()],
-                    validate_on={"blur", "submitted"},
-                    disabled=registry_locked,
-                )
-            api_mode_value, api_mode_valid = self._provider_api_mode_display_value(
-                provider
-            )
-            provider_table_malformed = self._qwencloud_provider_table_is_malformed(
-                provider
-            )
-            api_mode_row_classes = "settings-input-row settings-select-row"
-            if provider_config_key(provider) != "qwencloud":
-                api_mode_row_classes += " settings-gated-profile-hidden"
-            with Horizontal(
-                id="settings-provider-api-mode-row", classes=api_mode_row_classes
-            ):
-                yield Static("API mode", classes="settings-input-label")
-                yield Select(
-                    QWENCLOUD_API_MODE_OPTIONS,
-                    value=api_mode_value,
-                    id="settings-provider-api-mode",
-                    prompt="Choose Responses or Chat Completions",
-                    classes=(
-                        "settings-compact-select"
-                        if api_mode_valid and not provider_table_malformed
-                        else "settings-compact-select settings-invalid-input"
-                    ),
-                    allow_blank=True,
-                    compact=True,
-                    disabled=provider_config_key(provider) != "qwencloud",
-                )
-            yield Static(
-                (
-                    QWENCLOUD_PROVIDER_TABLE_INVALID_COPY
-                    if provider_config_key(provider) == "qwencloud"
-                    and provider_table_malformed
-                    else (
-                        QWENCLOUD_API_MODE_INVALID_COPY
-                        if provider_config_key(provider) == "qwencloud"
-                        and not api_mode_valid
-                        else QWENCLOUD_API_MODE_HELP_COPY
-                    )
-                ),
-                id="settings-provider-api-mode-guidance",
-                classes=(
-                    "settings-status-row"
-                    if provider_config_key(provider) == "qwencloud"
-                    else "settings-status-row settings-gated-profile-hidden"
-                ),
-            )
-            yield Static("Credentials", classes="destination-section")
-            yield Static(
-                self._provider_credential_status(provider),
-                id="settings-provider-credential-status",
-                classes="settings-status-row",
-            )
-            # TASK-34201: Anthropic only -- an API key or the Claude subscription.
-            is_anthropic = provider_config_key(provider) == "anthropic"
-            subscription_selected = (
-                is_anthropic
-                and self._provider_auth_source_value(provider)
-                == _anthropic_auth_sources()[1]
-            )
-            with Horizontal(
-                id="settings-provider-auth-source-row",
-                classes=(
-                    "settings-input-row settings-select-row"
-                    if is_anthropic
-                    else "settings-input-row settings-select-row settings-gated-profile-hidden"
-                ),
-            ):
-                yield Static("Sign in with", classes="settings-input-label")
-                yield Select(
-                    _anthropic_auth_source_options(),
-                    value=self._provider_auth_source_value(provider),
-                    id="settings-provider-auth-source",
-                    classes="settings-compact-select",
-                    allow_blank=False,
-                    compact=True,
-                    disabled=not is_anthropic,
-                )
-            yield Static(
-                ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
-                if subscription_selected
-                else ANTHROPIC_API_KEY_GUIDANCE_COPY,
-                id="settings-provider-auth-source-guidance",
-                classes=(
-                    "settings-status-row"
-                    if is_anthropic
-                    else "settings-status-row settings-gated-profile-hidden"
-                ),
-            )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("API key", classes="settings-input-label")
-                yield Input(
-                    value=str(values.get("api_key") or ""),
-                    id="settings-provider-api-key",
-                    classes="settings-compact-input",
-                    placeholder=self._provider_api_key_placeholder(provider),
-                    password=True,
-                    disabled=registry_locked or subscription_selected,
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("", classes="settings-input-label")
-                yield Button(
-                    "Clear saved key",
-                    id="settings-provider-api-key-clear",
-                    disabled=subscription_selected or (
-                        not self._provider_saved_api_key_present(provider)
-                        and not bool(str(values.get("api_key") or "").strip())
-                    ),
-                    tooltip="Clear the API key saved in local config for this provider.",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Env var", classes="settings-input-label")
-                yield Input(
-                    value=str(values["credential_env_var"]),
-                    id="settings-provider-credential-env-var",
-                    classes="settings-compact-input",
-                    placeholder=self._provider_credential_placeholder(provider),
-                    disabled=registry_locked or subscription_selected,
-                )
-            yield Static(
-                "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.",
-                id="settings-provider-credential-guidance",
-                classes="settings-status-row",
-            )
-            hosted_guidance = self._hosted_provider_guidance(
-                provider, values.get("model")
-            )
-            yield Static(
-                hosted_guidance,
-                id="settings-hosted-provider-guidance",
-                classes=(
-                    "settings-status-row"
-                    if hosted_guidance
-                    else "settings-status-row settings-gated-profile-hidden"
-                ),
-            )
-            reconnect = Button(
-                "Review restored OpenAI connection",
-                id="settings-openai-reconnect-review",
-            )
-            reconnect.display = provider_config_key(provider) == "openai"
-            reconnect.disabled = self._openai_reconnect_busy
-            yield reconnect
-            # task-189: the Test affordance closes the first-run Connect job
-            # (provider -> model -> endpoint -> credentials -> test) before
-            # the informational readiness and discovery sections.
-            yield Button(
-                "Test Provider",
-                id="settings-test-provider",
-                tooltip=PROVIDER_TEST_GUIDANCE,
-            )
-            # TASK-386 (AC#2): the readiness / live-probe explanation must also
-            # exist as visible static text -- a hover tooltip is invisible to
-            # keyboard users and self-occludes the result line below it.
-            yield Static(
-                PROVIDER_TEST_GUIDANCE,
-                id="settings-test-provider-guidance",
-                classes="settings-status-row",
-            )
-            yield _ProviderTestResult(
-                self._adopt_shared_provider_test_evidence(),
-                id="settings-provider-test-result",
-                markup=False,
-            )
-            yield Static(
-                self._provider_save_result,
-                id="settings-provider-save-result",
-                classes="settings-status-row",
-            )
-            existing_changes = Static(
-                self._provider_existing_changes_copy(),
-                id="settings-provider-existing-changes-summary",
-                classes="settings-status-row",
-                markup=False,
-            )
-            existing_changes.display = self._provider_same_target_has_draft()
-            yield existing_changes
-            conflict_target = self._provider_navigation_conflict_target
-            conflict = Vertical(id="settings-provider-navigation-conflict")
-            conflict.display = conflict_target is not None
-            with conflict:
-                yield Static(
-                    self._provider_navigation_conflict_copy(),
-                    id="settings-provider-navigation-conflict-summary",
-                    classes="settings-status-row",
-                    markup=False,
-                )
-                yield Button(
-                    "Review existing changes",
-                    id="settings-provider-conflict-review",
-                )
-                yield Button(
-                    self._provider_conflict_discard_label(),
-                    id="settings-provider-conflict-discard",
-                )
-                yield Button(
-                    "Return to Chat settings",
-                    id="settings-provider-conflict-return",
-                    disabled=self._provider_return_actions_disabled(),
-                )
-            continuation = Vertical(id="settings-provider-return-continuation")
-            continuation.display = self._provider_return_outcome is not None
-            with continuation:
-                yield Static(
-                    self._provider_return_continuation_copy(),
-                    id="settings-provider-return-continuation-status",
-                    classes="settings-status-row",
-                    markup=False,
-                )
-                yield Button(
-                    "Return to Chat settings",
-                    id="settings-provider-return",
-                    variant="primary",
-                    disabled=self._provider_return_actions_disabled(),
-                )
-                yield Button(
-                    "Stay in Settings",
-                    id="settings-provider-stay",
-                )
-            return_without_saving = Button(
-                "Return without saving",
-                id="settings-provider-return-without-save",
-                disabled=self._provider_return_actions_disabled(),
-            )
-            return_without_saving.display = self._provider_can_return_without_saving()
-            yield return_without_saving
-            yield Static("Provider readiness", classes="destination-section")
-            yield self._detail_row(
-                "Readiness",
-                self._provider_readiness_label().removeprefix("Provider readiness: "),
-                identifier="settings-provider-readiness",
-            )
-            yield self._detail_row(
-                "Provider source",
-                self._settings_source_label(resolved.provider_source),
-                identifier="settings-provider-source",
-            )
-            yield self._detail_row(
-                "Model source",
-                self._settings_source_label(resolved.model_source),
-                identifier="settings-model-source",
-            )
-            yield self._detail_row(
-                "Endpoint",
-                self._provider_endpoint_display_value(
-                    str(values["provider"]), values["endpoint"]
-                ),
-                identifier="settings-provider-endpoint",
-            )
-            yield Static(
-                self._provider_key_status(str(values["provider"])),
-                id="settings-provider-key-status",
-            )
-            yield Static("Context capacity", classes="destination-section")
-            yield Static(
-                self._provider_model_context_window_status(
-                    provider,
-                    str(values["model"]),
-                    values.get("model_context_window"),
-                ),
-                id="settings-model-context-window-status",
-                classes="settings-status-row",
-            )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("Context window", classes="settings-input-label")
-                yield Input(
-                    value=self._profile_input_value(
-                        values.get("model_context_window", "")
-                    ),
-                    id="settings-model-context-window",
-                    classes="settings-compact-input",
-                    placeholder="tokens (required when unknown)",
-                    restrict=r"^[0-9]*$",
-                    disabled=registry_locked,
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static("", classes="settings-input-label")
-                yield Button(
-                    "Reset to detected",
-                    id="settings-model-context-window-reset",
-                    disabled=(
-                        not context_window_state.has_configured_override
-                        or registry_locked
-                    ),
-                    tooltip=(
-                        "Remove only the configured context-window override and "
-                        "return to the detected capability value."
-                    ),
-                )
-            yield Static(
-                "This is the model's total token capacity, not a conversation "
-                "length preference. Repairs update the existing model-capability "
-                "registry used by request safety checks.",
-                id="settings-model-context-window-help",
-                classes="settings-detail-row",
-            )
-            yield Static("Model discovery", classes="destination-section")
-            yield Static(
-                self._model_discovery_status,
-                id="settings-model-discovery-status",
-                classes="settings-status-row",
-            )
-            empty_state = Static(
-                MODEL_DISCOVERY_EMPTY_COPY,
-                id="settings-model-discovery-empty",
-                classes="settings-status-row",
-            )
-            empty_state.display = not self._model_discovery_models
-            yield empty_state
-            yield Static(
-                MODEL_DISCOVERY_CAPABILITY_WARNING,
-                id="settings-model-discovery-capability-warning",
-                classes="settings-status-row",
-            )
-            with Horizontal(classes="settings-input-row"):
-                yield Button(
-                    "Discover models",
-                    id="settings-discover-provider-models",
-                    disabled=not self._model_discovery_available(
-                        str(values["provider"])
-                    ),
-                    tooltip=(
-                        "Query the configured OpenAI-compatible provider endpoint "
-                        "for available models."
-                    ),
-                )
-                yield Button(
-                    "Save selected",
-                    id="settings-save-discovered-provider-models",
-                    disabled=not self._model_discovery_models,
-                    tooltip="Append selected discovered model IDs to the local provider list.",
-                )
-                yield Button(
-                    "Clear",
-                    id="settings-clear-discovered-provider-models",
-                    disabled=not self._model_discovery_models,
-                    tooltip="Clear runtime-discovered models for this provider.",
-                )
-            yield SelectionList(
-                *self._model_discovery_selection_options(),
-                id="settings-discovered-models-list",
-                classes="settings-discovered-models-list",
-                disabled=not self._model_discovery_models,
-            )
-            # ADR-020: [model_catalog] auto-refresh toggles. Values initialize
-            # inline from the saved config (the Connect block pattern) and
-            # persist immediately on change via the handlers below.
-            # task-1341: instant-apply is the labeled exception to the staged
-            # default; the bordered group and hint line separate these
-            # operational flags visually from the staged Connect fields.
-            model_catalog_settings = load_model_catalog_settings(
-                self._model_catalog_form_values or load_settings()
-            )
-            # TASK-387: keep the internal decision-record id (ADR-020) out of the
-            # user-facing heading; it survives in the code comment above.
-            with Vertical(
-                id="settings-model-catalog-group",
-                classes="settings-instant-apply-group",
-            ):
-                yield Static("Automatic refresh", classes="destination-section")
-                yield Static(
-                    INSTANT_APPLY_BEHAVIOR_COPY,
-                    id="settings-model-catalog-instant-hint",
-                    classes="settings-instant-apply-hint",
-                )
-                yield Checkbox(
-                    "Refresh on startup",
-                    value=model_catalog_settings.auto_refresh_enabled,
-                    id="settings-model-catalog-auto-refresh",
-                )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        "Refresh after (hours)", classes="settings-input-label"
-                    )
-                    yield Input(
-                        (
-                            str(
-                                self._model_catalog_form_values["model_catalog"][
-                                    "stale_after_hours"
-                                ]
-                            )
-                            if self._model_catalog_form_values is not None
-                            else f"{model_catalog_settings.stale_after_hours:g}"
-                        ),
-                        id="settings-model-catalog-stale-hours",
-                        type="number",
-                        tooltip="0 = refetch every launch.",
-                    )
-                yield Static(
-                    self._model_catalog_save_status,
-                    id="settings-model-catalog-save-status",
-                    classes="settings-status-row",
-                    markup=False,
-                )
-                retry = Button("Retry", id="settings-model-catalog-retry")
-                retry.display = self._model_catalog_save_failed
-                yield retry
-                for _provider in AUTO_REFRESH_PROVIDER_LIST_KEYS:
-                    _provider_key = provider_config_key(_provider)
-                    _pid = _provider.lower()
-                    with Horizontal(classes="settings-input-row"):
-                        yield Checkbox(
-                            f"{provider_display_name(_provider)}: refresh",
-                            value=(
-                                _provider_key
-                                not in model_catalog_settings.auto_refresh_disabled
-                            ),
-                            id=f"settings-mc-auto-{_pid}",
-                        )
-                        yield Checkbox(
-                            "save to config",
-                            value=_provider_key
-                            in model_catalog_settings.write_to_config,
-                            id=f"settings-mc-write-{_pid}",
-                            tooltip=(
-                                "Append newly discovered models to config.toml — "
-                                "large catalogs like OpenRouter only add newly released "
-                                "models after a first baseline."
-                            ),
-                        )
-            # task-34384 (issue #365): quit-time session usage summary.
-            # Instant-apply like the catalog block above; the pure helper's
-            # no-op guard keeps per-keystroke Input.Changed off the disk.
-            with Vertical(
-                id="settings-session-summary-group",
-                classes="settings-instant-apply-group",
-            ):
-                yield Static("Session summary on quit", classes="destination-section")
-                yield Static(
-                    INSTANT_APPLY_BEHAVIOR_COPY,
-                    id="settings-session-summary-instant-hint",
-                    classes="settings-instant-apply-hint",
-                )
-                yield Checkbox(
-                    "Show session usage summary when quitting",
-                    value=bool(
-                        get_cli_setting("session_summary", "enabled", False)
-                    ),
-                    id="settings-session-summary-enabled",
-                )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        "Summary duration (seconds):",
-                        classes="settings-status-row",
-                    )
-                    yield Input(
-                        str(get_cli_setting("session_summary", "duration_seconds", 3)),
-                        id="settings-session-summary-duration",
-                        type="integer",
-                        tooltip="How long the quit summary shows before auto-exit (1-30). Invalid or empty values fall back to 3 seconds.",
-                    )
-            # ADR-146 task-7: named-endpoint management (rename / edit /
-            # delete-with-reference-guard / slot conversion). Instant-apply
-            # like the catalog block above: threaded config writes, one
-            # shared status line, no partial-apply states.
-            yield from self._render_custom_endpoints_section()
-            # task-189: sampling and provider-specific tuning live below the
-            # Connect block in a collapsed-by-default disclosure.
-            model = str(values["model"])
-            # TASK-33001.2: a row the provider+model request does not carry is
-            # hidden and disabled (never a focus stop), as the gated rows were.
-            row_supported = {
-                draft_key: self._model_profile_field_supported(
-                    provider, draft_key, model
-                )
-                for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS
-            }
-            with Collapsible(
-                title="Generation defaults",
-                collapsed=self._generation_defaults_collapsed,
-                id="settings-generation-defaults",
-                disabled=registry_locked,
-            ):
-                yield Static(
-                    "Selected model defaults",
-                    id="settings-selected-model-defaults-title",
-                    classes="destination-section",
-                )
-                yield Static(
-                    "Global fallbacks live under Console Behavior; these values apply only "
-                    "to the provider+model above.",
-                    classes="settings-detail-row",
-                )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        MODEL_FIELD_LABELS["temperature"],
-                        classes="settings-input-label",
-                    )
-                    yield Input(
-                        value=self._profile_input_value(
-                            values["model_profile_temperature"]
-                        ),
-                        id="settings-model-profile-temperature",
-                        classes="settings-compact-input",
-                        placeholder="0.0 - 2.0",
-                    )
-                with Horizontal(
-                    id="settings-model-profile-top-p-row",
-                    classes=self._gated_profile_row_classes(
-                        row_supported["model_profile_top_p"]
-                    ),
-                ):
-                    yield Static(
-                        MODEL_FIELD_LABELS["top_p"], classes="settings-input-label"
-                    )
-                    yield Input(
-                        value=self._profile_input_value(values["model_profile_top_p"]),
-                        id="settings-model-profile-top-p",
-                        classes="settings-compact-input",
-                        disabled=not row_supported["model_profile_top_p"],
-                        placeholder="0.0 - 1.0",
-                    )
-                with Horizontal(
-                    id="settings-model-profile-min-p-row",
-                    classes=self._gated_profile_row_classes(
-                        row_supported["model_profile_min_p"]
-                    ),
-                ):
-                    yield Static(
-                        MODEL_FIELD_LABELS["min_p"], classes="settings-input-label"
-                    )
-                    yield Input(
-                        value=self._profile_input_value(values["model_profile_min_p"]),
-                        id="settings-model-profile-min-p",
-                        classes="settings-compact-input",
-                        disabled=not row_supported["model_profile_min_p"],
-                        placeholder="optional 0.0 - 1.0",
-                    )
-                with Horizontal(
-                    id="settings-model-profile-top-k-row",
-                    classes=self._gated_profile_row_classes(
-                        row_supported["model_profile_top_k"]
-                    ),
-                ):
-                    yield Static(
-                        MODEL_FIELD_LABELS["top_k"], classes="settings-input-label"
-                    )
-                    yield Input(
-                        value=self._profile_input_value(values["model_profile_top_k"]),
-                        id="settings-model-profile-top-k",
-                        classes="settings-compact-input",
-                        disabled=not row_supported["model_profile_top_k"],
-                        placeholder="optional whole number",
-                        restrict=r"^[0-9]*$",
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        MODEL_FIELD_LABELS["max_tokens"], classes="settings-input-label"
-                    )
-                    yield Input(
-                        value=self._profile_input_value(
-                            values["model_profile_max_tokens"]
-                        ),
-                        id="settings-model-profile-max-tokens",
-                        classes="settings-compact-input",
-                        placeholder="optional whole number",
-                        restrict=r"^[0-9]*$",
-                    )
-                with Horizontal(
-                    id="settings-model-profile-seed-row",
-                    classes=self._gated_profile_row_classes(
-                        row_supported["model_profile_seed"]
-                    ),
-                ):
-                    yield Static(
-                        MODEL_FIELD_LABELS["seed"], classes="settings-input-label"
-                    )
-                    yield Input(
-                        value=self._profile_input_value(values["model_profile_seed"]),
-                        id="settings-model-profile-seed",
-                        classes="settings-compact-input",
-                        disabled=not row_supported["model_profile_seed"],
-                        placeholder="optional whole number",
-                        restrict=r"^[0-9]*$",
-                    )
-                with Horizontal(
-                    id="settings-model-profile-presence-penalty-row",
-                    classes=self._gated_profile_row_classes(
-                        row_supported["model_profile_presence_penalty"]
-                    ),
-                ):
-                    yield Static(
-                        MODEL_FIELD_LABELS["presence_penalty"],
-                        classes="settings-input-label",
-                    )
-                    yield Input(
-                        value=self._profile_input_value(
-                            values["model_profile_presence_penalty"]
-                        ),
-                        id="settings-model-profile-presence-penalty",
-                        classes="settings-compact-input",
-                        disabled=not row_supported["model_profile_presence_penalty"],
-                        placeholder="-2.0 - 2.0",
-                    )
-                with Horizontal(
-                    id="settings-model-profile-frequency-penalty-row",
-                    classes=self._gated_profile_row_classes(
-                        row_supported["model_profile_frequency_penalty"]
-                    ),
-                ):
-                    yield Static(
-                        MODEL_FIELD_LABELS["frequency_penalty"],
-                        classes="settings-input-label",
-                    )
-                    yield Input(
-                        value=self._profile_input_value(
-                            values["model_profile_frequency_penalty"]
-                        ),
-                        id="settings-model-profile-frequency-penalty",
-                        classes="settings-compact-input",
-                        disabled=not row_supported["model_profile_frequency_penalty"],
-                        placeholder="-2.0 - 2.0",
-                    )
-                # task-189: one summary line replaces per-row "Unavailable
-                # for <provider>" placeholders; unsupported rows are hidden.
-                support_copy = self._provider_generation_support_copy(provider, model)
-                support_summary = Static(
-                    support_copy,
-                    id="settings-provider-generation-support",
-                    classes="settings-detail-row",
-                )
-                support_summary.set_class(
-                    not support_copy, "settings-gated-profile-hidden"
-                )
-                yield support_summary
-                with Horizontal(
-                    id="settings-model-profile-reasoning-effort-row",
-                    classes=self._gated_profile_row_classes(
-                        row_supported["model_profile_reasoning_effort"]
-                    )
-                    + " settings-select-row",
-                ):
-                    yield Static(
-                        MODEL_FIELD_LABELS["reasoning_effort"],
-                        classes="settings-input-label",
-                    )
-                    yield self._model_profile_enum_select(
-                        provider,
-                        "model_profile_reasoning_effort",
-                        values,
-                    )
-                with Horizontal(
-                    id="settings-model-profile-reasoning-summary-row",
-                    classes=self._gated_profile_row_classes(
-                        row_supported["model_profile_reasoning_summary"]
-                    )
-                    + " settings-select-row",
-                ):
-                    yield Static(
-                        MODEL_FIELD_LABELS["reasoning_summary"],
-                        classes="settings-input-label",
-                    )
-                    yield self._model_profile_enum_select(
-                        provider,
-                        "model_profile_reasoning_summary",
-                        values,
-                    )
-                with Horizontal(
-                    id="settings-model-profile-verbosity-row",
-                    classes=self._gated_profile_row_classes(
-                        row_supported["model_profile_verbosity"]
-                    )
-                    + " settings-select-row",
-                ):
-                    yield Static(
-                        MODEL_FIELD_LABELS["verbosity"], classes="settings-input-label"
-                    )
-                    yield self._model_profile_enum_select(
-                        provider,
-                        "model_profile_verbosity",
-                        values,
-                    )
-                with Horizontal(
-                    id="settings-model-profile-thinking-effort-row",
-                    classes=self._gated_profile_row_classes(
-                        row_supported["model_profile_thinking_effort"]
-                    )
-                    + " settings-select-row",
-                ):
-                    yield Static(
-                        MODEL_FIELD_LABELS["thinking_effort"],
-                        classes="settings-input-label",
-                    )
-                    yield self._model_profile_enum_select(
-                        provider,
-                        "model_profile_thinking_effort",
-                        values,
-                    )
-                with Horizontal(
-                    id="settings-model-profile-thinking-budget-tokens-row",
-                    classes=self._gated_profile_row_classes(
-                        row_supported["model_profile_thinking_budget_tokens"]
-                    ),
-                ):
-                    yield Static(
-                        MODEL_FIELD_LABELS["thinking_budget_tokens"],
-                        classes="settings-input-label",
-                    )
-                    yield Input(
-                        value=self._model_profile_input_value(
-                            provider,
-                            "model_profile_thinking_budget_tokens",
-                            model,
-                            values["model_profile_thinking_budget_tokens"],
-                        ),
-                        id="settings-model-profile-thinking-budget-tokens",
-                        classes="settings-compact-input",
-                        placeholder=self._model_profile_input_placeholder(
-                            provider,
-                            "model_profile_thinking_budget_tokens",
-                            model,
-                        ),
-                        restrict=r"^[0-9]*$",
-                        disabled=not row_supported[
-                            "model_profile_thinking_budget_tokens"
-                        ],
-                    )
-                with Horizontal(classes="settings-input-row settings-select-row"):
-                    yield Static(
-                        MODEL_FIELD_LABELS["streaming"], classes="settings-input-label"
-                    )
-                    yield Select(
-                        list(MODEL_PROFILE_STREAMING_SELECT_OPTIONS),
-                        value=self._streaming_select_value(
-                            values["model_profile_streaming"]
-                        ),
-                        id="settings-model-profile-streaming",
-                        classes="settings-compact-select",
-                        allow_blank=True,
-                        prompt="Inherit default",
-                        compact=True,
-                    )
-            yield Static(
-                self._provider_catalog_summary(),
-                id="settings-provider-catalog",
-                classes="settings-status-row",
-            )
-            yield Static(
-                self._provider_catalog_key_policy(),
-                id="settings-provider-catalog-policy",
-                classes="settings-status-row",
-            )
-            yield Static(
-                "Choose a catalog provider (type in the open list to jump to one), "
-                "or use Manual / custom provider for other keys.",
-                id="settings-provider-manual-entry-policy",
-                classes="settings-status-row",
-            )
-            yield Static(
-                "Sampling and transport defaults are routed to Console Behavior.",
-                id="settings-provider-sampling-route",
-                classes="settings-status-row",
-            )
-            yield self._detail_row(
-                "Endpoint key",
-                self._provider_endpoint_row(str(values["provider"])).removeprefix(
-                    "Endpoint key: "
-                ),
-                identifier="settings-provider-endpoint-key",
-            )
 
     # ------------------------------------------------------------------
     # Custom endpoints (ADR-146 task-7): rename / edit / guarded delete /
-    # built-in slot conversion. Panel logic lives in
-    # settings_provider_view_model; this block is composition + threaded
-    # config writes with one shared status line.
+    # built-in slot conversion. Panel logic lives in settings_provider_view_
+    # model and composition in Settings_Modules/providers_models_card; this
+    # block is the handlers + threaded config writes (one shared status line).
 
     def _custom_endpoints_view_config(self) -> Mapping[str, object]:
         """Return the freshest full config for registry reads.
@@ -18923,174 +18247,6 @@ class SettingsScreen(BaseAppScreen):
             store = getattr(runtime, "chat_store", None)
         return store
 
-    def _render_custom_endpoints_section(self) -> ComposeResult:
-        """Compose the Custom endpoints section (ADR-146 management)."""
-        yield Static("Custom endpoints", classes="destination-section")
-        # SettingsRegion (task-15475): a plain Vertical yielded inline has no
-        # compose() of its own, so a region-scoped refresh(recompose=True)
-        # would wipe it instead of rebuilding it.
-        yield SettingsRegion(
-            self._compose_custom_endpoints_children,
-            id="settings-custom-endpoints",
-            classes="settings-instant-apply-group",
-        )
-
-    def _compose_custom_endpoints_children(self) -> ComposeResult:
-        """Yield the Custom endpoints region children (rebuilt per refresh)."""
-        config = self._custom_endpoints_view_config()
-        entries = load_custom_endpoints(config)
-        rows = custom_endpoint_rows(config)
-        if not rows:
-            yield Static(
-                "No named endpoints yet. Create one from a template in "
-                "Console's Chat settings (New endpoint…), or "
-                "convert a built-in custom slot below.",
-                id="settings-custom-endpoints-empty",
-                classes="settings-status-row",
-                markup=False,
-            )
-        for row in rows:
-            slug = row.key[len(CUSTOM_ENDPOINT_ID_PREFIX) :]
-            entry = entries.get(slug)
-            if entry is None:
-                continue
-            yield Static(
-                f"{row.label}: {_fold_long_tokens(row.value)}",
-                id=f"settings-cep-row-{slug}",
-                classes="settings-detail-row",
-                markup=False,
-            )
-            with Horizontal(classes="settings-action-row"):
-                yield Button(
-                    "Rename",
-                    id=f"settings-cep-rename-{slug}",
-                    tooltip="Rename this endpoint. Its id never changes.",
-                )
-                yield Button(
-                    "Edit",
-                    id=f"settings-cep-edit-{slug}",
-                    tooltip=(
-                        "Edit the endpoint URL, credential variable, or "
-                        "model list. Existing conversations re-resolve "
-                        "on their next send."
-                    ),
-                )
-                yield Button(
-                    "Duplicate",
-                    id=f"settings-cep-duplicate-{slug}",
-                    tooltip=(
-                        "Create another endpoint from this one via the "
-                        "template flow: same family, new URL (a full copy "
-                        "stays one row below the preselected starter)."
-                    ),
-                )
-                yield Button(
-                    "Detach references",
-                    id=f"settings-cep-detach-{slug}",
-                    classes=(
-                        ""
-                        if self._custom_endpoint_detach_slug == slug
-                        else "settings-gated-profile-hidden"
-                    ),
-                    tooltip=(
-                        "Keep each referencing conversation's current "
-                        "endpoint as conversation-only, then delete the "
-                        "entry."
-                    ),
-                )
-                yield Button(
-                    "Delete",
-                    id=f"settings-cep-delete-{slug}",
-                    tooltip=(
-                        "Delete this endpoint. Blocked while any "
-                        "conversation still references it."
-                    ),
-                )
-            if self._custom_endpoint_rename_slug == slug:
-                with Horizontal(classes="settings-input-row"):
-                    yield Static("Name", classes="settings-input-label")
-                    yield Input(
-                        value=entry.display_name,
-                        id="settings-cep-rename-value",
-                        classes="settings-compact-input",
-                        placeholder="Display name",
-                    )
-                with Horizontal(classes="settings-action-row"):
-                    yield Button("Save name", id="settings-cep-rename-save")
-                    yield Button("Cancel", id="settings-cep-rename-cancel")
-            if self._custom_endpoint_edit_slug == slug:
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        MODEL_FIELD_LABELS["endpoint"], classes="settings-input-label"
-                    )
-                    yield Input(
-                        value=entry.base_url,
-                        id="settings-cep-edit-url",
-                        classes="settings-compact-input",
-                        placeholder="http://127.0.0.1:8080",
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static(
-                        "Credential env var (name)", classes="settings-input-label"
-                    )
-                    yield Input(
-                        value=entry.api_key_env or "",
-                        id="settings-cep-edit-key-env",
-                        classes="settings-compact-input",
-                        placeholder="API key environment variable (optional)",
-                    )
-                with Horizontal(classes="settings-input-row"):
-                    yield Static("Models", classes="settings-input-label")
-                    yield Input(
-                        value=", ".join(entry.models),
-                        id="settings-cep-edit-models",
-                        classes="settings-compact-input",
-                        placeholder="comma-separated model ids",
-                    )
-                yield Static(
-                    "",
-                    id="settings-cep-edit-error",
-                    classes="settings-status-row",
-                    markup=False,
-                )
-                with Horizontal(classes="settings-action-row"):
-                    yield Button("Save endpoint", id="settings-cep-edit-save")
-                    yield Button("Cancel", id="settings-cep-edit-cancel")
-        for slot_id in ("custom", "custom_2"):
-            app_config = self._app_config_mapping()
-            api_settings = app_config.get("api_settings")
-            slot_endpoint = first_configured_endpoint(
-                provider_settings_for_key(
-                    api_settings if isinstance(api_settings, Mapping) else {},
-                    slot_id,
-                )
-            )
-            if not slot_endpoint:
-                continue
-            yield Static(
-                f"{provider_display_name(slot_id)}: "
-                f"{safe_endpoint_display(slot_endpoint)} (built-in slot)",
-                id=f"settings-cep-slot-{slot_id}",
-                classes="settings-detail-row",
-                markup=False,
-            )
-            with Horizontal(classes="settings-action-row"):
-                yield Button(
-                    "Convert to named endpoint",
-                    id=f"settings-cep-convert-{slot_id}",
-                    tooltip=(
-                        "Create a named endpoint from this slot's "
-                        "configured URL and models. The slot itself is "
-                        "left untouched."
-                    ),
-                )
-        yield Static(
-            self._custom_endpoints_status,
-            id="settings-custom-endpoints-status",
-            classes="settings-status-row",
-            markup=False,
-        )
-
     def _refresh_custom_endpoints_section(self) -> None:
         """Rebuild the Custom endpoints section in place."""
         try:
@@ -19098,6 +18254,7 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         region.refresh(recompose=True)
+        self._refresh_advanced()
 
     def _custom_endpoints_status_update(self, message: str) -> None:
         """Set the shared status line without closing any open form."""
@@ -19469,12 +18626,19 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
             yield Static("Local reasoning history", classes="destination-section")
-            yield Select(
-                REASONING_HISTORY_OPTIONS,
-                value=self._console_behavior_value("reasoning_history"),
-                allow_blank=False,
-                id="settings-console-reasoning-history",
-            )
+            # Parent AC#7 (TASK-33007): every Select on the card is one row.
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                # Captures review note 9: the global default and the override
+                # below were both "Replay"; each label says which it is.
+                yield Static("Default replay", classes="settings-input-label")
+                yield Select(
+                    REASONING_HISTORY_OPTIONS,
+                    value=self._console_behavior_value("reasoning_history"),
+                    allow_blank=False,
+                    id="settings-console-reasoning-history",
+                    classes="settings-compact-select",
+                    compact=True,
+                )
             yield Static(
                 "These device-local controls refine Conversation Auto. Conversation "
                 "Include and Exclude override them, and Required continuation remains "
@@ -19495,13 +18659,17 @@ class SettingsScreen(BaseAppScreen):
                     markup=False,
                     classes="settings-detail-row",
                 )
-                yield Select(
-                    (("Use default", "inherit"), *REASONING_HISTORY_OPTIONS),
-                    value=self._reasoning_override_value(),
-                    allow_blank=False,
-                    disabled=target is None,
-                    id="settings-console-reasoning-override",
-                )
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static("This model's replay", classes="settings-input-label")
+                    yield Select(
+                        (("Use default", "inherit"), *REASONING_HISTORY_OPTIONS),
+                        value=self._reasoning_override_value(),
+                        allow_blank=False,
+                        disabled=target is None,
+                        id="settings-console-reasoning-override",
+                        classes="settings-compact-select",
+                        compact=True,
+                    )
                 yield Checkbox(
                     "Native tool support",
                     value=self._reasoning_native_override_value(),
@@ -19592,13 +18760,16 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
             yield Static("Rail presentation", classes="destination-section")
-            yield Static("Rail layout scope", classes="settings-input-label")
-            yield Select(
-                (("Global", "global"), ("Per workspace", "workspace")),
-                value=self._console_rail_layout_scope(),
-                allow_blank=False,
-                id="settings-console-rail-layout-scope",
-            )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Rail layout scope", classes="settings-input-label")
+                yield Select(
+                    (("Global", "global"), ("Per workspace", "workspace")),
+                    value=self._console_rail_layout_scope(),
+                    allow_blank=False,
+                    id="settings-console-rail-layout-scope",
+                    classes="settings-compact-select",
+                    compact=True,
+                )
             yield Static(
                 "Global keeps one arrangement everywhere. Per workspace restores "
                 "and keeps each workspace's saved arrangement.",
@@ -20021,9 +19192,8 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    "Default chat display name", classes="settings-input-label"
-                )
+                # Review note 10: 25 cells did not fit the 24-cell label.
+                yield Static("Chat display name", classes="settings-input-label")
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("user_display_name")
@@ -20038,164 +19208,14 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-default-user-display-name-help",
                 classes="settings-detail-row",
             )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["streaming"], classes="settings-input-label"
-                )
-                yield Checkbox(
-                    value=coerce_bool_setting(
-                        self._console_behavior_value("streaming"), True
-                    ),
-                    id="settings-console-default-streaming",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["temperature"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("temperature")
-                    ),
-                    id="settings-console-default-temperature",
-                    classes="settings-compact-input",
-                    placeholder="0.0 - 2.0",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["top_p"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("top_p")
-                    ),
-                    id="settings-console-default-top-p",
-                    classes="settings-compact-input",
-                    placeholder="0.0 - 1.0",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["min_p"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("min_p")
-                    ),
-                    id="settings-console-default-min-p",
-                    classes="settings-compact-input",
-                    placeholder="optional 0.0 - 1.0",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["top_k"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("top_k")
-                    ),
-                    id="settings-console-default-top-k",
-                    classes="settings-compact-input",
-                    placeholder="optional whole number",
-                    restrict=r"^[0-9]*$",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["max_tokens"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("max_tokens")
-                    ),
-                    id="settings-console-default-max-tokens",
-                    classes="settings-compact-input",
-                    placeholder="optional whole number",
-                    restrict=r"^[0-9]*$",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(MODEL_FIELD_LABELS["seed"], classes="settings-input-label")
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("seed")
-                    ),
-                    id="settings-console-default-seed",
-                    classes="settings-compact-input",
-                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_seed"],
-                    restrict=r"^[0-9]*$",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["presence_penalty"],
-                    classes="settings-input-label",
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("presence_penalty")
-                    ),
-                    id="settings-console-default-presence-penalty",
-                    classes="settings-compact-input",
-                    placeholder="-2.0 - 2.0",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["frequency_penalty"],
-                    classes="settings-input-label",
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("frequency_penalty")
-                    ),
-                    id="settings-console-default-frequency-penalty",
-                    classes="settings-compact-input",
-                    placeholder="-2.0 - 2.0",
-                )
-            yield Static(
-                "Reasoning and thinking controls are sent only to providers that support them.",
-                id="settings-console-reasoning-help",
-                classes="settings-detail-row",
+            # TASK-33007.7: the same rows, orders and streaming Select family
+            # as Model defaults; imported here so the Settings route's
+            # pre-import payload does not grow (ADR-097).
+            from ..Settings_Modules.settings_field_rows import (
+                compose_console_fallbacks,
             )
-            with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["reasoning_effort"],
-                    classes="settings-input-label",
-                )
-                yield self._console_default_enum_select("reasoning_effort")
-            with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["reasoning_summary"],
-                    classes="settings-input-label",
-                )
-                yield self._console_default_enum_select("reasoning_summary")
-            with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["verbosity"], classes="settings-input-label"
-                )
-                yield self._console_default_enum_select("verbosity")
-            with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["thinking_effort"],
-                    classes="settings-input-label",
-                )
-                yield self._console_default_enum_select("thinking_effort")
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["thinking_budget_tokens"],
-                    classes="settings-input-label",
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("thinking_budget_tokens")
-                    ),
-                    id="settings-console-default-thinking-budget-tokens",
-                    classes="settings-compact-input",
-                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS[
-                        "model_profile_thinking_budget_tokens"
-                    ],
-                    restrict=r"^[0-9]*$",
-                )
-            yield Static(
-                "chat_defaults.streaming is canonical; enable_streaming is read as fallback only.",
-                id="settings-console-streaming-compatibility",
-                classes="settings-status-row",
-            )
+
+            yield from compose_console_fallbacks(self)
             yield Static("Background effects", classes="destination-section")
             yield Checkbox(
                 "Enable background effects",
@@ -20279,7 +19299,7 @@ class SettingsScreen(BaseAppScreen):
                         f"{MAX_CONSOLE_BACKGROUND_FPS} FPS."
                     ),
                 )
-            yield Static(
+            yield SettingsResultLine(
                 self._console_behavior_result_text(),
                 id="settings-console-behavior-result",
                 classes="settings-status-row",
@@ -21707,7 +20727,7 @@ class SettingsScreen(BaseAppScreen):
             "Profile", "the active RAG profile (rag_profiles/<id>.json)"
         )
         yield self._detail_row("Pointer", "the [rag.service].profile pointer")
-        yield Static(
+        yield SettingsResultLine(
             self._library_rag_result,
             id="settings-library-rag-save-result",
             classes="settings-status-row",
@@ -22922,43 +21942,11 @@ class SettingsScreen(BaseAppScreen):
             with Vertical(
                 id="settings-console-behavior-detail", classes="settings-focus-card"
             ):
+                # Captures review note 10: the read-only summary that followed
+                # the card restated its own rows and the Inspector's Override
+                # rules; its config keys now sit in the Inspector's closed
+                # "config key" disclosure.
                 yield from self._render_console_behavior_card(compact=False)
-                yield Static("Composer behavior", classes="destination-section")
-                yield self._detail_row(
-                    "Paste collapse",
-                    "pasted chunks over the threshold display as compact placeholders",
-                )
-                yield self._detail_row(
-                    "Threshold", self._paste_collapse_threshold_label()
-                )
-                yield self._detail_row(
-                    "Typing rule",
-                    "normal typing remains literal and never auto-collapses",
-                )
-                yield self._detail_row(
-                    "Current default", self._collapse_large_pastes_label()
-                )
-                yield Static("Global fallback defaults", classes="destination-section")
-                yield self._detail_row(
-                    "Fallback source",
-                    "[chat_defaults].streaming, temperature, top_p, max_tokens",
-                )
-                yield self._detail_row(
-                    "Compatibility",
-                    "streaming is canonical; enable_streaming is read only when streaming is absent",
-                )
-                yield self._detail_row(
-                    "Override order",
-                    "active Console session, then provider+model profile, then global fallback",
-                )
-                yield self._detail_row(
-                    "Save targets",
-                    "[console] paste settings and [chat_defaults] global fallbacks",
-                )
-                yield self._detail_row(
-                    "Console impact",
-                    "new/default sessions use these only when no narrower override applies",
-                )
         elif category is SettingsCategoryId.LIBRARY_RAG:
             yield from self._render_library_rag_detail()
         elif category is SettingsCategoryId.APPEARANCE:
@@ -23200,7 +22188,7 @@ class SettingsScreen(BaseAppScreen):
                         id="settings-preview-appearance",
                         tooltip="Check the Appearance draft; nothing is applied or saved.",
                     )
-                yield Static(
+                yield SettingsResultLine(
                     self._appearance_result,
                     id="settings-appearance-save-result",
                     classes="settings-status-row",
@@ -23296,7 +22284,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-storage-check-result",
                     classes="settings-status-row settings-storage-check-result",
                 )
-                yield Static(
+                yield SettingsResultLine(
                     self._storage_result,
                     id="settings-storage-save-result",
                     classes="settings-status-row",
@@ -23826,7 +22814,7 @@ class SettingsScreen(BaseAppScreen):
         if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static("Control guide", classes="destination-section")
             yield self._detail_row(
-                "Default chat display name",
+                "Chat display name",
                 "Speaker label and trusted character-template human name",
             )
             for name in ("streaming", "temperature", "top_p", "max_tokens"):
@@ -23842,14 +22830,36 @@ class SettingsScreen(BaseAppScreen):
                 "Minimum pasted chunk size before collapse",
             )
             yield Static("Focused field guide", classes="destination-section")
-            for index, (label, value) in enumerate(
+            shown, config_key = self._split_config_key_row(
                 self._console_behavior_field_guidance_rows()
-            ):
+            )
+            for index, (label, value) in enumerate(shown):
                 yield self._detail_row(
                     label,
                     value,
                     identifier=f"settings-console-behavior-field-guide-{index}",
                 )
+            # TASK-33007.7: the focused field's config key and the streaming
+            # key fact sit in the same closed "config key" disclosure
+            # Providers & Models has, not in the guide's own copy.
+            yield self._config_key_disclosure(
+                self._detail_row(
+                    CONFIG_KEY_ROW_LABEL,
+                    config_key,
+                    identifier="settings-console-behavior-config-key-saved-as",
+                ),
+                self._detail_row(
+                    MODEL_FIELD_LABELS["streaming"],
+                    STREAMING_CONFIG_KEY_FACT,
+                    identifier="settings-console-streaming-compatibility",
+                ),
+                self._detail_row(
+                    "Fallbacks",
+                    CONSOLE_FALLBACK_KEYS_FACT,
+                    identifier="settings-console-fallback-keys",
+                ),
+                identifier="settings-console-behavior-config-key",
+            )
             yield Static("Override rules", classes="destination-section")
             yield self._detail_row(
                 "Priority",
@@ -23862,24 +22872,13 @@ class SettingsScreen(BaseAppScreen):
             yield self._detail_row("Save", STAGED_SAVE_BEHAVIOR_COPY)
             return
         elif summary.category is SettingsCategoryId.PROVIDERS_MODELS:
-            yield Static(
-                "Affects Console and provider-backed generation.",
-                classes="destination-section",
+            # TASK-33007.4: Applies to, Next new chat, the focused field and
+            # Key, composed beside the card (spec mock (c)).
+            from ..Settings_Modules.providers_models_card import (
+                compose_providers_models_inspector,
             )
-            yield Static(
-                self._provider_readiness_label(),
-                id="settings-provider-inspector-readiness",
-                classes="settings-detail-row",
-            )
-            yield Static("Focused field guide", classes="destination-section")
-            for index, (label, value) in enumerate(
-                self._provider_field_guidance_rows()
-            ):
-                yield self._detail_row(
-                    label,
-                    value,
-                    identifier=f"settings-provider-field-guide-{index}",
-                )
+
+            yield from compose_providers_models_inspector(self)
         elif summary.category is SettingsCategoryId.LIBRARY_RAG:
             # UX review item 9 (Scope Inspector clipping): a blank spacer
             # ahead of the RAG-specific guidance, separating it from the
@@ -24575,20 +23574,14 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         self._sync_provider_credential_widget(provider_value)
+        self._syncing_provider_model_value = True
         try:
-            self._syncing_provider_model_value = True
-            try:
-                model_input = self.query_one("#settings-model-value", Input)
-                # task-15673/15740: the flag misses the posted message; the
-                # echo staged the nav model as an edit, marking the category
-                # dirty so this method's own unsaved-changes guard refused
-                # the NEXT navigation apply.
-                with model_input.prevent(Input.Changed):
-                    model_input.value = model_value
-            finally:
-                self._syncing_provider_model_value = False
-        except QueryError:
-            pass
+            # task-15673/15740: a quiet write -- the posted echo staged the
+            # nav model as an edit, marking the category dirty so this
+            # method's own unsaved-changes guard refused the NEXT apply.
+            self._set_model_field_value(model_value, provider=provider_value)
+        finally:
+            self._syncing_provider_model_value = False
         self._sync_provider_model_profile_widgets(provider_value, model_value)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
@@ -26011,6 +25004,16 @@ class SettingsScreen(BaseAppScreen):
         landed_id = str(getattr(event.widget, "id", "") or "")
         if pending and landed_id and f"#{landed_id}" == pending:
             self._pending_navigation_focus_selector = None
+        if any(
+            node.has_class("settings-config-key-disclosure")
+            for node in event.widget.ancestors_with_self
+        ):
+            # TASK-33007.4: opening the Inspector's "config key" disclosure
+            # must keep naming the field the user was on. Traced: without
+            # this, the title's MouseDown focus resets the guide to its
+            # no-focus copy, which wraps 2 rows taller and moves the title
+            # out from under the pointer, so the click never reaches it.
+            return
         active_category = self._active_category_id()
         widget_id = str(getattr(event.widget, "id", "") or "")
         if active_category is SettingsCategoryId.APPEARANCE:
@@ -26216,6 +25219,28 @@ class SettingsScreen(BaseAppScreen):
     @on(Collapsible.Toggled, "#settings-generation-defaults")
     def handle_generation_defaults_toggled(self, event: Collapsible.Toggled) -> None:
         self._generation_defaults_collapsed = event.collapsible.collapsed
+
+    @on(Collapsible.Toggled, "#settings-model-sampling")
+    def handle_sampling_defaults_toggled(self, event: Collapsible.Toggled) -> None:
+        """Keep Sampling open or closed across a card rebuild (TASK-33007.5).
+
+        Args:
+            event: The Sampling disclosure's toggle.
+        """
+        self._sampling_defaults_collapsed = event.collapsible.collapsed
+
+    @on(Collapsible.Toggled, ".settings-advanced-disclosure")
+    def handle_advanced_disclosure_toggled(self, event: Collapsible.Toggled) -> None:
+        """Keep an Advanced disclosure open or closed across a card rebuild.
+
+        Args:
+            event: The toggle of one of the card's Advanced disclosures.
+        """
+        disclosure_id = str(event.collapsible.id)
+        if event.collapsible.collapsed:
+            self._advanced_disclosures_open.discard(disclosure_id)
+        else:
+            self._advanced_disclosures_open.add(disclosure_id)
 
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:
@@ -28992,12 +28017,19 @@ class SettingsScreen(BaseAppScreen):
         self._stage_console_default_value("user_display_name", event.value)
         self._mark_console_behavior_settings_staged()
 
-    @on(Checkbox.Changed, "#settings-console-default-streaming")
-    def handle_console_default_streaming_changed(self, event: Checkbox.Changed) -> None:
+    @on(Select.Changed, "#settings-console-default-streaming")
+    def handle_console_default_streaming_changed(self, event: Select.Changed) -> None:
+        """Stage the global streaming fallback as the bool the Checkbox staged.
+
+        Args:
+            event: The On/Off Select's change (TASK-33007.7).
+        """
         event.stop()
         if self._syncing_console_defaults:
             return
-        self._stage_console_default_value("streaming", bool(event.value))
+        self._stage_console_default_value(
+            "streaming", self._streaming_select_text(event.value) is True
+        )
         self._mark_console_behavior_settings_staged()
 
     @on(Input.Changed, "#settings-console-default-temperature")
@@ -30078,6 +29110,8 @@ class SettingsScreen(BaseAppScreen):
             message = (
                 "OpenAI connection changed or is unavailable. Request a fresh review."
             )
+        else:
+            self._openai_reconnect_pending = False  # reviewed: the row goes
         finally:
             self._openai_reconnect_busy = False
         if self.is_mounted and self.app.is_running:
@@ -30484,21 +29518,22 @@ class SettingsScreen(BaseAppScreen):
             finally:
                 self._syncing_provider_endpoint = False
         self._sync_provider_credential_widget(staged_provider)
+        if provider_changed and provider_config_key(staged_provider) == "openai":
+            from ..Settings_Modules.providers_models_card import (
+                refresh_openai_reconnect_pending,
+            )
+
+            refresh_openai_reconnect_pending(self)
         provider_default_model = (
             self._provider_model_default(staged_provider) if provider_changed else ""
         )
         if provider_changed:
             self._stage_provider_value("model", provider_default_model or None)
-            try:
-                default_model_input = self.query_one("#settings-model-value", Input)
-            except QueryError:
-                pass
-            else:
-                # task-15740: the model is staged explicitly one line up; the
-                # unguarded echo re-staged it a second time through the
-                # handler. Same class as the flagged sites, no flag at all.
-                with default_model_input.prevent(Input.Changed):
-                    default_model_input.value = provider_default_model
+            # task-15740: staged explicitly one line up, so the write is
+            # quiet; the picker re-scopes to the new provider (AC#6).
+            self._set_model_field_value(
+                provider_default_model, provider=staged_provider
+            )
         model = str(self._provider_setting_values_mapping().get("model") or "")
         self._sync_provider_model_profile_widgets(staged_provider, model)
         self._reset_provider_model_discovery_state()
@@ -30507,17 +29542,32 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-provider-search")
     def handle_provider_search_changed(self, event: Input.Changed) -> None:
-        """Refresh only picker rows so provider connection drafts remain mounted."""
+        """Filter the provider list as the user types (TASK-33007.2 AC#3).
+
+        Only picker rows refresh, so provider connection drafts stay mounted.
+        The list opens only for typing in the focused control.
+        """
+        from ..Settings_Modules.providers_models_card import (
+            open_provider_list,
+            shown_provider_label,
+        )
 
         event.stop()
-        self._refresh_provider_picker(event.value)
+        if event.input.has_focus:
+            open_provider_list(self)
+        elif event.value != shown_provider_label(self):
+            self._refresh_provider_picker(event.value)
 
     @on(OptionList.OptionSelected, "#settings-provider-picker")
     def handle_provider_picker_selected(self, event: OptionList.OptionSelected) -> None:
         from ...Widgets.select_values import assign_select_value
+        from ..Settings_Modules.providers_models_card import close_provider_list
 
         event.stop()
         option = event.option
+        # The choice lands through the provider Select's handler, which then
+        # puts the chosen provider's name in the control.
+        close_provider_list(self)
         action = getattr(option, "action", None)
         provider_id = getattr(option, "provider_id", None)
         try:
@@ -30592,8 +29642,36 @@ class SettingsScreen(BaseAppScreen):
             return
         self._apply_provider_value_change(select_value)
 
+    # Named handlers, not @on: @on would need the picker class imported with
+    # this module (ADR-097 pre-import payload).
+    def on_model_search_picker_model_selected(
+        self, event: "ModelSearchPicker.ModelSelected"
+    ) -> None:
+        """Stage a chosen model as the default for new chats (AC#3, C4).
+
+        Any listed id replaces a default that is already set; the saved
+        model list is untouched (ADR-002: Save selected persists ids).
+
+        Args:
+            event: The picker's choice.
+        """
+        event.stop()
+        self._set_model_field_value(event.model_id, quiet=False)
+
+    def on_model_search_picker_model_value_changed(
+        self, event: "ModelSearchPicker.ModelValueChanged"
+    ) -> None:
+        """Stage a typed Custom ID; an invalid one holds no model (AC#5).
+
+        Args:
+            event: The picker's Custom ID edit, or its rollback.
+        """
+        event.stop()
+        self._set_model_field_value(event.model_id or "", quiet=False)
+
     @on(Input.Changed, "#settings-model-value")
     def handle_model_value_changed(self, event: Input.Changed) -> None:
+        self._sync_model_picker()
         if self._syncing_provider_model_value:
             return
         model_value = event.value.strip()
@@ -30647,13 +29725,8 @@ class SettingsScreen(BaseAppScreen):
             draft.originals.pop("model_context_window_reset", None)
         self._stage_provider_value("model_context_window", value)
         values = self._provider_setting_values_mapping()
-        self._set_static_text(
-            "#settings-model-context-window-status",
-            self._provider_model_context_window_status(
-                str(values.get("provider") or ""),
-                str(values.get("model") or ""),
-                value,
-            ),
+        self._show_context_window_row(
+            str(values.get("provider") or ""), str(values.get("model") or ""), value
         )
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -30680,15 +29753,8 @@ class SettingsScreen(BaseAppScreen):
         finally:
             self._syncing_provider_context_window = False
         event.button.disabled = True
-        detected_copy = (
-            f"{state.detected_tokens:,} tokens"
-            if state.detected_tokens is not None
-            else "unknown"
-        )
-        self._set_static_text(
-            "#settings-model-context-window-status",
-            f"Reset staged. Detected context window: {detected_copy}.",
-        )
+        # The staged detected value reads "edited *" beside "detected N".
+        self._show_context_window_row(provider, model, detected)
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
     @on(Input.Changed, "#settings-provider-endpoint-value")
@@ -30867,6 +29933,22 @@ class SettingsScreen(BaseAppScreen):
         ):
             return
         self._stage_provider_value("api_key", event.value.strip())
+        draft = self._provider_draft()
+        provider = str(
+            self._provider_setting_values_mapping().get("provider") or ""
+        ).strip()
+        cleared = self._provider_api_key_cleared
+        if (
+            draft is not None
+            and not event.value.strip()
+            # Identity, not ==: two drafts with the same values are equal.
+            and not (cleared and cleared[0] is draft and cleared[1] == provider)
+        ):
+            # An emptied field keeps the saved key; only Clear stages removal.
+            draft.values.pop("api_key", None)
+            draft.originals.pop("api_key", None)
+            if not draft.is_dirty:
+                self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
         self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
@@ -30891,6 +29973,9 @@ class SettingsScreen(BaseAppScreen):
             region = self.query_one("#settings-custom-endpoints")
         except QueryError:
             return
+        # TASK-33007.6: the editor sits in the Custom endpoints disclosure.
+        for disclosure in self.query("#settings-advanced-custom-endpoints"):
+            disclosure.collapsed = False
         await region.recompose()
         target = region  # The editor lists the on-disk registry.
         try:
@@ -30928,6 +30013,10 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             api_key_input = None
         self._stage_provider_value("api_key", "")
+        self._provider_api_key_cleared = (
+            self._provider_draft(),
+            str(self._provider_setting_values_mapping().get("provider") or "").strip(),
+        )
         if api_key_input is not None:
             self._set_provider_api_key_input_value(api_key_input, "")
         self._reset_provider_model_discovery_state()
@@ -30940,8 +30029,8 @@ class SettingsScreen(BaseAppScreen):
 
         event.stop()
         focus_by_key = {
-            "provider": "#settings-provider-value",
-            "model": "#settings-model-value",
+            "provider": "#settings-provider-search",
+            "model": "#model-search-picker-input",
             "endpoint": "#settings-provider-endpoint-value",
             "api_key": "#settings-provider-api-key",
             "credential_env_var": "#settings-provider-credential-env-var",
@@ -30950,7 +30039,7 @@ class SettingsScreen(BaseAppScreen):
         dirty_keys = sorted(draft.dirty_keys) if draft is not None else []
         selector = next(
             (focus_by_key[key] for key in dirty_keys if key in focus_by_key),
-            "#settings-provider-value",
+            "#settings-provider-search",
         )
         try:
             self.query_one(selector).focus()
@@ -31051,27 +30140,19 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-model-profile-temperature")
     def handle_model_profile_temperature_changed(self, event: Input.Changed) -> None:
-        if self._syncing_provider_model_profile:
-            return
-        try:
-            value = self._normalise_model_profile_temperature(event.value)
-        except ValueError:
-            value = event.value
-        self._stage_provider_value("model_profile_temperature", value)
-        self._update_provider_dynamic_widgets()
-        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+        self._stage_model_profile_input(
+            "model_profile_temperature",
+            event.value,
+            self._normalise_model_profile_temperature,
+        )
 
     @on(Input.Changed, "#settings-model-profile-top-p")
     def handle_model_profile_top_p_changed(self, event: Input.Changed) -> None:
-        if self._syncing_provider_model_profile:
-            return
-        try:
-            value = self._normalise_model_profile_top_p(event.value)
-        except ValueError:
-            value = event.value
-        self._stage_provider_value("model_profile_top_p", value)
-        self._update_provider_dynamic_widgets()
-        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+        self._stage_model_profile_input(
+            "model_profile_top_p",
+            event.value,
+            self._normalise_model_profile_top_p,
+        )
 
     @on(Input.Changed, "#settings-model-profile-min-p")
     def handle_model_profile_min_p_changed(self, event: Input.Changed) -> None:
@@ -31182,10 +30263,31 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         if self._syncing_provider_model_profile:
             return
+        current = self._provider_setting_values_mapping()
+        draft = self._provider_draft()
+        saved = (draft.originals if draft is not None else {}).get(
+            key, current.get(key)
+        )
         try:
             value = normalizer(raw_value)
         except ValueError:
-            value = raw_value
+            # An Input repeating a saved value its normaliser refuses (a
+            # hand-edited seed = -1, shown as a new chat reads it) is no edit.
+            value = (
+                saved if raw_value == self._profile_input_value(saved) else raw_value
+            )
+        else:
+            provider = str(current.get("provider") or "")
+            model = str(current.get("model") or "")
+            if (
+                value == ""
+                and key not in (draft.dirty_keys if draft is not None else ())
+                and self._unshown_model_profile_choice(provider, model, key) is not None
+            ):
+                # A blank Select over a saved choice it has no option for (a
+                # hand-edited "High") is how that value shows (mount, Revert),
+                # so is no edit; a blank chosen after an option is Inherit.
+                value = saved
         self._stage_provider_value(key, value)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
@@ -31330,6 +30432,13 @@ class SettingsScreen(BaseAppScreen):
             self._model_discovery_selected_model_ids = {
                 str(model_id) for model_id in current_list.selected
             }
+            # TASK-33007.6 (AC#4): each row says in words whether it is
+            # selected; the options keep their order and values.
+            for index, (label, _value, _selected) in enumerate(
+                self._model_discovery_selection_options()
+            ):
+                current_list.replace_option_prompt_at_index(index, label)
+            self._refresh_advanced()
 
     @on(Button.Pressed, "#settings-clear-discovered-provider-models")
     def handle_clear_discovered_provider_models(self, event: Button.Pressed) -> None:
@@ -31360,11 +30469,13 @@ class SettingsScreen(BaseAppScreen):
     def handle_session_summary_toggle_changed(self, event: Checkbox.Changed) -> None:
         event.stop()
         self._persist_session_summary_settings()
+        self._refresh_advanced()  # the Advanced title says its state
 
     @on(Input.Changed, "#settings-session-summary-duration")
     def handle_session_summary_duration_changed(self, event: Input.Changed) -> None:
         event.stop()
         self._persist_session_summary_settings()
+        self._refresh_advanced()  # the Advanced title says its state
 
     @on(Select.Changed, "#settings-permission-summary-mode")
     def handle_permission_summary_mode_changed(self, event: Select.Changed) -> None:
@@ -32409,6 +31520,7 @@ class SettingsScreen(BaseAppScreen):
                     provider,
                     model,
                     values,
+                    dirty_keys=dirty_keys,
                 )
             next_model_capabilities = None
             delete_model_capabilities_entry = False
@@ -32607,6 +31719,15 @@ class SettingsScreen(BaseAppScreen):
                 self._sync_provider_credential_widget(provider)
                 self._sync_provider_context_window_widget(provider, model)
                 self._update_provider_dynamic_widgets()
+                from ..Settings_Modules.providers_models_card import (
+                    refresh_next_new_chat,
+                )
+
+                refresh_next_new_chat(self)
+                # TASK-33007.2: a saved key or endpoint can change who leads
+                # the provider list and its "configured: ..." help.
+                self._provider_configured_keys = None
+                self._refresh_provider_picker()
                 self._update_draft_status_widgets(category)
                 conflict_target = self._provider_navigation_conflict_target
                 if conflict_target is not None:
@@ -33127,8 +32248,8 @@ class SettingsScreen(BaseAppScreen):
                 finally:
                     self._syncing_provider_selection = False
                 self._sync_provider_manual_widget(provider)
-                self.query_one("#settings-model-value", Input).value = str(
-                    values["model"]
+                self._set_model_field_value(
+                    str(values["model"]), provider=provider, quiet=False
                 )
                 endpoint_input = self.query_one(
                     "#settings-provider-endpoint-value", Input
@@ -34320,10 +33441,12 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_defaults = True
         try:
             try:
-                self.query_one(
-                    "#settings-console-default-streaming", Checkbox
-                ).value = coerce_bool_setting(
-                    self._console_behavior_value("streaming"), True
+                self.query_one("#settings-console-default-streaming", Select).value = (
+                    "true"
+                    if coerce_bool_setting(
+                        self._console_behavior_value("streaming"), True
+                    )
+                    else "false"
                 )
             except QueryError:
                 pass
@@ -34336,8 +33459,11 @@ class SettingsScreen(BaseAppScreen):
                     pass
             for selector, (enum_key, value) in select_values.items():
                 try:
-                    self.query_one(selector, Select).value = self._select_option_value(
-                        value, CLOSED_ENUM_SELECT_OPTIONS[enum_key]
+                    # Only an exact option is shown (TASK-33007.7).
+                    self.query_one(selector, Select).value = (
+                        value
+                        if value in CLOSED_ENUM_SELECT_OPTIONS[enum_key]
+                        else Select.NULL
                     )
                 except QueryError:
                     pass

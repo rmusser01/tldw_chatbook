@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.                                          │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │ │ Streaming               ▐X▌                                                                                       │ │  │  │  │                                         │
+│  category search             │  │  │ │ │ Temperature             │ 1.0                                                                                     │ │  │  │  │ Selected category: Console Behavior     │
+│                              │  │  │ │ │ Top P                   │ 0.95                                                                                    │ │  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ │ Min P                   │ 0.05                                                                                    │ │  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │ │ │ Top K                   │ 50                                                                                      │ │  │  │  │  Save (s) — no changes                  │
+│      Providers & Models      │  │  │ │ │ Max tokens              │ tokens                                                                                  │ │  │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │ │ │ Seed                    │ integer                                                                                 │ │  │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │ │ │ Presence penalty        │ -2.0 - 2.0                                                                              │ │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ │ Frequency penalty       │ -2.0 - 2.0                                                                              │ │  │  │  │ Control guide                           │
+│      Appearance              │  │  │ │ │  Reasoning and thinking controls are sent only to providers that support them.                                    │ │  │  │  │  Default chat display name: Speaker     │
+│      Theme                   │  │  │ │ │ Reasoning effort        │ Provider default                                                                     ▼  │ │  │  │  │  label and trusted character-template   │
+│      Splash Screen           │  │  │ │ │ Reasoning summary       │ Provider default                                                                     ▼  │ │  │  │  │  human name                             │
+│ █  > Console Behavior        │  │  │ │ │ Verbosity               │ Provider default                                                                     ▼  │ │  │  │  │  Streaming: Show the reply as it is     │
+│  Data & Privacy              │  │  │ │ │ Thinking                │ Provider default                                                                     ▼  │ │  │  │  │  generated.                             │
+│      Storage                 │  │  │ │ │ Thinking budget         │ >= 1024                                                                                 │ │  │  │  │  Temperature: How varied replies are:   │
+│      Workspaces              │  │  │ │ │  chat_defaults.streaming is canonical; enable_streaming is read as fallback only.                                 │ │  │  │  │  lower is focused, higher is more       │
+│      Tool Profiles           │  │  │ │ │                                                                                                                   │ │  │  │  │  varied.                                │
+│      Privacy & Security      │  │  │ │ │  Background effects                                                                                               │ │  │  │  │  Top P: Sample only from the            │
+│      Network                 │  │  │ │ │ ▐X▌ Enable background effects                                                                                     │ │  │  │  │  likeliest tokens whose chances add     │
+│      My Profile              │  │  │ │ │ Background effect       │ None                                                                                 ▼  │ │  │  │  │  up to P.                               │
+│  Troubleshooting             │  │  │ │ │ Scope                   │ Transcript (recommended)                                                             ▼  │ │  │  │  │  Max tokens: Longest reply the model    │
+│      Diagnostics (view)      │  │  │ │ │ Intensity               │ Low                                                                                  ▼  │ │  │  │  │  may write, in tokens.                  │
+│      About (view)            │  │  │ │ │ Frame rate              │ 6                                                                                       │ │  │  │  │  Paste collapse: Only pasted chunks   ▂ │
+│      Agents                  │  │  │ │ │  Console behavior settings have not been saved this session.                                                      │ │  │  │  │  over the threshold become compact      │
+│  Expert                      │  │  │ │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │▁ │  │  │  placeholders; typed text stays         │
+│      Hooks                   │  │  │ │                                                                                                                       │  │  │  │  literal                                │
+│      Internal Prompts        │  │  │ │  Composer behavior                                                                                                    │  │  │  │  Threshold: Minimum pasted chunk size   │
+│      Advanced Config         │  │  │ │  Paste collapse: pasted chunks over the threshold display as compact placeholders                                     │  │  │  │  before collapse                        │
+│   Domain Defaults ▸ (11)     │  │  │ │  Threshold: 50 characters                                                                                             │  │  │  │ Focused field guide                     │
+│                              │  │  │ │  Typing rule: normal typing remains literal and never auto-collapses                                                  │  │  │  │  Purpose: Focus a Console Behavior      │
+│                              │  │  │ │  Current default: Enabled: collapse large pastes                                                                      │▃ │  │  │  field for setting-specific guidance.   │
+│                              │  │  │ │                                                                                                                       │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

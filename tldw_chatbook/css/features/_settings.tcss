@@ -91,6 +91,15 @@
     scrollbar-color-active: $ds-action-focus;
 }
 
+/* TASK-33007.6: with Advanced closed, Providers & Models fits the pane, and
+   the Model picker's open rows push it past the fold. Without a reserved
+   gutter, focusing or leaving the picker added or removed the scrollbar,
+   changed the content width and re-laid out the whole card: the blur
+   restore ran ~150 ms late, measured. The gutter keeps the width fixed. */
+#settings-detail-pane-body {
+    scrollbar-gutter: stable;
+}
+
 /* Narrow-width compact workbench (task-1342), following the personas
    precedent (personas-workbench-compact): at <=100 cols the 3:6:2 split
    leaves slivers, so the category pane becomes a fixed-width sidebar, the
@@ -129,9 +138,15 @@
    TASK-32748 includes the nested Generation defaults rows, where the same
    fixed label otherwise leaves only the final digit of Temperature visible.
    Console Behavior and Storage use the same stacked field contract.
-   Existing controls retain their compact border and focus contracts. */
+   Existing controls retain their compact border and focus contracts.
+   TASK-33007.6: the Context window and Discover rows moved from the card
+   into Advanced disclosures, so those two are named. A card-wide
+   descendant selector would also stack Catalog refresh's and Custom
+   endpoints' rows, which keep their own compact rules (fix round 1). */
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row,
 .settings-workbench-compact #settings-generation-defaults .settings-input-row,
+.settings-workbench-compact #settings-advanced-context-window .settings-input-row,
+.settings-workbench-compact #settings-advanced-saved-models .settings-input-row,
 .settings-workbench-compact #settings-network-card > .settings-input-row,
 .settings-workbench-compact #settings-console-behavior-card .settings-input-row,
 .settings-workbench-compact #settings-storage-card .settings-input-row {
@@ -143,6 +158,7 @@
 
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-generation-defaults .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-advanced-context-window .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-network-card > .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-console-behavior-card .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-storage-card .settings-input-row > .settings-input-label {
@@ -155,6 +171,7 @@
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row > Select,
 .settings-workbench-compact #settings-generation-defaults .settings-input-row > Input,
 .settings-workbench-compact #settings-generation-defaults .settings-input-row > Select,
+.settings-workbench-compact #settings-advanced-context-window .settings-input-row > Input,
 .settings-workbench-compact #settings-network-card > .settings-input-row > Input,
 .settings-workbench-compact #settings-network-card > .settings-input-row > Select,
 .settings-workbench-compact #settings-console-behavior-card .settings-input-row > Input,
@@ -472,20 +489,226 @@ Button.settings-category-group-toggle:focus {
     height: $ds-size-12;
 }
 
-/* The provider search is content-sized, while its OptionList owns a bounded
-   scrolling viewport. Explicit sizing keeps following fields in document
-   order at both the standard and compact Settings workbench widths. */
-#settings-provider-picker-block {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-9;
+/* TASK-33007.2: Connect rows read label | one-row control | Source word |
+   one-line help (spec §6). At 211x44 the card has 117 columns: the control
+   column is 36 wide on every row, so the Source words line up, and the help
+   gets 39. A narrower card (the inspector-beside-detail widths) shrinks the
+   Source word and help first and keeps each control's text at least 20
+   cells wide, the TASK-32593 floor. Nothing wraps, so each row stays one
+   row. */
+#settings-provider-search,
+#settings-provider-auth-source,
+#settings-provider-api-mode,
+#settings-provider-credential-env-var,
+#settings-provider-endpoint-value,
+#settings-openai-reconnect-review,
+#settings-model-picker {
+    width: $ds-fr-2;
+    min-width: $ds-size-24;
+    max-width: $ds-size-36;
 }
 
+/* With its Clear button the API key column is the same 36 columns. */
+#settings-provider-api-key {
+    width: $ds-fr-2;
+    min-width: $ds-size-14;
+    max-width: $ds-size-28;
+}
+
+/* TASK-33007.3: the Default model picker is one row at rest, the field in
+   the Connect control column. While it holds focus it opens across the row:
+   the Source word and help step aside, the field keeps its whole width and
+   Custom ID drops below it (so the TASK-32593 floor holds in a narrow card),
+   then the picker's status line and the grouped list. The picker's own CSS
+   makes its control 3 rows tall (R10). Its parts are named by type (the
+   control row is its only Horizontal, Custom ID its only Button, the status
+   line its only Static child) so every rule stays in the lazy Settings
+   sheet: a picker id or class token would pin it to the boot bundle. */
+/* Textual restyles a subtree on focus only from the outermost ancestor that
+   itself carries a :focus-within rule, so the row needs one of its own or
+   its Source word and help never hear that the picker took focus. */
+#settings-model-row,
+#settings-model-row:focus-within {
+    height: auto;
+}
+
+#settings-model-picker > Horizontal {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+}
+
+#settings-model-picker Button,
+#settings-model-picker > Static {
+    display: none;
+}
+
+#settings-model-picker:focus-within > Horizontal {
+    layout: vertical;
+    height: auto;
+}
+
+#settings-model-picker:focus-within Button,
+#settings-model-picker:focus-within > Static {
+    display: block;
+}
+
+#settings-model-row:focus-within #settings-model-picker {
+    width: $ds-width-fill;
+    max-width: $ds-width-full;
+}
+
+#settings-model-row:focus-within .settings-source-word,
+#settings-model-row:focus-within .settings-row-help {
+    display: none;
+}
+
+#settings-providers-models-card .settings-source-word,
+#settings-console-fallbacks .settings-source-word {
+    width: $ds-width-fill;
+    max-width: $ds-size-18;
+    height: $ds-control-height-compact;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#settings-providers-models-card .settings-row-help,
+#settings-providers-models-card .settings-key-check-verdict,
+#settings-console-fallbacks .settings-row-help {
+    width: $ds-width-fill;
+    height: $ds-control-height-compact;
+    padding: $ds-space-0 $ds-space-1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#settings-providers-models-card .settings-row-help,
+#settings-console-fallbacks .settings-row-help {
+    padding: $ds-space-0;
+    color: $ds-text-muted;
+}
+
+/* TASK-33007.5: Model defaults rows read label | control | Source word |
+   help (spec §6). Numbers and enums share one 16-cell control column, the
+   enum size, so every Source word in the section lines up; the compact
+   workbench rules above still stack a row and widen its field. Context
+   window's field (captures review note 11) takes the same column, so its
+   Source word lines up with theirs. */
+#settings-generation-defaults .settings-compact-input,
+#settings-generation-defaults .settings-compact-select,
+#settings-advanced-context-window .settings-compact-input {
+    width: $ds-size-16;
+}
+
+/* TASK-33007.7: Console Behavior's global fallbacks read the same rows as
+   Model defaults (above), so their container grows with them and their
+   Sampling disclosure costs one row closed, as the card's do (below). */
+#settings-console-fallbacks {
+    height: auto;
+}
+
+/* TASK-33007.5 (spec §6 "a closed disclosure costs 1 row"): the card's
+   disclosures -- Model defaults, its Sampling, and (TASK-33007.6) the five
+   Advanced ones -- drop the global components/_widgets.tcss Collapsible
+   frame (round border, min-height 3, margin) and Textual's padding, as Chat
+   settings does, so each title is a one-row section header and the opened
+   rows line up with Connect's. A title set after mount keeps an auto width's
+   first measure, so it spans its row; the builders keep it to one row and
+   the ellipsis is the narrow-workbench safety net. */
+#settings-providers-models-card Collapsible,
+#settings-console-behavior-card Collapsible {
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+#settings-providers-models-card Collapsible > Contents,
+#settings-console-behavior-card Collapsible > Contents {
+    padding: $ds-space-0;
+    background: $ds-surface-panel;
+}
+
+#settings-providers-models-card Collapsible > CollapsibleTitle,
+#settings-console-behavior-card Collapsible > CollapsibleTitle {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-control-height-compact;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* TASK-33007.5 (R14): Settings inverted the Console's heights -- input rows
+   one row, select rows three. On Providers & Models and Console Behavior a
+   Select row is one row too: the compact Select keeps the compact input's
+   left-edge convention (thin at rest, thick on focus) instead of a full
+   border, which spent a row above and below on chrome. The row's label is
+   named by type: the label class is pinned to the boot bundle, and these
+   rules belong in the lazy Settings sheet (ADR-097). */
+#settings-providers-models-card .settings-select-row,
+#settings-providers-models-card .settings-select-row > Static,
+#settings-console-behavior-card .settings-select-row,
+#settings-console-behavior-card .settings-select-row > Static {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+}
+
+#settings-providers-models-card .settings-compact-select,
+#settings-console-behavior-card .settings-compact-select {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    border: none;
+    border-left: solid $ds-control-edge;
+}
+
+#settings-providers-models-card .settings-compact-select:focus,
+#settings-console-behavior-card .settings-compact-select:focus {
+    border: none;
+    border-left: thick $ds-action-focus;
+}
+
+/* TASK-33007.4: the Applies-to row names the open chat and the pair it will
+   use. It reads one row for a short chat title; a long title or model id
+   wraps to a second row rather than cutting off the pair, which is the
+   point of the row. */
+#settings-model-applies-row {
+    height: auto;
+}
+
+#settings-providers-models-card .settings-applies-to {
+    width: $ds-width-fill;
+    height: auto;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#settings-provider-api-key-clear,
+#settings-test-provider,
+#settings-model-context-window-reset {
+    width: auto;
+    min-width: $ds-size-0;
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+}
+
+/* Capture fix 3: Review is the restored-connection row's control, in the
+   Connect control column, so its Source word lines up with the others. */
+#settings-openai-reconnect-review {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+}
+
+/* The list under the Provider control never takes focus (one Tab stop), so
+   it draws no focus frame to hide any option's first character; its
+   highlighted row keeps OptionList's own cursor colours ($ds-focus-bg). */
 #settings-provider-picker {
     width: $ds-width-full;
-    height: $ds-size-6;
-    min-height: $ds-size-6;
-    max-height: $ds-size-6;
+    height: auto;
+    max-height: $ds-size-10;
+    padding: $ds-space-0 $ds-space-1;
+    background: $ds-surface-panel;
 }
 
 .settings-select-row {
@@ -719,12 +942,43 @@ Button.settings-category-group-toggle:focus {
     padding: $ds-space-0 $ds-space-1;
 }
 
+/* TASK-33007.6 (spec §6 "one frame level", AC#8): inside the detail pane
+   the Providers & Models card draws no frame of its own and no bordered
+   group -- the pane border is the only frame, and each section starts with
+   a one-row header. The instant-apply groups keep their class, hint line
+   and place outside the draft (ADR-033); other focus cards keep frames. */
+#settings-providers-models-card,
+#settings-providers-models-card .settings-instant-apply-group {
+    border: none;
+}
+
+#settings-providers-models-card .settings-instant-apply-group {
+    padding: $ds-space-0;
+}
+
+/* The discovered-model list keeps the card's control edge -- thin at rest,
+   thick on focus -- instead of a full-width box around its rows. The global
+   focus outline would then sit on its first and last rows, so the thick
+   edge and the highlighted row are its focus cue. */
+#settings-discovered-models-list {
+    border: none;
+    border-left: solid $ds-control-edge;
+}
+
+#settings-discovered-models-list:focus {
+    border: none;
+    border-left: thick $ds-action-focus;
+    outline: none;
+}
+
 /* Keep refresh controls inside the scrolled group at compact widths. */
 #settings-model-catalog-group .settings-input-row {
     height: auto;
 }
 
-#settings-model-catalog-group Checkbox {
+/* Every checkbox on the card is a one-row control with no box of its own
+   (TASK-33007.6: Prompt-cache snapshots' joins Catalog refresh's). */
+#settings-providers-models-card Checkbox {
     width: auto;
     max-width: $ds-width-full;
     height: $ds-control-height-compact;
@@ -1069,6 +1323,36 @@ Button.settings-category-group-toggle:focus {
     min-height: $ds-size-12;
 }
 
+/* Captures review note 9 (TASK-33007): Console Behavior reads with the
+   Providers & Models card's grammar. The detail pane's border is the only
+   frame -- the wrapper, the card and the instant-apply group draw none, and
+   the wrapper's inset is the only inset -- and every one-row Input and
+   Select sits in one control column instead of spanning the card. The
+   column fits the longest option ("Memory with latest exchange", 27 cells
+   plus 5 of chrome) whole. */
+#settings-console-behavior-detail,
+#settings-console-behavior-card,
+#settings-console-behavior-card .settings-instant-apply-group {
+    border: none;
+}
+
+#settings-console-behavior-card,
+#settings-console-behavior-card .settings-instant-apply-group {
+    padding: $ds-space-0;
+}
+
+/* Its prose lines -- detail rows, help copy and the unclassed help Statics
+   alike -- start where the section headers' text does. */
+#settings-console-behavior-card > Static,
+#settings-console-behavior-card .settings-instant-apply-group > Static {
+    padding: $ds-space-0 $ds-space-1;
+}
+
+#settings-console-behavior-card .settings-compact-input,
+#settings-console-behavior-card .settings-compact-select {
+    width: $ds-size-32;
+}
+
 /* Textual checkboxes measure one row. Compact borders and concise labels
    keep both the checkbox glyph and complete label inside the pane. */
 #settings-console-behavior-card Checkbox {
@@ -1089,13 +1373,6 @@ Button.settings-category-group-toggle:focus {
     text-wrap: wrap;
 }
 
-
-/* The outer focus card already supplies the compact pane inset. A second
-   inset leaves too few columns for the full rail-label checkbox. */
-.settings-workbench-compact #settings-console-behavior-card {
-    padding: $ds-space-0;
-}
-
 .settings-action-row {
     width: $ds-width-full;
     height: $ds-size-1;
@@ -1107,6 +1384,22 @@ Button.settings-category-group-toggle:focus {
     height: $ds-size-1;
     min-height: $ds-size-1;
     margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+}
+
+/* TASK-33007.4: the Inspector's "config key" disclosure costs one row closed
+   (spec §6): no global Collapsible frame, band or padding rows, and its rows
+   sit one cell in under the title. */
+.settings-config-key-disclosure {
+    min-height: $ds-size-0;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+    border: none;
+    background: transparent;
+}
+
+.settings-config-key-disclosure > Contents {
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    background: transparent;
 }
 
 /* TASK-33003.6: fill from components/_buttons.tcss, as above. */

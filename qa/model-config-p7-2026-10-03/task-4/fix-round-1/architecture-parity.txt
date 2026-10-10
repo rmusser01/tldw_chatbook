@@ -1,0 +1,27 @@
+# Architecture parity, 2026-10-04 (finding 1)
+
+Tests/Architecture + Tests/UI/test_component_pattern_governance.py, -p no:xdist, both sides at once, serial each,
+junit counts and failure-name sets compared by name.
+
+base junit: {'passed': 3446, 'failed': 50, 'skipped': 5}  failure+error names: 50
+head junit: {'passed': 3446, 'failed': 50, 'skipped': 5}  failure+error names: 50
+names in both: 50
+head-only names (0):
+base-only names (0):
+
+## pytest last lines
+base: 50 failed, 3446 passed, 5 skipped, 32 warnings in 1493.88s (0:24:53)
+head: 50 failed, 3446 passed, 5 skipped, 32 warnings in 1493.06s (0:24:53)
+
+## R22 governance offender lists (identical on both sides)
+### base
+E           assert not ['components/_agentic_terminal.tcss: 1', 'components/_settings_splash_theme.tcss: 2', 'features/_workflows.tcss: 11']
+E           assert not ['Widgets/Library/library_skill_work_pane.py:170: assignment width (static)']
+### head
+E           assert not ['components/_agentic_terminal.tcss: 1', 'components/_settings_splash_theme.tcss: 2', 'features/_workflows.tcss: 11']
+E           assert not ['Widgets/Library/library_skill_work_pane.py:170: assignment width (static)']
+
+## Warnings (identical on both sides)
+Both sides end "32 warnings"; the warnings-summary sections list the same nodes and the same messages
+(a pre-existing SyntaxWarning in Utils/Splash_Screens/environmental/train_journey.py), compared after
+normalising tree paths and line numbers. No Task 4 file appears in them.

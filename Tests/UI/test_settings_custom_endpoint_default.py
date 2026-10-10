@@ -250,8 +250,15 @@ def test_settings_registry_facts_resolve_either_spelling(spelling):
     assert screen._provider_endpoint_row(spelling) == (
         "Endpoint key: custom_endpoints.gpu-box.base_url"
     )
-    assert screen._provider_endpoint_display_value(spelling) == (
-        "http://192.168.1.5:8080"
+    # TASK-33007.2, rewritten on purpose: the Endpoint row's help names the
+    # entry's URL (the readiness block's Endpoint line is gone).
+    from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+        endpoint_row_copy,
+    )
+
+    assert endpoint_row_copy(screen, spelling, "") == (
+        "this endpoint",
+        "http://192.168.1.5:8080 · edit in Custom endpoints",
     )
 
 
@@ -357,12 +364,11 @@ async def test_settings_opens_on_an_entry_with_an_invalid_api_key_env(request):
 
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle_settings_mount_storm(pilot)
-        for selector in (
-            "#settings-provider-credential-status",
-            "#settings-provider-key-status",
-        ):
-            status = _text(screen, selector)
-            assert "credential env var name is invalid" in status, status
+        # TASK-33007.2, rewritten on purpose: the Credentials status line and
+        # the readiness block's key row are one API key row; its help says it.
+        status = _text(screen, "#settings-provider-api-key-help")
+        assert "credential env var name is invalid" in status, status
+        assert _text(screen, "#settings-provider-key-status") == "this endpoint"
         assert "gpu-key" not in _all_static_text(screen)
 
 
@@ -415,12 +421,13 @@ async def test_providers_models_states_the_entry_endpoint_and_credential(
         screen = _active_destination_screen(host)
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle_settings_mount_storm(pilot)
-        for selector in (
-            "#settings-provider-credential-status",
-            "#settings-provider-key-status",
-        ):
-            assert expected in _text(screen, selector), _text(screen, selector)
-        assert "http://192.168.1.5:8080" in _text(screen, "#settings-provider-endpoint")
+        # TASK-33007.2, rewritten on purpose: the API key and Endpoint rows
+        # say the entry's credential and URL in their help lines.
+        help_text = _text(screen, "#settings-provider-api-key-help")
+        assert expected in help_text, help_text
+        assert "http://192.168.1.5:8080" in _text(
+            screen, "#settings-provider-endpoint-help"
+        )
         key_row = "".join(_text(screen, "#settings-provider-endpoint-key").split())
         assert "custom_endpoints.gpu-box.base_url" in key_row, key_row
 
@@ -438,6 +445,9 @@ async def test_providers_models_states_the_entry_endpoint_and_credential(
 
 _REGISTRY_LOCKED_FIELDS = (
     "#settings-model-value",
+    # TASK-33007.3, extended on purpose: the Default model picker is the
+    # visible control in front of the adapter, and it locks with it (R9).
+    "#settings-model-picker",
     "#settings-provider-endpoint-value",
     "#settings-provider-api-key",
     "#settings-provider-api-key-clear",
@@ -491,6 +501,7 @@ async def test_providers_models_locks_a_registry_default_and_links_to_its_editor
         await pilot.pause()
         for selector in (
             "#settings-model-value",
+            "#settings-model-picker",
             "#settings-provider-endpoint-value",
             "#settings-provider-api-key",
             "#settings-provider-credential-env-var",

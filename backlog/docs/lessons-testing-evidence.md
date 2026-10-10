@@ -295,6 +295,34 @@ with no hold in front of it, and run the candidate implementations against the
 test. Where the harness cannot separate two candidates, poll the live terminal
 for the deciding case instead of keeping or deleting code on the test alone.
 
+---
+## A round-robin shard is not "total minutes / shards" — replay per-file seconds from a job log
+
+**TASK-33007.9 review round 2, 2026-10-05.** The UI Fast Lane splits its census
+round-robin (`census[i::total]`), and its slow files do not fall evenly. Three
+finished three-shard runs on dev's 138-file census (37241246559, 37232480746,
+37240371461) took 3.9-4.4, 10.2-11.9 and 14.5-14.8 min of pytest per shard,
+not three thirds of 31 min, and each job ran about 1.2 min longer than its
+pytest. This phase added five Settings files costing 10.8 min in the lane's
+serial recipe locally (CI ran private-profile census files at 1.05-1.46 times
+this machine). Replayed over dev's census with the five inserted, the heaviest
+shard was 19.1-20.4 min with three shards, 16.6-17.5 with four, 13.3-14.5 with
+five, and 15.9-17.1 with six: one more shard can be slower, because every
+inserted or removed line moves each later file to another shard.
+
+**What to do.** Before adding census files or picking a shard count, take
+per-file seconds from finished job logs (`gh run view --job <id> --log`).
+GitHub stamps a line when it ends and pytest ends a file's progress line when
+the next file starts, so a file costs its line's stamp minus the previous
+line's; checked here, the replay gave dev's three shards as 3.9/12.5/14.7 min.
+Replay every shard count you are considering with the new files in place, and
+compare the heaviest shard plus the job's ~1.2 min outside pytest with
+`timeout-minutes`. Price files from CI logs, not from this machine: some cost
+far more there (`test_enhanced_file_dialog_bundle_css.py` 212 s in CI, 4 s
+locally). Run each new census file once in the lane's recipe too: that is how
+an app-building test with no `bootstrap_profile` mark was found red
+(`RecoveryRequired`) in a census file, under the real HOME and an empty one.
+
 ## A prompt that tells the model where things are must be tested by doing what it says
 
 **TASK-33940.1, 2026-10-02.** The workspace system-prompt note listed bound folders "relative
@@ -642,6 +670,24 @@ Patch from a late hook (`pytest_collection_modifyitems`), never at plugin
 import -- module import runs before the Tests/conftest.py config sandbox and
 dies on the real profile's `RecoveryRequired` instead of red-proofing
 anything.
+
+## That plugin's shared profile turns config-writing tests red together
+
+**TASK-33007.6 fix round 1, 2026-10-04.** The plugin above marks every node
+`bootstrap_profile`, and `Tests/conftest.py` gives all bootstrap nodes in one
+worker the same profile (`_BOOTSTRAP_CONFIG_ROOT`). Task 6 moved the Prompt-cache
+snapshot block and counted `test_llamacpp_snapshot_settings.py` as "11 base
+reds", so the move had no green guard. Under the plugin the file failed 11 of
+15 on both sides. Each of the 15 nodes passed in its own pytest process at base
+and at head. The failures were leaks between tests:
+- the malformed-preferences cases run first and leave `keep_count =
+  "broken-private-value"` in the shared config, so later cases raise
+  `ValidationError` or find the controls disabled;
+- `[size0]` saves `enabled = true`, so `[size1]`'s Space turns it off.
+
+A whole-file red under the plugin is not a base red for a test that writes
+config. Run such a file one node per process (each process gets a fresh
+bootstrap root) before calling its reds environmental.
 
 ## Compare against the branch's merge base, not whatever `origin/dev` is now
 
@@ -4797,6 +4843,64 @@ because that path is testing the template, not the code. The read site's own
 literal default needs a separate, direct assertion (stub the accessor, assert
 the literal argument passed to it), not an inference from observed runtime
 behavior.
+
+## A label that names a value's source must be computed from that source, and tested with the key absent
+
+**TASK-33007.7 review, 2026-10-04.** Console Behavior's new field rows printed
+the Source word "Console Behavior" (meaning `[chat_defaults]` holds the value)
+for every control that was not blank. Three controls are never blank, because
+their Settings loaders return a value when the key is absent: streaming `True`,
+temperature 0.7, top_p 0.95. The shipped `[chat_defaults]` has no `streaming`
+key and the provider tables sit below it in the default chain, so on a fresh
+install the row read "Streaming | On | Console Behavior" while a new OpenAI
+chat streamed Off and Model defaults, one category away, read "inherits Off ·
+provider". Nothing caught it. Every test seeded an explicit key or asserted
+only that the word was non-empty, and the live-capture procedure itself wrote
+`streaming = true` into the scratch profile before the "at rest" capture.
+
+**What to do.**
+1. A source word is a claim about one layer. Derive it from that layer's own
+   data with the resolver's coercion (`chat_defaults_held_fields`), never from
+   "the control shows something": a loader's fallback makes an unset key look
+   saved. Read the value beside it with the same coercion
+   (`chat_defaults_value`). The round-1 fix moved only the word, and the
+   round-2 review measured the split on hand-edited keys: `streaming = 0`
+   read "Off | built-in" while a new chat streamed, and `temperature = 3.0`
+   read "0.7 | Console Behavior" while a new chat got 3.0. Round 2 then fixed
+   the loaders that finding named and missed a second one: the four choice
+   rows had their own loader and the Select its own mapping, both lowercased,
+   so `reasoning_effort = "High"` showed "high" while a new chat got "High"
+   (round 3). Grep every loader and control mapping of the table, not only
+   the ones the finding names. Round 3's fix then landed on the fallback rows
+   only: Model defaults, which the guide calls "the same rows", still folded
+   case through a shared helper and refused a typed minus (round 4). A fix to
+   one surface of a pair goes on its twin in the same commit.
+2. For every config-backed row, write one case with the key absent and compare
+   it with the neighbouring surface that reads the same key.
+3. Take the "at rest" capture on the shipped template. List every key the
+   capture procedure writes; a written key that the feature displays is a
+   hidden fixture.
+4. When copy moves into a closed disclosure, grep the tests for the copy, not
+   only for the ids. `Tests/UI/test_destination_shells.py::_visible_text`
+   checks each Static's own `display`, not a collapsed ancestor, so four
+   tests kept asserting "Saved as: ..." as visible text after it moved into
+   the closed "config key" disclosure (review round 2). Read it inside the
+   disclosure (`_console_config_key_saved_as`).
+5. A Textual `Input` posts `Changed` with its initial value once mounted. A
+   staging handler that keeps a refused value as raw text compares `"-1"`
+   with the saved `-1` and marks an untouched row "edited *": Model defaults
+   did this for a hand-edited `seed = -1` and `temperature = 3.0` until the
+   round-4 fix treated text repeating the saved value as no edit. Assert
+   "nothing staged" at rest in every hand-edited-value test.
+6. Save is the staging rule's twin. Round 4's "repeat of a refused saved
+   value is no edit" lived only in the staging handler; Model defaults' Save
+   re-read and re-normalised every widget, so the untouched `seed = -1` now
+   blocked every save in the category with a toast naming a row inside the
+   closed Sampling disclosure, and a blank row deleted a `streaming = "0"` it
+   could not show (round 5). Console Behavior's Save normalises dirty keys
+   only. Wherever a row can show a value its validator refuses, give Save the
+   same "untouched row keeps its saved value" rule, and pin it with the real
+   writer: a hand-edit plus an unrelated edit saves both as intended.
 
 ## A guard test must be PROVEN to discriminate — twice in one day it wasn't (2026-08-08, tasks 1359/2832)
 

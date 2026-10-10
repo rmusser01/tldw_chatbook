@@ -151,6 +151,7 @@ from .console_context_controls import (
 # ConsoleSettingsInput only lazily (inside compose) so this edge cannot cycle.
 from .console_endpoint_template_modal import ConsoleEndpointTemplateModal
 from .console_settings_field_row import (
+    ConsoleSettingsSelect,
     CONNECTION_DISCLOSURE_ID,
     CONNECTION_FOCUS_IDS,
     CONNECTION_TITLE,
@@ -1506,7 +1507,7 @@ class ConsoleSettingsModal(
             and control_id not in self._invalid_generation_choice_drafts
             else Select.NULL
         )
-        select = Select(
+        select = ConsoleSettingsSelect(
             [(choice.replace("xhigh", "x-high").title(), choice) for choice in options],
             prompt=BLANK_CHOICE_PROMPT,
             value=selected,
@@ -1821,8 +1822,7 @@ class ConsoleSettingsModal(
                     with Vertical(classes="console-settings-modal-section"):
                         yield Static("Model capacity", classes="destination-section")
                         yield Static(
-                            f"{self._model_window_label():<20}"
-                            f"{format_context_tokens(self._context_state.model_window_tokens)} tokens",
+                            self._model_window_row(),
                             id="console-context-model-window",
                             classes="console-settings-modal-row",
                             markup=False,
@@ -1863,7 +1863,7 @@ class ConsoleSettingsModal(
                             yield self._modal_label(
                                 MODEL_FIELD_LABELS["conversation_budget_mode"]
                             )
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     ("Automatic", ContextBudgetMode.AUTOMATIC.value),
                                     ("Custom", ContextBudgetMode.CUSTOM.value),
@@ -1910,7 +1910,7 @@ class ConsoleSettingsModal(
                             yield self._modal_label(
                                 MODEL_FIELD_LABELS["compaction_mode"]
                             )
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     ("Ask", ContextCompactionMode.ASK.value),
                                     (
@@ -1925,7 +1925,7 @@ class ConsoleSettingsModal(
                             )
                         with Horizontal(classes="console-settings-modal-row"):
                             yield self._modal_label("Representation")
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     (
                                         "Text summary",
@@ -1987,7 +1987,7 @@ class ConsoleSettingsModal(
                         )
                         with Horizontal(classes="console-settings-modal-row"):
                             yield self._modal_label("If compaction fails")
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     (
                                         "Stop and ask",
@@ -2006,7 +2006,7 @@ class ConsoleSettingsModal(
                             yield self._modal_label(
                                 MODEL_FIELD_LABELS["compaction_carry_forward_mode"]
                             )
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 CARRY_FORWARD_OPTIONS,
                                 value=self._context_state.resolved_policy.policy.carry_forward_mode.value,
                                 id="console-context-carry-forward",
@@ -2025,7 +2025,7 @@ class ConsoleSettingsModal(
                         )
                         with Horizontal(classes="console-settings-modal-row"):
                             yield self._modal_label("History policy")
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     ("Auto", "auto"),
                                     ("Include", "include"),
@@ -5487,8 +5487,8 @@ class ConsoleSettingsModal(
         label = (
             f"{format_context_tokens(estimate.used_tokens)} / {result.tokens:,} tokens"
         )
-        if not result.verified:
-            label += " (estimated; model unverified)"
+        if not result.verified:  # TASK-33007 #12: the words Settings uses
+            label += " (assumed; window unknown)"
         self._context_estimate = replace(
             estimate,
             token_limit=result.tokens,
@@ -5508,7 +5508,7 @@ class ConsoleSettingsModal(
         state = self._context_state
         updates = {
             "console-settings-context-current": f"Current         {self._context_label()}",
-            "console-context-model-window": f"{self._model_window_label():<20}{result.tokens:,} tokens ({result.source})",
+            "console-context-model-window": self._model_window_row(result.source),
             "console-context-safe-input": f"Safe input ceiling  {format_context_tokens(state.safe_input_ceiling_tokens)} tokens",
             "console-context-effective-budget": f"Effective           {format_context_tokens(state.conversation_budget_tokens)} tokens",
             "console-context-response-max": f"{MODEL_FIELD_LABELS['max_tokens']:<20}{format_context_tokens(state.response_max_tokens)} tokens",
@@ -6033,22 +6033,22 @@ class ConsoleSettingsModal(
             return "Capacity is verified for the selected model."
         if self._context_state.model_window_tokens is not None:
             return (
-                "Estimated fallback only; model capacity is unverified. "
-                "Set the actual context window in F4 Settings > Providers & Models."
+                "Context window unknown; budgets use the assumed size. Enter the "
+                "model's documented limit in F4 Settings > Providers & Models."
             )
         return (
             "Model limit unknown; automatic safety cannot be verified. "
             "Set the context window in F4 Settings > Providers & Models."
         )
 
-    def _model_window_label(self) -> str:
-        """Label fallback model windows as estimates instead of verified facts."""
-        if (
-            self._context_state.model_window_tokens is not None
-            and not self._context_state.model_window_verified
-        ):
-            return "Model window (est.)"
-        return "Model window"
+    def _model_window_row(self, source: str = "") -> str:
+        """Say the window; a fallback is unknown, its size assumed (TASK-33007 #12)."""
+        state = self._context_state
+        tokens = format_context_tokens(state.model_window_tokens)
+        if state.model_window_tokens is not None and not state.model_window_verified:
+            return f"{'Model window':<20}unknown, {tokens} assumed"
+        suffix = f" ({source})" if source else ""
+        return f"{'Model window':<20}{tokens} tokens{suffix}"
 
     def _memory_metadata_label(self) -> str:
         effective = self._context_state.effective_memory

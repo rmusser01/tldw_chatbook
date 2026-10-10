@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │ Model                   │ claude-sonnet-4-5                  new-chat default type to search · Custom ID for others   │  │  │  │                                         │
+│  category search             │  │  │ │ Applies to               new chats (Ctrl+T, temporary, workspace). Open chat “Chat 1” is unused and will use          │  │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ │                          Anthropic · claude-sonnet-4-5.                                                               │  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │  ▼ Model defaults · Anthropic · claude-sonnet-4-5                                                                     │  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │ │ Temperature             │ 0.0 - 2.0      Console Behavior inherits 1.0 · Console Behavior                             │  │  │  │  Save (s) — no changes                  │
+│    > Providers & Models      │  │  │ │ Max tokens              │ 8192           model default    Longest reply the model may write, in tokens.               │  │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │ │ Streaming               │ Inherit     ▼  provider         inherits Off · provider                                     │  │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │ │ Thinking                │ Inherit     ▼  provider         blank = provider default                                    │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ Thinking budget         │ >= 1024        provider         blank = provider default                                    │  │  │  │  Focused setting: None — Tab to a       │
+│      Appearance              │  │  │ │  ▼ Sampling · Top P 0.9 · Anthropic does not accept 7 fields (open to list them)                                      │  │  │  │  setting                                │
+│      Theme                   │  │  │ │  Anthropic does not accept: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort, Reasoning summary,    │  │  │  │  Purpose: Configure the default         │
+│      Splash Screen           │  │  │ │  Verbosity.                                                                                                           │  │  │  │  provider, model, endpoint, and         │
+│      Console Behavior        │  │  │ │ Top P                   │ 0.9            model default    Sample only from the likeliest tokens whose chances add up… │  │  │  │  credential source.                   ▄ │
+│  Data & Privacy              │  │  │ │ Top K                   │ integer        Console Behavior inherits 50 · Console Behavior                              │  │  │  │  Save: staged - press s to save, r to   │
+│      Storage                 │  │  │ │                                                                                                                       │  │  │  │  revert                                 │
+│      Workspaces              │  │  │ │  Context capacity                                                                                                     │  │  │  │  Validation: test provider readiness    │
+│      Tool Profiles           │  │  │ │  Detected context window: 200,000 tokens.                                                                             │▆ │  │  │  before saving these defaults           │
+│      Privacy & Security      │  │  │ │ Context window          │ 200000                                                                                      │  │  │  │  ▶ config key                           │
+│      Network                 │  │  │ │                          Reset to detected                                                                            │  │  │  │ Key                                     │
+│      My Profile              │  │  │ │  This is the model's total token capacity, not a conversation length preference. Repairs update the existing          │  │  │  │  Provider readiness: Anthropic /        │
+│  Troubleshooting             │  │  │ │  model-capability registry used by request safety checks.                                                             │  │  │  │  claude-sonnet-4-5                      │
+│      Diagnostics (view)      │  │  │ │                                                                                                                       │  │  │  │  Checks the settings, then lists      ▅ │
+│      About (view)            │  │  │ │  Model discovery                                                                                                      │  │  │  │  models without generating: a cloud     │
+│      Agents                  │  │  │ │  Discover models from configured endpoint                                                                             │  │  │  │  provider's listing checks the API      │
+│  Expert                      │  │  │ │  No discovered models yet. Use Discover models after endpoint is configured.                                          │  │  │  │  key, a local server's shows it         │
+│      Hooks                   │  │  │ │  Capabilities unknown until saved or verified; text chat is assumed.                                                  │  │  │  │  answers. Nothing is saved.             │
+│      Internal Prompts        │  │  │ │  Discover models  Save selected       Clear                                                                           │  │  │  │ Configuration check has not run.        │
+│      Advanced Config         │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │  Runtime owner: Settings persisted      │
+│   Domain Defaults ▸ (11)     │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │  defaults; Console runtime selection    │
+│                              │  │  │ │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  │  Writes allowed: Yes                    │
+│                              │  │  │ │ │                                                                                                                   │ │  │  │  │  Owns: chat_defaults.provider           │
+│                              │  │  │ │ │  Automatic refresh                                                                                                │ │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

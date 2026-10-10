@@ -252,8 +252,14 @@ async def test_real_service_create_deck_select_deck_and_add_card_in_local_mode()
         assert db.get_deck(deck_id) is not None, "deck row missing from the DB"
         assert db.get_deck(deck_id)["name"] == "Cell biology"
 
+        # Choosing the new deck also starts the deck-change rebuild, so wait
+        # for the list to settle rather than read it mid-rebuild.
         card_list = app.screen.query_one("#card-list", ListView)
-        assert _card_list_labels(card_list) == ["No cards in this deck."]
+        await _wait_until(
+            pilot,
+            lambda: _card_list_labels(card_list) == ["No cards in this deck."],
+            what="the new deck's empty card list",
+        )
 
         app.screen.query_one("#card-front", TextArea).text = "What is a ribosome?"
         app.screen.query_one("#card-back", TextArea).text = "The protein factory."

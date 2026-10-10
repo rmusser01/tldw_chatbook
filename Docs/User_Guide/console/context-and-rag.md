@@ -242,7 +242,8 @@ that built the payload, never a separate estimate — so they always sum to
 the request total. Categories big enough to act on name their lever (e.g.
 Conversation → summarize older turns via `/rewind`; Attachments →
 `[agents] retire_stale_images`). Viewing the breakdown never triggers a
-model call, and an unverified model window keeps its "estimated" label.
+model call, and a model window no catalog knows still reads "unknown" with
+the size it assumes.
 
 
 ### Reading long Context and Inspector sections
@@ -546,10 +547,11 @@ being inspected. The modal stays bound to that chat and profile. **Close** and
 `Escape` return to your previous control.
 
 Hovering the cost chip shows a summary: context fullness, conversation budget,
-compaction, current spend and the next-send estimate. When the session's
-provider sends rate-limit headers (OpenAI and Anthropic do, as do many
-compatible APIs), the last line shows how much its most recent reply said was
-left. For example: `Rate limit at 14:32:05: 4,999/5,000 requests left (resets
+compaction, current spend and the next-send estimate. When no catalog knows
+the model's window, the fullness line ends "(assumed; window unknown)". When
+the session's provider sends rate-limit headers (OpenAI and Anthropic do, as
+do many compatible APIs), the last line shows how much its most recent reply
+said was left. For example: `Rate limit at 14:32:05: 4,999/5,000 requests left (resets
 14:32:53) · 39,200/40,000 tokens left (resets 14:32:06)`. The times are clock
 times from that reply. A provider that sends no rate-limit headers adds no
 line.

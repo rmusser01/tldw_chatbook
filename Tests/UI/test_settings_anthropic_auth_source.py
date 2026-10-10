@@ -1,7 +1,8 @@
 """Settings > Providers > Anthropic: sign in with an API key or the Claude subscription.
 
 TASK-34201, owner-approved design (2026-10-03): a "Sign in with" select at the
-top of Credentials, Anthropic only; choosing the subscription disables, but
+top of Credentials (since TASK-33007.2, directly above the API key row in
+Connect), Anthropic only; choosing the subscription disables, but
 keeps visible, the API key and Env var rows; a guidance line, no confirm.
 Saves go through the captured atomic writer, never a real config file.
 """
@@ -19,9 +20,9 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_configuration_hub import _open_settings_category
 from Tests.UI.test_settings_qwencloud_api_mode import _capture_atomic_writes
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-from tldw_chatbook.UI.Screens.settings_screen import (
-    ANTHROPIC_API_KEY_GUIDANCE_COPY,
-    ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY,
+from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+    AUTH_SOURCE_API_KEY_HELP,
+    AUTH_SOURCE_SUBSCRIPTION_HELP,
 )
 
 # The real Settings screen goes through config-participant admission, which the
@@ -97,8 +98,10 @@ async def test_subscription_disables_but_keeps_the_key_rows_and_switching_back_r
         api_key = screen.query_one("#settings-provider-api-key", Input)
         env_var = screen.query_one("#settings-provider-credential-env-var", Input)
         clear = screen.query_one("#settings-provider-api-key-clear", Button)
+        # Rewritten on purpose (TASK-33007 capture fix 7): the guidance is the
+        # Sign in with row's one-line help; its long copy is the Inspector's.
         guidance = screen.query_one("#settings-provider-auth-source-guidance", Static)
-        assert str(guidance.content) == ANTHROPIC_API_KEY_GUIDANCE_COPY
+        assert str(guidance.content) == AUTH_SOURCE_API_KEY_HELP
 
         _choose(screen, "claude_subscription")
         await pilot.pause()
@@ -106,14 +109,14 @@ async def test_subscription_disables_but_keeps_the_key_rows_and_switching_back_r
         assert api_key.disabled is True and env_var.disabled is True and clear.disabled is True
         assert api_key.display and env_var.display  # visible, not hidden
         assert env_var.value == "ANTHROPIC_API_KEY"  # nothing lost
-        assert str(guidance.content) == ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
+        assert str(guidance.content) == AUTH_SOURCE_SUBSCRIPTION_HELP
 
         _choose(screen, "api_key")
         await pilot.pause()
 
         assert api_key.disabled is False and env_var.disabled is False
         assert env_var.value == "ANTHROPIC_API_KEY"
-        assert str(guidance.content) == ANTHROPIC_API_KEY_GUIDANCE_COPY
+        assert str(guidance.content) == AUTH_SOURCE_API_KEY_HELP
 
 
 @pytest.mark.asyncio
@@ -258,9 +261,12 @@ async def test_switching_a_saved_subscription_back_to_api_key_shows_the_stored_k
         await pilot.pause()
 
         assert clear.disabled is False
-        status = str(screen.query_one("#settings-provider-credential-status", Static).content)
-        assert "Claude subscription" not in status
-        assert "local config key saved" in status
+        # TASK-33007.2 folded the credential status line into the API key
+        # row: its Source word and help line say where the key comes from.
+        source = str(screen.query_one("#settings-provider-key-status", Static).content)
+        help_line = str(screen.query_one("#settings-provider-api-key-help", Static).content)
+        assert "Claude subscription" not in help_line
+        assert source == "saved in config"
 
 
 @pytest.mark.asyncio
@@ -274,5 +280,7 @@ async def test_an_unsaved_subscription_choice_shows_in_the_credential_status():
         _choose(screen, "claude_subscription")
         await pilot.pause()
 
-        status = str(screen.query_one("#settings-provider-credential-status", Static).content)
-        assert "Claude subscription" in status
+        source = str(screen.query_one("#settings-provider-key-status", Static).content)
+        help_line = str(screen.query_one("#settings-provider-api-key-help", Static).content)
+        assert source == "subscription"
+        assert "Claude subscription" in help_line

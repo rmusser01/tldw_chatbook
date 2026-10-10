@@ -106,7 +106,6 @@ tldw_chatbook/UI/Speech/speech_playback_mixin.py::_play_audio_async	1
 tldw_chatbook/UI/Speech/speech_playground_pane.py::_run_audio_cpp_lifecycle	1
 tldw_chatbook/UI/Speech/speech_profile_mixin.py::_save_current_result_as_profile	4
 tldw_chatbook/UI/Speech/speech_settings_pane.py::save_preferences	1
-tldw_chatbook/UI/Study_Modules/flashcards_handler.py::refresh_cards	1
 tldw_chatbook/UI/Study_Modules/flashcards_handler.py::refresh_decks	1
 tldw_chatbook/UI/Study_Modules/quizzes_handler.py::load_selected_attempt	1
 tldw_chatbook/UI/Study_Modules/quizzes_handler.py::refresh_questions	1

@@ -8630,13 +8630,17 @@ ConsoleSettingsModal .console-context-action-row {
 }
 
 
-.console-settings-field-row Input,
-#console-settings-context-view Input {
+.console-settings-field-row ConsoleSettingsInput,
+.console-settings-field-row ConsoleSettingsSelect {
+    width: $ds-size-13;
+}
+
+#console-settings-context-view ConsoleSettingsInput {
     width: $ds-size-12;
 }
 
-#console-settings-streaming {
-    width: $ds-size-8;
+#console-settings-context-view ConsoleSettingsSelect {
+    width: $ds-size-32;
 }
 
 
@@ -8657,32 +8661,6 @@ ConsoleSettingsModal .console-context-action-row {
     text-overflow: ellipsis;
 }
 
-
-#console-settings-verbosity,
-#console-settings-thinking-effort,
-#console-settings-reasoning-effort,
-#console-context-thinking-history-policy {
-    width: $ds-size-12;
-}
-
-#console-settings-reasoning-summary {
-    width: $ds-size-13;
-}
-
-#console-context-budget-mode,
-#console-context-compaction-mode {
-    width: $ds-size-14;
-}
-
-#console-context-compaction-representation {
-    width: $ds-size-22;
-}
-
-#console-context-failure-behavior {
-    width: $ds-size-23;
-}
-
-#console-context-carry-forward,
 #console-settings-user-display-name {
     max-width: $ds-size-32;
 }
@@ -11045,6 +11023,7 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 
 .settings-workbench-compact #settings-providers-models-card > .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-generation-defaults .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-advanced-context-window .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-network-card > .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-console-behavior-card .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-storage-card .settings-input-row > .settings-input-label {

@@ -117,19 +117,6 @@ class ConsoleContextControlState:
         return int(budget * self.resolved_policy.policy.target_ratio)
 
     @property
-    def request_row(self) -> str:
-        used = format_context_tokens(self.request_tokens)
-        ceiling = format_context_tokens(self.safe_input_ceiling_tokens)
-        if self.safe_input_ceiling_tokens is None:
-            suffix = "limit unknown"
-        elif self.model_window_verified:
-            suffix = "safe input"
-        else:
-            suffix = "estimated input; model unverified"
-        estimate_prefix = "~" if self.request_tokens is not None else ""
-        return f"{estimate_prefix}{used} / {ceiling} {suffix}"
-
-    @property
     def conversation_row(self) -> str:
         used = format_context_tokens(self.conversation_tokens)
         budget = format_context_tokens(self.conversation_budget_tokens)
@@ -436,6 +423,12 @@ def build_console_context_cost_state(
             f"Context: ~{format_context_tokens(used)} / "
             f"{format_context_tokens(ceiling)} safe input ({fullness} full)"
         )
+        if (
+            context.model_window_tokens is not None
+            and not context.model_window_verified
+        ):
+            # TASK-33007 #12: a fallback window is unknown, its size assumed.
+            context_line += " (assumed; window unknown)"
     conversation = format_context_tokens(context.conversation_tokens)
     budget = format_context_tokens(context.conversation_budget_tokens)
     prefix = "~" if context.conversation_tokens is not None else ""

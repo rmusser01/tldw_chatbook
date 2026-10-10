@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.                                          │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Console Behavior                                                                                                          │  │  │ Selected category: Console Behavior     │
+│                              │  │  │                                                                                                                            │  │  │ No unsaved changes                      │
+│  Core                        │  │  │   Start here                                                                                                               │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │  ▐X▌ Show model thinking (On)                                                                                              │  │  │  Save (s) — no changes                  │
+│      Providers & Models      │  │  │   Applies immediately. Thinking remains part of the conversation even when hidden.                                         │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │                                                                                                                          ▁ │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │                                                                                                                            │  │  │ file.                                   │
+│  Interface                   │  │  │   Local reasoning history                                                                                                  │  │  │  may write, in tokens.                  │
+│      Appearance              │  │  │  Default replay          │ Automatic (recommended)     ▼                                                                   │  │  │  Paste collapse: Only pasted chunks     │
+│      Theme                   │  │  │   These device-local controls refine Conversation Auto. Conversation Include and Exclude override them, and Required       │  │  │  over the threshold become compact      │
+│      Splash Screen           │  │  │   continuation remains intact. Automatic follows reviewed templates; unknown templates keep the server default. All        │  │  │  placeholders; typed text stays         │
+│    > Console Behavior        │  │  │   available sends every compatible field, but the server template can still omit older reasoning.                          │  │  │  literal                                │
+│  Data & Privacy              │  │  │   ▼ Reasoning replay override                                                                                              │  │  │  Threshold: Minimum pasted chunk size   │
+│      Storage                 │  │  │   Select a local model in Console to set a remembered override.                                                            │  │  │  before collapse                        │
+│      Workspaces              │  │  │  This model's replay     │ Use default                 ▼                                                                   │  │  │ Focused field guide                   ▅ │
+│      Tool Profiles           │  │  │  ▐X▌ Native tool support                                                                                                   │  │  │  Purpose: Focus a Console Behavior      │
+│      Privacy & Security      │  │  │   Remembered for this normalized endpoint and model. Native tool support is configured separately from reasoning           │  │  │  field for setting-specific guidance.   │
+│      Network                 │  │  │   replay.                                                                                                                  │  │  │  Consequences: No field-specific        │
+│      My Profile              │  │  │   Conversation Auto: template checked on next send                                                                         │  │  │  guidance is active right now.          │
+│  Troubleshooting             │  │  │   Conversation context and memory ↓                                                                                        │  │  │  Applies: varies by field               │
+│      Diagnostics (view)      │  │  │   Also in this category: rail presentation, paste handling, images, agent limits, selection side chat, and generation      │  │  │  ▶ config key                           │
+│      About (view)            │  │  │   defaults.                                                                                                                │  │  │ Override rules                          │
+│      Agents                  │  │  │                                                                                                                            │  │  │  Priority: active Console session,      │
+│  Expert                      │  │  │   Exchange capture                                                                                                         │  │  │  then provider+model profile, then      │
+│      Hooks                   │  │  │  ▐X▌ Capture future exchanges                                                                                              │  │  │  these global fallbacks                 │
+│      Internal Prompts        │  │  │  ▐X▌ Mask PII in future traces                                                                                             │  │  │  Scope: [chat_defaults] response        │
+│      Advanced Config         │  │  │  Trace viewer            │ Safe                        ▼                                                                   │  │  │  fallbacks and [console] paste          │
+│   Domain Defaults ▸ (11)     │  │  │   Capture, PII masking, and viewing are separate. PII masking is irreversible for provider-only trace data but never       │  │  │  display settings                       │
+│                              │  │  │   rewrites the saved conversation. New traces reference saved messages instead of copying the transcript. Safe and Full    │  │  │  Save: staged - press s to save, r to   │
+│                              │  │  │   view the same trace; credentials stay blocked in both, and older trace formats remain readable.                          │  │  │  revert                                 │
+│                              │  │  │   Apply exchange capture                                                                                                   │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

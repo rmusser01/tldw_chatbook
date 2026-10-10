@@ -370,17 +370,20 @@ async def test_settings_model_default_labels_and_inspector_come_from_the_table(
 
         # Captures flag 7 (parent AC#5): the Automatic refresh list named
         # providers by their list keys ("MistralAI", "Moonshot", "ZAI").
-        labels = {
-            provider: str(
-                screen.query_one(
-                    f"#settings-mc-auto-{provider.lower()}", Checkbox
-                ).label
+        # TASK-33007.6, rewritten on purpose: each label now ends in its
+        # state as a word (Catalog refresh, AC#5).
+        boxes = {
+            provider: screen.query_one(
+                f"#settings-mc-auto-{provider.lower()}", Checkbox
             )
             for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
         }
-        assert labels == {
-            provider: f"{provider_display_name(provider)}: refresh"
-            for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
+        assert {provider: str(box.label) for provider, box in boxes.items()} == {
+            provider: (
+                f"{provider_display_name(provider)}: refresh "
+                f"{'On' if box.value else 'Off'}"
+            )
+            for provider, box in boxes.items()
         }
 
 
@@ -438,16 +441,27 @@ async def test_settings_console_behavior_fallback_labels_come_from_the_table(
         screen.query_one("#settings-console-default-temperature").focus()
         await pilot.pause()
         field = MODEL_CONFIG_FIELDS["temperature"]
+        # TASK-33007.7 (review M6), rewritten on purpose: the guide no longer
+        # prints the config key; "Saved as" sits in the Inspector's closed
+        # "config key" disclosure, as on Providers & Models.
         guide = [
             str(screen.query_one(f"#settings-console-behavior-field-guide-{i}").content)
-            for i in range(4)
+            for i in range(3)
         ]
         assert guide == [
             f"Focused setting: {field.label}",
             f"Purpose: {field.help}",
-            "Saved as: chat_defaults.temperature",
             f"Validation: {field.valid_range}",
         ]
+        assert not screen.query("#settings-console-behavior-field-guide-3")
+        assert (
+            str(
+                screen.query_one(
+                    "#settings-console-behavior-config-key-saved-as"
+                ).content
+            )
+            == "Saved as: chat_defaults.temperature"
+        )
         for name in GENERATION_FIELD_REQUEST_KEYS:
             screen._active_settings_field_id = (
                 f"settings-console-default-{name.replace('_', '-')}"

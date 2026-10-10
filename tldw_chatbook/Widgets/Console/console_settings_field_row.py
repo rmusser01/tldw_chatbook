@@ -154,6 +154,12 @@ SAMPLING_HIDDEN_LIST_ID = "console-settings-sampling-hidden"
 #: A blank choice Select shows the value it inherits, not "Select" (spec
 #: §6); its Source word says the provider's (``_field_source``).
 BLANK_CHOICE_PROMPT = "default"
+
+class ConsoleSettingsSelect(Select):
+    """A Chat settings Select. Its own CSS type lets the width rules name it
+    instead of every Select in the app (the CSS fast-path ratchet counts
+    ancestor-scoped bare ``Select`` subjects)."""
+
 _CHOICE_FIELDS = frozenset(
     {"reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort"}
 )
@@ -205,35 +211,53 @@ SAMPLING_FOCUS_IDS = frozenset(field_control_id(name) for name in SAMPLING_FIELD
 CONNECTION_FOCUS_IDS = frozenset({"console-settings-base-url"})
 
 
-def hidden_fields_line(provider_name: str, hidden: Iterable[str]) -> str:
+def hidden_fields_line(
+    provider_name: str,
+    hidden: Iterable[str],
+    *,
+    cells: int = DISCLOSURE_TITLE_CELLS,
+    state: str = "",
+) -> str:
     """Return the one-row Sampling title for the fields the provider rejects.
 
     Args:
         provider_name: The provider's display name.
         hidden: Field-table names of the hidden fields, in line order.
+        cells: The title's one-row budget; Settings' card is narrower than
+            the Chat settings frame (TASK-33007.5).
+        state: An optional summary of the shown fields, put right after
+            "Sampling" (Settings' "Top P 0.95 · others inherit").
 
     Returns:
         ``"Sampling"`` when nothing is hidden; ``"Sampling · hidden for
         Anthropic: Min P, Seed (this provider does not accept them)"`` when
-        the labels fit ``DISCLOSURE_TITLE_CELLS``; else ``"Sampling · Together
-        does not accept 10 fields (open to list them)"``, the name shortened
-        with ``…`` if even that is too wide.
+        the labels fit ``cells``; else ``"Sampling · Together does not
+        accept 10 fields (open to list them)"``, the name shortened with
+        ``…`` if even that is too wide. A ``state`` follows "Sampling"; it
+        goes first when nothing of the name fits, then the hidden-field part
+        (the opened disclosure still lists them).
     """
+    title = f"{SAMPLING_TITLE} · {state}" if state else SAMPLING_TITLE
     labels = [MODEL_FIELD_LABELS[name] for name in hidden]
     if not labels:
-        return SAMPLING_TITLE
+        return title
     named = (
-        f"{SAMPLING_TITLE} · hidden for {provider_name}: "
+        f"{title} · hidden for {provider_name}: "
         f"{', '.join(labels)} {HIDDEN_FIELDS_REASON}"
     )
-    if cell_len(named) <= DISCLOSURE_TITLE_CELLS:
+    if cell_len(named) <= cells:
         return named
     noun = "field" if len(labels) == 1 else "fields"
     tail = f" does not accept {len(labels)} {noun} {HIDDEN_FIELDS_OPEN_HINT}"
-    room = DISCLOSURE_TITLE_CELLS - cell_len(f"{SAMPLING_TITLE} · {tail}")
+    room = cells - cell_len(f"{title} · {tail}")
+    if room < 1:
+        # Not even "…" fits: a negative size would cut the name from its end.
+        if state:
+            return hidden_fields_line(provider_name, hidden, cells=cells)
+        return title
     if cell_len(provider_name) > room:
         provider_name = set_cell_size(provider_name, room - 1) + "…"
-    return f"{SAMPLING_TITLE} · {provider_name}{tail}"
+    return f"{title} · {provider_name}{tail}"
 
 
 def hidden_fields_list(provider_name: str, hidden: Iterable[str]) -> str:
@@ -442,7 +466,7 @@ class ConsoleSettingsFieldRowsMixin:
         # it is hidden while empty, so the row grammar holds.
         validation: list[Widget] = []
         if name == "streaming":
-            control: Widget = Select(
+            control: Widget = ConsoleSettingsSelect(
                 STREAMING_OPTIONS,
                 value=self._streaming_select_value(),
                 allow_blank=False,
@@ -558,8 +582,14 @@ class ConsoleSettingsFieldRowsMixin:
         estimate = self._context_estimate
         context = ""
         if estimate.token_limit:
-            size = context_copy(estimate.token_limit, bool(estimate.token_limit_verified))
-            context = f" · {size} context"
+            # TASK-33007 #12: a fallback is not a known size; say "unknown" as
+            # Settings ▸ Advanced does. The size it assumes is in Request
+            # estimate below, so a long id keeps its width here.
+            context = (
+                f" · {context_copy(estimate.token_limit, True)} context"
+                if estimate.token_limit_verified
+                else " · context unknown"
+            )
         status = self.query_one("#console-settings-model-status", Static)
         _show(status, f"{self._model_row_word}{context}")
 

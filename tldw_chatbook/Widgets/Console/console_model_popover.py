@@ -67,7 +67,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     remember_model_draft,
 )
 from tldw_chatbook.Chat.provider_catalog import (
-    PROVIDER_CUSTOM_GROUP_KEYS,
+    PROVIDER_LEGACY_ALIAS_KEYS,
     provider_display_name,
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import URL_BASED_PROVIDER_KEYS
@@ -112,9 +112,6 @@ _RECENT_ROWS = 6
 _SETUP_ROWS = 8
 _MATCH_ROWS = 30
 HIGHLIGHT_GLYPH = "▶"
-#: Legacy aliases are hidden unless configured or current (ADR-066); the
-#: built-in custom and custom_2 slots always stay listable (ADR-146).
-_LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - {"custom", "custom_2"}
 #: Column widths of one pair row (mockup (a)). The model column grows to the
 #: longest id shown, so ids render whole (spec: never truncated); a row too
 #: long for the list ends in an ellipsis (the list is ``nowrap``), so the
@@ -261,22 +258,26 @@ def _fit(text: str, width: int) -> str:
 
 
 def context_copy(tokens: int, verified: bool) -> str:
-    """Return a context window's short size, e.g. ``"200k"`` or ``"~32k"``.
+    """Return a context window's short size, e.g. ``"200k"``, or ``"?"``.
 
     Args:
         tokens: The window size in tokens.
-        verified: Whether the size is known; an estimate starts with ``~``.
+        verified: Whether the size is known. A provider or application
+            fallback is a guess, so it reads ``"?"`` (unknown), never a size
+            (TASK-33007 #12).
 
     Returns:
-        The size in ``k`` or ``M`` units.
+        The size in ``k`` or ``M`` units, or ``"?"``.
     """
+    if not verified:
+        return "?"
     if tokens >= 1_000_000:
         size = f"{round(tokens / 1_000_000, 1):g}M"
     elif tokens >= 1_000:
         size = f"{tokens // 1_000}k"
     else:
         size = str(tokens)
-    return size if verified else f"~{size}"
+    return size
 
 
 def _temperature_in_range(value: float) -> bool:
@@ -829,7 +830,7 @@ class ConsoleModelPopover(
             dict.fromkeys(
                 key
                 for key in (*self._provider_order, *sorted(used))
-                if key and (key not in _LEGACY_ALIAS_KEYS or key in used)
+                if key and (key not in PROVIDER_LEGACY_ALIAS_KEYS or key in used)
             )
         )
 
@@ -1039,7 +1040,7 @@ class ConsoleModelPopover(
     ) -> SwitcherRow:
         if self._is_current(provider, model):
             note = CURRENT_MARK
-        if provider_key(provider) in _LEGACY_ALIAS_KEYS:
+        if provider_key(provider) in PROVIDER_LEGACY_ALIAS_KEYS:
             note = f"legacy alias · {note}" if note else "legacy alias"
         return SwitcherRow(kind, provider=provider, model=model, note=note, score=score)
 

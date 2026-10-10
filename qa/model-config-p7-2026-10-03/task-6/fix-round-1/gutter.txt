@@ -1,0 +1,98 @@
+Finding 5: what the Settings-wide scrollbar gutter (#settings-detail-pane-body
+{ scrollbar-gutter: stable }, Task 6 commit 7adb151708) costs a category that does
+not overflow, 2026-10-04. Base d9b73fc412 (no gutter) against Task 6 head 7bf5f42a79
+for the pilot sweep, and against the fix commit 1db0f78198 for the live captures
+(1db0f78198 changes only <=100-column rules, so the 211x44 pane is the same).
+
+1. Pilot sweep, every category, real stylesheet, default scratch profile
+   Each Settings category was opened by clicking its rail button. For each category
+   whose pane body has max_scroll_y == 0 (it fits, so no scrollbar at base), the
+   detail pane's painted rows were dumped on both sides. "Content lines changed"
+   compares the rows after removing frame glyphs and collapsing runs of spaces; the
+   one Diagnostics row that prints the per-run temporary config path is ignored.
+   Of the 31 categories, the 9 (211x44) and 8 (235x52) that overflow on both sides
+   already draw a scrollbar in that column, so the gutter changes nothing there (same
+   widths and max_scroll_y on both sides). Providers & Models overflows at base and
+   fits at head (the fold); its width is pinned by
+   test_opening_the_model_picker_keeps_the_card_width.
+
+   211x44: 21 categories fit the pane (max_scroll_y == 0) on both sides
+     category             width base->head   content lines changed
+     acp-defaults         122->121            0
+     advanced-config      122->121            0
+     agents               122->121            0
+     artifacts            122->121            0
+     diagnostics          122->121            0
+     hooks                122->121            0
+     internal-prompts     122->121            0
+     mcp-defaults         122->121            0
+     network              122->121            0
+     overview             122->121            0
+     personal-context     122->121            0
+     personas             122->121            0
+     schedules            122->121            0
+     skills               122->121            0
+     theme                122->121            0
+     tool-profiles        122->121            0
+     video_generation     122->121            0
+     watchlists           122->121            0
+     web-search           122->121            0
+     workflows            122->121            0
+     workspaces           122->121            0
+   235x52: 22 categories fit the pane (max_scroll_y == 0) on both sides
+     category             width base->head   content lines changed
+     about                140->139            0
+     acp-defaults         140->139            0
+     advanced-config      140->139            0
+     agents               140->139            0
+     artifacts            140->139            0
+     diagnostics          140->139            0
+     hooks                140->139            0
+     internal-prompts     140->139            0
+     mcp-defaults         140->139            0
+     network              140->139            0
+     overview             140->139            0
+     personal-context     140->139            0
+     personas             140->139            0
+     schedules            140->139            0
+     skills               140->139            0
+     theme                140->139            0
+     tool-profiles        140->139            0
+     video_generation     140->139            0
+     watchlists           140->139            0
+     web-search           140->139            0
+     workflows            140->139            0
+     workspaces           140->139            0
+
+   Every fitting category: the content column is one cell narrower and the card's
+   right frame moves one cell left, leaving a blank column before the pane border.
+   No text is clipped, ellipsized or re-wrapped in any of them.
+
+2. Live captures, 211x44 (gutter-captures/)
+   The real app in an isolated tmux server (-L p7t6fix1live) under env -i: HOME,
+   XDG_CONFIG_HOME, XDG_DATA_HOME and TLDW_CONFIG_PATH in a scratch directory, the null
+   keyring, TERM=xterm-256color, COLORTERM=truecolor, PYTHONPATH=<tree>. One profile per
+   side, written from the shipped template (itself generated under a second scratch
+   HOME) with users_name = "verify_p7t6fix1_live", setup completed, splash off, catalog
+   auto-refresh off, first send completed, and anthropic / claude-sonnet-4-5 with a fake
+   key. The app was quit with Ctrl+Q and relaunched for each capture.
+   - <side>-overview-211x44: launch, wait for the nav bar, F4. Settings opens on Overview.
+   - <side>-network-211x44: launch, F4, F6, Down x11, Enter, Escape.
+   .txt is colour-stripped (tmux capture-pane -p); .ansi.txt keeps the escapes (-e).
+
+   Compared row by row (44 rows each):
+     overview: 22 rows differ, 0 after removing frame glyphs and spaces
+     network:   9 rows differ, 0 after removing frame glyphs and spaces
+   The only change is the card's right edge, e.g. "──────┐ │" at base and "─────┐  │" at
+   the fix: the Overview card and the Network card (its Select and CA bundle path
+   field included) are one cell narrower and every word is still painted.
+   Both sides show "State: Pending — save with s" on Network; it is the same at base.
+
+   Afterwards: tmux server killed. A marker was touched before the first launch;
+   find ~/.config/tldw_cli ~/.local/share/tldw_cli -newer <marker> listed 0 entries, and
+   ~/.config/tldw_cli/config.toml still reads Sep 26.
+
+3. Ruling held: keep the gutter Settings-wide. Its cost in every category that fits is
+   one blank column, measured above, with no content lost. Scoping it to Providers &
+   Models would need a per-category class on the shared pane body, set from Python on
+   every category switch, to save that one column.

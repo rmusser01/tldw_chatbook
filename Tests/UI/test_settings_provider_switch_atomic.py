@@ -54,17 +54,17 @@ async def test_provider_switch_updates_dependent_fields_with_no_stale_window():
             Select.Changed(provider_select, "llama.cpp")
         )
 
-        readiness = str(
-            screen.query_one("#settings-provider-readiness", Static).renderable
-        )
+        # TASK-33007.2, rewritten on purpose: the readiness block's
+        # "Provider / model" line is gone; the Provider control names the
+        # provider and its Source word says it is an unsaved edit.
+        control = screen.query_one("#settings-provider-search", Input).value
         source = str(screen.query_one("#settings-provider-source", Static).renderable)
         model_value = screen.query_one("#settings-model-value", Input).value
 
         # The dependent fields reflect the NEW provider immediately...
-        assert "llama.cpp" in readiness
-        assert "draft" in source.lower()
+        assert control == "llama.cpp"
+        assert source == "edited *"
         # ...and never assert the previous provider/model combination.
-        assert "gpt-4o" not in readiness
         assert model_value == ""
         assert screen._provider_form_values_from_widgets()["model"] == ""
 

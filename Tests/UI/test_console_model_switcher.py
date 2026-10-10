@@ -39,12 +39,14 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsSurface,
     ConsoleSettingsTransfer,
 )
+from tldw_chatbook.Utils.token_counter import resolve_context_window
 from tldw_chatbook.Widgets.Console.console_model_popover import (
     CURRENT_MARK,
     HIGHLIGHT_GLYPH,
     VALUE_FIELDS,
     ConsoleModelPopover,
     UnsavedEditsGuard,
+    context_copy,
     switcher_readiness_words,
 )
 
@@ -324,7 +326,10 @@ async def test_switcher_lists_four_groups_of_one_line_pairs() -> None:
 
         previous = line_with(lines, "claude-sonnet-4-5")
         assert "Anthropic" in previous
-        assert "~200k" in previous or "200k" in previous
+        # The size the one resolver gives: "200k" from the catalog, or "?"
+        # if the catalog is unavailable (a fallback is unknown, TASK-33007 #12).
+        window = resolve_context_window("anthropic", "claude-sonnet-4-5")
+        assert f" {context_copy(window.tokens, window.verified)}  " in previous
         assert "Ready · not tested" in previous
         assert "used 2h ago in this chat" in previous
 

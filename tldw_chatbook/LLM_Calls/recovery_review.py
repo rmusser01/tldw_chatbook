@@ -291,6 +291,35 @@ def prepare_openai_reconnect(*, auth_source=None):
         )
 
 
+def openai_reconnect_pending() -> bool:
+    """Whether a restored OpenAI connection awaits its review.
+
+    Restored generations exist (the history ``prepare_openai_reconnect``
+    reads) and no recorded review matches the current selection, so
+    ``openai_call`` would refuse a request.
+
+    Returns:
+        True only then. False when nothing was restored, a review matches,
+        or the history cannot be read (``prepare_openai_reconnect`` would
+        refuse a review then too).
+    """
+    path = bootstrap.effective_config_path()
+    try:
+        with acquire_storage(path) as lease:
+            restored = bool(_history(path, lease))
+    except (OSError, ValueError, RuntimeError):  # ProviderReconnectRequired too
+        return False
+    if not restored:
+        return False
+    try:
+        _Operation(path).close()
+    except ProviderReconnectRequired:
+        return True
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return False
+
+
 def confirm_openai_reconnect(review):
     """Record only this generation's explicit OpenAI endpoint/auth selection."""
     if type(review) is not OpenAIReconnectReview:

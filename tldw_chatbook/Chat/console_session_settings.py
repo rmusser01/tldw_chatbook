@@ -1222,6 +1222,63 @@ def _value_from_source(source: Mapping[str, object], name: str) -> object:
     return _optional_float_setting_from_sources((source,), name)
 
 
+def chat_defaults_value(app_config: Mapping[str, object], name: str) -> object:
+    """Read one generation field from ``[chat_defaults]`` as a new chat does.
+
+    That one layer, under the default chain's own reading (legacy
+    ``enable_streaming`` bridged, the builder's coercion), so Settings shows
+    the value a new chat would take from there (TASK-33007.7).
+
+    Args:
+        app_config: The configuration snapshot the default chain reads.
+        name: A generation field, e.g. ``"temperature"``.
+
+    Returns:
+        The usable value, or ``None`` when ``[chat_defaults]`` holds none.
+    """
+    chat_defaults = _chat_defaults_with_streaming_compat(
+        _mapping_value(app_config, "chat_defaults")
+    )
+    return _value_from_source(chat_defaults, name)
+
+
+def model_default_value(profile: Mapping[str, object], name: str) -> object:
+    """Read one generation field from a model's defaults profile as a new chat does.
+
+    The ``chat_defaults_value`` twin for Settings ▸ Model defaults: the
+    builder's own coercion, so a hand-edited ``streaming = "0"`` reads Off
+    and a ``top_k = 2.5`` a new chat ignores reads as unset (TASK-33007.7).
+
+    Args:
+        profile: One ``[api_settings.<provider>.model_defaults.<model>]``
+            table.
+        name: A generation field, e.g. ``"temperature"``.
+
+    Returns:
+        The usable value, or ``None`` when the profile holds none.
+    """
+    return _value_from_source(profile, name)
+
+
+def chat_defaults_held_fields(
+    app_config: Mapping[str, object], names: Sequence[str]
+) -> frozenset[str]:
+    """Name the generation fields ``[chat_defaults]`` holds a usable value for.
+
+    Settings says "Console Behavior" only for these (TASK-33007.7).
+
+    Args:
+        app_config: The configuration snapshot the default chain reads.
+        names: Generation fields to check.
+
+    Returns:
+        The names ``chat_defaults_value`` reads a value for.
+    """
+    return frozenset(
+        name for name in names if chat_defaults_value(app_config, name) is not None
+    )
+
+
 def resolve_console_value_layers(
     app_config: Mapping[str, object],
     provider: str | None,
@@ -1231,6 +1288,7 @@ def resolve_console_value_layers(
     edited: frozenset[str] = frozenset(),
     chat_settings: ConsoleSessionSettings | None = None,
     extra_sources: Sequence[Mapping[str, object]] = (),
+    excluded_model_profile_fields: frozenset[str] = frozenset(),
 ) -> dict[str, ConsoleValueLayer]:
     """Name the parameter-stack layer each shown value comes from (spec §6).
 
@@ -1245,12 +1303,19 @@ def resolve_console_value_layers(
         chat_settings: This chat's committed settings when the shown pair is
             its pair; a value that differs from the default chain is the chat's.
         extra_sources: ADR-147 registry params, as the builder takes them.
+        excluded_model_profile_fields: Model-default fields to skip, so a
+            blank Settings model default names the layer it inherits from
+            (TASK-33007.5), as the builder takes them.
 
     Returns:
         ``{name: layer}`` for every name.
     """
     _effective, layers = _console_default_layers(
-        app_config, provider, model, extra_sources=extra_sources
+        app_config,
+        provider,
+        model,
+        excluded_model_profile_fields=excluded_model_profile_fields,
+        extra_sources=extra_sources,
     )
     defaults = (
         build_default_console_session_settings(
@@ -2279,8 +2344,8 @@ def build_console_context_estimate(
         )
 
     label = f"{used_tokens:,} / {token_limit:,} tokens"
-    if not token_limit_verified:
-        label = f"{label} (estimated; model unverified)"
+    if not token_limit_verified:  # TASK-33007 #12: Settings' words for a fallback
+        label = f"{label} (assumed; window unknown)"
     if max_tokens_response is not None:
         label = f"{label}; {max_tokens_response:,} response tokens reserved"
     if staged_source_count:

@@ -759,8 +759,31 @@ async def _wait_for_settings_value(
     )
 
 
+async def _open_enclosing_disclosures(pilot, widget) -> None:
+    """Open any closed disclosure around a control, as a user does first.
+
+    TASK-33007.6, changed on purpose: Providers & Models folds its rarely
+    used controls into closed one-row Advanced disclosures, and a control
+    inside a closed one has no region to click.
+
+    Args:
+        pilot: The running app's pilot.
+        widget: The control about to be clicked.
+    """
+    closed = [
+        node
+        for node in widget.ancestors
+        if isinstance(node, Collapsible) and node.collapsed
+    ]
+    for node in closed:
+        node.collapsed = False
+    if closed:
+        await pilot.pause()
+
+
 async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Button:
     button = screen.query_one(selector, Button)
+    await _open_enclosing_disclosures(pilot, button)
     detail_pane = screen.query_one("#settings-detail-pane-body", VerticalScroll)
     detail_pane.scroll_to_widget(
         button,
@@ -776,6 +799,7 @@ async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Butto
 
 async def _click_scrolled_settings_checkbox(screen, pilot, selector: str) -> Checkbox:
     checkbox = screen.query_one(selector, Checkbox)
+    await _open_enclosing_disclosures(pilot, checkbox)
     detail_pane = screen.query_one("#settings-detail-pane-body", VerticalScroll)
     detail_pane.scroll_to_widget(
         checkbox,
@@ -3670,7 +3694,19 @@ async def test_settings_provider_category_lists_console_supported_catalog():
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Provider catalog" in text
+        # TASK-33007.4 (AC#6), rewritten on purpose: the catalog and the
+        # manual-entry line left the card for the Inspector's closed
+        # "config key" disclosure.
+        card = screen.query_one("#settings-providers-models-card")
+        disclosure = screen.query_one("#settings-provider-config-key", Collapsible)
+        assert disclosure.collapsed is True
+        catalog = screen.query_one("#settings-provider-catalog", Static)
+        manual = screen.query_one("#settings-provider-manual-entry-policy", Static)
+        for row in (catalog, manual):
+            assert disclosure in row.ancestors
+            assert card not in row.ancestors
+        catalog_line = str(catalog.renderable)
+        assert catalog_line.startswith("Provider catalog")
         # task-180: the catalog line shows grouped human display names, never
         # a raw config-key dump.
         for display_name in (
@@ -3681,18 +3717,15 @@ async def test_settings_provider_category_lists_console_supported_catalog():
             "llama.cpp",
             "vLLM (legacy alias)",
         ):
-            assert display_name in text
-        catalog_line = str(
-            screen.query_one("#settings-provider-catalog", Static).renderable
-        )
+            assert display_name in catalog_line
         assert "Cloud:" in catalog_line
         assert "Local:" in catalog_line
         assert "Custom & legacy aliases:" in catalog_line
         assert "local_vllm" not in catalog_line
         assert "custom_2" not in catalog_line
-        assert (
+        assert str(manual.renderable) == (
             "Choose a catalog provider (type in the open list to jump to one), "
-            "or use Manual / custom provider for other keys." in text
+            "or use Manual / custom provider for other keys."
         )
 
 
@@ -3913,6 +3946,11 @@ async def test_settings_provider_picker_search_keeps_draft_endpoint_and_api_key(
         assert all(option.disabled for option in headings)
 
 
+def _focus_provider_control(screen) -> None:
+    """Focus the one-row Provider control (TASK-33007.2)."""
+    screen.query_one("#settings-provider-search", Input).focus()
+
+
 def _provider_picker_option_index(
     picker: OptionList,
     *,
@@ -3955,8 +3993,10 @@ async def test_settings_provider_picker_initial_known_provider_enter_is_noop_for
         highlighted = picker.get_option_at_index(picker.highlighted)
         assert getattr(highlighted, "provider_id", None) == "openai"
 
-        picker.focus()
-        await pilot.press("enter")
+        # TASK-33007.2, rewritten on purpose: the list never takes focus; the
+        # Provider control opens it (Down) and chooses (Enter).
+        screen.query_one("#settings-provider-search", Input).focus()
+        await pilot.press("down", "enter")
         await pilot.pause()
 
         assert screen._provider_setting_values_mapping()["provider"] == "OpenAI"
@@ -4013,12 +4053,15 @@ async def test_settings_provider_picker_saved_unknown_activation_is_exact_noop()
         assert getattr(highlighted, "provider_id", None) == "Exact_Custom-ID"
         assert manual.value == "Exact_Custom-ID"
 
-        picker.focus()
-        await pilot.press("enter")
+        # TASK-33007.2, rewritten on purpose: the Provider control opens the
+        # list and chooses; focus stays on the one Tab stop.
+        search = screen.query_one("#settings-provider-search", Input)
+        search.focus()
+        await pilot.press("down", "enter")
         await pilot.pause()
 
         assert host._exception is None
-        assert picker.has_focus
+        assert search.has_focus
         assert screen.query_one("#settings-provider-endpoint-value", Input) is endpoint
         assert screen.query_one("#settings-provider-api-key", Input) is api_key
         assert endpoint.value == "https://draft.example/v1"
@@ -4080,12 +4123,11 @@ async def test_settings_provider_picker_filtered_selection_uses_provider_lifecyc
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         search = screen.query_one("#settings-provider-search", Input)
-        picker = screen.query_one("#settings-provider-picker", OptionList)
 
-        search.value = "anthropic"
-        await pilot.pause()
-        picker.focus()
-        await pilot.press("enter")
+        # TASK-33007.2, rewritten on purpose: typing in the Provider control
+        # filters the list, and Enter chooses.
+        search.focus()
+        await pilot.press(*"anthropic", "enter")
         await pilot.pause()
 
         assert screen._provider_setting_values_mapping()["provider"] == "anthropic"
@@ -4133,16 +4175,11 @@ async def test_settings_provider_picker_enter_provider_id_focuses_manual_field(
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        search = screen.query_one("#settings-provider-search", Input)
-        picker = screen.query_one("#settings-provider-picker", OptionList)
-        search.value = "provider-that-does-not-exist"
-        await pilot.pause()
-        picker.highlighted = _provider_picker_option_index(
-            picker, action="enter_provider_id"
-        )
-        picker.focus()
-
-        await pilot.press("enter")
+        # TASK-33007.2, rewritten on purpose: typed into the Provider control,
+        # a filter with no match leaves only the manual action, and Enter
+        # chooses it.
+        _focus_provider_control(screen)
+        await pilot.press(*"provider-that-does-not-exist", "enter")
         await pilot.pause()
 
         manual = screen.query_one("#settings-provider-manual-value", Input)
@@ -4162,15 +4199,11 @@ async def test_settings_provider_picker_rejects_unsupported_manual_id_without_lo
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        search = screen.query_one("#settings-provider-search", Input)
-        picker = screen.query_one("#settings-provider-picker", OptionList)
-        search.value = "provider-that-does-not-exist"
-        await pilot.pause()
-        picker.highlighted = _provider_picker_option_index(
-            picker, action="enter_provider_id"
-        )
-        picker.focus()
-        await pilot.press("enter")
+        # TASK-33007.2, rewritten on purpose: typed into the Provider control,
+        # a filter with no match leaves only the manual action, and Enter
+        # chooses it.
+        _focus_provider_control(screen)
+        await pilot.press(*"provider-that-does-not-exist", "enter")
         await pilot.pause()
         manual = screen.query_one("#settings-provider-manual-value", Input)
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
@@ -4209,15 +4242,11 @@ async def test_settings_provider_picker_supported_manual_alias_uses_catalog_life
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        search = screen.query_one("#settings-provider-search", Input)
-        picker = screen.query_one("#settings-provider-picker", OptionList)
-        search.value = "provider-that-does-not-exist"
-        await pilot.pause()
-        picker.highlighted = _provider_picker_option_index(
-            picker, action="enter_provider_id"
-        )
-        picker.focus()
-        await pilot.press("enter")
+        # TASK-33007.2, rewritten on purpose: typed into the Provider control,
+        # a filter with no match leaves only the manual action, and Enter
+        # chooses it.
+        _focus_provider_control(screen)
+        await pilot.press(*"provider-that-does-not-exist", "enter")
         await pilot.pause()
 
         manual = screen.query_one("#settings-provider-manual-value", Input)
@@ -4321,15 +4350,17 @@ async def test_settings_picker_legacy_alias_row_selects_saves_and_reloads(reques
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-provider-search", Input).value = "legacy"
+        # TASK-33007.2, rewritten on purpose: the row is chosen by typing in
+        # the Provider control (the list never takes focus) and Enter.
+        _focus_provider_control(screen)
+        await pilot.press(*"local_llamacpp")
         await pilot.pause()
         picker = screen.query_one("#settings-provider-picker", OptionList)
         index = _provider_picker_option_index(picker, provider_id="local_llamacpp")
         assert str(picker.get_option_at_index(index).prompt) == (
             "llama.cpp (legacy alias)"
         )
-        picker.highlighted = index
-        picker.focus()
+        assert picker.highlighted == index
         await pilot.press("enter")
         await pilot.pause()
         assert (
@@ -4399,6 +4430,9 @@ async def test_settings_provider_picker_current_alias_preserves_connection_draft
 async def test_settings_provider_picker_geometry_is_bounded_and_non_overlapping(
     terminal_size,
 ):
+    """TASK-33007.2, rewritten on purpose: the provider list no longer sits
+    open at six rows. At rest it is hidden; opened from the Provider control
+    it is bounded and lies between the Provider row and the API key row."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     host = StyledSettingsDestinationHarness(app, "settings")
@@ -4408,16 +4442,13 @@ async def test_settings_provider_picker_geometry_is_bounded_and_non_overlapping(
         screen = _active_destination_screen(host)
         search = screen.query_one("#settings-provider-search", Input)
         picker = screen.query_one("#settings-provider-picker", OptionList)
-        status = screen.query_one("#settings-provider-search-status", Static)
-        model = screen.query_one("#settings-model-value", Input)
-        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
-        regions = [
-            search.region,
-            picker.region,
-            status.region,
-            model.region,
-            endpoint.region,
-        ]
+        api_key_row = screen.query_one("#settings-provider-api-key-row")
+        assert not picker.display
+
+        search.focus()
+        await pilot.press("down")
+        await pilot.pause()
+        regions = [search.region, picker.region, api_key_row.region]
 
         for index in range(len(regions) - 1):
             upper, lower = regions[index : index + 2]
@@ -4425,7 +4456,7 @@ async def test_settings_provider_picker_geometry_is_bounded_and_non_overlapping(
                 f"provider controls overlap at {terminal_size}: {upper} vs {lower}"
             )
             assert upper.bottom <= lower.y
-        assert 4 <= picker.region.height <= 8
+        assert 4 <= picker.region.height <= 10
         assert picker.virtual_size.height > picker.container_size.height
 
 
@@ -4459,20 +4490,36 @@ async def test_settings_provider_model_defaults_appear_before_reference_copy():
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         card = screen.query_one("#settings-providers-models-card")
-        title = card.query_one("#settings-selected-model-defaults-title", Static)
+        defaults = card.query_one("#settings-generation-defaults", Collapsible)
         temperature = card.query_one("#settings-model-profile-temperature", Input)
-        catalog = card.query_one("#settings-provider-catalog", Static)
-        widgets = list(card.query("*"))
 
-        assert str(title.renderable) == "Selected model defaults"
-        assert widgets.index(title) < widgets.index(catalog)
-        assert widgets.index(temperature) < widgets.index(catalog)
+        # TASK-33007.5, rewritten on purpose: the "Selected model defaults"
+        # heading is gone; the open disclosure's title names the pair.
+        assert str(defaults.title) == "Model defaults · OpenAI · gpt-4.1"
+        assert defaults in temperature.ancestors
+        # TASK-33007.4 (AC#6), rewritten on purpose: no reference copy
+        # follows the defaults in the card any more; all five rows live in
+        # the Inspector's closed "config key" disclosure.
+        disclosure = screen.query_one("#settings-provider-config-key", Collapsible)
+        assert disclosure.collapsed is True
+        for selector in (
+            "#settings-provider-catalog",
+            "#settings-provider-catalog-policy",
+            "#settings-provider-manual-entry-policy",
+            "#settings-provider-sampling-route",
+            "#settings-provider-endpoint-key",
+        ):
+            assert not card.query(selector), selector
+            assert disclosure in screen.query_one(selector).ancestors, selector
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_connect_block_precedes_collapsed_generation_defaults():
+async def test_settings_provider_connect_block_precedes_open_model_defaults():
     """task-189: Connect (provider/model/endpoint/credentials/test) leads the
-    category; sampling lives in a collapsed Generation defaults disclosure."""
+    category. TASK-33007.5, rewritten on purpose (was
+    ``test_settings_provider_connect_block_precedes_collapsed_generation_defaults``):
+    the defaults are open as "Model defaults · <pair>", core rows first, and
+    the samplers sit in a closed Sampling disclosure inside it."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     host = DestinationHarness(app, "settings")
@@ -4488,14 +4535,18 @@ async def test_settings_provider_connect_block_precedes_collapsed_generation_def
             card.query_one("#settings-provider-connect-title")
         )
 
-        assert disclosure.collapsed is True
-        assert str(disclosure.title) == "Generation defaults"
+        assert disclosure.collapsed is False
+        assert str(disclosure.title) == "Model defaults · OpenAI · gpt-4.1"
+        sampling = disclosure.query_one("#settings-model-sampling", Collapsible)
+        assert sampling.collapsed is True
 
         for selector in (
             "#settings-provider-value",
             "#settings-model-value",
             "#settings-provider-endpoint-value",
-            "#settings-provider-credential-status",
+            # TASK-33007.2, rewritten on purpose: the Credentials status line
+            # is the API key row's Source word now.
+            "#settings-provider-key-status",
             "#settings-provider-api-key",
             "#settings-provider-api-key-clear",
             "#settings-provider-credential-env-var",
@@ -4506,23 +4557,31 @@ async def test_settings_provider_connect_block_precedes_collapsed_generation_def
             assert connect_index < index < disclosure_index, selector
 
         for selector in (
-            "#settings-selected-model-defaults-title",
             "#settings-model-profile-temperature",
             "#settings-model-profile-reasoning-effort",
             "#settings-model-profile-streaming",
-            "#settings-provider-generation-support",
         ):
             field = card.query_one(selector)
             assert disclosure in field.ancestors, selector
+            assert sampling not in field.ancestors, selector
+        for selector in (
+            "#settings-model-profile-top-p",
+            "#settings-model-profile-top-k",
+            "#settings-provider-generation-support",
+        ):
+            assert sampling in card.query_one(selector).ancestors, selector
 
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_provider_unavailable_fields_render_single_summary_line(
+async def test_settings_provider_unavailable_fields_are_named_by_the_sampling_line(
     request,
 ):
-    """task-189: gated fields collapse to one summary line instead of per-row
-    'Unavailable for <provider>' placeholders."""
+    """task-189: gated fields are hidden and named, never drawn as
+    'Unavailable for <provider>' placeholders. TASK-33007.5, rewritten on
+    purpose (was ``test_settings_provider_unavailable_fields_render_single_summary_line``):
+    the names come from Chat settings' formatter -- the Sampling title names
+    or counts them in one row, and the opened disclosure lists them."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
     host = DestinationHarness(app, "settings")
@@ -4535,11 +4594,14 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line(
         # llama.cpp's request carries reasoning effort and a thinking budget
         # (chat_template_kwargs / reasoning_budget_tokens), so only these hide.
         summary = screen.query_one("#settings-provider-generation-support", Static)
+        sampling = screen.query_one("#settings-model-sampling", Collapsible)
         assert (
             str(summary.renderable)
-            == "Hidden for llama.cpp: Reasoning summary, Verbosity, Thinking."
+            == "llama.cpp does not accept: Reasoning summary, Verbosity, Thinking."
         )
         assert not summary.has_class("settings-gated-profile-hidden")
+        assert str(sampling.title).startswith("Sampling · all inherit · ")
+        assert "llama.cpp" in str(sampling.title)
         for row_id in (
             "#settings-model-profile-reasoning-summary-row",
             "#settings-model-profile-verbosity-row",
@@ -4565,7 +4627,7 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line(
 
         assert (
             str(summary.renderable)
-            == "Hidden for OpenAI: Min P, Top K, Thinking, Thinking budget."
+            == "OpenAI does not accept: Min P, Top K, Thinking, Thinking budget."
         )
         assert not screen.query_one(
             "#settings-model-profile-reasoning-effort-row"
@@ -4616,24 +4678,37 @@ def test_settings_model_profile_rows_ask_the_request_field_decision(provider, mo
 
 
 def test_settings_generation_summary_names_every_hidden_row():
-    """TASK-33001.2: one line names the rows Anthropic's request drops."""
+    """TASK-33001.2: one line names the rows Anthropic's request drops.
+
+    TASK-33007.5, rewritten on purpose: Settings' own "Hidden for ..." copy
+    is gone; the hidden set is formatted by Chat settings' line, so both
+    surfaces name the same fields in the same words."""
     from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+    from tldw_chatbook.UI.Settings_Modules.settings_field_rows import (
+        hidden_model_default_fields,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+        hidden_fields_list,
+    )
 
     screen = SettingsScreen.__new__(SettingsScreen)
     screen.app_instance = None  # no app config, so no endpoint registry
 
-    assert screen._provider_generation_support_copy(
-        "anthropic", "claude-sonnet-4-5"
-    ) == (
-        "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, "
-        "Reasoning effort, Reasoning summary, Verbosity."
+    def copy(provider, name, model):
+        return hidden_fields_list(
+            name, hidden_model_default_fields(screen, provider, model)
+        )
+
+    assert copy("anthropic", "Anthropic", "claude-sonnet-4-5") == (
+        "Anthropic does not accept: Min P, Seed, Presence penalty, Frequency "
+        "penalty, Reasoning effort, Reasoning summary, Verbosity."
     )
-    assert screen._provider_generation_support_copy("anthropic", "claude-sonnet-5") == (
-        "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, "
-        "Reasoning effort, Reasoning summary, Verbosity, Thinking budget."
+    assert copy("anthropic", "Anthropic", "claude-sonnet-5") == (
+        "Anthropic does not accept: Min P, Seed, Presence penalty, Frequency "
+        "penalty, Reasoning effort, Reasoning summary, Verbosity, Thinking budget."
     )
-    assert screen._provider_generation_support_copy("openai", "gpt-5") == (
-        "Hidden for OpenAI: Min P, Top K, Thinking, Thinking budget."
+    assert copy("openai", "OpenAI", "gpt-5") == (
+        "OpenAI does not accept: Min P, Top K, Thinking, Thinking budget."
     )
 
 
@@ -4642,6 +4717,8 @@ def test_settings_model_default_save_leaves_values_for_hidden_rows_untouched():
 
     The Settings writer used to pop every unsupported field from the saved
     profile; it now leaves the fields the request drops exactly as saved.
+    Every row is passed as dirty, so a blank hidden row would be deleted
+    and only the support guard keeps it.
     """
     from tldw_chatbook.UI.Screens.settings_screen import (
         PROVIDER_MODEL_PROFILE_FIELD_KEYS,
@@ -4664,7 +4741,10 @@ def test_settings_model_default_save_leaves_values_for_hidden_rows_untouched():
     values["model_profile_temperature"] = 0.3
 
     updated = screen._updated_model_defaults_for_values(
-        "anthropic", "claude-sonnet-4-5", values
+        "anthropic",
+        "claude-sonnet-4-5",
+        values,
+        dirty_keys=set(PROVIDER_MODEL_PROFILE_FIELD_KEYS),
     )
 
     assert updated == {
@@ -5194,11 +5274,17 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        model_input = screen.query_one("#settings-model-value", Input)
-        model_input.value = "gpt-shortcut-check"
-        screen.handle_model_value_changed(Input.Changed(model_input, model_input.value))
+        adapter = screen.query_one("#settings-model-value", Input)
+        adapter.value = "gpt-shortcut-check"
+        screen.handle_model_value_changed(Input.Changed(adapter, adapter.value))
+        await pilot.pause()
         screen._provider_test_result = None
-        model_input.focus()
+        # TASK-33007.3, rewritten on purpose: the Model field users type in is
+        # the Default model picker's; a typed id is a Custom ID edit there
+        # (#settings-model-value is its hidden adapter).
+        picker = screen.query_one("#settings-model-picker")
+        model_input = picker.query_one("#model-search-picker-input", Input)
+        picker.toggle_custom_mode()
         await pilot.pause()
 
         assert screen.app.focused is model_input
@@ -5207,6 +5293,7 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(
         await pilot.pause()
 
         assert model_input.value == "srt"
+        assert adapter.value == "srt"
         assert saved == []
         # TASK-366: editing a provider input (the model here) marks the last
         # Test Provider result stale rather than leaving a now-inaccurate verdict.
@@ -5416,44 +5503,40 @@ async def test_settings_rail_focus_draws_a_readable_edge_on_every_row(request):
 async def test_providers_models_highlighted_option_is_a_readable_bar(request):
     """TASK-33003.6 AC#5: in Settings ▸ Providers & Models the highlighted
     provider differs from the other rows by 3:1 and its label stays AA on
-    the bar, focused or not, in agentic_terminal and a light theme. The
-    shared OptionList contract painted $surface on $panel (1.12:1)."""
+    the bar, in agentic_terminal and a light theme. The shared OptionList
+    contract painted $surface on $panel (1.12:1).
+
+    TASK-33007.2, rewritten on purpose: the list opens only from the focused
+    Provider control and never takes focus itself, so there is no focus
+    outline over its rows and one state to measure: open, control focused.
+    """
     host = _styled_settings_host()
     async with host.run_test(size=(211, 44)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         picker = screen.query_one("#settings-provider-picker", OptionList)
-        picker.scroll_visible(animate=False)
-        # The focus outline paints over this compact list's first and last
-        # rows (TASK-33007.2 owns that); keep the highlight off them.
-        picker.scroll_to(y=picker.scroll_offset.y + 2, animate=False)
+        screen.query_one("#settings-provider-search", Input).focus()
+        await pilot.press("down", "down", "down")
         await pilot.pause()
         for theme in ("agentic_terminal", "textual-light"):
             host.theme = theme
-            for focused in (False, True):
-                if focused:
-                    picker.focus()
-                else:
-                    host.set_focus(None)
-                await pilot.pause()
-                box = picker.content_region
-                label = str(picker.get_option_at_index(picker.highlighted).prompt)
-                strips = screen._compositor.render_strips()
-                rows = {
-                    y: strips[y].text[box.x : box.right]
-                    for y in range(box.y, box.bottom)
-                }
-                # The outline also covers each row's first cell when focused.
-                needle = label.strip()[1:8]
-                row_y = next(y for y, text in rows.items() if needle in text)
-                other_y = next(
-                    y for y, text in rows.items() if y != row_y and text.strip()
-                )
-                ink_x = box.x + rows[row_y].index(needle)
-                _, ink, bar = _rendered_cell(screen, ink_x, row_y)
-                _, _, rest = _rendered_cell(screen, ink_x, other_y)
-                assert _wcag_ratio(bar, rest) >= 3.0, (theme, focused, bar, rest)
-                assert _wcag_ratio(ink, bar) >= 4.5, (theme, focused, ink, bar)
+            await pilot.pause()
+            box = picker.content_region
+            label = str(picker.get_option_at_index(picker.highlighted).prompt)
+            strips = screen._compositor.render_strips()
+            rows = {
+                y: strips[y].text[box.x : box.right] for y in range(box.y, box.bottom)
+            }
+            needle = label.strip()
+            row_y = next(y for y, text in rows.items() if needle in text)
+            other_y = next(
+                y for y, text in rows.items() if y != row_y and text.strip()
+            )
+            ink_x = box.x + rows[row_y].index(needle)
+            _, ink, bar = _rendered_cell(screen, ink_x, row_y)
+            _, _, rest = _rendered_cell(screen, ink_x, other_y)
+            assert _wcag_ratio(bar, rest) >= 3.0, (theme, bar, rest)
+            assert _wcag_ratio(ink, bar) >= 4.5, (theme, ink, bar)
 
 
 @pytest.mark.asyncio
@@ -5605,6 +5688,12 @@ async def test_settings_long_detail_and_inspector_panes_are_scrollable_container
         await _open_settings_category(pilot, "#settings-category-providers-models")
         detail_body = screen.query_one("#settings-detail-pane-body", VerticalScroll)
         test_provider = screen.query_one("#settings-test-provider", Button)
+        # TASK-33007.6, changed on purpose: with Advanced folded the whole
+        # card fits this pane, so open Catalog refresh's 30 provider rows to
+        # make the content long enough to scroll.
+        catalog = screen.query_one("#settings-advanced-catalog-refresh", Collapsible)
+        catalog.collapsed = False
+        await pilot.pause()
 
         assert detail_body.max_scroll_y > 0
         detail_body.scroll_to_widget(
@@ -5728,8 +5817,12 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
         screen = _active_destination_screen(host)
         pane = screen.query_one("#settings-impact-pane-body", VerticalScroll)
         field = screen.query_one("#settings-console-max-parallel-runs", Input)
-        other_field = screen.query_one("#settings-console-default-streaming", Checkbox)
-        guide_ids = [f"#settings-console-behavior-field-guide-{i}" for i in range(4)]
+        # TASK-33007.7, rewritten on purpose: global streaming is an On/Off
+        # Select now, not a Checkbox; any other fallback field serves here.
+        other_field = screen.query_one("#settings-console-default-streaming", Select)
+        # TASK-33007.7 (review M6), rewritten on purpose: the guide is three
+        # rows now; "Saved as" moved into the closed "config key" disclosure.
+        guide_ids = [f"#settings-console-behavior-field-guide-{i}" for i in range(3)]
 
         # Measure the REAL (focused) guide's total span first, so the pane
         # can be grown to hold it end to end.
@@ -5796,8 +5889,8 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
         )
 
         # Trigger: focusing "Max parallel runs" swaps the guide's CONTENT
-        # in place (same 4 ids) to the real Purpose/Consequences/Saved as/
-        # Applies text and must re-scroll to reveal all of it.
+        # in place (same 3 ids) to the real Purpose/Consequences/Applies
+        # text and must re-scroll to reveal all of it.
         field.focus()
         await pilot.pause()
         await pilot.pause()
@@ -6793,9 +6886,10 @@ async def test_settings_console_behavior_renders_global_default_controls():
             screen.query_one("#settings-console-default-user-display-name", Input).value
             == "Rowan"
         )
+        # TASK-33007.7, rewritten on purpose: the On/Off Select shows "false".
         assert (
-            screen.query_one("#settings-console-default-streaming", Checkbox).value
-            is False
+            screen.query_one("#settings-console-default-streaming", Select).value
+            == "false"
         )
         assert (
             screen.query_one("#settings-console-default-temperature", Input).value
@@ -6850,7 +6944,9 @@ async def test_settings_console_behavior_renders_global_default_controls():
             == "50"
         )
         text = _visible_text(screen)
-        assert "Default chat display name" in text
+        # Captures review note 10, rewritten on purpose: "Default chat
+        # display name" did not fit the 24-cell label column.
+        assert "Chat display name" in text
         assert (
             "Used for your speaker label. Character chats also use it for trusted "
             "{{user}} templates."
@@ -6859,9 +6955,20 @@ async def test_settings_console_behavior_renders_global_default_controls():
             "Used when no provider+model profile or active Console session overrides them."
             in text
         )
-        assert (
-            "chat_defaults.streaming is canonical; enable_streaming is read as fallback only."
-            in text
+        # TASK-33007.7, rewritten on purpose: the raw streaming-key line left
+        # the card; the Inspector's closed "config key" disclosure holds it.
+        assert "enable_streaming" not in " ".join(
+            str(static.renderable)
+            for static in screen.query_one("#settings-detail-pane-body").query(Static)
+        )
+        disclosure = screen.query_one(
+            "#settings-console-behavior-config-key", Collapsible
+        )
+        assert disclosure.collapsed is True
+        assert "enable_streaming is read only when streaming is absent" in str(
+            disclosure.query_one(
+                "#settings-console-streaming-compatibility", Static
+            ).renderable
         )
 
 
@@ -7245,7 +7352,8 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        streaming = screen.query_one("#settings-console-default-streaming", Checkbox)
+        # TASK-33007.7, rewritten on purpose: an On/Off Select, not a Checkbox.
+        streaming = screen.query_one("#settings-console-default-streaming", Select)
         temperature = screen.query_one("#settings-console-default-temperature", Input)
         top_p = screen.query_one("#settings-console-default-top-p", Input)
         min_p = screen.query_one("#settings-console-default-min-p", Input)
@@ -7272,9 +7380,9 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
             "#settings-console-default-thinking-budget-tokens", Input
         )
 
-        streaming.value = False
+        streaming.value = "false"
         screen.handle_console_default_streaming_changed(
-            Checkbox.Changed(streaming, False)
+            Select.Changed(streaming, "false")
         )
         temperature.value = "0.33"
         screen.handle_console_default_temperature_changed(
@@ -7517,15 +7625,16 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         threshold = screen.query_one(
             "#settings-console-paste-collapse-threshold", Input
         )
-        streaming = screen.query_one("#settings-console-default-streaming", Checkbox)
+        # TASK-33007.7, rewritten on purpose: an On/Off Select, not a Checkbox.
+        streaming = screen.query_one("#settings-console-default-streaming", Select)
 
         threshold.value = "120"
         screen.handle_console_paste_threshold_changed(
             Input.Changed(threshold, threshold.value)
         )
-        streaming.value = False
+        streaming.value = "false"
         screen.handle_console_default_streaming_changed(
-            Checkbox.Changed(streaming, False)
+            Select.Changed(streaming, "false")
         )
 
         await pilot.click("#settings-save-category")
@@ -7852,8 +7961,13 @@ async def test_settings_provider_category_uses_effective_console_source():
 
         assert "llama_cpp" in text
         assert "qwen" in text
-        assert "Provider source: Saved chat defaults" in text
-        assert "Model source: Saved chat defaults" in text
+        # TASK-33007.2, rewritten on purpose: the readiness block's "Provider
+        # source" / "Model source" lines are the rows' Source words now.
+        for selector in ("#settings-provider-source", "#settings-model-source"):
+            assert (
+                str(screen.query_one(selector, Static).renderable)
+                == "new-chat default"
+            ), selector
         assert screen.query_one("#settings-provider-value", Select).value == "llama_cpp"
         assert screen.query_one("#settings-model-value", Input).value == "qwen"
 
@@ -9140,11 +9254,16 @@ async def test_settings_provider_keyless_local_provider_does_not_report_missing_
             screen,
             pilot,
             SettingsCategoryId.PROVIDERS_MODELS,
-            expected_text="API key: not required for this provider",
+            expected_text="this provider needs no key",
         )
         text = _visible_text(screen)
 
-        assert "API key: not required for this provider" in text
+        # TASK-33007.2, rewritten on purpose: the API key row says it.
+        assert "this provider needs no key" in text
+        assert (
+            str(screen.query_one("#settings-provider-key-status", Static).renderable)
+            == "not required"
+        )
         assert "LLAMA_CPP_API_KEY=missing" not in text
 
 
@@ -9337,7 +9456,12 @@ async def test_settings_provider_category_saves_selected_model_profile(
         screen.query_one("#settings-model-profile-top-p", Input).value = "0.88"
         screen.query_one("#settings-model-profile-streaming", Select).value = "false"
         # TASK-33002.6: the fallbacks live in the rail's Console Behavior.
-        assert "Global fallbacks live under Console Behavior" in _visible_text(screen)
+        # TASK-33007.5, rewritten on purpose: that sentence is gone; a blank
+        # row's Source word names Console Behavior, and the open section's
+        # title names the pair these defaults belong to.
+        assert str(
+            screen.query_one("#settings-generation-defaults", Collapsible).title
+        ) == "Model defaults · OpenAI · gpt-4.1"
 
         await pilot.click("#settings-save-category")
 
@@ -9459,10 +9583,13 @@ async def test_settings_provider_category_saves_openai_generation_profile(
         for selector, value in select_values.items():
             screen.query_one(selector, Select).value = value
 
-        text = _visible_text(screen)
         # task-189: gated groups collapse to one summary line; dead rows hide.
         # TASK-33001.2: OpenAI's request carries no min_p or top_k either.
-        assert "Hidden for OpenAI: Min P, Top K, Thinking, Thinking budget." in text
+        # TASK-33007.5, rewritten on purpose: the names are Chat settings'
+        # line, listed inside the Sampling disclosure.
+        assert str(
+            screen.query_one("#settings-provider-generation-support", Static).renderable
+        ) == "OpenAI does not accept: Min P, Top K, Thinking, Thinking budget."
         assert (
             screen.query_one("#settings-model-profile-thinking-effort", Select).disabled
             is True
@@ -9500,13 +9627,21 @@ async def test_settings_provider_category_saves_openai_generation_profile(
     }
 
 
-def test_settings_enum_select_value_clamps_case_and_unknown_values():
+def test_settings_enum_select_value_takes_only_an_exact_option():
     screen = SettingsScreen(_build_test_app())
 
-    # Case-insensitive: a hand-edited valid value still renders (not nulled).
+    # Task 7 review round 4: a hand-edited "High" is no option. A new chat
+    # takes "High" as written, so showing "high" said something false; the
+    # row names the saved value instead (as Console Behavior's fallbacks do).
     assert (
         screen._select_option_value(
             "High", settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
+        )
+        is Select.NULL
+    )
+    assert (
+        screen._select_option_value(
+            " high ", settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
         )
         == "high"
     )
@@ -9526,7 +9661,9 @@ def test_settings_enum_select_value_clamps_case_and_unknown_values():
 
 
 @pytest.mark.asyncio
-async def test_settings_profile_enum_select_clamps_saved_values():
+async def test_settings_profile_enum_select_shows_only_exact_saved_values():
+    """Task 7 review round 4: neither hand edit is an option, so both Selects
+    are blank and both rows name the value a new chat still takes."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {
@@ -9542,14 +9679,13 @@ async def test_settings_profile_enum_select_clamps_saved_values():
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
-        assert (
-            screen.query_one("#settings-model-profile-reasoning-effort", Select).value
-            == "high"
-        )
-        assert (
-            screen.query_one("#settings-model-profile-verbosity", Select).value
-            is Select.NULL
-        )
+        for field, saved in (("reasoning-effort", "High"), ("verbosity", "extreme")):
+            selector = f"#settings-model-profile-{field}"
+            assert screen.query_one(selector, Select).value is Select.NULL
+            assert (
+                str(screen.query_one(f"{selector}-source", Static).renderable),
+                str(screen.query_one(f"{selector}-help", Static).renderable),
+            ) == ("model default", f"saved '{saved}' is not a choice")
 
 
 def test_settings_generation_controls_allow_openai_none_reasoning_effort():
@@ -9603,15 +9739,18 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(
         for selector, value in select_values.items():
             screen.query_one(selector, Select).value = value
 
-        text = _visible_text(screen)
         # task-189: gated groups collapse to one summary line; dead rows hide.
         # TASK-33001.2: Anthropic's request carries no Min P, Seed or
         # penalties, and Opus 4.7 rejects a fixed thinking budget.
-        assert (
-            "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency "
+        # TASK-33007.5, rewritten on purpose: the names are Chat settings'
+        # line, listed inside the Sampling disclosure.
+        assert str(
+            screen.query_one("#settings-provider-generation-support", Static).renderable
+        ) == (
+            "Anthropic does not accept: Min P, Seed, Presence penalty, Frequency "
             "penalty, Reasoning effort, Reasoning summary, Verbosity, Thinking "
             "budget."
-        ) in text
+        )
         for row_id in (
             "#settings-model-profile-min-p-row",
             "#settings-model-profile-seed-row",
@@ -9781,9 +9920,15 @@ async def test_settings_provider_streaming_and_enums_prevent_invalid_input(
 
         # Console-side booleans/enums use the same constrained widgets.
         await _open_settings_category(pilot, "#settings-category-console-behavior")
-        assert isinstance(
-            screen.query_one("#settings-console-default-streaming"), Checkbox
+        # TASK-33007.7, rewritten on purpose: global streaming is the model
+        # default's Select family -- On/Off only, with nothing to inherit.
+        console_streaming = screen.query_one(
+            "#settings-console-default-streaming", Select
         )
+        assert [value for _label, value in console_streaming._options] == [
+            "true",
+            "false",
+        ]
         console_enums = {
             "#settings-console-default-reasoning-effort": set(
                 settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
@@ -10131,12 +10276,17 @@ async def test_settings_provider_category_renders_local_api_key_setup_without_re
         assert api_key.value == ""
         text = _visible_text(screen)
         assert "API key" in text
-        assert "local config key saved" in text.lower()
+        # TASK-33007.2, rewritten on purpose: the API key row's Source word.
+        assert "saved in config" in text.lower()
         assert fake_key not in text
 
 
 @pytest.mark.asyncio
 async def test_settings_provider_category_saves_and_clears_local_api_key(monkeypatch):
+    from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+        API_KEY_CLEAR_KEY,
+    )
+
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -10167,9 +10317,13 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
         await pilot.pause()
         clear_button = screen.query_one("#settings-provider-api-key-clear", Button)
         assert clear_button.disabled is False
-        clear_button.focus()
+        # TASK-33007.2 (owner ruling 2026-10-04), rewritten on purpose: Clear
+        # is not a Tab stop; its key on the API key field presses it. Which
+        # key is test_settings_connect_key_rows.py's to pin.
+        screen.query_one("#settings-provider-api-key", Input).focus()
         await pilot.pause()
-        await pilot.press("enter")
+        await pilot.press(API_KEY_CLEAR_KEY)
+        await pilot.pause()
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
         assert draft.values["api_key"] == ""
         await pilot.click("#settings-save-category")
@@ -10977,8 +11131,12 @@ async def test_settings_provider_switch_selects_provider_default_model():
         assert screen.query_one("#settings-model-value", Input).value == "llama3"
         text = _visible_text(screen)
         assert "Provider readiness: Ollama / llama3" in text
-        assert "Provider source: Unsaved Settings draft" in text
-        assert "Model source: Unsaved Settings draft" in text
+        # TASK-33007.2, rewritten on purpose: the readiness block's source
+        # lines are the Provider and Model rows' Source words now.
+        for selector in ("#settings-provider-source", "#settings-model-source"):
+            assert (
+                str(screen.query_one(selector, Static).renderable) == "edited *"
+            ), selector
         assert "Provider readiness: Ollama / gpt-4o" not in text
 
 
@@ -11028,9 +11186,12 @@ async def test_settings_provider_switch_resets_staged_model_for_each_provider_tr
         await pilot.pause()
 
         assert model_input.value == ""
+        # TASK-33007.2, rewritten on purpose: settings-provider-readiness is
+        # the Key check row's readiness word; the provider/model pair stays in
+        # the Inspector row below.
         assert (
             str(screen.query_one("#settings-provider-readiness", Static).renderable)
-            == "Readiness: Anthropic / not selected"
+            == "Not ready · no key"
         )
         assert (
             str(
@@ -11073,12 +11234,24 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
             str(screen.query_one("#settings-category-providers-models", Button).label)
             == "> Providers & Models *"
         )
-        assert "Provider source: Unsaved Settings draft" in text
-        assert "Model source: Unsaved Settings draft" in text
-        assert "Source: settings_draft" not in text
-        assert "Model source: settings_draft" not in text
+        # TASK-33007.2, rewritten on purpose: the readiness block's source and
+        # Endpoint lines are the rows' Source words and the Endpoint field.
+        for selector in ("#settings-provider-source", "#settings-model-source"):
+            assert (
+                str(screen.query_one(selector, Static).renderable) == "edited *"
+            ), selector
+        assert "settings_draft" not in text
         assert "Endpoint key: api_settings.ollama.api_url" in text
-        assert "Endpoint: http://localhost:11434/v1/chat/completions" in text
+        assert (
+            screen.query_one("#settings-provider-endpoint-value", Input).value
+            == "http://localhost:11434/v1/chat/completions"
+        )
+        assert (
+            str(
+                screen.query_one("#settings-provider-endpoint-source", Static).renderable
+            )
+            == "config"
+        )
         assert (
             "Endpoint: api_settings.ollama.api_url=http://localhost:11434" not in text
         )
@@ -11098,7 +11271,12 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
         # so the key spans two lines in visible text.
         assert "Saved as: api_settings.ollama." in text
         assert "api_url" in text
-        assert "Validation: an http:// or https:// address when set" in text
+        # TASK-33007, rewritten on purpose: Ollama's Endpoint row reads
+        # "required: the server's base URL", and the guide now says so too.
+        assert (
+            "Validation: an http:// or https:// address; "
+            "required: the server's base URL" in text
+        )
 
 
 @pytest.mark.asyncio
@@ -11196,7 +11374,13 @@ async def test_settings_provider_test_uses_api_settings_env_var_without_secret_l
         await _wait_for_settings_text(screen, pilot, "from env var GROQ_API_KEY")
         text = _visible_text(screen)
 
-        assert "env:GROQ_API_KEY" in text
+        # TASK-33007.2, rewritten on purpose: the API key row says where the
+        # key comes from (the readiness block's "API key: env:..." is gone).
+        assert "GROQ_API_KEY in your shell" in text
+        assert (
+            str(screen.query_one("#settings-provider-key-status", Static).renderable)
+            == "from env var"
+        )
         # TASK-33002.2 AC#3: the Key row names the source, never the value.
         assert dict(_provider_test_rows_of(screen._provider_test_result))["Key"] == (
             "from env var GROQ_API_KEY · present, not verified"
@@ -12578,11 +12762,16 @@ def test_settings_source_labels_cover_every_resolvable_source():
     never renders a raw `key.replace("_", " ")` fallback (the stale
     `console_control`/`app_reactive` keys did exactly that for
     `console_session` after task-648's rename).
+
+    TASK-33007.2, rewritten on purpose: the readiness block's source labels
+    became the Provider and Model rows' Source words.
     """
-    from tldw_chatbook.UI.Screens.settings_screen import SETTINGS_SOURCE_LABELS
+    from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+        SELECTION_SOURCE_WORDS,
+    )
 
     resolvable = {"settings_draft", "console_session", "chat_defaults", "default"}
-    assert set(SETTINGS_SOURCE_LABELS) == resolvable
+    assert set(SELECTION_SOURCE_WORDS) == resolvable
 
 
 # ---- [chat.images] render_remote_images toggle (task-1537 settings UI) ----
@@ -13916,7 +14105,9 @@ async def test_settings_invalid_input_keeps_error_tint_while_focused():
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        model_input = screen.query_one("#settings-model-value", Input)
+        # TASK-33007.3, rewritten on purpose: the visible one-row Model field
+        # is the picker's (#settings-model-value is a hidden adapter).
+        model_input = screen.query_one("#model-search-picker-input", Input)
         model_input.add_class("settings-invalid-input")
         await pilot.pause()
 

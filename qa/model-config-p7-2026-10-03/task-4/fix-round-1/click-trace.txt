@@ -1,0 +1,53 @@
+# Why the config-key title click needs the focus early-return (finding 7)
+
+Traced 2026-10-04 at 769dff7edc with a scratch probe (not committed) that repeats the disclosure test's setup
+(OpenAI app, 211x44, Endpoint focused, inspector scrolled to the disclosure) and then sends exactly what
+pilot.click sends -- MouseDown, then MouseUp + Click -- at ONE screen offset fixed before the first event,
+recording state after each step. A spy on CollapsibleTitle._on_click counts the clicks the title receives.
+Variant scroll-off additionally replaces SettingsScreen._scroll_impact_pane_to_field_guide with a no-op,
+to separate the guide-row reflow from the inspector scroll. Both variants ran on the committed code and
+with the early return replaced by 'pass' (negative control NC2), restored afterwards.
+
+
+## HEAD as committed (early return present)
+
+### variant scroll-on, click offset (x, y) = (170, 23)
+- before MouseDown: focused=SettingsURLInput#settings-provider-endpoint-value pane_scroll_y=12.0 title=Region(x=170, y=23, width=14, height=1) widget_at_offset=CollapsibleTitle() guide0='Focused setting: Endpoint' collapsed=True
+- after MouseDown (focus landed): focused=CollapsibleTitle#None pane_scroll_y=12.0 title=Region(x=170, y=23, width=14, height=1) widget_at_offset=CollapsibleTitle() guide0='Focused setting: Endpoint' collapsed=True
+- after MouseUp + Click: focused=CollapsibleTitle#None pane_scroll_y=19 title=Region(x=170, y=16, width=14, height=1) widget_at_offset=Contents() guide0='Focused setting: Endpoint' collapsed=False
+- clicks the title received: 1
+
+### variant scroll-off, click offset (x, y) = (170, 35)
+- before MouseDown: focused=SettingsURLInput#settings-provider-endpoint-value pane_scroll_y=0.0 title=Region(x=170, y=35, width=14, height=1) widget_at_offset=CollapsibleTitle() guide0='Focused setting: Endpoint' collapsed=True
+- after MouseDown (focus landed): focused=CollapsibleTitle#None pane_scroll_y=0.0 title=Region(x=170, y=35, width=14, height=1) widget_at_offset=CollapsibleTitle() guide0='Focused setting: Endpoint' collapsed=True
+- after MouseUp + Click: focused=CollapsibleTitle#None pane_scroll_y=19 title=Region(x=170, y=16, width=14, height=1) widget_at_offset=Contents() guide0='Focused setting: Endpoint' collapsed=False
+- clicks the title received: 1
+
+## early return removed (nc2 mutation)
+
+### variant scroll-on, click offset (x, y) = (170, 23)
+- before MouseDown: focused=SettingsURLInput#settings-provider-endpoint-value pane_scroll_y=12.0 title=Region(x=170, y=23, width=14, height=1) widget_at_offset=CollapsibleTitle() guide0='Focused setting: Endpoint' collapsed=True
+- after MouseDown (focus landed): focused=CollapsibleTitle#None pane_scroll_y=12.0 title=Region(x=170, y=25, width=14, height=1) widget_at_offset=Static(id='settings-provider-field-guide-3', classes='settings-detail-row') guide0='Focused setting: None — Tab to a setting' collapsed=True
+- after MouseUp + Click: focused=CollapsibleTitle#None pane_scroll_y=12.0 title=Region(x=170, y=25, width=14, height=1) widget_at_offset=Static(id='settings-provider-field-guide-3', classes='settings-detail-row') guide0='Focused setting: None — Tab to a setting' collapsed=True
+- clicks the title received: 0
+
+### variant scroll-off, click offset (x, y) = (170, 35)
+- before MouseDown: focused=SettingsURLInput#settings-provider-endpoint-value pane_scroll_y=0.0 title=Region(x=170, y=35, width=14, height=1) widget_at_offset=CollapsibleTitle() guide0='Focused setting: Endpoint' collapsed=True
+- after MouseDown (focus landed): focused=CollapsibleTitle#None pane_scroll_y=0.0 title=Region(x=170, y=37, width=14, height=1) widget_at_offset=Static(id='settings-provider-field-guide-3', classes='settings-detail-row') guide0='Focused setting: None — Tab to a setting' collapsed=True
+- after MouseUp + Click: focused=CollapsibleTitle#None pane_scroll_y=0.0 title=Region(x=170, y=37, width=14, height=1) widget_at_offset=Static(id='settings-provider-field-guide-3', classes='settings-detail-row') guide0='Focused setting: None — Tab to a setting' collapsed=True
+- clicks the title received: 0
+
+## Reading
+- Committed code: MouseDown focuses the title; the guide keeps 'Focused setting: Endpoint'; the title stays at
+  the offset; MouseUp + Click reach it (1 click) and the disclosure opens. The later pane_scroll_y 19 is the
+  Collapsible scrolling itself into view after it opens (textual widgets/_collapsible.py:222, scroll_visible on expand).
+- Early return removed: MouseDown focuses the title (no id), so handle_descendant_focus records no field and
+  rewrites the guide to its no-focus copy ('Focused setting: None — Tab to a setting', ...). At the 36-column
+  inspector that copy wraps 2 rows taller, so the title moves from y=23 to y=25 (scroll-off: 35 to 37) while
+  pane_scroll_y does not move. MouseUp + Click land on #settings-provider-field-guide-3, the row now under
+  the pointer; the title receives 0 clicks and the disclosure stays closed.
+- The scroll-off variant fails the same way, so the cause is the guide reflow under the pointer, not the
+  inspector's scroll-to-guide (the implementer's 'likely cause' was wrong).
+- A real terminal fails the same way: App.on_event only synthesises a Click when the MouseUp widget is the
+  MouseDown widget (textual 8.2.8 app.py), and here they differ. So the early return is load-bearing for
+  mouse users, not only for the test; the comment at the early return now says so (fix round 1).

@@ -17,7 +17,7 @@ from dataclasses import replace
 from uuid import uuid4
 
 import pytest
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Select, Static
 
 import tldw_chatbook.Chat.console_settings_defaults as defaults_module
 from Tests.console_provider_doubles import provider_resolution
@@ -2474,6 +2474,9 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
             evidence_token,
             ProviderProbeResult(endpoint="reachable", model_ids=("dirty-model",)),
         )
+        # TASK-33007.2: a real probe settles through this refresh, which also
+        # re-says the Key check row's verdict from the settled evidence.
+        screen._update_provider_test_result()
         screen._model_discovery_status = "Earlier discovery result."
         screen._model_discovery_selected_model_ids = {"earlier-discovered-model"}
         screen._refresh_model_discovery_widgets()
@@ -2505,20 +2508,46 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
             )
             api_key = screen.query_one("#settings-provider-api-key", Input)
             temperature = screen.query_one("#settings-model-profile-temperature", Input)
+            # TASK-33007.2, rewritten on purpose: the readiness block's
+            # Endpoint row (settings-provider-endpoint) is gone; each Connect
+            # row's Source word and help line take its facts, and
+            # settings-provider-readiness is the Key check verdict.
+            # TASK-33007.4, extended on purpose (R15): the Applies-to row
+            # names the pair the open chat will use; the endpoint-key row
+            # moved into the Inspector's config-key disclosure, same id.
+            # TASK-33007.5, extended on purpose (R15): Model defaults rows say
+            # their Source word and what a blank inherits; the
+            # generation-support id is now the opened Sampling list.
             dynamic_static_ids = (
+                "settings-model-applies-to",
+                "settings-model-profile-temperature-source",
+                "settings-model-profile-temperature-help",
                 "settings-provider-readiness",
                 "settings-provider-inspector-readiness",
                 "settings-provider-source",
                 "settings-model-source",
                 "settings-provider-endpoint-key",
-                "settings-provider-endpoint",
+                "settings-provider-search-status",
+                "settings-provider-key-status",
+                "settings-provider-api-key-help",
+                "settings-provider-env-var-source",
+                "settings-provider-endpoint-source",
+                "settings-provider-endpoint-help",
                 "settings-provider-generation-support",
                 "settings-provider-api-mode-guidance",
                 "settings-provider-credential-guidance",
                 "settings-hosted-provider-guidance",
             )
+            control = screen.query_one("#settings-provider-search", Input)
+            # TASK-33007.3, extended on purpose (R15): the Default model is a
+            # picker over the hidden #settings-model-value adapter; what it
+            # shows and holds is restored with the adapter.
+            picker = screen.query_one("#settings-model-picker")
+            picker_field = picker.query_one("#model-search-picker-input", Input)
             return {
                 "provider": (provider.value, provider.disabled),
+                "provider_control": (control.value, control.disabled),
+                "model_picker": (picker_field.value, picker.value, picker.disabled),
                 "manual": (manual.value, manual.placeholder, manual.disabled),
                 "model": (model.value, model.placeholder, model.disabled),
                 "endpoint": (
@@ -2563,6 +2592,13 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
                         str(screen.query_one(f"#{widget_id}", Static).renderable),
                     )
                     for widget_id in dynamic_static_ids
+                ),
+                "disclosure_titles": tuple(
+                    str(screen.query_one(selector, Collapsible).title)
+                    for selector in (
+                        "#settings-generation-defaults",
+                        "#settings-model-sampling",
+                    )
                 ),
                 "save": screen.query_one("#settings-save-category", Button).disabled,
                 "revert": screen.query_one(

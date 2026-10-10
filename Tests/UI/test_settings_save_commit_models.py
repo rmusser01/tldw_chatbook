@@ -10,7 +10,8 @@ These tests pin:
 * staged stays the default model for the guided categories;
 * every intentional instant-apply control is labeled inline
   ("applies immediately - no Save needed") and visually separated from
-  staged fields (its own bordered group);
+  staged fields (its own instant-apply group; TASK-33007.6 dropped that
+  group's border, as the pane border is the card's only frame);
 * the focused-field inspector documents the per-field save behavior
   ("Save: staged - press s to save, r to revert" vs
   "Save: applies immediately - no Save needed").
@@ -23,6 +24,7 @@ from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
+    _console_config_key_saved_as,
     _visible_text,
 )
 from Tests.UI.test_screen_navigation import _build_test_app
@@ -40,7 +42,8 @@ INSTANT_SAVE_ROW = f"Save: {INSTANT_APPLY_LABEL}"
 @pytest.mark.asyncio
 async def test_model_catalog_controls_are_labeled_and_visually_separated():
     """Providers pane: the auto-refresh block carries the inline instant-apply
-    label and lives in its own bordered group, distinct from staged fields."""
+    label and lives in its own instant-apply group, distinct from staged
+    fields (TASK-33007.6: the group keeps its class, not its border)."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -106,8 +109,10 @@ async def test_console_display_name_documents_staged_save_in_the_inspector():
             "Purpose: Default speaker label for chats without a per-chat override."
             in text
         )
-        assert "Saved as: chat_defaults." in text
-        assert "user_display_name" in text
+        # TASK-33007.7: the key sits in the closed config key disclosure.
+        saved_as = _console_config_key_saved_as(screen)
+        assert "Saved as: chat_defaults." in saved_as
+        assert "user_display_name" in saved_as
         assert STAGED_SAVE_ROW in text
 
 

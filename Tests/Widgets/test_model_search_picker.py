@@ -11,7 +11,7 @@ import asyncio
 
 import pytest
 
-from textual import on
+from textual import events, on
 from textual.app import App
 from textual.widgets import Button, Input, OptionList, Select
 from textual.widgets._input import Selection
@@ -232,6 +232,34 @@ async def test_enter_commits_single_keyboard_filtered_result():
         assert search_input.value == "anthropic/claude-x"
         assert app.selected_models == ["anthropic/claude-x"]
 
+        # TASK-33007.9: the choice is selected like the Provider's, so the
+        # next key filters afresh instead of landing at the filter's index.
+        await pilot.press("o")
+        assert search_input.value == "o"
+
+
+@pytest.mark.asyncio
+async def test_enter_on_an_exactly_typed_id_selects_it_so_the_next_key_searches_afresh():
+    """TASK-33007.9 (review round 3): Enter on text that already equals the
+    chosen id leaves the field's text unchanged, and that choice is selected
+    too, so the next key replaces it."""
+    app = PickerTestApp(
+        {"OpenRouter": []},
+        _entries("OpenRouter", ["anthropic/claude-x", "openai/gpt-y"]),
+    )
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        search_input = app.query_one("#model-search-picker-input", Input)
+        app.set_focus(search_input)
+        await pilot.pause()
+        await pilot.press(*"openai/gpt-y", "enter")
+        await pilot.pause()
+
+        assert app.selected_models == ["openai/gpt-y"]
+        assert search_input.value == "openai/gpt-y"
+        await pilot.press("o")
+        assert search_input.value == "o"
+
 
 @pytest.mark.asyncio
 async def test_keyboard_result_commit_restores_visible_input_focus():
@@ -446,6 +474,11 @@ async def test_escape_clears_filter_without_losing_committed_model():
         assert picker.value == "saved-model"
         assert search_input.value == "saved-model"
         assert not _results(app).display
+
+        # TASK-33007.9: the restored model is selected, not left under the
+        # filter's selection, so the next key replaces it whole.
+        await pilot.press("o")
+        assert search_input.value == "o"
 
 
 @pytest.mark.asyncio
@@ -724,6 +757,43 @@ async def test_unverified_served_now_option_is_grouped_as_unverified() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("served_now", "group"),
+    [(False, "Custom / unverified"), (True, "Served now")],
+)
+async def test_discovered_overlay_groups_as_served_now_only_when_its_host_says_so(
+    served_now, group
+) -> None:
+    """TASK-33007.3: Settings drops its listing whenever the endpoint changes,
+    so its overlay's new ids are served now; the default stays unverified."""
+    app = PickerTestApp({"OpenRouter": []}, ())
+    async with app.run_test() as pilot:
+        picker = app.query_one(ModelSearchPicker)
+        picker.set_provenance_options(
+            "OpenRouter",
+            (
+                _provenance_option(
+                    "catalog/model", ConsoleModelProvenance.CURRENT_CATALOG
+                ),
+            ),
+        )
+        picker.set_discovered_models(
+            "OpenRouter", ["catalog/model", "listed/model"], served_now=served_now
+        )
+        picker.focus_input()
+        await pilot.pause()
+
+        prompts = _result_prompts(_results(app))
+        assert prompts[prompts.index(group) + 1] == "listed/model", prompts
+        assert prompts[prompts.index("Current catalog") + 1] == "catalog/model"
+        assert picker.provenance_for_model("listed/model") == (
+            ConsoleModelProvenance.SERVED_NOW
+            if served_now
+            else ConsoleModelProvenance.CUSTOM_UNVERIFIED
+        )
+
+
+@pytest.mark.asyncio
 async def test_provenance_filter_only_renders_non_empty_groups() -> None:
     """Filtering must not leave orphan headings for groups with no matches."""
     app = PickerTestApp({"OpenRouter": []}, ())
@@ -833,11 +903,13 @@ async def test_truncated_results_say_how_many_matched_and_that_typing_narrows():
         )
 
         # Narrowing under the cap drops the note: the list is complete again.
+        # Rewritten on purpose (TASK-33007 capture fix 8): a typed filter
+        # counts its own matches, as the Settings Provider list does.
         await _set_query(pilot, "vendor/m2")
         assert _result_prompts(_results(app)) == [
             f"vendor/m{index}" for index in range(20, cap + 5)
         ]
-        assert _status_text(app) == f"{cap + 5} models available. Type to filter."
+        assert _status_text(app) == "5 found · Enter picks · Esc cancels"
 
 
 _OVER_CAP_IDS = [
@@ -935,7 +1007,8 @@ async def test_focus_keeps_committed_model_selected_so_typing_replaces_it():
         await pilot.pause()
 
         assert search_input.value == "saved-model"
-        assert search_input.selection == Selection(0, len("saved-model"))
+        # TASK-33007.9: the whole id is selected with the caret at its head.
+        assert search_input.selection == Selection(len("saved-model"), 0)
         assert "openai/gpt-y" in _result_prompts(_results(app))
 
         await pilot.press("c", "l")
@@ -962,7 +1035,7 @@ async def test_focusing_click_selects_committed_model_so_typing_replaces_it():
         await pilot.click("#model-search-picker-input", offset=(4, 1))
         await pilot.pause()
         assert search_input.value == "saved-model"
-        assert search_input.selection == Selection(0, len("saved-model"))
+        assert search_input.selection == Selection(len("saved-model"), 0)
 
         await pilot.press("c", "l")
         assert search_input.value == "cl"
@@ -980,6 +1053,170 @@ async def test_focusing_click_selects_committed_model_so_typing_replaces_it():
 
 def _painted_text(app) -> str:
     return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+
+
+#: Wider than the field at the default 80-column test size.
+_WIDE_HEAD = "head-of-the-id/"
+_WIDE_MODEL = _WIDE_HEAD + "x" * 90 + "/its-tail"
+
+
+def _painted_field(app, field) -> str:
+    """The cells the compositor paints for ``field``'s text area."""
+    area = field.content_region
+    return _painted_text(app).splitlines()[area.y][area.x : area.right]
+
+
+async def _until(pilot, condition) -> None:
+    """Pause until ``condition()`` holds (the picker's blur timer is 50 ms)."""
+    for _ in range(100):
+        if condition():
+            return
+        await pilot.pause(0.02)
+
+
+async def _leave_the_picker(pilot, field) -> None:
+    pilot.app.query_one("#apply", Button).focus()
+    await _until(pilot, lambda: not field.has_focus)
+    await pilot.pause(0.2)  # the picker's blur timer
+
+
+@pytest.mark.asyncio
+async def test_a_model_id_wider_than_the_field_reads_from_its_head():
+    """TASK-33007.9 (review round 2): Input keeps a cell for the caret after
+    the last character and scrolls to it, so a select-all that ended there
+    pushed the head of a wide model id out of view. Focus now selects with
+    the caret at the head, and a field without focus comes to rest on the
+    head: after the caret was left at the end, after a value is set while it
+    rests, and for a Custom ID."""
+    shorter = _WIDE_MODEL[:-20]
+    app = PickerTestApp(
+        {"OpenRouter": []},
+        _entries("OpenRouter", [_WIDE_MODEL, shorter]),
+        current_model=_WIDE_MODEL,
+    )
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        picker = app.query_one(ModelSearchPicker)
+        field = app.query_one("#model-search-picker-input", Input)
+        assert field.content_region.width < len(shorter)
+        assert _painted_field(app, field).startswith(_WIDE_HEAD)  # as mounted
+
+        picker.focus_input()
+        await pilot.pause()
+        assert field.selection == Selection(len(_WIDE_MODEL), 0)
+        assert _painted_field(app, field).startswith(_WIDE_HEAD)
+
+        # The caret is the user's to move while the field is theirs.
+        await pilot.press("end")
+        await pilot.pause()
+        assert not _painted_field(app, field).startswith(_WIDE_HEAD)
+        await _leave_the_picker(pilot, field)
+        assert _painted_field(app, field).startswith(_WIDE_HEAD)
+
+        # A shorter id set at rest moves the caret, which Input scrolls to.
+        picker.set_model_value(shorter)
+        await pilot.pause()
+        assert field.value == shorter
+        assert _painted_field(app, field).startswith(_WIDE_HEAD)
+
+        picker.toggle_custom_mode()
+        await pilot.pause()
+        await pilot.press("end", "z")
+        await pilot.pause()
+        assert field.value == shorter + "z"
+        assert not _painted_field(app, field).startswith(_WIDE_HEAD)
+        await _leave_the_picker(pilot, field)
+        assert field.value == shorter + "z"
+        assert _painted_field(app, field).startswith(_WIDE_HEAD)
+
+
+@pytest.mark.asyncio
+async def test_a_returning_window_focus_selects_the_model_unless_text_is_being_typed():
+    """TASK-33007.9 (review round 2): Input keeps the caret when the window
+    regains focus. Here the blur has dropped the filter and put the committed
+    model back by then, so that focus selects it like any other and the next
+    key replaces it. Text still being typed keeps its caret: a filter when the
+    window was away for less than the blur timer, with the list it filtered,
+    and a Custom ID always, scrolled back into view after the blur showed the
+    head of an id wider than the field."""
+    app = PickerTestApp(
+        {"OpenRouter": ["saved-model"]},
+        _entries("OpenRouter", ["anthropic/claude-x", "openai/gpt-y"]),
+        current_model="saved-model",
+    )
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        picker = app.query_one(ModelSearchPicker)
+        field = app.query_one("#model-search-picker-input", Input)
+        picker.focus_input()
+        await pilot.pause()
+        await pilot.press("c", "l")
+        assert field.value == "cl" and _results(app).display
+
+        # Away for less than the blur timer: both events are queued at once.
+        app.post_message(events.AppBlur())
+        app.post_message(events.AppFocus())
+        await pilot.pause(0.3)
+        assert field.has_focus and _results(app).display
+        assert field.value == "cl"
+        assert field.selection == Selection.cursor(2)
+        assert _result_prompts(_results(app)) == ["anthropic/claude-x"]
+
+        # Round 3: a filter that matches nothing hides the list, and is still
+        # being typed: it keeps its caret, the hidden list and its status, on
+        # a short window blur and on Tab out to Custom ID and Shift+Tab back.
+        no_match = "No matching models. Clear the filter or use Custom ID."
+        await pilot.press("backspace", "backspace", "z", "z", "z")
+        assert field.value == "zzz" and not _results(app).display
+        app.post_message(events.AppBlur())
+        app.post_message(events.AppFocus())
+        await pilot.pause(0.3)
+        assert field.has_focus and field.value == "zzz"
+        assert field.selection == Selection.cursor(3)
+        assert not _results(app).display and _status_text(app) == no_match
+        await pilot.press("q")
+        assert field.value == "zzzq"
+        await pilot.press("tab")
+        await _until(pilot, lambda: not field.has_focus)
+        await pilot.press("shift+tab")
+        await _until(pilot, lambda: field.has_focus)
+        await pilot.pause()
+        assert field.value == "zzzq" and not _results(app).display
+        assert _status_text(app) == no_match
+
+        app.post_message(events.AppBlur())
+        await _until(
+            pilot, lambda: field.value == "saved-model" and not _results(app).display
+        )
+        assert field.value == "saved-model" and not field.has_focus
+        app.post_message(events.AppFocus())
+        await _until(pilot, lambda: field.has_focus)
+        await pilot.pause()
+        assert field.selection == Selection(len("saved-model"), 0)
+        await pilot.press("o")
+        assert field.value == "o"
+
+        await pilot.click("#model-search-picker-custom")
+        await _until(pilot, lambda: field.has_focus)
+        await pilot.press(*_WIDE_MODEL)
+        assert picker.custom_mode and field.value == _WIDE_MODEL
+        assert field.content_region.width < len(_WIDE_MODEL)
+        assert _painted_field(app, field).rstrip().endswith("/its-tail")
+        app.post_message(events.AppBlur())
+        await _until(pilot, lambda: not field.has_focus)
+        await pilot.pause(0.2)
+        assert _painted_field(app, field).startswith(_WIDE_HEAD)  # at rest
+        app.post_message(events.AppFocus())
+        await _until(pilot, lambda: field.has_focus)
+        await pilot.pause()
+        assert field.value == _WIDE_MODEL
+        assert field.selection == Selection.cursor(len(_WIDE_MODEL))
+        # The view is back on the caret, and so is the terminal cursor: an end
+        # caret sits in the cell just past the last painted character.
+        assert _painted_field(app, field).rstrip().endswith("/its-tail")
+        assert app.cursor_position == field.cursor_screen_offset
+        area = field.content_region
+        assert area.x <= app.cursor_position.x <= area.right
 
 
 @pytest.mark.asyncio
@@ -1139,3 +1376,50 @@ async def test_a_committed_model_past_the_result_cap_stays_marked_and_first():
         assert prompts[-2:] == ["Saved fallback", f"{committed}  {CURRENT_MARK}"]
         assert len(picker._matches) == cap
         assert results.highlighted == len(prompts) - 1
+
+
+@pytest.mark.asyncio
+async def test_a_typed_filter_counts_matches_highlights_the_first_and_enter_picks_it():
+    """Capture 02 (TASK-33007 fix 8): with a filter typed the status still
+    read "Showing 14 configured models", and no row was highlighted, so
+    Enter picked nothing. A name typed in full is the one highlighted."""
+    app = PickerTestApp(
+        {"OpenRouter": ["a/big", "a/mini-two", "a/mini", "c/other"]},
+        (),
+        current_model="a/big",
+    )
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        picker = app.query_one(ModelSearchPicker)
+        field = app.query_one("#model-search-picker-input", Input)
+        results = _results(app)
+        assert _status_text(app) == (
+            "Live catalog unavailable. Showing 4 configured models."
+        )
+
+        field.focus()
+        await pilot.pause()
+        await pilot.press(*"mini")
+        await pilot.pause()
+        assert _result_prompts(results) == ["a/mini-two", "a/mini"]
+        assert _status_text(app) == "2 found · Enter picks · Esc cancels"
+        assert results.highlighted == 0
+
+        await pilot.press(*"/mini")
+        await pilot.pause()
+        assert field.value == "mini/mini"
+        assert _status_text(app) == (
+            "No matching models. Clear the filter or use Custom ID."
+        )
+
+        field.value = "a/mini"
+        await pilot.pause()
+        assert _result_prompts(results) == ["a/mini-two", "a/mini"]
+        assert results.highlighted == 1  # typed in full
+
+        field.value = "mini-t"
+        await pilot.pause()
+        assert results.highlighted == 0
+        await pilot.press("enter")
+        await pilot.pause()
+        assert picker.value == "a/mini-two"
