@@ -68,6 +68,7 @@ def _controller(session, store, sync_calls) -> ConsoleLibraryPolicyController:
         direct_library_tools=lambda: True,
         push_screen=lambda _modal: None,
         request_control_bar_sync=lambda: sync_calls.append("sync"),
+        console_owns_screen_stack=lambda: True,
     )
 
 
