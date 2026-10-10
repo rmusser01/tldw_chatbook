@@ -82,6 +82,7 @@ def test_complete_rebackup_retains_eval_after_source_and_candidate_removal(tmp_p
     environment = os.environ.copy()
     environment.update(
         HOME=str(restored / "home"),
+        USERPROFILE=str(restored / "home"),
         XDG_CONFIG_HOME=str(restored / "config"),
         XDG_DATA_HOME=str(restored / "data"),
         TLDW_CONFIG_PATH=str(restored / "config" / "config.toml"),
