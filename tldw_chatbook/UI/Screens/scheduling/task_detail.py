@@ -204,14 +204,17 @@ def _format_next_run(
     # the timestamp first made a completed task read "-" while its status
     # badge said "Disabled" (Qodo review). Suppression is a property of the
     # status, not of whether a stale timestamp happens to survive.
-    display_status = _task_status(task)
-    # UAT finding 3e: a fired one-time reminder is COMPLETED (not
-    # DISABLED, since `_task_status` above now checks `reminder_has_
-    # fired` first) -- its own branch, not the generic "nothing
-    # scheduled" fallback below, so "Completed" never explains itself as
-    # "— (disabled)".
-    if display_status == TaskStatus.COMPLETED:
+    #
+    # UAT finding 3e: a fired one-time reminder gets its own branch, not
+    # the generic "nothing scheduled" fallback below, so "Completed" never
+    # explains itself as "— (disabled)". TASK-33641.4: the branch tests
+    # `reminder_has_fired`, never a Completed display status --
+    # `_task_status` falls through to `last_status`, a successful dispatch
+    # records "completed" on a recurring reminder too, and testing the
+    # status hid an armed weekly reminder's stored next run.
+    if isinstance(task, ReminderTask) and reminder_has_fired(task):
         return "—"
+    display_status = _task_status(task)
     if display_status == TaskStatus.DISABLED:
         return "— (disabled)"
     if display_status == TaskStatus.PAUSED:

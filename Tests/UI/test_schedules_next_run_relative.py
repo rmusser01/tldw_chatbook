@@ -13,7 +13,7 @@ import pytest
 from textual.widgets import DataTable, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind
+from tldw_chatbook.Scheduling.models import ReminderTask, ScheduleKind, TaskStatus
 from tldw_chatbook.UI.Screens.scheduling.schedules_workbench import (
     SchedulesWorkbench,
 )
@@ -127,6 +127,56 @@ async def test_queue_cell_and_detail_pane_agree_on_the_relative_form():
         # Same relative rendering in both surfaces.
         relative = cell[cell.index("(") :]
         assert relative in detail, (cell, detail)
+
+
+# --- TASK-33641.4: a recurring reminder keeps its next run after a dispatch -
+
+
+class _CompletedRecurringService(_Service):
+    """A weekly reminder as its last successful dispatch left it."""
+
+    async def list_tasks(self, owner_id=None, include_projections=True):
+        now = datetime.now(timezone.utc)
+        return [
+            ReminderTask(
+                id="task-1",
+                title="Weekly digest",
+                schedule_kind=ScheduleKind.RECURRING,
+                cron="0 9 * * 1",
+                timezone="UTC",
+                next_run_at=now + timedelta(days=5, hours=1),
+                last_run_at=now - timedelta(days=2),
+                last_status=TaskStatus.COMPLETED,
+            )
+        ]
+
+
+# ``bootstrap_profile``: see the same note in test_schedules_disabled_state.py.
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_completed_recurring_reminder_shows_its_next_run_in_queue_and_detail():
+    """Both mounted surfaces: the badge reads Completed (the last outcome)
+    while the queue cell and the detail pane still name the next run."""
+    app = _App()
+    app.scheduling_service = _CompletedRecurringService()
+    async with app.run_test(size=(160, 48)) as pilot:
+        workbench = SchedulesWorkbench(app_instance=pilot.app)
+        await pilot.app.push_screen(workbench)
+        await pilot.pause()
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        table = workbench.query_one("#scheduling-task-table", DataTable)
+        cell = str(table.get_row_at(0)[2])
+        detail = str(
+            workbench.query_one("#scheduling-task-detail-next-run", Static).render()
+        )
+        badge = str(
+            workbench.query_one("#scheduling-task-status-badge", Static).render()
+        )
+        assert "Completed" in badge, badge
+        assert "(in 5d)" in cell, cell
+        assert "(in 5d)" in detail, detail
 
 
 # --- review F9: relative text refreshes instead of going stale ------------
