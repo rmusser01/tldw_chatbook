@@ -235,19 +235,23 @@ def _pending_rounds(store: Any, controller: Any) -> tuple:
     return rounds, controller.fleet_summary_counts()
 
 
-def _cost_inputs(store: Any, controller: Any, agent: Any, session_id: str) -> tuple:
+def _cost_inputs(
+    store: Any, controller: Any, agent: Any, session_id: str, in_flight: bool
+) -> tuple:
     """What moves the cost chip: settled rows and usage, fleet spend, cache TTL.
 
-    Streaming rows are left out of the chip's total, so these move when a
-    row settles or usage lands (the display revision), not per chunk. The
-    cache TTL contributes its displayed second while warm.
+    The chip leaves streaming rows out of its total. Rows added or settled
+    move the payload revision. The display revision also moves on every
+    streamed chunk (the speech fence), so it counts only while the chat has
+    no run in flight -- where a Stop's late usage lands. The cache TTL
+    contributes its displayed second while warm.
     """
     warm_until, had_activity = controller.cache_ttl_snapshot(session_id)
     remaining = None
     if had_activity and warm_until is not None:
         remaining = max(int(warm_until - time.monotonic()), -1)
     return (
-        store.display_projection_revision(session_id),
+        None if in_flight else store.display_projection_revision(session_id),
         store.payload_revision(session_id),
         store.session_settings_revision(session_id),
         agent._console_agent_fleet_token_total() if agent is not None else 0,
@@ -276,6 +280,7 @@ def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
     """
     from tldw_chatbook import config
     from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
     from tldw_chatbook.Chat.provider_test_evidence import shared_connection_evidence
 
     store = getattr(screen, "_console_chat_store", None)
@@ -291,7 +296,11 @@ def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
     if controller is not None:
         run = (_pending_rounds(store, controller),)
         if session_id is not None:
-            run += (_cost_inputs(store, controller, agent, session_id),)
+            state = states.get(session_id)
+            in_flight = viewed_active or (
+                state is not None and state.status in FEEDBACK_ACTIVE_RUN_STATUSES
+            )
+            run += (_cost_inputs(store, controller, agent, session_id, in_flight),)
     if agent is not None:
         run += (
             agent._console_agent_section_lines(),

@@ -563,3 +563,24 @@ def test_the_inputs_read_the_public_config_and_pause_accessors(clock, monkeypatc
     monkeypatch.setattr(storage_admission, "local_pause_active", lambda: True)
     assert _tick(screen) == 1
     assert _tick(screen) == 0
+
+
+def test_streamed_chunks_alone_do_not_project_but_settled_usage_does(clock):
+    """The display revision moves on every streamed chunk (the speech fence).
+
+    The cost chip leaves streaming rows out of its total, so while the
+    active chat's run is in flight that revision is not a cost input; once
+    the run has left the active statuses (where a Stop's late usage lands)
+    it is.
+    """
+    screen = _settled(clock)
+    controller = screen._console_chat_controller
+    controller.states["s1"] = ConsoleRunState(ConsoleRunStatus.STREAMING)
+    assert _tick(screen) == 1  # The run starting is itself a change.
+    for _ in range(3):
+        screen._console_chat_store.display += 1  # One streamed chunk.
+        assert _tick(screen) == 0, "a streamed chunk projected"
+    controller.states["s1"] = ConsoleRunState(ConsoleRunStatus.STOPPED)
+    assert _tick(screen) == 1
+    screen._console_chat_store.display += 1  # Late usage on the stopped row.
+    assert _tick(screen) == 1, "late usage after the run did not project"
