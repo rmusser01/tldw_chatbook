@@ -19199,7 +19199,7 @@ DELETE FROM keywords
 
         # Message-content substring matching stays a LIKE (substring
         # semantics, mid-word included, are the Library contract) but the
-        # subquery is deliberately UNCORRELATED (TASK-34414): one bounded
+        # subquery is deliberately UNCORRELATED (TASK-34784): one bounded
         # pass over ``messages`` per search -- shared by the COUNT, the
         # page query, and the per-row hit_N projections via this branches
         # list -- instead of a per-candidate correlated scan. Rule: never a
