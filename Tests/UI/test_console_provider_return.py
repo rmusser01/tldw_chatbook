@@ -344,6 +344,7 @@ def test_a_console_return_is_offered_before_any_save_and_the_modals_is_not() -> 
         _settings(modal, None, store, dirty=True),  # as before: its own draft only
         _settings(console, None, store, dirty=True, conflict=console),
         _settings(console, SAVED, store, dirty=True),
+        _settings(modal, SAVED, store, own_draft=True),  # after a save: neither kind
         _settings(None, None, store, dirty=True),
     ):
         assert not can_return_without_saving(no_question)
@@ -358,6 +359,7 @@ def test_a_console_return_is_offered_before_any_save_and_the_modals_is_not() -> 
     # A save's outcome is what the return sends, whatever is unsaved since.
     assert return_outcome(_settings(console, SAVED, store, dirty=True)) is SAVED
     assert return_outcome(_settings(modal, SAVED, store)) is SAVED
+    assert return_outcome(_settings(modal, SAVED, store, own_draft=True)) is SAVED
     store.close_session(chat.id)
     assert continuation_copy(on_arrival) == "No unsaved changes. Return to Console."
 
