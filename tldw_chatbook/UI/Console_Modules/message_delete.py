@@ -160,7 +160,8 @@ async def _delete(host: Any, store: Any, scope: ConsoleDeleteScope) -> None:
         try:
             done["delete"] = await delete_subtree_off_loop(store, message_id)
         except ValueError as exc:  # a pending dispatch or live reply owns it
-            host.app_instance.notify(str(exc), severity="warning")
+            # Exception text is runtime text: render it literally (TASK-1513).
+            host.app_instance.notify(str(exc), severity="warning", markup=False)
             await host._sync_native_console_chat_ui()
             raise
         except Exception as exc:  # noqa: BLE001 - report at the UI boundary
@@ -195,7 +196,8 @@ async def _delete(host: Any, store: Any, scope: ConsoleDeleteScope) -> None:
         try:
             await restore_subtree_off_loop(store, deleted)
         except ConsoleDeleteUndoError as exc:
-            host.app_instance.notify(str(exc), severity="warning")
+            # May carry a storage ValueError's text verbatim (TASK-1513).
+            host.app_instance.notify(str(exc), severity="warning", markup=False)
             # Retryable: nothing changed, so keep Undo on offer.
             return "retry" if exc.retryable else "final"
         noun = "message" if deleted.count == 1 else "messages"
@@ -215,7 +217,7 @@ async def _delete(host: Any, store: Any, scope: ConsoleDeleteScope) -> None:
         except Exception as exc:  # noqa: BLE001 - the outcome is the save's
             _refresh_failed(exc)
         host.app_instance.notify(
-            f"Restored {deleted.count} {noun}.", severity="information"
+            f"Restored {deleted.count} {noun}.", severity="information", markup=False
         )
         return "restored"
 
