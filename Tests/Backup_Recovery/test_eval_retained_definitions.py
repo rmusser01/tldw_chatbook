@@ -20,6 +20,10 @@ from Tests.Backup_Recovery.test_temporary_media_capture import (
 
 helper_resource_root = recovery_fixtures.helper_resource_root
 
+# Windows startup/setup already uses over 30s of the 45s parent budget.
+# Keep the separate 30s capture watchdog while allowing cold startup.
+_FULL_APP_CHILD_TIMEOUT = 90 if os.name == "nt" else 45
+
 
 def _replace(source, old, new):
     assert source.count(old) == 1
@@ -65,7 +69,13 @@ _RETAIN_REOPEN = _replace(
 def test_complete_rebackup_retains_eval_after_source_and_candidate_removal(tmp_path):
     original = tmp_path / "original"
     original.mkdir()
-    _run(original, "temporary", "complete", script=_RETAIN_PUBLIC)
+    _run(
+        original,
+        "temporary",
+        "complete",
+        script=_RETAIN_PUBLIC,
+        timeout=_FULL_APP_CHILD_TIMEOUT,
+    )
     restored = tmp_path / "restored"
     restored.mkdir()
     _run(restored, str(original / "home"), "isolated", script=_RETAIN_RESTORE)
@@ -85,7 +95,7 @@ def test_complete_rebackup_retains_eval_after_source_and_candidate_removal(tmp_p
         capture_output=True,
         text=True,
         check=False,
-        timeout=45,
+        timeout=_FULL_APP_CHILD_TIMEOUT,
     )
     (tmp_path / "reopen.log").write_text(result.stdout + result.stderr)
     assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]

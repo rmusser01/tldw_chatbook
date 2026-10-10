@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 17:58'
-updated_date: '2026-10-10 02:07'
+updated_date: '2026-10-10 02:27'
 labels: []
 dependencies: []
 ---
@@ -63,6 +63,8 @@ Windows packaged-resource roots remain unavailable after leaf/checkout ownership
 The private Windows clone failed before Python setup because long Backlog filenames exceed Git for Windows default path handling. The clone now sets core.longpaths=true before checkout. The completed job log is preserved; no test deadline, test selection, safety gate or production code changed. Rebased cleanly onto latest dev ec83a5565a (merge-queue tooling only); final platform verification remains pending.
 
 Git long-path checkout succeeds. The native icacls recursion then fails on long Backlog documentation paths, which are not recovery resources. Ownership setup now covers the actual private checkout root plus tldw_chatbook and packages runtime resource trees; all runtime paths retain real runner ownership and all production qualification checks remain unchanged. Explicit shared-fixture registration also passes lint without import-shadow suppressions.
+
+Final pre-budget CI on aca49d97e1: Linux 76 passed, macOS 76 passed; Windows 74 passed, 1 FIFO skip, 1 full-App outer timeout. Genuine private source ownership fixes complete inventory. The same read-only reviewer traced the remaining failure: at least 30.476s of startup/media setup occur before capture, leaving less than 15s of the inherited 45s process deadline for a capture with its own 30s watchdog. Admission/readmission/maintenance/capture/Windows facade are unchanged from dev; the waiting readmission is expected while capture holds its exclusive gate, and no holder cycle is demonstrated. Only this full-App Windows capture/reopen case now has a 90s overall cold-start budget. Capture still has its original 30s watchdog, pytest retains its 180s case bound, POSIX and all other child defaults remain 45s, and every functional assertion is retained. Qualification under the corrected budget is pending.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering Provenance
