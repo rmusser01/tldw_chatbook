@@ -65,3 +65,10 @@ jobs:
           name: eval-recovery-${{ matrix.os }}
           path: ${{ runner.temp }}/eval-recovery.xml
           if-no-files-found: error
+      - name: Preserve owned failed subprocess diagnostics
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-recovery-windows-child-logs
+          path: ${{ env.TEMP }}/pytest-of-*/pytest-*/*/original/restart-output.log
+          if-no-files-found: ignore
