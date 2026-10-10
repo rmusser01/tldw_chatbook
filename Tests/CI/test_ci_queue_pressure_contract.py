@@ -151,13 +151,21 @@ def _assert_required_aggregation(workflow: dict) -> None:
 
     verdict = _named_step(required, "Require successful PR fast lane")
     assert not verdict.get("continue-on-error", False)
-    assert verdict["if"] == f"${{{{ ({LANES}) && needs.pr-fast-lane.result != 'success' }}}}"
+    # TASK-33621.27 review round 4: `!cancelled() &&` drops the implicit
+    # `success()`, so a red lane does not skip the next lane's verdict and
+    # every red lane is reported in one pass (run 38072845848 showed the UI
+    # and P0 verdicts skipped behind the PR lane's).
+    assert verdict["if"] == (
+        f"${{{{ !cancelled() && ({LANES}) && needs.pr-fast-lane.result != 'success' }}}}"
+    )
     assert "needs.pr-fast-lane.result" in verdict["run"]
     assert "exit 1" in verdict["run"]
 
     ui_verdict = _named_step(required, "Require successful UI fast lane")
     assert not ui_verdict.get("continue-on-error", False)
-    assert ui_verdict["if"] == f"${{{{ ({LANES}) && needs.ui-fast-lane.result != 'success' }}}}"
+    assert ui_verdict["if"] == (
+        f"${{{{ !cancelled() && ({LANES}) && needs.ui-fast-lane.result != 'success' }}}}"
+    )
     assert "needs.ui-fast-lane.result" in ui_verdict["run"]
     assert "exit 1" in ui_verdict["run"]
 
@@ -169,7 +177,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
     p0_verdict = _named_step(required, "Require successful Console P0 regression gate")
     assert not p0_verdict.get("continue-on-error", False)
     assert p0_verdict["if"] == (
-        f"${{{{ ({LANES}) && needs.console-p0-gate.result != 'success' }}}}"
+        f"${{{{ !cancelled() && ({LANES}) && needs.console-p0-gate.result != 'success' }}}}"
     )
     assert "needs.console-p0-gate.result" in p0_verdict["run"]
     assert "exit 1" in p0_verdict["run"]
@@ -333,7 +341,8 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
     admission = _named_step(
         p0, "Run the admission-sensitive Console P0 regression tests"
     )
-    assert admission["if"] == "always()"  # one red step must not hide the other
+    # One red step must not hide the other; a cancelled run stops (round 4).
+    assert admission["if"] == "${{ !cancelled() }}"
     for step, timeout in ((sandboxed, "--timeout=180"), (admission, "--timeout=300")):
         tokens = shlex.split(step["run"].replace("\\\n", " "))
         assert tokens[0] == "pytest"

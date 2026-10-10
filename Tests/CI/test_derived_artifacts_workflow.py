@@ -107,7 +107,10 @@ def test_required_aggregator_fails_when_either_lane_fails():
     assert job.get("needs") == ["pr-fast-lane", "ui-fast-lane", "console-p0-gate"]
     for lane, step_name in VERDICTS.items():
         verdict = next(step for step in job["steps"] if step.get("name") == step_name)
-        assert verdict["if"] == f"${{{{ ({LANES}) && needs.{lane}.result != 'success' }}}}"
+        # Round 4: `!cancelled()` so one red lane cannot skip the next verdict.
+        assert verdict["if"] == (
+            f"${{{{ !cancelled() && ({LANES}) && needs.{lane}.result != 'success' }}}}"
+        )
         assert "exit 1" in verdict["run"]
 
 

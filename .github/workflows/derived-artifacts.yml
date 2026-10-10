@@ -327,7 +327,7 @@ jobs:
       # bootstrap_profile suites: their own invocation, after the sandboxed
       # one, exactly as pr-fast-lane's admission-sensitive step (TASK-32873).
       - name: Run the admission-sensitive Console P0 regression tests
-        if: always()
+        if: ${{ !cancelled() }}
         run: |
           pytest \
             Tests/Agents/test_provider_tool_schema_conformance.py \
@@ -373,8 +373,12 @@ jobs:
           # generation. No `cache: pip` -- nothing is installed.
           python-version: '3.12.11'
 
+      # TASK-33621.27 review round 4: each verdict starts `!cancelled() &&`,
+      # which drops GitHub's implicit `success()`; without it the first red
+      # lane's verdict skipped the others (run 38072845848), so a second red
+      # lane went unreported until the next push.
       - name: Require successful PR fast lane
-        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane.result != 'success' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane.result != 'success' }}
         run: |
           echo "PR Fast Lane result: ${{ needs.pr-fast-lane.result }}"
           echo "::error::The required PR fast lane did not succeed."
@@ -385,7 +389,7 @@ jobs:
       # which is the "guard nobody is gated on" failure this workflow exists to
       # avoid.
       - name: Require successful UI fast lane
-        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.ui-fast-lane.result != 'success' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.ui-fast-lane.result != 'success' }}
         run: |
           echo "UI Fast Lane result: ${{ needs.ui-fast-lane.result }}"
           echo "::error::The required UI fast lane did not succeed."
@@ -393,7 +397,7 @@ jobs:
 
       # TASK-33621.27: same shape again, for the Console P0 regression gate.
       - name: Require successful Console P0 regression gate
-        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.console-p0-gate.result != 'success' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.console-p0-gate.result != 'success' }}
         run: |
           echo "Console P0 regression gate result: ${{ needs.console-p0-gate.result }}"
           echo "::error::The required Console P0 regression gate did not succeed."
