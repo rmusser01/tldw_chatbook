@@ -34,6 +34,12 @@ _PRIVATE_TOKEN_MARKERS = (
 _TOKEN_FIELDS = frozenset(
     {
         "provider",
+        # TASK-2110: the provider the user configured that was NOT available,
+        # recorded beside `provider` (the substitute actually running) whenever
+        # the STT stack silently fell back -- `status=ok provider=<substitute>`
+        # with no mention of the configured name is exactly the report that
+        # made a 2026-08-03 degraded run read as healthy.
+        "configured_provider",
         "model",
         "operation",
         "status",

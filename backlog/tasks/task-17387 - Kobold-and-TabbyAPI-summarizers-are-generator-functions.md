@@ -103,4 +103,10 @@ ADR check: ADR not required — no code or architectural change made in this
 close; the fix's design (nested stream generators mirroring the llama/
 oobabooga siblings) was already governed by TASK-32805 under the existing
 summarization-transport decisions.
+
+Resume provenance (2026-10-10): the 2026-10-04 close-out session was
+rate-limit-killed before it could commit-and-push the sibling TASK-2110 work in
+this worktree; a second session resumed the branch, re-verified this task's
+closure evidence (no change needed) and carried this file forward unmodified
+apart from this note.
 <!-- SECTION:NOTES:END -->
