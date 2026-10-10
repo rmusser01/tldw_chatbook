@@ -371,6 +371,23 @@ def _console_workspace_ssh_status_chips(
     return chips
 
 
+def _bind_composer_after_switch(owner: Any) -> None:
+    """Bind the Console composer to the chat a workspace path just switched to.
+
+    TASK-33622.7: see ``ConsoleSessionController._bind_composer_to_active_
+    session`` -- never leave the rebind to the coalescable sync pass. Focus
+    stays with the path, which focuses the composer when it finishes.
+
+    Args:
+        owner: The workspace controller (or a test double); reached through
+            its screen's session controller when one is attached.
+    """
+    session = getattr(getattr(owner, "_screen", None), "_session", None)
+    bind = getattr(session, "_bind_composer_to_active_session", None)
+    if callable(bind):
+        bind(focus=False)
+
+
 def _normalized_console_workspace_id(workspace_id: str | None) -> str:
     """Fold the "no explicit workspace" sentinels onto one identity.
 
@@ -1378,17 +1395,6 @@ class ConsoleWorkspaceController:
     @property
     def _capture_console_draft_switch_snapshot(self) -> Any:
         return self._capture_draft_switch_snapshot_fn
-
-    def _bind_composer_to_active_session(self, *, focus: bool = False) -> None:
-        """Bind the composer to the chat just switched to (TASK-33622.7).
-
-        See ``ConsoleSessionController._bind_composer_to_active_session``:
-        never leave the rebind to the coalescable sync pass.
-        """
-        session = getattr(self._screen, "_session", None)
-        bind = getattr(session, "_bind_composer_to_active_session", None)
-        if callable(bind):
-            bind(focus=focus)
 
     @property
     def _sync_console_chat_core_state(self) -> Any:
@@ -5405,7 +5411,7 @@ class ConsoleWorkspaceController:
             if prior_active_session_id != session_id:
                 self._capture_console_draft_switch_snapshot()
                 controller.switch_session(session_id)
-                self._bind_composer_to_active_session()  # TASK-33622.7
+                _bind_composer_after_switch(self)
             self._set_active_workspace_for_console_session(session_id)
             session = next(item for item in store.sessions() if item.id == session_id)
             try:
@@ -5598,7 +5604,7 @@ class ConsoleWorkspaceController:
             if session.workspace_id == target_workspace_id:
                 self._capture_console_draft_switch_snapshot()
                 store.switch_session(session.id)
-                self._bind_composer_to_active_session()  # TASK-33622.7
+                _bind_composer_after_switch(self)
                 # task-7 review: this switches the active session with no
                 # other chip-refresh call anywhere in the caller chain (all
                 # three callers only run `_sync_native_console_chat_ui()`
@@ -6357,7 +6363,7 @@ class ConsoleWorkspaceController:
             return
         try:
             store.switch_session(prior_active_session_id)
-            self._bind_composer_to_active_session()  # TASK-33622.7
+            _bind_composer_after_switch(self)
             self._set_active_workspace_for_console_session(prior_active_session_id)
             self._sync_console_chat_core_state()
             sync_result = self._sync_native_console_chat_ui_fn()
@@ -6557,7 +6563,7 @@ class ConsoleWorkspaceController:
                 )
                 return None
             store.switch_session(session.id)
-            self._bind_composer_to_active_session()  # TASK-33622.7
+            _bind_composer_after_switch(self)
             self._set_active_workspace_for_console_session(session.id)
             self._sync_console_retrieval_scope_row()
             self._console_agent_drilldown_run_id = None
