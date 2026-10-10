@@ -3456,7 +3456,13 @@ class ChatScreen(BaseAppScreen):
             navigation.report_completion(False)
 
     def _owns_console_screen_stack(self) -> bool:
-        """Return whether this exact Console instance owns the active stack top."""
+        """Return whether this exact Console instance owns the active stack top.
+
+        TASK-34720: also the one rule every Console dialog opener checks just
+        before it pushes. A typed burst on a focused chip queues one request
+        per Enter/Space; the first dialog covers the Console, so the rest are
+        refused instead of stacking (~20 stacked dialogs crashed the app).
+        """
         try:
             stack = self.app.screen_stack
             return bool(stack) and stack[-1] is self
@@ -10891,6 +10897,8 @@ class ChatScreen(BaseAppScreen):
                 group="console-retrieval-scope-save",
             )
 
+        if not self._owns_console_screen_stack():  # TASK-34720: one dialog
+            return
         self.app.push_screen(
             ConsoleScopePickerModal(
                 target_label,
@@ -11060,6 +11068,8 @@ class ChatScreen(BaseAppScreen):
         supplies them, via ``project_instruction_ui.
         project_instruction_context_kwargs``.
         """
+        if not self._owns_console_screen_stack():  # TASK-34720: one dialog
+            return
         from ...Widgets.Console.console_conversation_inspector import (
             ConsoleConversationInspector,
         )
@@ -11190,6 +11200,8 @@ class ChatScreen(BaseAppScreen):
                 "No characters saved yet — import a card in Roleplay first.",
                 severity="information",
             )
+            return
+        if not self._owns_console_screen_stack():  # TASK-34720: one dialog
             return
         self.app.push_screen(
             ConsoleCharacterPickerModal(

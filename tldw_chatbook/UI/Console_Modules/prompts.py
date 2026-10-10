@@ -2148,6 +2148,10 @@ class ConsolePromptsController:
                 return
             self._apply_console_session_system_prompt(result)
 
+        # TASK-34720: chip and rail-line opens run as workers, so a burst
+        # queues several; only the one that finds the Console on top pushes.
+        if not self._screen._owns_console_screen_stack():
+            return
         from ...Widgets.Console.console_system_prompt_modal import (
             ConsoleSystemPromptModal,
         )
