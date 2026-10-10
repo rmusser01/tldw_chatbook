@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -62,28 +61,17 @@ async def prepare_library_for_turn(
         scope=controller._automatic_scope_for_authority(authority),
     )
     error_code: str | None = None
+    from .console_library_search import run_bounded_library_search  # TASK-33621.20
+
     try:
-        service = getattr(controller.app, "library_rag_search_service", None)
-        await controller._prewarm_library_service(service)
-        async with asyncio.timeout(controller._library_preparation_timeout):
-            search = getattr(service, "search", None)
-            if not callable(search):
-                raise RuntimeError("library service unavailable")
-            kwargs: dict[str, object] = {
-                "top_k": request.top_k,
-                "include_citations": request.include_citations,
-            }
-            if request.scope is not None:
-                kwargs["scope"] = request.scope
-            raw_result = search(
-                request.query,
-                request.source_types,
-                request.mode,
-                **kwargs,
+        result = _outcome_from_service_result(
+            await run_bounded_library_search(
+                getattr(controller.app, "library_rag_search_service", None),
+                request,
+                search_budget=controller._library_preparation_timeout,
+                initialization_budget=controller._library_initialization_timeout,
             )
-            if inspect.isawaitable(raw_result):
-                raw_result = await raw_result
-            result = _outcome_from_service_result(raw_result)
+        )
     except asyncio.CancelledError:
         raise
     except TimeoutError:

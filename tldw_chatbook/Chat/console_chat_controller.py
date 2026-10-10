@@ -3821,6 +3821,8 @@ class ConsoleChatController:
         self._library_preparation_timeout = max(
             0.001, float(library_preparation_timeout)
         )
+        # TASK-33621.20: the Library's first-use runtime build is bounded
+        # separately; only the search counts against the turn's budget.
         self._library_initialization_timeout = max(
             0.001, float(library_initialization_timeout)
         )
@@ -7375,15 +7377,6 @@ class ConsoleChatController:
         """Return the last immutable payload attached to this preparation."""
 
         return self._preparation_outcomes.get(preparation_id)
-
-    async def _prewarm_library_service(self, service: Any) -> None:
-        """Initialize retrieval within its own finite startup budget."""
-        prewarm = getattr(service, "prewarm", None)
-        if callable(prewarm):
-            async with asyncio.timeout(self._library_initialization_timeout):
-                result = prewarm()
-                if inspect.isawaitable(result):
-                    await result
 
     async def prepare_library_for_turn(
         self, preparation_id: str
@@ -13092,29 +13085,22 @@ class ConsoleChatController:
                 include_citations=True,
                 scope=self._automatic_scope_for_authority(authority),
             )
-            service = getattr(self.app, "library_rag_search_service", None)
-            search = getattr(service, "search", None)
-            if not callable(search):
+            from tldw_chatbook.Chat.console_library_search import (  # TASK-33621.20
+                LibrarySearchUnavailable,
+                run_bounded_library_search,
+            )
+
+            try:
+                raw = await run_bounded_library_search(
+                    getattr(self.app, "library_rag_search_service", None),
+                    request,
+                    search_budget=self._library_preparation_timeout,
+                    initialization_budget=self._library_initialization_timeout,
+                )
+            except LibrarySearchUnavailable as exc:
                 raise _DispatchRecoveryRefusal(
                     "Library retrieval is unavailable for retry."
-                )
-            kwargs: dict[str, object] = {
-                "top_k": request.top_k,
-                "include_citations": request.include_citations,
-            }
-            if request.scope is not None:
-                kwargs["scope"] = request.scope
-            try:
-                await self._prewarm_library_service(service)
-                async with asyncio.timeout(self._library_preparation_timeout):
-                    raw = search(
-                        request.query,
-                        request.source_types,
-                        request.mode,
-                        **kwargs,
-                    )
-                    if inspect.isawaitable(raw):
-                        raw = await raw
+                ) from exc
             except TimeoutError as exc:
                 raise _DispatchRecoveryRefusal(
                     "Library retrieval timed out during retry."
