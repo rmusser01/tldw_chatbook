@@ -7,6 +7,7 @@ from threading import Event
 
 import pytest
 
+from Tests.Backup_Recovery.conftest import helper_resource_root as helper_resource_root
 from Tests.Backup_Recovery.test_held_sqlite_rollback import replacement_case
 from tldw_chatbook.Backup_Recovery import bootstrap, crypto, publication, replacement
 from tldw_chatbook.Backup_Recovery.journal import Journal
