@@ -1,11 +1,11 @@
 ---
 id: TASK-407
 title: Fix media search results dedup collapse from missing content key
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-21 09:48'
-updated_date: '2026-10-10 19:46'
+updated_date: '2026-10-10 20:28'
 labels:
   - rag
   - bug
@@ -131,4 +131,9 @@ Post-merge review completion (2026-10-10)
 The NULL/empty-content fallback retains the original title for display but is marked in SearchResult metadata and deduplicated by source plus media record ID. Real-content prefix dedup and highest-score selection remain unchanged. Added real-database repeated-title, repeated-hit and fallback-versus-real-content regressions; strengthened the existing real-content control so ingestion itself cannot collapse its two records before the pipeline runs.
 Red/green: the new media cases failed with 1 result instead of 3/2 before the repair; all pass afterward. Combined guard/media/widget/fusion/citation run: 218 passed; post-format changed-module plus scoped-media/custom-pipeline/chat-context run: 49 passed. Black 25.1.0 and focused Ruff 0.13.1 error checks passed; preflight passed. No full-suite run. Independent review pending; task remains In Progress until that review.
 ADR required: no; routine completion of this task's existing dedup fix; no schema or source-authority change.
+
+Independent immutable review closeout (2026-10-10)
+Reviewer review_3029 cleared committed head 4d0130496caf35f76d61ec987f794420414ed5fc after reviewing the post-merge follow-up and its correction; no actionable findings remain in the authorized scope. All acceptance criteria are checked, self-review and independent review are complete, and the task is Done. Prior red/green receipts remain above; targeted checks, formatting, focused lint, whitespace checks and preflight passed. No full-suite run or push.
+ADR required: no; routine completion of the existing bug-fix/guard boundaries.
+The reviewed media change preserves display titles, real-content prefix dedup and highest-score selection while contentless rows retain distinct record identity. Validation receipts are separate runs: 218 passed for the base fixes and 49 passed for the post-format scoped checks.
 <!-- SECTION:NOTES:END -->

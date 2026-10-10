@@ -3,11 +3,11 @@ id: TASK-1513
 title: >-
   Systemic markup-parsing gap: interpolated names in notify, tooltips, and
   Button labels
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-30 14:00'
-updated_date: '2026-10-10 20:25'
+updated_date: '2026-10-10 20:28'
 labels:
   - evals
   - ux
@@ -148,4 +148,9 @@ Independent review correction completed (2026-10-10)
 notify(..., markup=False) now remains exempt only when its message expression does not first evaluate from_markup. The existing helper detects both direct and nested parser evaluation; plain-string opt-outs and escaped/literal parser inputs remain exempt. The four new count/gate regression cases failed before the fix (4 failed, 33 passed), then the guard and real widget parser pins passed together (50 passed).
 Black 25.1.0 and focused Ruff 0.13.1 error checks passed; preflight passed with the same 543 pinned occurrences and no census edits. The existing evaluation-order lesson now records this second independently reproduced gap. No full suite or production UI changes. Independent re-review remains pending; task stays In Progress.
 ADR required: no; correction of an existing syntactic guard exemption, with no runtime/UI boundary change.
+
+Independent immutable review closeout (2026-10-10)
+Reviewer review_3029 cleared committed head 4d0130496caf35f76d61ec987f794420414ed5fc after reviewing the post-merge follow-up and its correction; no actionable findings remain in the authorized scope. All acceptance criteria are checked, self-review and independent review are complete, and the task is Done. Prior red/green receipts remain above; targeted checks, formatting, focused lint, whitespace checks and preflight passed. No full-suite run or push.
+ADR required: no; routine completion of the existing bug-fix/guard boundaries.
+The final independent probe covered eight cases: direct/nested/outer-escape parser hazards and plain markup=False, inert Text, literal/escaped parser exemptions. The correction run passed 50 tests, separately from the earlier 218-test base-fix and 49-test post-format runs. The census remains 543, including the exactly reviewed 41 inherited occurrences across 36 symbols; these remain cleanup work items, not runtime safety approvals.
 <!-- SECTION:NOTES:END -->
