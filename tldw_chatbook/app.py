@@ -5347,8 +5347,12 @@ class TldwCli(
         """Warm ``sys.modules`` for every registered screen route.
 
         See ``_preimport_screens`` for the per-route mechanics; this just
-        supplies the full, priority-ordered route list.
+        supplies the full, priority-ordered route list. TASK-33620.15.5: the
+        Console's first-send modules go first (``console_first_send_modules``).
         """
+        from .Chat.console_first_send_modules import preimport_first_send_modules
+
+        preimport_first_send_modules(lambda: self._shutting_down)
         self._preimport_screens(self._screen_preimport_route_order())
 
     def _initial_screen_preimport_route(self) -> ScreenRoute | None:
