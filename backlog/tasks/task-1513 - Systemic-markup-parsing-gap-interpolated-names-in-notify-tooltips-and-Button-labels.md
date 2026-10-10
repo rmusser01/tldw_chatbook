@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-07-30 14:00'
-updated_date: '2026-10-10 19:46'
+updated_date: '2026-10-10 20:25'
 labels:
   - evals
   - ux
@@ -78,6 +78,13 @@ Post-merge review follow-up (2026-10-10; base bade7c9a9d)
 ADR required: no
 ADR path: N/A
 Reason: complete the existing syntactic guard and its tests; no runtime/UI architecture or dependency change.
+
+Independent review correction (2026-10-10)
+1. Add red-first direct and nested notify from_markup regressions with markup=False, plus the actual census-gate failure and plain-string exemption controls.
+2. Restrict markup=False exemption using the existing prior-parser helper, then run targeted guard tests and preflight.
+ADR required: no
+ADR path: N/A
+Reason: complete the existing guard exemption; no runtime or UI boundary change.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -136,4 +143,9 @@ The guard now inspects from_markup interpolation and label assignments. Plain Te
 Reviewed baseline growth: exactly 41 inherited occurrences in 36 symbols at bade7c9a9d: 40 label assignments plus WatchlistSourcePickerDialog.compose's from_markup call over pre-escaped locals. The TSV adds only those exact rows, with an explicit provenance header; no production UI source changed and no new unsafe runtime values were admitted. The scanner remains syntactic and existing pins remain migration work items, not safety approvals.
 Combined guard/media/widget/fusion/citation run: 218 passed; post-format changed-module plus scoped-media/custom-pipeline/chat-context run: 49 passed. Black 25.1.0 and focused Ruff 0.13.1 error checks passed; preflight passed (543 markup occurrences pinned). No full-suite run. Independent review pending; task remains In Progress until that review.
 ADR required: no; correction of the existing syntactic guard and test coverage, with no runtime/UI architecture change.
+
+Independent review correction completed (2026-10-10)
+notify(..., markup=False) now remains exempt only when its message expression does not first evaluate from_markup. The existing helper detects both direct and nested parser evaluation; plain-string opt-outs and escaped/literal parser inputs remain exempt. The four new count/gate regression cases failed before the fix (4 failed, 33 passed), then the guard and real widget parser pins passed together (50 passed).
+Black 25.1.0 and focused Ruff 0.13.1 error checks passed; preflight passed with the same 543 pinned occurrences and no census edits. The existing evaluation-order lesson now records this second independently reproduced gap. No full suite or production UI changes. Independent re-review remains pending; task stays In Progress.
+ADR required: no; correction of an existing syntactic guard exemption, with no runtime/UI boundary change.
 <!-- SECTION:NOTES:END -->

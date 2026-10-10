@@ -19548,8 +19548,12 @@ exempted every from_markup call, incorrectly assuming its nested interpolation
 would still be checked. Direct and nested parser inputs, plus Button.label
 mutations omitted from the constructor-only census, all passed the guard.
 Red-first regressions exposed these misses before the follow-up repair.
+Independent review of the follow-up f8252ec6 found that notify's markup=False
+opt-out still hid an earlier from_markup argument parse. Four regressions
+failed on the missed counts and incorrectly successful census-gate exits.
 
 **What to do.** Test safe-wrapper exemptions with a hazardous parser nested
 inside them: argument evaluation happens before the wrapper can make text
-inert. Exercise both construction and mutation seams, and assert the guard's
-failure exit as well as its occurrence counts.
+inert. Consumer opt-outs also need this check; they cannot change evaluation
+of their arguments. Exercise both construction and mutation seams, and assert
+the guard's failure exit as well as its occurrence counts.
