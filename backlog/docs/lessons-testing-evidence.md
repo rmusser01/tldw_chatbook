@@ -5821,6 +5821,17 @@ unsaved edit after arriving. A kept draft takes another arrival branch
 landed on, so focus stayed on the category button with Return without saving
 on screen.
 
+The review after that pressed Enter on the new landing. Return without saving
+fences itself while its confirmation is open: the handler disables the button
+before it pushes the dialog. Textual blurs a focused widget when it is disabled
+(`Widget.watch_disabled`), so Settings held no focus under the dialog, the
+dialog's opener restore (`SafeModalDismissMixin.on_mount`) had nothing to
+remember, and after Keep editing the screen's auto focus took its first
+focusable widget, the nav bar's Home button. In the review's run Enter, Enter,
+Enter from the landing opened Home. Both kinds of return did this, and the
+handler was dev's own. No test saw it: every test of this dialog answered
+Discard changes, but for one that cancelled and read the fence, not focus.
+
 **What to do.** Before focusing a widget that a route names, ask whether it can
 be disabled, and give the rule a landing for that case. Test fallback candidates
 with `w.display and not w.disabled`, not `focusable`. When one such route turns
@@ -5829,6 +5840,9 @@ no field, and drive each one before closing the finding. Drive it from the
 control the user presses, to the end: a screen that only opens another list is
 not where the route ends. Drive each arrival a second time with the state that
 outlives the screen (a kept draft) already there, not only made after arriving.
+A handler that disables the control it was pressed from before it opens a
+dialog puts focus back itself on the dialog's cancel path, and a test takes the
+dialog's default answer as well as its confirm, then reads focus.
 Assert that the widget in focus is painted, as well as
 its id: `_fully_on_screen` in `Tests/UI/test_console_provider_return.py` reads
 the compositor's visible widgets, and is False for a widget inside a hidden row.

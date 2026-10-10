@@ -31216,6 +31216,8 @@ class SettingsScreen(BaseAppScreen):
         async def _cancel_return() -> None:
             self._provider_return_confirmation_open = False
             self._update_provider_return_widgets()
+            # The fence above disabled this button, which took its focus.
+            self.query("#settings-provider-return-without-save").focus()
 
         async def _return_after_revert() -> None:
             try:

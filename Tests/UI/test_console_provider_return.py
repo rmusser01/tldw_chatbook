@@ -6,8 +6,9 @@ provider_return.py``) with the real handoff store and the real Console chat
 store. The private-profile tests run the real app: card -> Settings -> key ->
 save -> Enter, the saved model an untouched chat comes back on, Return without
 saving in every unsaved state, the return offered on arrival, where focus
-arrives when the route names no field or a disabled one, a return that lapses
-when the user walks back by hand, and edits made after the save.
+arrives when the route names no field or a disabled one, where it goes after
+Keep editing, a return that lapses when the user walks back by hand, and edits
+made after the save.
 """
 
 from __future__ import annotations
@@ -587,6 +588,35 @@ def _editing_the_endpoint(app, settings) -> bool:
     sees."""
     on_url = getattr(app.focused, "id", None) == "settings-cep-edit-url"
     return on_url and _fully_on_screen(settings, app.focused)
+
+
+async def _keep_editing(app, pilot, settings) -> None:
+    """Enter on Return without saving, then Enter on the confirmation's own
+    default, Keep editing. Focus comes back to the action it left, with the
+    edit unsaved and the handoff pending, so the next Enter asks again.
+
+    The action is disabled while the confirmation is open, which takes its
+    focus away. Not given back, focus fell to the nav bar's Home button."""
+    action = "settings-provider-return-without-save"
+    assert app.focused.id == action
+    await pilot.press("enter")
+    await _until(
+        pilot,
+        lambda: (
+            isinstance(app.screen, ConfirmationDialog)
+            and getattr(app.focused, "id", None) == "cancel-button"
+        ),
+        "the discard confirmation, with focus on Keep editing",
+    )
+    await pilot.press("enter")
+    await _until(
+        pilot,
+        lambda: app.screen is settings and getattr(app.focused, "id", None) == action,
+        "Settings again, with focus back on Return without saving",
+    )
+    assert _fully_on_screen(settings, app.focused)
+    assert settings._provider_same_target_has_draft()
+    assert app.pending_handoffs.has_pending(CHANNEL)
 
 
 def _cloud_app(monkeypatch, **saved):
@@ -1217,7 +1247,8 @@ async def test_a_route_with_no_field_to_focus_arrives_on_return_without_saving_o
     That edit withdraws Return to Console, so Return without saving, which
     takes its place, takes its focus too, for a route that names no field (a
     cloud Retry) and for one whose field is disabled (Review credentials).
-    Enter asks before it discards, then goes back with nothing written."""
+    Enter asks before it discards. Keep editing, the default answer, gives
+    focus back to the action; Discard changes goes back with nothing written."""
     saved, edited, typed = _ROUTES_ONTO_A_KEPT_EDIT[route]
     # Stubbed, so the user's own Claude Code credential is never read.
     monkeypatch.setattr(
@@ -1297,6 +1328,9 @@ async def test_a_route_with_no_field_to_focus_arrives_on_return_without_saving_o
         assert not fresh.query_one("#settings-provider-return-continuation").display
         assert _fully_on_screen(fresh, app.focused)
 
+        # Enter, Enter is the confirmation's default answer; a third Enter
+        # must ask again, not leave Settings by the nav bar.
+        await _keep_editing(app, pilot, fresh)
         await pilot.press("enter")
         await _until(
             pilot,
@@ -1314,6 +1348,70 @@ async def test_a_route_with_no_field_to_focus_arrives_on_return_without_saving_o
             "the Console's card to hold focus again, its return claimed",
         )
         assert _saved_config() == saved_before
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_keep_editing_gives_focus_back_on_chat_settings_return_too(
+    monkeypatch, request
+):
+    """Return without saving is one handler for both kinds. Chat settings'
+    Configure credential, with an unsaved edit to its provider, gets the same
+    answer to Keep editing: focus back on the action, nothing discarded, the
+    modal's own handoff still pending."""
+    monkeypatch.setattr(
+        anthropic_subscription,
+        "subscription_credential_status",
+        lambda **_kwargs: "missing",
+    )
+    app = _cloud_app(monkeypatch, **_SUBSCRIPTION_CHAT)
+    app.providers_models = {"anthropic": ["claude-sonnet-5"]}
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "console-setup-modal-action",
+            "the Get started card's action to hold focus",
+        )
+        console = app._navigation_outgoing_screen()
+        assert await console._open_console_settings() is True
+        await _until(
+            pilot,
+            lambda: bool(app.screen.query("#console-settings-configure-credential")),
+            "Chat settings to offer Configure credential",
+        )
+        app.screen.query_one("#console-settings-configure-credential").focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and getattr(app.focused, "id", None) == "settings-provider-auth-source"
+            ),
+            "Settings to open with focus on Sign in with",
+        )
+        settings = app.screen
+        assert settings._provider_return_target.session_id is None
+        settings.query_one("#settings-provider-endpoint-value", Input).focus()
+        await pilot.pause()
+        await pilot.press("x")
+        await _until(
+            pilot,
+            settings._provider_same_target_has_draft,
+            "the typed edit to be unsaved",
+        )
+        settings.query_one("#settings-provider-return-without-save", Button).focus()
+        await _until(
+            pilot,
+            lambda: (
+                getattr(app.focused, "id", None)
+                == "settings-provider-return-without-save"
+            ),
+            "focus on Return without saving",
+        )
+
+        await _keep_editing(app, pilot, settings)
 
 
 #: row -> (saved config, the card's action, the control focus arrives on).

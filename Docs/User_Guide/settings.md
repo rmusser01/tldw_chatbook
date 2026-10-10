@@ -489,13 +489,15 @@ return, and so does going back to the Console yourself: Settings offers no
 return to that chat the next time you open it.
 
 **Return without saving** asks "Discard all unsaved changes to Providers &
-Models?" and then goes back with nothing written. It shows only until you save:
+Models?". **Discard changes** goes back with nothing written. **Keep editing**,
+where focus starts, changes nothing and puts focus back on **Return without
+saving**. It shows only until you save:
 from Chat settings while you have unsaved edits to that provider, and from the
 Console for any unsaved edit on this page, such as another provider picked in
 **Provider** or a snapshot preference. A Console recovery can arrive on edits
 to its provider that an earlier visit left unsaved. When it names no field, or
 a disabled one, focus then starts on **Return without saving**, and **Enter**
-there asks that question first.
+there asks that question first; **Enter** again is **Keep editing**.
 
 If Settings opens while unsaved edits to another provider are already waiting,
 a short panel offers to review them, discard them, or return. Saving them is
