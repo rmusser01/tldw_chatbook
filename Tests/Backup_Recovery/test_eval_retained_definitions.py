@@ -128,6 +128,8 @@ def test_complete_rebackup_retains_eval_after_source_and_candidate_removal(tmp_p
         TLDW_TEST_MODE="1",
         TLDW_DISABLE_CONFIG_WATCH="1",
     )
+    if os.name == "nt":
+        environment["TMPDIR"] = environment.get("TMPDIR", environment["TEMP"])
     result = subprocess.run(
         [sys.executable, "-c", _RETAIN_REOPEN],
         cwd=Path(__file__).resolve().parents[2],
