@@ -19,6 +19,7 @@ from ...Chat.console_chat_models import (
     ConsoleChatMessage,
 )
 from ...Chat.console_turn_preparation import (
+    RESEND_PAUSE_COPY,
     ConsolePreparationPauseKind,
     ContextCompactionHold,
     ConsoleTurnPreparation,
@@ -43,6 +44,10 @@ class TraceCallRecoveryState:
     #: TASK-33621.20: why automatic Library retrieval paused this send
     #: (``RETRIEVAL``), e.g. "Library search timed out"; empty otherwise.
     library_reason: str = ""
+    #: TASK-33621.20 review: the pause a send that Retry or Send once
+    #: without Library resumed fell into on its way out (provider not ready,
+    #: not saved); None otherwise. Its card offers Retry and Cancel.
+    resend_pause: ConsolePreparationPauseKind | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +91,16 @@ def trace_call_recovery_state(
     if (
         preparation is not None
         and preparation.state is ConsoleTurnPreparationState.PAUSED
+        and preparation.pause_kind in RESEND_PAUSE_COPY
+    ):
+        # TASK-33621.20 review: nothing showed a send that re-paused on its
+        # way out (provider not ready, not saved), and nothing could end it.
+        return TraceCallRecoveryState(
+            preparation.preparation_id, resend_pause=preparation.pause_kind
+        )
+    if (
+        preparation is not None
+        and preparation.state is ConsoleTurnPreparationState.PAUSED
         and preparation.pause_kind is ConsolePreparationPauseKind.CONTEXT_COMPACTION
     ):
         if context_hold is None:
@@ -125,6 +140,19 @@ _BLOCKED_TURN_REASONS = {
     ConsolePreparationPauseKind.TRACE_PROVENANCE: "trace not saved",
     ConsolePreparationPauseKind.TRACE_CALL: "capture failed",
     ConsolePreparationPauseKind.TEMPORARY_CAPTURE: "save chat first",
+    # TASK-33621.20 review: a send that re-paused after Retry / Send once.
+    ConsolePreparationPauseKind.DESTINATION_CHANGED: "check provider",
+    ConsolePreparationPauseKind.PERSISTENCE: "send not saved",
+}
+#: TASK-33621.20 review: the card's Problem line for a send that re-paused.
+_RESEND_PROBLEMS = {
+    ConsolePreparationPauseKind.DESTINATION_CHANGED: (
+        "Problem: The provider or model for this send is not ready, or changed "
+        "after the send was prepared."
+    ),
+    ConsolePreparationPauseKind.PERSISTENCE: (
+        "Problem: This send could not be saved before it went out."
+    ),
 }
 #: TASK-33621.20: the same for a Library-paused send, by its error code.
 _LIBRARY_BLOCKED_REASONS = {
@@ -330,11 +358,16 @@ class TraceCallRecoveryCallout(Vertical):
         temporary = bool(state is not None and state.temporary_capture)
         hold = state.context_hold if state is not None else None
         library = state.library_reason if state is not None else ""
+        resend = (
+            RESEND_PAUSE_COPY.get(state.resend_pause, "")
+            if state is not None and state.resend_pause is not None
+            else ""
+        )
         self.query_one("#console-trace-title", Static).update(
             "Context limit reached; your message is held"
             if hold is not None
-            else f"{library}; your message was not sent"
-            if library
+            else f"{library or resend}; your message was not sent"
+            if library or resend
             else "Save chat to capture this send"
             if temporary
             else "Trace capture blocked"
@@ -361,6 +394,8 @@ class TraceCallRecoveryCallout(Vertical):
                     (
                         f"Problem: {library} before this send could use it."
                         if library
+                        else _RESEND_PROBLEMS.get(state.resend_pause, "")
+                        if resend
                         else "Problem: Temporary chats cannot store durable captures."
                         if temporary
                         else "Problem: This send's trace record could not be saved."
@@ -379,9 +414,15 @@ class TraceCallRecoveryCallout(Vertical):
         )
         retry = self.query_one("#console-trace-retry", Button)
         retry.display = state is not None and not temporary and hold is None
-        retry.label = "Retry Library search" if library else "Retry capture"
+        retry.label = (
+            "Retry Library search"
+            if library
+            else "Retry send"
+            if resend
+            else "Retry capture"
+        )
         self.query_one("#console-trace-send-without", Button).display = (
-            state is not None and hold is None and not library
+            state is not None and hold is None and not library and not resend
         )
         self.query_one("#console-trace-send-without-library", Button).display = bool(
             library

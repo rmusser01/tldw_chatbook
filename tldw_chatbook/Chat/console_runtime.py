@@ -1169,6 +1169,10 @@ class ConsoleRuntime:
         self._turn_custody: dict[str, _ConsoleTurnCustodyRecord] = {}
         self._turn_recoveries: dict[str, ConsoleTurnRecoveryEntry] = {}
         self._recovery_turns_by_session: dict[str, list[str]] = {}
+        #: TASK-33621.20 review: paused sends whose transcript card is acting
+        #: on them (Retry, Send once without Library, Cancel). Their unsent
+        #: turns are off the shelf, so one send is never offered twice.
+        self._card_held_preparations: set[str] = set()
         self._recovery_order = 0
         self._staged_evidence = _ConsoleStagedEvidenceState()
         self._prompt_history: Any | None = None
@@ -2770,16 +2774,43 @@ class ConsoleRuntime:
     def recoveries_for_session(
         self, session_id: str
     ) -> tuple[ConsoleTurnRecoveryEntry, ...]:
-        """Return exact recoveries in admission-failure order."""
+        """Return the offered recoveries in admission-failure order.
+
+        TASK-33621.20 review: an unsent turn whose paused send is being sent
+        again (by its card, or otherwise live and no longer paused) is not
+        offered: restoring it would send the message twice, and discarding it
+        would not stop it.
+        """
         return tuple(
-            self._turn_recoveries[turn_id]
+            entry
             for turn_id in self._recovery_turns_by_session.get(session_id, ())
-            if turn_id in self._turn_recoveries
+            if (entry := self._turn_recoveries.get(turn_id)) is not None
+            and self._turn_recovery_offered(entry)
         )
+
+    def _turn_recovery_offered(self, entry: ConsoleTurnRecoveryEntry) -> bool:
+        """Whether an unsent turn may be restored or discarded right now."""
+        preparation_id = entry.preparation_id
+        if preparation_id is None:
+            return True
+        if preparation_id in self._card_held_preparations:
+            return False
+        store = getattr(self._chat_controller, "store", None)
+        lookup = getattr(store, "preparation_by_id", None)
+        preparation = lookup(preparation_id) if callable(lookup) else None
+        if preparation is None:
+            return True
+        from tldw_chatbook.Chat.console_turn_preparation import (
+            ConsoleTurnPreparationState as State,
+        )
+
+        return preparation.state in {State.PAUSED, State.CANCELLED, State.SETTLED}
 
     def restore_turn_recovery(self, turn_id: str) -> ConsoleTurnRecoveryEntry:
         """Re-stage one exact recovery into its still-live owning session."""
         entry = self._turn_recoveries[turn_id]
+        if not self._turn_recovery_offered(entry):
+            raise RuntimeError("That unsent turn is being sent.")
         store = self._chat_store
         if store is None or entry.session_id not in {
             session.id for session in store.sessions()
@@ -2803,9 +2834,12 @@ class ConsoleRuntime:
         ``release=False``: the controller's own close and shutdown abandon
         every live preparation.
         """
-        entry = self._turn_recoveries.pop(turn_id, None)
-        if entry is None:
+        entry = self._turn_recoveries.get(turn_id)
+        if entry is None or (release and not self._turn_recovery_offered(entry)):
             return False
+        del self._turn_recoveries[turn_id]
+        if entry.preparation_id is not None:
+            self._card_held_preparations.discard(entry.preparation_id)
         turns = self._recovery_turns_by_session.get(entry.session_id, [])
         if turn_id in turns:
             turns.remove(turn_id)
@@ -2828,6 +2862,23 @@ class ConsoleRuntime:
                 )
         return True
 
+    def hold_turn_recoveries_for_preparation(self, preparation_id: str) -> None:
+        """Take a paused send's unsent turn off the shelf while its card acts.
+
+        TASK-33621.20 review: the card's Retry or Send once without Library
+        sends that exact turn; until it settles, Restore would send it twice
+        and Discard would not stop it. A re-pause stays on the card.
+        """
+        if any(
+            entry.preparation_id == preparation_id
+            for entry in self._turn_recoveries.values()
+        ):
+            self._card_held_preparations.add(preparation_id)
+
+    def unhold_turn_recoveries_for_preparation(self, preparation_id: str) -> None:
+        """Offer a held unsent turn on the shelf again (its card is gone)."""
+        self._card_held_preparations.discard(preparation_id)
+
     def forget_turn_recoveries_for_preparation(self, preparation_id: str) -> int:
         """Drop the unsent turns whose paused send its card has settled.
 
@@ -2838,6 +2889,7 @@ class ConsoleRuntime:
         Returns:
             How many shelf entries were dropped.
         """
+        self._card_held_preparations.discard(preparation_id)
         turn_ids = [
             turn_id
             for turn_id, entry in self._turn_recoveries.items()
@@ -2846,6 +2898,38 @@ class ConsoleRuntime:
         for turn_id in turn_ids:
             self.discard_turn_recovery(turn_id, release=False)
         return len(turn_ids)
+
+    def return_turn_recovery_to_draft(
+        self, preparation_id: str
+    ) -> ConsoleTurnRecoveryEntry | None:
+        """Put a cancelled send's unsent turn back as the draft, attachments too.
+
+        TASK-33621.20 review: the card's Cancel used to refill the composer's
+        text only; the attachments the send had taken stayed with the dropped
+        shelf entry. The caller has checked that the composer is empty, and
+        the controller's cancel has just written the sent text back into the
+        stored draft, so the draft is replaced rather than merged.
+
+        Returns:
+            The returned unsent turn, or None when the send had none.
+        """
+        entry = next(
+            (
+                entry
+                for entry in self._turn_recoveries.values()
+                if entry.preparation_id == preparation_id
+            ),
+            None,
+        )
+        store = self._chat_store
+        if entry is None or store is None:
+            return None
+        store.restore_transferred_pending_attachments(
+            entry.session_id, entry.attachments
+        )
+        store.set_session_draft(entry.session_id, entry.draft)
+        self.forget_turn_recoveries_for_preparation(preparation_id)
+        return entry
 
     def _record_turn_recovery(
         self,

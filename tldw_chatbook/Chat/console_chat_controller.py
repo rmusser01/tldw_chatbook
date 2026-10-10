@@ -338,8 +338,10 @@ from tldw_chatbook.Chat.console_turn_context import (
     ConsoleTurnExecutionContext,
 )
 from tldw_chatbook.Chat.console_turn_preparation import (
-    LIBRARY_PAUSE_CANCELLED_COPY,
+    LIBRARY_INITIALIZATION_TIMEOUT_SECONDS,
+    SHELF_RELEASABLE_PAUSES,
     library_pause_copy,
+    prepared_cancel_copy,
     ConsolePreparationPauseKind,
     ConsolePreparationTransition,
     ContextCompactionHold,
@@ -490,10 +492,7 @@ from tldw_chatbook.config import (
     get_runtime_config_snapshot,
 )
 from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
-from tldw_chatbook.Library.library_rag_service import (
-    LibraryRagSearchRequest,
-    _outcome_from_service_result,
-)
+from tldw_chatbook.Library.library_rag_service import LibraryRagSearchRequest
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
@@ -4045,7 +4044,7 @@ class ConsoleChatController:
         canvas_enabled_reader: Callable[[], bool] | None = None,
         canvas_disabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
-        library_initialization_timeout: float = 60.0,
+        library_initialization_timeout: float = LIBRARY_INITIALIZATION_TIMEOUT_SECONDS,
         ensure_run_hooks: "Callable[[], Any] | None" = None,
         hook_permissions_accessor: Callable[[], HookPermissions] | None = None,
     ) -> None:
@@ -4105,7 +4104,9 @@ class ConsoleChatController:
         # TASK-33621.20: the Library's first-use runtime build is bounded
         # separately; only the search counts against the turn's budget. The
         # running automatic search per session is what Stop cancels.
-        self._library_initialization_timeout = float(library_initialization_timeout)
+        self._library_initialization_timeout = max(
+            0.001, float(library_initialization_timeout)
+        )
         self._library_search_tasks: dict[str, asyncio.Task] = {}
         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
         self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
@@ -7805,9 +7806,13 @@ class ConsoleChatController:
         self._preparation_outcomes.pop(preparation_id, None)
         outcome = await self.prepare_library_for_turn(preparation_id)
         if outcome.state is not ConsoleTurnPreparationState.READY:
-            return ConsoleSubmitResult(
-                False, False, "Library preparation remains paused."
+            # TASK-33621.20: say why the retry paused again, not why it first did.
+            paused_copy = library_pause_copy(outcome.error_code)
+            self._set_run_state(
+                ConsoleRunState.blocked(paused_copy),
+                session_id=preparation.session_id,
             )
+            return ConsoleSubmitResult(False, False, paused_copy)
         return await self._continue_prepared_submission(preparation_id)
 
     async def _retry_durable_trace_provenance(
@@ -7910,7 +7915,9 @@ class ConsoleChatController:
                 ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
                 # TASK-34350: the context-limit hold uses the same card.
                 ConsolePreparationPauseKind.CONTEXT_COMPACTION,
-                ConsolePreparationPauseKind.RETRIEVAL,  # TASK-33621.20
+                # TASK-33621.20: a Library pause, and a send that re-paused
+                # after Retry or Send once (provider not ready, not saved).
+                *SHELF_RELEASABLE_PAUSES,
             }
         ):
             return None
@@ -8320,12 +8327,14 @@ class ConsoleChatController:
             preparation_id,
             expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
         )
-        # TASK-33621.20: a cancelled Library pause no longer reads "Blocked".
+        # TASK-33621.20: a cancelled pause no longer reads "Blocked", and says
+        # which send it cancelled (a Library search, or a send that re-paused).
+        copy = prepared_cancel_copy(preparation)
         self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.STOPPED, LIBRARY_PAUSE_CANCELLED_COPY),
+            ConsoleRunState(ConsoleRunStatus.STOPPED, copy),
             session_id=preparation.session_id,
         )
-        return self._prepared_action_refusal(None, LIBRARY_PAUSE_CANCELLED_COPY)
+        return self._prepared_action_refusal(None, copy)
 
     def _cancel_temporary_capture_preparation(
         self,
@@ -13535,29 +13544,17 @@ class ConsoleChatController:
                 include_citations=True,
                 scope=self._automatic_scope_for_authority(authority),
             )
-            from tldw_chatbook.Chat.console_library_search import (  # TASK-33621.20
-                LibrarySearchUnavailable,
-                run_bounded_library_search,
+            # TASK-33621.20: shown ("Searching Library…") and stoppable, too.
+            from tldw_chatbook.Chat.console_library_search import (
+                automatic_search_outcome,
             )
 
-            try:
-                raw = await run_bounded_library_search(
-                    getattr(self.app, "library_rag_search_service", None),
-                    request,
-                    search_budget=self._library_preparation_timeout,
-                    initialization_budget=self._library_initialization_timeout,
-                )
-            except LibrarySearchUnavailable as exc:
-                raise _DispatchRecoveryRefusal(
-                    "Library retrieval is unavailable for retry."
-                ) from exc
-            except TimeoutError as exc:
-                raise _DispatchRecoveryRefusal(
-                    "Library retrieval timed out during retry."
-                ) from exc
-            result = _outcome_from_service_result(raw)
-            if result.status not in {"ready", "empty"}:
-                raise _DispatchRecoveryRefusal("Library retrieval failed during retry.")
+            result, error_code = await automatic_search_outcome(
+                self, session_id, request
+            )
+            if error_code is not None or result.status not in {"ready", "empty"}:
+                reason = library_pause_copy(error_code or "library_retrieval_failed")
+                raise _DispatchRecoveryRefusal(f"{reason}; the retry was not sent.")
             rows = tuple(result.results or ())
             if rows:
                 bundle = build_library_rag_evidence_bundle(
@@ -18087,7 +18084,8 @@ class ConsoleChatController:
         search = self._library_search_tasks.get(self.store.active_session_id or "")
         return (
             self.run_state.is_stop_allowed
-            or (search is not None and not search.done())  # TASK-33621.20
+            # TASK-33621.20: a running automatic Library search, until Stop.
+            or (search is not None and not search.done() and not search.cancelling())
             or self.prompt_queue_coordinator.pending_continuation_stop_available(
                 self.store.active_session_id or ""
             )
