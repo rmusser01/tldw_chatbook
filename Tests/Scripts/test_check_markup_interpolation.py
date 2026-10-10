@@ -40,9 +40,9 @@ def _scan(src: str):
 # notify
 # --------------------------------------------------------------------------
 
-NOTIFY_HAZARD = "self.app.notify(f\"Imported '{name}'.\", severity=\"information\")\n"
+NOTIFY_HAZARD = 'self.app.notify(f"Imported \'{name}\'.", severity="information")\n'
 NOTIFY_SAFE_ESCAPE = (
-    "self.notify(f\"Imported '{escape_markup(name)}'.\", severity=\"information\")\n"
+    'self.notify(f"Imported \'{escape_markup(name)}\'.", severity="information")\n'
 )
 
 
@@ -88,13 +88,13 @@ def test_notify_percent_and_format_and_concat_shapes_are_counted():
 
 
 def test_button_label_interpolated_name_is_counted():
-    src = 'def f(self):\n    yield Button(f\'Review "{self.name}"…\')\n'
+    src = "def f(self):\n    yield Button(f'Review \"{self.name}\"…')\n"
     hits = _scan(src)
     assert hits[("m", "f", _mod.KIND_BUTTON_LABEL)] == 1
 
 
 def test_button_label_escape_markup_wrap_is_exempt():
-    src = 'def f(self):\n    yield Button(f\'Review "{escape_markup(self.name)}"…\')\n'
+    src = "def f(self):\n    yield Button(f'Review \"{escape_markup(self.name)}\"…')\n"
     assert not _scan(src)
 
 
@@ -107,6 +107,43 @@ def test_button_label_text_wrap_is_exempt():
     """``Text(str)`` does not parse markup -- safe by construction."""
     src = 'def f(record):\n    yield Button(Text(f"{record.name} - 3 folders"))\n'
     assert not _scan(src)
+
+
+@pytest.mark.parametrize(
+    "surface, kind",
+    [
+        ('Button(Text.from_markup(f"{name}"))', _mod.KIND_BUTTON_LABEL),
+        ('Button(Content.from_markup(f"{name}"))', _mod.KIND_BUTTON_LABEL),
+        ('Button(Text(Text.from_markup(f"{name}")))', _mod.KIND_BUTTON_LABEL),
+        ('Button(escape_markup(Text.from_markup(f"{name}")))', _mod.KIND_BUTTON_LABEL),
+        ('self.notify(Text.from_markup(f"{name}"))', _mod.KIND_NOTIFY),
+        ('Button("Use", tooltip=Content.from_markup(f"{name}"))', _mod.KIND_TOOLTIP),
+        ('self.row.tooltip = Text.from_markup(f"{name}")', _mod.KIND_TOOLTIP),
+    ],
+)
+def test_from_markup_does_not_hide_unescaped_interpolation(surface, kind):
+    hits = _scan(f"def f(name):\n    {surface}\n")
+    assert hits[("m", "f", kind)] == 1
+
+
+@pytest.mark.parametrize(
+    "label",
+    ['Text.from_markup("[b]Review[/b]")', 'Text.from_markup(f"{escape_markup(name)}")'],
+)
+def test_from_markup_with_no_unsafe_input_is_exempt(label):
+    assert not _scan(f"def f(name):\n    Button({label})\n")
+
+
+def test_button_label_assignment_is_counted():
+    hits = _scan('def f(name):\n    self.button.label = f"Review {name}"\n')
+    assert hits[("m", "f", _mod.KIND_BUTTON_LABEL)] == 1
+
+
+@pytest.mark.parametrize(
+    "label", ['"Review"', 'Text(f"{name}")', 'f"{escape_markup(name)}"']
+)
+def test_button_label_assignment_with_inert_input_is_exempt(label):
+    assert not _scan(f"def f(name):\n    self.button.label = {label}\n")
 
 
 def test_button_label_literal_is_exempt():
@@ -133,7 +170,7 @@ def test_tooltip_assignment_interpolated_name_is_counted():
 
 def test_tooltip_escaped_name_is_exempt():
     src = (
-        'def f(name):\n'
+        "def f(name):\n"
         '    yield Button("Use", tooltip=f"Use {escape_markup(name)} here.")\n'
     )
     assert not _scan(src)
@@ -184,3 +221,22 @@ def test_guard_fails_on_one_new_site(tmp_path, monkeypatch):
 
     hits = _mod.scan_tree()
     assert hits[("tldw_chatbook/planted", "planted", _mod.KIND_NOTIFY)] == 2
+
+
+@pytest.mark.parametrize(
+    "hazard",
+    ['Button(Text.from_markup(f"{name}"))', 'self.button.label = f"{name}"'],
+)
+def test_new_label_hazards_fail_the_census_gate(tmp_path, monkeypatch, capsys, hazard):
+    package = tmp_path / "tldw_chatbook"
+    package.mkdir()
+    (package / "planted.py").write_text(f"def planted(name):\n    {hazard}\n")
+    monkeypatch.setattr(_mod, "PRODUCTION_ROOT", package)
+    monkeypatch.setattr(_mod, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(_mod, "CENSUS", tmp_path / "census.tsv")
+    monkeypatch.setattr(sys, "argv", [str(_SCRIPT)])
+
+    assert _mod.main() == 1
+    assert (
+        "tldw_chatbook/planted\tplanted\tbutton_label_interp" in capsys.readouterr().out
+    )

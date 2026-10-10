@@ -19540,3 +19540,16 @@ then re-query its live row without yielding. A generic row and a Pilot settle
 pause do not prove that a sibling slice has arrived. The 30-second budget,
 real service, storage and all original action assertions remain unchanged.
 Evidence: [retained controls and RED/GREEN](../../Docs/QA/task-34414/README.md).
+
+## A safe output wrapper cannot protect an earlier markup parse (PR #3040, TASK-1513)
+
+**Incident.** Post-merge review of f509ef52 found that the new markup guard
+exempted every from_markup call, incorrectly assuming its nested interpolation
+would still be checked. Direct and nested parser inputs, plus Button.label
+mutations omitted from the constructor-only census, all passed the guard.
+Red-first regressions exposed these misses before the follow-up repair.
+
+**What to do.** Test safe-wrapper exemptions with a hazardous parser nested
+inside them: argument evaluation happens before the wrapper can make text
+inert. Exercise both construction and mutation seams, and assert the guard's
+failure exit as well as its occurrence counts.

@@ -3,10 +3,11 @@ id: TASK-1513
 title: >-
   Systemic markup-parsing gap: interpolated names in notify, tooltips, and
   Button labels
-status: Done
-assignee: ['@claude']
+status: In Progress
+assignee:
+  - '@claude'
 created_date: '2026-07-30 14:00'
-updated_date: '2026-07-31 03:50'
+updated_date: '2026-10-10 19:46'
 labels:
   - evals
   - ux
@@ -31,6 +32,7 @@ Found during the 2026-07-30 Evals UAT fix batch (Task 2 review, reproduced again
 
 ## Implementation Plan
 
+<!-- SECTION:PLAN:BEGIN -->
 Premise re-verified at branch base `cddc89d3e7` (2026-10-06):
 
 - AC2 was ALREADY satisfied by the task-1482 batch named in the 2026-07-30
@@ -69,8 +71,18 @@ Premise re-verified at branch base `cddc89d3e7` (2026-10-06):
    kind through the REAL parsers, each with a negative control proving the
    parser rejects the unescaped shape).
 
+Post-merge review follow-up (2026-10-10; base bade7c9a9d)
+1. Add red-first guard tests for unescaped from_markup inputs and runtime Button.label assignments, plus safe literal/Text/escaped controls.
+2. Exempt only inert Text construction; census label assignments as well as Button construction, keeping inherited unsafe sites explicit.
+3. Review every newly detected inherited site before extending the exact census; prove newly introduced unsafe sites still fail the guard. Run targeted script/widget tests and preflight.
+ADR required: no
+ADR path: N/A
+Reason: complete the existing syntactic guard and its tests; no runtime/UI architecture or dependency change.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 Everything above implemented as planned; no deviations.
 
 Evidence (venv 3.12.13, `-p no:xdist`):
@@ -118,3 +130,10 @@ Files: `scripts/check_markup_interpolation.py` (new),
 Owner note: `.github/workflows/derived-artifacts.yml` needs a matching
 step (workflow files were out of scope for this branch):
 `python scripts/check_markup_interpolation.py`.
+
+Post-merge review completion (2026-10-10)
+The guard now inspects from_markup interpolation and label assignments. Plain Text/escape_markup wraps remain inert only when they do not first evaluate a nested markup parser. Direct and nested parser regressions, escaped/literal controls, assignment controls, and actual census-gate exit assertions were red before the fix and pass afterward.
+Reviewed baseline growth: exactly 41 inherited occurrences in 36 symbols at bade7c9a9d: 40 label assignments plus WatchlistSourcePickerDialog.compose's from_markup call over pre-escaped locals. The TSV adds only those exact rows, with an explicit provenance header; no production UI source changed and no new unsafe runtime values were admitted. The scanner remains syntactic and existing pins remain migration work items, not safety approvals.
+Combined guard/media/widget/fusion/citation run: 218 passed; post-format changed-module plus scoped-media/custom-pipeline/chat-context run: 49 passed. Black 25.1.0 and focused Ruff 0.13.1 error checks passed; preflight passed (543 markup occurrences pinned). No full-suite run. Independent review pending; task remains In Progress until that review.
+ADR required: no; correction of the existing syntactic guard and test coverage, with no runtime/UI architecture change.
+<!-- SECTION:NOTES:END -->
