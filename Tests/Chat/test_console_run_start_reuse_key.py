@@ -22,6 +22,7 @@ import pytest
 from Tests.MCP.test_catalog_fingerprint import GOVERNANCE_CHECKS, RefusingOne
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.Chat import console_run_start_tools as tools
+from tldw_chatbook.MCP.permission_store import EffectiveToolState
 
 
 class _Service:
@@ -36,7 +37,7 @@ class _Service:
         self.local_service = SimpleNamespace(
             store=SimpleNamespace(path=local_store),
             connection_states=lambda profiles=(): tuple(False for _ in profiles),
-            get_inventory=lambda: None,
+            get_inventory=lambda: {"tools": []},
         )
         self.manifest = ("source", "a" * 64)
         self.catalog_reads = 0
@@ -200,3 +201,54 @@ async def test_a_profile_switch_during_composition_is_never_reused(service):
         "a catalog composed for the named profile was reused for the default"
     )
     assert await _composed_reads(service, profile_id_provider=active) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["refusal", "invalid_payload"])
+async def test_an_incomplete_inventory_recovers_on_the_next_run(service, failure):
+    """A transient inventory failure must not preserve missing tools forever."""
+    inventory_reads = 0
+
+    def inventory():
+        nonlocal inventory_reads
+        inventory_reads += 1
+        if inventory_reads == 1:
+            if failure == "refusal":
+                raise PermissionError("transient inventory refusal")
+            return None
+        return {
+            "tools": [
+                {
+                    "name": "read_note",
+                    "description": "Read a note",
+                    "inputSchema": {"type": "object", "properties": {}},
+                }
+            ]
+        }
+
+    service.local_service.get_inventory = inventory
+    service.effective_tool_states = lambda hub_tools, **kwargs: {
+        (tool.server_key, tool.name): EffectiveToolState(
+            state="ask", origin="global_default"
+        )
+        for tool in hub_tools
+    }
+    loop = asyncio.get_running_loop()
+
+    first = MCPToolProvider(service=service, main_loop=loop)
+    assert await tools.compose_run_mcp_provider(service, first) is first
+    assert first.list_catalog() == []
+
+    recovered = MCPToolProvider(service=service, main_loop=loop)
+    assert await tools.compose_run_mcp_provider(service, recovered) is recovered
+    assert [entry.one_line_description for entry in recovered.list_catalog()] == [
+        "Read a note"
+    ], "an incomplete inventory stayed cached after its read recovered"
+    assert await _composed_reads(service) == 0, "the recovered catalog was not reused"
+
+
+@pytest.mark.asyncio
+async def test_a_successful_empty_catalog_is_reused(service):
+    """A complete read with no tools remains eligible for reuse."""
+    assert await _composed_reads(service) == 1
+    assert await _composed_reads(service) == 0, "an empty successful catalog recomposed"
