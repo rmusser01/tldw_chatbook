@@ -93,6 +93,18 @@ _RETAIN_REOPEN = _replace(
 )
 
 
+_RETAIN_REOPEN = _replace(
+    _RETAIN_REOPEN,
+    "select_profile(receipt['profile'], home / 'control')",
+    """import tempfile
+owned_temp = Path(os.environ['TMPDIR']).resolve(strict=True) if os.name == 'nt' else None
+select_profile(receipt['profile'], home / 'control')
+if owned_temp is not None:
+    assert Path(os.environ['TMPDIR']).resolve(strict=True) == owned_temp
+    assert Path(tempfile.gettempdir()).resolve(strict=True) == owned_temp""",
+)
+
+
 def test_complete_rebackup_retains_eval_after_source_and_candidate_removal(tmp_path):
     original = tmp_path / "original"
     original.mkdir()

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 17:58'
-updated_date: '2026-10-10 03:07'
+updated_date: '2026-10-10 03:25'
 labels: []
 dependencies: []
 ---
@@ -69,6 +69,8 @@ Final pre-budget CI on aca49d97e1: Linux 76 passed, macOS 76 passed; Windows 74 
 The 90s Windows run completes original capture and isolated restore, confirming the outer-budget remedy, then exposes a later fixture mismatch: the direct reopen subprocess sets HOME but inherits the pytest session USERPROFILE, so Windows Path.home() looks for restored.json in the wrong profile. Reopen now sets USERPROFILE to the same actual restored home. The two sibling direct reopens in the shared temporary-media fixture receive the same one-line correction. No product selector, custody, capture limit or retention assertion changes. Final pipeline verification is pending.
 
 Restored-home selection is corrected and reopened App starts, but Windows rebackup preview now refuses restored agents, persona, subscriptions and recovered-media owners. The same reviewer confirms their discovery, validators and preview/classification code are unchanged from dev. The current assertion omits validator reasons, so no production cause or common metadata cause is established. Add test-only failure diagnostics using existing item metadata/dependencies and owner validators under the existing preview-read scope; upload the owned reopened/restore logs as well as original-capture output. All assertions and qualification gates remain intact; no production repair is guessed.
+
+The same reviewer identified the common profile-selection temp-selector mismatch: select_profile clears the environment via an existing allowlist that preserves TMPDIR but drops Windows TEMP/TMP. CI supplied the owned private ancestor only through TEMP/TMP; read-only SQLite preview snapshots then select tempfile.gettempdir() and can be refused by native ancestry guards. Supply that same owned parent through the already permitted TMPDIR and assert both the environment and tempfile select it after profile selection. The fallback directory/exact native exception was not yet recorded, so the next run must verify this causal correction. Production launch/snapshot code remains unchanged; ordinary Windows TEMP/TMP preservation is a separate baseline consideration.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering Provenance
