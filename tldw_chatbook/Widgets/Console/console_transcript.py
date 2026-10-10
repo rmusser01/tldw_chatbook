@@ -3077,6 +3077,7 @@ class ConsoleTranscript(VerticalScroll):
         #: race the TASK-15777 round-3 review filed).
         self._scroll_end_intent_time = 0.0
         self._refresh_lock = asyncio.Lock()
+        self._refresh_after_mount = False
         self._empty_card_state = ConsoleSetupCardState(
             mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
         )
@@ -3283,6 +3284,9 @@ class ConsoleTranscript(VerticalScroll):
         viewport used to finish below the fold with no scroll).
         """
         self.anchor()
+        if self._refresh_after_mount:
+            self._refresh_after_mount = False
+            self.call_later(self.refresh_messages)
         # TASK-1365: a transcript composed with a preloaded (resumed) history
         # can already exceed the watermarks before any refresh_messages call.
         self._schedule_prune_check()
@@ -3375,10 +3379,17 @@ class ConsoleTranscript(VerticalScroll):
 
     async def recompose(self) -> None:
         """Detach screen-owned message overflow UI before rebuilding rows."""
+        if not self._can_mutate_widget(self):
+            return
         menus = message_more_menus_on_screen(self.screen) if self.is_mounted else []
         opener_id = menus[0].opener_button_id if menus else ""
         await self.dismiss_message_more_menu(restore_focus=False)
-        await super().recompose()
+        async with self._refresh_lock:
+            if not self._can_mutate_widget(self):
+                return
+            await super().recompose()
+            if not self._can_mutate_widget(self):
+                return
         if menus:
             self._restore_message_action_focus(opener_id)
 
@@ -4791,11 +4802,21 @@ class ConsoleTranscript(VerticalScroll):
 
     async def refresh_messages(self) -> None:
         """Reconcile mounted message rows from the current transcript state."""
+        if not self._can_mutate_widget(self):
+            return
         menus = message_more_menus_on_screen(self.screen) if self.is_mounted else []
         opener_id = menus[0].opener_button_id if menus else ""
         await self.dismiss_message_more_menu(restore_focus=False)
         async with self._refresh_lock:
+            if not self._can_mutate_widget(self):
+                return
+            if not self.is_mounted:
+                # The screen may already have cached this projection key.
+                self._refresh_after_mount = True
+                return
             await self._reconcile_rows(self._transcript_rows())
+            if not self._can_mutate_widget(self):
+                return
         if menus:
             self._restore_message_action_focus(opener_id)
         # TASK-15777: a re-centered far jump replaced the whole window, so the
@@ -7067,7 +7088,30 @@ class ConsoleTranscript(VerticalScroll):
             if self._kb_selection_row is not None:
                 self._exit_keyboard_selection(clear=False)
 
+    def _can_mutate_widget(
+        self, widget: Widget, *, parent: Widget | None = None
+    ) -> bool:
+        """Keep captured row work within its still-attached presentation owner."""
+        return (
+            not self._closing
+            and not self._pruning
+            and self.is_attached
+            and not widget._closing
+            and not widget._pruning
+            and widget.is_attached
+            and (parent is None or widget.parent is parent)
+        )
+
+    def _can_sync_assistant_turn(self, widget: ConsoleAssistantTurnWidget) -> bool:
+        return (
+            self._can_mutate_widget(widget, parent=self)
+            and self._can_mutate_widget(widget.activity_stack, parent=widget)
+            and self._can_mutate_widget(widget.adjunct_stack, parent=widget)
+        )
+
     async def _reconcile_rows(self, rows: list[_TranscriptRow]) -> None:
+        if not self._can_mutate_widget(self):
+            return
         desired_keys = [row.key for row in rows]
         desired_key_set = set(desired_keys)
         turn_file_cards = self._turn_file_cards_enabled()
@@ -7088,7 +7132,8 @@ class ConsoleTranscript(VerticalScroll):
             if row.kind == "assistant-turn" and isinstance(
                 widget, ConsoleAssistantTurnWidget
             ):
-                await self._sync_assistant_turn_widget(widget, row)
+                if not await self._sync_assistant_turn_widget(widget, row):
+                    return
                 self._row_signatures[row.key] = row.signature
                 continue
             updated_widget = self._update_row_widget(
@@ -7109,6 +7154,8 @@ class ConsoleTranscript(VerticalScroll):
             for widget in removals:
                 self._cancel_selection_if_row_removed(widget)
             await self.remove_children(removals)
+            if not self._can_mutate_widget(self):
+                return
 
         pending_widgets: list[Widget] = []
         pending_rows: list[_TranscriptRow] = []
@@ -7126,7 +7173,10 @@ class ConsoleTranscript(VerticalScroll):
                 await self.mount(*pending_widgets)
             else:
                 await self.mount(*pending_widgets, before=before)
-            if any(widget.parent is not self for widget in pending_widgets):
+            if not self._can_mutate_widget(self) or any(
+                not self._can_mutate_widget(widget, parent=self)
+                for widget in pending_widgets
+            ):
                 for pending_row in pending_rows:
                     self._row_widgets.pop(pending_row.key, None)
                     self._row_signatures.pop(pending_row.key, None)
@@ -7185,8 +7235,10 @@ class ConsoleTranscript(VerticalScroll):
         self,
         widget: ConsoleAssistantTurnWidget,
         row: _TranscriptRow,
-    ) -> None:
+    ) -> bool:
         """Sync one composite row without remounting its answer or shell."""
+        if not self._can_sync_assistant_turn(widget):
+            return False
         assert row.assistant_turn is not None and row.nested_rows
         assistant = row.nested_rows[0].message
         assert assistant is not None
@@ -7218,7 +7270,8 @@ class ConsoleTranscript(VerticalScroll):
             getattr(widget, "_console_activity_signature", None)
             != row.activity_signature
         ):
-            await self._sync_activity_widgets(widget, row)
+            if not await self._sync_activity_widgets(widget, row):
+                return False
             widget._console_activity_signature = row.activity_signature
         if getattr(widget, "_console_adjunct_signature", None) != row.adjunct_signature:
             turn_file_cards = self._turn_file_cards_enabled()
@@ -7231,9 +7284,14 @@ class ConsoleTranscript(VerticalScroll):
             if widget.adjunct_stack.children:
                 self._cancel_selection_if_row_removed(widget.adjunct_stack)
                 await widget.adjunct_stack.remove_children()
+                if not self._can_sync_assistant_turn(widget):
+                    return False
             if adjuncts:
                 await widget.adjunct_stack.mount(*adjuncts)
+                if not self._can_sync_assistant_turn(widget):
+                    return False
             widget._console_adjunct_signature = row.adjunct_signature
+        return True
 
     def _build_row_widget(
         self,
@@ -7549,8 +7607,10 @@ class ConsoleTranscript(VerticalScroll):
         self,
         widget: ConsoleAssistantTurnWidget,
         row: _TranscriptRow,
-    ) -> None:
+    ) -> bool:
         """Reconcile same-id disclosures without detaching their focused headers."""
+        if not self._can_sync_assistant_turn(widget):
+            return False
         turn = row.assistant_turn
         assert turn is not None
         disclosures = list(widget.activity_stack.children)
@@ -7580,6 +7640,8 @@ class ConsoleTranscript(VerticalScroll):
                 for disclosure in stale:
                     self._cancel_selection_if_row_removed(disclosure)
                 await widget.activity_stack.remove_children(stale)
+                if not self._can_sync_assistant_turn(widget):
+                    return False
             disclosures = []
             for index, (activity, owned_rows) in enumerate(
                 zip(row.activity_items, row.activity_rows)
@@ -7593,14 +7655,27 @@ class ConsoleTranscript(VerticalScroll):
                 if disclosure is None:
                     disclosure = self._build_activity_disclosure(activity, owned_rows)
                     await widget.activity_stack.mount(disclosure)
+                    if not self._can_sync_assistant_turn(widget):
+                        return False
                 disclosures.append(disclosure)
                 if widget.activity_stack.children[index] is not disclosure:
                     widget.activity_stack.move_child(disclosure, before=index)
+
+        def disclosure_is_live(disclosure: ConsoleActivityDisclosure) -> bool:
+            return (
+                self._can_sync_assistant_turn(widget)
+                and self._can_mutate_widget(disclosure, parent=widget.activity_stack)
+                and self._can_mutate_widget(disclosure.action_stack, parent=disclosure)
+                and self._can_mutate_widget(disclosure.detail_stack, parent=disclosure)
+            )
 
         for disclosure, activity, owned_rows in zip(
             disclosures, row.activity_items, row.activity_rows
         ):
             assert isinstance(disclosure, ConsoleActivityDisclosure)
+
+            if not disclosure_is_live(disclosure):
+                return False
             activity_id = (
                 activity.id
                 if isinstance(activity, ConsoleChatMessage)
@@ -7613,8 +7688,12 @@ class ConsoleTranscript(VerticalScroll):
             ):
                 if disclosure.action_stack.children:
                     await disclosure.action_stack.remove_children()
+                    if not disclosure_is_live(disclosure):
+                        return False
                 if components.action_widgets:
                     await disclosure.action_stack.mount(*components.action_widgets)
+                    if not disclosure_is_live(disclosure):
+                        return False
                 disclosure._console_action_signature = components.action_signature
             if (
                 getattr(disclosure, "_console_detail_signature", None)
@@ -7642,13 +7721,19 @@ class ConsoleTranscript(VerticalScroll):
                         await disclosure.detail_stack.remove_children(
                             current_detail[1:]
                         )
+                        if not disclosure_is_live(disclosure):
+                            return False
                         if components.detail_widgets[1:]:
                             await disclosure.detail_stack.mount(
                                 *components.detail_widgets[1:]
                             )
+                            if not disclosure_is_live(disclosure):
+                                return False
                 else:
                     self._cancel_selection_if_row_removed(disclosure.detail_stack)
                     await disclosure.replace_detail_widgets(components.detail_widgets)
+                    if not disclosure_is_live(disclosure):
+                        return False
                 disclosure._console_detail_signature = components.detail_signature
             disclosure._has_actions = bool(components.action_widgets)
             disclosure.detail_available = components.detail_available
@@ -7666,6 +7751,7 @@ class ConsoleTranscript(VerticalScroll):
                     components.presentation if components.presentation.call_id else None
                 ),
             )
+        return True
 
     def _build_assistant_turn_widget(self, row: _TranscriptRow) -> Widget:
         """Build one Assistant-owned surface from a composite transcript row."""

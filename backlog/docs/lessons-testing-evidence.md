@@ -19439,3 +19439,20 @@ was 985 s for a 17 s run and 2006 s for a 122 s run, because the process hung
 at exit after printing its summary (see "PRINTED ITS FINAL SUMMARY and then
 never exited" above). Normalise against a gated reference file timed the same
 way.
+
+
+## TASK-34785: an attached transcript can still own a composing activity stack
+
+PR2882 UI4 failed with MountError inside activity reconciliation on an unchanged
+base transcript. A real-recompose probe held the new Assistant turn's child
+composition: the transcript and turn were attached, but its activity stack was
+not. Real removal at other await boundaries instead made Textual mount return
+an empty AwaitMount and exposed unchecked child indexing and stale signature
+publication. The repair checks the exact nested owner after awaits, coordinates
+recompose through the existing refresh lock, and queues the first-mount update
+after composition. The screen caches its projection key after refresh returns,
+so a liveness early return must preserve the unfinished update as well as avoid
+a crash. Initial setup/app-context/oracle failures are separate from the true
+RED MountError and final targeted PASS15 receipt. Evidence:
+/private/tmp/pr2882-transcript-lifecycle-final.xml;
+/private/tmp/pr2882-transcript-composition-{head,base}.json.
