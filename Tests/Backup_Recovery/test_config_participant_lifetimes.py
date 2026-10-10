@@ -30,8 +30,9 @@ def test_pause_refuses_cached_bootstrap_without_erasing_cache(source):
     before = source._CONFIG_CACHE
     pause = storage._begin_local_pause()
     try:
+        assert source.load_cli_config_and_ensure_existence() is before
         with pytest.raises(bootstrap.RecoveryRequired):
-            source.load_cli_config_and_ensure_existence()
+            source.load_cli_config_and_ensure_existence(force_reload=True)
         assert source._CONFIG_CACHE is before
     finally:
         pause.resume()
@@ -128,6 +129,7 @@ def test_pause_during_serialization_refuses_derived_effects_and_publication(
     pauses = []
     cache = source._CONFIG_CACHE
     generation = source._CONFIG_GENERATION
+    before = source.get_cli_config_path().read_bytes()
 
     def serialize(*args, **kwargs):
         result = original(*args, **kwargs)
@@ -139,10 +141,12 @@ def test_pause_during_serialization_refuses_derived_effects_and_publication(
         result = source.apply_settings_mutation_to_cli_config(
             {"general": {"users_name": "new-directory"}}
         )
-        assert result.file_replaced and not result.caches_reloaded
+        assert pauses, "original encoder never reached the pause barrier"
+        assert not result.file_replaced and not result.caches_reloaded
+        assert result.failure_phase == "before_replace"
         assert source._CONFIG_GENERATION == generation
         assert source._CONFIG_CACHE is cache
-        assert "new-directory" in source.get_cli_config_path().read_text()
+        assert source.get_cli_config_path().read_bytes() == before
         assert not (source._default_base_data_dir() / "new-directory").exists()
     finally:
         for pause in reversed(pauses):
@@ -249,7 +253,7 @@ def opened(*args, **kwargs):
     fd = original_open(*args, **kwargs)
     direct_body = failure == 'direct_parent' and any(frame.function == '_prepare_config_parent' for frame in inspect.stack())
     if raw._runtime_operation() is not None or direct_body:
-        if (failure == 'ancestor' or direct_body) and args[0] == '/': fd_target = fd
+        if (failure == 'ancestor' or direct_body) and Path(args[0]) == Path(Path(args[0]).anchor): fd_target = fd
         if failure.startswith('lock_') and str(args[0]).endswith('.lock'): fd_target = fd
     return fd
 def writing(fd, payload):
@@ -314,7 +318,7 @@ sys.stdin.readline()
 def test_config_native_uncertainty_blocks_independent_maintenance(
     tmp_path, local_root, launch, failure
 ):
-    import select
+    from Tests.pipe_readiness import pipe_readable
     import subprocess
     from Tests.Backup_Recovery.test_admission import line, release
     from tldw_chatbook.Backup_Recovery.control_records import (
@@ -349,7 +353,7 @@ def test_config_native_uncertainty_blocks_independent_maintenance(
             log.seek(0)
             pytest.fail(log.read())
         observer = launch(authority.control_root, "maintenance", (UNBOUND_NAMESPACE,))
-        assert not select.select([observer.stdout], [], [], 0.1)[0]
+        assert not pipe_readable(observer.stdout, 0.1)
         child.stdin.write("exit\n")
         child.stdin.flush()
         child.wait(timeout=5)
@@ -371,16 +375,20 @@ def test_default_bootstrap_creates_private_parent_and_pause_preserves_it(
 ):
     import stat
     from Tests.Backup_Recovery.config_test_support import install_config_source
+    from tldw_chatbook.Utils.platform_files import os as private_os
 
     home = tmp_path / "first-home"
     home.mkdir(mode=0o700)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
     source = install_config_source(monkeypatch)
     target = home / ".config" / "tldw_cli" / "config.toml"
     assert source.first_profile_created_this_session()
-    assert stat.S_IMODE(target.stat().st_mode) == 0o600
-    assert stat.S_IMODE(target.parent.stat().st_mode) == 0o700
+    # Native facade modes include the actual Windows DACL and owner.
+    assert stat.S_IMODE(private_os.stat(target).st_mode) == 0o600
+    assert stat.S_IMODE(private_os.stat(target.parent).st_mode) == 0o700
     original = target.read_bytes()
     pause = storage._begin_local_pause()
     try:
@@ -473,7 +481,7 @@ def test_private_directory_verifier_cannot_widen_config_operation(source, tmp_pa
 
 
 def test_two_config_processes_preserve_each_others_keys(source, tmp_path, local_root):
-    import select
+    from Tests.pipe_readiness import pipe_readable
     import subprocess
     from Tests.Backup_Recovery.test_admission import line
 
@@ -486,10 +494,14 @@ from tldw_chatbook import config
 mode = sys.argv[2]
 if mode == 'first':
     original = config.toml.dumps
+    announced = False
     def serialize(*args, **kwargs):
+        global announced
         value = original(*args, **kwargs)
-        print('serializing', flush=True)
-        sys.stdin.readline()
+        if not announced:
+            announced = True
+            print('serializing', flush=True)
+            sys.stdin.readline()
         return value
     config.toml.dumps = serialize
 else:
@@ -521,7 +533,7 @@ print('saved', flush=True)
             children.append(child)
             assert line(child) == ("serializing" if mode == "first" else "attempting")
         first, second = children
-        assert not select.select([second.stdout], [], [], 0.1)[0]
+        assert not pipe_readable(second.stdout, 0.1)
         first.stdin.write("continue\n")
         first.stdin.flush()
         assert line(first) == "saved"
@@ -547,23 +559,25 @@ print('saved', flush=True)
 def test_reentrant_publication_from_derived_scope_refuses_all_effects(
     source, monkeypatch
 ):
-    from pathlib import Path
-
     directory = source.get_model_cache_dir()
     directory.rmdir()
     before = source.get_cli_config_path().read_bytes()
     cache = source._CONFIG_CACHE
     generation = source._CONFIG_GENERATION
-    original = Path.mkdir
+    original = source.secure_private_directory
+    entered = []
 
     def reenter(path, *args, **kwargs):
         if path == directory:
+            assert storage._raw_operations
+            entered.append(True)
             source.replace_cli_config({"general": {"users_name": "reentrant"}})
         return original(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "mkdir", reenter)
+    monkeypatch.setattr(source, "secure_private_directory", reenter)
     with pytest.raises(bootstrap.RecoveryRequired, match="raw_path_outside_scope"):
         source.get_model_cache_dir()
+    assert entered, "original derived scope never reached its private-directory call"
     assert not directory.exists()
     assert source.get_cli_config_path().read_bytes() == before
     assert source._CONFIG_CACHE is cache

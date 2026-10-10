@@ -52,7 +52,8 @@ native = pytest.mark.skipif(
 @native
 def test_private_relative_file_and_exclusive_rename(tmp_path):
     win = WindowsOS()
-    win.chmod(tmp_path, 0o700)
+    tmp_path = tmp_path / "native-fixture"
+    win.mkdir(tmp_path, 0o700)
     parent = win.open(tmp_path, win.O_RDONLY | win.O_DIRECTORY)
     try:
         descriptor = win.open(
@@ -223,6 +224,8 @@ def test_inherit_only_public_acl_hardened_before_ordinary_children(tmp_path):
 @native
 def test_directory_namespace_barriers_after_empty_create_rename_and_remove(tmp_path):
     win = WindowsOS()
+    tmp_path = tmp_path / "native-fixture"
+    win.mkdir(tmp_path, 0o700)
     parent = win.open(tmp_path, win.O_RDONLY | win.O_DIRECTORY)
     try:
         win.mkdir("empty", 0o700, dir_fd=parent)
@@ -463,3 +466,37 @@ def test_nested_directory_publication_and_installed_metadata(tmp_path):
         win.close(descriptor)
     with pytest.raises(OSError):
         win.open(selected, win.O_WRONLY | win.O_NOFOLLOW)
+
+
+def test_default_token_owner_requires_exact_private_user_custody():
+    from tldw_chatbook.Utils.windows_files import _owner_uid
+
+    full = 0x1F01FF
+    aces = [(0, 16, full, "me"), (0, 16, full, "S-1-5-32-544")]
+    assert _owner_uid("S-1-5-32-544", "me", "S-1-5-32-544", aces, 0o600) == 1000
+
+
+@pytest.mark.parametrize(
+    "owner,token_owner,aces,mode",
+    [
+        ("S-1-5-32-544", "me", [(0, 0, 0x1F01FF, "me")], 0o600),
+        ("foreign", "S-1-5-32-544", [(0, 0, 0x1F01FF, "me")], 0o600),
+        ("S-1-5-32-544", "S-1-5-32-544", [(0, 0, 0x1F01FF, "S-1-5-32-544")], 0o600),
+        ("S-1-5-32-544", "S-1-5-32-544", [(0, 0, 0x1F01FF, "S-1-3-4")], 0o600),
+        ("S-1-5-32-544", "S-1-5-32-544", [(0, 8, 0x1F01FF, "me")], 0o600),
+        ("S-1-5-32-544", "S-1-5-32-544", [(0, 0, 0x1, "me")], 0o600),
+        ("S-1-5-32-544", "S-1-5-32-544", [(0, 0, 0x1F01FF, "me")], 0o644),
+        (
+            "S-1-5-32-544",
+            "S-1-5-32-544",
+            [(1, 0, 0x1, "me"), (0, 0, 0x1F01FF, "me")],
+            0o600,
+        ),
+    ],
+)
+def test_administrator_or_foreign_owner_is_not_private_user_without_full_proof(
+    owner, token_owner, aces, mode
+):
+    from tldw_chatbook.Utils.windows_files import _owner_uid
+
+    assert _owner_uid(owner, "me", token_owner, aces, mode) != 1000

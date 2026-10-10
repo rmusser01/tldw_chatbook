@@ -42,6 +42,10 @@ from tldw_chatbook.Chat.provider_continuation import (
 )
 
 
+from tldw_chatbook.provider_registry import ENGINE_RECORDS
+
+
+_ENGINE_EXECUTION_KEYS = frozenset(record.key for record in ENGINE_RECORDS)
 _SURFACE_VERIFICATION_ISSUER = object()
 
 
@@ -750,6 +754,10 @@ def reconstruct_provider_gateway_kwargs(
     elif execution_key == "qwencloud":
         kwargs["api_mode"] = getattr(resolution, "api_mode")
         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+    elif execution_key in (_ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS):
+        # Match the resolved preset endpoint independently of the dispatcher.
+        # Preset defaults cannot replace the selected endpoint in capture.
+        kwargs["api_base_url"] = getattr(resolution, "base_url") or None
     elif execution_key in {"moonshot", "zai"}:
         kwargs.update(
             api_base_url=getattr(resolution, "base_url") or None,
@@ -774,6 +782,10 @@ def reconstruct_provider_gateway_kwargs(
             kwargs["api_key_resolved"] = True
     elif execution_key == "openai" and getattr(request, "response_format") is not None:
         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
+    if execution_key in _ENGINE_EXECUTION_KEYS and request.continuation_groups:
+        kwargs["provider_continuations"] = [
+            group.checkpoint for group in request.continuation_groups
+        ]
     return {name: value for name, value in kwargs.items() if value is not None}
 
 

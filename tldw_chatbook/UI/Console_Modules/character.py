@@ -245,7 +245,34 @@ class ConsoleCharacterController:
                 except Exception:  # noqa: BLE001 - reject unavailable retained storage
                     return None
 
-            card = await asyncio.to_thread(fetch_exact)
+            from ...DB.base_db import run_owned_db_call
+            from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
+            if (
+                type(required_database) is CharactersRAGDB
+                and not required_database.is_memory_db
+            ):
+                # Own the actual callback through repeated cancellation, and
+                # retire only a connection newly opened on its worker thread.
+                worker = asyncio.Task(
+                    run_owned_db_call(required_database, fetch_exact),
+                    loop=asyncio.get_running_loop(),
+                )
+                try:
+                    card = await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    while not worker.done():
+                        try:
+                            await asyncio.shield(worker)
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception:
+                            break
+                    if not worker.cancelled():
+                        worker.exception()
+                    raise
+            else:
+                card = await asyncio.to_thread(fetch_exact)
             if not admission_is_current():
                 return
         if card is None:

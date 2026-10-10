@@ -234,7 +234,9 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
             if not available:
                 coordinator.close_voice(self)
             title = session.title if session is not None else "Conversation unavailable"
-            self.query_one("#buddy-conversation-title", Static).update(str(title))
+            title_widget = self.query_one("#buddy-conversation-title", Static)
+            if str(title_widget.renderable) != str(title):
+                title_widget.update(str(title))
             if busy:
                 coordinator.close_voice(self)
             activity = (
@@ -242,7 +244,9 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
                 if available
                 else "This target is missing or unavailable. No other conversation will be used."
             )
-            self.query_one("#buddy-activity", Static).update(activity)
+            activity_widget = self.query_one("#buddy-activity", Static)
+            if str(activity_widget.renderable) != activity:
+                activity_widget.update(activity)
             self.query_one("#buddy-send", Button).disabled = (
                 busy or self.binding in coordinator.submitting
             )
@@ -263,7 +267,11 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
                     )
                     self._last_transcript = transcript
             else:
-                self.query_one("#buddy-transcript", Static).update("")
+                transcript_widget = self.query_one("#buddy-transcript", Static)
+                if str(transcript_widget.renderable):
+                    transcript_widget.update("")
+                # The cleared view must republish even if the same messages return.
+                self._last_transcript = None
             changed = changed or decision_key != self._last_decision_key
             self._last_decision_key = decision_key
             self.query_one("#buddy-pending", Button).display = bool(payloads)
@@ -318,7 +326,9 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
         notice = coordinator.notices.get(self.binding, "")
         if "worktree_merge" in payloads:
             notice = "A worktree decision needs review. Open Console to continue."
-        self.query_one("#buddy-reply-notice", Static).update(notice)
+        notice_widget = self.query_one("#buddy-reply-notice", Static)
+        if str(notice_widget.renderable) != notice:
+            notice_widget.update(notice)
         draft = coordinator.drafts.get(self.binding, "")
         composer = self.query_one("#buddy-reply", TextArea)
         if self._last_draft != draft:

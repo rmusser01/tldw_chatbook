@@ -28,7 +28,7 @@ import sqlite3
 import subprocess
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Sequence
 
 from loguru import logger
 from loguru import logger as loguru_logger
@@ -36,7 +36,6 @@ from textual import work
 from textual.message_pump import active_message_pump
 from textual.worker import Worker, WorkerCancelled, WorkerState
 
-from tldw_chatbook.app_keep_alive import keep_alive_notice, retire_dead_pump
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
 from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 from tldw_chatbook.Chat.console_settings_durability import (
@@ -64,6 +63,24 @@ from tldw_chatbook.Widgets.confirmation_dialog import (
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
     from tldw_chatbook.Workflows.session import WorkflowSession
+
+
+def retire_dead_pump(
+    app: Any, pump: Any, frames: Sequence[tuple[str, str, int | None]]
+) -> str | None:
+    """Load the original recovery helper only when handling a pump error."""
+    from tldw_chatbook.app_keep_alive import retire_dead_pump as retire
+
+    return retire(app, pump, frames)
+
+
+def keep_alive_notice(
+    site: tuple[str, str, int | None], pump: Any, raised: BaseException, kind: str
+) -> str:
+    """Preserve the lifecycle alias without loading error recovery at boot."""
+    from tldw_chatbook.app_keep_alive import keep_alive_notice as notice
+
+    return notice(site, pump, raised, kind)
 
 
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
@@ -544,25 +561,19 @@ class LifecycleMixin:
         if task is None:
 
             async def settle_view_and_dispose() -> None:
-                view_workers = [
-                    worker
-                    for worker in tuple(getattr(self, "workers", ()))
-                    if worker.group in {
-                        "console-sync",
-                        "console-resume-navigation-startup",
-                        "console-resume-navigation-dispatch",
-                    }
-                ]
-                for worker in view_workers:
-                    if not worker.is_finished and not worker.is_cancelled:
-                        worker.cancel()
-                # Cancelled view workers finish their rollback before the
-                # runtime and screens disappear. Accepted execution remains
-                # owned by the runtime's existing disposal policy.
-                await asyncio.gather(
-                    *(worker.wait() for worker in view_workers),
-                    return_exceptions=True,
+                from .UI.Console_Modules.view_workers import (
+                    capture_console_view_workers,
+                    drain_console_view_workers,
                 )
+
+                # Preserve the original App manager-wide selected group scope;
+                # Runtime.detach_view can precede a retired view's awaited cleanup.
+                captured = capture_console_view_workers(self)
+                runtime = getattr(self, "console_runtime", None)
+                view = getattr(runtime, "view", None)
+                if view is not None:
+                    view._console_chat_tearing_down = True
+                await drain_console_view_workers(captured)
                 await dispose_console_runtime(self)
 
             task = asyncio.create_task(
@@ -699,6 +710,7 @@ class LifecycleMixin:
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        actor_recovery_cancellation = await TldwCli._shutdown_actor_pack_recovery(self)
         await self._shutdown_workflow_session()
         self._mcp_local_config_saves_closed = True
         self._tool_profile_operations_closed = True
@@ -714,7 +726,9 @@ class LifecycleMixin:
             await tool_profiles.close_and_drain()
         recovery_cancellation = await TldwCli._shutdown_recovery_service(self)
         monitor_cancellation = await TldwCli._stop_backup_maintenance_monitor(self)
-        recovery_cancellation = recovery_cancellation or monitor_cancellation
+        recovery_cancellation = (
+            recovery_cancellation or monitor_cancellation or actor_recovery_cancellation
+        )
         workflow_error = None
         workflow_authoring = getattr(self, "_workflow_authoring", None)
         if workflow_authoring is not None:
@@ -1401,7 +1415,7 @@ class LifecycleMixin:
 
             # Clean up any lingering subprocess
             for proc in (
-                subprocess._active.copy()
+                (subprocess._active or []).copy()
             ):  # Make a copy to avoid modification during iteration
                 try:
                     if proc.poll() is None:  # Process is still running

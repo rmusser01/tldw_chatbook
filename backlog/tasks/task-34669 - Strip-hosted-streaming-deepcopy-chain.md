@@ -1,5 +1,5 @@
 ---
-id: TASK-34417
+id: TASK-34669
 title: Strip hosted-streaming deepcopy chain
 status: Done
 created_date: 2026-10-07 02:40
@@ -37,3 +37,16 @@ Replaced the hosted-streaming deepcopy chain with fresh per-level dict construct
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
+
+## Renumbering provenance
+
+This is the same completed hosted-streaming task previously identified as
+TASK-34417, not newly scheduled work. Its creation date, Done status, acceptance
+criteria and implementation history are preserved. During PR #3050's rebase the
+older Console empty-MCP-catalog task keeps that ID under the older-arrival rule.
+The Console claimant was created 2026-10-06 07:22 and first arrived in commit
+5d7c244a0a at 2026-10-06 08:50-0700. This younger streaming claimant was created
+2026-10-07 02:40 and first arrived in commit c10a106645 at
+2026-10-06 19:46-0700. Its replacement ID is TASK-34669. Existing dependencies
+follow this same historical task; the higher replacement number does not make
+that dependency newly future work.

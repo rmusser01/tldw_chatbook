@@ -24,6 +24,13 @@ from tldw_chatbook.Tool_Packs.contracts import (
 )
 
 
+# Keep host-native permissions and durability local to this receipt store.
+if os.name == "nt":
+    from tldw_chatbook.Utils.windows_files import WindowsOS as _ReceiptWindowsOS
+
+    os = _ReceiptWindowsOS()
+
+
 RECEIPT_SCHEMA = "tldw.tool-pack-receipt/v1"
 MAX_RECEIPT_BYTES = 4 * 1024 * 1024
 MAX_RECEIPT_STORE_BYTES = 32 * 1024 * 1024
@@ -483,12 +490,12 @@ class ToolPackReceiptStore:
     def _ensure_root(self) -> None:
         try:
             if self.root.exists() or self.root.is_symlink():
-                info = self.root.lstat()
+                info = os.stat(self.root, follow_symlinks=False)
                 if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
                     raise _fail("activation_failed")
             else:
                 self.root.mkdir(parents=True, mode=0o700)
-            self.root.chmod(0o700)
+            os.chmod(self.root, 0o700)
             self._fsync_directory(self.root)
             self._fsync_directory(self.root.parent)
         except ToolPackError:
@@ -516,7 +523,7 @@ class ToolPackReceiptStore:
     def exists(self, receipt_id: str) -> bool:
         path = self._path(receipt_id)
         try:
-            info = path.lstat()
+            info = os.stat(path, follow_symlinks=False)
         except FileNotFoundError:
             return False
         except OSError:
@@ -527,7 +534,7 @@ class ToolPackReceiptStore:
         path = self._path(receipt_id)
         digest = _digest(expected_digest)
         try:
-            info = path.lstat()
+            info = os.stat(path, follow_symlinks=False)
             if (
                 stat.S_ISLNK(info.st_mode)
                 or not stat.S_ISREG(info.st_mode)
@@ -591,7 +598,7 @@ class ToolPackReceiptStore:
         path = handle.path
         with self._state.lock:
             try:
-                before = path.lstat()
+                before = os.stat(path, follow_symlinks=False)
             except FileNotFoundError:
                 return False
             except OSError:
@@ -605,7 +612,7 @@ class ToolPackReceiptStore:
                 raise _fail("payload_invalid")
             verified = self.read(handle.receipt_id, expected_digest=expected_digest)
             try:
-                after = path.lstat()
+                after = os.stat(path, follow_symlinks=False)
             except OSError:
                 raise _fail("activation_uncertain") from None
             if verified.handle.size != handle.size or _file_identity(
@@ -640,7 +647,7 @@ class ToolPackReceiptStore:
                     for entry in scan:
                         if len(entries) >= self.max_reconcile_entries:
                             raise _fail("capacity_exceeded")
-                        entries.append(Path(entry.path))
+                        entries.append(self.root / entry.name)
                 entries.sort(key=lambda path: path.name)
             except ToolPackError:
                 raise
@@ -651,7 +658,7 @@ class ToolPackReceiptStore:
                 if name in protected or not _RECEIPT_ID_RE.fullmatch(name):
                     continue
                 try:
-                    info = path.lstat()
+                    info = os.stat(path, follow_symlinks=False)
                     if (
                         stat.S_ISLNK(info.st_mode)
                         or not stat.S_ISREG(info.st_mode)
@@ -708,7 +715,7 @@ class ToolPackReceiptStore:
             for path in entries:
                 if not _RECEIPT_ID_RE.fullmatch(path.name):
                     continue
-                info = path.lstat()
+                info = os.stat(path, follow_symlinks=False)
                 if stat.S_ISREG(info.st_mode) and not stat.S_ISLNK(info.st_mode):
                     total += info.st_size
         except OSError:

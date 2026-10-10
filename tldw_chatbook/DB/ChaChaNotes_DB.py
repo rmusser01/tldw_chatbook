@@ -37,6 +37,7 @@ changes in the `sync_log` and in individual records.
 # Imports
 import contextlib
 import hashlib
+import inspect
 import sqlite3
 import json
 import re
@@ -3032,7 +3033,10 @@ DELETE FROM keywords
                     conn.attach_quiescence_registry(self._connection_quiescence)
                     conn.row_factory = sqlite3.Row
                     if not self.is_memory_db:
-                        conn.execute("PRAGMA journal_mode=WAL;")
+                        # Finish the statement: an active journal_mode PRAGMA is
+                        # a writer that refuses every later COMMIT on this
+                        # connection if anything retains its cursor.
+                        conn.execute("PRAGMA journal_mode=WAL;").fetchall()
                     # NORMAL is safe under WAL (app-crash-safe; only an OS/power
                     # crash can lose the last commit or two, acceptable for this
                     # local cache) and avoids an fsync on every commit -- the
@@ -3370,78 +3374,94 @@ DELETE FROM keywords
         The caller must release its native borrowers before requesting close; the
         cache reference is cleared only after successful native retirement.
         """
-        conn = getattr(self._local, "conn", None)
+        local = self._local
+        conn = getattr(local, "conn", None)
         if conn is not None:
-            with _core_closing(self, conn) as allowed:
-                if not allowed:
-                    return
-                try:
-                    if not self.is_memory_db:
-                        # Resolve any pending transaction before checkpointing
-                        if conn.in_transaction:
+            self._close_connection_handle(conn, local, self._connection_quiescence)
+
+    def _close_connection_handle(self, conn, local, registry, *, strict=False):
+        """Apply the original close policy to this captured native handle."""
+        with _core_closing(self, conn) as allowed:
+            if not allowed:
+                if strict:
+                    raise RuntimeError("notes_connection_retirement_refused")
+                return
+            try:
+                if not self.is_memory_db:
+                    # Resolve any pending transaction before checkpointing
+                    if conn.in_transaction:
+                        try:
+                            logger.warning(
+                                f"Connection is in an uncommitted transaction during "
+                                f"close; attempting rollback "
+                                f"db_sha256={self._db_diagnostic_ref}."
+                            )
+                            conn.rollback()  # Attempt rollback if transaction is open
+                        except sqlite3.Error as exc:
+                            logger.error(
+                                f"Rollback attempt during close failed "
+                                f"db_sha256={self._db_diagnostic_ref} "
+                                f"exception_type={type(exc).__name__}"
+                            )
+                            # Don't proceed to checkpoint if rollback fails and we're still in transaction potentially
+                            # However, conn.close() below should still be attempted.
+
+                    # Checkpoint WAL only if not in a failed transaction state that prevents it
+                    # and WAL mode is active.
+                    # We assume if conn.in_transaction is false now, any transaction was committed/rolled back.
+                    if not conn.in_transaction:  # Re-check after potential rollback
+                        mode_row = conn.execute("PRAGMA journal_mode;").fetchone()
+                        if mode_row and mode_row[0].lower() == "wal":
                             try:
-                                logger.warning(
-                                    f"Connection is in an uncommitted transaction during "
-                                    f"close; attempting rollback "
+                                logger.debug(
+                                    f"Attempting WAL checkpoint (TRUNCATE) before close "
+                                    f"db_sha256={self._db_diagnostic_ref} "
+                                    f"thread={threading.get_ident()}."
+                                )
+                                conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                                logger.debug(
+                                    f"WAL checkpoint TRUNCATE executed "
                                     f"db_sha256={self._db_diagnostic_ref}."
                                 )
-                                conn.rollback()  # Attempt rollback if transaction is open
                             except sqlite3.Error as exc:
-                                logger.error(
-                                    f"Rollback attempt during close failed "
+                                logger.warning(
+                                    f"WAL checkpoint failed "
                                     f"db_sha256={self._db_diagnostic_ref} "
                                     f"exception_type={type(exc).__name__}"
                                 )
-                                # Don't proceed to checkpoint if rollback fails and we're still in transaction potentially
-                                # However, conn.close() below should still be attempted.
+                conn.close()
+                if strict:
+                    try:
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
+                        pass
+                    else:
+                        raise RuntimeError("notes_connection_not_physically_retired")
+                registry.unregister(conn)
+                # This ensures that the reference is cleared from threading.local
+                # even if conn.close() itself raised an exception.
+                if getattr(local, "conn", None) is conn:
+                    local.conn = None
+                    local.canvas_revision_deletion_authorization = None
+                    local.semantic_mutation_authorization = None
+                    local.voice_trace_import_authorization = None
 
-                        # Checkpoint WAL only if not in a failed transaction state that prevents it
-                        # and WAL mode is active.
-                        # We assume if conn.in_transaction is false now, any transaction was committed/rolled back.
-                        if not conn.in_transaction:  # Re-check after potential rollback
-                            mode_row = conn.execute("PRAGMA journal_mode;").fetchone()
-                            if mode_row and mode_row[0].lower() == "wal":
-                                try:
-                                    logger.debug(
-                                        f"Attempting WAL checkpoint (TRUNCATE) before close "
-                                        f"db_sha256={self._db_diagnostic_ref} "
-                                        f"thread={threading.get_ident()}."
-                                    )
-                                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-                                    logger.debug(
-                                        f"WAL checkpoint TRUNCATE executed "
-                                        f"db_sha256={self._db_diagnostic_ref}."
-                                    )
-                                except sqlite3.Error as exc:
-                                    logger.warning(
-                                        f"WAL checkpoint failed "
-                                        f"db_sha256={self._db_diagnostic_ref} "
-                                        f"exception_type={type(exc).__name__}"
-                                    )
-                    conn.close()
-                    self._connection_quiescence.unregister(conn)
-                    # This ensures that the reference is cleared from threading.local
-                    # even if conn.close() itself raised an exception.
-                    if hasattr(self._local, "conn"):
-                        self._local.conn = None
-                    self._local.canvas_revision_deletion_authorization = None
-                    self._local.semantic_mutation_authorization = None
-                    self._local.voice_trace_import_authorization = None
-
-                    logger.debug(
-                        f"Closed SQLite connection "
-                        f"db_sha256={self._db_diagnostic_ref} "
-                        f"thread={threading.get_ident()}."
-                    )
-                except (
-                    sqlite3.Error
-                ) as exc:  # Catches errors from execute, checkpoint, or close
-                    logger.warning(
-                        f"Error during SQLite connection close/checkpoint "
-                        f"db_sha256={self._db_diagnostic_ref} "
-                        f"thread={threading.get_ident()} "
-                        f"exception_type={type(exc).__name__}"
-                    )
+                logger.debug(
+                    f"Closed SQLite connection "
+                    f"db_sha256={self._db_diagnostic_ref} "
+                    f"thread={threading.get_ident()}."
+                )
+            except (
+                sqlite3.Error
+            ) as exc:  # Catches errors from execute, checkpoint, or close
+                logger.warning(
+                    f"Error during SQLite connection close/checkpoint "
+                    f"db_sha256={self._db_diagnostic_ref} "
+                    f"thread={threading.get_ident()} "
+                    f"exception_type={type(exc).__name__}"
+                )
+                if strict:
+                    raise
 
     def backup_database(self, backup_file_path: str) -> bool:
         """
@@ -24894,3 +24914,302 @@ class TransactionContextManager:
 #
 # End of ChaChaNotes_DB.py
 #######################################################################################################################
+# Definition-time identities for the finite Character display reader only.
+_CHARACTER_REFRESH_READERS = tuple(
+    (
+        CharactersRAGDB,
+        name,
+        descriptor,
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        __file__,
+        __spec__,
+        getattr(__spec__, "origin", None),
+    )
+    for name in (
+        "get_local_authority_id",
+        "get_character_conversation_search_revision",
+        "get_connection",
+        "close_connection",
+        "transaction",
+    )
+    for descriptor in (vars(CharactersRAGDB)[name],)
+    for function in (
+        descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
+    )
+)
+
+
+# Definition-time identities for the optional finite stock browser callback.
+# No handle, authority verdict or query result is retained by these records.
+_CONSOLE_BROWSER_NOTES_SOURCE = (
+    globals(),
+    globals()["__file__"],
+    globals()["__spec__"],
+    getattr(globals()["__spec__"], "origin", None),
+    tuple(
+        (owner, name, inspect.getattr_static(owner, name))
+        for owner, names in (
+            (
+                CharactersRAGDB,
+                (
+                    "_after_conversation_page_count",
+                    "_close_connection_handle",
+                    "_conversation_archive_scope_clause",
+                    "_conversation_character_scope_clause",
+                    "_conversation_deleted_scope_clause",
+                    "_conversation_search_filter",
+                    "_fts_prefix_match_expression",
+                    "_get_thread_connection",
+                    "_normalize_conversation_character_scope",
+                    "_normalize_conversation_state",
+                    "_normalize_nullable_text",
+                    "_normalize_scope",
+                    "_validate_conversation_page_coordinates",
+                    "close_connection",
+                    "count_messages_for_conversations",
+                    "execute_query",
+                    "get_connection",
+                    "get_keywords_for_conversations",
+                    "search_conversations_page",
+                    "transaction",
+                ),
+            ),
+            (TransactionContextManager, ("__init__", "__enter__", "__exit__")),
+        )
+        for name in (*names, "__getattribute__", "__dict__")
+    ),
+    tuple(
+        (name, globals()[name])
+        for name in (
+            "CharactersRAGDB",
+            "TransactionContextManager",
+            "_core_operation",
+            "_core_closing",
+            "_core_cached_connection",
+            "_register_core_connection",
+            "connect_private_sqlite",
+            "_QuiescentSQLiteConnection",
+        )
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in tuple(
+            function
+            for owner, names in (
+                (
+                    CharactersRAGDB,
+                    (
+                        "_after_conversation_page_count",
+                        "_close_connection_handle",
+                        "_conversation_archive_scope_clause",
+                        "_conversation_character_scope_clause",
+                        "_conversation_deleted_scope_clause",
+                        "_conversation_search_filter",
+                        "_fts_prefix_match_expression",
+                        "_get_thread_connection",
+                        "_normalize_conversation_character_scope",
+                        "_normalize_conversation_state",
+                        "_normalize_nullable_text",
+                        "_normalize_scope",
+                        "_validate_conversation_page_coordinates",
+                        "close_connection",
+                        "count_messages_for_conversations",
+                        "execute_query",
+                        "get_connection",
+                        "get_keywords_for_conversations",
+                        "search_conversations_page",
+                        "transaction",
+                    ),
+                ),
+                (TransactionContextManager, ("__init__", "__enter__", "__exit__")),
+            )
+            for name in names
+            for descriptor in (vars(owner)[name],)
+            for function in (
+                descriptor.__func__ if type(descriptor) is staticmethod else descriptor,
+            )
+        )
+        + (CharactersRAGDB._get_thread_connection.__wrapped__,)
+    ),
+)
+
+
+# Definition-time identities for the optional finite stock browser callback.
+# No handle, authority verdict or query result is retained by these records.
+_CONSOLE_BROWSER_NOTES_CORE_SOURCE = (
+    _core_operation.__wrapped__.__globals__,
+    _core_operation.__wrapped__.__globals__["__file__"],
+    _core_operation.__wrapped__.__globals__["__spec__"],
+    getattr(_core_operation.__wrapped__.__globals__["__spec__"], "origin", None),
+    (),
+    tuple(
+        (name, _core_operation.__wrapped__.__globals__[name])
+        for name in (
+            "_core_operation",
+            "_core_closing",
+            "_core_getter",
+            "_core_access",
+            "_core_cached_connection",
+            "_register_core_connection",
+            "_repository_participant",
+        )
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in tuple(
+            _core_operation.__wrapped__.__globals__[name]
+            for name in (
+                "_core_operation",
+                "_core_closing",
+                "_core_getter",
+                "_core_access",
+                "_core_cached_connection",
+                "_register_core_connection",
+                "_repository_participant",
+            )
+        )
+        + (_core_operation.__wrapped__, _core_closing.__wrapped__)
+    ),
+)
+
+
+# Definition-time identities for the optional finite stock browser callback.
+# No handle, authority verdict or query result is retained by these records.
+_CONSOLE_BROWSER_NOTES_CLOSE_SOURCE = (
+    globals(),
+    globals()["__file__"],
+    globals()["__spec__"],
+    getattr(globals()["__spec__"], "origin", None),
+    tuple(
+        (CharactersRAGDB, name, inspect.getattr_static(CharactersRAGDB, name))
+        for name in ("_close_connection_handle", "__getattribute__", "__dict__")
+    ),
+    tuple((name, globals()[name]) for name in ("CharactersRAGDB", "_core_closing")),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in (CharactersRAGDB._close_connection_handle,)
+    ),
+)
+
+
+# Definition-time identities for the optional finite stock browser callback.
+# No handle, authority verdict or query result is retained by these records.
+_CONSOLE_BROWSER_NOTES_CLOSING_SOURCE = (
+    _core_operation.__wrapped__.__globals__,
+    _core_operation.__wrapped__.__globals__["__file__"],
+    _core_operation.__wrapped__.__globals__["__spec__"],
+    getattr(_core_operation.__wrapped__.__globals__["__spec__"], "origin", None),
+    (),
+    tuple(
+        (name, _core_operation.__wrapped__.__globals__[name])
+        for name in ("_core_closing", "_repository_participant", "_repository_types")
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in tuple(
+            _core_operation.__wrapped__.__globals__[name]
+            for name in (
+                "_core_closing",
+                "_repository_participant",
+                "_repository_types",
+            )
+        )
+        + (_core_closing.__wrapped__,)
+    ),
+)
+
+
+# Definition-time identities for the optional finite stock browser callback.
+# No handle, authority verdict or query result is retained by these records.
+_CONSOLE_BROWSER_NOTES_RETIREMENT_SOURCE = (
+    _QuiescentSQLiteConnection.close.__globals__,
+    _QuiescentSQLiteConnection.close.__globals__["__file__"],
+    _QuiescentSQLiteConnection.close.__globals__["__spec__"],
+    getattr(_QuiescentSQLiteConnection.close.__globals__["__spec__"], "origin", None),
+    tuple(
+        (owner, name, inspect.getattr_static(owner, name))
+        for owner, names in (
+            (
+                _QuiescentSQLiteConnection.close.__globals__[
+                    "SQLiteConnectionQuiescenceRegistry"
+                ],
+                ("is_registered", "unregister", "__getattribute__", "__dict__"),
+            ),
+            (_QuiescentSQLiteConnection, ("close",)),
+        )
+        for name in names
+    ),
+    tuple(
+        (name, _QuiescentSQLiteConnection.close.__globals__[name])
+        for name in ("SQLiteConnectionQuiescenceRegistry", "_QuiescentSQLiteConnection")
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in (
+            _QuiescentSQLiteConnection.close.__globals__[
+                "SQLiteConnectionQuiescenceRegistry"
+            ].is_registered,
+            _QuiescentSQLiteConnection.close.__globals__[
+                "SQLiteConnectionQuiescenceRegistry"
+            ].unregister,
+            _QuiescentSQLiteConnection.close,
+        )
+    ),
+)

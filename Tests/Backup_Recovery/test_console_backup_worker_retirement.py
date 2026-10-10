@@ -77,7 +77,7 @@ async def test_rail_preference_prune_retires_finished_worker_connection(tmp_path
         chachanotes_db=db, app_config={"console": {"rail_state": {"live": {}}}},
     ))
     try:
-        await asyncio.to_thread(ChatScreen._prune_console_rail_preferences.__wrapped__, screen, {"live"})
+        await ChatScreen._prune_console_rail_preferences.__wrapped__(screen, {"live"})
         assert not worker_leases(db)
     finally:
         db.close()

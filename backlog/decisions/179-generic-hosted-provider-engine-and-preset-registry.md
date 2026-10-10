@@ -49,3 +49,43 @@ ADR-146.
 - [ADR-062: Hosted Chat Completions Provider Boundary](062-hosted-chat-completions-provider-boundary.md)
 - [ADR-063: Use a neutral hosted wire boundary with durable tool continuation](063-hosted-provider-wire-and-durable-tool-continuation.md)
 - [ADR-146: Console custom endpoint registry](146-console-custom-endpoint-registry.md)
+
+## Provider-owned response normalization amendment (2026-10-04, TASK-34367.1-.5)
+
+Documented provider fields are qualified by primary schemas and actual-adapter
+complete/SSE replays when paid captures are unavailable; this establishes an
+offline contract, not a claim of live compatibility. The evidence source and
+remaining live-capture boundary stay explicit beside each preset.
+
+A hosted adapter may supply one call-owned wire normalizer after bounded JSON
+validation and before strict response/event validation. The default supplies
+none. The normalizer must preserve required content, tool, finish and accounting
+fields, reject unknown/malformed fields that it consumes, and leave all other
+fields for the existing closed parser. No arbitrary metadata is persisted.
+Groq promotes only streamed x_groq.usage to ordinary usage, rejects conflicting
+usage and nested x_groq.error, and keeps complete-response hardware-cache usage
+separate. OpenRouter may reconcile its documented content-free final usage
+choice repeating the already accepted finish state; changed finish/index,
+content/tool/reasoning deltas, duplicate usage and error records fail closed.
+Provider annotations remain scoped; unsupported vendor execution features do
+not become allowed extras. This keeps ADR-062/063 ownership without teaching
+the neutral parser provider names or loosening its default terminal contract.
+
+Alternatives rejected: dropping all x_groq metadata loses accounting and hides
+errors; universal extra fields or repeat-terminal tolerance weakens unrelated
+providers; duplicated transports would bypass the shared resource/SSE guards.
+
+## Tool-call shape clarification (2026-10-05, TASK-34364)
+
+`ProviderRecord.tool_call_allowances` extends the existing record-owned
+extra-field contract to non-streamed tool-call objects. Required id/type/function
+fields and their validation remain strict; named extras pass the existing value
+rule and are dropped. Fireworks allows only index/name, qualified by its retained
+live tool fixture. No other record inherits this allowance. Provider-owned wire
+normalization still runs between bounded JSON and closed shape validation.
+
+For an established streamed call index, a null repeated id/type/function.name
+claims no new value and is treated as omitted. A first delta must establish its
+required identity; a changed non-null identity/type/name still refuses. This
+shared continuation rule does not tolerate arbitrary extra keys or relax finish,
+usage, argument, transport or resource limits.

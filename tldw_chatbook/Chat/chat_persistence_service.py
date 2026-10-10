@@ -1235,6 +1235,7 @@ class ChatPersistenceService:
         conversation_id: str,
         snapshot: ConsoleGenerationSettingsSnapshot,
         expected_snapshot: ConsoleGenerationSettingsSnapshot | None,
+        _expected_database: CharactersRAGDB | None = None,
     ) -> ConsoleGenerationSettingsWriteResult:
         """Compare-and-set one complete owned snapshot with one bounded retry.
 
@@ -1243,6 +1244,9 @@ class ChatPersistenceService:
         expected base. The retry then merges against that fresh record so
         unrelated metadata siblings are preserved.
         """
+        if _expected_database is not None and self.db is not _expected_database:
+            raise RuntimeError("console_settings_writer_source_changed")
+        database = self.db if _expected_database is None else _expected_database
         try:
             merge_console_generation_settings({}, snapshot)
             if expected_snapshot is not None:
@@ -1254,7 +1258,7 @@ class ChatPersistenceService:
 
         target = str(conversation_id)
         for attempt in range(2):
-            record = self.db.get_conversation_by_id(target)
+            record = database.get_conversation_by_id(target)
             if record is None or record.get("deleted"):
                 return ConsoleGenerationSettingsWriteResult(
                     ConsoleGenerationSettingsWriteStatus.MISSING
@@ -1281,7 +1285,7 @@ class ChatPersistenceService:
                 snapshot,
             )
             try:
-                self.db.update_conversation(
+                database.update_conversation(
                     target,
                     {
                         "metadata": json.dumps(
@@ -1295,7 +1299,7 @@ class ChatPersistenceService:
             except ConflictError:
                 if attempt == 0:
                     continue
-                fresh_record = self.db.get_conversation_by_id(target)
+                fresh_record = database.get_conversation_by_id(target)
                 if fresh_record is None or fresh_record.get("deleted"):
                     return ConsoleGenerationSettingsWriteResult(
                         ConsoleGenerationSettingsWriteStatus.MISSING
@@ -1332,6 +1336,9 @@ class ChatPersistenceService:
         expected_revision: int | None | object = (
             _CONTEXT_POLICY_EXPECTED_REVISION_UNSET
         ),
+        _expected_database: CharactersRAGDB | None = None,
+        _expected_context_repository: ConsoleContextRepository | None = None,
+        _expected_context_writer: Any = None,
     ) -> int | None | ContextPolicyWriteResult:
         """Persist context policy, optionally guarding its owned revision.
 
@@ -1339,6 +1346,25 @@ class ChatPersistenceService:
         caller contract. Settings Apply passes an explicit revision, including
         ``None`` for an absent row, and receives the typed CAS result.
         """
+        if _expected_database is not None:
+            current = getattr(self.context_repository, "save_policy_if_revision", None)
+            if (
+                self.db is not _expected_database
+                or self.context_repository is not _expected_context_repository
+                or _expected_context_repository.db is not _expected_database
+                or getattr(current, "__self__", None)
+                is not getattr(_expected_context_writer, "__self__", None)
+                or getattr(current, "__func__", None)
+                is not getattr(_expected_context_writer, "__func__", None)
+                or not callable(_expected_context_writer)
+            ):
+                raise RuntimeError("console_settings_writer_source_changed")
+            return _expected_context_writer(
+                conversation_id,
+                overrides,
+                expected_revision=expected_revision,
+                _expected_database=_expected_database,
+            )
         if expected_revision is not _CONTEXT_POLICY_EXPECTED_REVISION_UNSET:
             return self.context_repository.save_policy_if_revision(
                 conversation_id,

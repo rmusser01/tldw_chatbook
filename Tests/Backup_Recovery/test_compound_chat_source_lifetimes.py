@@ -119,8 +119,8 @@ def configured_db(tmp_path, monkeypatch, local_root):
     (tmp_path / "data").mkdir(mode=0o700)
     target = tmp_path / "config.toml"
     target.write_text(
-        f'[paths]\ndata_dir = "{tmp_path / "data"}"\n'
-        f'[database]\nchachanotes_db_path = "{tmp_path / "chat.sqlite"}"\n'
+        f'[paths]\ndata_dir = {json.dumps(str(tmp_path / "data"))}\n'
+        f'[database]\nchachanotes_db_path = {json.dumps(str(tmp_path / "chat.sqlite"))}\n'
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
     config = install_config_source(monkeypatch)
@@ -333,13 +333,14 @@ def test_dictionary_history_publication_flushes_its_own_bytes(
     import stat
 
     from tldw_chatbook.Backup_Recovery import chat_source_participants as chat
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
 
     db, _ = configured_db
     source = chat.build_dictionary_service(db)
     source.create_dictionary({"name": "seed"})
 
     seen: list[os.stat_result] = []
-    real_fsync = os.fsync
+    real_fsync = raw.flush_file
 
     def spy(fd):
         try:
@@ -348,7 +349,7 @@ def test_dictionary_history_publication_flushes_its_own_bytes(
             pass
         return real_fsync(fd)
 
-    monkeypatch.setattr(os, "fsync", spy)
+    monkeypatch.setattr(raw, "flush_file", spy)
     source.create_dictionary({"name": "durable"})
 
     published = source.history_store_path.stat()

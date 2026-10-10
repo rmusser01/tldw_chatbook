@@ -48,4 +48,6 @@ Not changed (nits): a null type/name on a continuation still fails, since no pro
 Review follow-up (owner rule: fix every finding, minor included): a null type or function.name on a streamed continuation now counts as not sent, like a null id; a different non-null value still fails ('type changed' / 'name changed'). The downstream accumulator (console_provider_gateway._ToolCallAccumulator._merge) reads id, type and name by truthiness, so nulls in the visible frame are ignored. Mutation-checked.
 
 Qodo round (2026-10-05): (1) uncovered_keys no longer crashes on a tool_calls value that is not a list; (2) a complete streamed tool round now counts as a successful round, in capture.py's write gate and in the replay's has_usable_round, so a tool-stream-only capture is written and recognised. Both have tests; removing the gate change fails its test.
+
+Governance clarification for the reconciliation merge: existing ADR-179 now states the record-scoped non-streamed tool-call extra/value/drop contract and nullable established-stream identity rule. Provider-owned response normalization and all strict required-field/terminal/resource checks remain. No new ADR or duplicate transport is introduced.
 <!-- SECTION:NOTES:END -->

@@ -52,6 +52,7 @@ async def _settle_window_swap(console, pilot, *, type_during_window: str):
     return store, session_a, session_b_id, composer
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_switch_carries_settle_window_typing_to_new_session():
     app = _build_test_app()
@@ -75,6 +76,7 @@ async def test_console_switch_carries_settle_window_typing_to_new_session():
         assert store.session_draft(session_a.id) == "old draft"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_switch_without_typing_swaps_drafts_exactly_as_before():
     app = _build_test_app()
@@ -95,6 +97,7 @@ async def test_console_switch_without_typing_swaps_drafts_exactly_as_before():
         assert store.session_draft(session_a.id) == "old draft"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_raw_refusal_during_switch_settle_preserves_both_session_drafts():
     app = _build_test_app()

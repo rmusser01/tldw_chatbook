@@ -361,12 +361,14 @@ class ConsoleFleetWakeCoordinator:
         If recovery was requested, create its task only when none exists;
         capturing a loop alone does not request a new recovery audit.
         """
+        if self._disposed:
+            return
         try:
             self._loop = asyncio.get_running_loop()
         except RuntimeError:
             return
         if self._recovery_requested and self._recovery_task is None:
-            self._recovery_task = self._loop.create_task(self.recover())
+            self._recovery_task = asyncio.Task(self.recover(), loop=self._loop)
 
     def bind_runtime_submitter(self, submit_wake: Callable[..., str]) -> None:
         """Route future wake turns through app-owned runtime custody.
@@ -1190,7 +1192,7 @@ class ConsoleFleetWakeCoordinator:
         Native runtime creation calls this once. Repeated requests are no-ops;
         without a running loop, a later loop capture schedules the audit.
         """
-        if self._recovery_requested:
+        if self._disposed or self._recovery_requested:
             return
         self._recovery_requested = True
         self._recovery_ready = False
@@ -1206,6 +1208,27 @@ class ConsoleFleetWakeCoordinator:
         if self._recovery_task is not None:
             await asyncio.shield(self._recovery_task)
         return self._recovery_ready
+
+    async def drain_recovery(self) -> bool:
+        """Join the captured recovery task and report shutdown-waiter cancellation."""
+        task = self._recovery_task
+        cancelled = False
+        if task is None:
+            return cancelled
+        if not task.done() and task.get_loop() is not asyncio.get_running_loop():
+            raise RuntimeError("Recovery must retire on its live owner loop")
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled |= bool(asyncio.current_task().cancelling())
+            except Exception:
+                if not task.done():
+                    raise
+                break
+        if not task.cancelled():
+            task.exception()
+        return cancelled
 
     async def recover(self) -> None:
         """Audit execution ownership and restore pending results after startup.
@@ -1224,11 +1247,17 @@ class ConsoleFleetWakeCoordinator:
                 return
             ledger = self._runs_db().automatic_work
             await run_owned_db_call(ledger._db, ledger.recover, current_owner_id=self._owner_id)
+            if self._disposed:
+                return
             await run_owned_db_call(ledger._db, self.seed_from_marks, database=ledger._db)
+            if self._disposed:
+                return
             with self._registry_lock:
                 pending = {cid: dict(bucket) for cid, bucket in self._pending.items()}
             for cid, bucket in pending.items():
                 rows = await run_owned_db_call(ledger._db, self._rows_for, cid, bucket, database=ledger._db)
+                if self._disposed:
+                    return
                 self._result_chains.update(
                     (str(row["id"]), row.get("work_chain_id")) for row in rows
                 )
@@ -1237,22 +1266,34 @@ class ConsoleFleetWakeCoordinator:
                         self._paused[(cid, None)] = "legacy_lineage"
                     else:
                         snapshot = await run_owned_db_call(ledger._db, ledger.snapshot, chain_id)
+                        if self._disposed:
+                            return
                         if snapshot.status != "active":
                             self._paused[(cid, chain_id)] = (
                                 snapshot.pause_reason or "review_required"
                             )
             self.seed_progress_hints()
-            self._recovery_failure_reason = None
-            self._recovery_ready = True
+            with self._registry_lock:
+                if self._disposed:
+                    return
+                self._recovery_failure_reason = None
+                self._recovery_ready = True
             self.retry_soon()
         except Exception as exc:  # noqa: BLE001 - incomplete audit forbids dispatch
+            if self._disposed:
+                return
             logger.warning(
                 "wake recovery failed (exception_type={})", type(exc).__name__
             )
-            self._recovery_ready = False
-            self._recovery_failure_reason = "history_unavailable"
-            for session in self._controller.store.sessions():
-                self._notify_ui(session.id)
+            with self._registry_lock:
+                if self._disposed:
+                    return
+                self._recovery_ready = False
+                self._recovery_failure_reason = "history_unavailable"
+                for session in self._controller.store.sessions():
+                    if self._disposed:
+                        return
+                    self._notify_ui(session.id)
 
     def _conversation_in_view(self, conversation_id: str, session_id: str) -> bool:
         """Whether the delivered conversation is actually being viewed.

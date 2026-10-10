@@ -151,9 +151,9 @@ async def _press(pilot, key: str) -> None:
 
 
 async def _ready(app, pilot) -> Screen:
-    assert await _poll(lambda: getattr(app, "_ui_ready", False), timeout=60), (
-        "production TldwCli never reached _ui_ready"
-    )
+    assert await _poll(
+        lambda: getattr(app, "_ui_ready", False), timeout=60
+    ), "production TldwCli never reached _ui_ready"
     await pilot.pause()
     return app.screen
 
@@ -183,9 +183,9 @@ async def _trigger_screen_handler_error(app, pilot, crash_records, modal_cls):
     modal.query_one("#zq-screen-trigger", Button).focus()
     await pilot.pause()
     await _press(pilot, "enter")
-    assert await _poll(lambda: bool(_crashes(crash_records))), (
-        "the handler never raised"
-    )
+    assert await _poll(
+        lambda: bool(_crashes(crash_records))
+    ), "the handler never raised"
     # Let the keep-alive and Textual's loop-exit settle.
     await asyncio.sleep(0.3)
     return content, modal
@@ -282,13 +282,17 @@ async def test_a_callback_error_on_a_live_screen_keeps_that_screen(
             await pilot.pause()
         stack_before = list(app.screen_stack)
         getattr(target, how)(_boom)
-        assert await _poll(lambda: bool(_crashes(crash_records))), (
-            "the callback never raised"
-        )
+        assert await _poll(
+            lambda: bool(_crashes(crash_records))
+        ), "the callback never raised"
         await asyncio.sleep(0.3)
         assert app.is_running and not app._exit and app._exception is None
         assert list(app.screen_stack) == stack_before, _stack(app)
         assert target.is_running and _dead_screens(app) == []
+        # notify() posts asynchronously; a live screen does not imply delivery.
+        assert await _poll(
+            lambda: any("kept running" in n.message for n in app._notifications)
+        ), "the keep-alive notification was not delivered"
         messages = [n.message for n in app._notifications]
         assert any("kept running" in m for m in messages), messages
         assert not any("was closed" in m for m in messages), messages
@@ -693,9 +697,9 @@ async def test_a_retired_screen_is_torn_down_however_its_loop_ended(death, insta
         ticker = dying.ticker
         assert ticker is not None
         assert ticker.ticks and dying.ticks, "nothing ticked before the death"
-        assert await _poll(lambda: _torn_down(app, dying), timeout=5), (
-            f"registered={dying in app._registry} parent={dying._parent!r}"
-        )
+        assert await _poll(
+            lambda: _torn_down(app, dying), timeout=5
+        ), f"registered={dying in app._registry} parent={dying._parent!r}"
         assert await _poll(lambda: _torn_down(app, ticker), timeout=5), (
             f"registered={ticker in app._registry} parent={ticker._parent!r} "
             f"running={ticker.is_running}"
@@ -704,9 +708,9 @@ async def test_a_retired_screen_is_torn_down_however_its_loop_ended(death, insta
         await asyncio.sleep(0.3)
         assert (ticker.ticks, dying.ticks) == ticks, "a dead screen's timer ticked"
         for worker in (dying.worker, ticker.worker):
-            assert await _poll(lambda w=worker: _cancelled(app, w), timeout=5), (
-                f"{type(worker.node).__name__}'s worker is {worker.state.name}"
-            )
+            assert await _poll(
+                lambda w=worker: _cancelled(app, w), timeout=5
+            ), f"{type(worker.node).__name__}'s worker is {worker.state.name}"
         assert app.screen is content and content.is_running
         assert dying not in app.screen_stack
         assert not app.is_screen_installed(dying)
@@ -756,9 +760,9 @@ async def test_a_dead_screen_whose_unmount_raises_is_still_dropped(raiser, site)
                 assert await _poll(lambda: _torn_down(app, ticker), timeout=5)
             assert await _poll(lambda: not ticker.is_running, timeout=5)
             for worker in (dying.worker, ticker.worker):
-                assert await _poll(lambda w=worker: _cancelled(app, w), timeout=5), (
-                    f"{type(worker.node).__name__}'s worker is {worker.state.name}"
-                )
+                assert await _poll(
+                    lambda w=worker: _cancelled(app, w), timeout=5
+                ), f"{type(worker.node).__name__}'s worker is {worker.state.name}"
             assert app.kinds == ["screen"], app.kinds
     finally:
         logger.remove(sink_id)

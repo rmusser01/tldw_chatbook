@@ -131,6 +131,16 @@ async def _assert_projection(console, pilot, assistant_id, copy, approval_count)
     assert copy in text, text
     assert str(console.query_one("#console-run-chip").render()) == f"Run: {copy}."
     inspector = console.query_one("#console-run-inspector-state", ConsoleRunInspector)
+    await _wait(
+        pilot,
+        lambda: all(
+            any(row.is_mounted for row in inspector.query(f"#{row_id}"))
+            for row_id in (
+                "console-inspector-live-work",
+                "console-inspector-approvals",
+            )
+        ),
+    )
     rendered = "\n".join(str(row.render()) for row in inspector.query(Static))
     assert f"Live work: {copy}" in rendered, rendered
     assert f"Approvals: {approval_count} pending" in rendered, rendered

@@ -194,6 +194,32 @@ def test_controller_unfollow_survives_view_detach_and_remount():
 
 
 @pytest.fixture(autouse=True)
+def _default_tool_settings(monkeypatch):
+    """Declare this unit harness's settings at the existing consumer seams.
+
+    Real config readers and native source guards stay installed; these tests
+    supply their MCP policy, tool defaults, and controller settings explicitly.
+    Individual settings tests may override the relevant consumer afterward.
+    """
+    for consumer in (
+        "tldw_chatbook.Agents.local_tool_provider",
+        "tldw_chatbook.Chat.console_chat_controller",
+        "tldw_chatbook.DB.Subscriptions_DB",
+    ):
+        monkeypatch.setattr(
+            f"{consumer}.get_cli_setting",
+            lambda section, key=None, default=None: default,
+        )
+
+    # Optional built-ins default to disabled. This local/hook review harness
+    # does not assert their availability; calculator/datetime stay always on.
+    # Keep the real provider constructor, permission gates and config readers.
+    import tldw_chatbook.Agents.tool_catalog as tool_catalog
+
+    monkeypatch.setattr(tool_catalog, "_GATEABLE_BUILTINS", ())
+
+
+@pytest.fixture(autouse=True)
 def _dispatching_run():
     """Bind ``RUN`` as the dispatching run for every test in this module.
 
@@ -778,6 +804,7 @@ def _bare_controller(app):
     controller._agent_bridge = None
     controller._pending_approval_event = None
     controller._pending_approval_decisions = None
+    controller._character_read_guards = {}
     scratch_spaces = ConsoleScratchSpaceManager()
     scratch_snapshot = scratch_spaces.snapshot("test-chat")
     controller._scratch_spaces = scratch_spaces
@@ -1452,7 +1479,12 @@ def test_selected_root_swap_fails_closed_before_local_invoke(monkeypatch, tmp_pa
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "secret.txt").write_text("outside")
-    selected.symlink_to(outside, target_is_directory=True)
+    try:
+        selected.symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows account lacks the actual symlink creation capability")
+        raise
 
     assert {
         key: normalize_tool_review(value).verdict
@@ -1870,14 +1902,14 @@ def test_pretooluse_hook_denies_before_permission_store(tmp_path):
     }
     assert verdicts["fs_list"] != "proceed"
     assert verdicts["fs_list"].startswith("hook: ")
-    assert verdicts["git_status"] == "proceed"
+    assert normalize_tool_review(verdicts["git_status"]).verdict == "proceed"
     # ONE approval round trip, carrying only the non-matching call: the
     # hook-denied call never reaches the permission store.
     assert rounds == [["git_status"]]
 
 
 @pytest.mark.bootstrap_profile
-def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
+def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path, monkeypatch):
     """Task 6 bridge wiring: run_reply must wrap the caller's review chain
     with the engine's PreToolUse layer when the bridge was built with an
     ``ensure_run_hooks`` accessor.
@@ -1893,7 +1925,10 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
 
     from tldw_chatbook.Agents.agent_models import STEP_TOOL_RESULT
     from tldw_chatbook.Agents.local_tool_provider import _default_specs
+    import tldw_chatbook.Chat.console_agent_bridge as bridge_module
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Internal_Prompts.catalog import CATALOG
+
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.Chat.console_provider_gateway import (
@@ -1901,6 +1936,18 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
         ProviderToolCalls,
     )
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.Chat.stream_stall_watchdog import DEFAULT_STALL_TIMEOUT_SECONDS
+
+    # This scripted local/hook case has no user prompt overrides.
+    monkeypatch.setattr(
+        bridge_module,
+        "get_internal_prompt",
+        lambda prompt_id: CATALOG[prompt_id].default,
+    )
+    # Declare the documented ENV-first default; keep the real watchdog ceiling.
+    monkeypatch.setenv(
+        "TLDW_STREAM_STALL_TIMEOUT_SECONDS", str(DEFAULT_STALL_TIMEOUT_SECONDS)
+    )
 
     engine = _deny_fs_tools_engine(tmp_path)
 
@@ -1940,69 +1987,96 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
             ["done."],
         ]
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    store = ConsoleChatStore()
-    session = store.ensure_session()
-    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
-    assistant = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
-    )
-    dispatched = []
+    from tldw_chatbook.DB.base_db import operation_owned_connection
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Tools import workspace_file_roots
+    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
-    def execute(operation, arguments, *, intent):
-        dispatched.append(operation)
-        return "clean working tree"
+    # The original turn lazily reads the default file-tools registry as well
+    # as this fixture's run store. Retire only handles this fixture acquires.
+    registry_before = workspace_file_roots._default_registry_instance
+    with contextlib.ExitStack() as cleanup:
+        if type(registry_before) is LocalWorkspaceRegistryService:
+            cleanup.enter_context(operation_owned_connection(registry_before.db))
+        elif registry_before is None:
 
-    local = LocalToolProvider(
-        workspace_root=tmp_path,
-        specs=[
-            spec
-            for spec in _default_specs(
-                tmp_path, workspace_executor=SimpleNamespace(execute=execute)
-            )
-            if spec.name in {"fs_read", "git_status"}
-        ],
-        resolve_state=lambda _hub: ASK,
-    )
-    rounds = []
+            def close_created_registry():
+                registry = workspace_file_roots._default_registry_instance
+                if (
+                    type(registry) is LocalWorkspaceRegistryService
+                    and type(registry.db) is WorkspaceDB
+                ):
+                    registry.db.close()
 
-    def approvals(pending):
-        rounds.append([call.tool_name for call in pending])
-        return {call.tool_name: "approve_once" for call in pending}
+            cleanup.callback(close_created_registry)
+        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        cleanup.callback(db.close)
+        store = ConsoleChatStore()
+        session = store.ensure_session()
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        dispatched = []
 
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db,
-        store=store,
-        provider_gateway=gateway,
-        ensure_run_hooks=lambda: engine,
-    )
-    _run_id, outcome = bridge.run_reply(
-        conversation_id="conv-1",
-        session_id=session.id,
-        resolution=ConsoleProviderResolution(
-            provider="Groq", execution_key="groq", base_url="", model=None, ready=True
-        ),
-        assistant_message_id=assistant.id,
-        model="test-model",
-        session_system_prompt="",
-        agent_messages=[{"role": "user", "content": "hi"}],
-        should_cancel=lambda: False,
-        local_provider=local,
-        review_tool_calls=build_local_review_hook(local, approvals),
-    )
+        def execute(operation, arguments, *, intent):
+            dispatched.append(operation)
+            return "clean working tree"
 
-    assert outcome.status == "done", outcome.steps
-    # The hook denied fs_read BEFORE the review chain: the one approval
-    # round carried only the non-matching call.
-    assert rounds == [["git_status"]]
-    results = {
-        step.tool_name: step.result
-        for step in outcome.steps
-        if step.kind == STEP_TOOL_RESULT
-    }
-    assert results["fs_read"].startswith("hook: ")
-    assert "git_status" in results  # ran the normal chain and dispatched
-    assert dispatched == ["git_status"]
+        local = LocalToolProvider(
+            workspace_root=tmp_path,
+            specs=[
+                spec
+                for spec in _default_specs(
+                    tmp_path, workspace_executor=SimpleNamespace(execute=execute)
+                )
+                if spec.name in {"fs_read", "git_status"}
+            ],
+            resolve_state=lambda _hub: ASK,
+        )
+        rounds = []
+
+        def approvals(pending):
+            rounds.append([call.tool_name for call in pending])
+            return {call.tool_name: "approve_once" for call in pending}
+
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=db,
+            store=store,
+            provider_gateway=gateway,
+            ensure_run_hooks=lambda: engine,
+        )
+        _run_id, outcome = bridge.run_reply(
+            conversation_id="conv-1",
+            session_id=session.id,
+            resolution=ConsoleProviderResolution(
+                provider="Groq",
+                execution_key="groq",
+                base_url="",
+                model=None,
+                ready=True,
+            ),
+            assistant_message_id=assistant.id,
+            model="test-model",
+            session_system_prompt="",
+            agent_messages=[{"role": "user", "content": "hi"}],
+            should_cancel=lambda: False,
+            local_provider=local,
+            review_tool_calls=build_local_review_hook(local, approvals),
+        )
+
+        assert outcome.status == "done", outcome.steps
+        # The hook denied fs_read BEFORE the review chain: the one approval
+        # round carried only the non-matching call.
+        assert rounds == [["git_status"]]
+        results = {
+            step.tool_name: step.result
+            for step in outcome.steps
+            if step.kind == STEP_TOOL_RESULT
+        }
+        assert results["fs_read"].startswith("hook: ")
+        assert "git_status" in results  # ran the normal chain and dispatched
+        assert dispatched == ["git_status"]
 
 
 # -- ApprovalRequested at the approval-round registration (run hooks Task 8) --

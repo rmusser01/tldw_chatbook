@@ -5,7 +5,8 @@
 import asyncio
 import copy
 import json
-from collections.abc import Mapping
+from collections.abc import Coroutine, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -792,13 +793,19 @@ def _existing_ids_sync(
             "RAG scope existence unavailable; reason=scope_existing_ids_read_failure"
         )
         raise _ScopeExistenceReadError from None
+    from ...DB.base_db import operation_owned_connection
+    from ...DB.ChaChaNotes_DB import CharactersRAGDB
+    from ...DB.Client_Media_DB_v2 import MediaDatabase
+
+    owned = type(db) in {CharactersRAGDB, MediaDatabase} and not db.is_memory_db
     try:
-        rows = _sensitive_fetchall(
-            db,
-            f"SELECT id FROM {table} "
-            "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
-            (json.dumps(sorted(ids)),),
-        )
+        with operation_owned_connection(db) if owned else nullcontext():
+            rows = _sensitive_fetchall(
+                db,
+                f"SELECT id FROM {table} "
+                "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
+                (json.dumps(sorted(ids)),),
+            )
         return frozenset(str(row[0]) for row in rows)
     except Exception:
         logger.warning(
@@ -807,10 +814,35 @@ def _existing_ids_sync(
         raise _ScopeExistenceReadError from None
 
 
+async def _await_scope_read(
+    database: Any,
+    operation: Coroutine[Any, Any, Any],
+    *,
+    retain: bool,
+    stock_callback: bool = True,
+) -> Any:
+    """Retain only an opted-in stock display read, never the later scope phases."""
+    if not retain or not stock_callback:
+        return await operation
+    from ...Chat.console_preparation_reads import await_finite_read
+    from ...DB.ChaChaNotes_DB import CharactersRAGDB
+    from ...DB.Client_Media_DB_v2 import MediaDatabase
+    from ...DB.Workspace_DB import WorkspaceDB
+
+    if (
+        type(database) in {CharactersRAGDB, MediaDatabase, WorkspaceDB}
+        and not database.is_memory_db
+    ):
+        return await await_finite_read(operation)
+    return await operation
+
+
 async def _resolve_scope_with_current_ids(
     app: "TldwCli",
     conv_scope: Optional[RagScope],
     ws_scope: Optional[RagScope],
+    *,
+    retain_display_reads: bool = False,
 ) -> EffectiveScope:
     """Resolve scope while routing each existence read for its own store."""
 
@@ -833,11 +865,10 @@ async def _resolve_scope_with_current_ids(
         if bool(getattr(db, "is_memory_db", False)):
             survivors[source_type] = _existing_ids_sync(app, source_type, ids)
         else:
-            survivors[source_type] = await asyncio.to_thread(
-                _existing_ids_sync,
-                app,
-                source_type,
-                ids,
+            survivors[source_type] = await _await_scope_read(
+                db,
+                asyncio.to_thread(_existing_ids_sync, app, source_type, ids),
+                retain=retain_display_reads,
             )
 
     return resolve_effective_scope(
@@ -957,7 +988,11 @@ def _parse_fresh_scope(raw_scope: Any) -> Optional[RagScope]:
 
 
 async def resolve_scope_for_session(
-    app: "TldwCli", session: Optional[Any], *, use_cache: bool = True
+    app: "TldwCli",
+    session: Optional[Any],
+    *,
+    use_cache: bool = True,
+    retain_display_reads: bool = False,
 ) -> ScopeResolution:
     """Resolve conversation + workspace RAG retrieval scope for ``session``.
 
@@ -1023,6 +1058,9 @@ async def resolve_scope_for_session(
         use_cache: Whether to consult and populate the per-app scope cache.
             Prompt-boundary evidence authorization passes ``False`` so
             retrieval-time scope state cannot authorize stale evidence.
+        retain_display_reads: Console display workers retain each stock finite
+            read before propagating cancellation; other callers keep their
+            existing cancellation contract. No later phase starts after it.
 
     Returns:
         A ``ScopeResolution`` carrying the raw conversation scope, the raw
@@ -1045,11 +1083,15 @@ async def resolve_scope_for_session(
                     db, str(conversation_id)
                 )
             else:
-                conv_scope = await run_owned_db_call(
+                conv_scope = await _await_scope_read(
                     db,
-                    _read_cached_conversation_scope_sync,
-                    db,
-                    str(conversation_id),
+                    run_owned_db_call(
+                        db,
+                        _read_cached_conversation_scope_sync,
+                        db,
+                        str(conversation_id),
+                    ),
+                    retain=retain_display_reads,
                 )
         else:
             try:
@@ -1058,11 +1100,15 @@ async def resolve_scope_for_session(
                         db, str(conversation_id)
                     )
                 else:
-                    raw_metadata = await run_owned_db_call(
+                    raw_metadata = await _await_scope_read(
                         db,
-                        _read_fresh_conversation_metadata_sync,
-                        db,
-                        str(conversation_id),
+                        run_owned_db_call(
+                            db,
+                            _read_fresh_conversation_metadata_sync,
+                            db,
+                            str(conversation_id),
+                        ),
+                        retain=retain_display_reads,
                     )
                 if raw_metadata in (None, ""):
                     metadata = {}
@@ -1124,22 +1170,43 @@ async def resolve_scope_for_session(
         registry_db = getattr(registry_service, "db", None)
         registry_is_memory = bool(getattr(registry_db, "is_memory_db", False))
         try:
+            stock_registry = False
+            if retain_display_reads:
+                from ...Workspaces.registry_service import LocalWorkspaceRegistryService
+
+                if type(registry_service) is LocalWorkspaceRegistryService:
+                    scope_reader = registry_service.get_workspace_scope
+                    stock_registry = (
+                        getattr(scope_reader, "__self__", None) is registry_service
+                        and getattr(scope_reader, "__func__", None)
+                        is LocalWorkspaceRegistryService.get_workspace_scope
+                    )
             if not use_cache and registry_is_memory:
                 ws_scope = _read_fresh_workspace_scope_sync(
                     registry_service, workspace_id
                 )
             elif not use_cache:
-                ws_scope = await run_owned_db_call(
+                ws_scope = await _await_scope_read(
                     registry_db,
-                    _read_fresh_workspace_scope_sync,
-                    registry_service,
-                    workspace_id,
+                    run_owned_db_call(
+                        registry_db,
+                        _read_fresh_workspace_scope_sync,
+                        registry_service,
+                        workspace_id,
+                    ),
+                    retain=retain_display_reads,
+                    stock_callback=stock_registry,
                 )
             elif registry_is_memory:
                 ws_scope = registry_service.get_workspace_scope(workspace_id)
             else:
-                ws_scope = await run_owned_db_call(
-                    registry_db, registry_service.get_workspace_scope, workspace_id
+                ws_scope = await _await_scope_read(
+                    registry_db,
+                    run_owned_db_call(
+                        registry_db, registry_service.get_workspace_scope, workspace_id
+                    ),
+                    retain=retain_display_reads,
+                    stock_callback=stock_registry,
                 )
         except Exception:
             # A malformed or unreadable stored scope is not equivalent to no
@@ -1182,6 +1249,7 @@ async def resolve_scope_for_session(
             app,
             conv_scope,
             ws_scope,
+            **({"retain_display_reads": True} if retain_display_reads else {}),
         )
     except _ScopeExistenceReadError:
         return ScopeResolution(

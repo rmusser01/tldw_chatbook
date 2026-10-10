@@ -160,6 +160,7 @@ class _App:
         self.notifications.append((message, severity))
 
 
+@pytest.mark.bootstrap_profile
 def test_runtime_attention_is_receipt_or_hidden_decision_and_exact_ack() -> None:
     marks = _Marks((("conv-a", RECEIPT_A), ("conv-b", RECEIPT_B)))
     app = _App(marks)
@@ -197,6 +198,58 @@ def test_runtime_attention_is_receipt_or_hidden_decision_and_exact_ack() -> None
     ) == (RECEIPT_B,)
     assert runtime.console_needs_attention is False
     assert app.console_attention_updates[-1] is False
+
+
+@pytest.mark.bootstrap_profile
+def test_repeated_render_acknowledges_each_exact_receipt_once_until_it_reappears():
+    marks = _Marks((("conv-a", RECEIPT_A),))
+    app = _App(marks)
+    runtime = ConsoleRuntime(app)
+    calls = []
+    original = marks.acknowledge_console_unseen
+
+    def acknowledge(cid, receipt):
+        calls.append((cid, receipt))
+        return original(cid, receipt)
+
+    marks.acknowledge_console_unseen = acknowledge
+    rendered = (("conv-a", RECEIPT_A),)
+    assert runtime.acknowledge_rendered_terminal_receipts(rendered) == (RECEIPT_A,)
+    for _ in range(6):
+        assert runtime.acknowledge_rendered_terminal_receipts(rendered) == ()
+    assert calls == list(rendered)
+    # A newly observed durable mark invalidates previous acknowledgement.
+    marks.pairs.append(rendered[0])
+    runtime.recompute_console_attention()
+    assert runtime.acknowledge_rendered_terminal_receipts(rendered) == (RECEIPT_A,)
+    assert calls == list(rendered) * 2
+
+
+@pytest.mark.bootstrap_profile
+def test_failed_render_acknowledgement_remains_retryable():
+    marks = _Marks((("conv-a", RECEIPT_A),))
+    app = _App(marks)
+    runtime = ConsoleRuntime(app)
+    original = marks.acknowledge_console_unseen
+    marks.acknowledge_console_unseen = lambda *_: (_ for _ in ()).throw(RuntimeError("busy"))
+    rendered = (("conv-a", RECEIPT_A),)
+    assert runtime.acknowledge_rendered_terminal_receipts(rendered) == ()
+    marks.acknowledge_console_unseen = original
+    assert runtime.acknowledge_rendered_terminal_receipts(rendered) == (RECEIPT_A,)
+
+
+@pytest.mark.bootstrap_profile
+def test_render_acknowledgement_releases_view_owner_on_detach():
+    marks = _Marks((("conv-a", RECEIPT_A),))
+    runtime = ConsoleRuntime(_App(marks))
+    view = SimpleNamespace(console_view_hooks=lambda: {})
+    generation = runtime.attach_view(view)
+    runtime.acknowledge_rendered_terminal_receipts(
+        (("conv-a", RECEIPT_A),), view=view, attachment_generation=generation,
+    )
+    assert runtime.detach_view(view, generation)
+    assert runtime._rendered_receipt_ack_owner is None
+    assert runtime._rendered_receipt_acks == set()
 
 
 @pytest.mark.parametrize("producer", ("pending", "ack", "detach", "attach"))
@@ -1108,6 +1161,7 @@ def test_media_receipts_require_their_exact_hydrated_card_rows() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_transcript_reports_real_nested_ordinary_image_and_video_mounts() -> None:
     ordinary, image, video, image_spec, video_spec = _mounted_media_messages()
     app = _TranscriptHarness()
@@ -1134,6 +1188,7 @@ async def test_transcript_reports_real_nested_ordinary_image_and_video_mounts() 
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_transcript_media_evidence_requires_successful_nested_card_mount() -> None:
     ordinary, image, video, image_spec, video_spec = _mounted_media_messages()
     app = _TranscriptHarness()

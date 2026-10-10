@@ -1783,3 +1783,43 @@ class CollectionsCaptureRepository:
 
 
 __all__ = ["CollectionsCaptureRepository"]
+
+
+# Original callbacks eligible for finite deferred Collections setup only.
+def _record_collections_setup_source(entries):
+    from types import FunctionType
+
+    rows = []
+    for owner, name in entries:
+        original = owner[name] if type(owner) is dict else getattr(owner, name)  # noqa: E721 - exact stock compatibility boundary
+        function = getattr(original, "__func__", original)
+        records = []
+        while type(function) is FunctionType:
+            records.append(
+                (
+                    function,
+                    function.__code__,
+                    function.__globals__,
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple((function.__kwdefaults__ or {}).items()),
+                    function.__closure__,
+                    tuple(
+                        (cell, cell.cell_contents)
+                        for cell in function.__closure__ or ()
+                    ),
+                    vars(function).get("__wrapped__"),
+                )
+            )
+            function = vars(function).get("__wrapped__")
+        rows.append((owner, name, original, tuple(records)))
+    return globals(), tuple(rows)
+
+
+_COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
+    (
+        (globals(), "CollectionsCaptureRepository"),
+        (CollectionsCaptureRepository, "__init__"),
+    )
+)
+del _record_collections_setup_source

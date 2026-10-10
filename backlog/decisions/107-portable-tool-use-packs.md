@@ -226,3 +226,27 @@ surfaces are not extended.
 - [ADR-069: Console project-instruction local state and preflight](069-console-project-instruction-local-state-and-preflight.md)
 - [ADR-074: Portable Actor Packs and local Persona Visual runtime](074-portable-actor-packs-and-local-persona-visual-runtime.md)
 - [ADR-079: Workspace assistant defaults](079-workspace-assistant-defaults.md)
+
+### TASK-34406: native Windows receipt permissions and durability
+
+Tool Pack receipts retain the same private-root/private-file, bounded-capacity,
+digest, atomic publication and uncertain-outcome contract on Windows. Windows
+does not provide POSIX `os.fchmod`, meaningful owner-only mode bits through
+`Path.stat`, or directory descriptors through the CRT `os.open`. The receipt
+store uses the existing local `Utils.windows_files.WindowsOS` facade on Windows
+for directory/file opens, exact native owner/DACL metadata, private hardening
+and durability barriers. Python's global `os` module is never replaced or patched.
+POSIX uses its preceding `os` implementation and operations. This introduces no
+permission cache, policy authority or recovery override. Supported native
+Windows storage remains the local NTFS boundary already defined by ADR-126;
+unsupported filesystems, reparse points and actual barrier or hardening failures
+remain visible failures. Receipts published before a failed barrier retain their
+original uncertain outcome and reconciliation behavior.
+
+Tests inspect actual native owner/DACL mode projections on Windows, rather than
+synthetic CRT permission bits, and change an actual ACL to test relaxed access.
+Symlink tests retain their original assertions and report a capability skip only
+when the host denies symlink creation with Windows error 1314; that skip is not
+product validation. Native directory and file handle retirement, original receipt
+publication/read/digest/capacity/failure controls and eligible workspace
+provisioning remain required; original waits and global-drain limits are unchanged.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import functools
 import platform
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -225,6 +226,16 @@ def _platform_contract(identity: Mapping[str, str | int]) -> bool:
     return False
 
 
+@functools.lru_cache(maxsize=4)
+def _parsed_evidence(raw: str) -> _Evidence:
+    """Parse exact evidence text once; callers still read the file every call.
+
+    A pure function of the bytes just read: it memoizes no file observation,
+    identity or verdict. Validation errors are raised again, never cached.
+    """
+    return _Evidence.model_validate_json(raw)
+
+
 def _qualified_identity(
     operation: str, identity: dict[str, str | int]
 ) -> tuple[bool, str]:
@@ -233,7 +244,7 @@ def _qualified_identity(
     except OSError:
         return False, "qualification_unavailable"
     try:
-        evidence = _Evidence.model_validate_json(raw)
+        evidence = _parsed_evidence(raw)
     except ValidationError:
         return False, "qualification_evidence_invalid"
     if evidence.schema_version != 1 or any(

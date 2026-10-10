@@ -713,6 +713,7 @@ class ConsoleComposerBar(Horizontal):
         # programmatic load/clear/restore leave it untouched so callers can
         # detect "the user typed since X".
         self._user_edit_serial = 0
+        self._authored_draft_observer = None
         # Monotonic scope/version guard for changes that can retain identical
         # bytes and edit serials (notably a same-text session/load swap).
         # Improvement snapshots carry this value so an old request can never
@@ -2044,6 +2045,9 @@ class ConsoleComposerBar(Horizontal):
         matching cache means the hidden input already holds it.
         """
         canonical = self._canonical_draft_text()
+        observer = self._authored_draft_observer
+        if observer is not None:
+            observer(canonical, (self._draft_generation, self._user_edit_serial))
         if canonical == self._hidden_input_mirror:
             return
         try:

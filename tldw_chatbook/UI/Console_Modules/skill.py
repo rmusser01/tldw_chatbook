@@ -61,7 +61,15 @@ class ConsoleSkillController:
         if not callable(get_context):
             return {}
         try:
-            context = await get_context(mode="local")
+            preparation = _stock_console_skill_preparation(
+                self, self.app_instance, service
+            )
+            if preparation is None:
+                context = await get_context(mode="local")
+            else:
+                context = await get_context(
+                    mode="local", _console_trust_preparation=preparation
+                )
         except Exception:
             logger.opt(exception=True).warning("Console skill context fetch failed.")
             return {}
@@ -184,23 +192,17 @@ class ConsoleSkillController:
         """Replace only the pending skill-install task state."""
         current = self._task_resume_state()
         return bool(
-            self._set_task_resume_state(
-                replace(current, pending_skill_install=payload)
-            )
+            self._set_task_resume_state(replace(current, pending_skill_install=payload))
         )
 
     def _set_console_pending_skill_script(self, payload: dict[str, Any] | None) -> bool:
         """Replace only the pending skill-script task state."""
         current = self._task_resume_state()
         return bool(
-            self._set_task_resume_state(
-                replace(current, pending_skill_script=payload)
-            )
+            self._set_task_resume_state(replace(current, pending_skill_script=payload))
         )
 
-    def _set_console_pending_chat_create(
-        self, payload: dict[str, Any] | None
-    ) -> None:
+    def _set_console_pending_chat_create(self, payload: dict[str, Any] | None) -> None:
         """Replace only the pending chat-create task state."""
         current = self._task_resume_state()
         self._set_task_resume_state(replace(current, pending_chat_create=payload))
@@ -249,3 +251,226 @@ class ConsoleSkillController:
             controller.resolve_pending_chat_create(
                 allow, remember, request_id=request_id
             )
+
+
+def _stock_console_skill_preparation(controller, app, service):
+    """Select existing stock preparation without importing its heavy services."""
+    import inspect
+    import sys
+    from types import (
+        FunctionType,
+        GetSetDescriptorType,
+        MemberDescriptorType,
+        ModuleType,
+    )
+
+    cls = _CONSOLE_SKILL_CONTROLLER_ORIGINAL
+    missing = _CONSOLE_SKILL_MISSING
+    if (
+        type(controller) is not cls
+        or inspect.getattr_static(cls, "__getattribute__")
+        is not object.__getattribute__
+        or inspect.getattr_static(cls, "__getattr__", missing) is not missing
+        or inspect.getattr_static(cls, "app_instance", missing) is not missing
+    ):
+        return None
+    dictionary = inspect.getattr_static(cls, "__dict__", missing)
+    if (
+        type(dictionary) is not GetSetDescriptorType
+        and type(dictionary) is not MemberDescriptorType
+    ):
+        return None
+    fields = vars(controller)
+    if type(fields) is not dict or fields.get("app_instance") is not app:  # noqa: E721 -- exact stock metadata; no custom dispatch
+        return None
+    module = sys.modules.get("tldw_chatbook.app_service_wiring")
+    if type(module) is not ModuleType:
+        return None
+    namespace = vars(module)
+    ensure = inspect.getattr_static(type(app), "ensure_local_skill_trust_service", None)
+    if type(ensure) is not FunctionType or ensure.__globals__ is not namespace:
+        return None
+    entry = namespace.get("_CONSOLE_SKILL_ENTRY")
+    if type(entry) is not tuple or len(entry) != 2:
+        return None
+    capture, prepare = entry
+    if type(capture) is not FunctionType or type(prepare) is not FunctionType:
+        return None
+    source = namespace.get("_CONSOLE_SKILL_WIRING_SOURCE")
+    # These two original callback bodies must be present in the defining table
+    # before any optional callback is dispatched. No custom iterable/key used.
+    if type(source) is not tuple or len(source) != 6 or type(source[5]) is not tuple:
+        return None
+    controller_module = sys.modules.get(__name__)
+    if (
+        type(controller_module) is not ModuleType
+        or vars(controller_module) is not globals()
+    ):
+        return None
+    controller_source = globals().get("_CONSOLE_SKILL_CONTEXT_SOURCE")
+    if type(controller_source) is not tuple or len(controller_source) != 6:
+        return None
+    fetch = inspect.getattr_static(cls, "_fetch_console_skill_context", None)
+    controller_records = controller_source[5]
+    if type(controller_records) is not tuple:
+        return None
+    functions = (
+        capture,
+        prepare,
+        namespace.get("_console_skill_metadata_current"),
+        namespace.get("_console_skill_source_current"),
+    )
+    for function in functions:
+        if type(function) is not FunctionType:
+            return None
+        match = None
+        for row in source[5]:
+            if type(row) is not tuple or len(row) != 11:
+                return None
+            if row[2] is function:
+                match = row
+                break
+        if (
+            match is None
+            or function.__globals__ is not namespace
+            or function.__code__ is not match[3]
+            or function.__defaults__ is not match[5]
+            or function.__kwdefaults__ is not match[6]
+            or function.__closure__ is not match[8]
+        ):
+            return None
+        keyword_defaults = function.__kwdefaults__
+        if keyword_defaults is not None and type(keyword_defaults) is not dict:  # noqa: E721 -- exact stock metadata; no custom dispatch
+            return None
+        if keyword_defaults is not None and any(
+            type(key) is not str  # noqa: E721 -- exact stock metadata; no custom dispatch
+            for key in keyword_defaults  # noqa: E721 -- exact stock metadata; no custom dispatch
+        ):
+            return None
+        if type(match[7]) is not tuple or type(match[9]) is not tuple:
+            return None
+        if len(keyword_defaults or {}) != len(match[7]):
+            return None
+        for item in match[7]:
+            if type(item) is not tuple or len(item) != 2 or type(item[0]) is not str:  # noqa: E721 -- exact stock metadata; no custom dispatch
+                return None
+            if (keyword_defaults or {}).get(item[0]) is not item[1]:
+                return None
+        if len(function.__closure__ or ()) != len(match[9]):
+            return None
+        for cell, item in zip(function.__closure__ or (), match[9]):
+            if (
+                type(item) is not tuple
+                or len(item) != 2
+                or item[0] is not cell
+                or cell.cell_contents is not item[1]
+            ):
+                return None
+
+    # Qualify this caller and fetch before dispatching any optional helper.
+    for name, function in (
+        ("_stock_console_skill_preparation", _stock_console_skill_preparation),
+        ("_fetch_console_skill_context", fetch),
+    ):
+        if type(function) is not FunctionType:
+            return None
+        matches = [
+            row
+            for row in controller_records
+            if type(row) is tuple and len(row) == 11 and row[2] is function
+        ]
+        if len(matches) != 1:
+            return None
+        row = matches[0]
+        if (
+            function.__globals__ is not globals()
+            or function.__code__ is not row[3]
+            or function.__defaults__ is not row[5]
+            or function.__kwdefaults__ is not row[6]
+            or function.__closure__ is not row[8]
+        ):
+            return None
+
+    def owner_current():
+        return (
+            type(controller) is cls
+            and inspect.getattr_static(cls, "__getattribute__")
+            is object.__getattribute__
+            and inspect.getattr_static(cls, "__getattr__", missing) is missing
+            and inspect.getattr_static(cls, "app_instance", missing) is missing
+            and vars(controller) is fields
+            and fields.get("app_instance") is app
+        )
+
+    try:
+        captured = capture(app, service, owner_current, controller_source)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return None if captured is None else (prepare, captured)
+
+
+_CONSOLE_SKILL_CONTROLLER_ORIGINAL = ConsoleSkillController
+_CONSOLE_SKILL_MISSING = object()
+
+
+# Definition-time originals for stock Console trust preparation only.
+from types import FunctionType as _SkillFunctionType  # noqa: E402
+
+
+_CONSOLE_SKILL_FUNCTIONS = {
+    "__init__": ConsoleSkillController.__dict__["__init__"],
+    "_fetch_console_skill_context": ConsoleSkillController.__dict__[
+        "_fetch_console_skill_context"
+    ],
+    "_stock_console_skill_preparation": _stock_console_skill_preparation,
+}
+_CONSOLE_SKILL_CONTEXT_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "ConsoleSkillController", ConsoleSkillController),
+        (globals(), "_CONSOLE_SKILL_FUNCTIONS", _CONSOLE_SKILL_FUNCTIONS),
+        (
+            ConsoleSkillController.__dict__,
+            "__init__",
+            ConsoleSkillController.__dict__["__init__"],
+        ),
+        (
+            ConsoleSkillController.__dict__,
+            "_fetch_console_skill_context",
+            ConsoleSkillController.__dict__["_fetch_console_skill_context"],
+        ),
+        (
+            globals(),
+            "_stock_console_skill_preparation",
+            _stock_console_skill_preparation,
+        ),
+        (
+            globals(),
+            "_CONSOLE_SKILL_CONTROLLER_ORIGINAL",
+            _CONSOLE_SKILL_CONTROLLER_ORIGINAL,
+        ),
+        (globals(), "_CONSOLE_SKILL_MISSING", _CONSOLE_SKILL_MISSING),
+    ),
+    tuple(
+        (
+            _CONSOLE_SKILL_FUNCTIONS,
+            _skill_name,
+            _skill_function,
+            _skill_function.__code__,
+            _skill_function.__globals__,
+            _skill_function.__defaults__,
+            _skill_function.__kwdefaults__,
+            tuple((_skill_function.__kwdefaults__ or {}).items()),
+            _skill_function.__closure__,
+            tuple(
+                (cell, cell.cell_contents) for cell in _skill_function.__closure__ or ()
+            ),
+            vars(_skill_function).get("__wrapped__"),
+        )
+        for _skill_name, _skill_function in _CONSOLE_SKILL_FUNCTIONS.items()
+        if type(_skill_function) is _SkillFunctionType
+    ),
+)

@@ -8,9 +8,15 @@ bypass. See the design spec §3.3, §7, §8, §9.2.
 
 from __future__ import annotations
 
+import inspect
 import os
+import sys
 import threading
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
+from dataclasses import dataclass
+from functools import partial
+from types import CodeType, FunctionType, MethodType
 from pathlib import Path
 from typing import Callable, ContextManager
 
@@ -552,6 +558,12 @@ class RunLogWriter:
             run_id: The PRIMARY run's id. Later calls are ignored so a
                 child run never rebinds its parent's writer.
         """
+        try:
+            source = _check_scoped_writer(self)
+        except PermissionError:
+            self._bind_attempted = True
+            self._active = False
+            return
         if self._bind_attempted:
             return
         self._bind_attempted = True
@@ -560,8 +572,14 @@ class RunLogWriter:
             self._active = False
             return
         try:
-            with self._access_scope():
-                self._bind_under_scope(run_id)
+            _check_scoped_writer(self)
+            scope = source.access() if source is not None else self._access_scope()
+            with scope:
+                _check_scoped_writer(self)
+                if source is not None:
+                    _invoke_stock_writer(self, "_bind_under_scope", run_id)
+                else:
+                    self._bind_under_scope(run_id)
         except Exception as exc:
             logger.warning(
                 "run log: access scope unavailable; logging disabled category={}",
@@ -571,7 +589,12 @@ class RunLogWriter:
 
     def _bind_under_scope(self, run_id: str) -> None:
         """Create the run directory while the caller holds file authority."""
-        root = self._explicit_root or resolve_log_root()
+        source = _check_scoped_writer(self)
+        root = (
+            source.root
+            if source is not None
+            else self._explicit_root or resolve_log_root()
+        )
         if root is None:
             self._active = False
             return
@@ -605,18 +628,46 @@ class RunLogWriter:
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 
         with acquire_storage(root):
-            from tldw_chatbook.Tools.file_operation_tools import is_within
+            from tldw_chatbook.Tools.file_operation_tools import (
+                _IS_WITHIN_ORIGINAL,
+                is_sensitive_path,
+                is_within,
+            )
+            from tldw_chatbook.Utils.sensitive_paths import (
+                _IS_SENSITIVE_PATH_ORIGINAL,
+                _RESOLVE_SENSITIVE_CONTEXT_ORIGINAL,
+                resolve_sensitive_context,
+            )
 
+            context_kwargs = {}
+            if _stock_writer(self) and all(
+                callback is original
+                and callback.__code__ is code
+                and callback.__defaults__ is defaults
+                for callback, (original, code, defaults) in (
+                    (is_within, _IS_WITHIN_ORIGINAL),
+                    (is_sensitive_path, _IS_SENSITIVE_PATH_ORIGINAL),
+                    (resolve_sensitive_context, _RESOLVE_SENSITIVE_CONTEXT_ORIGINAL),
+                )
+            ):
+                # One finite bind owns this data. Each path still resolves and
+                # checks independently; custom callbacks retain two arguments.
+                context_kwargs["context"] = resolve_sensitive_context()
             base = root / dir_name
             # Verify containment before creating any directories.
-            if not is_within(base, root):
+            if not is_within(base, root, **context_kwargs):
                 logger.warning("run log: base directory escapes root; logging disabled")
                 self._active = False
                 return
             if legacy_dir_name is not None:
                 # Best-effort, self-contained (never raises): see
                 # `_migrate_legacy_dir` for the full upgrade-safety policy.
-                self._migrate_legacy_dir(root, legacy_dir_name, base)
+                if source is not None:
+                    _invoke_stock_writer(
+                        self, "_migrate_legacy_dir", root, legacy_dir_name, base
+                    )
+                else:
+                    self._migrate_legacy_dir(root, legacy_dir_name, base)
             base.mkdir(parents=True, exist_ok=True)
             gitignore = base / ".gitignore"
             if not gitignore.exists():
@@ -625,16 +676,24 @@ class RunLogWriter:
                 gitignore.write_text("*\n", encoding="utf-8")
             run_dir = base / run_id
             # Verify containment of run_dir before creating it.
-            if not is_within(run_dir, root):
+            if not is_within(run_dir, root, **context_kwargs):
                 logger.warning("run log: run directory escapes root; logging disabled")
                 self._active = False
                 return
             run_dir.mkdir(parents=True, exist_ok=True)
+            _check_scoped_writer(self)
             self.log_dir = run_dir
             self._active = True
+            # Source drift is a refusal, not an optional observer failure.
+            _check_scoped_writer(self)
+            if source is not None:
+                source.check()
             if self._on_bound is not None:
                 try:
-                    self._on_bound(run_id, root)
+                    if source is not None:
+                        source.publish(run_id, root)
+                    else:
+                        self._on_bound(run_id, root)
                 except Exception as exc:  # noqa: BLE001 -- observers never break logging
                     logger.debug(
                         "run log: on_bound callback failed category={}",
@@ -695,6 +754,7 @@ class RunLogWriter:
             legacy_name: The pre-dot directory name (e.g. ``"agent-runs"``).
             dotted: The dotted target directory (e.g. ``root / ".agent-runs"``).
         """
+        _check_scoped_writer(self)
         legacy = root / legacy_name
         try:
             if not legacy.is_dir():
@@ -981,3 +1041,462 @@ def _now_iso() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+# Definition-time anchors keep first-import custom producers on their old route.
+_STOCK_LOG_MODULE = sys.modules[__name__]
+_STOCK_LOG_SELECTOR = resolve_log_root
+_STOCK_LOG_SELECTOR_BINDING = (
+    resolve_log_root,
+    resolve_log_root.__code__,
+    resolve_log_root.__globals__,
+    None,
+)
+_CONTEXTMANAGER_FACTORY_CODES = tuple(
+    code
+    for code in contextmanager.__code__.co_consts
+    if type(code) is CodeType and code.co_name == "helper"
+)
+_CONTEXTMANAGER_GLOBALS = contextmanager.__globals__
+_STOCK_WRITER = RunLogWriter
+_STOCK_PATH_TYPE = type(Path())
+_MAX_SCOPED_CALLBACK_ARGUMENTS = 32
+_STOCK_WRITER_METHODS = {
+    name: vars(RunLogWriter)[name]
+    for name in ("bind", "_bind_under_scope", "_migrate_legacy_dir")
+}
+_STOCK_WRITER_BODY_BINDINGS = {
+    name: (function, function.__code__, function.__globals__, None)
+    for name, function in _STOCK_WRITER_METHODS.items()
+}
+_SCOPED_LOG_SOURCE = ContextVar("scoped_run_log_source", default=None)
+
+
+@dataclass(frozen=True)
+class _ScopedLogSource:
+    """Pure source owners for one original turn; contains no admission."""
+
+    service: object
+    service_anchor: tuple
+    writer: object
+    root: Path
+    access_scope: object
+    on_bound: object
+    access_binding: object
+    publisher_binding: object
+    actor: tuple
+    thread: object
+    live: bool = True
+
+    def check(self) -> None:
+        from tldw_chatbook.Backup_Recovery.admission_runtime import execution_identity
+
+        module, service_class, wrapper, body, *_ = self.service_anchor
+        if (
+            not self.live
+            or sys.modules.get(module.__name__) is not module
+            or module.AgentService is not service_class
+            or module._SCOPED_RUN_TURN_ANCHOR is not self.service_anchor
+            or type(self.service) is not service_class
+            or not _bound_original(self.service, "run_turn", wrapper)
+            or not _stock_service_body_current(self.service_anchor)
+            or inspect.getattr_static(self.service, "_injected_run_log_writer")
+            is not self.writer
+            or inspect.getattr_static(self.service, "run_log_writer") is not self.writer
+            or execution_identity() != self.actor
+            or threading.current_thread() is not self.thread
+            or not _stock_writer(self.writer)
+            or inspect.getattr_static(self.writer, "_explicit_root") is not self.root
+            or inspect.getattr_static(self.writer, "_access_scope")
+            is not self.access_scope
+            or inspect.getattr_static(self.writer, "_on_bound") is not self.on_bound
+            or not _callback_unchanged(self.access_scope, self.access_binding)
+            or not _callback_unchanged(self.on_bound, self.publisher_binding)
+        ):
+            raise PermissionError("run_log_source_changed")
+
+    def access(self):
+        self.check()
+        return _invoke_captured(self.access_scope, self.access_binding)
+
+    def publish(self, run_id, root) -> None:
+        # Caller checks outside the optional observer's swallowed exception block.
+        _invoke_captured(self.on_bound, self.publisher_binding, run_id, root)
+
+
+def _bound_original(receiver, name, function) -> bool:
+    if inspect.getattr_static(type(receiver), name, None) is not function:
+        return False
+    method = getattr(receiver, name, None)
+    return (
+        type(method) is MethodType
+        and method.__self__ is receiver
+        and method.__func__ is function
+    )
+
+
+_UNQUALIFIED_CALLBACK = object()
+
+
+def _function_body_binding(function):
+    """Retain one concrete Python body and its supported contextmanager factory."""
+    if type(function) is not FunctionType:
+        return _UNQUALIFIED_CALLBACK
+    factory = None
+    if (
+        any(function.__code__ is code for code in _CONTEXTMANAGER_FACTORY_CODES)
+        and function.__globals__ is _CONTEXTMANAGER_GLOBALS
+    ):
+        wrapped = function.__dict__.get("__wrapped__")
+        closure = function.__closure__
+        if type(wrapped) is not FunctionType or closure is None or len(closure) != 1:
+            return _UNQUALIFIED_CALLBACK
+        try:
+            if closure[0].cell_contents is not wrapped:
+                return _UNQUALIFIED_CALLBACK
+        except ValueError:
+            return _UNQUALIFIED_CALLBACK
+        factory = (wrapped, wrapped.__code__, wrapped.__globals__, closure)
+    return function, function.__code__, function.__globals__, factory
+
+
+def _function_body_current(binding) -> bool:
+    function, code, defining, factory = binding
+    if (
+        type(function) is not FunctionType
+        or function.__code__ is not code
+        or function.__globals__ is not defining
+    ):
+        return False
+    if factory is None:
+        return True
+    wrapped, wrapped_code, wrapped_globals, closure = factory
+    if (
+        function.__dict__.get("__wrapped__") is not wrapped
+        or function.__closure__ is not closure
+        or wrapped.__code__ is not wrapped_code
+        or wrapped.__globals__ is not wrapped_globals
+    ):
+        return False
+    try:
+        return closure[0].cell_contents is wrapped
+    except ValueError:
+        return False
+
+
+def _simple_callback_binding(callback):
+    if type(callback) is FunctionType:
+        body = _function_body_binding(callback)
+        receiver = None
+    elif type(callback) is MethodType:
+        body = _function_body_binding(callback.__func__)
+        receiver = callback.__self__
+    else:
+        return _UNQUALIFIED_CALLBACK
+    if body is _UNQUALIFIED_CALLBACK:
+        return _UNQUALIFIED_CALLBACK
+    return callback, receiver, body
+
+
+def _simple_callback_current(callback, binding) -> bool:
+    original, receiver, body = binding
+    if callback is not original:
+        return False
+    if receiver is None:
+        if type(callback) is not FunctionType or callback is not body[0]:
+            return False
+    elif (
+        type(callback) is not MethodType
+        or callback.__self__ is not receiver
+        or callback.__func__ is not body[0]
+    ):
+        return False
+    return _function_body_current(body)
+
+
+def _callback_binding(callback):
+    if callback is None:
+        return None
+    if type(callback) is partial:
+        if (
+            len(callback.args) > _MAX_SCOPED_CALLBACK_ARGUMENTS
+            or len(callback.keywords) > _MAX_SCOPED_CALLBACK_ARGUMENTS
+        ):
+            return _UNQUALIFIED_CALLBACK
+        target = _simple_callback_binding(callback.func)
+        if target is _UNQUALIFIED_CALLBACK:
+            return _UNQUALIFIED_CALLBACK
+        return (
+            "partial",
+            callback.func,
+            callback.args,
+            callback.keywords,
+            tuple(callback.keywords.items()),
+            target,
+        )
+    target = _simple_callback_binding(callback)
+    if target is _UNQUALIFIED_CALLBACK:
+        return _UNQUALIFIED_CALLBACK
+    return "simple", target
+
+
+def _callback_unchanged(callback, binding) -> bool:
+    if binding is None:
+        return callback is None
+    if binding[0] == "simple":
+        return _simple_callback_current(callback, binding[1])
+    _, function, args, keywords, items, target = binding
+    return (
+        type(callback) is partial
+        and callback.func is function
+        and callback.args is args
+        and callback.keywords is keywords
+        and len(keywords) == len(items)
+        and all(key in keywords and keywords[key] is value for key, value in items)
+        and _simple_callback_current(function, target)
+    )
+
+
+def _invoke_captured(callback, binding, *args):
+    if not _callback_unchanged(callback, binding):
+        raise PermissionError("run_log_source_changed")
+    if binding is None or binding[0] == "simple":
+        return callback(*args)
+    _, function, prefix, _keywords, items, _target = binding
+    return function(*prefix, *args, **dict(items))
+
+
+def _stock_service_body_current(anchor) -> bool:
+    (
+        _,
+        _,
+        wrapper,
+        body,
+        wrapper_code,
+        wrapper_globals,
+        body_code,
+        body_globals,
+        closure,
+    ) = anchor
+    if (
+        type(wrapper) is not FunctionType
+        or type(body) is not FunctionType
+        or wrapper.__code__ is not wrapper_code
+        or wrapper.__globals__ is not wrapper_globals
+        or wrapper.__dict__.get("__wrapped__") is not body
+        or body.__code__ is not body_code
+        or body.__globals__ is not body_globals
+        or wrapper.__closure__ is not closure
+        or closure is None
+        or len(closure) != 1
+    ):
+        return False
+    try:
+        return closure[0].cell_contents is body
+    except ValueError:
+        return False
+
+
+def _invoke_stock_writer(writer, name, *args):
+    # This check is at dispatch: an original check-return observer can change
+    # a function body after the caller's preceding source check returned.
+    try:
+        _check_scoped_writer(writer)
+        if not _stock_writer(writer):
+            raise PermissionError("run_log_source_changed")
+    except PermissionError:
+        if name != "bind":
+            raise
+        writer._bind_attempted = True
+        writer._active = False
+        return None
+    return _STOCK_WRITER_METHODS[name](writer, *args)
+
+
+def _stock_writer(writer) -> bool:
+    return (
+        sys.modules.get(__name__) is _STOCK_LOG_MODULE
+        and RunLogWriter is _STOCK_WRITER
+        and resolve_log_root is _STOCK_LOG_SELECTOR
+        and _function_body_current(_STOCK_LOG_SELECTOR_BINDING)
+        and type(writer) is _STOCK_WRITER
+        and all(
+            inspect.getattr_static(_STOCK_WRITER, name) is function
+            and _bound_original(writer, name, function)
+            and _function_body_current(_STOCK_WRITER_BODY_BINDINGS[name])
+            for name, function in _STOCK_WRITER_METHODS.items()
+        )
+    )
+
+
+def capture_scoped_log_source(
+    service: object, function: Callable
+) -> _ScopedLogSource | None:
+    """Qualify an injected original writer; custom producers keep old behavior."""
+    from tldw_chatbook.Backup_Recovery.admission_runtime import execution_identity
+    from . import agent_service
+
+    anchor = agent_service._SCOPED_RUN_TURN_ANCHOR
+    module, service_class, wrapper, body, *_ = anchor
+    if (
+        module is not agent_service
+        or sys.modules.get(agent_service.__name__) is not module
+        or agent_service.AgentService is not service_class
+        or type(service) is not service_class
+        or function is not body
+        or not _stock_service_body_current(anchor)
+        or not _bound_original(service, "run_turn", wrapper)
+    ):
+        return None
+    writer = inspect.getattr_static(service, "_injected_run_log_writer", None)
+    if (
+        not _stock_writer(writer)
+        or inspect.getattr_static(service, "run_log_writer", None) is not writer
+    ):
+        return None
+    root = inspect.getattr_static(writer, "_explicit_root")
+    if type(root) is not _STOCK_PATH_TYPE:
+        return None
+    access_scope = inspect.getattr_static(writer, "_access_scope")
+    on_bound = inspect.getattr_static(writer, "_on_bound")
+    access_binding = _callback_binding(access_scope)
+    publisher_binding = _callback_binding(on_bound)
+    if (
+        access_binding is _UNQUALIFIED_CALLBACK
+        or publisher_binding is _UNQUALIFIED_CALLBACK
+    ):
+        return None
+    source = _ScopedLogSource(
+        service,
+        anchor,
+        writer,
+        root,
+        access_scope,
+        on_bound,
+        access_binding,
+        publisher_binding,
+        execution_identity(),
+        threading.current_thread(),
+    )
+    source.check()
+    return source
+
+
+@contextmanager
+def scoped_log_source(source: _ScopedLogSource):
+    """Retain exact source metadata only until the original turn exits."""
+    source.check()
+    token = _SCOPED_LOG_SOURCE.set(source)
+    try:
+        yield
+    finally:
+        object.__setattr__(source, "live", False)
+        _SCOPED_LOG_SOURCE.reset(token)
+
+
+def _current_scoped_log_source():
+    from tldw_chatbook.Backup_Recovery.admission_runtime import execution_identity
+
+    source = _SCOPED_LOG_SOURCE.get()
+    if source is not None and (
+        execution_identity() != source.actor
+        or threading.current_thread() is not source.thread
+    ):
+        # Copied metadata is not an admission. The worker uses its original
+        # independently acquired execution/scratch/storage guards.
+        return None
+    return source
+
+
+def check_scoped_log_service(service: object) -> _ScopedLogSource | None:
+    source = _current_scoped_log_source()
+    if source is not None:
+        if source.service is not service:
+            raise PermissionError("run_log_source_changed")
+        source.check()
+    return source
+
+
+def bind_scoped_log_writer(writer: RunLogWriter, run_id: str) -> None:
+    """Use the retained original binder only for this turn's scoped source."""
+    source = _current_scoped_log_source()
+    if source is None:
+        writer.bind(run_id)
+    else:
+        # The original binder owns its nonfatal refusal behavior and rechecks
+        # before its first effect, even when instance metadata changed late.
+        _invoke_stock_writer(writer, "bind", run_id)
+
+
+def _check_scoped_writer(writer):
+    source = _current_scoped_log_source()
+    if source is not None:
+        if source.writer is not writer:
+            raise PermissionError("run_log_source_changed")
+        source.check()
+    return source
+
+
+# Defining callbacks for the optional finite legacy run-log probe only.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "resolve_existing_log_dir",
+                "resolve_log_root",
+                "_validate_run_id_path_component",
+                "_setting",
+                "_env_override",
+                "_coerce_dir_name",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "resolve_existing_log_dir",
+                    "resolve_log_root",
+                    "_validate_run_id_path_component",
+                    "_setting",
+                    "_env_override",
+                    "_coerce_dir_name",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)

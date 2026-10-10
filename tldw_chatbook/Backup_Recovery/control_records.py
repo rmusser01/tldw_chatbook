@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -28,11 +29,11 @@ from .bootstrap import (
     _strings,
 )
 from .native_files import (
-    create_private_directory,
     flush_directory,
     pinned_directory,
     publish_new,
 )
+from .native_platform import flush_file
 from .profile_paths import lexical_path
 from .qualification import qualified_for
 
@@ -87,14 +88,174 @@ def _enrollment(authority: Admission, *, session=None, names=()):
         raise RecoveryRequired("close_unenrolled_clients_and_restart") from None
 
 
-def _ensure(root: Path) -> None:
-    """Registration only: create missing private ancestors, never fix existing ones."""
-    if not root.exists():
-        _ensure(root.parent)
+_CREATION_INTENT_BYTES = 4096
+
+
+class _CreationIntent(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    version: int = Field(ge=1, le=1)
+    child: str = Field(min_length=1, max_length=255)
+    parent_device: int = Field(ge=0)
+    parent_inode: int = Field(ge=1)
+
+
+def _creation_name(root: Path) -> str:
+    # Only a caller-derived lexical component chooses a name. Serialized paths
+    # never select a directory or confer authority on an initializer.
+    return ".bootstrap-create-" + _key(os.path.normcase(root.name)) + ".json"
+
+
+def _creation_file_stat(fd: int):
+    info = os.fstat(fd)
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+        or info.st_uid != os.geteuid()
+        or stat.S_IMODE(info.st_mode) != 0o600
+        or info.st_size > _CREATION_INTENT_BYTES
+    ):
+        raise RecoveryRequired("bootstrap_creation_uncertain")
+    return info
+
+
+def _read_creation_intent(fd: int):
+    # Windows LockFileEx excludes a second handle even in this process. Read
+    # bounded bytes through the actual locked descriptor, never another open.
+    os.lseek(fd, 0, os.SEEK_SET)
+    data = bytearray()
+    while len(data) <= _CREATION_INTENT_BYTES:
+        chunk = os.read(fd, _CREATION_INTENT_BYTES + 1 - len(data))
+        if not chunk:
+            break
+        data.extend(chunk)
+    if len(data) > _CREATION_INTENT_BYTES:
+        raise RecoveryRequired("bootstrap_creation_uncertain")
+    return _CreationIntent.model_validate_json(data)
+
+
+def _check_creation_record(parent: int, name: str, fd: int, expected):
+    before = _stat_identity(_creation_file_stat(fd))
+    try:
+        if (
+            _stat_identity(os.stat(name, dir_fd=parent, follow_symlinks=False))
+            != before
+        ):
+            raise RecoveryRequired("bootstrap_creation_record_changed")
+        record = _read_creation_intent(fd)
+        if record != expected:
+            raise RecoveryRequired("bootstrap_creation_uncertain")
+        if (
+            _stat_identity(_creation_file_stat(fd)) != before
+            or _stat_identity(os.stat(name, dir_fd=parent, follow_symlinks=False))
+            != before
+        ):
+            raise RecoveryRequired("bootstrap_creation_record_changed")
+    except (OSError, ValueError):
+        raise RecoveryRequired("bootstrap_creation_uncertain") from None
+
+
+def _check_creation_parent(path: Path, parent: int, expected):
+    info = os.fstat(parent)
+    named = os.stat(path, follow_symlinks=False)
+    identity = expected.parent_device, expected.parent_inode
+    if (
+        (info.st_dev, info.st_ino) != identity
+        or (named.st_dev, named.st_ino) != identity
+        or not stat.S_ISDIR(info.st_mode)
+        or info.st_uid not in (0, os.geteuid())
+        or info.st_mode & 0o022
+        and not info.st_mode & stat.S_ISVTX
+    ):
+        raise RecoveryRequired("bootstrap_creation_parent_changed")
+
+
+def _ensure_entry(root: Path) -> None:
+    name = _creation_name(root)
+    with pinned_directory(root.parent) as parent:
+        info = os.fstat(parent)
+        expected = _CreationIntent(
+            version=1,
+            child=os.path.normcase(root.name),
+            parent_device=info.st_dev,
+            parent_inode=info.st_ino,
+        )
+        created = False
         try:
-            create_private_directory(root)
-        except FileExistsError:
-            pass
+            fd = os.open(name, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        except FileNotFoundError:
+            try:
+                os.stat(root.name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                return  # Existing input, with no exact unfinished creation work.
+            try:
+                fd = os.open(
+                    name,
+                    os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=parent,
+                )
+                created = True
+            except FileExistsError:
+                fd = os.open(
+                    name, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
+                )
+        try:
+            _creation_file_stat(fd)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise RecoveryRequired("bootstrap_creation_busy") from None
+            if created:
+                data = memoryview(expected.model_dump_json().encode())
+                while data:
+                    count = os.write(fd, data)
+                    if count <= 0:
+                        raise OSError("bootstrap_creation_record_short_write")
+                    data = data[count:]
+            _check_creation_record(parent, name, fd, expected)
+            _check_creation_parent(root.parent, parent, expected)
+            # An earlier failure may precede either initial intent barrier.
+            # Every attempt establishes durable intent before a missing child
+            # can be created, including a retry of complete but unflushed bytes.
+            flush_file(fd)
+            flush_directory(parent)
+            _check_creation_record(parent, name, fd, expected)
+            _check_creation_parent(root.parent, parent, expected)
+            try:
+                child = os.stat(root.name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(root.name, mode=0o700, dir_fd=parent)
+                except FileExistsError:
+                    pass  # The exact containing-entry barrier still applies.
+                child = os.stat(root.name, dir_fd=parent, follow_symlinks=False)
+            if not stat.S_ISDIR(child.st_mode):
+                raise RecoveryRequired("bootstrap_creation_child_changed")
+            with pinned_directory(root) as current:
+                observed = os.fstat(current)
+                if (observed.st_dev, observed.st_ino) != (child.st_dev, child.st_ino):
+                    raise RecoveryRequired("bootstrap_creation_child_changed")
+            _check_creation_parent(root.parent, parent, expected)
+            flush_directory(parent)
+            _check_creation_record(parent, name, fd, expected)
+            _check_creation_parent(root.parent, parent, expected)
+            os.unlink(name, dir_fd=parent)
+            flush_directory(parent)
+        finally:
+            # Closing the actual lock owner retires custody on every outcome.
+            os.close(fd)
+
+
+def _ensure(root: Path) -> None:
+    """Create local ancestors; recheck only their exact durable creation intents."""
+    if root.parent != root:
+        # Existing ancestors may carry an unfinished entry from a failed attempt.
+        # Read-only traversal grants no permission to flush unrelated ancestors.
+        _ensure(root.parent)
+        _ensure_entry(root)
     with pinned_directory(root) as parent:
         if os.fstat(parent).st_uid != os.geteuid() or os.fstat(parent).st_mode & 0o077:
             # Ancestors may be normal trusted home/config dirs; only final bootstrap

@@ -94,7 +94,7 @@ async def test_console_reuse_timer_quiescence_and_runtime_attachment(
 
         # Arm the interval timers the way an active run would.
         console._start_console_transcript_sync_timer()
-        console._start_console_cost_ttl_timer()
+        console._context_spend._start_console_cost_ttl_timer()
         assert console._console_transcript_sync_timer is not None
 
         await _press_until_screen(pilot, "ctrl+1", "HomeScreen")
@@ -102,7 +102,7 @@ async def test_console_reuse_timer_quiescence_and_runtime_attachment(
             "suspend must stop the 0.2s transcript-sync poll -- Textual "
             "does not auto-cancel a suspended installed screen's timers"
         )
-        assert console._console_cost_ttl_timer is None
+        assert console._context_spend._console_cost_ttl_timer is None
         assert getattr(console._fleet, "_console_fleet_survivor_timer", None) is None
         # THE crux of the audit: the runtime view must stay attached --
         # a suspend-time detach permanently kills the prompt queue
@@ -114,8 +114,7 @@ async def test_console_reuse_timer_quiescence_and_runtime_attachment(
 
         await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
         assert app.screen is console, (
-            "chat is a reusable route: returning must resume the installed "
-            "instance"
+            "chat is a reusable route: returning must resume the installed " "instance"
         )
         assert runtime.view is console
 

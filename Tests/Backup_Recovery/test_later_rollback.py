@@ -59,9 +59,9 @@ def _completed(tmp_path, monkeypatch, helper, *, control_root=None):
             timeout=15,
         )
         selector.write_bytes(
-            selector.read_bytes().replace(
-                b"[general]\n", b"[general]\npost_restore=true\n"
-            )
+            selector.read_bytes()
+            .replace(b"\r\n", b"\n")
+            .replace(b"[general]\n", b"[general]\npost_restore=true\n")
         )
         yield case, operation, original_config
 

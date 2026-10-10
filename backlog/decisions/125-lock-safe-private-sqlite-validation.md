@@ -202,3 +202,39 @@ security-sensitive correction.
 - [ADR-029](029-local-private-data-boundary.md)
 - [ADR-028](028-character-tts-generation-profile-ownership.md)
 - [ADR-051](051-private-tts-clone-reference-assets.md)
+
+## OPT95 finite Windows preparation (2026-10-09)
+
+TASK-34601 applies the existing fixed-inventory batching decision to the local
+Windows preparation branch. A qualified stock ordinary connection may share one
+verified parent across the main database and three sidecars for their no-mutation
+first generations. Every per-leaf no-follow/type/owner/link/mode/identity/rights
+check remains. Creation/hardening receives its original fresh pre-effect parent
+proof, and optional churn keeps fresh retries within the original four-attempt
+bound. Custom/capture/source-pin routes retain their existing behavior.
+
+Initial trusted-directory verification remains. Before SQLite allocation, fresh
+full named-chain verification must identify the retained parent; a retained
+Windows share-delete handle alone never proves the current path. Retire all
+preparation descriptors before opening SQLite. Uncertain retirement refuses the
+open and retains the exact existing admission/custody until process exit; do not
+retry possibly recycled descriptor numbers. No proof crosses a call or await.
+This refinement does not eliminate SQLite's existing pathname-open race, change
+WAL/commit/checkpoint policy, relax ADR029 privacy checks, or alter ADR126 source,
+pause and ownership gates.
+
+Alternative: retain four independent parent walks on every unchanged inventory.
+The original warm diagnostic attributes .351–1.186s inclusive to artifact
+preparation, but it is not a latency saving estimate. The bounded shared-parent
+candidate requires actual refusal/retirement controls and sequential whole-Send
+qualification under the [implementation plan](../../Docs/superpowers/plans/2026-10-09-finite-windows-sqlite-preparation.md)
+before adoption. No pool, generic preparation framework or persisted cache is
+selected. Keep this amendment's experimental qualification status explicit until
+those checks pass.
+
+Experiment disposition: **not adopted**. Targeted ownership/refusal controls
+qualify the candidate, but sequential whole-Send timing does not justify its
+added machinery (warm mean 3.030 to 3.224s). The exact implementation/tests are
+archived and removed; four independent walks remain. This section records the
+tested alternative, not a newly active preparation or retention contract. See
+the linked plan for all samples, fixture corrections and source identities.

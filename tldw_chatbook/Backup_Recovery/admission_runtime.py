@@ -12,10 +12,11 @@ import asyncio
 import os
 import threading
 from collections.abc import Callable, Iterator
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass
 
+from . import activation
 from .activation import execution_scope
 from .storage_admission import acquire_storage
 
@@ -174,22 +175,7 @@ class RecoveryAdmissionGuard:
         )
         with ExitStack() as stack:
             try:
-                for owner, path in observed:
-                    if path not in leases:
-                        leases[path] = acquire_storage(path)
-                        stack.callback(leases[path].close)
-                    if self.admit_source is not None and self.admit_source(
-                        stack, owner, path, leases[path]
-                    ):
-                        continue
-                    if not stack.enter_context(
-                        execution_scope(
-                            self.owners(owner), path, retained=leases[path]
-                        )
-                    ):
-                        raise self.error()
-                if self.finalize is not None and not self.finalize(observed, leases):
-                    raise self.error()
+                self._admit_sources(observed, leases, stack, resolve=resolve)
             except (OSError, ValueError, TypeError, RuntimeError, AttributeError):
                 raise self.error() from None
             state = ExecutionState(execution_identity(), leases, observed, active)
@@ -199,6 +185,40 @@ class RecoveryAdmissionGuard:
             finally:
                 state.live = False
                 self.context.reset(token)
+
+    def _admit_sources(self, observed, leases, stack, *, resolve):
+        """Finish finite preparation before the execution generator can yield."""
+        shared = (
+            resolve is None
+            and self.admit_source is None
+            and self.finalize is None
+            and activation._execution_preparation_current(execution_scope)
+        )
+
+        def ordinary(owners, path, lease):
+            return stack.enter_context(execution_scope(owners, path, retained=lease))
+
+        preparation = (
+            activation._execution_preparation(ordinary)
+            if shared
+            else nullcontext(ordinary)
+        )
+        with preparation as admit:
+            for owner, path in observed:
+                if path not in leases:
+                    leases[path] = acquire_storage(path)
+                    stack.callback(leases[path].close)
+                if self.admit_source is not None and self.admit_source(
+                    stack, owner, path, leases[path]
+                ):
+                    continue
+                owners = self.owners(owner)
+                if not admit(owners, path, leases[path]):
+                    raise self.error()
+        if shared and not activation._execution_preparation_current(execution_scope):
+            raise self.error()
+        if self.finalize is not None and not self.finalize(observed, leases):
+            raise self.error()
 
     @contextmanager
     def worker_isolation(self) -> Iterator[None]:

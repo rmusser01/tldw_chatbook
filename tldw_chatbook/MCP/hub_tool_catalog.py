@@ -26,6 +26,28 @@ _RESERVED_EXTERNAL_PROFILE_IDS = frozenset({"__local__", "__virtual_cli__"})
 DIRECT_RUNTIME_UNAVAILABLE_TOOLS = frozenset({"chat_with_llm"})
 
 
+def maximum_needs_external_catalog(maximum: frozenset[str] | None) -> bool:
+    """Whether a frozen tool ceiling may include an external catalog tool."""
+    if type(maximum) is not frozenset:
+        return True
+    prefix = "builtin:tldw_chatbook::"
+    return any(
+        type(tool_id) is not str  # noqa: E721 -- do not invoke custom string methods
+        or not tool_id.startswith(prefix)
+        or len(tool_id) == len(prefix)
+        for tool_id in maximum
+    )
+
+
+# Define before consumers import this module: a replacement must not become
+# the stock dependency rule merely by arriving before preparation's import.
+_MAXIMUM_EXTERNAL_CATALOG_ANCHOR = (
+    maximum_needs_external_catalog,
+    maximum_needs_external_catalog.__code__,
+    maximum_needs_external_catalog.__globals__,
+)
+
+
 @dataclass(frozen=True)
 class HubTool:
     """A single tool normalized for cross-server display.
@@ -59,6 +81,55 @@ class HubTool:
     @property
     def tool_id(self) -> str:
         return f"{self.server_key}::{self.name}"
+
+
+# Capture before another module can import a replaced constructor. Only slots
+# consumed by shared Console construction/conversion are part of this shape.
+_HUB_TOOL_SLOT_MISSING = object()
+_HUB_TOOL_CONSTRUCTION_ANCHOR = (
+    HubTool,
+    HubTool.__bases__,
+    HubTool.__mro__,
+    _HUB_TOOL_SLOT_MISSING,
+    tuple(
+        (name, vars(HubTool).get(name, _HUB_TOOL_SLOT_MISSING))
+        for name in (
+            "__new__",
+            "__init__",
+            "__getattribute__",
+            "__getattr__",
+            "tool_id",
+            "server_key",
+            "server_label",
+            "source",
+            "name",
+            "description",
+            "input_schema",
+            "tags",
+            "stale",
+            "executable",
+        )
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            (
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple(dict.items(function.__kwdefaults__))
+                if function.__kwdefaults__ is not None
+                else (),
+                function.__closure__,
+                tuple(
+                    (cell, cell.cell_contents) for cell in function.__closure__ or ()
+                ),
+            ),
+        )
+        for function in (vars(HubTool)["__init__"], vars(HubTool)["tool_id"].fget)
+    ),
+)
 
 
 def _normalized_schema(raw: Any) -> dict | None:

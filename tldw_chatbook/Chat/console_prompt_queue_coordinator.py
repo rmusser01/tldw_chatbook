@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
     from tldw_chatbook.Agents.hooks_v2.models import HookResult
     from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
+    from tldw_chatbook.Chat.console_received_turn import ConsoleReceivedTurnClaim
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
 
 
@@ -146,11 +147,14 @@ class ConsolePromptQueueCoordinator:
         on_activity_changed: Callable[[str], None] | None = None,
         on_chain_terminal: Callable[[str, ConsoleRunStatus, str | None], None]
         | None = None,
+        received_turn_for_session: Callable[[str], ConsoleReceivedTurnClaim | None]
+        | None = None,
     ) -> None:
         self.registry = registry
         self._context_epoch = context_epoch
         self._run_status = run_status
         self._submit_queued = submit_queued
+        self._received_turn_for_session = received_turn_for_session
         self._has_staged_rider = has_staged_rider or (lambda _session_id: False)
         self._needs_approval = needs_approval or (lambda _session_id: False)
         self._can_reacquire_slot = can_reacquire_slot or (lambda _session_id: True)
@@ -729,6 +733,18 @@ class ConsolePromptQueueCoordinator:
             ConsoleRunStatus.CHECKING_CITATIONS,
             ConsoleRunStatus.RETRYING,
         }
+        received = (
+            self._received_turn_for_session(session_id)
+            if self._received_turn_for_session is not None
+            else None
+        )
+        if received is not None:
+            occupies_slot = True
+            preparing = preparing or (
+                not accepted_live
+                and received.origin
+                in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
+            )
         return ConsoleControllerActivity(
             session_id=session_id,
             occupies_slot=occupies_slot,

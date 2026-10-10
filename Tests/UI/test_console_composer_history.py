@@ -17,6 +17,8 @@ import json
 import pytest
 from textual.widgets import Static
 
+from Tests.private_profile import private_profile_test
+
 from Tests.UI.test_console_native_chat_flow import (
     _configure_native_ready_console,
 )
@@ -326,16 +328,14 @@ def _seed_history_file(path, *inputs: str) -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_console_ghost_text_renders_and_right_arrow_accepts(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ):
     history_path = tmp_path / "prompt_history.jsonl"
     _seed_history_file(history_path, "explain quantum computing")
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Console_Modules.prompts.default_prompt_history_path",
-        lambda: history_path,
-    )
     app = _build_test_app()
+    app.console_prompt_history_factory = lambda: PromptHistory(history_path)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -375,14 +375,14 @@ async def test_console_ghost_text_renders_and_right_arrow_accepts(
 
 
 @pytest.mark.asyncio
-async def test_console_up_down_recall_gated_to_boundary_rows(tmp_path, monkeypatch):
+@private_profile_test
+async def test_console_up_down_recall_gated_to_boundary_rows(
+    request, tmp_path, monkeypatch
+):
     history_path = tmp_path / "prompt_history.jsonl"
     _seed_history_file(history_path, "first prompt", "second prompt")
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Console_Modules.prompts.default_prompt_history_path",
-        lambda: history_path,
-    )
     app = _build_test_app()
+    app.console_prompt_history_factory = lambda: PromptHistory(history_path)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -429,17 +429,17 @@ async def test_console_up_down_recall_gated_to_boundary_rows(tmp_path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_console_send_records_to_shared_prompt_history(tmp_path, monkeypatch):
+@private_profile_test
+async def test_console_send_records_to_shared_prompt_history(
+    request, tmp_path, monkeypatch
+):
     """An accepted send lands once in the JSONL store the composer reads."""
     from Tests.UI.test_console_native_chat_flow import CapturingGateway
 
     history_path = tmp_path / "prompt_history.jsonl"
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Console_Modules.prompts.default_prompt_history_path",
-        lambda: history_path,
-    )
     gateway = CapturingGateway()
     app = _build_test_app()
+    app.console_prompt_history_factory = lambda: PromptHistory(history_path)
     attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     app.console_provider_gateway_factory = lambda: gateway

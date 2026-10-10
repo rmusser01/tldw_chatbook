@@ -222,6 +222,29 @@ project-instruction bodies never enter default durable capture.
     chunk-row encoding are deferred to [TASK-24206](../tasks/task-24206%20-%20Add-lossless-chunk-row-encoding-for-streamed-trace-events.md)
     and are not required by the forthcoming ADR-097 implementation umbrella.
 
+### Amendment recorded 2026-10-04: canonical live revision roots
+
+TASK-33621.47 deterministically reproduces collection between saved-revision
+admission and provider-call reservation: a live canonical message's exact
+revision was swept because no trace edge yet referenced it. Treat every current
+live canonical revision locator as a metadata root, including its immutable
+revision ancestry required by the existing foreign-key lineage. The canonical
+message owns this identity until its locator retires; admission and reservation
+continue to require the exact revision, never a recreated or guessed substitute.
+
+This root retains digest-free revision metadata only. It grants no disclosure
+policy, retained message body, policy binding or provider artifact ownership.
+Trace-owned bytes and bindings still require their existing reachable policy
+and graph roots. Once canonical deletion retires the last live locator,
+unreferenced revision metadata and ancestry remain collectible. Existing global
+epoch rechecks, maintenance leases and append-only deletion grants remain in
+force; no timer delay, grace period or new durable reservation registry is added.
+
+Payload revision ancestry is marked separately from canonical metadata ancestry.
+A policy held by another independent call cannot turn a metadata-only ancestor
+into an archived-body or redaction-span root. The final revision sweep marks
+union both ancestries only after binding and payload reachability is determined.
+
 ### Clarification recorded 2026-09-07: automatic project context
 
 TASK-31976.1 applies decisions 6 and 8 to automatic `AGENTS.md` context: Capture
@@ -650,8 +673,14 @@ both distinct-role and single-preamble wire formats. The final header comparison
 runs in the dispatch-binding transaction before capability promotion; changed
 system content cannot bypass unchanged-message checks. Provider, model, endpoint,
 generation parameters, response format, reasoning controls, tool schemas and
-literal provider envelope must also match the preceding failed attempt. The
-AGENT_FIRST to TOOL_LOOP route transition is allowed; it grants no target change.
+literal provider envelope must also match the preceding failed attempt. Match
+JSON settings using the existing canonical JSON bytes, distinguishing booleans,
+integers and floating-point values at every nested position while ignoring object
+key order. Restore frozen arrays to ordinary JSON before request-header storage.
+Independent final-value reconstruction must include each registry engine's
+resolved endpoint and exact owned continuation values; an alignment omission
+cannot authorize a retry. The AGENT_FIRST to TOOL_LOOP route transition is
+allowed; it grants no target change.
 An appended or replaced surface, unknown/open dispatch, stale or foreign chain,
 or unsaved settlement remains ineligible. Each retry reserves a distinct ordered
 call; it never rewrites the failed call or relabels it as a tool response.

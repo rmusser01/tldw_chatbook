@@ -349,9 +349,34 @@ class ConversationLocalMarksService:
         from tldw_chatbook.DB.base_db import operation_owned_connection
         from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
+        from types import MethodType
+
+        defining, owner, original, body_globals, code, defaults, kwdefaults = (
+            _CONSOLE_UNREAD_READER_ORIGINAL
+        )
+        stock_reader = (
+            globals() is defining
+            and defining.get("ConversationLocalMarksService") is owner
+            and type(self) is owner
+            and owner.__dict__.get("unread_ids_for") is original
+            and owner.__getattribute__ is object.__getattribute__
+            and original.__globals__ is body_globals
+            and original.__code__ is code
+            and original.__defaults__ is defaults
+            and original.__kwdefaults__ is kwdefaults
+        )
+        if stock_reader:
+            reader = self.unread_ids_for
+            stock_reader = (
+                type(reader) is MethodType
+                and reader.__self__ is self
+                and reader.__func__ is original
+            )
         ownership = (
             operation_owned_connection(self.db)
-            if type(self.db) is CharactersRAGDB and not self.db.is_memory_db
+            if stock_reader
+            and type(self.db) is CharactersRAGDB
+            and not self.db.is_memory_db
             else nullcontext()
         )
         found: set[str] = set()
@@ -749,3 +774,16 @@ class ConversationLocalMarksService:
         if has_unseen and len(outcomes) == 1:
             return next(iter(outcomes))
         return None
+
+
+# Capture the defining stock body before UI imports can learn a custom reader.
+# This is refusal metadata; it grants no database or storage authority.
+_CONSOLE_UNREAD_READER_ORIGINAL = (
+    globals(),
+    ConversationLocalMarksService,
+    ConversationLocalMarksService.unread_ids_for,
+    ConversationLocalMarksService.unread_ids_for.__globals__,
+    ConversationLocalMarksService.unread_ids_for.__code__,
+    ConversationLocalMarksService.unread_ids_for.__defaults__,
+    ConversationLocalMarksService.unread_ids_for.__kwdefaults__,
+)

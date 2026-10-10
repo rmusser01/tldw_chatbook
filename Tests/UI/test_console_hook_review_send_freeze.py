@@ -100,6 +100,33 @@ class NavigatedConsoleHarness(ConsolidatedCSSApp):
 
         self.run_worker(navigate(), group="screen-navigation")
 
+    async def _shutdown(self) -> None:
+        from tldw_chatbook.UI.Console_Modules.view_workers import (
+            capture_console_view_workers,
+            drain_console_view_workers,
+        )
+
+        self._exit = True
+        drain_error = None
+        try:
+            # The actual host owns current and detached nodes in these groups.
+            captured = capture_console_view_workers(self)
+            view = self.screen
+            view._console_chat_tearing_down = True
+            await drain_console_view_workers(captured)
+        except BaseException as error:
+            drain_error = error
+        try:
+            await super()._shutdown()
+        except BaseException as error:
+            if drain_error is not None:
+                error.add_note(
+                    "Captured Console view drain also failed before host shutdown"
+                )
+            raise
+        if drain_error is not None:
+            raise drain_error
+
 
 def _key(app, key: str, char: str | None = None) -> None:
     """Deliver a key the way the terminal driver does, through the app pump,
@@ -232,7 +259,8 @@ async def _release(host, modal, requester) -> None:
     if host._exit:
         return
     if host.screen is modal:
-        modal.dismiss(None)
+        # Cancel the resident request, not only its disposable presentation.
+        await modal.request_safe_cancel(source="test-cleanup")
     await asyncio.sleep(0.2)
     if not await _pump_runs(requester, 0.5):
         await requester._flush_next_callbacks()

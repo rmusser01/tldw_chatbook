@@ -23,6 +23,7 @@ from collections.abc import Awaitable
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections.abc import Collection, Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
+from inspect import getattr_static as _badge_count_getattr_static
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, ContextManager, Literal, Sequence, cast
@@ -238,7 +239,7 @@ from tldw_chatbook.config import (
 )
 
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB, _CHANGE_REVIEW_LIST_RUNS_SOURCE
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 from tldw_chatbook.Workspaces.change_review_finalization import (
@@ -10589,27 +10590,9 @@ class ConsoleAgentBridge:
         self, conversation_id: str
     ) -> list[tuple[str | None, list[ConsoleChatMessage]]]:
         """Return anchored blocks containing only durable Change Review rows."""
-        records = [
-            record
-            for record in self._db.list_runs(conversation_id, include_superseded=False)
-            if record["agent_kind"] == AGENT_KIND_PRIMARY
-        ]
-        records.reverse()
-        snapshots: dict[str, list[dict]] = {}
-        try:
-            for row in self._db.change_snapshots_for_conversation(conversation_id):
-                snapshots.setdefault(str(row["run_id"]), []).append(row)
-        except Exception:  # noqa: BLE001 -- transcript refresh must degrade safely
-            snapshots = {}
-        return [
-            (
-                record.get("assistant_message_id"),
-                self._change_review_marker_block(
-                    record, snapshots.get(str(record.get("id")), ())
-                ),
-            )
-            for record in records
-        ]
+        return _read_change_review_markers(
+            self._db, conversation_id, self._change_review_marker_block
+        )
 
     def resume_marker_messages(
         self,
@@ -11307,8 +11290,13 @@ class ConsoleAgentBridge:
         )
         return records[0]["id"] if records else None
 
-    def _derive_historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
-        primary_records = self._db.list_runs(
+    def _derive_historical_snapshot(
+        self, conversation_id: str, *, database: AgentRunsDB | None = None
+    ) -> AgentLiveSnapshot:
+        # A finite presentation callback captures its receiver before await;
+        # a replaced bridge database cannot redirect its reads or retirement.
+        database = self._db if database is None else database
+        primary_records = database.list_runs(
             conversation_id,
             include_superseded=False,
             agent_kind=AGENT_KIND_PRIMARY,
@@ -11316,7 +11304,7 @@ class ConsoleAgentBridge:
         if not primary_records:
             return AgentLiveSnapshot()
         primary = primary_records[0]
-        subagent_records = self._db.list_runs(
+        subagent_records = database.list_runs(
             conversation_id,
             include_superseded=False,
             agent_kind=AGENT_KIND_SUBAGENT,
@@ -11670,3 +11658,174 @@ def _release_chat_creation_token(payload: dict) -> None:
     release = getattr(payload.get("_creation_token"), "close", None)
     if callable(release):
         release()
+
+
+# Original loop-side callbacks, retained before optional badge consumers import.
+_SUBAGENT_BADGE_LIVE_CALLBACKS = (
+    ConsoleAgentBridge.__getattribute__,
+    ConsoleAgentBridge.__dict__["__dict__"],
+    tuple(
+        (name, function, function.__code__, function.__globals__)
+        for name, function in (
+            ("live_snapshot", ConsoleAgentBridge.live_snapshot),
+            ("run_log_target_token", ConsoleAgentBridge.run_log_target_token),
+        )
+    ),
+)
+
+
+# Defining callbacks for the optional finite legacy run-log probe only.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "ConsoleAgentBridge", ConsoleAgentBridge),
+        *(
+            (ConsoleAgentBridge, name, vars(ConsoleAgentBridge)[name])
+            for name in (
+                "resolve_run_log_target",
+                "latest_primary_run_id",
+                "_owning_run_id_for_log",
+                "run_log_available",
+                "_run_log_authority_for",
+                "_read_run_log_page",
+            )
+        ),
+        (globals(), "AgentRunsDB", AgentRunsDB),
+        (globals(), "operation_owned_connection", operation_owned_connection),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            (globals(), "ConsoleAgentBridge", ConsoleAgentBridge),
+            *(
+                (ConsoleAgentBridge, name, vars(ConsoleAgentBridge)[name])
+                for name in (
+                    "resolve_run_log_target",
+                    "latest_primary_run_id",
+                    "_owning_run_id_for_log",
+                    "run_log_available",
+                    "_run_log_authority_for",
+                    "_read_run_log_page",
+                )
+            ),
+            (globals(), "AgentRunsDB", AgentRunsDB),
+            (globals(), "operation_owned_connection", operation_owned_connection),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+
+# Exact defining-module count callback; independent of the run-log probe capsule.
+
+_SUBAGENT_BADGE_COUNT_CALLBACK = (
+    ConsoleAgentBridge,
+    "subagent_counts",
+    ConsoleAgentBridge.subagent_counts,
+    ConsoleAgentBridge.subagent_counts.__code__,
+    ConsoleAgentBridge.subagent_counts.__globals__,
+    ConsoleAgentBridge.__getattribute__,
+    _badge_count_getattr_static(ConsoleAgentBridge, "__dict__"),
+)
+del _badge_count_getattr_static
+
+
+def _read_change_review_markers(
+    database, conversation_id, render, *, require_current=None
+):
+    """Read one captured database, preserving public ordering and error handling."""
+    if require_current is not None:
+        require_current()
+    original, code, defaults = _CHANGE_REVIEW_LIST_RUNS_SOURCE
+    reader = database.list_runs
+    if (
+        type(database) is AgentRunsDB
+        and getattr(reader, "__func__", None) is original
+        and original.__code__ is code
+        and original.__defaults__ is defaults
+    ):
+        records = database.list_change_review_run_anchors(conversation_id)
+    else:
+        # Preserve the existing callback contract for custom DB adapters.
+        records = [
+            record
+            for record in reader(conversation_id, include_superseded=False)
+            if record["agent_kind"] == AGENT_KIND_PRIMARY
+        ]
+        records.reverse()
+    if require_current is not None:
+        require_current()
+    snapshots: dict[str, list[dict]] = {}
+    try:
+        for row in database.change_snapshots_for_conversation(conversation_id):
+            snapshots.setdefault(str(row["run_id"]), []).append(row)
+    except Exception:  # noqa: BLE001 -- transcript refresh must degrade safely
+        snapshots = {}
+    if require_current is not None:
+        require_current()
+    return [
+        (
+            record.get("assistant_message_id"),
+            render(record, snapshots.get(str(record.get("id")), ())),
+        )
+        for record in records
+    ]
+
+
+_CHANGE_REVIEW_MARKER_SOURCES = tuple(
+    (
+        name,
+        vars(ConsoleAgentBridge)[name],
+        (
+            (
+                function,
+                function.__code__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+            ),
+        ),
+    )
+    for name in ("change_review_marker_messages", "_change_review_marker_block")
+    for descriptor in (vars(ConsoleAgentBridge)[name],)
+    for function in (
+        descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
+    )
+)
+
+_CHANGE_REVIEW_MARKER_HELPER_SOURCE = (
+    _read_change_review_markers,
+    _read_change_review_markers.__code__,
+    _read_change_review_markers.__defaults__,
+    _read_change_review_markers.__kwdefaults__,
+    tuple(_read_change_review_markers.__kwdefaults__.items()),
+)

@@ -9,6 +9,7 @@ on, which once stopped before a slow runner's turn had started.
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 from textual.app import ComposeResult
@@ -33,6 +34,10 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.UI.Console_Modules.console_spend_projection import (
+    ConsoleReadinessConfigProjection,
+)
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 from tldw_chatbook.Widgets.Console.console_transcript import (
     _ACTION_TOOLTIPS,
@@ -253,6 +258,97 @@ def _console_app(gateway):
     return ConsoleHarness(app)
 
 
+async def _await_selected_console_readiness(console, pilot, *, deadline):
+    """Await the current readiness owner, then its original checked paint."""
+    import inspect
+    from types import CoroutineType, MethodType
+
+    bindings = (
+        (ChatScreen, "_sync_console_control_bar"),
+        (ConsoleReadinessConfigProjection, "_refresh"),
+    )
+    originals = tuple(
+        (
+            owner,
+            name,
+            vars(owner)[name],
+            vars(owner)[name].__code__,
+            vars(owner)[name].__globals__,
+            vars(owner)[name].__defaults__,
+        )
+        for owner, name in bindings
+    )
+    control, refresh_code = originals[0][2], originals[1][3]
+
+    def owns_original(coroutine):
+        for _depth in range(64):
+            if type(coroutine) is not CoroutineType:
+                return False
+            frame = coroutine.cr_frame
+            if frame is not None:
+                receiver = frame.f_locals.get("self")
+                if (
+                    coroutine.cr_code is refresh_code
+                    and type(receiver) is ConsoleReadinessConfigProjection
+                    and receiver
+                    is getattr(console, "_console_readiness_config_projection", None)
+                    and receiver.screen is console
+                    and frame.f_globals is originals[1][4]
+                ):
+                    return True
+            coroutine = coroutine.cr_await
+        return False
+
+    while True:
+        remaining = deadline - time.monotonic()
+        assert (
+            remaining > 0
+        ), "Selected Console readiness exceeded original startup budget"
+        assert all(
+            vars(owner).get(name) is function
+            and function.__code__ is code
+            and function.__globals__ is namespace
+            and function.__defaults__ is defaults
+            for owner, name, function, code, namespace, defaults in originals
+        ), "Original Console readiness source changed"
+        assert inspect.getattr_static(console, "_sync_console_control_bar") is control
+        pending = any(
+            worker.node is console and owns_original(worker._work)
+            for worker in console.workers
+        ) or any(
+            owns_original(task.get_coro())
+            for task in asyncio.all_tasks()
+            if task is not asyncio.current_task()
+        )
+        projection = getattr(console, "_console_readiness_config_projection", None)
+        projection_pending = (
+            type(projection) is ConsoleReadinessConfigProjection
+            and projection.screen is console
+            and projection.pending
+        )
+        if not pending and not projection_pending:
+            callback = console._sync_console_control_bar
+            assert (
+                type(callback) is MethodType
+                and callback.__self__ is console
+                and callback.__func__ is control
+            )
+            if callback() is True:
+                assert (
+                    time.monotonic() < deadline
+                ), "Selected Console readiness exceeded original startup budget"
+                return
+        await asyncio.sleep(min(0.01, remaining))
+
+
+async def _select_ready_llamacpp_console(console, pilot):
+    """Share the original composer's two-second setup budget with publication."""
+    deadline = time.monotonic() + 2.0
+    await _wait_for_selector(console, pilot, "#console-native-composer")
+    _select_llamacpp_console(console)
+    await _await_selected_console_readiness(console, pilot, deadline=deadline)
+
+
 def _session_rows(console) -> list[ConsoleChatMessage]:
     store = console._ensure_console_chat_store()
     return store.messages_for_session(store.active_session_id)
@@ -264,8 +360,7 @@ async def test_console_resend_click_re_runs_a_failed_turn_in_place():
 
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_ready_llamacpp_console(console, pilot)
         console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
             "hello"
         )
@@ -313,8 +408,7 @@ async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
 
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_ready_llamacpp_console(console, pilot)
         controller = console._ensure_console_chat_controller()
         entered = asyncio.Event()
         started = asyncio.Event()
@@ -377,8 +471,7 @@ async def test_console_r_resends_a_refused_echo_as_one_message():
 
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_ready_llamacpp_console(console, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
         console.query_one("#console-send-message", Button).press()

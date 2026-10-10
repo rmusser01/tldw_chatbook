@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.hook_permissions import HookPermissions
     from tldw_chatbook.Chat.console_chat_controller import (
         ApprovalDecision,
         ApprovalDecisions,
@@ -53,8 +54,10 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
+from tldw_chatbook.Chat.console_hook_review_host import InitialHookReviewMixin
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_PENDING_APPROVAL_KIND,
+    CONSOLE_PENDING_HOOK_REVIEW_KIND,
     CONSOLE_PENDING_QUESTION_KIND,
     CONSOLE_PENDING_SKILL_INSTALL_KIND,
     CONSOLE_PENDING_SKILL_SCRIPT_KIND,
@@ -78,6 +81,7 @@ SESSION_REMOUNT_KINDS: tuple[str, ...] = (
 
 KIND_SETTER_ATTRS: dict[str, str] = {
     CONSOLE_PENDING_APPROVAL_KIND: "set_pending_approval",
+    CONSOLE_PENDING_HOOK_REVIEW_KIND: "set_pending_decision",
     CONSOLE_PENDING_SKILL_INSTALL_KIND: "set_pending_skill_install",
     CONSOLE_PENDING_SKILL_SCRIPT_KIND: "set_pending_skill_script",
     CONSOLE_PENDING_WORKTREE_MERGE_KIND: "set_pending_worktree_merge",
@@ -212,7 +216,7 @@ class _DecisionClock:
         )
 
 
-class InterruptRoundHost:
+class InterruptRoundHost(InitialHookReviewMixin):
     """Own the registries, payload maps, and FIFO-head render contract."""
 
     POLL_SECONDS = 1.0
@@ -356,6 +360,8 @@ class InterruptRoundHost:
         read_global_threading: Callable[[], Any],
         read_global_time: Callable[[], Any],
         read_global_uuid4: Callable[[], Any],
+        read_hook_review_owner: Callable[[], HookPermissions | None] | None = None,
+        read_hook_review_shutdown: Callable[[str], bool] | None = None,
     ):
         """Store named live accessors; preserve existing native host initialization separately."""
         self.read_controller__active_assistant_message_ids = (
@@ -644,6 +650,8 @@ class InterruptRoundHost:
         self.read_global_threading = read_global_threading
         self.read_global_time = read_global_time
         self.read_global_uuid4 = read_global_uuid4
+        self.read_hook_review_owner = read_hook_review_owner
+        self.read_hook_review_shutdown = read_hook_review_shutdown
         self.lock = threading.Lock()
         self._hook_interrupts: set[object] = set()
         self.registries: dict[str, dict[str, dict[str, Any]]] = {
@@ -841,6 +849,8 @@ class InterruptRoundHost:
     # -- setter / app access (always late-bound) -----------------------
 
     def _setter(self, kind: str):
+        if kind == CONSOLE_PENDING_HOOK_REVIEW_KIND:
+            return lambda payload: self._hook_review_project_current()
         return {
             CONSOLE_PENDING_APPROVAL_KIND: self.read_controller_set_pending_approval,
             CONSOLE_PENDING_SKILL_INSTALL_KIND: self.read_controller_set_pending_skill_install,
@@ -1429,7 +1439,9 @@ class InterruptRoundHost:
 
     def _announce_hidden_decision(
         self,
-        decision_type: Literal["approval", "skill_install", "skill_script"],
+        decision_type: Literal[
+            "approval", "skill_install", "skill_script", "hook_review"
+        ],
         session_id: str,
         decision_id: str,
     ) -> None:
@@ -1459,6 +1471,7 @@ class InterruptRoundHost:
             "approval": "needs approval to use a tool",
             "skill_install": "needs confirmation for a skill install",
             "skill_script": "needs confirmation to run a skill script",
+            "hook_review": "needs hook review before Send",
         }[decision_type]
         # Deliberately excludes title, ids, tool/skill names, URLs, paths,
         # arguments, and payload bodies.
@@ -1528,7 +1541,9 @@ class InterruptRoundHost:
 
         registry_lock = self.lock if decision_type == "skill_install" else self.lock
         registry = (
-            self.registries["skill_install"]
+            self.registries[CONSOLE_PENDING_HOOK_REVIEW_KIND]
+            if decision_type == CONSOLE_PENDING_HOOK_REVIEW_KIND
+            else self.registries["skill_install"]
             if decision_type == "skill_install"
             else self.registries["skill_script"]
         )
@@ -1564,6 +1579,7 @@ class InterruptRoundHost:
 
     def _cancel_pending_decisions_for_session(self, session_id: str) -> None:
         """Fail closed only the rounds owned by a destructively closed session."""
+        self.cancel_hook_reviews(session_id)
         events: list[self.read_global_threading().Event] = []
         self.read_controller_set_answerable_decision()(session_id, None)
         with self.lock:
@@ -2076,9 +2092,13 @@ class InterruptRoundHost:
         rows = payload.get("calls") or []
         if not round_id or not rows:
             return
-        # Lock order: config lock FIRST, then `_approval_state_lock` (see
-        # `run_if_runtime_config_generation_current` in config.py) -- so the
-        # config read happens before the approval lock is taken.
+        with self.lock:
+            state = self.registries["approval"].get(round_id)
+            if state is None or state.get("summary_fired"):
+                return
+        # Release the preliminary approval check before reading config.
+        # Nested lock order stays config first, then approval (see
+        # `run_if_runtime_config_generation_current` in config.py).
         try:
             from tldw_chatbook.Chat.permission_summary_service import (
                 resolve_permission_summary,
@@ -2089,7 +2109,6 @@ class InterruptRoundHost:
             )
         except Exception:  # noqa: BLE001 -- advisory only
             resolution = None
-        # A wasted resolve when the once-flag is already consumed is harmless.
         with self.lock:
             state = self.registries["approval"].get(round_id)
             if state is None or state.get("summary_fired"):
@@ -2319,6 +2338,7 @@ class InterruptRoundHost:
                 self.payloads["approval"],
                 self.payloads["skill_install"],
                 self.payloads["skill_script"],
+                self.payloads[CONSOLE_PENDING_HOOK_REVIEW_KIND],
             )
             for payload in store.values()
             if payload.get("session_id") == session_id and payload.get("_decision_id")
@@ -2338,6 +2358,8 @@ class InterruptRoundHost:
             states.update(self.registries["skill_install"])
         with self.lock:
             states.update(self.registries["skill_script"])
+        with self.lock:
+            states.update(self.registries[CONSOLE_PENDING_HOOK_REVIEW_KIND])
         return states
 
     def _permission_summary_worker(
@@ -2387,7 +2409,9 @@ class InterruptRoundHost:
         *,
         round_state: dict[str, Any],
         payload: dict[str, Any],
-        decision_type: Literal["approval", "skill_install", "skill_script"],
+        decision_type: Literal[
+            "approval", "skill_install", "skill_script", "hook_review"
+        ],
         decision_id: str,
         timeout_seconds: float,
         retained_store: dict[str, dict[str, Any]] | None,
@@ -6472,3 +6496,25 @@ def build_virtual_cli_review_hook(
         }
 
     return review_tool_calls
+
+
+# Definition-time sources for optional in-memory Inspector pending display only.
+_CONSOLE_PENDING_FACTS_READERS = tuple(
+    (
+        name,
+        method,
+        method.__code__,
+        method.__globals__,
+        method.__defaults__,
+        method.__kwdefaults__,
+        tuple((method.__kwdefaults__ or {}).items()),
+        method.__closure__,
+        tuple((cell, cell.cell_contents) for cell in method.__closure__ or ()),
+    )
+    for name in (
+        "pending_round_count",
+        "pending_round_kinds",
+        "has_pending_approval_round",
+    )
+    for method in (getattr(InterruptRoundHost, name),)
+)

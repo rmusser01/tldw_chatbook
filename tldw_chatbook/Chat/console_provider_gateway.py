@@ -20,6 +20,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
+from functools import partial
 from time import monotonic
 from types import GeneratorType, MappingProxyType
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, TypeVar, cast
@@ -4120,10 +4121,19 @@ class ConsoleProviderGateway:
         )
         return target
 
-    def _project_context_window_target(self, settings: Any) -> ContextWindowTarget:
+    def _project_context_window_target(
+        self,
+        settings: Any,
+        *,
+        _display_config: Mapping[str, Any] | None = None,
+    ) -> ContextWindowTarget:
         from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
 
-        config = self._config_provider() or {}
+        config = (
+            self._config_provider() or {}
+            if _display_config is None
+            else _display_config
+        )
         entry = entry_for(config, settings.provider)
         family = family_execution_key(entry.family) if entry else settings.provider
         identity = resolve_console_provider_identity(family)
@@ -4183,6 +4193,31 @@ class ConsoleProviderGateway:
                 identity.readiness_key or family, settings.model or ""
             )
         return cache.cached(self._context_window_target(settings))
+
+    def _cached_context_window_from_display(
+        self,
+        settings: Any,
+        config: Mapping[str, Any],
+        *,
+        cache: Any,
+        project_target: Callable,
+        read_cached: Callable | None,
+    ) -> ContextWindowResolution:
+        """Consume one checked display copy without retaining a live target."""
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        if cache is None:
+            # Preserve first paint's original family/model fallback. Creating
+            # the serving cache or projecting credentials here would change it.
+            entry = entry_for(config, settings.provider)
+            family = family_execution_key(entry.family) if entry else settings.provider
+            identity = resolve_console_provider_identity(family)
+            return resolve_context_window(
+                identity.readiness_key or family, settings.model or ""
+            )
+        # This projection deliberately bypasses the live target memo. A detached
+        # display value cannot become an input to a later network/Send route.
+        return read_cached(project_target(settings, _display_config=config))
 
     async def resolve_context_window(self, settings: Any) -> ContextWindowResolution:
         """Refresh optional serving metadata without running a generation."""
@@ -4323,12 +4358,27 @@ class ConsoleProviderGateway:
             )
 
     async def resolve_for_send(
-        self, selection: ConsoleProviderSelection
+        self,
+        selection: ConsoleProviderSelection,
+        *,
+        _run_native: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     ) -> ConsoleProviderResolution:
         """Resolve readiness and attach the credential-free destination."""
         from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
 
-        resolution = await self._resolve_for_send_unclassified(selection)
+        resolver = self._resolve_for_send_unclassified
+        original, code = _CONSOLE_PROVIDER_RESOLUTION_NATIVE_METHODS[1][1:]
+        if (
+            getattr(resolver, "__self__", None) is not self
+            or getattr(resolver, "__func__", None) is not original
+            or original.__code__ is not code
+        ):
+            _run_native = None
+        resolution = (
+            await resolver(selection)
+            if _run_native is None
+            else await resolver(selection, _run_native=_run_native)
+        )
         if resolution.ready:
             target = ContextWindowTarget(
                 selection.provider,
@@ -4375,7 +4425,10 @@ class ConsoleProviderGateway:
             logger.debug("Context-window metadata refresh failed", exc_info=True)
 
     async def _resolve_for_send_unclassified(
-        self, selection: ConsoleProviderSelection
+        self,
+        selection: ConsoleProviderSelection,
+        *,
+        _run_native: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     ) -> ConsoleProviderResolution:
         """Resolve the provider selected by Console before sending.
 
@@ -4717,11 +4770,16 @@ class ConsoleProviderGateway:
                 execution_key=identity.execution_key,
             )
 
-        readiness = await asyncio.to_thread(
+        readiness_call = partial(
             get_provider_readiness,
             identity.readiness_key,
             app_config,
             environ=self._environ,
+        )
+        readiness = (
+            await asyncio.to_thread(readiness_call)
+            if _run_native is None
+            else await _run_native(readiness_call)
         )
         if not readiness.ready:
             return self._blocked_resolution(
@@ -7827,3 +7885,38 @@ def _first_string(*values: object) -> str | None:
         if stripped:
             return stripped
     return None
+
+
+# Retain provenance at defining-module completion, before a lazy UI helper can
+# observe a class callback replacement and mistake it for the standard route.
+_CONTEXT_CAPACITY_DISPLAY_ORIGINALS = (
+    globals(),
+    ConsoleProviderGateway,
+    tuple(
+        (name, method, method.__code__)
+        for name, method in (
+            ("cached_context_window", ConsoleProviderGateway.cached_context_window),
+            (
+                "_project_context_window_target",
+                ConsoleProviderGateway._project_context_window_target,
+            ),
+            (
+                "_cached_context_window_from_display",
+                ConsoleProviderGateway._cached_context_window_from_display,
+            ),
+        )
+    ),
+)
+
+
+# Defining-module provenance for the private finite-read scheduling adapter.
+_CONSOLE_PROVIDER_RESOLUTION_NATIVE_METHODS = tuple(
+    (name, method, method.__code__)
+    for name, method in (
+        ("resolve_for_send", ConsoleProviderGateway.resolve_for_send),
+        (
+            "_resolve_for_send_unclassified",
+            ConsoleProviderGateway._resolve_for_send_unclassified,
+        ),
+    )
+)

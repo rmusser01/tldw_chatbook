@@ -31,6 +31,8 @@ break silently:
    the six cannot matter.
 """
 
+from tldw_chatbook.UI.Console_Modules.context_spend import ConsoleContextSpendController
+
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -88,6 +90,7 @@ _EXPECTED_SLOTS: list[tuple[str, type]] = [
 #: Complete controller graph for the Task-3070.8 construction-order contract.
 #: Kept separate because `_EXPECTED_SLOTS` is a historical common-interface subset.
 _ALL_CONTROLLER_SLOTS: list[tuple[str, type]] = [
+    ("_context_spend", ConsoleContextSpendController),
     ("_image", ConsoleImageController),
     ("_video", ConsoleVideoController),
     ("_retrieval", ConsoleRetrievalController),
@@ -132,9 +135,9 @@ def test_all_six_controllers_are_constructed_with_the_right_classes():
     for attr, cls in _EXPECTED_SLOTS:
         controller = getattr(screen, attr, None)
         assert controller is not None, f"{attr} was never wired"
-        assert isinstance(controller, cls), (
-            f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
-        )
+        assert isinstance(
+            controller, cls
+        ), f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
 
 
 def test_all_eighteen_controllers_are_constructed_with_the_right_classes() -> None:
@@ -145,9 +148,9 @@ def test_all_eighteen_controllers_are_constructed_with_the_right_classes() -> No
     for attr, cls in _ALL_CONTROLLER_SLOTS:
         controller = getattr(screen, attr, None)
         assert controller is not None, f"{attr} was never wired"
-        assert isinstance(controller, cls), (
-            f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
-        )
+        assert isinstance(
+            controller, cls
+        ), f"{attr} is {type(controller).__name__}, expected {cls.__name__}"
     assert observed == names, f"controller build order changed: {observed}"
 
 
@@ -156,9 +159,9 @@ def test_terminal_controller_is_wired_to_late_bound_app_and_console_edges(
 ) -> None:
     screen = _unmounted_console()
     deferred = getattr(screen, "_terminal", None)
-    assert isinstance(deferred, wiring_module._DeferredConsoleTerminalController), (
-        "deferred _terminal was never wired"
-    )
+    assert isinstance(
+        deferred, wiring_module._DeferredConsoleTerminalController
+    ), "deferred _terminal was never wired"
     assert screen._console_terminal_workspace is None
     assert deferred.is_open is False
 
@@ -321,71 +324,87 @@ async def test_review_selection_controller_is_late_bound_without_sibling_objects
     request,
 ) -> None:
     screen = _unmounted_console()
-    controller = screen._review_selection
+    # Restore temporary runtime owners before the app fixture disposes them.
+    with monkeypatch.context() as scoped:
+        controller = screen._review_selection
 
-    assert controller.annotation_loaded_conversation is None
-    assert controller.annotation_previews == {}
-    assert controller.selection_feedback_inflight is False
+        assert controller.annotation_loaded_conversation is None
+        assert controller.annotation_previews == {}
+        assert controller.selection_feedback_inflight is False
 
-    store = object()
-    conversation_id = "conversation"
-    provider = object()
-    roots = object()
-    runs_db = object()
-    bindings = object()
-    native_messages = object()
-    screen._ensure_console_chat_store = lambda: store
-    active_status = next(iter(FEEDBACK_ACTIVE_RUN_STATUSES))
-    chat_controller = SimpleNamespace(
-        store=SimpleNamespace(active_session_id="session"),
-        run_state=SimpleNamespace(status=active_status),
-        _agent_conversation_id=lambda session_id: (conversation_id, session_id),
-        run_active_for_workspace=lambda root: ("active", root),
-        resolve_turn_execution_context=lambda session_id: SimpleNamespace(
-            workspace_roots=(roots, session_id)
-        ),
-    )
-    screen._console_chat_controller = chat_controller
-    screen._ensure_console_chat_controller = lambda: chat_controller
-    screen._ensure_console_agent_bridge = lambda: SimpleNamespace(
-        runs_db=runs_db,
-        change_review_provider=lambda value: (provider, value),
-    )
-    screen._console_runtime = lambda: SimpleNamespace(chat_controller=chat_controller)
-    from tldw_chatbook.UI.Console_Modules import capture_policy_bindings
+        store = object()
+        conversation_id = "conversation"
+        provider = object()
+        roots = object()
+        runs_db = object()
+        bindings = object()
+        native_messages = object()
+        scoped.setattr(screen, "_ensure_console_chat_store", lambda: store)
+        active_status = next(iter(FEEDBACK_ACTIVE_RUN_STATUSES))
+        chat_controller = SimpleNamespace(
+            store=SimpleNamespace(active_session_id="session"),
+            run_state=SimpleNamespace(status=active_status),
+            _agent_conversation_id=lambda session_id: (conversation_id, session_id),
+            run_active_for_workspace=lambda root: ("active", root),
+            resolve_turn_execution_context=lambda session_id: SimpleNamespace(
+                workspace_roots=(roots, session_id)
+            ),
+        )
+        scoped.setattr(screen, "_console_chat_controller", chat_controller)
+        scoped.setattr(
+            screen, "_ensure_console_chat_controller", lambda: chat_controller
+        )
+        scoped.setattr(
+            screen,
+            "_ensure_console_agent_bridge",
+            lambda: SimpleNamespace(
+                runs_db=runs_db,
+                change_review_provider=lambda value: (provider, value),
+            ),
+        )
+        scoped.setattr(
+            screen,
+            "_console_runtime",
+            lambda: SimpleNamespace(chat_controller=chat_controller),
+        )
+        from tldw_chatbook.UI.Console_Modules import capture_policy_bindings
 
-    monkeypatch.setattr(
-        capture_policy_bindings,
-        "build_capture_policy_bindings",
-        lambda controller, session_id, conv_id: (
+        monkeypatch.setattr(
+            capture_policy_bindings,
+            "build_capture_policy_bindings",
+            lambda controller, session_id, conv_id: (
+                bindings,
+                controller,
+                session_id,
+                conv_id,
+            ),
+        )
+        scoped.setattr(
+            screen._message, "_native_console_messages", lambda: native_messages
+        )
+
+        assert controller._store_accessor() is store
+        assert controller._agent_conversation_id_accessor() == (
+            conversation_id,
+            "session",
+        )
+        assert controller._change_review_provider_accessor("conversation") == (
+            provider,
+            "conversation",
+        )
+        assert controller._run_active_accessor() is True
+        assert controller._run_active_for_root("root") == ("active", "root")
+        assert controller._workspace_roots_accessor() == (roots, "session")
+        assert controller._agent_runs_db_accessor() is runs_db
+        assert controller._capture_policy_bindings_accessor(
+            "session", "conversation"
+        ) == (
             bindings,
-            controller,
-            session_id,
-            conv_id,
-        ),
-    )
-    screen._message._native_console_messages = lambda: native_messages
-
-    assert controller._store_accessor() is store
-    assert controller._agent_conversation_id_accessor() == (
-        conversation_id,
-        "session",
-    )
-    assert controller._change_review_provider_accessor("conversation") == (
-        provider,
-        "conversation",
-    )
-    assert controller._run_active_accessor() is True
-    assert controller._run_active_for_root("root") == ("active", "root")
-    assert controller._workspace_roots_accessor() == (roots, "session")
-    assert controller._agent_runs_db_accessor() is runs_db
-    assert controller._capture_policy_bindings_accessor("session", "conversation") == (
-        bindings,
-        chat_controller,
-        "session",
-        "conversation",
-    )
-    assert controller._native_messages_accessor() is native_messages
+            chat_controller,
+            "session",
+            "conversation",
+        )
+        assert controller._native_messages_accessor() is native_messages
 
 
 def test_send_price_controller_is_constructed_with_late_bound_screen_edges(
@@ -393,9 +412,9 @@ def test_send_price_controller_is_constructed_with_late_bound_screen_edges(
 ) -> None:
     screen = _unmounted_console()
     controller = getattr(screen, "_send_price", None)
-    assert isinstance(controller, ConsoleSendPriceController), (
-        "_send_price was never wired"
-    )
+    assert isinstance(
+        controller, ConsoleSendPriceController
+    ), "_send_price was never wired"
 
     settings = object()
     store = object()
@@ -547,77 +566,92 @@ def test_realtime_outgoing_edges_target_controller_after_method_move() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fleet_controller_is_constructed_with_late_bound_screen_edges() -> None:
+async def test_fleet_controller_is_constructed_with_late_bound_screen_edges(
+    monkeypatch,
+) -> None:
     screen = _unmounted_console()
-    controller = getattr(screen, "_fleet", None)
-    assert isinstance(controller, ConsoleFleetLifecycleController), (
-        "_fleet was never wired"
-    )
+    # Restore temporary runtime owners before the app fixture disposes them.
+    with monkeypatch.context() as scoped:
+        controller = getattr(screen, "_fleet", None)
+        assert isinstance(
+            controller, ConsoleFleetLifecycleController
+        ), "_fleet was never wired"
 
-    composer = SimpleNamespace(draft_text=lambda: " replacement draft ")
-    screen._console_composer_or_none = lambda: composer
-    displayed_draft = controller._displayed_composer_draft_accessor()
-    assert displayed_draft == " replacement draft "
-    assert displayed_draft is not composer
-    assert controller._console_wake_user_priority("session-a") is True
+        composer = SimpleNamespace(draft_text=lambda: " replacement draft ")
+        scoped.setattr(screen, "_console_composer_or_none", lambda: composer)
+        displayed_draft = controller._displayed_composer_draft_accessor()
+        assert displayed_draft == " replacement draft "
+        assert displayed_draft is not composer
+        assert controller._console_wake_user_priority("session-a") is True
 
-    pending_handoffs = object()
-    sessions = (SimpleNamespace(id="late-session", persisted_conversation_id=None),)
-    store = SimpleNamespace(
-        active_session_id="late-session",
-        sessions=lambda: sessions,
-    )
-    screen.app_instance.pending_handoffs = pending_handoffs
-    screen._ensure_console_chat_store = lambda: store
-    screen._console_chat_store = store
+        pending_handoffs = object()
+        sessions = (SimpleNamespace(id="late-session", persisted_conversation_id=None),)
+        store = SimpleNamespace(
+            active_session_id="late-session",
+            sessions=lambda: sessions,
+        )
+        scoped.setattr(screen.app_instance, "pending_handoffs", pending_handoffs)
+        scoped.setattr(screen, "_ensure_console_chat_store", lambda: store)
+        scoped.setattr(screen, "_console_chat_store", store)
 
-    assert controller._pending_handoffs_accessor() is pending_handoffs
-    assert controller._ensure_chat_store() is store
-    assert controller._active_session_id_accessor() == "late-session"
-    assert controller._chat_sessions_accessor() is sessions
+        assert controller._pending_handoffs_accessor() is pending_handoffs
+        assert controller._ensure_chat_store() is store
+        assert controller._active_session_id_accessor() == "late-session"
+        assert controller._chat_sessions_accessor() is sessions
 
-    chat_controller = object()
-    screen._ensure_console_chat_controller = lambda: chat_controller
-    assert controller._ensure_chat_controller() is chat_controller
+        chat_controller = object()
+        scoped.setattr(
+            screen, "_ensure_console_chat_controller", lambda: chat_controller
+        )
+        assert controller._ensure_chat_controller() is chat_controller
 
-    def raise_controller_error() -> None:
-        raise RuntimeError("replacement controller unavailable")
+        def raise_controller_error() -> None:
+            raise RuntimeError("replacement controller unavailable")
 
-    screen._ensure_console_chat_controller = raise_controller_error
-    with pytest.raises(RuntimeError, match="replacement controller unavailable"):
-        controller._ensure_chat_controller()
+        scoped.setattr(
+            screen, "_ensure_console_chat_controller", raise_controller_error
+        )
+        with pytest.raises(RuntimeError, match="replacement controller unavailable"):
+            controller._ensure_chat_controller()
 
-    wake_calls: list[object] = []
-    wake = SimpleNamespace(
-        wire=lambda **kwargs: wake_calls.append(("wire", kwargs.get("app"))) or True,
-        seed_from_marks=lambda: wake_calls.append("seed") or True,
-        retry_soon=lambda: wake_calls.append("retry"),
-        has_pending=lambda conversation_id: conversation_id == "conversation-a",
-        delivering_session_ids=lambda: frozenset({"session-a", "session-b"}),
-    )
-    screen._console_chat_controller = SimpleNamespace(
-        fleet_wake=wake,
-        fleet_has_unsettled_children=lambda: True,
-    )
+        wake_calls: list[object] = []
+        wake = SimpleNamespace(
+            wire=lambda **kwargs: wake_calls.append(("wire", kwargs.get("app")))
+            or True,
+            seed_from_marks=lambda: wake_calls.append("seed") or True,
+            retry_soon=lambda: wake_calls.append("retry"),
+            has_pending=lambda conversation_id: conversation_id == "conversation-a",
+            delivering_session_ids=lambda: frozenset({"session-a", "session-b"}),
+        )
+        scoped.setattr(
+            screen,
+            "_console_chat_controller",
+            SimpleNamespace(
+                fleet_wake=wake,
+                fleet_has_unsettled_children=lambda: True,
+            ),
+        )
 
-    assert controller._chat_controller_available() is True
-    assert controller._wire_wake_coordinator() is True
-    workers = []
-    screen.run_worker = lambda callback, **kwargs: workers.append(callback)
-    assert controller._seed_wake_from_marks() is False
-    assert workers == []
-    sessions[0].persisted_conversation_id = "conversation-a"
-    assert controller._seed_wake_from_marks() is False
-    assert "seed" not in wake_calls
-    await workers.pop()()
-    controller._retry_wake_soon()
-    assert controller._wake_has_pending("conversation-a") is True
-    assert controller._wake_delivering_session_ids() == frozenset(
-        {"session-a", "session-b"}
-    )
-    assert controller._console_wake_turn_active("session-b")
-    assert controller._fleet_has_unsettled_children() is True
-    assert wake_calls == [("wire", screen.app_instance), "seed", "retry", "retry"]
+        assert controller._chat_controller_available() is True
+        assert controller._wire_wake_coordinator() is True
+        workers = []
+        scoped.setattr(
+            screen, "run_worker", lambda callback, **kwargs: workers.append(callback)
+        )
+        assert controller._seed_wake_from_marks() is False
+        assert workers == []
+        sessions[0].persisted_conversation_id = "conversation-a"
+        assert controller._seed_wake_from_marks() is False
+        assert "seed" not in wake_calls
+        await workers.pop()()
+        controller._retry_wake_soon()
+        assert controller._wake_has_pending("conversation-a") is True
+        assert controller._wake_delivering_session_ids() == frozenset(
+            {"session-a", "session-b"}
+        )
+        assert controller._console_wake_turn_active("session-b")
+        assert controller._fleet_has_unsettled_children() is True
+        assert wake_calls == [("wire", screen.app_instance), "seed", "retry", "retry"]
 
 
 @pytest.mark.asyncio
@@ -749,9 +783,9 @@ def test_every_controller_holds_the_same_app_instance_as_the_screen():
 
     for attr, _ in _EXPECTED_SLOTS:
         controller = getattr(screen, attr)
-        assert controller.app_instance is screen.app_instance, (
-            f"{attr}.app_instance is not the screen's app_instance"
-        )
+        assert (
+            controller.app_instance is screen.app_instance
+        ), f"{attr}.app_instance is not the screen's app_instance"
 
 
 def test_shared_chat_store_accessor_resolves_to_the_screens_own_store():
@@ -763,9 +797,9 @@ def test_shared_chat_store_accessor_resolves_to_the_screens_own_store():
 
     for attr, _ in _EXPECTED_SLOTS:
         accessor = getattr(getattr(screen, attr), _SHARED_ACCESSOR)
-        assert accessor() is expected, (
-            f"{attr}.{_SHARED_ACCESSOR}() is not the screen's chat store"
-        )
+        assert (
+            accessor() is expected
+        ), f"{attr}.{_SHARED_ACCESSOR}() is not the screen's chat store"
 
 
 def test_shared_chat_store_accessor_is_late_bound():
@@ -776,9 +810,9 @@ def test_shared_chat_store_accessor_is_late_bound():
 
     for attr, _ in _EXPECTED_SLOTS:
         accessor = getattr(getattr(screen, attr), _SHARED_ACCESSOR)
-        assert accessor() is sentinel, (
-            f"{attr}.{_SHARED_ACCESSOR} froze the constructor-time method"
-        )
+        assert (
+            accessor() is sentinel
+        ), f"{attr}.{_SHARED_ACCESSOR} froze the constructor-time method"
 
 
 @pytest.mark.parametrize(
@@ -984,9 +1018,13 @@ async def test_session_verified_adoption_edges_are_late_bound(request, monkeypat
         calls = []
         patch.setattr(screen, "_console_chat_controller", controller)
         patch.setattr(screen, "_build_console_provider_selection", lambda: selection)
-        patch.setattr(screen, "_build_console_settings_summary_state", lambda: summary)
         patch.setattr(
-            screen,
+            screen._context_spend,
+            "_build_console_settings_summary_state",
+            lambda: summary,
+        )
+        patch.setattr(
+            screen._context_spend,
             "_apply_console_settings_summary_state",
             lambda value: calls.append(value),
         )

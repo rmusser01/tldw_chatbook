@@ -58,6 +58,10 @@ from tldw_chatbook.Tools.file_operation_tools import GrepFiles
 from Tests.Agents.test_agent_service import fence
 from Tests.Agents.test_fleet_runtime import FLEET_CFG, make_fleet_service
 
+# Real prompt/config readers retain their admitted collection profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 #: What the survivor answers. Distinctive enough that finding it in the
 #: wrong tree is unambiguous.
 SURVIVOR_MARKER = "SURVIVOR_RECORD_4c1a late answer"

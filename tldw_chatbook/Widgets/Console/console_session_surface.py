@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import replace
+from types import CoroutineType, FunctionType
 from typing import Any, Callable
 
 from tldw_chatbook.Utils.input_validation import escape_markup as _escape_markup
 from rich.text import Text
 from textual import events
+from textual._context import active_message_pump
 from textual.app import ComposeResult
 from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.css.query import NoMatches
@@ -707,6 +710,28 @@ class ConsoleSessionSurface(Vertical):
         except Exception:
             return
 
+    def _session_strip_is_attached(self, tab_strip: HorizontalScroll) -> bool:
+        """Check that an awaited tab update still owns the attached strip."""
+        if (
+            not self.is_attached
+            or self.app._exit
+            or not tab_strip.is_attached
+            or self._closing
+            or self._closed
+            or self._pruning
+            or tab_strip._closing
+            or tab_strip._closed
+            or tab_strip._pruning
+        ):
+            return False
+        try:
+            return (
+                self.query_one("#console-native-tab-strip", HorizontalScroll)
+                is tab_strip
+            )
+        except NoMatches:
+            return False
+
     async def sync_sessions(
         self,
         *,
@@ -726,16 +751,59 @@ class ConsoleSessionSurface(Vertical):
                 controller), falls back to the legacy ``streaming_session_id``
                 single-session cursor for the RUNNING glyph only.
         """
+        if not self.is_attached or self._closing or self._closed or self._pruning:
+            return
         active_session = next(
             (session for session in sessions if session.id == active_session_id),
             None,
         )
         self.set_session_title(active_session.title if active_session else None)
         async with self._session_sync_lock:
-            if not self.is_attached or self.app._exit:
+            if (
+                not self.is_attached
+                or self.app._exit
+                or self._closing
+                or self._closed
+                or self._pruning
+            ):
                 return
-            tab_strip = self.query_one("#console-native-tab-strip", HorizontalScroll)
-            if not tab_strip.is_attached:
+            try:
+                tab_strip = self.query_one(
+                    "#console-native-tab-strip", HorizontalScroll
+                )
+            except NoMatches:
+                return
+            # A copied pump context does not identify its actual mount task.
+            # Eager execution can enter Mount before Textual assigns _task.
+            task = asyncio.current_task()
+            strip_task = tab_strip._task
+            owns_mount = (
+                active_message_pump.get(None) is tab_strip
+                and task is not None
+                and task is strip_task
+            )
+            if (
+                not owns_mount
+                and strip_task is None
+                and task is not None
+                and active_message_pump.get(None) is tab_strip
+            ):
+                function = inspect.getattr_static(
+                    type(tab_strip), "_process_messages", None
+                )
+                coroutine = task.get_coro()
+                frame = coroutine.cr_frame if type(coroutine) is CoroutineType else None
+                owns_mount = (
+                    type(function) is FunctionType
+                    and type(coroutine) is CoroutineType
+                    and coroutine.cr_code is function.__code__
+                    and frame is not None
+                    and frame.f_locals.get("self") is tab_strip
+                )
+                del frame, coroutine, function
+            if not owns_mount:
+                await tab_strip._mounted_event.wait()
+            if not self._session_strip_is_attached(tab_strip):
                 return
             desired_ids = self._desired_tab_child_ids(
                 sessions=sessions,
@@ -758,7 +826,7 @@ class ConsoleSessionSurface(Vertical):
             # Each removal or mount can yield to navigation or app shutdown.
             for child in list(tab_strip.children):
                 await child.remove()
-                if not tab_strip.is_attached or self.app._exit:
+                if not self._session_strip_is_attached(tab_strip):
                     return
             for session in sessions:
                 is_active = session.id == active_session_id
@@ -775,15 +843,19 @@ class ConsoleSessionSurface(Vertical):
                         queued_count=(queue_counts or {}).get(session.id, 0),
                     )
                 )
-                if not tab_strip.is_attached or self.app._exit:
+                if not self._session_strip_is_attached(tab_strip):
                     return
                 await tab_strip.mount(self._build_close_tab_button(session))
-                if not tab_strip.is_attached or self.app._exit:
+                if not self._session_strip_is_attached(tab_strip):
                     return
+            if not self._session_strip_is_attached(tab_strip):
+                return
             await tab_strip.mount(self._build_new_tab_button())
-            if not tab_strip.is_attached or self.app._exit:
+            if not self._session_strip_is_attached(tab_strip):
                 return
             await tab_strip.mount(self._build_new_temporary_tab_button())
+            if not self._session_strip_is_attached(tab_strip):
+                return
             self._record_mount_churn(mounted=mounted_count, removed=removed_count)
         # TASK-28028: mounted/removed tabs change what is hidden past each
         # edge even when scroll_x does not move; refresh the ‹ › hints once

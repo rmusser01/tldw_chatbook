@@ -17,6 +17,11 @@ from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
+# The real default stop resolver uses the installed config participant. Per-test
+# environment redirection after enrollment fails closed with
+# raw_source_selection_changed under both the original and worker implementation.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
 def db(tmp_path):
@@ -139,7 +144,8 @@ async def test_scheduler_missing_handler_is_no_op(db):
 @pytest.mark.asyncio
 async def test_scheduler_run_stop_lifecycle(db):
     _create_reminder(db, "Lifecycle", "2026-01-01T00:00:00+00:00")
-    handler = AsyncMock()
+    dispatched = asyncio.Event()
+    handler = AsyncMock(side_effect=lambda *_: dispatched.set())
     loop = SchedulerLoop(
         db,
         handlers={"reminder": handler},
@@ -148,9 +154,11 @@ async def test_scheduler_run_stop_lifecycle(db):
     )
 
     task = asyncio.create_task(loop.run())
-    await asyncio.sleep(0.01)
-    loop.stop()
-    await asyncio.wait_for(task, timeout=1.0)
+    try:
+        await asyncio.wait_for(dispatched.wait(), timeout=2.0)
+    finally:
+        loop.stop()
+        await asyncio.wait_for(task, timeout=1.0)
     handler.assert_awaited()
 
 

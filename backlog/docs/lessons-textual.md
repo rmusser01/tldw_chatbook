@@ -1738,6 +1738,23 @@ that chat no longer shows, and post awaited answers with an explicit
 `session_id`. **Making a call asynchronous changes the contract of everything
 it calls: list each handler's awaits and what it re-reads after them.**
 
+## A widget's `_task` belongs to Textual's message pump (TASK-34561, 2026-10-04)
+
+The Character browser reused `self._task` for an `asyncio.create_task` controller
+refresh. Textual also stores its message-pump task there, and `App._prune` waits
+for `node._task` during awaited removal. The unchanged removed-browser assertion
+then accepted a late presentation because removal had waited for the unrelated
+read rather than detached the real widget. A real suspended-read barrier proved
+the inverse symptom too: removal waited on a blocked controller operation.
+Both controls failed on the immutable original source and on current native
+Windows source; naming only the widget slot `_controller_task` made both pass.
+
+Keep widget-owned asynchronous slots distinct from framework-owned attributes.
+For removal claims, mount a real widget and hold the unrelated operation across
+`await widget.remove()`; assert actual attachment and the original state
+identity. A fake `is_attached` flag or an already-finished controller read cannot
+establish that Textual retired its own message pump.
+
 ---
 
 ## A handler that awaits the removal of its own ancestor never returns -- and `asyncio.wait_for` cannot get you out (TASK-34000.4, 2026-10-04)

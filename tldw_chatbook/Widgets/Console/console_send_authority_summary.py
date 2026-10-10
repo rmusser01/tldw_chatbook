@@ -103,6 +103,20 @@ def project_console_send_authority(
 
     owned = classify_inspector_content(state, ownership_policy)
     rows = {entry.row.label: entry.row for entry in owned.rows}
+    if owned.pending_only:
+        live = rows.get("Live work")
+        return ConsoleSendAuthorityProjection(
+            where="Refreshing…",
+            scope="Refreshing…",
+            run="Inspector data incomplete"
+            if owned.incomplete
+            else str(live.value)
+            if live
+            else "Refreshing…",
+            sources="Refreshing…",
+            approvals=f"{state.pending_approval_count} pending"
+            + (" · action required" if state.pending_approval_count > 0 else ""),
+        )
 
     workspace_row = rows.get("Workspace")
     workspace = str(workspace_row.value).strip() if workspace_row else "Default"

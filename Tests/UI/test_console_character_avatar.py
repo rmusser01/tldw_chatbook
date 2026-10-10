@@ -37,6 +37,7 @@ from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
 from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.console_rail_section_helpers import open_rail_section
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_session_tab_close import ProductionConsoleHarness
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -426,7 +427,7 @@ async def console_screen_with_db(avatar_db, request):
     _configure_native_ready_console(app)
     request.getfixturevalue("owned_console_apps")(app.console_runtime, avatar_db)
     app.chachanotes_db = avatar_db
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
         await _wait_for_selector(screen, pilot, "#console-rail-section-header-details")
@@ -2737,3 +2738,58 @@ async def test_character_portrait_grows_and_shrinks_with_terminal(
     assert sizes[1].height > sizes[0].height
     assert sizes[1].width > sizes[0].width
     assert sizes[2] == sizes[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["select", "clear"])
+async def test_reaction_label_updates_before_avatar_resolution(
+    console_screen_with_db, monkeypatch, action
+):
+    _app, screen, db = console_screen_with_db
+    character_id = db.add_character_card({"name": "Samira"})
+    _set_active_console_character(screen, character_id, "Samira")
+    scope = screen._session._current_visual_identity_actor_scope()
+    assert scope is not None
+    option = ReactionOption("custom:relief", "Relief", "image/webp", False)
+    monkeypatch.setattr(
+        session_module, "_visual_identity_options_for_db", lambda _db, _scope: (option,)
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hold_avatar_refresh():
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr(
+        screen._session, "_refresh_character_avatar_fn", hold_avatar_refresh
+    )
+    label = screen.query_one("#console-character-reaction-state", Static)
+    task = None
+    if action == "clear":
+        screen._session._set_manual_reaction(scope, "custom:relief")
+        label.update("Reaction: Relief (manual)")
+    else:
+        label.update("Reaction: Automatic")
+    try:
+        if action == "select":
+            task = asyncio.create_task(
+                screen._session._apply_console_reaction_selection(option)
+            )
+        else:
+            screen._session._dispatch_console_reaction_clear()
+        await asyncio.wait_for(entered.wait(), 3)
+        assert screen._session._manual_reaction_key(scope) == (
+            "custom:relief" if action == "select" else None
+        )
+        assert str(label.renderable) == (
+            "Reaction: Relief (manual)" if action == "select" else "Reaction: Automatic"
+        )
+    finally:
+        release.set()
+        if task is not None:
+            await task
+        else:
+            workers = [
+                w for w in screen.app.workers if w.group == "console-reaction-selection"
+            ]
+            await asyncio.gather(*(worker.wait() for worker in workers))

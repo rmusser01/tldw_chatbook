@@ -12,6 +12,7 @@ import atexit
 import copy
 import sqlite3
 import stat
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -60,17 +61,17 @@ class _Operation:
     def __init__(self):
         raise TypeError("operation_is_installed_owner_issued")
 
-    def check(self, path=None):
+    def _state(self):
+        """Validate issued metadata only; caller holds the coordinator."""
         from .participants import _installed_repositories
 
+        if self not in _operations or self.participant not in _installed_repositories:
+            raise bootstrap.RecoveryRequired("operation_provenance_invalid")
+        repository = self.participant.repository()
         if (
-            self not in _operations
-            or self.participant not in _installed_repositories
-            or self.participant.repository() is None
-            or self.participant.read_only
-            != getattr(self.participant.repository(), "_read_only", False)
-            or self.participant.repository()._maintenance_participant
-            is not self.participant
+            repository is None
+            or self.participant.read_only != getattr(repository, "_read_only", False)
+            or repository._maintenance_participant is not self.participant
             or self.pid != os.getpid()
             or self.thread is not threading.current_thread()
             or self.task is not _task_identity()
@@ -78,16 +79,6 @@ class _Operation:
             or self.lease not in _live_leases
         ):
             raise bootstrap.RecoveryRequired("operation_provenance_invalid")
-        if path is not None:
-            selected = lexical_path(path)
-            parent = os.stat(self.path.parent)
-            if (
-                selected != self.path
-                or selected.resolve() != self.resolved_path
-                or (parent.st_dev, parent.st_ino) != self.parent_identity
-                or self.participant.repository().db_path != self.path
-            ):
-                raise bootstrap.RecoveryRequired("operation_path_outside_scope")
         if _pause is not None:
             hold = _holds.get(self.lease._key)
             if (
@@ -99,14 +90,67 @@ class _Operation:
                 or hold.error is not None
             ):
                 raise bootstrap.RecoveryRequired("operation_native_scope_unqualified")
+        return (
+            self.participant,
+            repository,
+            self.lease,
+            self.path,
+            self.resolved_path,
+            self.parent_identity,
+            self.key,
+            self.hold,
+            self.lease._key,
+        )
+
+    def check(self, path=None, *, fence=True):
+        """Check issued state; with ``fence``, also natively re-prove ``path``.
+
+        ``fence=False`` keeps every in-memory provenance/lexical-path check and
+        skips only the native parent-identity and resolution walk. Only a
+        single acquisition that already fenced this exact path uses it
+        (TASK-34601 amendment to ADR-126).
+        """
+        with _lock:
+            expected = _check_operation_state(self)
+        fenced = path is not None and fence
+        if fenced:
+            selected = lexical_path(path)
+            parent = os.stat(expected[3].parent)
+            resolved = selected.resolve() if selected == expected[3] else None
+        with _lock:
+            _check_operation_state(self, expected, path)
+            if fenced and (
+                selected != expected[3]
+                or resolved != expected[4]
+                or (parent.st_dev, parent.st_ino) != expected[5]
+            ):
+                raise bootstrap.RecoveryRequired("operation_path_outside_scope")
+        return expected
 
 
-def _check_operation(operation, path=None):
+def _check_operation_state(operation, expected=None, path=None):
+    """Fence exact issued metadata without performing filesystem observation."""
+    if type(operation) is not _Operation:
+        raise bootstrap.RecoveryRequired("operation_provenance_invalid")
+    current = _Operation._state(operation)
+    if expected is not None:
+        if any(current[index] is not expected[index] for index in (0, 1, 2, 7)):
+            raise bootstrap.RecoveryRequired("operation_provenance_invalid")
+        if any(current[index] != expected[index] for index in (3, 4, 5, 6, 8)):
+            raise bootstrap.RecoveryRequired("operation_path_outside_scope")
+    if path is not None and (
+        lexical_path(path) != current[3] or current[1].db_path != current[3]
+    ):
+        raise bootstrap.RecoveryRequired("operation_path_outside_scope")
+    return current
+
+
+def _check_operation(operation, path=None, *, fence=True):
     # Thread-local discovery is not authority. Never dispatch a caller-supplied
     # validation callback or an instance-shadowed method.
     if type(operation) is not _Operation:
         raise bootstrap.RecoveryRequired("operation_provenance_invalid")
-    _Operation.check(operation, path)
+    return _Operation.check(operation, path, fence=fence)
 
 
 @contextmanager
@@ -114,12 +158,16 @@ def _repository_operation(participant):
     from .participants import _check_core_retirement, _installed_repositories
 
     previous = getattr(_operation_local, "operation", None)
+    proof = _check_operation(previous, previous.path) if previous is not None else None
+    reuse = previous is not None and previous.participant is participant
+    target = participant.path
+    if reuse and target != previous.path:
+        _check_operation(previous, target)
     with _changed:
         if previous is not None:
-            _check_operation(previous, previous.path)
-        reuse = previous is not None and previous.participant is participant
+            _check_operation_state(previous, proof, previous.path)
         if reuse:
-            _check_operation(previous, participant.path)
+            _check_operation_state(previous, proof, participant.path)
         else:
             if (
                 participant not in _installed_repositories
@@ -171,6 +219,7 @@ def _repository_operation(participant):
             _check_core_retirement(participant)
             operation.key = operation.lease._key
             operation.hold = _holds.get(operation.key)
+            _check_operation_state(operation, path=operation.path)
             _operation_local.operation = operation
         yield operation
     finally:
@@ -183,9 +232,14 @@ def _repository_operation(participant):
                 _operations.discard(operation)
                 _changed.notify_all()
         finally:
+            proof = (
+                _check_operation(previous, previous.path)
+                if previous is not None
+                else None
+            )
             with _changed:
                 if previous is not None:
-                    _check_operation(previous, previous.path)
+                    _check_operation_state(previous, proof, previous.path)
                 _operation_local.operation = previous
 
 
@@ -198,6 +252,8 @@ class _Acquisition:
         self.scope_roots = None
         self.cancel = threading.Event()
         self.operation = getattr(_operation_local, "operation", None)
+        # Paths this one attempt already natively fenced (thread-confined).
+        self._fenced_paths = set()
         with _lock:
             if self.operation is not None:
                 _check_operation(self.operation)
@@ -211,7 +267,16 @@ class _Acquisition:
         if self.operation is not None:
             if path is None:
                 raise bootstrap.RecoveryRequired("operation_path_outside_scope")
-            _check_operation(self.operation, path)
+            # One native parent/resolution fence per path per acquisition: the
+            # bracket checks before and after the lease count repeat only the
+            # in-memory provenance, lexical-path, pause and cancel checks
+            # (TASK-34601 amendment to ADR-126; previously 3-4 drive-root walks).
+            selected = lexical_path(path)
+            proof = _check_operation(
+                self.operation, path, fence=selected not in self._fenced_paths
+            )
+            self._fenced_paths.add(selected)
+            return proof
         elif _pause is not None:
             raise bootstrap.RecoveryRequired("storage_locally_paused")
 
@@ -219,16 +284,31 @@ class _Acquisition:
     def initializing(self, root, path):
         # The marker and native registration are a single same-process first-use
         # interval. Durable incomplete state from any other interval still refuses.
-        with _changed:
-            while True:
-                self.check(path)
+        while True:
+            operation = self.operation
+            proof = self.check(path)
+            with _changed:
                 if (
                     self not in _pending_acquisitions
                     or self.pid != os.getpid()
                     or self.thread is not threading.current_thread()
                     or self.task is not _task_identity()
+                    or self.operation is not operation
                 ):
                     raise bootstrap.RecoveryRequired("acquisition_provenance_invalid")
+                if self.cancel.is_set():
+                    raise bootstrap.RecoveryRequired("storage_locally_paused")
+                if type(self) is _StartupReacquisition:
+                    if path is not None or operation is not None:
+                        raise bootstrap.RecoveryRequired(
+                            "startup_reacquisition_invalid"
+                        )
+                    _StartupReacquisition.check(self)
+                elif operation is None:
+                    if _pause is not None:
+                        raise bootstrap.RecoveryRequired("storage_locally_paused")
+                else:
+                    _check_operation_state(operation, proof, path)
                 leader = next(
                     (
                         other
@@ -408,8 +488,12 @@ def _begin_local_pause() -> _LocalPause:
         for attempt in _pending_acquisitions:
             if attempt.operation is None:
                 attempt.cancel.set()
+        # Change-notification handles pin their directories' ancestors against
+        # rename; maintenance owns the tree from here, so release them now.
+        retired = [w for hold in _holds.values() for w in _retire_watches(hold)]
         _changed.notify_all()
-        return pause
+    _close_retired_watches(retired)
+    return pause
 
 
 class _StartupReacquisition(_Acquisition):
@@ -502,7 +586,13 @@ class _Hold:
         # evidence, discarded with this hold. Guarded by _lock.
         self.evidence: dict[str, _Evidence] = {}
         self.path_evidence: OrderedDict[tuple, _Evidence] = OrderedDict()
-        self.derived_evidence: OrderedDict[tuple, tuple[_Evidence, object]] = OrderedDict()
+        self.derived_evidence: OrderedDict[tuple, tuple[_Evidence, object]] = (
+            OrderedDict()
+        )
+        # TASK-34601 (Windows): change notifications over evidence last
+        # confirmed by a full observation, keyed by entry identity (LRU).
+        # Guarded by _lock.
+        self.watches: OrderedDict[tuple, _EvidenceWatch] = OrderedDict()
         self.thread = threading.Thread(
             target=self._run,
             args=(authority,),
@@ -604,11 +694,14 @@ class StorageLease:
                 return
             hold = _holds[key]
             hold.count -= 1
+            watches = []
             if hold.count == 0:
                 hold.stop.set()
                 del _holds[key]
                 _retiring_holds.add(hold)
                 retired = hold
+                watches.extend(_retire_watches(hold))
+        _close_retired_watches(watches)
         if retired is not None:
             retired.thread.join()
             with _lock:
@@ -800,17 +893,20 @@ _QUALIFICATION_FILE = Path(__file__).with_name("native_qualification.json")
 
 def _posture(path: Path) -> tuple | None:
     """Identity and permission posture, or None when the path is absent."""
-    try:
-        info = os.stat(path, follow_symlinks=False)
-    except FileNotFoundError:
-        return None
-    return (
+    return _observe_stamps((path,), ())[0][0]
+
+
+def _posture_stamp(info, security=None) -> tuple:
+    stamp = (
         info.st_dev,
         info.st_ino,
         stat.S_IFMT(info.st_mode),
         stat.S_IMODE(info.st_mode),
         info.st_uid,
     )
+    # Exact fresh owner/DACL bytes fence native security changes without
+    # invalidating posture on unrelated directory content writes.
+    return (*stamp, security) if security is not None else stamp
 
 
 def _content(path: Path) -> tuple | None:
@@ -820,6 +916,61 @@ def _content(path: Path) -> tuple | None:
     except FileNotFoundError:
         return None
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+_METADATA_NATIVE_MODULE = sys.modules.get("tldw_chatbook.Utils.windows_files")
+_METADATA_CLOSE_ERROR = (
+    vars(_METADATA_NATIVE_MODULE).get("_WINDOWS_METADATA_CLOSE_ERROR_ORIGINAL")
+    if _METADATA_NATIVE_MODULE is not None
+    else None
+)
+
+
+def _metadata_close_uncertain(error):
+    # Provenance is retained at the defining native module's completion.
+    return type(error) is _METADATA_CLOSE_ERROR  # noqa: E721 - exact defining exception.
+
+
+def _observe_stamps(posture_paths, content_paths, links=None) -> tuple:
+    """Observe each named path once for one fresh evidence snapshot.
+
+    Posture and content of overlapping paths come from the same native open.
+    No filesystem observation survives this call. When ``links`` is a list, the
+    link count of every present content path is appended to it.
+    """
+    paths = tuple(dict.fromkeys((*posture_paths, *content_paths)))
+    if os.name == "nt":
+        observations = os.stat_many_for_admission(paths)
+    else:
+        observations = {}
+        for path in paths:
+            try:
+                observations[path] = (os.stat(path, follow_symlinks=False), None)
+            except FileNotFoundError:
+                observations[path] = None
+    posture = tuple(
+        None if (observed := observations[path]) is None else _posture_stamp(*observed)
+        for path in posture_paths
+    )
+    content = tuple(
+        None
+        if (observed := observations[path]) is None
+        else (
+            observed[0].st_dev,
+            observed[0].st_ino,
+            observed[0].st_size,
+            observed[0].st_mtime_ns,
+            observed[0].st_ctime_ns,
+        )
+        for path in content_paths
+    )
+    if links is not None:
+        links.extend(
+            observations[path][0].st_nlink
+            for path in content_paths
+            if observations[path] is not None
+        )
+    return posture, content
 
 
 def _chain(path: Path) -> tuple[Path, ...]:
@@ -834,8 +985,10 @@ class _Evidence:
 
     def __init__(self, names, posture_paths, content_paths):
         self.names = names
-        self.posture = tuple((p, _posture(p)) for p in posture_paths)
-        self.content = tuple((p, _content(p)) for p in content_paths)
+        posture_paths, content_paths = tuple(posture_paths), tuple(content_paths)
+        posture, content = _observe_stamps(posture_paths, content_paths)
+        self.posture = tuple(zip(posture_paths, posture, strict=True))
+        self.content = tuple(zip(content_paths, content, strict=True))
         self.epoch = bootstrap._admission_epoch
         self.confirmed = False
 
@@ -852,15 +1005,313 @@ class _Evidence:
         )
 
     def observe(self) -> tuple:
-        return (
-            tuple(_posture(p) for p, _ in self.posture),
-            tuple(_content(p) for p, _ in self.content),
+        return _observe_stamps(
+            tuple(p for p, _ in self.posture),
+            tuple(p for p, _ in self.content),
         )
 
     def settled_before(self, when_ns: int) -> bool:
         return all(
             s is None or s[4] <= when_ns - _EVIDENCE_SETTLE_NS for _, s in self.content
         )
+
+
+def _observe_evidence(entries, links=None) -> tuple:
+    """Observe all derivation dependencies once within one fresh snapshot."""
+    posture_paths = tuple(
+        dict.fromkeys(p for entry in entries for p, _ in entry.posture)
+    )
+    content_paths = tuple(
+        dict.fromkeys(p for entry in entries for p, _ in entry.content)
+    )
+    posture, content = _observe_stamps(posture_paths, content_paths, links)
+    posture_by_path = dict(zip(posture_paths, posture, strict=True))
+    content_by_path = dict(zip(content_paths, content, strict=True))
+    return tuple(
+        (
+            tuple(posture_by_path[p] for p, _ in entry.posture),
+            tuple(content_by_path[p] for p, _ in entry.content),
+        )
+        for entry in entries
+    )
+
+
+# ---------------------------------------------------------------------------
+# TASK-34601 amendment to ADR-126: change-notified evidence reuse (Windows).
+#
+# A warm reuse may skip the per-call full re-observation (and the per-call
+# qualified_for walk) only while ALL hold: overlapped change notifications on
+# every directory of the evidence tree were armed BEFORE the full observation
+# that last confirmed these exact evidence objects, and are still quiet when
+# checked after the lease is counted; the drive root, which no parent directory
+# can watch, is re-stamped directly; every content file had a single link at
+# confirmation; no by-id write was made through this process's facade since
+# (such writes notify no directory); and that confirmation is younger than the
+# backstop. Anything else runs the original full observation -- still the only
+# source of refusals -- re-arming first so a change during it is never lost, and
+# a full observation that finds any change un-verifies every watch of the hold.
+# No watch is armed or used during a local pause; all are released when a pause
+# begins or their hold retires.
+# ---------------------------------------------------------------------------
+
+#: Kill switch. POSIX observation is already cheap, so Windows only.
+_EVIDENCE_WATCH = os.name == "nt"
+#: A full observation re-confirms watched evidence at least this often. This also
+#: bounds changes no watched directory reports: writes through a handle opened by
+#: file id in another process, data written through a still-open handle, a hard
+#: link created in another directory, a volume turning read-only.
+_EVIDENCE_WATCH_BACKSTOP_S = 0.5
+#: Evidence spanning more directories than this keeps per-call observation.
+_EVIDENCE_WATCH_MAX_DIRECTORIES = 128
+#: Watched evidence tuples kept per hold (a bound hold has one per admitted path).
+_EVIDENCE_WATCH_SLOTS = 8
+
+
+def _native_generation() -> int:
+    if os.name != "nt":
+        return 0
+    from tldw_chatbook.Utils.windows_files import native_mutation_generation
+
+    return native_mutation_generation()
+
+
+class _EvidenceWatch:
+    """Notifications over one exact tuple of confirmed evidence objects.
+
+    ``watch`` is None when arming failed for these entries; arming is not
+    retried until the evidence itself is replaced. ``verified_at``,
+    ``generation``, ``users`` and ``retired`` are guarded by ``_lock``.
+    """
+
+    __slots__ = ("entries", "watch", "verified_at", "generation", "users", "retired")
+
+    def __init__(self, entries, watch):
+        self.entries = entries
+        self.watch = watch
+        self.verified_at = None
+        self.generation = None
+        self.users = 0
+        self.retired = False
+
+    def covers(self, entries) -> bool:
+        return len(entries) == len(self.entries) and all(
+            mine is theirs for mine, theirs in zip(self.entries, entries)
+        )
+
+
+def _watch_key(entries) -> tuple:
+    # A watch holds strong references to its entries, so their ids stay unique.
+    return tuple(id(entry) for entry in entries)
+
+
+def _watch_directories(entries) -> dict | None:
+    """``{directory: notify filter}`` for every directory of the evidence tree.
+
+    Posture stamps hold no timestamps, so a directory whose children are only
+    posture paths watches names, attributes and security; a parent of any
+    content path also watches size and write/creation times. None when a content
+    path lies on a drive whose root is not re-stamped as posture.
+    """
+    from tldw_chatbook.Utils.windows_files import WATCH_CONTENT, WATCH_POSTURE
+
+    content = {p for entry in entries for p, _ in entry.content}
+    anchors = {p for entry in entries for p, _ in entry.posture if p.parent == p}
+    if any(Path(path.anchor) not in anchors for path in content):
+        return None
+    nodes = {
+        node
+        for entry in entries
+        for path in (*(p for p, _ in entry.posture), *content)
+        for node in (*path.parents, path)
+    }
+    directories = {}
+    for node in nodes:
+        if node.parent != node:
+            notify = WATCH_CONTENT if node in content else WATCH_POSTURE
+            directories[node.parent] = directories.get(node.parent, 0) | notify
+    return directories
+
+
+def _arm_watch(entries) -> _EvidenceWatch:
+    """Arm notifications for ``entries``; failure yields a ``watch=None`` marker."""
+    from tldw_chatbook.Utils.windows_files import DirectoryWatch
+
+    directories = _watch_directories(entries)
+    if directories is None or len(directories) > _EVIDENCE_WATCH_MAX_DIRECTORIES:
+        return _EvidenceWatch(entries, None)
+    try:
+        return _EvidenceWatch(entries, DirectoryWatch(directories))
+    except (OSError, ValueError, RuntimeError) as error:
+        if _metadata_close_uncertain(error):
+            raise
+        return _EvidenceWatch(entries, None)
+
+
+def _retire(watch):
+    """Mark one detached watch retired (caller holds ``_lock``); closable now?"""
+    watch.retired = True
+    return watch if watch.users == 0 else None
+
+
+def _retire_watches(hold) -> list:
+    """Detach every watch of ``hold`` (caller holds ``_lock``); the closable ones."""
+    watches, hold.watches = getattr(hold, "watches", None) or {}, OrderedDict()
+    return [watch for watch in map(_retire, watches.values()) if watch is not None]
+
+
+def _close_retired_watches(watches) -> None:
+    """Close detached watches outside the coordinator lock."""
+    for watch in watches:
+        if watch is not None and watch.watch is not None:
+            watch.watch.close()
+
+
+def _release_watch(watch) -> None:
+    with _lock:
+        watch.users -= 1
+        closable = watch.retired and watch.users == 0
+    if closable:
+        _close_retired_watches((watch,))
+
+
+def _invalidate_watches(hold) -> None:
+    """A full observation found a change: no watch of this hold stays verified."""
+    with _lock:
+        for watch in (getattr(hold, "watches", None) or {}).values():
+            watch.verified_at = None
+
+
+def _watch_current(watch, entries, now, generation) -> bool:
+    """Check a claimed watch's in-memory validity; caller holds ``_lock``."""
+    return (
+        _pause is None
+        and watch is not None
+        and not watch.retired
+        and watch.watch is not None
+        and watch.verified_at is not None
+        and now - watch.verified_at < _EVIDENCE_WATCH_BACKSTOP_S
+        and watch.generation == generation
+        and watch.covers(entries)
+    )
+
+
+def _quiet_watch(hold, entries):
+    """Claim the hold's verified watch for ``entries`` within the backstop, or None."""
+    if not _EVIDENCE_WATCH:
+        return None
+    now, generation, key = time.monotonic(), _native_generation(), _watch_key(entries)
+    with _lock:
+        watches = getattr(hold, "watches", None) or {}
+        watch = watches.get(key)
+        if not _watch_current(watch, entries, now, generation):
+            return None
+        watch.users += 1
+        watches.move_to_end(key)
+        return watch
+
+
+def _anchors_unchanged(entries) -> bool:
+    """Re-stamp every drive root directly; no parent directory can watch it."""
+    expected = {}
+    for entry in entries:
+        for path, stamp in entry.posture:
+            if path.parent == path:
+                expected[path] = stamp
+    if not expected:
+        return True
+    anchors = tuple(expected)
+    posture, _ = _observe_stamps(anchors, ())
+    return posture == tuple(expected[path] for path in anchors)
+
+
+def _observe_watched(hold, entries) -> bool:
+    """The original full observation, (re)arming notifications BEFORE it.
+
+    Returns whether every stamp is unchanged. A watch becomes verified only when
+    the stamps are unchanged, every content file has a single link, no by-id
+    write happened in this process during the observation, and the watch armed
+    before the observation is still quiet after it. Any change un-verifies every
+    watch of the hold.
+    """
+    key = _watch_key(entries)
+    candidate = fresh = None
+    if _EVIDENCE_WATCH:
+        arm = False
+        with _lock:
+            current = (getattr(hold, "watches", None) or {}).get(key)
+            if _pause is None:
+                if (
+                    current is not None
+                    and not current.retired
+                    and current.covers(entries)
+                ):
+                    if current.watch is not None:
+                        current.users += 1
+                        candidate = current
+                else:
+                    arm = True
+        if candidate is not None and not candidate.watch.quiet():
+            _release_watch(candidate)
+            candidate, arm = None, True
+        if arm:
+            fresh = _arm_watch(entries)
+    generation = _native_generation()
+    links = []
+    started = time.monotonic()
+    try:
+        unchanged = _observe_evidence(entries, links) == tuple(
+            entry.stamps() for entry in entries
+        )
+        armed = candidate if candidate is not None else fresh
+        verified = (
+            unchanged
+            and all(count == 1 for count in links)
+            and armed is not None
+            and armed.watch is not None
+            and armed.watch.quiet()
+            and _native_generation() == generation
+        )
+    except BaseException:
+        if fresh is not None and fresh.watch is not None:
+            fresh.watch.close()
+        if candidate is not None:
+            _release_watch(candidate)
+        raise
+    retired = []
+    with _lock:
+        watches = getattr(hold, "watches", None)
+        if watches is not None and not unchanged:
+            for watch in watches.values():
+                watch.verified_at = None
+        if candidate is not None:
+            if (
+                verified
+                and watches is not None
+                and watches.get(key) is candidate
+                and not candidate.retired
+            ):
+                candidate.verified_at, candidate.generation = started, generation
+        elif fresh is not None and (
+            watches is not None
+            and _pause is None
+            and _holds.get(hold.key) is hold
+            and _hold_serving(hold)
+        ):
+            previous = watches.pop(key, None)
+            if previous is not None:
+                retired.append(_retire(previous))
+            watches[key] = fresh
+            if verified:
+                fresh.verified_at, fresh.generation = started, generation
+            while len(watches) > _EVIDENCE_WATCH_SLOTS:
+                retired.append(_retire(watches.popitem(last=False)[1]))
+            fresh = None
+    _close_retired_watches(retired)
+    if fresh is not None and fresh.watch is not None:
+        fresh.watch.close()  # never installed
+    if candidate is not None:
+        _release_watch(candidate)
+    return unchanged
 
 
 def _no_links(evidence: _Evidence) -> bool:
@@ -880,6 +1331,16 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
         return None
     if any(n.startswith(("pending-", "activation-update-")) for n in entries):
         return None
+    from .control_records import _creation_name
+
+    # Full authority derivation inspects each exact ancestor creation intent.
+    # Their absence must remain observable when reusing a completed decision;
+    # a newly unfinished entry must return to the original strict initializer.
+    creation_intents = {
+        child.parent / _creation_name(child)
+        for child in _chain(root)
+        if child.parent != child
+    }
     admission = root / "admission"
     content = [
         root,
@@ -888,6 +1349,7 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
         admission / "registry.lock",
         root / "unbound-owner",
         _QUALIFICATION_FILE,
+        *sorted(creation_intents),
         *sorted(root / n for n in entries if n not in _NOT_BOOTSTRAP_RECORDS),
     ]
     # The selector is an input even when unbound: a profile whose fingerprint
@@ -898,18 +1360,33 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
             return None  # absence-proved roots are never reused
         walked.extend(roots)
     posture = sorted({p for target in walked for p in _chain(Path(target))})
-    evidence = _Evidence(names, posture, (*content, selector))
+    if os.name == "nt":
+        posture = sorted({*posture, Path(_QUALIFICATION_FILE.anchor)})
+    try:
+        evidence = _Evidence(names, posture, (*content, selector))
+    except (OSError, ValueError) as error:
+        if _metadata_close_uncertain(error):
+            raise
+        return None  # Native unobservable paths never become admission evidence.
     posture_ok = all(
         s is not None and not stat.S_ISLNK(s[2]) for _, s in evidence.posture
     )
     # An absent selector is observed as absent; its appearance is a mismatch.
-    content_ok = all(s is not None for p, s in evidence.content if p != selector)
+    content_ok = all(
+        s is None if p in creation_intents else p == selector or s is not None
+        for p, s in evidence.content
+    )
     return evidence if posture_ok and content_ok else None
 
 
 def _path_evidence(names, selected: Path) -> _Evidence | None:
     """Stamp the admitted path's chain (the containment check's only input)."""
-    evidence = _Evidence(names, _chain(selected), ())
+    try:
+        evidence = _Evidence(names, _chain(selected), ())
+    except (OSError, ValueError) as error:
+        if _metadata_close_uncertain(error):
+            raise
+        return None
     return evidence if _no_links(evidence) else None
 
 
@@ -924,6 +1401,10 @@ def _hold_serving(hold) -> bool:
 
 def _mount_read_only(path: Path) -> bool:
     """Qualification refuses a read-only mount; the reuse path must too."""
+    if os.name == "nt":
+        # Qualification reads current local-NTFS identity and read-only flags.
+        # The Windows facade has no POSIX statvfs; absence is not a mount verdict.
+        return not qualified_for("admission", path)[0]
     statvfs = getattr(os, "statvfs", None)
     if statvfs is None:
         return True
@@ -936,7 +1417,10 @@ def _mount_read_only(path: Path) -> bool:
 def _selected_paths(path, related_paths) -> tuple[Path, ...]:
     return tuple(
         selected
-        for selected in ((lexical_path(path) if path is not None else None), *related_paths)
+        for selected in (
+            (lexical_path(path) if path is not None else None),
+            *related_paths,
+        )
         if selected is not None
     )
 
@@ -1100,8 +1584,16 @@ def _metadata_evidence(hold, paths=(), *, registry=None, records=None):
             for p, s in evidence.posture
         ):
             return None
+        # Selector evidence has already validated these exact absent ancestor
+        # creation intents. Preserve their absence through this second snapshot:
+        # appearance here refuses reuse, and later appearance changes the stamp.
+        absent_intents = {
+            dependency
+            for dependency, stamp in base.content
+            if stamp is None and dependency != selector
+        }
         if any(
-            stamp is None
+            stamp is not None if dependency in absent_intents else stamp is None
             for dependency, stamp in evidence.content
             if dependency != selector
         ):
@@ -1111,7 +1603,9 @@ def _metadata_evidence(hold, paths=(), *, registry=None, records=None):
         return None
 
 
-def _reuse_evidence(root, selector, path, related_paths, check, execution_selection):
+def _reuse_evidence(
+    root, selector, path, related_paths, check, execution_selection, check_state
+):
     """Return a lease from confirmed evidence, or None to run the derivation.
 
     Like the derivation, the lease is counted before the final revalidation, so a
@@ -1132,8 +1626,10 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
             or evidence.names != hold.names
         ):
             return None
+        epoch = evidence.epoch
         bound = evidence.names != (UNBOUND_NAMESPACE,)
         per_path = []
+        retained_paths = []
         fresh_children = []
         for item in selected if bound else ():
             entry = hold.path_evidence.get((str(selector), str(item)))
@@ -1155,10 +1651,13 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
                     return None
                 hold.path_evidence.move_to_end(directory_key)
                 per_path.append(directory)
+                retained_paths.append((directory_key, directory))
                 fresh_children.append(item)
             else:
-                hold.path_evidence.move_to_end((str(selector), str(item)))
+                path_key = (str(selector), str(item))
+                hold.path_evidence.move_to_end(path_key)
                 per_path.append(entry)
+                retained_paths.append((path_key, entry))
     # Snapshot only under _lock. New child stamps, like final observations,
     # perform filesystem work outside the coordinator lock.
     for item in fresh_children:
@@ -1166,38 +1665,96 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
         if entry is None:
             return None
         per_path.append(entry)
-    if _mount_read_only(root.parent):
-        return None
-    with _lock:
-        check()
-    if getattr(_local, "admitted", False):
-        raise bootstrap.RecoveryRequired("maintenance_requires_owner_capability")
-    with _lock:
-        check()
-        if (
-            _holds.get(key) is not hold
-            or not _hold_serving(hold)
-            or hold.evidence.get(str(selector)) is not evidence
-            or evidence.epoch != bootstrap._admission_epoch
-        ):
-            return None
-        hold.count += 1
-        token = StorageLease(key)
-        token._execution_selection = execution_selection
-    # Native filesystem observation never runs under the coordinator lock.
+    entries = (evidence, *per_path)
+    # Fresh child stamps are new objects on every call, so evidence including
+    # them is never watched; it keeps the original per-call observation.
+    watched = None if fresh_children else _quiet_watch(hold, entries)
     try:
-        unchanged = (
-            evidence.observe() == evidence.stamps()
-            and all(entry.observe() == entry.stamps() for entry in per_path)
-            and evidence.epoch == bootstrap._admission_epoch
-        )
-    except BaseException:
-        token.close()  # as the derivation does: a counted lease never leaks
-        raise
-    if not unchanged:
-        token.close()
-        return None
-    return token
+        # A quiet verified watch covers the qualification inputs as well; the
+        # backstop bounds a volume turning read-only (TASK-34601 amendment).
+        if watched is None and _mount_read_only(root.parent):
+            return None
+        proof = check()
+        with _lock:
+            check_state(proof)
+        if getattr(_local, "admitted", False):
+            raise bootstrap.RecoveryRequired("maintenance_requires_owner_capability")
+        proof = check()
+        with _lock:
+            check_state(proof)
+            if (
+                _holds.get(key) is not hold
+                or not _hold_serving(hold)
+                or hold.evidence.get(str(selector)) is not evidence
+                or evidence.epoch != bootstrap._admission_epoch
+            ):
+                return None
+            hold.count += 1
+            token = StorageLease(key)
+            token._execution_selection = execution_selection
+        # Native filesystem observation never runs under the coordinator lock.
+        # The notification check replaces the final re-observation at the same
+        # point: after the lease is counted, before the final owner checks.
+        try:
+            # Recheck notifications and in-memory validity after the native
+            # root read: a by-id write, expiry or invalidation can race that read
+            # without signaling the watch. This adds no native observation.
+            observed = False
+            if (
+                watched is not None
+                and _anchors_unchanged(entries)
+                and watched.watch.quiet()
+            ):
+                with _lock:
+                    observed = _watch_current(
+                        watched, entries, time.monotonic(), _native_generation()
+                    )
+            if not observed:
+                if watched is not None:
+                    observed = not _mount_read_only(root.parent) and _observe_watched(
+                        hold, entries
+                    )
+                elif fresh_children:
+                    observed = _observe_evidence(entries) == tuple(
+                        entry.stamps() for entry in entries
+                    )
+                    if not observed:
+                        _invalidate_watches(hold)  # shared selector evidence moved
+                else:
+                    observed = _observe_watched(hold, entries)
+            unchanged = observed and evidence.epoch == bootstrap._admission_epoch
+            proof = check()
+            with _lock:
+                check_state(proof)
+                unchanged = (
+                    unchanged
+                    and token in _live_leases
+                    and token._key == key
+                    and _holds.get(key) is hold
+                    and _hold_serving(hold)
+                    and hold.evidence.get(str(selector)) is evidence
+                    and evidence.epoch == epoch == bootstrap._admission_epoch
+                    and evidence.names == hold.names
+                    and all(
+                        hold.path_evidence.get(path_key) is entry
+                        for path_key, entry in retained_paths
+                    )
+                )
+        except (OSError, ValueError) as error:
+            token.close()
+            if _metadata_close_uncertain(error):
+                raise
+            return None  # Only the unchanged full derivation decides refusal codes.
+        except BaseException:
+            token.close()  # as the derivation does: a counted lease never leaks
+            raise
+        if not unchanged:
+            token.close()
+            return None
+        return token
+    finally:
+        if watched is not None:
+            _release_watch(watched)
 
 
 def _observe_candidates(root, selector, path, related_paths):
@@ -1216,11 +1773,16 @@ def _observe_candidates(root, selector, path, related_paths):
             directory_key = ("directory", str(selector), str(item.parent))
             wanted[directory_key] = hold.path_evidence.get(directory_key)
     now = time.time_ns()
-    return epoch, {
-        name: (entry, entry.observe(), now)
-        for name, entry in wanted.items()
-        if entry is not None
-    }
+    observations = {}
+    for name, entry in wanted.items():
+        if entry is not None:
+            try:
+                observations[name] = (entry, entry.observe(), now)
+            except (OSError, ValueError) as error:
+                if _metadata_close_uncertain(error):
+                    raise
+                continue  # A candidate that cannot be observed cannot confirm.
+    return epoch, observations
 
 
 def _note_evidence(hold, root, selector, path, related_paths, names, roots, before):
@@ -1279,6 +1841,92 @@ def _note_evidence(hold, root, selector, path, related_paths, names, roots, befo
                     store.popitem(last=False)
 
 
+class _ScopeProof:
+    """One call's synchronized source dependencies, never a permission verdict."""
+
+    def __init__(self, root, selector, attempt, authority):
+        self.root = root
+        self.selector = selector
+        self.key = (os.getpid(), str(root))
+        self.thread = threading.current_thread()
+        self.task = _task_identity()
+        self.attempt = attempt
+        self.authority = authority
+        self.continuation = False
+        with _lock:
+            self.hold = _holds.get(self.key)
+            self.names = self.hold.names if self.hold is not None else None
+            self.pause = (
+                attempt.pause if type(attempt) is _StartupReacquisition else None
+            )
+            self.startup_source = (
+                self.pause._startup_source if self.pause is not None else None
+            )
+            self.startup_roots = (
+                self.pause._startup_roots if self.pause is not None else None
+            )
+            self.check()
+
+    def check(self):
+        """Fence only current actor, lexical selection and captured live metadata."""
+        if (
+            self.key != (os.getpid(), str(bootstrap.default_bootstrap_root()))
+            or self.selector != effective_config_path()
+            or self.thread is not threading.current_thread()
+            or self.task is not _task_identity()
+        ):
+            raise bootstrap.RecoveryRequired("execution_selection_changed")
+        if self.pause is not None:
+            _StartupReacquisition.check(self.attempt)
+            if (
+                self.attempt not in _pending_acquisitions
+                or self.attempt.pause is not self.pause
+                or self.pause._startup_source != self.startup_source
+                or self.pause._startup_roots != self.startup_roots
+                or self.authority is None
+                or self.authority._identity != self.startup_source[3]
+            ):
+                raise bootstrap.RecoveryRequired("startup_scope_changed")
+        if self.continuation and (
+            _holds.get(self.key) is not self.hold
+            or self.hold is None
+            or self.hold.names != self.names
+            or self.hold.count <= 0
+            or self.hold.stop.is_set()
+        ):
+            raise bootstrap.RecoveryRequired("storage_scope_changed")
+
+
+def _check_acquisition_state(attempt, operation, proofs, paths, execution_selection):
+    """Repeat pure issued-state checks after an original fresh path proof."""
+    if (
+        attempt not in _pending_acquisitions
+        or attempt.pid != os.getpid()
+        or attempt.thread is not threading.current_thread()
+        or attempt.task is not _task_identity()
+        or attempt.operation is not operation
+    ):
+        raise bootstrap.RecoveryRequired("acquisition_provenance_invalid")
+    if attempt.cancel.is_set():
+        raise bootstrap.RecoveryRequired("storage_locally_paused")
+    if (
+        execution_selection[0] != os.getpid()
+        or execution_selection[1] != bootstrap.default_bootstrap_root()
+        or execution_selection[2] != effective_config_path()
+    ):
+        raise bootstrap.RecoveryRequired("execution_selection_changed")
+    if type(attempt) is _StartupReacquisition:
+        _StartupReacquisition.check(attempt)
+    elif operation is None:
+        if _pause is not None:
+            raise bootstrap.RecoveryRequired("storage_locally_paused")
+    else:
+        for selected, proof in zip(paths, proofs, strict=True):
+            if proof is None:
+                raise bootstrap.RecoveryRequired("operation_provenance_invalid")
+            _check_operation_state(operation, proof, selected)
+
+
 def _scope(
     root: Path,
     selector: Path,
@@ -1287,27 +1935,33 @@ def _scope(
     startup_attempt=None,
     authority=None,
     related_paths: tuple[Path, ...] = (),
+    proof: _ScopeProof | None = None,
 ) -> tuple[str, ...]:
+    if proof is None:
+        proof = _ScopeProof(root, selector, startup_attempt, authority)
+    if (
+        type(proof) is not _ScopeProof
+        or proof.root != root
+        or proof.selector != selector
+        or proof.attempt is not startup_attempt
+        or proof.authority is not authority
+    ):
+        raise bootstrap.RecoveryRequired("storage_scope_changed")
     pending, profiles = bootstrap._records(root)
     registry = bootstrap._registry(root)
     binding = bootstrap._binding(selector, profiles, registry) if profiles else None
     if type(startup_attempt) is _StartupReacquisition:
-        _StartupReacquisition.check(startup_attempt, path)
-        pause = startup_attempt.pause
-        if (
-            startup_attempt not in _pending_acquisitions
-            or authority is None
-            or authority._identity != pause._startup_source[3]
-        ):
-            raise bootstrap.RecoveryRequired("startup_scope_changed")
-        if pause._startup_roots is not None:
+        with _lock:
+            proof.check()
+            _StartupReacquisition.check(startup_attempt, path)
+        if proof.startup_roots is not None:
             previous = next(
                 (r for r in profiles if r["selector"] == str(selector)), None
             )
             if (
                 previous is None
-                or tuple(previous["namespaces"]) != pause._startup_source[2]
-                or tuple(previous["roots"]) != pause._startup_roots
+                or tuple(previous["namespaces"]) != proof.startup_source[2]
+                or tuple(previous["roots"]) != proof.startup_roots
             ):
                 raise bootstrap.RecoveryRequired("startup_scope_changed")
             if binding is None and not pending:
@@ -1316,13 +1970,14 @@ def _scope(
                 snapshot = dict(previous, fingerprint=bootstrap._fingerprint(selector))
                 binding = bootstrap._binding(selector, [snapshot], registry)
     if binding is None and not pending:
-        live = _holds.get((os.getpid(), str(root)))
+        live = proof.hold
         previous = next((r for r in profiles if r["selector"] == str(selector)), None)
         if (
             live is not None
             and previous is not None
-            and live.names == tuple(previous["namespaces"])
+            and proof.names == tuple(previous["namespaces"])
         ):
+            proof.continuation = True
             # Existing owners continue only inside their original verified mapping.
             # New process enrollment still requires the saved config fingerprint.
             snapshot = dict(previous, fingerprint=bootstrap._fingerprint(selector))
@@ -1330,6 +1985,8 @@ def _scope(
     if binding is None:
         if pending:
             raise bootstrap.RecoveryRequired("recovery_scope_uncertain")
+        with _lock:
+            proof.check()
         return (UNBOUND_NAMESPACE,)
     from .bootstrap import effective_roots
 
@@ -1350,6 +2007,8 @@ def _scope(
             (*roots, Path(binding["selector"])), selected
         ):
             raise bootstrap.RecoveryRequired("storage_scope_not_enrolled")
+    with _lock:
+        proof.check()
     return tuple(binding["namespaces"])
 
 
@@ -1366,10 +2025,24 @@ def acquire_storage(
         return _acquire_storage(path, attempt, related_paths=related_paths)
     except bootstrap.RecoveryRequired:
         raise
-    except (OSError, ValueError, RuntimeError):
+    except (OSError, ValueError, RuntimeError) as error:
+        if _metadata_close_uncertain(error):
+            raise
         raise bootstrap.RecoveryRequired("storage_admission_unavailable") from None
     finally:
         attempt.close()
+
+
+# Direct callable inputs for the installed raw-member batch only. These are
+# source bindings, never permission or retained native admission evidence.
+_RAW_MEMBER_ACQUIRE_BINDING = (
+    acquire_storage,
+    acquire_storage.__code__,
+    acquire_storage.__globals__,
+    acquire_storage.__defaults__,
+    acquire_storage.__kwdefaults__,
+    tuple((acquire_storage.__kwdefaults__ or {}).items()),
+)
 
 
 def _acquire_storage(
@@ -1386,25 +2059,32 @@ def _acquire_storage(
     selector = effective_config_path()
     related_paths = tuple(lexical_path(selected) for selected in related_paths)
 
+    paths = (path, *related_paths)
+    operation = attempt.operation
+
     def check():
-        for selected in (path, *related_paths):
-            attempt.check(selected)
+        return tuple(attempt.check(selected) for selected in paths)
 
     execution_selection = _execution_selection_for(path)
     if execution_selection[1:3] != (root, selector):
         raise bootstrap.RecoveryRequired("execution_selection_changed")
+
+    def check_state(proofs):
+        _check_acquisition_state(attempt, operation, proofs, paths, execution_selection)
+
+    proof = check()
     with _lock:
-        check()
+        check_state(proof)
         if (
-            attempt.operation is not None
-            and attempt.operation.key is not None
-            and attempt.operation.key != (os.getpid(), str(root))
+            operation is not None
+            and operation.key is not None
+            and operation.key != (os.getpid(), str(root))
         ):
             raise bootstrap.RecoveryRequired("operation_native_scope_changed")
     before = None
-    if _EVIDENCE_REUSE and type(attempt) is _Acquisition and os.name != "nt":
+    if _EVIDENCE_REUSE and type(attempt) is _Acquisition:
         reused = _reuse_evidence(
-            root, selector, path, related_paths, check, execution_selection
+            root, selector, path, related_paths, check, execution_selection, check_state
         )
         if reused is not None:
             return reused
@@ -1421,34 +2101,36 @@ def _acquire_storage(
             existing = existing.parent
         allowed, reason = qualified_for("admission", existing)
         if not allowed:
-            # Preserve a positively disjoint startup decision, while still limiting
-            # each owner path to its verified scope. Native unavailability is not a
-            # conflict with an unrelated operation and never qualifies maintenance.
             _scope(
-                root, selector, lexical_path(path) if path is not None else None,
+                root,
+                selector,
+                lexical_path(path) if path is not None else None,
                 related_paths=related_paths,
             )
             allowed, reason = bootstrap.startup_permission(selector, root)
             if not allowed:
                 raise bootstrap.RecoveryRequired(reason)
+            proof = check()
             with _lock:
-                check()
+                check_state(proof)
                 token = StorageLease(None)
                 token._execution_selection = execution_selection
                 return token
-        # Opening existing authority can wait on the registry. Retiring unrelated
-        # owners must remain possible while that or a native gate is contended.
         authority = admission_authority(root)
+    scope_proof = _ScopeProof(root, selector, attempt, authority)
+    names = _scope(
+        root,
+        selector,
+        lexical_path(path) if path is not None else None,
+        startup_attempt=attempt,
+        authority=authority,
+        related_paths=related_paths,
+        proof=scope_proof,
+    )
+    proof = check()
     with _lock:
-        check()
-        names = _scope(
-            root,
-            selector,
-            lexical_path(path) if path is not None else None,
-            startup_attempt=attempt,
-            authority=authority,
-            related_paths=related_paths,
-        )
+        check_state(proof)
+        scope_proof.check()
         key = (os.getpid(), str(root))
         hold = _holds.get(key)
         if hold is not None and names != hold.names:
@@ -1459,37 +2141,50 @@ def _acquire_storage(
         hold.count += 1
         token = StorageLease(key)
         token._execution_selection = execution_selection
-    # Count pending acquisitions before dropping the lock: a drain must see
-    # them, and another acquiring thread must share this same native hold.
+    # Count pending acquisitions before the final fresh proof, so drain sees them.
     try:
         while not hold.ready.wait(0.01):
+            proof = check()
             with _lock:
-                check()
+                check_state(proof)
         if hold.error is not None:
             raise bootstrap.RecoveryRequired("storage_admission_unavailable")
-        # Enrollment races an unbound selection. Revalidate after acquiring its
-        # lease; never enter on a stale pre-enrollment decision.
+        allowed, reason = bootstrap.startup_permission(selector, root)
+        if not allowed:
+            raise bootstrap.RecoveryRequired(reason)
+        scope_proof = _ScopeProof(root, selector, attempt, authority)
+        final_names = _scope(
+            root,
+            selector,
+            lexical_path(path) if path is not None else None,
+            startup_attempt=attempt,
+            authority=authority,
+            related_paths=related_paths,
+            proof=scope_proof,
+        )
+        proof = check()
         with _lock:
-            check()
-            allowed, reason = bootstrap.startup_permission(selector, root)
-            if not allowed:
-                raise bootstrap.RecoveryRequired(reason)
+            check_state(proof)
+            scope_proof.check()
             if (
-                _scope(
-                    root,
-                    selector,
-                    lexical_path(path) if path is not None else None,
-                    startup_attempt=attempt,
-                    authority=authority,
-                    related_paths=related_paths,
-                )
-                != names
+                final_names != names
+                or token not in _live_leases
+                or token._key != key
+                or _holds.get(key) is not hold
+                or hold.names != names
+                or not _hold_serving(hold)
             ):
                 raise bootstrap.RecoveryRequired("storage_scope_changed")
         if before is not None:
             _note_evidence(
-                hold, root, selector, path, related_paths, names,
-                attempt.scope_roots, before,
+                hold,
+                root,
+                selector,
+                path,
+                related_paths,
+                names,
+                attempt.scope_roots,
+                before,
             )
         return token
     except BaseException:
@@ -1920,7 +2615,8 @@ class _DiscoveryScope:
         self.active = True
         self.sqlite_copies = (
             _PreviewScope(limits, byte_budget, native_scope=self)
-            if private_sqlite else None
+            if private_sqlite
+            else None
         )
 
     def check(self):
@@ -2229,11 +2925,10 @@ class MaintenanceSession:
             not set(row["namespaces"]) <= set(self._names) for row, _ in bindings
         ):
             raise bootstrap.RecoveryRequired("capture_config_scope_changed")
-        self._config_capture_sources = _config_capture_sources(root, selectors, bindings)
-        if any(
-            not _contains_capture_path(self._roots, path)
-            for path in selectors
-        ):
+        self._config_capture_sources = _config_capture_sources(
+            root, selectors, bindings
+        )
+        if any(not _contains_capture_path(self._roots, path) for path in selectors):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
         with self._discovery_reads():
             current = discover(selectors, selections=selections)
@@ -2244,9 +2939,9 @@ class MaintenanceSession:
             if item.status != "included" or item.path is None:
                 continue
             path = lexical_path(item.path)
-            if not _contains_capture_path(self._roots, path) and not _config_capture_item(
-                item, current, self._config_capture_sources
-            ):
+            if not _contains_capture_path(
+                self._roots, path
+            ) and not _config_capture_item(item, current, self._config_capture_sources):
                 raise bootstrap.RecoveryRequired("capture_source_outside_scope")
             info = os.stat(path)
             if not stat.S_ISREG(info.st_mode):
@@ -2270,7 +2965,10 @@ class MaintenanceSession:
             if type(limits) is not ArchiveLimits:
                 raise TypeError("invalid_preview_limits")
             byte_budget = limits.expanded_bytes if byte_budget is None else byte_budget
-            if type(byte_budget) is not int or not 0 < byte_budget <= limits.expanded_bytes:
+            if (
+                type(byte_budget) is not int
+                or not 0 < byte_budget <= limits.expanded_bytes
+            ):
                 raise ValueError("invalid_preview_budget")
         elif limits is not None or byte_budget is not None:
             raise ValueError("invalid_discovery_copy_options")
@@ -2568,14 +3266,16 @@ class _CaptureFileDescriptors:
             self.scope.resources.remove(self)
 
 
-def _check_capture_file_identity(scope, selected, info, *, source_only=False, owner_id=None):
+def _check_capture_file_identity(
+    scope, selected, info, *, source_only=False, owner_id=None
+):
     scope.check()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise bootstrap.RecoveryRequired("capture_file_not_regular")
     if type(scope) is _DiscoveryScope:
-        if not _contains_capture_path(scope.session._roots, selected) and not _config_capture_file(
-            scope.config_sources, selected, owner_id, info
-        ):
+        if not _contains_capture_path(
+            scope.session._roots, selected
+        ) and not _config_capture_file(scope.config_sources, selected, owner_id, info):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
         return
     if type(scope) is _PreviewScope:

@@ -168,6 +168,12 @@ def test_console_wiring_opens_auto_speak_consent_on_owning_app() -> None:
         read_resume_asyncio=lambda: chat_screen.asyncio,
         resume_isawaitable=lambda result: chat_screen.inspect.isawaitable(result),
         read_resume_logger=lambda: chat_screen.logger,
+        display_pricing_catalog=lambda: chat_screen.spend.pricing_catalog_for_display(
+            screen, chat_screen.get_pricing_catalog
+        ),
+        build_cost_snapshot=lambda *args, **kwargs: chat_screen.build_cost_snapshot(
+            *args, **kwargs
+        ),
         rag_source_types_accessor=lambda: (),
         rag_top_k_accessor=lambda: 10,
         read_trace_recovery_dispatch=lambda: (

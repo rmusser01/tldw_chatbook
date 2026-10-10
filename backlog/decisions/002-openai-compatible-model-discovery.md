@@ -38,3 +38,15 @@ Implementations must preserve exact top-level `[providers]` key spelling/casing 
 - [OpenAI-compatible model discovery PRD](../../Docs/superpowers/specs/2026-06-04-openai-compatible-model-discovery-prd-design.md)
 - [Implementation plan](../../Docs/superpowers/plans/2026-06-04-openai-compatible-model-discovery-implementation.md)
 - [Backlog task TASK-78](../tasks/task-78%20-%20OpenAI-Compatible-Model-Discovery.md)
+
+## Bounded metadata clarification (2026-10-05, TASK-34363)
+
+A valid model ID remains discoverable when one metadata field exceeds a bound.
+Drop that field, then the largest fields until the retained metadata fits every
+existing depth/item/key/value/serialized-byte limit; excessive top-level field
+count keeps no metadata. Credential-looking fields remain scrubbed. Invalid IDs,
+model-count and response-size violations still reject the listing.
+
+Retained metadata supplies capability hints only; absent hints stay unknown.
+This policy adds no provider/tool authority or automatic configuration writes,
+and preserves exact provider identity and explicit manual persistence.

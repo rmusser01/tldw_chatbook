@@ -24,8 +24,9 @@ from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
+from Tests.UI.test_console_session_tab_close import (
+    ProductionConsoleHarness as ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_command_grammar import (
     KIND_COMMAND,
@@ -524,6 +525,7 @@ async def test_action_open_console_style_insert_is_unavailable_when_ephemeral():
         assert notified == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_style_picker_selection_inserts_style_token_into_draft():
     """An empty draft is prefixed with the command word AND the style token
@@ -544,7 +546,10 @@ async def test_style_picker_selection_inserts_style_token_into_draft():
         await pilot.pause(0.2)
         assert len(host.screen_stack) == baseline_depth + 1
 
-        await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
+        target = host.screen.query_one(f"#{ROW_ID_PREFIX}style_anime")
+        target.scroll_visible(animate=False)
+        await pilot.pause()
+        assert await pilot.click(target)
         await pilot.pause(0.2)
 
         assert len(host.screen_stack) == baseline_depth, (
@@ -580,6 +585,7 @@ async def test_style_picker_insert_composes_valid_command_after_command_word():
         assert composer.draft_text() == "/generate-image @style_anime a red dragon"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_style_picker_insert_replaces_existing_leading_style_token():
     """A draft that already carries a leading `@style` token gets that token
@@ -599,7 +605,10 @@ async def test_style_picker_insert_replaces_existing_leading_style_token():
         console.action_open_console_style_insert()
         await pilot.pause(0.2)
 
-        await pilot.click(f"#{ROW_ID_PREFIX}style_anime")
+        target = host.screen.query_one(f"#{ROW_ID_PREFIX}style_anime")
+        target.scroll_visible(animate=False)
+        await pilot.pause()
+        assert await pilot.click(target)
         await pilot.pause(0.2)
 
         assert (

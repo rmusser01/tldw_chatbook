@@ -287,6 +287,7 @@ def test_restore_history_discards_orphaned_generated_boundary_entry():
     assert composer.draft_text() == "safe"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_session_switch_restores_current_collapsed_paste_structure():
     _, host = _ready_host()
@@ -784,6 +785,7 @@ async def test_console_undo_redo_empty_stack_is_silent_noop_via_screen():
         assert composer.draft_text() == "untouched"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_undo_history_scoped_per_session_never_leaks():
     """AC4: editing in session A, switching to B, must not let Ctrl+Z touch

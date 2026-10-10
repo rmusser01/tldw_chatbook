@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1711,3 +1712,81 @@ class ChatConversationService:
                 # None, matching a snapshot taken a moment later.
                 continue
             node["image_data"] = image_row.get("image_data")
+
+
+# Definition-time identities for the optional finite stock browser callback.
+# No handle, authority verdict or query result is retained by these records.
+_CONSOLE_BROWSER_SERVICE_SOURCE = (
+    globals(),
+    globals()["__file__"],
+    globals()["__spec__"],
+    getattr(globals()["__spec__"], "origin", None),
+    tuple(
+        (
+            ChatConversationService,
+            name,
+            inspect.getattr_static(ChatConversationService, name),
+        )
+        for name in (
+            "_fetch_keywords_for_conversations",
+            "_normalize_conversation_rows",
+            "get_conversation_keywords",
+            "list_conversations",
+            "__getattribute__",
+            "__dict__",
+        )
+    ),
+    tuple(
+        (name, globals()[name])
+        for name in (
+            "ChatConversationService",
+            "_clean_text",
+            "_normalize_state",
+            "_normalize_assistant_kind",
+            "_normalize_scope",
+            "_normalize_runtime_backend",
+            "_normalize_discovery_owner",
+            "_normalize_keywords",
+            "_row_assistant_name",
+            "derive_conversation_title",
+            "normalize_conversation_row",
+        )
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in tuple(
+            vars(ChatConversationService)[name]
+            for name in (
+                "_fetch_keywords_for_conversations",
+                "_normalize_conversation_rows",
+                "get_conversation_keywords",
+                "list_conversations",
+            )
+        )
+        + tuple(
+            globals()[name]
+            for name in (
+                "_clean_text",
+                "_normalize_state",
+                "_normalize_assistant_kind",
+                "_normalize_scope",
+                "_normalize_runtime_backend",
+                "_normalize_discovery_owner",
+                "_normalize_keywords",
+                "_row_assistant_name",
+                "derive_conversation_title",
+                "normalize_conversation_row",
+            )
+        )
+    ),
+)

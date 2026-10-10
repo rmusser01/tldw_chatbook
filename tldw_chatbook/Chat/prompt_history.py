@@ -51,15 +51,16 @@ class PromptHistory:
     """Manages a JSONL prompt-history file with async IO and draft stashing."""
 
     def __init__(
-        self, path: Path | str, max_entries: int = DEFAULT_MAX_ENTRIES
+        self, path: Path | str | None = None, max_entries: int = DEFAULT_MAX_ENTRIES
     ) -> None:
         """Initialize the history store.
 
         Args:
-            path: Path of the JSONL history file (created on first write).
+            path: Explicit JSONL path, or None to resolve the default in its IO worker.
             max_entries: Cap on stored entries; the most recent entries win.
         """
-        self.path = lexical_path(path)
+        self._default_path = path is None
+        self.path = lexical_path(path) if path is not None else None
         self.max_entries = max_entries
         self._entries: list[HistoryEntry] = []
         self._current: str | None = None
@@ -123,10 +124,19 @@ class PromptHistory:
         """
         return max(-self.size, min(0, index))
 
-    def _history_io(self, selected, payload):
+    def _resolve_default_path(self) -> None:
+        """Fix the default selection once, inside the serialized real worker."""
+        if self._default_path and self.path is None:
+            self.path = lexical_path(default_prompt_history_path())
+
+    def _history_io(self, selected, payload, *, _require_installed=False):
         """Own the complete real thread scope; payload is a fixed write snapshot."""
         with raw._scope(
-            self, "prompt_history", writing=payload is not None, selected_read=selected
+            self,
+            "prompt_history",
+            writing=payload is not None,
+            selected_read=selected,
+            _require_installed=_require_installed,
         ) as operation:
             if payload is None:
                 entries = []

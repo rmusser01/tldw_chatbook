@@ -228,9 +228,13 @@ def _signature_to_prompt_arguments(
 
 
 def _extract_registered_entries(
-    method_name: str, decorator_name: str
+    method_name: str,
+    decorator_name: str,
+    *,
+    module_node: ast.Module | None = None,
 ) -> list[dict[str, Any]]:
-    module_node = _load_server_module_ast()
+    if module_node is None:
+        module_node = _load_server_module_ast()
     for node in module_node.body:
         if not isinstance(node, ast.ClassDef) or node.name != "TldwMCPServer":
             continue
@@ -275,16 +279,28 @@ def _extract_registered_entries(
     return []
 
 
-def _describe_local_resources() -> list[dict[str, Any]]:
-    return _extract_registered_entries("_register_resources", "resource")
+def _describe_local_resources(
+    *, module_node: ast.Module | None = None
+) -> list[dict[str, Any]]:
+    return _extract_registered_entries(
+        "_register_resources", "resource", module_node=module_node
+    )
 
 
-def _describe_local_prompts() -> list[dict[str, Any]]:
-    return _extract_registered_entries("_register_prompts", "prompt")
+def _describe_local_prompts(
+    *, module_node: ast.Module | None = None
+) -> list[dict[str, Any]]:
+    return _extract_registered_entries(
+        "_register_prompts", "prompt", module_node=module_node
+    )
 
 
-def _describe_local_tools() -> list[dict[str, Any]]:
-    return _extract_registered_entries("_register_tools", "tool")
+def _describe_local_tools(
+    *, module_node: ast.Module | None = None
+) -> list[dict[str, Any]]:
+    return _extract_registered_entries(
+        "_register_tools", "tool", module_node=module_node
+    )
 
 
 def _describe_local_library_tools() -> list[dict[str, Any]]:
@@ -307,12 +323,15 @@ def _describe_local_library_tools() -> list[dict[str, Any]]:
 
 def describe_local_mcp_capabilities() -> dict[str, Any]:
     """Return a stable local MCP capability manifest without opening a loopback connection."""
+    # One source observation per request; later requests still load fresh source.
+    module_node = _load_server_module_ast()
     return {
         "server_id": "local:tldw_chatbook",
         "server_label": "tldw_chatbook local MCP",
-        "tools": _describe_local_tools() + _describe_local_library_tools(),
-        "resources": _describe_local_resources(),
-        "prompts": _describe_local_prompts(),
+        "tools": _describe_local_tools(module_node=module_node)
+        + _describe_local_library_tools(),
+        "resources": _describe_local_resources(module_node=module_node),
+        "prompts": _describe_local_prompts(module_node=module_node),
     }
 
 

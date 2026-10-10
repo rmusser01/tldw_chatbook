@@ -229,6 +229,7 @@ async def test_survivor_tick_observes_new_published_usage_without_a_new_timer(re
         assert section.rows[0].secondary_text == "Target unavailable · long job · ~11 local output tok"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_the_tick_stops_itself_with_one_final_settle_paint():
     """15664 AC#2: the refresh must not keep repainting on a timer when no

@@ -13,6 +13,9 @@ from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.UI.Console_Modules.retrieval import ConsoleRetrievalController
 
 
+pytestmark = pytest.mark.bootstrap_profile
+
+
 def _controller() -> tuple[ConsoleRetrievalController, SimpleNamespace]:
     """Build the real controller with observable no-mount boundary doubles."""
     state = SimpleNamespace(

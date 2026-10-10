@@ -271,13 +271,23 @@ async def test_assistant_tooltip_renders_malformed_markup_literally(after_sync):
 class _RunChipsApp(_ChipsApp):
     """Chips app variant that passes the FB-08 run-copy constructor arg."""
 
-    def __init__(self, state: ConsoleControlState, *, run_copy: str = "") -> None:
+    def __init__(
+        self,
+        state: ConsoleControlState,
+        *,
+        run_copy: str = "",
+        collapsed: bool = False,
+    ) -> None:
         super().__init__(state)
         self._run_copy = run_copy
+        self._collapsed = collapsed
 
     def compose(self) -> ComposeResult:
         yield ConsoleStatusChips(
-            self._state, run_copy=self._run_copy, id="console-status-chips"
+            self._state,
+            run_copy=self._run_copy,
+            collapsed=self._collapsed,
+            id="console-status-chips",
         )
 
 
@@ -321,7 +331,65 @@ async def test_run_chip_renders_on_first_frame_when_run_already_active():
         assert str(chip.render()) == "Run: Agent running."
 
 
+@pytest.mark.parametrize("collapsed", [False, True], ids=["expanded", "collapsed"])
 @pytest.mark.asyncio
+async def test_run_feedback_survives_status_collapse_and_independent_sync(
+    collapsed, monkeypatch
+):
+    app = _RunChipsApp(_state(), run_copy="Preparing.", collapsed=collapsed)
+    async with app.run_test(size=(160, 6)) as pilot:
+        await pilot.pause()
+        chips = app.query_one("#console-status-chips", ConsoleStatusChips)
+        chip = app.query_one("#console-run-chip")
+        copy = app.query_one("#console-status-collapsed-copy", Static)
+        expanded = app.query_one("#console-status-expanded")
+        collapsed_strip = app.query_one("#console-status-collapsed")
+        assert str(copy.render()) == "Run: Preparing."
+        assert expanded.display is not collapsed
+        assert collapsed_strip.display is collapsed
+
+        chips.set_collapsed(True)
+        chips.sync_state(_state(model_label="Model: updated"))
+        await pilot.pause()
+        assert str(copy.render()) == "Run: Preparing."
+        assert expanded.display is False
+        assert collapsed_strip.display is True
+
+        chips.sync_run_chip(True, "Waiting for your approval.")
+        await pilot.pause()
+        assert str(copy.render()) == "Run: Waiting for your approval."
+
+        updates = []
+        original_update = copy.update
+
+        def record_update(content):
+            updates.append(content)
+            return original_update(content)
+
+        monkeypatch.setattr(copy, "update", record_update)
+        chips.sync_run_chip(True, "Waiting for your approval.")
+        assert updates == []
+
+        chips.set_collapsed(False)
+        await pilot.pause()
+        assert expanded.display is True
+        assert collapsed_strip.display is False
+        assert str(chip.render()) == "Run: Waiting for your approval."
+        chips.sync_run_chip(True, "Streaming response.")
+        chips.set_collapsed(True)
+        await pilot.pause()
+        assert str(copy.render()) == "Run: Streaming response."
+
+        chips.sync_run_chip(False, "Response complete.")
+        await pilot.pause()
+        assert str(copy.render()) == "Status hidden"
+        chips.set_collapsed(False)
+        await pilot.pause()
+        assert chip.display is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_run_chip_tracks_active_run_state_via_mode_bar_sync():
     """FB-08 (TASK-2154.18) integration: with a live Console, an active
     run status renders the chip through ``_sync_console_mode_bar`` (the
@@ -343,7 +411,9 @@ async def test_run_chip_tracks_active_run_state_via_mode_bar_sync():
         ConsoleRunStatus,
     )
 
-    app = _build_test_app()
+    from tldw_chatbook import config
+
+    app = _build_test_app(user_data_dir=config.get_user_data_dir())
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -362,7 +432,7 @@ async def test_run_chip_tracks_active_run_state_via_mode_bar_sync():
         console._sync_console_mode_bar()
         await pilot.pause()
         assert chip.display is True
-        assert str(chip.render()) == "Run: Streaming response."
+        assert str(chip.render()) == "Run: Waiting for reply…"
 
         # Terminal statuses hide the chip even with lingering copy --
         # their ambient signal is the task-2154.16/.17 toast pair.
@@ -375,6 +445,7 @@ async def test_run_chip_tracks_active_run_state_via_mode_bar_sync():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_run_chip_reads_waiting_for_approval_while_a_round_is_pending():
     """task-32345: a card waiting on the user overrides the streaming copy.
 
@@ -398,7 +469,9 @@ async def test_run_chip_reads_waiting_for_approval_while_a_round_is_pending():
         ConsoleRunStatus,
     )
 
-    app = _build_test_app()
+    from tldw_chatbook import config
+
+    app = _build_test_app(user_data_dir=config.get_user_data_dir())
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -415,7 +488,7 @@ async def test_run_chip_reads_waiting_for_approval_while_a_round_is_pending():
         )
         console._sync_console_mode_bar()
         await pilot.pause()
-        assert str(chip.render()) == "Run: Agent running."
+        assert str(chip.render()) == "Run: Waiting for reply…"
 
         controller.add_pending_round(session.id, "round-1")
         console._sync_console_mode_bar()
@@ -434,13 +507,14 @@ async def test_run_chip_reads_waiting_for_approval_while_a_round_is_pending():
         controller.discard_pending_round(session.id, "round-1")
         console._sync_console_mode_bar()
         await pilot.pause()
-        assert str(chip.render()) == "Run: Agent running."
+        assert str(chip.render()) == "Run: Waiting for reply…"
         assert "Waiting for your approval." not in str(
             console.query_one("#console-mode-bar", Static).renderable
         )
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_run_chip_names_the_kind_of_decision_that_is_waiting():
     """Qodo #4 (task-32345): the round registry holds all five interrupt
     kinds, not just MCP approvals.
@@ -470,7 +544,9 @@ async def test_run_chip_names_the_kind_of_decision_that_is_waiting():
         ConsoleRunStatus,
     )
 
-    app = _build_test_app()
+    from tldw_chatbook import config
+
+    app = _build_test_app(user_data_dir=config.get_user_data_dir())
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
 
@@ -508,4 +584,4 @@ async def test_run_chip_names_the_kind_of_decision_that_is_waiting():
         assert await _chip_copy() == "Run: Waiting for your confirmation."
 
         controller.discard_pending_round(session.id, "s-1")
-        assert await _chip_copy() == "Run: Agent running."
+        assert await _chip_copy() == "Run: Waiting for reply…"

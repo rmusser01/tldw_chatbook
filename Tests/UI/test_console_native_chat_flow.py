@@ -2758,7 +2758,7 @@ class _ReadyResolutionGateway:
         return resolution
 
 
-class _PromptImprovementGateway:
+class _PromptImprovementGateway(_ReadyResolutionGateway):
     """Return one strict rewrite using the request's protected projection."""
 
     def __init__(self) -> None:
@@ -2779,7 +2779,8 @@ class _PromptImprovementGateway:
             )
         )
 
-    async def complete_auxiliary(self, request):
+    async def complete_auxiliary(self, request, *, route=None):
+        assert route is None
         self.auxiliary_calls += 1
         payload = json.loads(str(request.messages[-1]["content"]))
         rewritten = str(payload["source_prompt"]).replace("Draft", "Improved", 1)
@@ -2800,10 +2801,10 @@ class _HoldingPromptImprovementGateway(_PromptImprovementGateway):
         self.started = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def complete_auxiliary(self, request):
+    async def complete_auxiliary(self, request, *, route=None):
         self.started.set()
         await self.release.wait()
-        return await super().complete_auxiliary(request)
+        return await super().complete_auxiliary(request, route=route)
 
 
 class _MutableResolutionPromptGateway(_PromptImprovementGateway):
@@ -3064,13 +3065,16 @@ async def test_prompt_auto_improvement_applies_once_and_menu_undo_restores_exact
         assert composer._pending_attachment_label == attachment.label
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_prompt_improvement_review_compares_and_can_keep_or_restore() -> None:
+    from Tests.UI.test_console_session_tab_close import ProductionConsoleHarness
+
     app = _build_test_app()
     _configure_native_ready_console(app)
     gateway = _PromptImprovementGateway()
     app.console_provider_gateway_factory = lambda: gateway
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
 
     async with host.run_test(size=(140, 40)) as pilot:
         console = host.screen_stack[-1]

@@ -6887,13 +6887,14 @@ class SubscriptionsDB(BaseDB):
         finalizer has nothing left to do and must not act on a connection this
         thread may since have reopened.
         """
-        connection = getattr(self._local, "conn", None)
+        local = self._local
+        connection = getattr(local, "conn", None)
         if connection is None:
             return
+        cleanup = getattr(local, "connection_cleanup", None)
         with _core_closing(self, connection) as allowed:
             if not allowed:
                 return
-            connection = getattr(self._local, "conn", None)
             if connection:
                 try:
                     if not self.is_memory_db and not connection.in_transaction:
@@ -6907,12 +6908,15 @@ class SubscriptionsDB(BaseDB):
                             f"{self.db_path_str}: {exc}"
                         )
                 connection.close()
-                cleanup = getattr(self._local, "connection_cleanup", None)
                 if cleanup is not None:
                     cleanup.detach()
-                    self._local.connection_cleanup = None
-                self._local.conn = None
+                    if getattr(local, "connection_cleanup", None) is cleanup:
+                        local.connection_cleanup = None
+                if getattr(local, "conn", None) is connection:
+                    local.conn = None
             with self._connections_lock:
-                self._connections.pop(threading.get_ident(), None)
+                ident = threading.get_ident()
+                if self._connections.get(ident) is connection:
+                    self._connections.pop(ident)
 
     # End of Subscriptions_DB.py

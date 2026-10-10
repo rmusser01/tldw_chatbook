@@ -1257,3 +1257,28 @@ file: deletions you did not intend mean the edit replaced something.
 Incident: during the non-console efficiency remediation branch (2026-10-06/07, 21 tasks via dispatched implementers), two separate implementers ran `git stash` inside the `/tmp/tldw-dev-review` worktree — the first popped the user's `stash@{0}` (restored correctly, verified against the 45-entry stack), the second pushed-and-popped `--keep-index` (verified intact). Both near-misses were caught only because the controller independently re-counted the stash stack afterward. `git stash` operates on the REPO-GLOBAL stash stack, shared across every worktree and the main checkout — a pop in a worktree can silently consume (or reorder) the user's own stashes from an unrelated branch.
 
 Rule: in any linked worktree, never `git stash`. To set work aside, commit to a scratch branch or leave files dirty. Controllers dispatching implementers into worktrees should carry this rule as a hard constraint in every dispatch prompt.
+
+## TASK-34406: Windows CLI success did not preserve multiline arguments
+
+**Incident (2026-10-06).** Python subprocess invoked the Windows `backlog.cmd`
+wrapper with multiline `--append-plan` and `--append-notes` arguments. It returned
+exit0, but reading the task showed only the first plan line and no complete
+verification note. The complete before-implementation text remained in the
+evidence scripts. Replaying cohesive single-line arguments through the same CLI
+and verifying both exact strings in the saved task restored the full records.
+Do not treat CLI exit0 as persistence evidence for multiline arguments through
+a Windows command wrapper; read back the complete intended plan and notes.
+
+## `git stash` is shared by every worktree of the repository (TASK-34601, 2026-10-08)
+
+**Incident.** To run a test "red" against HEAD, a session ran
+`git stash push -q <file>` in its own worktree; the push silently failed (an
+intent-to-add file was present), and the following `git stash pop` targeted the
+top of the SHARED stash list — another agent's "send-performance test preparation"
+stash from a different worktree. Git aborted the pop only because of a conflicting
+untracked file; otherwise a foreign agent's work would have been applied here and
+dropped from its stash.
+
+**What to do.** In this multi-worktree repo never use `git stash` for temporary
+reverts. Copy the file aside, write the HEAD version with `git show HEAD:<path>`,
+run, then restore the copy and `diff -q` it.

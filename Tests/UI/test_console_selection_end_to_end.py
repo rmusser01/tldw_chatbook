@@ -994,6 +994,7 @@ async def test_feedback_modal_escape_cancels_without_dispatch():
         assert composer.draft_text() == draft_before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_feedback_real_modal_submit_dispatches_composed_text():
     """Full loop with the real modal: request -> type -> Submit -> queue."""
@@ -1019,6 +1020,7 @@ async def test_feedback_real_modal_submit_dispatches_composed_text():
         assert composer.draft_text() == "untouched draft"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_feedback_real_modal_empty_submit_omits_comment_block():
     """Full loop with the real modal: request -> empty Submit -> queue.
@@ -1047,6 +1049,7 @@ async def test_feedback_real_modal_empty_submit_omits_comment_block():
         assert queue.dispatched == ["[LGTM]\n> ship it"]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_feedback_real_modal_escape_dispatches_nothing():
     """Full loop with the real modal: request -> Escape -> nothing sent."""

@@ -143,7 +143,7 @@ Excluded, with reasons:
 ## Context
 
 Wave 3 of the non-console performance remediation. Task 5
-(TASK-34417, commit 028c4494bc) removed the per-chunk deepcopy chain in
+(TASK-34669, commit 028c4494bc) removed the per-chunk deepcopy chain in
 the hosted streaming engine; this task removes the per-turn costs: the
 `deepcopy(dict(payload))` on every POST attempt — the payload carries the
 entire normalized message history — and the fresh

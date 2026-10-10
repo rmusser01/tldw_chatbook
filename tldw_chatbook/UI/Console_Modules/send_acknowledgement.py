@@ -457,11 +457,18 @@ def request_visible_send(
         return
     composer = screen._console_composer_or_none()
     stash = composer.capture_draft_for_send() if composer is not None else None
-    request = _Request(session_id, stash, guard)
+    request = _Request(
+        session_id, stash, guard,
+        received_inputs=_pressed_inputs(screen, session_id, stash),
+    )
     flight = _flight(screen)
     if screen._console_pending_send is not None or flight.tasks or flight.deferred:
         _defer(screen, flight, request)
     elif _record_draft(screen, request):
+        if request.received_inputs is None:
+            request = replace(
+                request, received_inputs=_pressed_inputs(screen, session_id, stash)
+            )
         _schedule(screen, flight, request)
 
 
@@ -474,6 +481,7 @@ class _Request:
     guard: Callable[[], bool] | None
     #: Repeats the running send's capture (a second Enter, nothing new typed).
     repeat: bool = False
+    received_inputs: Any | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -497,6 +505,21 @@ def _flight(screen: Any) -> _SendFlight:
     return flight
 
 
+def _pressed_inputs(screen: Any, session_id: str, stash: Any) -> Any:
+    """Retain stock resident inputs at the press, before acknowledgement paint."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    store = getattr(screen, "_console_chat_store", None)
+    if type(store) is not ConsoleChatStore:
+        return None
+    try:
+        inputs = store.session_input_snapshot(session_id)
+    except KeyError:
+        return None
+    text = stash.text if stash is not None else ""
+    return inputs if inputs.draft == text else None
+
+
 def _record_draft(screen: Any, request: _Request) -> bool:
     """Mirror the captured draft into its chat; False if the chat is gone."""
     if request.stash is None:
@@ -513,7 +536,9 @@ def _record_draft(screen: Any, request: _Request) -> bool:
 def _schedule(screen: Any, flight: _SendFlight, request: _Request) -> None:
     from tldw_chatbook.UI.Screens.chat_screen import _ConsolePendingSend
 
-    pending_send = _ConsolePendingSend(request.session_id, request.stash, object())
+    pending_send = _ConsolePendingSend(
+        request.session_id, request.stash, object(), request.received_inputs
+    )
     screen._console_pending_send = pending_send
     if request.guard is not None and not request.guard():
         screen._console_pending_send = None
@@ -567,6 +592,11 @@ def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
         screen.app_instance.notify(text, severity="warning")
         return
     if _record_draft(screen, request):
+        if request.received_inputs is None:
+            request = replace(
+                request,
+                received_inputs=_pressed_inputs(screen, request.session_id, stash),
+            )
         flight.deferred = request
 
 

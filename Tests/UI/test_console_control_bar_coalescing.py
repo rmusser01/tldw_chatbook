@@ -29,17 +29,17 @@ import pytest
 
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 @pytest.fixture()
 def sync_spy(monkeypatch):
-    """Count real executions of the underlying control-bar sync."""
+    """Count attempted syncs per actual screen, including deferred calls."""
     real_sync = ChatScreen._sync_console_control_bar
-    calls: list[object] = []
+    calls: dict[int, list[object]] = {}
 
     def counting_sync(self, rail_state=None):
-        calls.append(rail_state)
+        calls.setdefault(id(self), []).append(rail_state)
         return real_sync(self, rail_state)
 
     monkeypatch.setattr(ChatScreen, "_sync_console_control_bar", counting_sync)
@@ -53,6 +53,7 @@ async def test_screen_push_runs_a_bounded_number_of_control_bar_syncs(sync_spy):
     async with app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
         screen = ChatScreen(app)
+        sync_spy = sync_spy.setdefault(id(screen), [])
         await app.push_screen(screen)
         for _ in range(8):
             await pilot.pause()
@@ -80,6 +81,7 @@ async def test_requested_sync_still_executes(sync_spy):
     async with app.run_test(size=(235, 52)) as pilot:
         await pilot.pause()
         screen = ChatScreen(app)
+        sync_spy = sync_spy.setdefault(id(screen), [])
         await app.push_screen(screen)
         for _ in range(8):
             await pilot.pause()

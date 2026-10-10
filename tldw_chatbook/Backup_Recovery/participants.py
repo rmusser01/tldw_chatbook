@@ -69,6 +69,8 @@ def run_finite_local_worker(function, /, *args, **kwargs):
             "db.prompts.primary": "close_connection",
             "db.library_collections": "close",
             "db.evals": "close",
+            "db.subscriptions": "close",
+            "db.workspaces": "close",
             "notifications.client": "close",
         }
         with storage._lock:
@@ -309,7 +311,11 @@ def _repository_types():
     # optional runtime stacks just to compare an unrelated source's exact type.
     optional = {}
     for module_name, class_name, owner_id in (
-        ("tldw_chatbook.Backup_Recovery.recovered_media", "RecoveredMedia", "recovered.media"),
+        (
+            "tldw_chatbook.Backup_Recovery.recovered_media",
+            "RecoveredMedia",
+            "recovered.media",
+        ),
         ("tldw_chatbook.DB.Evals_DB", "EvalsDB", "db.evals"),
         ("tldw_chatbook.DB.RAG_Indexing_DB", "RAGIndexingDB", "db.rag_indexing"),
         ("tldw_chatbook.DB.Subscriptions_DB", "SubscriptionsDB", "db.subscriptions"),
@@ -408,13 +414,18 @@ def _core_access(repository):
         if operation is not None:
             if participant is None:
                 raise RecoveryRequired("repository_participant_not_installed")
-            storage._check_operation(operation, participant.path)
-            if operation.participant is not participant:
-                raise RecoveryRequired("operation_provenance_invalid")
+            storage._check_operation_state(operation)
         elif (
             participant is not None and participant.closed
         ) or storage._pause is not None:
             raise RecoveryRequired("storage_locally_paused")
+    if operation is not None:
+        proof = storage._check_operation(operation, participant.path)
+        with storage._lock:
+            _check_core_retirement(participant)
+            storage._check_operation_state(operation, proof, participant.path)
+            if operation.participant is not participant:
+                raise RecoveryRequired("operation_provenance_invalid")
 
 
 @contextmanager
@@ -576,8 +587,9 @@ def _core_getter(function):
 
         previous = getattr(storage._operation_local, "operation", None)
         if previous is not None and not repository.is_memory_db:
+            proof = storage._check_operation(previous, previous.path)
             with storage._lock:
-                storage._check_operation(previous, previous.path)
+                storage._check_operation_state(previous, proof, previous.path)
                 participant = _repository_participant(repository)
                 independent = previous.participant is not participant
             if independent:

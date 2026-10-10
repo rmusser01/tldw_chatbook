@@ -15,6 +15,10 @@ from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
+# Default stop reads must retain the installed private config selection. The
+# original scheduler also holds dispatch after per-test environment redirection.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
 def database(tmp_path):
@@ -158,21 +162,35 @@ async def test_cancelled_scheduler_still_owns_pending_database_callback(database
     try:
         assert await asyncio.to_thread(entered.wait, 2)
         runner.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await runner
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not runner.done(), "scheduler cancellation must await its held callback"
+        assert scheduler._maintenance_db_tasks
         scheduler._maintenance_close_admission()
         assert not await scheduler._maintenance_drain(time.monotonic())
+        runner.cancel()
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert not runner.done(), "repeated cancellation abandoned scheduler custody"
         release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await runner
+        assert (
+            finished.is_set()
+        ), "runner cancellation preceded the original callback return"
+        assert not scheduler._maintenance_db_tasks
         assert await scheduler._maintenance_drain(time.monotonic() + 2)
-        assert finished.is_set()
     finally:
         release.set()
-        await asyncio.to_thread(finished.wait, 3)
+        await asyncio.gather(runner, return_exceptions=True)
+        assert await asyncio.to_thread(finished.wait, 3)
 
 
 @pytest.mark.asyncio
 async def test_paused_scheduler_retires_projection_worker_connections(
-    database, tmp_path, local_root
+    database,
+    tmp_path,
+    local_root,  # noqa: F811 - imported pytest fixture.
 ):
     subscriptions = SubscriptionsDB(tmp_path / "subscriptions.db", "scheduler")
     subscriptions.add_subscription(

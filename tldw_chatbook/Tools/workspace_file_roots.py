@@ -904,3 +904,92 @@ def _binding_matches_frozen_authority(folder: Path, frozen: Any) -> bool:
         return tuple(identities) == tuple(frozen.root_identity)
     except (AttributeError, OSError, TypeError, ValueError):
         return False
+
+
+# Defining callbacks for the optional finite legacy run-log probe only.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "_default_registry_factory",
+                "allowed_file_roots",
+                "current_run_workspace_id",
+                "current_run_sandbox_root",
+                "_iter_valid_folder_bindings",
+                "_binding_matches_frozen_authority",
+            )
+        ),
+        (globals(), "_registry_factory", _default_registry_factory),
+        (globals(), "_default_registry_lock", _default_registry_lock),
+        *(
+            (globals(), name, globals()[name])
+            for name in (
+                "_RUN_WORKSPACE_ID",
+                "_RUN_WORKSPACE_READ_BINDING_IDS",
+                "_RUN_WORKSPACE_WRITE_BINDING_IDS",
+                "_RUN_WORKSPACE_BINDING_AUTHORITY",
+                "_RUN_FILE_SANDBOX_ROOT",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "_default_registry_factory",
+                    "allowed_file_roots",
+                    "current_run_workspace_id",
+                    "current_run_sandbox_root",
+                    "_iter_valid_folder_bindings",
+                    "_binding_matches_frozen_authority",
+                )
+            ),
+            (globals(), "_registry_factory", _default_registry_factory),
+            (globals(), "_default_registry_lock", _default_registry_lock),
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "_RUN_WORKSPACE_ID",
+                    "_RUN_WORKSPACE_READ_BINDING_IDS",
+                    "_RUN_WORKSPACE_WRITE_BINDING_IDS",
+                    "_RUN_WORKSPACE_BINDING_AUTHORITY",
+                    "_RUN_FILE_SANDBOX_ROOT",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)

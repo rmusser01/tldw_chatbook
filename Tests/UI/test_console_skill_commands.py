@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 import pytest
 from textual.widgets import Button
 
+from Tests.UI.app_factory import attach_chachanotes_db
 from Tests.UI.test_console_command_composer import _spy_submit_draft
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
@@ -39,6 +40,10 @@ from tldw_chatbook.UI.Console_Modules.skill import (
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+
+# Keep the app factory on the private profile selected during module collection.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _skill(name: str, description: str = "Does the thing.") -> dict[str, Any]:
@@ -82,6 +87,17 @@ class FakeSkillsScopeService:
         self.blocked_skills = blocked_skills or []
         self.calls: list[str | None] = []
         self.executions: list[tuple[str, str | None]] = []
+        self.local_service = self
+
+    def _visible_records(self) -> dict[str, dict[str, Any]]:
+        """Supply the same selected catalog to synchronous Send capture."""
+        return {
+            item["name"]: dict(item)
+            for item in (*self.available_skills, *self.blocked_skills)
+        }
+
+    def _summary_for_record(self, record: Mapping[str, Any]) -> dict[str, Any]:
+        return dict(record)
 
     async def get_context(self, *, mode: str | None = None) -> Mapping[str, Any]:
         self.calls.append(mode)
@@ -269,7 +285,7 @@ async def test_skills_command_exact_trusted_name_shows_hint_and_never_runs():
 
 
 @pytest.mark.asyncio
-async def test_leading_dollar_skill_mention_executes_through_normal_send():
+async def test_leading_dollar_skill_mention_executes_through_normal_send(request):
     """Hard removal (Task 4): typing `$code-review fix it` directly is no
     longer intercepted by any composer-level command dispatch -- it is a
     plain user send. The skill still actually runs because the CONTROLLER
@@ -280,12 +296,17 @@ async def test_leading_dollar_skill_mention_executes_through_normal_send():
     with the bare `/name` dispatch it served (fix-wave branch (a)), so no
     TOOL row of any kind appears for a `$name` send."""
     app = _build_test_app()
+    database = attach_chachanotes_db(app)
+    request.addfinalizer(database.close_connection)
     _configure_native_ready_console(app)
     skills = FakeSkillsScopeService(
         available_skills=[_skill("code-review", "Reviews a diff.")]
     )
     app.skills_scope_service = skills
-    gateway = CapturingGateway(chunks=("accepted",))
+    # "accepted" is also the early Send status. Wait for the distinct
+    # provider reply so the test cannot finish before skill substitution.
+    reply = "Skill invocation completed."
+    gateway = CapturingGateway(chunks=(reply,))
     app.console_provider_gateway_factory = lambda: gateway
 
     async with app.run_test(size=(160, 48)) as pilot:
@@ -299,16 +320,32 @@ async def test_leading_dollar_skill_mention_executes_through_normal_send():
         assert session_id is not None
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_reply(console, pilot)
+        await _wait_for_text(console, pilot, reply)
+        assert _console_message_contents(console, ConsoleMessageRole.ASSISTANT) == [
+            reply
+        ]
 
         # The raw `$`-prefixed draft is submitted verbatim -- no composer
         # command dispatch ever intercepts it.
-        submit_spy.assert_awaited_once_with(
-            "$code-review fix it",
-            session_id=session_id,
-        )
+        submit_spy.assert_awaited_once()
+        assert submit_spy.await_args.args == ("$code-review fix it",)
+        submitted = submit_spy.await_args.kwargs
+        assert submitted["session_id"] == session_id
+        assert submitted["origin"].value == "manual"
+        assert submitted["configuration"].session_id == session_id
+        assert [
+            item["name"]
+            for item in submitted["configuration"].skill_context_maximum[
+                "available_skills"
+            ]
+        ] == ["code-review"]
+        assert submitted["accepted_attachments"] == ()
         # The skill actually ran (controller-side substitution).
         assert skills.executions == [("code-review", "fix it")]
+        assert gateway.sent_messages[0][-1] == {
+            "role": "user",
+            "content": "RENDERED[code-review:fix it]",
+        }
         # The stored transcript keeps the raw mention -- only the ephemeral
         # provider payload is rendered.
         user_rows = [

@@ -143,6 +143,8 @@ class ConsoleTurnPreparation:
     pii_redaction_enabled: bool = False
     pii_ruleset_revision_id: str | None = None
     next_trace_privacy_revision: int | None = None
+    #: None preserves legacy draft restore/clear semantics.
+    input_draft_revision: int | None = None
 
     def __post_init__(self) -> None:
         """Reject malformed, mutable, or internally inconsistent state."""
@@ -795,6 +797,13 @@ def _validate_preparation(preparation: ConsoleTurnPreparation) -> None:
         preparation.capture_mode is not ConsoleTraceCaptureMode.CAPTURE_OFF
     ):
         _invalid("Capture Off mode")
+
+    if preparation.input_draft_revision is not None and (
+        not isinstance(preparation.input_draft_revision, int)
+        or isinstance(preparation.input_draft_revision, bool)
+        or preparation.input_draft_revision < 0
+    ):
+        _invalid("input draft revision")
 
     _validate_execution_context(preparation)
     auto_retrieve = preparation.execution_context.library_authority.policy.auto_retrieve

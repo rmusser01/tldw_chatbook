@@ -80,7 +80,9 @@ class BuddySpeechControls(Vertical):
                 if self.coordinator.enabled
                 else "Buddy speech is off"
             )
-        self.query_one("#buddy-speech-status", Static).update(status)
+        status_widget = self.query_one("#buddy-speech-status", Static)
+        if str(status_widget.renderable) != status:
+            status_widget.update(status)
         self.query_one("#buddy-speech-actions").display = bool(
             self.coordinator.enabled
             or self.coordinator.needs_consent

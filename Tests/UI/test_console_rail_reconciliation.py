@@ -953,9 +953,9 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         reveal_shift = int(outer.scroll_y)
         visible_top = max(tree.content_region.y, outer.content_region.y)
         visible_bottom = min(tree.content_region.bottom, outer.content_region.bottom)
-        assert visible_bottom - visible_top >= 2, (
-            "the workspace tree is not on screen to press"
-        )
+        assert (
+            visible_bottom - visible_top >= 2
+        ), "the workspace tree is not on screen to press"
         # Press into the MIDDLE of the visible band, not its top edge. The
         # reveal shifts the tree down by however far the outer was scrolled,
         # and the pointer deliberately stays still through that reflow (that
@@ -979,9 +979,9 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
             if node is not None and str(node.data.key).startswith("workspace:"):
                 pressed_node, press_screen_y = node, candidate_y
                 break
-        assert pressed_node is not None, (
-            "no workspace row is visible both before and after the reveal"
-        )
+        assert (
+            pressed_node is not None
+        ), "no workspace row is visible both before and after the reveal"
         pressed_key = pressed_node.data.key
         pressed_workspace_id = pressed_key.split(":", 1)[1]
 
@@ -1021,9 +1021,9 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
         )
         await _settle(pilot, passes=4)
         new_click_y = int(pressed_node._line) - int(tree.scroll_y)
-        assert 0 <= new_click_y < tree.content_region.height, (
-            f"pressed row is no longer inside the tree: {new_click_y}"
-        )
+        assert (
+            0 <= new_click_y < tree.content_region.height
+        ), f"pressed row is no longer inside the tree: {new_click_y}"
         row_screen_y = tree.content_region.y + new_click_y
         if row_screen_y < outer.content_region.y:
             outer.scroll_to(
@@ -1048,9 +1048,9 @@ async def test_production_workspace_pointer_keeps_pressed_key_across_outer_reflo
             await _settle(pilot, passes=4)
         new_click_y = int(pressed_node._line) - int(tree.scroll_y)
         row_screen_y = tree.content_region.y + new_click_y
-        assert outer.content_region.y <= row_screen_y < outer.content_region.bottom, (
-            f"pressed row {row_screen_y} is outside the outer clip"
-        )
+        assert (
+            outer.content_region.y <= row_screen_y < outer.content_region.bottom
+        ), f"pressed row {row_screen_y} is outside the outer clip"
         assert await pilot.click(
             offset=(tree.content_region.x + 4, row_screen_y),
             times=2,
@@ -2089,7 +2089,9 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
             owner._on_reconcile = observe_outer
             state = replace(owner.state, model_row="Model: screen-path-probe")
             monkeypatch.setattr(
-                screen, "_build_console_settings_summary_state", lambda: state
+                screen._context_spend,
+                "_build_console_settings_summary_state",
+                lambda: state,
             )
             screen._sync_console_settings_summary()
         else:
@@ -2606,9 +2608,9 @@ async def test_focus_recovery_waits_for_the_focused_rows_own_rebuild(
 
         focused = app.focused
         assert focused is not original, "the rebuild did not replace the row"
-        assert focused is not None and focused.id == "context-rebuild-row", (
-            f"focus was stranded on {focused!r}"
-        )
+        assert (
+            focused is not None and focused.id == "context-rebuild-row"
+        ), f"focus was stranded on {focused!r}"
         assert focused.is_attached
         assert rail._pending_focus_recoveries == {}
 
@@ -3081,9 +3083,9 @@ async def test_pure_inspector_scroll_never_relayouts_the_rail(
             "".join(segment.text for segment in strip)
             for strip in host.screen_stack[-1]._compositor.render_strips()
         )
-        assert OUTER_HINT_MARKER in rendered, (
-            "the repainted copy must reach the compositor"
-        )
+        assert (
+            OUTER_HINT_MARKER in rendered
+        ), "the repainted copy must reach the compositor"
 
         assert observed == [], (
             f"{2 * notches} pure wheel frames forced {len(observed)} whole-rail "
@@ -3167,9 +3169,9 @@ async def test_inspector_section_collapse_still_runs_the_full_reconcile(
         collapsed_refreshes = len(observed)
         sources.display = True
         await _settle(pilot, passes=10)
-        assert len(observed) > collapsed_refreshes, (
-            "re-expanding the section must reconcile the outer fold too"
-        )
+        assert (
+            len(observed) > collapsed_refreshes
+        ), "re-expanding the section must reconcile the outer fold too"
         assert hint.display is True
         assert _shows_outer_hint(hint.renderable)
         _assert_outer_fold_contract(inspector, outer, hint)
@@ -3255,12 +3257,12 @@ async def test_scroll_cost_probe_still_detects_pre_split_routing(
             f"sequential={sequential} coalesced_burst={burst} "
             f"whole-rail refresh(layout=True) calls"
         )
-        assert sequential > 0, (
-            "the probe no longer observes the pre-split per-frame layout cost"
-        )
-        assert burst > 0, (
-            "the probe no longer observes the pre-split coalesced layout cost"
-        )
+        assert (
+            sequential > 0
+        ), "the probe no longer observes the pre-split per-frame layout cost"
+        assert (
+            burst > 0
+        ), "the probe no longer observes the pre-split coalesced layout cost"
 
 
 @pytest.mark.asyncio

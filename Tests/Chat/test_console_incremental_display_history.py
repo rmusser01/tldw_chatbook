@@ -1,5 +1,9 @@
 """The screen's settled history is reused until its store owner changes."""
 
+from tldw_chatbook.UI.Console_Modules.context_spend import ConsoleContextSpendController
+from Tests.UI.console_controller_stubs import context_spend_for_test
+
+from tldw_chatbook.UI.Console_Modules import context_spend as context_spend_module
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -48,10 +52,14 @@ def test_unchanged_typing_reuses_history_and_late_usage_rebuilds(monkeypatch):
         return actual(session_id)
 
     monkeypatch.setattr(store, "messages_for_session", counted)
-    first = ChatScreen._console_display_history(screen, store, session.id, controller)
+    first = ConsoleContextSpendController._console_display_history(
+        context_spend_for_test(screen), store, session.id, controller
+    )
     for _ in range(24):
         assert (
-            ChatScreen._console_display_history(screen, store, session.id, controller)
+            ConsoleContextSpendController._console_display_history(
+                context_spend_for_test(screen), store, session.id, controller
+            )
             == first
         )
     assert reads == [session.id]
@@ -65,13 +73,17 @@ def test_unchanged_typing_reuses_history_and_late_usage_rebuilds(monkeypatch):
             model="claude-sonnet-4-6",
         ),
     )
-    after = ChatScreen._console_display_history(screen, store, session.id, controller)
+    after = ConsoleContextSpendController._console_display_history(
+        context_spend_for_test(screen), store, session.id, controller
+    )
     assert len(reads) == 2
     assert after[0] != first[0]
     assert after[1][-1].usage is not None
 
     store.update_message_content(answer.id, "edited answer")
-    edited = ChatScreen._console_display_history(screen, store, session.id, controller)
+    edited = ConsoleContextSpendController._console_display_history(
+        context_spend_for_test(screen), store, session.id, controller
+    )
     assert len(reads) == 3
     assert edited[1][-1].content == "edited answer"
 
@@ -90,10 +102,12 @@ def test_history_projection_refreshes_after_append_stream_and_branch_switch():
         run_state_for=lambda _sid: SimpleNamespace(status=ConsoleRunStatus.IDLE),
         _submit_tasks_for_session=lambda _sid: (),
     )
-    first = ChatScreen._console_display_history(screen, store, session.id, controller)
+    first = ConsoleContextSpendController._console_display_history(
+        context_spend_for_test(screen), store, session.id, controller
+    )
     store.append_stream_chunk(answer.id, "answer streamed")
-    streamed = ChatScreen._console_display_history(
-        screen, store, session.id, controller
+    streamed = ConsoleContextSpendController._console_display_history(
+        context_spend_for_test(screen), store, session.id, controller
     )
     assert streamed[0] != first[0]
     assert streamed[1][-1].content == "answer streamed"
@@ -102,14 +116,14 @@ def test_history_projection_refreshes_after_append_stream_and_branch_switch():
     followup = store.append_message(
         session.id, role=ConsoleMessageRole.USER, content="followup"
     )
-    appended = ChatScreen._console_display_history(
-        screen, store, session.id, controller
+    appended = ConsoleContextSpendController._console_display_history(
+        context_spend_for_test(screen), store, session.id, controller
     )
     assert appended[1][-1].id == followup.id
 
     store.set_active_leaf(session.id, question.id)
-    branched = ChatScreen._console_display_history(
-        screen, store, session.id, controller
+    branched = ConsoleContextSpendController._console_display_history(
+        context_spend_for_test(screen), store, session.id, controller
     )
     assert [message.id for message in branched[1]] == [question.id]
     assert branched[2].request_ids == {question.id}
@@ -151,11 +165,14 @@ def test_stream_estimate_ttl_precedes_snapshots_and_draft_edits_still_invalidate
             )
         ),
     )
-    screen._console_display_history = lambda *args: ChatScreen._console_display_history(
-        screen, *args
+    context_spend_for_test(screen)
+    screen._context_spend._console_display_history = (
+        lambda *args: ConsoleContextSpendController._console_display_history(
+            context_spend_for_test(screen), *args
+        )
     )
     clock = [100.0]
-    monkeypatch.setattr(screen_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(context_spend_module.time, "monotonic", lambda: clock[0])
     original_messages = store.messages_for_session
     reads = []
 
@@ -166,8 +183,8 @@ def test_stream_estimate_ttl_precedes_snapshots_and_draft_edits_still_invalidate
     monkeypatch.setattr(store, "messages_for_session", counted)
 
     def estimate():
-        return ChatScreen._console_settings_context_estimate_for_session(
-            screen, session.id
+        return ConsoleContextSpendController._console_settings_context_estimate_for_session(
+            context_spend_for_test(screen), session.id
         )
 
     first = estimate()
@@ -276,8 +293,8 @@ def test_continuation_publication_refreshes_warm_history(publication):
             ),
             _submit_tasks_for_session=lambda _sid: (),
         )
-        before = ChatScreen._console_display_history(
-            screen, store, session.id, controller
+        before = ConsoleContextSpendController._console_display_history(
+            context_spend_for_test(screen), store, session.id, controller
         )
         revision = store.display_projection_revision(session.id)
         assert before[2].request_ids == (
@@ -285,8 +302,8 @@ def test_continuation_publication_refreshes_warm_history(publication):
         )
 
         store.persist_provider_continuation_event(event)
-        after = ChatScreen._console_display_history(
-            screen, store, session.id, controller
+        after = ConsoleContextSpendController._console_display_history(
+            context_spend_for_test(screen), store, session.id, controller
         )
 
         assert store.display_projection_revision(session.id) > revision
