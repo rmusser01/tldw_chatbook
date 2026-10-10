@@ -33,21 +33,33 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - name: Make the disposable Windows checkout runner-owned
+      - name: Select the POSIX source checkout
+        if: runner.os != 'Windows'
+        run: echo "EVAL_SOURCE_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+      - name: Stage the same commit under a private Windows ancestor
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $checkoutRoot = (Resolve-Path -LiteralPath $env:GITHUB_WORKSPACE).Path
-          if (-not (Test-Path -LiteralPath (Join-Path $checkoutRoot '.git'))) {
-            throw 'Expected checkout is not a Git workspace'
-          }
+          $checkoutCommit = git -C $checkoutRoot rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Source commit could not be read' }
+          $privateSource = Join-Path $env:USERPROFILE ('.config/eval-recovery-source-' + $env:GITHUB_RUN_ID + '-' + $env:GITHUB_RUN_ATTEMPT)
+          if (Test-Path -LiteralPath $privateSource) { throw 'Private source target already exists' }
+          New-Item -ItemType Directory -Path (Split-Path -Parent $privateSource) -Force | Out-Null
+          git clone --local --no-hardlinks $checkoutRoot $privateSource
+          if ($LASTEXITCODE -ne 0) { throw 'Private source clone failed' }
+          git -C $privateSource checkout --detach $checkoutCommit
+          if ($LASTEXITCODE -ne 0) { throw 'Selecting the exact reviewed commit failed' }
+          if ((git -C $privateSource rev-parse HEAD) -ne $checkoutCommit) { throw 'Private source commit differs' }
           $checkoutOwner = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-          icacls $checkoutRoot /setowner $checkoutOwner /T /Q
-          if ($LASTEXITCODE -ne 0) { throw 'Native checkout ownership could not be established' }
+          icacls $privateSource /setowner $checkoutOwner /T /Q
+          if ($LASTEXITCODE -ne 0) { throw 'Native fixture source ownership could not be established' }
+          "EVAL_SOURCE_ROOT=$privateSource" >> $env:GITHUB_ENV
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: python -m pip install -e ".[dev]"
+        working-directory: ${{ env.EVAL_SOURCE_ROOT }}
       - name: Install Windows fixture support
         if: runner.os == 'Windows'
         run: python -m pip install pywin32
@@ -60,6 +72,7 @@ jobs:
           "TEMP=$evalTemp" >> $env:GITHUB_ENV
           "TMP=$evalTemp" >> $env:GITHUB_ENV
       - name: Verify override classification and recovery lifetimes
+        working-directory: ${{ env.EVAL_SOURCE_ROOT }}
         run: >-
           python -m Tests.windows_private_fixture_runner
           Tests/Backup_Recovery/test_eval_private_overrides.py

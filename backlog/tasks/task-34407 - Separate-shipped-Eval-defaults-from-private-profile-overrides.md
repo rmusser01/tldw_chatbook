@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 17:58'
-updated_date: '2026-10-10 01:43'
+updated_date: '2026-10-10 01:56'
 labels: []
 dependencies: []
 ---
@@ -57,6 +57,8 @@ Expanded verification follow-up: the first platform run exposed 32 missing-fixtu
 Linux follow-up reached 75 passing cases with one remaining stale full-App oracle: restored private overrides retain their actual filename instead of eval_config.yaml. The fixture now records exact trusted restore-plan destinations and source digests in its own receipt, verifies each retained file after original/candidate removal, and compares the complete rebackup Eval payload multiset with those exact sources. The Eval-specific scenario requires one actual incoming private source; no retention assertion is removed or made vacuous. Generic media scenarios no longer demand a nonexistent packaged-default payload. All shared and Eval-specific embedded scripts compile with unique replacement anchors.
 
 Precise Windows child evidence identifies the remaining full-App inventory refusal in bundled chat.prompt templates and persona artwork under the Actions checkout, whose native owner is Administrators rather than TokenUser. Linux/macOS are genuinely runner-owned and pass all 76 cases. The Windows workflow now assigns the disposable checkout to the actual authenticated runner using the native ownership operation, verified to be the resolved Git workspace. This changes real fixture ownership, not metadata projections, production policy, guards, file contents, or test deadlines. The original refusal evidence is retained; one more exact-head run will confirm the fixture correction.
+
+Windows packaged-resource roots remain unavailable after leaf/checkout ownership correction because the Actions source is beneath the shared D:\a workspace ancestry. Stage the same Git commit using a no-hardlinks clone beneath the runner profile private ancestor, verify the exact commit, assign real runner ownership there, and install/run from that source so isolated subprocess imports match it. POSIX remains on its original checkout. This preserves every native parent/privacy check and file identity qualification rather than authorizing a shared ancestor. The full refusal records are retained in the owned child-log artifact.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering Provenance
