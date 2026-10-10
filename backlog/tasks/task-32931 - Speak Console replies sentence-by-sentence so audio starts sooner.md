@@ -1,11 +1,11 @@
 ---
 id: TASK-32931
 title: Speak Console replies sentence-by-sentence so audio starts sooner
-status: In Progress
+status: Done
 assignee:
   - '@dsh'
 created_date: '2026-09-27 20:10'
-updated_date: '2026-10-10 15:54'
+updated_date: '2026-10-10 16:13'
 labels:
   - tts
   - speech
@@ -170,7 +170,7 @@ the last.
 
 One provider request is made per piece. A custom OpenAI-compatible endpoint backed by tldw_server consumes one `max_calls` unit per request; a finite quota may reject a later piece after playback begins. This is an accepted tradeoff of client-side chunking, reported as a playback failure without replay. No server quota or batching contract changes are included.
 
-Fresh local verification: 29 chunked-speech tests passed; the targeted Console speech, format adaptation, logging privacy and TTS_Events run passed 268 tests with four excluded tests. Those four config-source lifetime failures were independently reproduced unchanged on dev `0c3ebc6ed76e5753385897c958f80b1c282abaa3` (4 failed, 19 deselected in the logging-privacy file), before reaching the modified speech path. Ruff formatting and undefined-name checks passed. Required preflight result is recorded after the final rebase. Historical live-server/device measurements above were not repeated locally because that server is unavailable.
+Fresh local verification: 29 chunked-speech tests passed; the targeted Console speech, format adaptation, logging privacy and TTS_Events run passed 268 tests with four excluded tests. Those four config-source lifetime failures were independently reproduced unchanged on dev `0c3ebc6ed76e5753385897c958f80b1c282abaa3` (4 failed, 19 deselected in the logging-privacy file), before reaching the modified speech path. Ruff formatting and undefined-name checks passed. All derived-artifact preflight checks passed after rebasing onto dev `75159f8843a10cf761114defc2d49554a8772bb3`; the final targeted run was 268 passed / the same four independently reproduced baseline failures. Independent final code review found no remaining concrete defects. Historical live-server/device measurements above were not repeated locally because that server is unavailable.
 
 ADR required: no; existing ADR-023 and ADR-028 govern these lifecycle/selection repairs. No storage or boundary changes.
 
