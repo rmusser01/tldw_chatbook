@@ -48,7 +48,8 @@ Tests/UI/test_console_selection_core.py
 Tests/UI/test_console_session_tab_close.py
 
 # TASK-33621.27: the Console review's P0 regression tests, by node id -- their
-# files measured 86-942 s each under load, over the lane's per-file rule.
+# files are over the lane's per-file rule (under load: Choose folder 148 s,
+# keep-alive 259 s, composer 942 s; Save .md's 26 tests about 21 s each).
 #   TASK-33621.12: Save .md writes the file and the app lives; Esc writes nothing.
 #   TASK-33621.13: Choose folder applies its binding; Esc returns to a live
 #     Inspector; Ctrl+Q quits after a screen handler error under a modal.

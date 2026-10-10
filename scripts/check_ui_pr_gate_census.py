@@ -198,7 +198,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33621.27 (2026-10-10) raised it by 12, to 175: the Console review's P0
 # regression tests (Save .md, Choose folder, the keep-alive's Ctrl+Q, Stop and
 # the composer buttons) had run in no PR lane since they merged. Their files
-# measured 86-260 s each under load, so they come in as 12 node-id entries --
+# measured 148-942 s each under load, so they come in as 12 node-id entries --
 # the first entries that are not whole files; see the module docstring. A
 # node id counts as one entry toward this floor, like a file.
 MINIMUM_FILES = 175
