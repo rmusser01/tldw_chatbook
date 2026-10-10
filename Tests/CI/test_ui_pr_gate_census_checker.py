@@ -119,3 +119,100 @@ def test_the_committed_census_is_currently_valid():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     assert module.main() == 0
+
+
+# ---- node id entries (TASK-33621.27) ---------------------------------------
+# A P0 regression test whose file is too slow for the lane is gated on its own
+# node id. Each rejection below is a way such an entry could silently stop
+# gating its test, or take the whole shard down with it.
+
+_NODE_SOURCE = (
+    "import pytest\n\n"
+    "@pytest.mark.parametrize('size', ['80x24'])\n"
+    "async def test_stop_is_reachable(size):\n    pass\n\n"
+    "class TestSaveMarkdown:\n    def test_escape_closes(self):\n        pass\n"
+)
+
+
+def _node_tree(tmp_path: Path) -> Path:
+    root = _tree(tmp_path, "Tests/UI/test_other.py")
+    (root / "Tests/UI/test_p0.py").write_text(_NODE_SOURCE, encoding="utf-8")
+    return root
+
+
+def test_node_id_entries_for_defined_tests_pass(tmp_path, capsys):
+    """Positive control: function, parametrized and class-method node ids."""
+    root = _node_tree(tmp_path)
+    m = _checker(
+        tmp_path,
+        [
+            "Tests/UI/test_p0.py::test_stop_is_reachable",
+            "Tests/UI/test_p0.py::test_stop_is_reachable[80x24]",
+            "Tests/UI/test_p0.py::TestSaveMarkdown::test_escape_closes",
+            "Tests/UI/test_other.py",
+        ],
+        floor=4,
+        root=root,
+    )
+    assert m.main() == 0, capsys.readouterr().err
+    assert "OK:" in capsys.readouterr().out
+
+
+def test_a_node_id_naming_a_renamed_test_is_rejected(tmp_path, capsys):
+    """pytest would refuse the whole shard with 'not found'; fail here by name."""
+    root = _node_tree(tmp_path)
+    m = _checker(
+        tmp_path,
+        ["Tests/UI/test_p0.py::test_stop_was_renamed"],
+        floor=1,
+        root=root,
+    )
+    assert m.main() == 1
+    assert "listed test does not exist" in capsys.readouterr().err
+
+
+def test_a_node_id_naming_a_method_on_the_wrong_class_is_rejected(tmp_path, capsys):
+    root = _node_tree(tmp_path)
+    m = _checker(
+        tmp_path,
+        ["Tests/UI/test_p0.py::TestElsewhere::test_escape_closes"],
+        floor=1,
+        root=root,
+    )
+    assert m.main() == 1
+    assert "listed test does not exist" in capsys.readouterr().err
+
+
+def test_a_node_id_in_a_missing_file_is_rejected(tmp_path, capsys):
+    root = _node_tree(tmp_path)
+    m = _checker(
+        tmp_path, ["Tests/UI/test_gone.py::test_stop_is_reachable"], floor=1, root=root
+    )
+    assert m.main() == 1
+    assert "listed file does not exist" in capsys.readouterr().err
+
+
+def test_a_node_id_beside_its_whole_file_is_rejected(tmp_path, capsys):
+    """Overlapping pytest arguments collapse (ADR-103); keep exactly one."""
+    root = _node_tree(tmp_path)
+    m = _checker(
+        tmp_path,
+        ["Tests/UI/test_p0.py", "Tests/UI/test_p0.py::test_stop_is_reachable"],
+        floor=2,
+        root=root,
+    )
+    assert m.main() == 1
+    assert "node id overlaps a whole-file entry" in capsys.readouterr().err
+
+
+def test_an_entry_with_whitespace_is_rejected(tmp_path, capsys):
+    """The lane and its shard pins read the census one token per entry."""
+    root = _node_tree(tmp_path)
+    m = _checker(
+        tmp_path,
+        ["Tests/UI/test_p0.py::test_stop_is_reachable[Not sent.]"],
+        floor=1,
+        root=root,
+    )
+    assert m.main() == 1
+    assert "entry contains whitespace" in capsys.readouterr().err

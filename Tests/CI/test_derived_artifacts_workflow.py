@@ -215,7 +215,9 @@ def test_ui_gate_census_is_non_empty_and_every_entry_exists():
     assert len(entries) == len(set(entries))
     for entry in entries:
         assert entry.startswith("Tests/UI/")
-        assert (PROJECT_ROOT / entry).is_file(), f"censused file is gone: {entry}"
+        # TASK-33621.27: an entry may be one test's node id (`file::test`).
+        file_part = entry.split("::", 1)[0]
+        assert (PROJECT_ROOT / file_part).is_file(), f"censused file is gone: {entry}"
 
 
 def test_triggers_are_not_path_filtered():

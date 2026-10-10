@@ -46,11 +46,21 @@ Hence: every listed path must exist, no duplicates, and the census may
 never fall below ``MINIMUM_FILES``. Growing it is free; shrinking it
 requires editing this file, which is the review checkpoint.
 
+An entry is a whole file or, since TASK-33621.27, one test's pytest node id
+(``Tests/UI/test_x.py::test_name`` or ``...::test_name[param]``). Node ids let
+a P0 regression test whose file is too slow for the lane be gated on its own,
+instead of the whole file staying ungated. A node id entry must name a test
+its file still defines (a renamed test would otherwise make pytest refuse the
+whole shard), may not contain whitespace (the lane reads the census one entry
+per line), and may not sit beside its own file as a whole entry (pytest
+collapses overlapping arguments, ADR-103).
+
 Exits 0 when the census is intact, 1 otherwise.
 """
 
 from __future__ import annotations
 
+import ast
 import sys
 from pathlib import Path
 
@@ -185,7 +195,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # its tests) gates the widget-level hostile-text sinks. B1's mounted Roleplay
 # files are bootstrap-profile and run in the PR Fast Lane's
 # admission-sensitive step instead (TASK-32873).
-MINIMUM_FILES = 163
+# TASK-33621.27 (2026-10-10) raised it by 12, to 175: the Console review's P0
+# regression tests (Save .md, Choose folder, the keep-alive's Ctrl+Q, Stop and
+# the composer buttons) had run in no PR lane since they merged. Their files
+# measured 86-260 s each under load, so they come in as 12 node-id entries --
+# the first entries that are not whole files; see the module docstring. A
+# node id counts as one entry toward this floor, like a file.
+MINIMUM_FILES = 175
 
 
 def read_census(path: Path) -> list[str]:
@@ -231,6 +247,42 @@ def shard(entries: list[str], index: int, total: int) -> list[str]:
     return entries[index::total]
 
 
+def defines_test(path: Path, node: str) -> bool:
+    """Whether `path` still defines the test a node id names.
+
+    Static on purpose: the census check runs install-free, so it cannot import
+    the test module. Parametrize ids (`[...]`) are not checked here; pytest
+    refuses an unknown one with "not found", which fails the lane by name.
+
+    Args:
+        path: The test file.
+        node: The node id after the file, ``test_x``, ``test_x[id]`` or
+            ``TestClass::test_x[id]``.
+
+    Returns:
+        True when the file defines that function (or that class method).
+    """
+    names = node.split("[", 1)[0].split("::")
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, ValueError):
+        return False
+    body = tree.body
+    for depth, name in enumerate(names):
+        last = depth == len(names) - 1
+        kinds = (
+            (ast.FunctionDef, ast.AsyncFunctionDef) if last else (ast.ClassDef,)
+        )
+        match = next(
+            (item for item in body if isinstance(item, kinds) and item.name == name),
+            None,
+        )
+        if match is None:
+            return False
+        body = getattr(match, "body", [])
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     """Verify the PR-gate census is intact, or print one shard of it.
 
@@ -239,8 +291,9 @@ def main(argv: list[str] | None = None) -> int:
             shard's paths, one per line, instead of checking the census.
 
     Returns:
-        0 when every listed path exists, is unique, sits under `Tests/UI/`, and
-        the census has not shrunk below its floor; 1 otherwise.
+        0 when every entry is unique, sits under `Tests/UI/`, names a file
+        that exists (and, for a node id, a test that file defines), and the
+        census has not shrunk below its floor; 1 otherwise.
     """
     if not CENSUS_PATH.exists():
         print(f"FAIL: census file is missing: {CENSUS_PATH}", file=sys.stderr)
@@ -254,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     problems: list[str] = []
 
     seen: set[str] = set()
+    whole_files = {entry for entry in entries if "::" not in entry}
     for entry in entries:
         if entry in seen:
             problems.append(f"duplicate entry: {entry}")
@@ -261,7 +315,15 @@ def main(argv: list[str] | None = None) -> int:
         if not entry.startswith("Tests/UI/"):
             problems.append(f"not a Tests/UI path: {entry}")
             continue
-        if not (REPO_ROOT / entry).is_file():
+        if any(character.isspace() for character in entry):
+            problems.append(
+                f"entry contains whitespace: {entry!r}\n"
+                "    The lane reads one entry per line; gate a node id without "
+                "spaces (pick another parametrization, or the whole test)."
+            )
+            continue
+        file_part, _, node = entry.partition("::")
+        if not (REPO_ROOT / file_part).is_file():
             problems.append(
                 f"listed file does not exist: {entry}\n"
                 "    A renamed or deleted censused file makes the gate collect "
@@ -269,10 +331,27 @@ def main(argv: list[str] | None = None) -> int:
                 "    Update the census to the new path, or remove the line and "
                 "lower MINIMUM_FILES with a reason."
             )
+            continue
+        if not node:
+            continue
+        if file_part in whole_files:
+            problems.append(
+                f"node id overlaps a whole-file entry: {entry}\n"
+                f"    {file_part} is already gated whole; pytest collapses "
+                "overlapping arguments (ADR-103). Drop one of the two."
+            )
+        if not defines_test(REPO_ROOT / file_part, node):
+            problems.append(
+                f"listed test does not exist: {entry}\n"
+                "    A renamed or deleted gated test makes pytest refuse the "
+                "whole shard with 'not found'.\n"
+                "    Update the census to the test's new name, or remove the "
+                "line and lower MINIMUM_FILES with a reason."
+            )
 
     if len(entries) < MINIMUM_FILES:
         problems.append(
-            f"census has shrunk: {len(entries)} files, floor is {MINIMUM_FILES}.\n"
+            f"census has shrunk: {len(entries)} entries, floor is {MINIMUM_FILES}.\n"
             "    If a censused file genuinely had to leave the gate, lower\n"
             f"    MINIMUM_FILES in {Path(__file__).name} in the SAME commit and say why.\n"
             "    Deleting the line on its own is how a gate rots to nothing."
@@ -289,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(
-        f"OK: {len(entries)} Tests/UI files in the PR gate "
+        f"OK: {len(entries)} Tests/UI entries in the PR gate "
         f"(floor {MINIMUM_FILES}); every listed path exists."
     )
     return 0

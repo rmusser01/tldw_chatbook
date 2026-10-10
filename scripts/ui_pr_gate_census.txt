@@ -46,6 +46,33 @@ Tests/UI/test_console_retrieval_controller.py
 Tests/UI/test_console_run_inspector_worldbooks.py
 Tests/UI/test_console_selection_core.py
 Tests/UI/test_console_session_tab_close.py
+
+# TASK-33621.27: the Console review's P0 regression tests, by node id -- their
+# files measured 86-942 s each under load, over the lane's per-file rule.
+#   TASK-33621.12: Save .md writes the file and the app lives; Esc writes nothing.
+#   TASK-33621.13: Choose folder applies its binding; Esc returns to a live
+#     Inspector; Ctrl+Q quits after a screen handler error under a modal.
+#   TASK-33625.1 / 33622.2: Stop is whole at 80-235 columns and every route
+#     stops the run; Enter on a focused composer button runs that button.
+# Twelve entries, a multiple of the four shards, inserted here rather than
+# appended: no later file changes shard, and the tail does not conflict. At
+# insertion the 2nd/6th/10th entries (the heaviest: about 210 s together under
+# load) land in shard 2, the lightest (about 6 min in CI). All are
+# private-profile or static, so none poisons its shard. Pinned by
+# Tests/CI/test_console_p0_regression_gate.py.
+Tests/UI/test_console_conversation_action_menu.py::test_row_menu_save_md_writes_the_file_and_keeps_the_app_running
+Tests/UI/test_app_keep_alive_dead_screen.py::test_ctrl_q_quits_after_a_screen_handler_error_while_a_modal_is_up
+Tests/UI/test_console_project_instruction_choose_folder.py::test_choose_folder_opens_picker_and_applies_the_chosen_binding[choose]
+Tests/UI/test_console_project_instruction_choose_folder.py::test_cancelling_the_picker_returns_to_a_responsive_inspector[escape]
+Tests/UI/test_console_conversation_action_menu.py::test_save_prompt_closes_without_writing_and_restores_focus[escape]
+Tests/UI/test_console_composer_run_controls.py::test_tab_reaches_a_visibly_focused_stop_and_its_key_stops_the_run
+Tests/UI/test_console_composer_run_controls.py::test_stop_routes_are_registered_and_documented_in_f1
+Tests/UI/test_console_composer_run_controls.py::test_stop_key_is_advertised_only_while_running_and_stops_the_run
+Tests/UI/test_console_composer_run_controls.py::test_slash_stop_stops_the_viewed_tabs_run_and_clears_itself
+Tests/UI/test_console_composer_run_controls.py::test_running_stop_is_painted_whole_inside_the_action_row
+Tests/UI/test_console_composer_run_controls.py::test_palette_stop_command_stops_the_viewed_tabs_run
+Tests/UI/test_console_composer_run_controls.py::test_enter_on_each_idle_composer_button_runs_its_own_action
+
 Tests/UI/test_console_settings_core_first.py
 Tests/UI/test_console_settings_disclosures.py
 Tests/UI/test_console_settings_hidden_fields.py
