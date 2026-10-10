@@ -15,10 +15,20 @@ This document describes the benchmarking stack: the orchestrator/runner split, t
 | A/B testing | `Evals/ab_testing.py` | `ABTestRunner.run_ab_test` (two orchestrator runs gathered), statistical tests, confidence intervals |
 | Research scoring | `Evals/research_report_scorer.py` | deterministic citation/grounding metrics for research reports |
 | Steering | `Evals/steering.py` | `model_steering` — prefix (raw) xor system_prompt (chat) from the model row's config JSON |
-| DB | `DB/Evals_DB.py` | `EvalsDB`, schema v5 via `PRAGMA user_version`; tasks/datasets/models/runs/results/metrics + probe review tables + A/B tables + FTS |
+| DB | `DB/Evals_DB.py` | `EvalsDB`, schema version at `SCHEMA_VERSION` via `PRAGMA user_version`; tasks/datasets/models/runs/results/metrics + probe review tables + A/B tables + FTS |
+| Configuration | `Evals/__init__.py`, `Evals/config_loader.py` | `_default_config_path`, `_override_config_path`, `EvalConfigLoader` — shipped defaults plus sparse private YAML overrides |
+| Recovery | `Evals/recovery.py`, `Backup_Recovery/settings_file_participants.py` | `eval.definitions` owner, exact private-file selection and raw-participant lifecycle |
 | UI | `UI/Screens/evals_screen.py`, `UI/Evals/evals_state.py`, `UI/Evals/sample_bench.py` | `EvalsScreen(LabScreen)`, pure `EvalsViewModel` read side |
 
 In-tree reference docs: `Evals/EVALS_SYSTEM_REFERENCE.md`, `Evals/DEVELOPER_GUIDE.md`. DB path: `config.get_evals_db_path()` (profile-aware).
+
+## Configuration and recovery ownership
+
+The default `EvalConfigLoader` reads `Evals/config/eval_config.yaml` as shipped application data and merges sparse `eval_overrides.yaml` beside the effective `config.toml`. `_default_config_path()` selects the package resource; `_override_config_path()` selects the private file through the CLI configuration path policy. Package defaults never enter the private mutable-file lifecycle.
+
+Dictionaries merge recursively; lists and scalars replace. Explicit updates remain overrides even when equal to a shipped default; mutable `get()` results remain drafts whose changes are captured on save. A missing override file uses the current shipped defaults without creating a private file. Primary saves atomically publish only sparse overrides; explicit loader files remain standalone configurations, and explicit export destinations receive the full effective configuration.
+
+Backup/recovery keeps the `eval.definitions` owner for private YAML, separate from the `db.evals` owner for results. Discovery uses the same override selector, records genuine canonical absence as `unused`, and blocks complete backup on nonregular or unreadable overrides. Legacy recovered definitions retain their existing provenance, inactive destinations and activation requirements; startup never automatically adopts or rewrites them.
 
 ## Classic eval run (dataflow)
 
@@ -33,18 +43,18 @@ In-tree reference docs: `Evals/EVALS_SYSTEM_REFERENCE.md`, `Evals/DEVELOPER_GUID
 
 ## Character probe (distinct path)
 
-`EvalsScreen` composes this engine inline (it does **not** go through `EvaluationOrchestrator`): load bench + probe set → snapshot character cards from ChaChaNotes (no cross-DB FK; text copied for provenance) → resolve targets (steering extracted and validated **before** the first provider call) → write the run-group rows (`pending`) before any provider call → run the cards × probes × targets × samples grid, conversations concurrently under a semaphore, turns sequentially (turn N needs turn N−1). Failures are per-conversation (retained turns + `error`); cancellation stops scheduling but in-flight `to_thread` calls run out. Output is collected conversations for **human review** (annotations, review state in v5 tables) — there is no scoring on this path. The default chat factory is hardcoded to `llama_cpp`.
+`EvalsScreen` composes this engine inline (it does **not** go through `EvaluationOrchestrator`): load bench + probe set → snapshot character cards from ChaChaNotes (no cross-DB FK; text copied for provenance) → resolve targets (steering extracted and validated **before** the first provider call) → write the run-group rows (`pending`) before any provider call → run the cards × probes × targets × samples grid, conversations concurrently under a semaphore, turns sequentially (turn N needs turn N−1). Failures are per-conversation (retained turns + `error`); cancellation stops scheduling but in-flight `to_thread` calls run out. Output is collected conversations for **human review** (annotations and probe review tables) — there is no scoring on this path. The default chat factory is hardcoded to `llama_cpp`.
 
 Word bench is the third engine: logprob capture against llama.cpp completions, driven by `sample_bench.run_existing_bench`; it shares `eval_models` targets, run groups, and the steering reader.
 
 ## DB notes
 
-Schema v5 via `PRAGMA user_version` (no version table — contrast ChaChaNotes). `eval_tasks.task_type` CHECK allows only the four basic types; specialized runners are selected via `metadata.category`/`subcategory` or `task_type == "research_report"`, so a specialized task must be stored with a compatible basic type. `eval_models` rows are immutable (no update API — steering is fixed per row). `eval_results` is UNIQUE(run_id, sample_id); run groups (`run_group_id`) pivot the UI's one-row-per-group view with status precedence and an all-cells-failed rollup query.
+Schema version at `DB/Evals_DB.py::SCHEMA_VERSION`, tracked via `PRAGMA user_version` (no version table — contrast ChaChaNotes). `eval_tasks.task_type` CHECK allows only the four basic types; specialized runners are selected via `metadata.category`/`subcategory` or `task_type == "research_report"`, so a specialized task must be stored with a compatible basic type. `eval_models` rows are immutable (no update API — steering is fixed per row). `eval_results` is UNIQUE(run_id, sample_id); run groups (`run_group_id`) pivot the UI's one-row-per-group view with status precedence and an all-cells-failed rollup query.
 
 ## Boundaries
 
-- Orchestrator coordinates; execution lives in runners; persistence only in `EvalsDB`; the UI read side is the pure `EvalsViewModel` (no Textual imports).
-- All provider traffic flows through `Chat.Chat_Functions.chat_api_call` (sync — hence `to_thread` everywhere).
+- Orchestrator coordinates; execution lives in runners; run/results persistence lives in `EvalsDB`, while private configuration YAML lives under the raw-participant lifecycle; the UI read side is the pure `EvalsViewModel` (no Textual imports).
+- Classic evals and the default character-probe chat factory use `Chat.Chat_Functions.chat_api_call` through `to_thread`. Word bench uses its own async HTTP capture client in `Evals/word_bench/capture_client.py` for llama.cpp completions.
 - Character cards live in ChaChaNotesDB — snapshots, not joins.
 - `EvalsScreen` runs word/character benches only; the classic `EvalRunner` path is exercised via `quick_eval`, A/B tests, and service APIs.
 
@@ -60,7 +70,7 @@ Schema v5 via `PRAGMA user_version` (no version table — contrast ChaChaNotes).
 
 ## Governing decisions and docs
 
-ADR-031 (`031-bounded-evaluation-and-tool-worker-execution.md`). Specs: `Docs/superpowers/specs/2026-07-24-evaluation-execution-contracts-design.md`, `2026-07-25-evals-console-rebuild-design.md`, `2026-08-01-character-probe-eval-design.md`. Config: `Evals/config/eval_config.yaml` (task types, valid metrics per type).
+ADR-031 (`031-bounded-evaluation-and-tool-worker-execution.md`). Specs: `Docs/superpowers/specs/2026-07-24-evaluation-execution-contracts-design.md`, `2026-07-25-evals-console-rebuild-design.md`, `2026-08-01-character-probe-eval-design.md`. Configuration ownership: [ADR-220](../../backlog/decisions/220-evaluation-defaults-and-private-overrides.md); backup/recovery: [ADR-126](../../backlog/decisions/126-complete-local-backup-and-recovery.md).
 
 ## Verified gotchas
 

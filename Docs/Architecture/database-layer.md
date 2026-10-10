@@ -55,7 +55,7 @@ The single write seam is `add_media_with_keywords`: URL/content-hash dedup with 
 - `RAG_Indexing_DB` — incremental indexing state (see [rag.md](./rag.md)).
 - `Workspace_DB`, `VisualIdentity_DB`, `Chunking_Lab_DB` — workspace bindings, visual identity, chunking experiments.
 
-All paths resolve through `config.py` helpers rooted at `get_user_data_dir()`.
+Database helpers in `config.py` resolve explicit path overrides first, then profile-aware defaults under `get_user_data_dir()`. Eval private configuration follows the separate effective-config-owned selector described in [evals.md](./evals.md).
 
 ## Failure behaviors
 
