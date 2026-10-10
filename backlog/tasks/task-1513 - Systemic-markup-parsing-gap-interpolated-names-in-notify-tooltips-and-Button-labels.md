@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-07-30 14:00'
-updated_date: '2026-10-10 20:28'
+updated_date: '2026-10-10 20:41'
 labels:
   - evals
   - ux
@@ -153,4 +153,11 @@ Independent immutable review closeout (2026-10-10)
 Reviewer review_3029 cleared committed head 4d0130496caf35f76d61ec987f794420414ed5fc after reviewing the post-merge follow-up and its correction; no actionable findings remain in the authorized scope. All acceptance criteria are checked, self-review and independent review are complete, and the task is Done. Prior red/green receipts remain above; targeted checks, formatting, focused lint, whitespace checks and preflight passed. No full-suite run or push.
 ADR required: no; routine completion of the existing bug-fix/guard boundaries.
 The final independent probe covered eight cases: direct/nested/outer-escape parser hazards and plain markup=False, inert Text, literal/escaped parser exemptions. The correction run passed 50 tests, separately from the earlier 218-test base-fix and 49-test post-format runs. The census remains 543, including the exactly reviewed 41 inherited occurrences across 36 symbols; these remain cleanup work items, not runtime safety approvals.
+
+Local reviewed-stack integration (2026-10-10)
+stack_parent: 595618f4592a3495a251ae0e187980b793c12e74
+Verification head: 7d9b32474269b0b30a39db72c5e01de011a4036d (rebased C follow-up before this evidence-only commit). The rebase's only conflict was the lessons append; complete upstream lesson text and the reviewed markup lesson are preserved. All follow-up production/test changes matched the previously reviewed tree exactly. Config-fixture ownership and trace-recovery changes from the stack remain intact.
+Fresh combined interaction run: 231 passed in 20.47s across the guard, real widget parser pins, real SQLite media dedup, fusion, citation capture, and TestMediaLegScopeEnforcement/TestCustomPipelineInheritance/TestChatEntryPointScopedE2E. This is a separate run from the earlier 218 base-fix, 49 post-format and 50 correction receipts.
+Black 25.1.0 checked all four follow-up Python files; focused Ruff 0.13.1 and stack-diff whitespace checks passed. Complete preflight passed (543 markup occurrences pinned; 175 Tests/UI gate entries). No full suite, push or PR creation. Task remains Done; no runtime behavior was changed during integration.
+ADR required: no; rebase and verification of previously reviewed routine fixes, with existing boundaries unchanged.
 <!-- SECTION:NOTES:END -->
