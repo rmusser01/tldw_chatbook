@@ -170,3 +170,22 @@ cron entry on `dev`.
 - Spec: `Docs/superpowers/specs/2026-09-27-ci-conflicts-and-waste-design.md`.
 
 2026-10-03: the required check is now also started by the merge queue's `workflow_dispatch` (input `pr`); see ADR-218.
+
+2026-10-10 (TASK-33621.27): the UI census (`scripts/ui_pr_gate_census.txt`) may list
+one test's pytest node id as well as a whole file, so a P0 regression test whose
+file is too slow for the lane can be gated on its own. The census checker
+verifies a node id's file still defines the test, rejects an entry with
+whitespace, rejects a node id beside its own whole file (the overlap rule
+above), and resolves a bracketed parametrize id statically, refusing one it
+cannot resolve. The same overlap helper pins every PR-lane pytest step.
+
+The Console review's P0 regression tests run in the census (mounted
+private-profile node ids) and in a third parallel lane, `console-p0-gate`
+("Console P0 regression gate"), with the PR Fast Lane's plugin set and its
+sandboxed / admission-sensitive split. They first went into the PR Fast Lane,
+which then took 33m41s of its 35-min cap (run 38064483856). The required check
+now `needs` all three lanes and fails when any of them is not `success`. This is
+one more runner per PR: the PR Fast Lane, four UI shards and the P0 gate make
+six concurrent test runners, then the aggregate.
+`Tests/CI/test_console_p0_regression_gate.py` pins where each P0 test runs. The
+required context name, event cadence and dependency boundary are unchanged.

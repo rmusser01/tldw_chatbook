@@ -143,20 +143,29 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # jobs; `derived-artifacts` remains the only branch-protection context, so
     # each lane needs its own verdict step below or a red lane would leave the
     # required check green.
-    assert required.get("needs") == ["pr-fast-lane", "ui-fast-lane"]
+    # TASK-33621.27: the Console P0 regression gate is the third lane.
+    assert required.get("needs") == ["pr-fast-lane", "ui-fast-lane", "console-p0-gate"]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in required["steps"])
 
     verdict = _named_step(required, "Require successful PR fast lane")
     assert not verdict.get("continue-on-error", False)
-    assert verdict["if"] == f"${{{{ ({LANES}) && needs.pr-fast-lane.result != 'success' }}}}"
+    # TASK-33621.27 review round 4: `!cancelled() &&` drops the implicit
+    # `success()`, so a red lane does not skip the next lane's verdict and
+    # every red lane is reported in one pass (run 38072845848 showed the UI
+    # and P0 verdicts skipped behind the PR lane's).
+    assert verdict["if"] == (
+        f"${{{{ !cancelled() && ({LANES}) && needs.pr-fast-lane.result != 'success' }}}}"
+    )
     assert "needs.pr-fast-lane.result" in verdict["run"]
     assert "exit 1" in verdict["run"]
 
     ui_verdict = _named_step(required, "Require successful UI fast lane")
     assert not ui_verdict.get("continue-on-error", False)
-    assert ui_verdict["if"] == f"${{{{ ({LANES}) && needs.ui-fast-lane.result != 'success' }}}}"
+    assert ui_verdict["if"] == (
+        f"${{{{ !cancelled() && ({LANES}) && needs.ui-fast-lane.result != 'success' }}}}"
+    )
     assert "needs.ui-fast-lane.result" in ui_verdict["run"]
     assert "exit 1" in ui_verdict["run"]
 
@@ -165,6 +174,17 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # precisely so it cannot eat pr-fast-lane's 30-minute budget; TASK-34353
     # split it into contiguous shards so the census fits that timeout. A
     # matrix job's `needs.<job>.result` is success only when every shard is.
+    p0_verdict = _named_step(required, "Require successful Console P0 regression gate")
+    assert not p0_verdict.get("continue-on-error", False)
+    assert p0_verdict["if"] == (
+        f"${{{{ !cancelled() && ({LANES}) && needs.console-p0-gate.result != 'success' }}}}"
+    )
+    assert "needs.console-p0-gate.result" in p0_verdict["run"]
+    assert "exit 1" in p0_verdict["run"]
+    p0 = workflow["jobs"]["console-p0-gate"]
+    assert not p0.get("continue-on-error", False)
+    assert all(not step.get("continue-on-error", False) for step in p0["steps"])
+
     ui = workflow["jobs"]["ui-fast-lane"]
     assert ui["runs-on"] == "ubuntu-latest"
     assert list(ui["strategy"]["matrix"]) == ["shard"]
@@ -289,6 +309,53 @@ def test_fast_lane_is_one_serial_minimal_python_312_job() -> None:
     assert all_commands.count("pip install") == 1
 
 
+def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
+    """TASK-33621.27: the P0 job is bounded and provisioned like the fast lane.
+
+    It left pr-fast-lane because that job reached 33m41s of its 35-min cap
+    with the P0 block in it (run 38064483856). Its own timeout is sized from
+    that run's figures in the workflow comment; a much larger one would let
+    it hide a hang behind a long wait, a smaller one would fail on a slow
+    runner.
+    """
+    p0 = _workflow("derived-artifacts.yml")["jobs"]["console-p0-gate"]
+
+    assert p0["name"] == "Console P0 regression gate"
+    assert p0["if"] == LANES
+    assert p0["runs-on"] == "ubuntu-latest"
+    assert 10 <= p0["timeout-minutes"] <= 25
+    assert "strategy" not in p0
+    setup = next(
+        step for step in p0["steps"] if step.get("uses") == "actions/setup-python@v5"
+    )
+    assert setup["with"]["python-version"] == "3.12"
+    install = _named_step(p0, "Install fast-lane dependencies")["run"]
+    assert shlex.split(install) == [
+        "python", "-m", "pip", "install", "-e", ".",
+        "pytest", "pytest-asyncio", "pytest-timeout", "packaging",
+    ]
+    commands = "\n".join(str(step.get("run", "")) for step in p0["steps"])
+    assert commands.count("pip install") == 1
+    assert "-n auto" not in commands and "--dist" not in commands
+    sandboxed = _named_step(p0, "Run the sandboxed Console P0 regression tests")
+    admission = _named_step(
+        p0, "Run the admission-sensitive Console P0 regression tests"
+    )
+    # One red step must not hide the other; a cancelled run stops (round 4).
+    assert admission["if"] == "${{ !cancelled() }}"
+    for step, timeout in ((sandboxed, "--timeout=180"), (admission, "--timeout=300")):
+        tokens = shlex.split(step["run"].replace("\\\n", " "))
+        assert tokens[0] == "pytest"
+        assert tokens[-2:] == [timeout, "--tb=short"]
+        assert _pytest_targets(step["run"]), step["name"]
+    # P0 targets live here, not in pr-fast-lane (whose budget they broke).
+    fast_targets = set(_pytest_targets(_named_step(
+        _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane"],
+        "Run admission-sensitive suites",
+    )["run"]))
+    assert not fast_targets & set(_pytest_targets(admission["run"]))
+
+
 def test_fast_lane_target_set_is_exact_and_non_overlapping() -> None:
     """Require the approved exact pytest targets without nested selections."""
     workflow = _workflow("derived-artifacts.yml")
@@ -324,7 +391,9 @@ def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> Non
     assert not missing, f"not gated on pull requests: {missing}"
     assert len(set(targets)) == len(targets)
     for target in targets:
-        assert (PROJECT_ROOT / target).exists(), f"gated target is gone: {target}"
+        # TASK-33621.27: a target may be one test's node id (`file::test`).
+        path = PROJECT_ROOT / target.split("::", 1)[0]
+        assert path.exists(), f"gated target is gone: {target}"
     # Their enrollment poisons sandboxed suites sharing a process (TASK-32873).
     assert not set(targets) & set(FAST_LANE_TARGETS)
 
@@ -375,8 +444,11 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
     ("job_name", "step_name"),
     [
         ("pr-fast-lane", None),
+        ("console-p0-gate", None),
+        ("console-p0-gate", "Run the admission-sensitive Console P0 regression tests"),
         ("derived-artifacts", None),
         ("derived-artifacts", "Require successful PR fast lane"),
+        ("derived-artifacts", "Require successful Console P0 regression gate"),
         ("derived-artifacts", "Generated stylesheets reproduce from their sources"),
     ],
 )

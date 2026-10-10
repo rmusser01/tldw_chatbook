@@ -252,9 +252,106 @@ jobs:
           mapfile -t SHARD < "$RUNNER_TEMP/ui-shard.txt"
           # An empty shard would make bare `pytest` collect the whole tree.
           test "${#SHARD[@]}" -gt 0
-          echo "Gating shard $(( ${{ strategy.job-index }} + 1 ))/${{ strategy.job-total }}: ${#SHARD[@]} Tests/UI files."
+          echo "Gating shard $(( ${{ strategy.job-index }} + 1 ))/${{ strategy.job-total }}: ${#SHARD[@]} Tests/UI entries."
           pytest "${SHARD[@]}" \
             --timeout=180 \
+            --tb=short
+
+  console-p0-gate:
+    # TASK-33621.27. The 2026-09-29 Console review's P0 fixes shipped with
+    # regression tests no pull-request lane ran; two of them drifted red on
+    # dev within days and nobody saw. This job is where they run.
+    #
+    # Its own job, not more steps on pr-fast-lane: PR #3062 first put them
+    # there and that job took 33m41s against its 35-min cap (run
+    # 38064483856: main step 13m08s, admission-sensitive step 19m30s, of
+    # which this block was 3m01s). Like ui-fast-lane, it is a separate
+    # runner, so it costs one more concurrent runner per PR (ADR-103: now
+    # pr-fast-lane + 4 UI shards + this = 6 test runners, then the
+    # aggregate), and no wall-clock on the PR Fast Lane.
+    #
+    # Same minimal dependency set, same serial pytest, same profile split as
+    # pr-fast-lane (TASK-32873): plain unit, private-profile and in-process
+    # tests in one invocation; bootstrap_profile ones (a file with even one
+    # such node, e.g. test_console_compaction_failure.py: 1 of 28) in a
+    # second, after it. A fast file is gated whole; a slow file by the node
+    # ids that pin the P0. The UI-census node ids stay in ui-fast-lane.
+    # Tests/CI/test_console_p0_regression_gate.py pins where each one runs.
+    #
+    # timeout-minutes: setup ~1 min (checkout 20 s, python 3 s, install 19 s
+    # in run 38064483856) + sandboxed step ~3 min (6 private-profile app
+    # boots at ~15-20 s each in CI plus ~1 min of unit/DB tests) + admission
+    # step ~5 min (the 3m01s measured block + the 20-action row sweep at ~6 s
+    # an action + one unit node) = ~9 min. 20 gives 2x for runner slowness
+    # (the dev-equivalent admission step varied 11m33s-19m30s).
+    name: Console P0 regression gate
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+
+      - name: Run the sandboxed Console P0 regression tests
+        run: |
+          pytest \
+            Tests/Console/test_console_markdown_export.py \
+            Tests/Chat/test_console_trace_row_sources.py \
+            Tests/Architecture/test_wizard_lifecycle_guards.py \
+            Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py \
+            Tests/UI/test_console_composer_run_controls.py::test_disabled_reason_names_the_queue_state_not_send_or_setup \
+            Tests/UI/test_console_composer_run_controls.py::test_queue_state_labels_match_the_prompt_queue_presentation \
+            Tests/UI/test_console_composer_run_controls.py::test_palette_lists_stop_and_the_composer_menu_actions_class_safe \
+            Tests/UI/test_app_keep_alive_dead_screen.py::test_a_dead_content_screen_over_only_the_placeholder_takes_the_loud_exit \
+            Tests/UI/test_app_keep_alive_dead_screen.py::test_a_recovery_that_raises_is_logged_before_the_loud_exit \
+            Tests/UI/test_app_keep_alive_dead_screen.py::test_retiring_a_dead_screen_resumes_a_worker_awaiting_a_screen_above_it \
+            Tests/UI/test_app_keep_alive_dead_screen.py::test_pump_loop_ended_matches_what_textual_does_to_the_pump \
+            Tests/UI/test_app_keep_alive_dead_screen.py::test_a_retired_screen_is_torn_down_however_its_loop_ended \
+            Tests/UI/test_app_keep_alive_dead_screen.py::test_a_dead_screen_whose_unmount_raises_is_still_dropped \
+            Tests/UI/test_app_keep_alive_dead_screen.py::test_a_screen_handler_error_leaves_only_live_screens_on_the_stack \
+            "Tests/UI/test_console_project_instruction_choose_folder.py::test_choose_folder_opens_picker_and_applies_the_chosen_binding[enable]" \
+            Tests/UI/test_console_conversation_action_menu.py::test_unwritable_save_path_shows_an_error_and_keeps_the_app_running \
+            "Tests/UI/test_console_conversation_action_menu.py::test_save_prompt_closes_without_writing_and_restores_focus[cancel]" \
+            --timeout=180 \
+            --tb=short
+
+      # bootstrap_profile suites: their own invocation, after the sandboxed
+      # one, exactly as pr-fast-lane's admission-sensitive step (TASK-32873).
+      - name: Run the admission-sensitive Console P0 regression tests
+        if: ${{ !cancelled() }}
+        run: |
+          pytest \
+            Tests/Agents/test_provider_tool_schema_conformance.py \
+            Tests/Chat/test_console_tool_definition_rejection.py \
+            Tests/Agents/test_local_tool_provider.py::test_todo_update_delete_rule_is_enforced_by_the_handler_not_the_schema \
+            Tests/Chat/test_console_capture_send_triggers.py \
+            "Tests/UI/test_console_blocked_send_recovery.py::test_each_trigger_chat_sends_and_renders_the_reply[system-prompt-before-first-send]" \
+            "Tests/UI/test_console_blocked_send_recovery.py::test_provenance_failure_recovery_actions_work[retry]" \
+            Tests/Chat/test_console_compaction_failure.py \
+            Tests/Chat/test_console_compaction_live_session.py::test_live_automatic_compaction_commits_memory_and_the_send_replies \
+            Tests/Chat/test_console_compaction_live_session.py::test_live_compact_now_succeeds_after_real_durable_sends \
+            Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compaction_records_reason_and_discloses_spend \
+            Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_says_nothing_changed \
+            Tests/Chat/test_console_compaction_live_session.py::test_live_failure_is_not_rebilled_until_the_policy_changes \
+            Tests/UI/test_console_row_menu_action_sweep.py::test_the_sweep_covers_every_declared_action_constant \
+            Tests/UI/test_console_row_menu_action_sweep.py::test_conversation_row_action_never_ends_the_app \
+            Tests/Wizards/test_first_run_provider_catalog.py::test_wizard_provider_list_is_the_settings_picker_set \
+            Tests/Wizards/test_first_run_provider_catalog.py::test_arrowing_through_every_listed_row_keeps_the_step_live \
+            Tests/Wizards/test_first_run_provider_catalog.py::test_a_raising_step_handler_keeps_the_step_and_the_keyboard \
+            Tests/Wizards/test_first_run_provider_catalog.py::test_next_after_a_step_error_never_exits_the_app \
+            Tests/UI/test_console_hook_review_send_freeze.py::test_the_app_pump_answers_ctrl_q_while_the_enter_review_is_open \
+            Tests/UI/test_console_hook_review_send_freeze.py::test_a_declined_send_review_settles_and_keeps_the_draft \
+            Tests/UI/test_console_hook_review_send_freeze.py::test_allow_all_resumes_the_captured_send_exactly_once \
+            --timeout=300 \
             --tb=short
 
   derived-artifacts:
@@ -262,7 +359,7 @@ jobs:
     # required status checks. Renaming it silently detaches the gate, so keep it
     # stable.
     name: Derived artifacts reproduce from their sources
-    needs: [pr-fast-lane, ui-fast-lane]
+    needs: [pr-fast-lane, ui-fast-lane, console-p0-gate]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -276,8 +373,12 @@ jobs:
           # generation. No `cache: pip` -- nothing is installed.
           python-version: '3.12.11'
 
+      # TASK-33621.27 review round 4: each verdict starts `!cancelled() &&`,
+      # which drops GitHub's implicit `success()`; without it the first red
+      # lane's verdict skipped the others (run 38072845848), so a second red
+      # lane went unreported until the next push.
       - name: Require successful PR fast lane
-        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane.result != 'success' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane.result != 'success' }}
         run: |
           echo "PR Fast Lane result: ${{ needs.pr-fast-lane.result }}"
           echo "::error::The required PR fast lane did not succeed."
@@ -288,10 +389,18 @@ jobs:
       # which is the "guard nobody is gated on" failure this workflow exists to
       # avoid.
       - name: Require successful UI fast lane
-        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.ui-fast-lane.result != 'success' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.ui-fast-lane.result != 'success' }}
         run: |
           echo "UI Fast Lane result: ${{ needs.ui-fast-lane.result }}"
           echo "::error::The required UI fast lane did not succeed."
+          exit 1
+
+      # TASK-33621.27: same shape again, for the Console P0 regression gate.
+      - name: Require successful Console P0 regression gate
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.console-p0-gate.result != 'success' }}
+        run: |
+          echo "Console P0 regression gate result: ${{ needs.console-p0-gate.result }}"
+          echo "::error::The required Console P0 regression gate did not succeed."
           exit 1
 
       # Every step below is `if: '!cancelled()'` rather than the default

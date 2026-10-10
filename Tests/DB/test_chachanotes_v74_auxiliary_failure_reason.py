@@ -56,10 +56,14 @@ def _start(repository: ConsoleContextRepository, conversation_id: str, op: str) 
 
 
 def test_fresh_database_has_the_failure_reason_column(tmp_path: Path) -> None:
+    # A fresh database is built at the CURRENT version, whatever later
+    # migrations have bumped it to, and still carries v74's column. Pinning
+    # the literal (77, then 80) went red on every bump (TASK-33621.27).
     db = CharactersRAGDB(tmp_path / "fresh.db", client_id="fresh")
     try:
         connection = db.get_connection()
-        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 77
+        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
+        assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 74
         assert "failure_reason" in _columns(connection)
     finally:
         db.close_connection()
