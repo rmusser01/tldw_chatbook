@@ -260,6 +260,22 @@ class LibraryLocalRagSearchService:
     def __init__(self, app_instance: Any) -> None:
         self._app = app_instance
 
+    async def warm_up(self) -> bool:
+        """Build the shared RAG runtime now, ahead of a time-boxed search.
+
+        TASK-33621.20: `rag` mode builds the runtime inside its first
+        `search` call (embedding model, vector store: 4-5 s cached, 18 s
+        uncached). The Console's automatic Library preparation awaits this
+        first, under its own bound, so that build no longer spends the
+        turn's short search budget. Cheap once the runtime is cached.
+
+        Returns:
+            True when a usable runtime is available; False when it is not
+            (missing deps or a failed build), which the next `search`
+            reports through its usual recovery state.
+        """
+        return await self._resolve_rag_runtime() is not None
+
     async def search(
         self,
         query: str,

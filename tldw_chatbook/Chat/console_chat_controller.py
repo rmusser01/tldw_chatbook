@@ -4043,6 +4043,7 @@ class ConsoleChatController:
         canvas_enabled_reader: Callable[[], bool] | None = None,
         canvas_disabled_reader: Callable[[], bool] | None = None,
         library_preparation_timeout: float = 5.0,
+        library_initialization_timeout: float = 60.0,
         ensure_run_hooks: "Callable[[], Any] | None" = None,
         hook_permissions_accessor: Callable[[], HookPermissions] | None = None,
     ) -> None:
@@ -4099,6 +4100,9 @@ class ConsoleChatController:
         self._library_preparation_timeout = max(
             0.001, float(library_preparation_timeout)
         )
+        # TASK-33621.20: the Library's first-use runtime build is bounded
+        # separately; only the search counts against the turn's budget.
+        self._library_initialization_timeout = float(library_initialization_timeout)
         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
         self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
         # TASK-34350: sends held at the compaction threshold (Ask), and the
@@ -7672,27 +7676,19 @@ class ConsoleChatController:
             scope=self._automatic_scope_for_authority(authority),
         )
         error_code: str | None = None
+        from tldw_chatbook.Chat.console_library_search import (  # TASK-33621.20
+            run_bounded_library_search,
+        )
+
         try:
-            async with asyncio.timeout(self._library_preparation_timeout):
-                service = getattr(self.app, "library_rag_search_service", None)
-                search = getattr(service, "search", None)
-                if not callable(search):
-                    raise RuntimeError("library service unavailable")
-                kwargs: dict[str, object] = {
-                    "top_k": request.top_k,
-                    "include_citations": request.include_citations,
-                }
-                if request.scope is not None:
-                    kwargs["scope"] = request.scope
-                raw_result = search(
-                    request.query,
-                    request.source_types,
-                    request.mode,
-                    **kwargs,
+            result = _outcome_from_service_result(
+                await run_bounded_library_search(
+                    getattr(self.app, "library_rag_search_service", None),
+                    request,
+                    search_budget=self._library_preparation_timeout,
+                    initialization_budget=self._library_initialization_timeout,
                 )
-                if inspect.isawaitable(raw_result):
-                    raw_result = await raw_result
-                result = _outcome_from_service_result(raw_result)
+            )
         except asyncio.CancelledError:
             raise
         except TimeoutError:
@@ -13545,28 +13541,22 @@ class ConsoleChatController:
                 include_citations=True,
                 scope=self._automatic_scope_for_authority(authority),
             )
-            service = getattr(self.app, "library_rag_search_service", None)
-            search = getattr(service, "search", None)
-            if not callable(search):
+            from tldw_chatbook.Chat.console_library_search import (  # TASK-33621.20
+                LibrarySearchUnavailable,
+                run_bounded_library_search,
+            )
+
+            try:
+                raw = await run_bounded_library_search(
+                    getattr(self.app, "library_rag_search_service", None),
+                    request,
+                    search_budget=self._library_preparation_timeout,
+                    initialization_budget=self._library_initialization_timeout,
+                )
+            except LibrarySearchUnavailable as exc:
                 raise _DispatchRecoveryRefusal(
                     "Library retrieval is unavailable for retry."
-                )
-            kwargs: dict[str, object] = {
-                "top_k": request.top_k,
-                "include_citations": request.include_citations,
-            }
-            if request.scope is not None:
-                kwargs["scope"] = request.scope
-            try:
-                async with asyncio.timeout(self._library_preparation_timeout):
-                    raw = search(
-                        request.query,
-                        request.source_types,
-                        request.mode,
-                        **kwargs,
-                    )
-                    if inspect.isawaitable(raw):
-                        raw = await raw
+                ) from exc
             except TimeoutError as exc:
                 raise _DispatchRecoveryRefusal(
                     "Library retrieval timed out during retry."
