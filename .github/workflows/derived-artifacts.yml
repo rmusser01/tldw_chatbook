@@ -184,7 +184,7 @@ jobs:
             Tests/Notes/test_notes_sync_attention_fence.py \
             Tests/Agents/test_first_request_window_honest_plan.py \
             Tests/Agents/test_provider_tool_schema_conformance.py \
-            Tests/Chat/test_console_tool_definition_rejection.py::test_default_console_send_to_anthropic_gets_a_reply \
+            Tests/Chat/test_console_tool_definition_rejection.py \
             Tests/Chat/test_console_capture_send_triggers.py \
             "Tests/UI/test_console_blocked_send_recovery.py::test_each_trigger_chat_sends_and_renders_the_reply[system-prompt-before-first-send]" \
             "Tests/UI/test_console_blocked_send_recovery.py::test_provenance_failure_recovery_actions_work[retry]" \

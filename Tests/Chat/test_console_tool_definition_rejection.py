@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
@@ -379,6 +380,21 @@ def test_default_console_send_to_anthropic_gets_a_reply(tmp_path, streaming):
 # ---------------------------------------------------------------------------
 
 
+def _assert_states_the_refusal(copy: str, provider: str, tool: str) -> None:
+    """The user sees who refused, that it was a 400, and which tool.
+
+    Asserts those facts, not a phrase: these pins asserted ``"HTTP 400"`` and
+    went red unseen when TASK-34100.5 reworded provider failures to
+    ``"Provider error from <provider>: bad request. Status: 400. ..."``
+    (TASK-33621.27).
+    """
+    assert provider in copy, copy
+    assert re.search(r"(?<!\d)400(?!\d)", copy), copy
+    # The tool is named in the same sentence that says a model switch won't
+    # help -- not merely quoted back from the provider's own message.
+    assert re.search(rf"{re.escape(tool)}[^.]*another model will not help", copy), copy
+
+
 @pytest.mark.loopback_network
 @pytest.mark.parametrize(
     ("reject_tool", "advice"),
@@ -403,11 +419,7 @@ def test_anthropic_tool_definition_rejection_names_the_tool_not_the_model(
     assert outcome.status != "done"
     assert server.rejected == [reject_tool]
     copy = ConsoleChatController._agent_failure_visible_copy(outcome)
-    assert "HTTP 400" in copy
-    assert (
-        f"The provider rejected the tool definition for {reject_tool} before "
-        "the model ran, so choosing another model will not help."
-    ) in copy, copy
+    _assert_states_the_refusal(copy, "Anthropic", reject_tool)
     assert advice in copy, copy
     for model_advice in _MODEL_ADVICE:
         assert model_advice not in copy, copy
@@ -468,8 +480,7 @@ def test_openai_tool_definition_rejection_names_the_tool_not_the_model(tmp_path)
     assert rejected == ["watchlists_check_sources"]
     assert outcome.status != "done"
     copy = ConsoleChatController._agent_failure_visible_copy(outcome)
-    assert "HTTP 400" in copy
-    assert "tool definition for watchlists_check_sources" in copy, copy
+    _assert_states_the_refusal(copy, "OpenAI", "watchlists_check_sources")
     for advice in _MODEL_ADVICE:
         assert advice not in copy, copy
 

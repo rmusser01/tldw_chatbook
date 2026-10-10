@@ -6,7 +6,8 @@ no pull-request lane ran. The UI Fast Lane runs only
 two pytest steps name; ``Tests/Architecture`` and most of ``Tests/Chat`` run in
 no PR lane at all. So a P0 could regress and merge green -- and one did drift
 unseen: the TASK-33621.1 rejection-copy tests went red when TASK-34100.5
-reworded the provider failure copy, and nothing noticed.
+reworded the provider failure copy, and nothing noticed. (They now assert the
+facts the user must see -- provider, 400, the refused tool -- and are gated.)
 
 This file pins where each P0's regression tests run. Removing one from its
 lane, or moving a ``bootstrap_profile`` test into a lane whose process it would
@@ -17,9 +18,6 @@ the node ids that pin the P0 itself.
 Measured at TASK-33621.27 (2026-10-10). Left out on purpose, so a reader does
 not re-add them blind:
 
-* ``test_console_tool_definition_rejection.py``'s three tool-rejection copy
-  tests (TASK-33621.1 AC#4) are red on ``dev``: they assert ``"HTTP 400"``,
-  and the copy now reads ``"Status: 400."``. They join when that is fixed.
 * ``test_chachanotes_v74_auxiliary_failure_reason.py`` (TASK-33621.3's
   migration) has a red schema-version pin on ``dev`` (asserts 77, is 80).
 * ``test_console_tray_rebuild_focus.py`` pins a focus restore, not the Save
@@ -58,8 +56,9 @@ P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
     # Default sends to OpenAI/Anthropic 400'd on built-in tool schemas.
     "TASK-33621.1": (
         "Tests/Agents/test_provider_tool_schema_conformance.py",
-        "Tests/Chat/test_console_tool_definition_rejection.py"
-        "::test_default_console_send_to_anthropic_gets_a_reply",
+        # The default send reaches the model; a tool rejection names the
+        # tool, not the model; the 400 is logged redacted (5 s, whole file).
+        "Tests/Chat/test_console_tool_definition_rejection.py",
     ),
     # Chats with a system prompt, a character or an image refused every send.
     "TASK-33621.2": (
