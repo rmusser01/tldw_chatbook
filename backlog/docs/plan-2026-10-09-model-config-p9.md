@@ -11,7 +11,7 @@ Phase 9 is the last phase of the model-configuration redesign, added by owner de
 Scope: every rider that is not Done and is a subtask of TASK-33001 through TASK-33007 or of TASK-33641, plus TASK-33666 and TASK-33667. Phase 8's own tasks (TASK-33008.x) are in flight on the branch below this one and are out of scope.
 
 This plan triaged 59 riders against this branch's HEAD (8b4a1ad23e, stacked on Phase 8's in-progress branch, which is stacked on Phase 7):
-- 52 VALID (TASK-33003.13 joined them once the owner ruled): grouped into the 16 plan tasks below.
+- 52 VALID (TASK-33003.13 joined them once the owner ruled), plus TASK-33641.7 filed from the wave 1 integration: grouped into the 16 plan tasks below.
 - 7 ALREADY FIXED and 0 OBSOLETE: listed under "Closed without code" with their evidence. They get no plan task; each is closed with that rationale in its own task file.
 - 0 NEEDS OWNER: TASK-33003.13 was ruled on 2026-10-09 and is in Task 15.
 
@@ -54,7 +54,7 @@ Size facts at HEAD (Tests/Architecture/test_module_size_ratchet.py and test_scre
 - Tests always run in parallel (xdist, `-n 6 --dist loadfile`); serial only for Tests/Architecture.
 - Per task, run the test files that cover what you changed, once, at HEAD. The phase runs ONE base-vs-head comparison at its end, both trees at once.
 - Evidence is the test names plus the command and its summary line in the report. Commit no per-task captures or evidence files; the Capture phase captures every changed surface once.
-- Execution order: five waves, run in order: Wave 1 = Tasks 1, 3, 4, 5; Wave 2 = Task 2 alone; Wave 3 = Tasks 6, 7, 8, 9, 10; Wave 4 = Tasks 11, 12, 13, 14; Wave 5 = Tasks 15, 16. Task 2 holds settings_screen.py, chat_screen.py and console_model_popover.py, which Phase 8's Tasks 1-2 edit on the branch below this one, so it waits for the rebase onto Phase 8's final head; Wave 1 runs before that rebase because its files are outside Phase 8's. Inside a wave, the tasks run in parallel git worktrees and are cherry-picked together, so their files are disjoint (each task's References list what it touches, and a 'Must not edit' line names the shared files it leaves alone). Each wave holds at most one task on each of settings_screen.py, chat_screen.py and console_settings_modal.py. Before Wave 2, rebase this branch onto Phase 8's final head; it is stacked on Phase 8's in-progress branch, which is stacked on Phase 7 (PR #3057). At each wave's cherry-pick, resolve conflicts in the generated CSS bundle by re-running tldw_chatbook/css/build_css.py, never by hand.
+- Execution order: six waves, run in order: Wave 1 = Tasks 1, 3, 4, 5; Wave 2 = Tasks 9, 10, 11, 13; then the rebase onto Phase 8's final head; Wave 3 = Task 2 alone; Wave 4 = Tasks 6, 7, 8; Wave 5 = Tasks 12, 14; Wave 6 = Tasks 15, 16. Waves 1 and 2 hold only files Phase 8 does not edit. console_settings_modal.py goes 11, then 6, then 15; settings_screen.py goes 2, then 7, then 12; chat_screen.py goes 2, then 8. Inside a wave, the tasks run in parallel git worktrees and are cherry-picked together, so their files are disjoint (each task's References list what it touches, and a 'Must not edit' line names the shared files it leaves alone). Each wave holds at most one task on each of settings_screen.py, chat_screen.py and console_settings_modal.py. Before Wave 3, rebase this branch onto Phase 8's final head; it is stacked on Phase 8's in-progress branch, which is stacked on Phase 7 (PR #3057). At each wave's cherry-pick, resolve conflicts in the generated CSS bundle by re-running tldw_chatbook/css/build_css.py, never by hand.
 
 ## Task 1: Repair the red modal-inventory, endpoint-creation and anchor-geometry tests (TASK-33003.19, TASK-33006.17, TASK-33006.24)
 
@@ -109,7 +109,7 @@ Task files:
 - backlog/tasks/task-33005.7 - Bring-the-remaining-readiness-copy-onto-the-one-vocabulary.md
 - backlog/tasks/task-33005.11 - Never-read-verified-for-a-model-the-key-check-did-not-list.md
 - backlog/tasks/task-33005.15 - Keep-the-Settings-Overview-readiness-line-in-step-with-the-Console.md
-Wave: 2
+Wave: 3
 Depends on: —
 
 ### Why
@@ -281,7 +281,7 @@ Task files:
 - backlog/tasks/task-33006.14 - Open-focus-on-a-blocked-chat-is-tested-when-Connection-starts-collapsed.md
 - backlog/tasks/task-33006.19 - Served-model-listings-are-kept-per-endpoint-not-per-provider.md
 - backlog/tasks/task-33006.25 - Open-pick-mode-after-a-new-endpoints-listing-even-if-the-close-guard-appeared.md
-Wave: 3
+Wave: 4
 Depends on: —
 
 ### Why
@@ -322,7 +322,7 @@ Task files:
 - backlog/tasks/task-33003.14 - Field-search-can-reach-Console-Behaviors-generation-fallbacks.md
 - backlog/tasks/task-33005.8 - Re-render-Settings-provider-test-rows-on-Save.md
 - backlog/tasks/task-33007.11 - Settings-keeps-keyboard-focus-off-the-navigation-bar-after-the-Revert-dialog-closes.md
-Wave: 3
+Wave: 4
 Depends on: —
 Must not edit: Tests/UI/test_settings_image_gen_panel.py and Tests/UI/test_settings_video_gen_defaults.py (Task 10 owns them in this wave): put the 33002.11 pins in Tests/UI/test_settings_state_line_unsaved_count.py.
 
@@ -369,7 +369,7 @@ Must not edit: Tests/UI/test_settings_image_gen_panel.py and Tests/UI/test_setti
 Task files:
 - backlog/tasks/task-33002.19 - Console-mode-strip-raises-MarkupError-on-a-markup-like-default-provider.md
 - backlog/tasks/task-33006.20 - The-app-footer-refreshes-after-a-modal-closes-so-Alt-A-is-not-pushed-off-at-211-columns.md
-Wave: 3
+Wave: 4
 Depends on: —
 Must not edit: console_settings_modal.py (Task 6 owns it in this wave). Fix the footer from Chat settings' close callback in chat_screen.py or in a UI/Console_Modules module.
 
@@ -400,7 +400,7 @@ Must not edit: console_settings_modal.py (Task 6 owns it in this wave). Fix the 
 Task files:
 - backlog/tasks/task-33001.14 - Legacy-summarizers-send-an-env-key-for-a-provider-whose-credential-source-is-none.md
 - backlog/tasks/task-33001.15 - Legacy-API-only-key-is-not-materialised-when-a-model-save-records-stored.md
-Wave: 3
+Wave: 2
 Depends on: —
 Must not edit: settings_screen.py (Task 7 owns it in this wave). The fix belongs in provider_setup_persistence.py. If the call site really has to change, stop and report rather than editing the screen.
 
@@ -428,13 +428,14 @@ Must not edit: settings_screen.py (Task 7 owns it in this wave). The fix belongs
 - Tests/UI/test_settings_configuration_hub.py (beside test_settings_model_save_keeps_the_stored_key_that_resolves)
 - backlog/decisions/012-provider-credential-settings-boundary.md
 
-## Task 10: Dimension tokens back at zero; the Lab GGUF row and backend names fit (TASK-33003.22, TASK-33641.2, TASK-33641.3)
+## Task 10: Dimension tokens back at zero; the Lab GGUF row and backend names fit; a test host resolves the theme guards (TASK-33003.22, TASK-33641.2, TASK-33641.3, TASK-33641.7)
 
 Task files:
 - backlog/tasks/task-33003.22 - The-dimension-literal-and-Python-style-governance-ratchets-are-back-at-zero.md
 - backlog/tasks/task-33641.2 - The-Lab-GGUF-Model-source-label-and-its-Select-share-one-row.md
 - backlog/tasks/task-33641.3 - Image-and-Video-generation-backend-rows-show-each-backend-name-whole.md
-Wave: 3
+- backlog/tasks/task-33641.7 - The-skills-recovery-controls-tests-resolve-the-theme-guard-variables-in-their-subprocess-host.md
+Wave: 2
 Depends on: —
 
 ### Why
@@ -448,6 +449,8 @@ Depends on: —
 - TASK-33641.2 (The Lab GGUF "Model source:" label and its Select share one row): css/features/_llm-management.tcss gives `.gguf-source-mode-row`, `.gguf-source-label` (content-align right middle) and `.gguf-source-mode` each `height: $ds-size-3`. The borderless Select paints its value on its top row while the label sits on the middle row. The widgets are built in UI/LLM_Management_Window.py.
 - TASK-33641.3 (Image and Video generation backend rows show each backend name whole): css/features/_settings.tcss still has `.settings-imagegen-backend-row .settings-input-label { width: $ds-size-12; min-width: $ds-size-12; }`. Its comment says a geometry guard pins 12 so that the row fits at 120 columns; that guard is the (235,52)/(120,45) parametrized pin in Tests/UI/test_settings_image_gen_panel.py (confirm by grep). The rows are built in Widgets/settings_image_gen_panel.py and Widgets/settings_video_gen_panel.py, not in the UI/Screens files the rider names.
 
+- TASK-33641.7 (The skills recovery controls tests resolve the theme guard variables in their subprocess host): filed from the wave 1 integration. Twelve nodes of Tests/Backup_Recovery/test_skills_recovery_controls.py fail with "undefined variable '$tldw-boundary'" parsing screen_agentic_library.tcss, at wave 1's base and head alike: the test's subprocess host is a plain App, so the theme guard variables TASK-33003.6 introduced have no source. 0cfe341382 fixed the same class for Tests/UI/consolidated_css.py::ConsolidatedCSSApp by inheriting ThemeVariableDefaultsMixin; do the same here and grep Tests for other plain-App hosts that parse application CSS.
+
 ### Acceptance criteria
 
 - [ ] TASK-33003.22 #1 test_dimension_literal_ratchet passes: each of the 14 literals becomes a token from css/core/_variables.tcss, with rendered geometry unchanged. [At HEAD the count is 18 literals in four sheets (see Why); the AC covers every offender at HEAD.]
@@ -459,6 +462,10 @@ Depends on: —
 - [ ] TASK-33641.3 #1 At 211x44 and 235x52, every Image Generation and Video Generation backend row shows the backend's full name, with at least one blank cell between the name and its status.
 - [ ] TASK-33641.3 #2 The status column still starts at the same column in every row of a panel.
 - [ ] TASK-33641.3 #3 A pilot test over every backend label fails before the fix and passes after it.
+
+- [ ] TASK-33641.7 #1 The twelve nodes pass, with the host resolving the theme guard variables the way the application does
+- [ ] TASK-33641.7 #2 The cause and the fix are recorded in this task's notes
+- [ ] TASK-33641.7 #3 A grep of Tests for other subprocess or scratch App hosts that parse application CSS without the theme defaults is recorded, and any that fail the same way are fixed here
 
 ### References
 
@@ -481,6 +488,8 @@ Depends on: —
 - Tests/UI/test_settings_video_gen_defaults.py
 - qa/model-config-33003-captures/lab-211x44.txt
 - qa/model-config-33003-captures/settings-video-generation-211x44.txt
+- Tests/Backup_Recovery/test_skills_recovery_controls.py
+- Tests/UI/consolidated_css.py (read only: the precedent)
 
 ## Task 11: Chat settings view tabs, a single readiness sync on mount, and the Context view's Apply reason (TASK-33003.11, TASK-33003.18, TASK-33006.21, TASK-33006.22, TASK-33006.23)
 
@@ -490,7 +499,7 @@ Task files:
 - backlog/tasks/task-33006.21 - Chat-settings-syncs-default-readiness-once-on-mount.md
 - backlog/tasks/task-33006.22 - The-Context-view-says-why-Apply-is-unavailable-while-an-endpoint-is-unsaved.md
 - backlog/tasks/task-33006.23 - A-focused-view-tab-paints-its-Selected-mark-after-a-keyboard-round-trip.md
-Wave: 4
+Wave: 2
 Depends on: —
 
 ### Why
@@ -529,7 +538,7 @@ Depends on: —
 Task files:
 - backlog/tasks/task-33005.9 - Home-Library-and-the-first-run-wizard-read-shared-connection-evidence.md
 - backlog/tasks/task-33005.10 - Measure-and-harden-the-Phase-5-evidence-paths.md
-Wave: 4
+Wave: 5
 Depends on: —
 Must not edit: Tests/UI/test_console_session_settings.py (Task 11 owns it in this wave). Put the keyed Settings → Chat settings case in a new test file.
 
@@ -571,7 +580,7 @@ Must not edit: Tests/UI/test_console_session_settings.py (Task 11 owns it in thi
 Task files:
 - backlog/tasks/task-33666 - Quitting-during-a-hung-reply-never-exits-the-process.md
 - backlog/tasks/task-33667 - Settle-a-dispatch-recovery-from-a-second-open-of-the-same-chat.md
-Wave: 4
+Wave: 2
 Depends on: —
 
 ### Why
@@ -603,7 +612,7 @@ Task files:
 - backlog/tasks/task-33001.11 - ProductionApp-provider-selection-tests-never-run-their-assertions-in-CI.md
 - backlog/tasks/task-33002.17 - Phase-2-Settings-tests-join-the-UI-PR-gate-census.md
 - backlog/tasks/task-33641.5 - A-PR-lane-runs-the-model-default-writer-tests-in-test_console_settings_defaults.md
-Wave: 4
+Wave: 5
 Depends on: Task 4 (raw-scope change) and Task 7 (it edits Tests/UI/test_settings_state_line_unsaved_count.py), both in earlier waves.
 
 ### Why
@@ -645,7 +654,7 @@ Task files:
 - backlog/tasks/task-33006.11 - Providers-without-a-PROVIDER-PARAM-MAP-entry-get-a-support-answer-for-their-samplers.md
 - backlog/tasks/task-33006.12 - A-field-whose-support-is-unknown-keeps-its-own-help-visible-beside-the-neutral-note.md
 - backlog/tasks/task-33006.16 - A-pick-does-not-list-fields-the-user-never-touched-in-the-unsaved-prompt.md
-Wave: 5
+Wave: 6
 Depends on: —
 
 ### Why
@@ -692,7 +701,7 @@ Task files:
 - backlog/tasks/task-33005.12 - Show-the-models-a-local-probe-listed-in-Switch-model.md
 - backlog/tasks/task-33005.14 - Polish-three-small-model-surface-findings-from-the-Phase-5-captures.md
 - backlog/tasks/task-33006.18 - Type-the-switcher-sources-the-Console-hands-pick-mode.md
-Wave: 5
+Wave: 6
 Depends on: —
 Must not edit: providers_models_card.py (read only). Fix the picker in model_search_picker.py.
 
@@ -733,13 +742,15 @@ Must not edit: providers_models_card.py (read only). Fix the picker in model_sea
 
 ## Execution order
 
-[[1, 3, 4, 5], [2], [6, 7, 8, 9, 10], [11, 12, 13, 14], [15, 16]]
+[[1, 3, 4, 5], [9, 10, 11, 13], [2], [6, 7, 8], [12, 14], [15, 16]]
 
-- Wave 1: Tasks 1, 3, 4, 5 (before the rebase onto Phase 8's final head).
-- Wave 2: Task 2 (after that rebase).
-- Wave 3: Tasks 6, 7, 8, 9, 10.
-- Wave 4: Tasks 11, 12, 13, 14.
-- Wave 5: Tasks 15, 16.
+- Wave 1: Tasks 1, 3, 4, 5 (done 2026-10-10, before the rebase onto Phase 8's final head).
+- Wave 2: Tasks 9, 10, 11, 13 (also before that rebase: none of their files is one Phase 8 edits).
+- Rebase this branch onto Phase 8's final head.
+- Wave 3: Task 2 alone (settings_screen.py, chat_screen.py and console_model_popover.py together).
+- Wave 4: Tasks 6, 7, 8.
+- Wave 5: Tasks 12, 14.
+- Wave 6: Tasks 15, 16.
 
 ## Closed without code
 
