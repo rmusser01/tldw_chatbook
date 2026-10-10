@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.content import Content
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
@@ -76,8 +77,14 @@ class StudyDashboard(Widget):
     def compose(self) -> ComposeResult:
         with Vertical(id="study-dashboard"):
             yield Static("Study Dashboard", classes="study-dashboard-title")
+            # TASK-34751: every `markup=False` Static below shows user text
+            # (workspace, deck, quiz and source titles); a name such as
+            # `Bio [/b]` raised `MarkupError` when it was drawn.
             yield Static(
-                "Global study", id="study-scope-summary", classes="study-dashboard-meta"
+                "Global study",
+                id="study-scope-summary",
+                classes="study-dashboard-meta",
+                markup=False,
             )
             with Horizontal(classes="study-dashboard-columns"):
                 with Vertical(classes="study-dashboard-column"):
@@ -93,6 +100,7 @@ class StudyDashboard(Widget):
                         "No recent decks yet.",
                         id="study-recent-decks",
                         classes="study-dashboard-value",
+                        markup=False,
                     )
                 with Vertical(classes="study-dashboard-column"):
                     yield Static("Recent Quizzes", classes="study-dashboard-heading")
@@ -100,6 +108,7 @@ class StudyDashboard(Widget):
                         "No recent quizzes yet.",
                         id="study-recent-quizzes",
                         classes="study-dashboard-value",
+                        markup=False,
                     )
             with Horizontal(classes="study-dashboard-actions"):
                 yield Button(
@@ -121,6 +130,7 @@ class StudyDashboard(Widget):
                 "Source generation is unavailable until Study has selected source items.",
                 id="study-source-generation-status",
                 classes="study-dashboard-meta",
+                markup=False,
             )
 
     def update_scope_summary(self, summary: str) -> None:
@@ -146,7 +156,8 @@ class StudyDashboard(Widget):
             return
         button = self.query_one("#study-resume-last", Button)
         if summary:
-            button.label = f"Resume {summary}"
+            # The summary carries a deck/source title -- literal, not markup.
+            button.label = Content(f"Resume {summary}")
             button.disabled = False
             button.tooltip = RESUME_ENABLED_TOOLTIP
         else:
