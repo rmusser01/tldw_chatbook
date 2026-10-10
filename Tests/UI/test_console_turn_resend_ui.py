@@ -529,12 +529,13 @@ async def test_resend_poll_survives_initial_hook_admission_read(request, monkeyp
     hook_release = asyncio.Event()
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_ready_llamacpp_console(console, pilot)
         console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
             "hello"
         )
-        console.query_one("#console-send-message", Button).press()
+        send = console.query_one("#console-send-message", Button)
+        assert send.display and not send.disabled
+        send.press()
         await _wait_for_text(console, pilot, "llama.cpp stream failed")
         await pilot.pause(0.4)
         user = next(row for row in _session_rows(console) if row.role is USER)
@@ -597,11 +598,12 @@ async def test_transcript_resend_retains_failed_rows_until_connection_is_ready(r
     host = _console_app(gateway)
     async with host.run_test(size=(211, 44)) as pilot:
         console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        _select_llamacpp_console(console)
+        await _select_ready_llamacpp_console(console, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
-        console.query_one("#console-send-message", Button).press()
+        send = console.query_one("#console-send-message", Button)
+        assert send.display and not send.disabled
+        send.press()
         await _wait_for_text(console, pilot, "llama.cpp stream failed")
         user = next(row for row in _session_rows(console) if row.role is USER)
         settings = console._active_console_settings_readiness_uncached()[0]

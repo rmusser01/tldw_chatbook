@@ -139,7 +139,12 @@ async def _assert_projection(console, pilot, assistant_id, copy, approval_count)
                 "console-inspector-live-work",
                 "console-inspector-approvals",
             )
-        ),
+        )
+        and f"Live work: {copy}"
+        in "\n".join(str(row.render()) for row in inspector.query(Static))
+        and f"Approvals: {approval_count} pending"
+        in "\n".join(str(row.render()) for row in inspector.query(Static))
+        and inspector.state.pending_approval_count == approval_count,
     )
     rendered = "\n".join(str(row.render()) for row in inspector.query(Static))
     assert f"Live work: {copy}" in rendered, rendered
