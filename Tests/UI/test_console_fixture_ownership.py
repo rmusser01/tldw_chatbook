@@ -397,28 +397,36 @@ async def test_prepared_close_profile_outlives_its_pending_owner_write(
         }.__getitem__
     )
     try:
-        with close_tests._pending_close_app(
+        async with close_tests._pending_close_app(
             request, "chat_create", surviving_child=True
         ) as app:
             db, runs = app.chachanotes_db, app._pending_close_runs
+            owner = app._pending_close_owned_resources
+            directory = owner.directory
             app.console_runtime.ensure_chat_store()
             handles = (db.get_connection(), runs._held_connection())
 
-        def delayed_write():
-            try:
-                conversation = db.add_conversation({"title": "pending owner write"})
-                run = runs.create_run(
-                    conversation_id=conversation, agent_kind="primary"
-                )
-                return conversation, run
-            finally:
-                runs.close()
-                db.close_connection()
+            def delayed_write():
+                try:
+                    conversation = db.add_conversation({"title": "pending owner write"})
+                    run = runs.create_run(
+                        conversation_id=conversation, agent_kind="primary"
+                    )
+                    return conversation, run
+                finally:
+                    runs.close()
+                    db.close_connection()
 
-        conversation, run = await asyncio.to_thread(delayed_write)
-        assert db.get_conversation_by_id(conversation)["title"] == "pending owner write"
-        assert runs.get_run(run)["conversation_id"] == conversation
-        await fixture.aclose()
+            assert directory.is_dir() and not owner.runtime_terminal
+            conversation, run = await asyncio.to_thread(delayed_write)
+            assert (
+                db.get_conversation_by_id(conversation)["title"]
+                == "pending owner write"
+            )
+            assert runs.get_run(run)["conversation_id"] == conversation
+            assert directory.is_dir() and not owner.runtime_terminal
+        assert owner.runtime_terminal
+        assert not directory.exists()
         for handle in handles:
             with pytest.raises(sqlite3.ProgrammingError, match="closed"):
                 handle.execute("SELECT 1")

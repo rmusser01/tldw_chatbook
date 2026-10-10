@@ -204,7 +204,9 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         # TASK-34563.11: exact original admission/lifetime references only.
         "store",
         "received_claim",
+        "received_intent",
     }
+    assert record.received_intent is None
     assert {field.name for field in fields(type(record.inputs))} == {
         "attachments",
         "staged_evidence_revision",
@@ -745,6 +747,7 @@ async def test_late_outgoing_ensure_cannot_reclaim_a_successor_attachment():
     runtime._chat_controller = SimpleNamespace(
         fleet_wake=wake,
         provider="successor-provider",
+        _interrupt_host=_hook_review_attachment_host(),
     )
     outgoing = ChatScreen.__new__(ChatScreen)
     successor = ChatScreen.__new__(ChatScreen)
@@ -761,6 +764,7 @@ async def test_late_outgoing_ensure_cannot_reclaim_a_successor_attachment():
     outgoing_generation = runtime.attach_view(outgoing)
     successor_generation = runtime.attach_view(successor)
     assert runtime.view is successor
+    assert runtime.chat_controller._interrupt_host.released == [outgoing_generation]
 
     # A late callback on the outgoing screen reaches this ordinary wiring
     # seam after the successor has already claimed the runtime.
@@ -962,13 +966,23 @@ async def test_project_binding_selection_fails_closed_on_app_dispose():
     assert await asyncio.wait_for(task, timeout=1) == ("cancel", None)
 
 
+def _hook_review_attachment_host():
+    """Record the controller adapter required by actual view retirement."""
+    released = []
+    return SimpleNamespace(
+        release_hook_review_attachment=released.append, released=released
+    )
+
+
 def _project_notice_runtime() -> ConsoleRuntime:
     runtime = ConsoleRuntime(SimpleNamespace())
     runtime._chat_store = SimpleNamespace(
         active_session_id="session-a",
         sessions=lambda: [SimpleNamespace(id="session-a")],
     )
-    runtime._chat_controller = SimpleNamespace(_active_cancel_events={})
+    runtime._chat_controller = SimpleNamespace(
+        _active_cancel_events={}, _interrupt_host=_hook_review_attachment_host()
+    )
     return runtime
 
 
@@ -1034,6 +1048,7 @@ def test_project_dispatch_confirmation_does_not_retain_view_detached_during_wait
     assert first_projected.wait(1)
 
     assert runtime.detach_view(view, generation)
+    assert runtime.chat_controller._interrupt_host.released == [generation]
     del view
     gc.collect()
     assert dead_view() is None
@@ -1085,6 +1100,7 @@ def test_project_dispatch_timeout_counts_only_successfully_projected_time():
     assert first_projected.wait(1)
 
     assert runtime.detach_view(first, first_generation)
+    assert runtime.chat_controller._interrupt_host.released == [first_generation]
     time.sleep(0.08)
     assert worker.is_alive(), "detached time consumed the answerable-time budget"
 
@@ -1948,6 +1964,7 @@ def test_detach_releases_the_old_chat_screen_from_every_runtime_hook():
     controller = SimpleNamespace(
         fleet_wake=wake,
         prompt_queue_coordinator=SimpleNamespace(),
+        _interrupt_host=_hook_review_attachment_host(),
     )
     store = SimpleNamespace()
     runtime.set_chat_controller(controller)
@@ -1961,6 +1978,7 @@ def test_detach_releases_the_old_chat_screen_from_every_runtime_hook():
 
     dead_screen = weakref.ref(screen)
     assert runtime.detach_view(screen, generation)
+    assert runtime.chat_controller._interrupt_host.released == [generation]
     del screen
     gc.collect()
 
@@ -1977,6 +1995,7 @@ async def test_active_runtime_custody_does_not_retain_the_detached_chat_screen()
     release = asyncio.Event()
 
     class BlockingController:
+        _interrupt_host = _hook_review_attachment_host()
         fleet_wake = SimpleNamespace(delivering_session_ids=lambda: ())
         prompt_queue_coordinator = SimpleNamespace(
             bind_turn_request=lambda _request, *, origin: None
@@ -2025,6 +2044,7 @@ async def test_active_runtime_custody_does_not_retain_the_detached_chat_screen()
     dead_screen = weakref.ref(screen)
 
     assert runtime.detach_view(screen, generation)
+    assert runtime.chat_controller._interrupt_host.released == [generation]
     del screen
     gc.collect()
 

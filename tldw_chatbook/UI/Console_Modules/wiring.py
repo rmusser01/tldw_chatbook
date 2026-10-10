@@ -744,6 +744,9 @@ async def _prepare_console_turn_to_runtime(
 ) -> str:
     """Prepare one exact UI turn, then transfer custody without another await."""
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
+
+    pressed_capture = type(stash) is ConsoleDraftStash and stash.text == draft
 
     runtime = screen._console_runtime()
     store = screen._ensure_console_chat_store()
@@ -755,7 +758,8 @@ async def _prepare_console_turn_to_runtime(
     )
     if composer is not None:
         # Button capture can precede the ordinary poll's in-memory draft mirror.
-        # Establish that mirror before waiting; subsequent edits still refuse.
+        # Establish that mirror before waiting. A captured press keeps its
+        # immutable body while later edits remain the next draft.
         store.set_session_draft(session_id, composer.draft_text())
     stored_draft = store.session_draft(session_id)
     prefill = store.session_one_shot_prefill_snapshot(session_id)
@@ -777,7 +781,7 @@ async def _prepare_console_turn_to_runtime(
         or runtime._chat_store is not store
         or next((item for item in store.sessions() if item.id == session_id), None)
         is not session
-        or store.session_draft(session_id) != stored_draft
+        or (not pressed_capture and store.session_draft(session_id) != stored_draft)
         or store.session_one_shot_prefill_snapshot(session_id) != prefill
         or tuple(item.attachment_id for item in current_attachments) != attachment_ids
         or len(current_attachments) != len(attachments)
@@ -797,7 +801,10 @@ async def _prepare_console_turn_to_runtime(
             and screen._console_visible_draft_session_id == session_id
             and (
                 screen._console_composer_or_none() is not composer
-                or composer.capture_draft_snapshot() != composer_snapshot
+                or (
+                    not pressed_capture
+                    and composer.capture_draft_snapshot() != composer_snapshot
+                )
             )
         )
     ):

@@ -283,6 +283,7 @@ def capture_mcp_definition_maximum(app: Any) -> dict[str, str]:
 
 
 _UNSET_SKILL_CONTEXT = object()
+_UNSET_PREPARED_INPUT = object()
 
 
 def capture_console_turn_configuration(
@@ -304,6 +305,9 @@ def capture_console_turn_configuration(
     _require_current=None,
     _plugin_service: Any = _UNSET_PLUGIN_SERVICE,
     _skill_context_maximum: Any = _UNSET_SKILL_CONTEXT,
+    _change_review_admission: Any = _UNSET_PREPARED_INPUT,
+    _character_authority: Any = _UNSET_PREPARED_INPUT,
+    _prompt_transform_inputs: Any = _UNSET_PREPARED_INPUT,
 ) -> ConsoleTurnConfigurationSnapshot:
     """Capture common domain state using the adapters' explicit selected values.
 
@@ -322,6 +326,9 @@ def capture_console_turn_configuration(
         tool_policy_profile_id: Explicit profile value; None keeps default semantics.
         persona_policy_rules: Explicit rules; None keeps the empty posture.
         mcp_definition_maximum: Prepared definitions, or None for fresh sync capture.
+        _change_review_admission: Prepared roots, aliases and skipped roots.
+        _character_authority: Prepared character authority, including None.
+        _prompt_transform_inputs: Prepared prompt-transform inputs.
 
     Returns:
         The complete detached snapshot. It carries no execution permission and
@@ -337,9 +344,12 @@ def capture_console_turn_configuration(
     session = next(item for item in store.sessions() if item.id == session_id)
     held_scope = session.rag_scope_holder.scope
     workspace_id = store.session_workspace_id(session_id)
-    roots, aliases, skipped = checked(
-        capture_change_review_admission, app, workspace_id
-    )
+    if _change_review_admission is _UNSET_PREPARED_INPUT:
+        roots, aliases, skipped = checked(
+            capture_change_review_admission, app, workspace_id
+        )
+    else:
+        roots, aliases, skipped = _change_review_admission
     model = provider_selection.explicit_model or provider_selection.configured_model
     if mcp_definition_maximum is None:
         mcp_definition_maximum = capture_mcp_definition_maximum(app)
@@ -377,10 +387,16 @@ def capture_console_turn_configuration(
             conversations_allowed=held_scope is None,
         ),
         project_authority=project_authority,
-        character_authority=checked(
-            capture_character_authority, session, character_repository
+        character_authority=(
+            checked(capture_character_authority, session, character_repository)
+            if _character_authority is _UNSET_PREPARED_INPUT
+            else _character_authority
         ),
-        prompt_transform_inputs=checked(capture_prompt_transform_inputs, app, session),
+        prompt_transform_inputs=(
+            checked(capture_prompt_transform_inputs, app, session)
+            if _prompt_transform_inputs is _UNSET_PREPARED_INPUT
+            else _prompt_transform_inputs
+        ),
         skill_context_maximum=(
             checked(
                 capture_skill_context_maximum,

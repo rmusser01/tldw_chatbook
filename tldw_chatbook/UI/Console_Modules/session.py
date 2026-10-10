@@ -169,7 +169,6 @@ from ...Chat.console_chat_store import (
 )
 from ...Chat.console_chat_controller import (
     ProjectInstructionBindingRecovery,
-    capture_project_instruction_authority,
     resolve_project_instruction_binding,
 )
 from ...Chat.console_configuration_capture import capture_console_turn_configuration
@@ -4536,8 +4535,10 @@ class ConsoleSessionController:
         *,
         mcp_definition_maximum: Mapping[str, str] | None = None,
     ) -> ConsoleTurnConfigurationSnapshot:
-        """Resolve mounted inputs for the shared configuration producer."""
+        """Resolve mounted inputs, consuming matched worker authority once."""
+        from types import MethodType
         from ...Chat.console_agent_bridge import console_run_budget
+        from .turn_admission import authority_for, authority_inputs
         from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 
         app_config = self._provider_readiness_app_config()
@@ -4550,27 +4551,46 @@ class ConsoleSessionController:
         store = self._ensure_console_chat_store()
         workspace_id = store.session_workspace_id(session_id)
         session = next(item for item in store.sessions() if item.id == session_id)
+        authority = authority_for(
+            self,
+            authority_inputs(self, session_id),
+            mcp_definition_maximum=mcp_definition_maximum,
+        )
+        policy_values = {}
+        for name, original, code in _CONSOLE_CAPTURE_POLICY_ADAPTERS:
+            callback = getattr(self, name)
+            stock = (
+                isinstance(callback, MethodType)
+                and callback.__self__ is self
+                and callback.__func__ is original
+                and original.__code__ is code
+            )
+            if name == "_resolve_turn_tool_policy_profile_id":
+                policy_values[name] = (
+                    authority.tool_policy_profile_id
+                    if stock
+                    else callback(workspace_id)
+                )
+            else:
+                policy_values[name] = (
+                    authority.persona_policy_rules if stock else callback(session_id)
+                )
         app_instance = getattr(self, "app_instance", None)
         agent_runtime_enabled = _console_live_runtime_enabled(
             getattr(app_instance, "app_config", None), console_config
-        )
-        agent_dispatch_eligible = bool(
-            agent_runtime_enabled
-            and not store.session_one_shot_prefill(session_id)
-            and session.assistant_kind != "character"
         )
         return capture_console_turn_configuration(
             app_instance,
             store,
             session_id,
             provider_selection=selection,
-            scratch_space=self._scratch_snapshot_provider(session_id),
+            scratch_space=authority.scratch_space,
             presentation_context=store.presentation_context(
                 session_id, _console_global_user_display_name(app_config)
             ),
             rag_defaults={
                 "source_types": tuple(self._rag_source_types_accessor()),
-                "top_k": self._rag_top_k_accessor(),
+                "top_k": authority.rag_top_k,
             },
             tool_configuration={
                 "session_ephemeral": bool(session.ephemeral),
@@ -4607,11 +4627,7 @@ class ConsoleSessionController:
                     console_config.get("exchange_capture", True), True
                 ),
             },
-            project_authority=capture_project_instruction_authority(
-                session,
-                getattr(app_instance, "workspace_registry_service", None),
-                include_bindings=agent_dispatch_eligible,
-            ),
+            project_authority=authority.project_authority,
             skill_workspace_id=None,
             character_repository=getattr(
                 (
@@ -4622,9 +4638,23 @@ class ConsoleSessionController:
                 "_visual_identity_repository",
                 None,
             ),
-            tool_policy_profile_id=self._resolve_turn_tool_policy_profile_id(workspace_id),
-            persona_policy_rules=self._resolve_turn_persona_policy_rules(session_id),
-            mcp_definition_maximum=mcp_definition_maximum,
+            tool_policy_profile_id=policy_values[
+                "_resolve_turn_tool_policy_profile_id"
+            ],
+            persona_policy_rules=policy_values["_resolve_turn_persona_policy_rules"],
+            mcp_definition_maximum=(
+                authority.mcp_definition_maximum
+                if mcp_definition_maximum is None
+                else mcp_definition_maximum
+            ),
+            _change_review_admission=(
+                authority.workspace_roots,
+                authority.change_review_root_aliases,
+                authority.change_review_skipped_roots,
+            ),
+            _character_authority=authority.character_authority,
+            _prompt_transform_inputs=authority.prompt_transform_inputs,
+            _skill_context_maximum=authority.skill_context_maximum,
         )
 
     #: Cross-pass memo for `_default_console_session_settings`, as

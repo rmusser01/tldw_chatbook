@@ -22761,12 +22761,15 @@ class ConsoleChatController:
 
         app, store = self.app, self.store
         service = getattr(app, "unified_mcp_service", None)
-        if not standard_console_sources(service):
-            if provided_selection is None:
+        stock_mcp = standard_console_sources(service)
+        if not stock_mcp:
+            if provided_selection is None and not mounted:
                 return synchronous_capture()
-            if service is not None:
+            if provided_selection is not None and service is not None:
                 raise RecoveryRequired("console_snapshot_owner_changed")
-        if _prepared_skills is None:
+        if not stock_mcp and provided_selection is None:
+            eligible_sources = False
+        elif _prepared_skills is None:
             eligible_sources = standard_console_configuration_sources(
                 app, store, self, session_id=session_id
             )
@@ -22886,16 +22889,7 @@ class ConsoleChatController:
                 and left.__func__ is right.__func__
             )
 
-        def require_current():
-            if _prepared_skills is not None:
-                require_prepared_skill_context(
-                    _prepared_skills,
-                    app,
-                    store,
-                    self,
-                    session_id=session_id,
-                    selection=selection,
-                )
+        def require_resident_current():
             current = next(
                 (row for row in store.sessions() if row.id == session_id), None
             )
@@ -22913,11 +22907,6 @@ class ConsoleChatController:
                 or sys.modules.get("tldw_chatbook.config") is not config
                 or getattr(app, "unified_mcp_service", None) is not service
                 or config.current_config_identity() != configuration_identity
-                or (
-                    selection is None
-                    and self._provider_selection_for_session(session_id)
-                    != legacy_selection
-                )
                 or store.session_settings_revision(session_id) != settings_revision
                 or (
                     session.incarnation_id,
@@ -22940,9 +22929,9 @@ class ConsoleChatController:
                 )
             ):
                 raise RecoveryRequired("console_snapshot_owner_changed")
+
             if mounted and (
                 owner.app_instance is not app
-                or owner._ensure_console_chat_store() is not store
                 or not all(
                     same(getattr(owner, name, None), callback)
                     for name, callback in selected_callbacks
@@ -22967,12 +22956,58 @@ class ConsoleChatController:
             ):
                 raise RecoveryRequired("console_snapshot_owner_changed")
 
+        def require_current():
+            require_resident_current()
+            if stock_mcp and not standard_console_sources(service):
+                raise RecoveryRequired("console_snapshot_owner_changed")
+            if _prepared_skills is not None:
+                require_prepared_skill_context(
+                    _prepared_skills,
+                    app,
+                    store,
+                    self,
+                    session_id=session_id,
+                    selection=selection,
+                )
+            if (
+                selection is None
+                and self._provider_selection_for_session(session_id) != legacy_selection
+            ):
+                raise RecoveryRequired("console_snapshot_owner_changed")
+            if mounted and owner._ensure_console_chat_store() is not store:
+                raise RecoveryRequired("console_snapshot_owner_changed")
+
         require_current()
         if selection is None:
-            # Keep known custom mounted callbacks on their previous loop route.
-            service = getattr(app, "unified_mcp_service", None)
-            if not standard_console_sources(service):
-                return synchronous_capture()
+            if mounted:
+                from tldw_chatbook.Backup_Recovery.participants import (
+                    run_finite_local_worker,
+                )
+                from tldw_chatbook.UI.Console_Modules.turn_admission import (
+                    applied,
+                    authority_inputs,
+                    capture_authority,
+                )
+                from .console_preparation_reads import run_preparation_read
+
+                inputs = authority_inputs(owner, session_id)
+                require_current()
+                observers = () if runtime is None else (runtime._preparation_reads,)
+                authority = await run_preparation_read(
+                    lambda: run_finite_local_worker(capture_authority, owner, inputs),
+                    creator=self,
+                    session_id=session_id,
+                    reads=self._preparation_reads,
+                    observers=observers,
+                    require_current=require_resident_current,
+                )
+                require_current()
+                if authority_inputs(owner, session_id).key != authority.key:
+                    raise RecoveryRequired("console_snapshot_owner_changed")
+                with applied(authority):
+                    context = synchronous_capture()
+                require_current()
+                return validate(context)
             maximum = await capture_console_definition_maximum(
                 service, CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS
             )
