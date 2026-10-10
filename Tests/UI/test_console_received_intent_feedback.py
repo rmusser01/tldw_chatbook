@@ -736,3 +736,36 @@ async def test_stopping_received_send_clears_feedback_and_keeps_draft(monkeypatc
             assert case.composer.draft_text() == case.draft
             assert case.store.session_draft(case.session.id) == case.draft
             assert case.provider_calls == []
+
+
+async def test_unrelated_acknowledgement_does_not_admit_a_blocked_pressed_capture(
+    monkeypatch,
+):
+    from tldw_chatbook.UI.Console_Modules.send_acknowledgement import (
+        acknowledgement_for,
+    )
+    from tldw_chatbook.UI.Console_Modules.wiring import receive_console_visible_intent
+
+    async with _received_console_case(monkeypatch, "unrelated-ack") as case:
+        inputs = case.store.session_input_snapshot(case.session.id)
+        stash = case.composer.capture_draft_for_send()
+        ack = acknowledgement_for(case.console)
+        token = ack.begin(case.session.id, case.draft)
+        assert token is not None
+        case.composer._send_blocked = True
+        try:
+            assert (
+                receive_console_visible_intent(
+                    case.console,
+                    case.draft,
+                    case.session.id,
+                    stash,
+                    _captured_inputs=inputs,
+                )
+                is None
+            )
+            assert case.store.received_turn_for_session(case.session.id) is None
+            assert not case.runtime.has_custodied_turns(case.session.id)
+            assert not case.probe.entered.is_set()
+        finally:
+            ack.release(token)

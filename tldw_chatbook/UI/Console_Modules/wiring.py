@@ -377,7 +377,23 @@ def receive_console_visible_intent(
             )
             return ""
     if getattr(composer, "_send_blocked", False):
-        return None
+        from .send_acknowledgement import ConsoleSendAcknowledgement
+
+        send_ack = getattr(screen, "_console_send_ack", None)
+        pending = (
+            send_ack._dispatching_send(session_id)
+            if type(send_ack) is ConsoleSendAcknowledgement
+            else None
+        )
+        # The dispatching press disables subsequent Sends during its own paint.
+        # This presentation state never replaces the authority checks below.
+        if (
+            _captured_inputs is None
+            or pending is None
+            or pending.admitted
+            or pending.row.content != draft
+        ):
+            return None
     callbacks = getattr(screen, "_console_received_live_adapters", ())
     if not callbacks or any(
         getattr(target, name, None) is not original
