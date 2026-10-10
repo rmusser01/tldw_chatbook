@@ -245,3 +245,6 @@ Tests/UI/test_roleplay_hostile_text_surfaces.py
 Tests/UI/test_console_assistant_turn.py::test_transcript_update_stops_after_real_owner_removal
 Tests/UI/test_console_assistant_turn.py::test_transcript_refresh_lock_resume_stops_after_real_removal
 Tests/UI/test_console_assistant_turn.py::test_activity_projection_during_child_composition_eventually_renders
+
+# TASK-34786: the local composer host must retire its borrowed app database owners.
+Tests/UI/test_console_tab_switch_binds_composer.py::test_running_harness_retires_actual_borrowed_database_connections
