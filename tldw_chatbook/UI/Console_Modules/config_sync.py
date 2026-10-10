@@ -291,7 +291,10 @@ def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
     states = controller.run_states() if controller is not None else {}
     viewed_active = controller is not None and bool(screen._console_run_active())
     error = getattr(config, "_CONFIG_PERSISTENCE_ERROR", None)
-    evidence = shared_connection_evidence(lambda: screen.app)
+    # Instance-held owners only: screen doubles resolve class attributes
+    # (``app``, the summary descriptors) as bound methods.
+    evidence = shared_connection_evidence(lambda: app) if app is not None else None
+    retrieval = getattr(screen, "_retrieval", None)
     run: tuple = ()
     if controller is not None:
         run = (_pending_rounds(store, controller),)
@@ -309,8 +312,8 @@ def _projection_inputs(screen: Any) -> tuple[tuple, tuple]:
     objects = (
         getattr(config, "_CONFIG_CACHE", None),
         getattr(config, "_SETTINGS_CACHE", None),
-        getattr(screen, "_active_dictionaries_summary", None),
-        getattr(screen, "_active_world_books_summary", None),
+        getattr(retrieval, "_active_dictionaries_summary", None),
+        getattr(retrieval, "_active_world_books_summary", None),
     )
     values = (
         config.current_config_identity(),

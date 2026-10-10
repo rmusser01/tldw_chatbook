@@ -109,8 +109,9 @@ class _Screen:
             console_mcp_not_connected_count=0,
             console_provider_ready=None,
         )
-        self._active_dictionaries_summary = None
-        self._active_world_books_summary = None
+        self._retrieval = SimpleNamespace(
+            _active_dictionaries_summary=None, _active_world_books_summary=None
+        )
         self.scopes = 0
         self._workspace = SimpleNamespace(tick_workspace_build_scope=self._scope)
         self.active = False
@@ -299,7 +300,7 @@ def _connection_evidence(monkeypatch, screen):
 
 
 def _dictionaries_summary(monkeypatch, screen):
-    screen._active_dictionaries_summary = object()
+    screen._retrieval._active_dictionaries_summary = object()
 
 
 @pytest.mark.parametrize(
