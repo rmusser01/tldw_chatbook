@@ -347,3 +347,12 @@ async def test_a_burst_of_chip_activations_opens_one_dialog(
             f"{selector} stacked {len(dialogs)} dialogs: "
             f"{[type(screen).__name__ for screen in dialogs]}"
         )
+
+        # The refusal lasts only while a dialog covers the Console.
+        await host.pop_screen()
+        await _settle(pilot, rounds=5)
+        assert host.screen_stack[-1] is console
+        chip.post_message(request_type())
+        await _settle(pilot)
+        reopened = host.screen_stack[host.screen_stack.index(console) + 1 :]
+        assert [type(screen) for screen in reopened] == [type(dialogs[0])]
