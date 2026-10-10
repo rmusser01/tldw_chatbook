@@ -181,6 +181,16 @@ async def _wait_for_notifications(pilot: Any, app: App, count: int) -> list[Any]
     raise AssertionError(f"expected {count} notification(s), got {list(app._notifications)}")
 
 
+async def _wait_for_notification_message(pilot: Any, app: App, message: str) -> Any:
+    """Return the app's notification whose message is ``message`` once it arrives."""
+    for _ in range(200):
+        for notification in list(app._notifications):
+            if notification.message == message:
+                return notification
+        await pilot.pause(0.02)
+    raise AssertionError(f"no {message!r} notification, got {list(app._notifications)}")
+
+
 def _rendered_toasts(app: App) -> list[str]:
     """Plain text of every Toast mounted on the active screen."""
     return [toast.render().plain for toast in app.screen.query("Toast")]
@@ -308,10 +318,10 @@ async def test_console_delete_undo_toasts_render_runtime_text_literally(monkeypa
         refused, *_ = await _wait_for_notifications(pilot, app, 1)
         await _assert_toast_literal(pilot, app, refused, HOSTILE_ERROR)
 
-        # Restored: the success toast is literal as well.
+        # Restored: the success toast is literal as well. Found by its message, not its
+        # position: Textual expires a toast after 5 s, so on a slow runner the refusal
+        # can be gone before the success toast arrives.
         await press_undo()
-        notifications = await _wait_for_notifications(pilot, app, 2)
-        restored = notifications[1]
-        assert restored.message == "Restored 2 messages."
+        restored = await _wait_for_notification_message(pilot, app, "Restored 2 messages.")
         assert restored.markup is False
         assert not restore_outcomes
