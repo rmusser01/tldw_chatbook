@@ -398,6 +398,8 @@ async def test_new_conversation_uses_store_default_without_post_create_write() -
     controller._sync_native_console_chat_ui_fn = _sync
     controller._sync_temporary_chip_fn = lambda: None
     controller._focus_composer_if_needed_fn = lambda **_kwargs: None
+    # TASK-33622.7: the new tab binds the composer before any await.
+    controller._bind_composer_to_active_session = lambda **_kwargs: None
 
     await controller._create_native_console_session_from_active_context()
 
