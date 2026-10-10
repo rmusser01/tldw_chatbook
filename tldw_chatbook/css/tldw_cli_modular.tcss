@@ -8630,16 +8630,16 @@ ConsoleSettingsModal .console-context-action-row {
 }
 
 
-.console-settings-field-row Input,
-.console-settings-field-row Select {
+.console-settings-field-row ConsoleSettingsInput,
+.console-settings-field-row ConsoleSettingsSelect {
     width: $ds-size-13;
 }
 
-#console-settings-context-view Input {
+#console-settings-context-view ConsoleSettingsInput {
     width: $ds-size-12;
 }
 
-#console-settings-context-view Select {
+#console-settings-context-view ConsoleSettingsSelect {
     width: $ds-size-32;
 }
 

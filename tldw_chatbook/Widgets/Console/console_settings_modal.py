@@ -151,6 +151,7 @@ from .console_context_controls import (
 # ConsoleSettingsInput only lazily (inside compose) so this edge cannot cycle.
 from .console_endpoint_template_modal import ConsoleEndpointTemplateModal
 from .console_settings_field_row import (
+    ConsoleSettingsSelect,
     CONNECTION_DISCLOSURE_ID,
     CONNECTION_FOCUS_IDS,
     CONNECTION_TITLE,
@@ -1506,7 +1507,7 @@ class ConsoleSettingsModal(
             and control_id not in self._invalid_generation_choice_drafts
             else Select.NULL
         )
-        select = Select(
+        select = ConsoleSettingsSelect(
             [(choice.replace("xhigh", "x-high").title(), choice) for choice in options],
             prompt=BLANK_CHOICE_PROMPT,
             value=selected,
@@ -1862,7 +1863,7 @@ class ConsoleSettingsModal(
                             yield self._modal_label(
                                 MODEL_FIELD_LABELS["conversation_budget_mode"]
                             )
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     ("Automatic", ContextBudgetMode.AUTOMATIC.value),
                                     ("Custom", ContextBudgetMode.CUSTOM.value),
@@ -1909,7 +1910,7 @@ class ConsoleSettingsModal(
                             yield self._modal_label(
                                 MODEL_FIELD_LABELS["compaction_mode"]
                             )
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     ("Ask", ContextCompactionMode.ASK.value),
                                     (
@@ -1924,7 +1925,7 @@ class ConsoleSettingsModal(
                             )
                         with Horizontal(classes="console-settings-modal-row"):
                             yield self._modal_label("Representation")
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     (
                                         "Text summary",
@@ -1986,7 +1987,7 @@ class ConsoleSettingsModal(
                         )
                         with Horizontal(classes="console-settings-modal-row"):
                             yield self._modal_label("If compaction fails")
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     (
                                         "Stop and ask",
@@ -2005,7 +2006,7 @@ class ConsoleSettingsModal(
                             yield self._modal_label(
                                 MODEL_FIELD_LABELS["compaction_carry_forward_mode"]
                             )
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 CARRY_FORWARD_OPTIONS,
                                 value=self._context_state.resolved_policy.policy.carry_forward_mode.value,
                                 id="console-context-carry-forward",
@@ -2024,7 +2025,7 @@ class ConsoleSettingsModal(
                         )
                         with Horizontal(classes="console-settings-modal-row"):
                             yield self._modal_label("History policy")
-                            yield Select(
+                            yield ConsoleSettingsSelect(
                                 [
                                     ("Auto", "auto"),
                                     ("Include", "include"),

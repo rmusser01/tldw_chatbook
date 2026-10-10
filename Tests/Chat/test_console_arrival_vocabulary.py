@@ -51,6 +51,10 @@ def _context(request_tokens, ceiling):
         conversation_tokens=None,
         conversation_budget_tokens=None,
         compaction_trigger_tokens=None,
+        # The real ConsoleContextControlState carries the model window and
+        # whether it is verified (TASK-33007 #12 reads both).
+        model_window_tokens=ceiling,
+        model_window_verified=True,
         resolved_policy=SimpleNamespace(
             policy=SimpleNamespace(compaction_mode=ContextCompactionMode.OFF)
         ),
