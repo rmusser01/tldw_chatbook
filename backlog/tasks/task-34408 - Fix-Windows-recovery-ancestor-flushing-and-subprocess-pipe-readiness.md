@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-04 18:37'
-updated_date: '2026-10-10 03:56'
+updated_date: '2026-10-10 21:35'
 labels: []
 dependencies: []
 ---
@@ -57,6 +57,14 @@ Final platform proof on 401037ceb1 verifies the actual TEMP/TMP product allowlis
 
 2026-10-10 independent PR review and rebase: the eight-file Eval/retention/durability/native-temp/pipe pipeline passes all81 cases on macOS in145.88s at the rebased source based on dev bade7c9a9d. Derived-artifact preflight passes; independent read-only review of the published implementation found no actionable introduced issue. Historical Linux/Windows CI keeps its original head identities; no local Windows or installed-wheel qualification is claimed. Exact-head protected CI remains required before merge. Existing ADR-220/ADR-126 govern.
 Integrated predecessor verification (2026-10-10): local runtime 5242b8f95c817f73332d3ca3b75f789810cb3486 includes reviewed PR2882 and PR2955 changes; the same eight-module native fixture selection passes all 81 tests on macOS in 143.71 seconds. Both new lesson entries were preserved during rebase. This receipt does not qualify native Windows on this rebased revision; the final pushed revision still requires its platform evidence matrix and protected CI. Historical Windows/Linux/macOS receipts and installed-wheel limitations retain their original identities.
+
+2026-10-10 b154-stack integration qualification
+Normal rebase carries own PR3018 range 02135a825e8252c90db02dc0a89f7614d64b62df..33c42af3c765aaf8abcc78d4cb6ca4b3dfb1ebd9 onto reviewed PR2955 head b1546a7c637d0953a06832e31fedbd1a69cc9a59, producing runtime dd3080dcc661be54eb63665a406dbb707378d630. All 19 own commits carry. Complete --no-renames correspondence has 37 own paths: all 36 nonlesson blobs/modes identical, and the lesson is the exact union preserving both own insertions and every upstream record with one blank separator. Only appended lesson context needed resolution; no source conflict, borrowed fix or speculative change. Proof: /private/tmp/pr3018-b154-correspondence.json and /private/tmp/pr3018-b154-range-diff.log.
+Fresh SAME eight native modules from /private/tmp/tldw-sequence-verification.json run through python -m Tests.windows_private_fixture_runner with --timeout=180 and own /tmp/pr3018-b154-native basetemp: all 81 macOS cases pass in 164.35s, zero failures/errors/skips/warnings. The full-App original capture, isolated restore, source/candidate removal, reopened inactive Eval retention and complete rebackup case passes. /private/tmp/pr3018-b154-native.log, native.xml and native-summary.json record this exact source; independently parsed XML totals the same 81 cases across the eight modules. Older 145.88s/143.71s and hosted platform receipts retain their original identities; this is a separate new phase.
+Full preflight passes (502 markup occurrences pinned; 175 gated UI entries). Syntax and fatal Ruff checks on all 26 owned Python paths, whitespace and all 5102 task-file readability checks pass. /private/tmp/pr3018-b154-preflight.log and /private/tmp/pr3018-b154-static.log. Independent reviewer review_3029 cleared immutable dd3080dcc661be54eb63665a406dbb707378d630 onto b1546a7c637d0953a06832e31fedbd1a69cc9a59, recomputed complete source/lesson correspondence and actual XML/receipt counts, and verified newbase Console lifecycle/writer-fixture deltas leave the native config/recovery/Eval seams unchanged. No actionable findings.
+All existing AC remain qualified and checked; both tasks stay Done. This receipt qualifies fresh macOS only. Historical Windows/Linux native heads, capability skips and the separate installed-wheel 300-second release limitation remain intact; no local Windows/Linux renewal, full sweep, relaxed budget/deadline/native guard or new feature is claimed. Exact final published-head platform/required CI remains the integration gate. Root owns the sequential merge/carry; no push or remote mutation. The following metadata-only commit receives no attributed runtime rerun.
+Current stack_parent: b1546a7c637d0953a06832e31fedbd1a69cc9a59
+ADR required: no new ADR. ADR paths: backlog/decisions/220-evaluation-defaults-and-private-overrides.md and backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: mechanical source-equivalent carry and verification records preserve the accepted ownership and durability contracts.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering Provenance
