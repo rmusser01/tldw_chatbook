@@ -54,7 +54,7 @@ Size facts at HEAD (Tests/Architecture/test_module_size_ratchet.py and test_scre
 - Tests always run in parallel (xdist, `-n 6 --dist loadfile`); serial only for Tests/Architecture.
 - Per task, run the test files that cover what you changed, once, at HEAD. The phase runs ONE base-vs-head comparison at its end, both trees at once.
 - Evidence is the test names plus the command and its summary line in the report. Commit no per-task captures or evidence files; the Capture phase captures every changed surface once.
-- Execution order: four waves, run in order: Wave 1 = Tasks 1, 2, 3, 4, 5; Wave 2 = Tasks 6, 7, 8, 9, 10; Wave 3 = Tasks 11, 12, 13, 14; Wave 4 = Tasks 15, 16. Inside a wave, the tasks run in parallel git worktrees and are cherry-picked together, so their files are disjoint (each task's References list what it touches, and a 'Must not edit' line names the shared files it leaves alone). Each wave holds at most one task on each of settings_screen.py, chat_screen.py and console_settings_modal.py. Before Wave 1, rebase this branch onto Phase 8's final head; it is stacked on Phase 8's in-progress branch, which is stacked on Phase 7 (PR #3057). At each wave's cherry-pick, resolve conflicts in the generated CSS bundle by re-running tldw_chatbook/css/build_css.py, never by hand.
+- Execution order: five waves, run in order: Wave 1 = Tasks 1, 3, 4, 5; Wave 2 = Task 2 alone; Wave 3 = Tasks 6, 7, 8, 9, 10; Wave 4 = Tasks 11, 12, 13, 14; Wave 5 = Tasks 15, 16. Task 2 holds settings_screen.py, chat_screen.py and console_model_popover.py, which Phase 8's Tasks 1-2 edit on the branch below this one, so it waits for the rebase onto Phase 8's final head; Wave 1 runs before that rebase because its files are outside Phase 8's. Inside a wave, the tasks run in parallel git worktrees and are cherry-picked together, so their files are disjoint (each task's References list what it touches, and a 'Must not edit' line names the shared files it leaves alone). Each wave holds at most one task on each of settings_screen.py, chat_screen.py and console_settings_modal.py. Before Wave 2, rebase this branch onto Phase 8's final head; it is stacked on Phase 8's in-progress branch, which is stacked on Phase 7 (PR #3057). At each wave's cherry-pick, resolve conflicts in the generated CSS bundle by re-running tldw_chatbook/css/build_css.py, never by hand.
 
 ## Task 1: Repair the red modal-inventory, endpoint-creation and anchor-geometry tests (TASK-33003.19, TASK-33006.17, TASK-33006.24)
 
@@ -64,7 +64,7 @@ Task files:
 - backlog/tasks/task-33006.24 - Steady-the-suspended-anchor-geometry-test.md
 Wave: 1
 Depends on: —
-Must not edit: console_model_popover.py (Task 2 owns it in this wave): fix the [ConsoleModelPopover] contract case on the test side.
+Must not edit: console_model_popover.py (Task 2 owns it): fix the [ConsoleModelPopover] contract case on the test side.
 
 ### Why
 
@@ -109,7 +109,7 @@ Task files:
 - backlog/tasks/task-33005.7 - Bring-the-remaining-readiness-copy-onto-the-one-vocabulary.md
 - backlog/tasks/task-33005.11 - Never-read-verified-for-a-model-the-key-check-did-not-list.md
 - backlog/tasks/task-33005.15 - Keep-the-Settings-Overview-readiness-line-in-step-with-the-Console.md
-Wave: 1
+Wave: 2
 Depends on: —
 
 ### Why
@@ -281,7 +281,7 @@ Task files:
 - backlog/tasks/task-33006.14 - Open-focus-on-a-blocked-chat-is-tested-when-Connection-starts-collapsed.md
 - backlog/tasks/task-33006.19 - Served-model-listings-are-kept-per-endpoint-not-per-provider.md
 - backlog/tasks/task-33006.25 - Open-pick-mode-after-a-new-endpoints-listing-even-if-the-close-guard-appeared.md
-Wave: 2
+Wave: 3
 Depends on: —
 
 ### Why
@@ -322,7 +322,7 @@ Task files:
 - backlog/tasks/task-33003.14 - Field-search-can-reach-Console-Behaviors-generation-fallbacks.md
 - backlog/tasks/task-33005.8 - Re-render-Settings-provider-test-rows-on-Save.md
 - backlog/tasks/task-33007.11 - Settings-keeps-keyboard-focus-off-the-navigation-bar-after-the-Revert-dialog-closes.md
-Wave: 2
+Wave: 3
 Depends on: —
 Must not edit: Tests/UI/test_settings_image_gen_panel.py and Tests/UI/test_settings_video_gen_defaults.py (Task 10 owns them in this wave): put the 33002.11 pins in Tests/UI/test_settings_state_line_unsaved_count.py.
 
@@ -369,7 +369,7 @@ Must not edit: Tests/UI/test_settings_image_gen_panel.py and Tests/UI/test_setti
 Task files:
 - backlog/tasks/task-33002.19 - Console-mode-strip-raises-MarkupError-on-a-markup-like-default-provider.md
 - backlog/tasks/task-33006.20 - The-app-footer-refreshes-after-a-modal-closes-so-Alt-A-is-not-pushed-off-at-211-columns.md
-Wave: 2
+Wave: 3
 Depends on: —
 Must not edit: console_settings_modal.py (Task 6 owns it in this wave). Fix the footer from Chat settings' close callback in chat_screen.py or in a UI/Console_Modules module.
 
@@ -400,7 +400,7 @@ Must not edit: console_settings_modal.py (Task 6 owns it in this wave). Fix the 
 Task files:
 - backlog/tasks/task-33001.14 - Legacy-summarizers-send-an-env-key-for-a-provider-whose-credential-source-is-none.md
 - backlog/tasks/task-33001.15 - Legacy-API-only-key-is-not-materialised-when-a-model-save-records-stored.md
-Wave: 2
+Wave: 3
 Depends on: —
 Must not edit: settings_screen.py (Task 7 owns it in this wave). The fix belongs in provider_setup_persistence.py. If the call site really has to change, stop and report rather than editing the screen.
 
@@ -434,7 +434,7 @@ Task files:
 - backlog/tasks/task-33003.22 - The-dimension-literal-and-Python-style-governance-ratchets-are-back-at-zero.md
 - backlog/tasks/task-33641.2 - The-Lab-GGUF-Model-source-label-and-its-Select-share-one-row.md
 - backlog/tasks/task-33641.3 - Image-and-Video-generation-backend-rows-show-each-backend-name-whole.md
-Wave: 2
+Wave: 3
 Depends on: —
 
 ### Why
@@ -490,7 +490,7 @@ Task files:
 - backlog/tasks/task-33006.21 - Chat-settings-syncs-default-readiness-once-on-mount.md
 - backlog/tasks/task-33006.22 - The-Context-view-says-why-Apply-is-unavailable-while-an-endpoint-is-unsaved.md
 - backlog/tasks/task-33006.23 - A-focused-view-tab-paints-its-Selected-mark-after-a-keyboard-round-trip.md
-Wave: 3
+Wave: 4
 Depends on: —
 
 ### Why
@@ -529,7 +529,7 @@ Depends on: —
 Task files:
 - backlog/tasks/task-33005.9 - Home-Library-and-the-first-run-wizard-read-shared-connection-evidence.md
 - backlog/tasks/task-33005.10 - Measure-and-harden-the-Phase-5-evidence-paths.md
-Wave: 3
+Wave: 4
 Depends on: —
 Must not edit: Tests/UI/test_console_session_settings.py (Task 11 owns it in this wave). Put the keyed Settings → Chat settings case in a new test file.
 
@@ -571,7 +571,7 @@ Must not edit: Tests/UI/test_console_session_settings.py (Task 11 owns it in thi
 Task files:
 - backlog/tasks/task-33666 - Quitting-during-a-hung-reply-never-exits-the-process.md
 - backlog/tasks/task-33667 - Settle-a-dispatch-recovery-from-a-second-open-of-the-same-chat.md
-Wave: 3
+Wave: 4
 Depends on: —
 
 ### Why
@@ -603,7 +603,7 @@ Task files:
 - backlog/tasks/task-33001.11 - ProductionApp-provider-selection-tests-never-run-their-assertions-in-CI.md
 - backlog/tasks/task-33002.17 - Phase-2-Settings-tests-join-the-UI-PR-gate-census.md
 - backlog/tasks/task-33641.5 - A-PR-lane-runs-the-model-default-writer-tests-in-test_console_settings_defaults.md
-Wave: 3
+Wave: 4
 Depends on: Task 4 (raw-scope change) and Task 7 (it edits Tests/UI/test_settings_state_line_unsaved_count.py), both in earlier waves.
 
 ### Why
@@ -644,7 +644,7 @@ Task files:
 - backlog/tasks/task-33006.11 - Providers-without-a-PROVIDER-PARAM-MAP-entry-get-a-support-answer-for-their-samplers.md
 - backlog/tasks/task-33006.12 - A-field-whose-support-is-unknown-keeps-its-own-help-visible-beside-the-neutral-note.md
 - backlog/tasks/task-33006.16 - A-pick-does-not-list-fields-the-user-never-touched-in-the-unsaved-prompt.md
-Wave: 4
+Wave: 5
 Depends on: —
 
 ### Why
@@ -688,7 +688,7 @@ Task files:
 - backlog/tasks/task-33005.12 - Show-the-models-a-local-probe-listed-in-Switch-model.md
 - backlog/tasks/task-33005.14 - Polish-three-small-model-surface-findings-from-the-Phase-5-captures.md
 - backlog/tasks/task-33006.18 - Type-the-switcher-sources-the-Console-hands-pick-mode.md
-Wave: 4
+Wave: 5
 Depends on: —
 Must not edit: providers_models_card.py (read only). Fix the picker in model_search_picker.py.
 
@@ -729,12 +729,13 @@ Must not edit: providers_models_card.py (read only). Fix the picker in model_sea
 
 ## Execution order
 
-[[1, 2, 3, 4, 5], [6, 7, 8, 9, 10], [11, 12, 13, 14], [15, 16]]
+[[1, 3, 4, 5], [2], [6, 7, 8, 9, 10], [11, 12, 13, 14], [15, 16]]
 
-- Wave 1: Tasks 1, 2, 3, 4, 5.
-- Wave 2: Tasks 6, 7, 8, 9, 10.
-- Wave 3: Tasks 11, 12, 13, 14.
-- Wave 4: Tasks 15, 16.
+- Wave 1: Tasks 1, 3, 4, 5 (before the rebase onto Phase 8's final head).
+- Wave 2: Task 2 (after that rebase).
+- Wave 3: Tasks 6, 7, 8, 9, 10.
+- Wave 4: Tasks 11, 12, 13, 14.
+- Wave 5: Tasks 15, 16.
 
 ## Closed without code
 
