@@ -6567,15 +6567,23 @@ class ConsoleSessionController:
     def _console_trace_recovery_state(self) -> Any:
         """Project the active pre-dispatch pause, with a context hold's numbers."""
 
-        from ...Chat.console_turn_preparation import library_pause_copy
+        from ...Chat.console_turn_preparation import (
+            ConsolePreparationPauseKind,
+            library_pause_copy,
+        )
 
         controller = self._ensure_console_chat_controller()
         preparation = controller.trace_call_recovery_preparation()
-        outcome = (
-            controller.preparation_outcome(preparation.preparation_id)
-            if preparation is not None
-            else None
-        )
+        # TASK-33621.20: only a Library-paused send has a reason to look up
+        # and pass on (why its search stopped).
+        library: dict[str, str] = {}
+        if (
+            getattr(preparation, "pause_kind", None)
+            is ConsolePreparationPauseKind.RETRIEVAL
+        ):
+            outcome = controller.preparation_outcome(preparation.preparation_id)
+            code = getattr(outcome, "error_code", None)
+            library["library_reason"] = library_pause_copy(code)
         return self._read_trace_recovery_state()(
             preparation,
             context_hold=(
@@ -6583,6 +6591,5 @@ class ConsoleSessionController:
                 if preparation is not None
                 else None
             ),
-            # TASK-33621.20: why a Library-paused send stopped.
-            library_reason=library_pause_copy(getattr(outcome, "error_code", None)),
+            **library,
         )

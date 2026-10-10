@@ -62,13 +62,14 @@ def library_paused(preparation: Any, preparation_id: str) -> bool:
         preparation_id: The paused send's preparation id.
 
     Returns:
-        True only for that preparation, PAUSED with ``RETRIEVAL``.
+        True only for that preparation, PAUSED with ``RETRIEVAL``; False for
+        anything else, including a projection that carries no state.
     """
     return (
-        preparation is not None
-        and preparation.preparation_id == preparation_id
-        and preparation.state is ConsoleTurnPreparationState.PAUSED
-        and preparation.pause_kind is ConsolePreparationPauseKind.RETRIEVAL
+        getattr(preparation, "preparation_id", None) == preparation_id
+        and getattr(preparation, "state", None) is ConsoleTurnPreparationState.PAUSED
+        and getattr(preparation, "pause_kind", None)
+        is ConsolePreparationPauseKind.RETRIEVAL
     )
 
 
