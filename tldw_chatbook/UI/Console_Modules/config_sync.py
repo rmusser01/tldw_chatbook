@@ -1,7 +1,19 @@
-"""The Console's synchronous checked configuration refresh lifetime."""
+"""The Console's synchronous checked configuration refresh lifetime.
 
-from collections.abc import Callable
+Also decides how often the 0.2 s poll pays for it (TASK-33620.15.1).
+"""
+
+import time
+from collections.abc import Awaitable, Callable
 from contextlib import ExitStack
+from contextvars import ContextVar
+from typing import Any
+
+#: TASK-33620.15.1 (owner decision 2026-10-09): during a run, the poll's
+#: config projections run at least this often even when no input changed.
+RUN_BACKSTOP_SECONDS = 1.0
+_clock = time.monotonic
+_POLL_TICK: ContextVar[bool] = ContextVar("console_poll_tick", default=False)
 
 
 def run_console_config_sync(
@@ -152,3 +164,139 @@ def sync_console_rail_visibility(screen) -> bool:
     ):
         return True
     return replay_whole_console_sync(screen)
+
+
+class _Cadence:
+    """When the sync tick last ran its projections, and from which inputs."""
+
+    def __init__(self) -> None:
+        self.requested = 0  # Syncs other than the poll's, counted at entry.
+        self.served = 0  # Requests a completed projection has covered.
+        self.objects: tuple = ()  # Compared by identity (and kept alive).
+        self.values: tuple | None = None
+        self.at = 0.0
+
+
+def _cadence(screen: Any) -> _Cadence:
+    cadence = getattr(screen, "_console_config_cadence", None)
+    if cadence is None:
+        cadence = _Cadence()
+        screen._console_config_cadence = cadence
+    return cadence
+
+
+async def run_periodic_console_sync(sync: Callable[[], Awaitable[Any]]) -> Any:
+    """Run the 0.2 s poll's sync, whose projections may skip their operation.
+
+    Args:
+        sync: Starts the poll's sync (``sync_poll_display_ui`` on the screen).
+
+    Returns:
+        Whatever the sync returned.
+    """
+    token = _POLL_TICK.set(True)
+    try:
+        return await sync()
+    finally:
+        _POLL_TICK.reset(token)
+
+
+def begin_console_sync(screen: Any) -> None:
+    """Classify a sync at its entry; every sync but the poll's asks to project.
+
+    Called before the sync's first await, so the poll's mark is consumed by
+    the sync it was set for: work that sync starts (a worker, a replay) does
+    not inherit it and counts as a request of its own.
+
+    Args:
+        screen: The Console screen whose sync is starting.
+    """
+    if _POLL_TICK.get():
+        _POLL_TICK.set(False)
+    else:
+        _cadence(screen).requested += 1
+
+
+def _projection_inputs(screen: Any) -> tuple[tuple, tuple, bool]:
+    """What the tick's config projections read, cheaply; and whether a run is on.
+
+    Returns:
+        Objects compared by identity (the installed config, settings and
+        persistence error: every install is a new object), values compared by
+        equality, and whether any chat has a run going (the backstop's gate).
+    """
+    from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
+
+    store = getattr(screen, "_console_chat_store", None)
+    controller = getattr(screen, "_console_chat_controller", None)
+    session_id = getattr(store, "active_session_id", None)
+    states = controller.run_states() if controller is not None else {}
+    viewed_active = controller is not None and bool(screen._console_run_active())
+    run_active = viewed_active or any(
+        state.status in FEEDBACK_ACTIVE_RUN_STATUSES for state in states.values()
+    )
+    approvals = (
+        controller.pending_round_count(session_id or "")
+        if controller is not None
+        else 0
+    )
+    objects = (
+        config._CONFIG_CACHE,
+        config._SETTINGS_CACHE,
+        config._CONFIG_PERSISTENCE_ERROR,
+    )
+    values = (
+        config._CONFIG_GENERATION,
+        config._get_effective_config_path(),
+        storage_admission._pause is not None,
+        session_id,
+        tuple(states.items()),
+        viewed_active,
+        approvals,
+    )
+    return objects, values, run_active
+
+
+def project_console_tick(screen: Any) -> bool:
+    """Run the tick's checked config projections unless nothing they read moved.
+
+    TASK-33620.15.1 (owner decision 2026-10-09): the 0.2 s poll paid one
+    checked config operation per tick (median 6-10 ms, max 44-80 ms live,
+    over half of it the operation's entry and exit) to re-render unchanged
+    state. The projections now run when a sync other than the poll's asked,
+    when an input changed since the last projection, or once a second while
+    a run is going. When they run, ``_sync_console_rail_and_controls`` is
+    unchanged: same locks, refusal and deferral. A deferred or failed
+    projection records nothing, so the next tick tries again. A config file
+    edited outside the app is noticed by the projection's own config reads,
+    so during a run it reaches the controls about a second later than it
+    did; outside a run it waits for the next other sync or input change
+    (the poll itself stops once no run work is left).
+
+    Args:
+        screen: The Console screen whose sync tick is running.
+
+    Returns:
+        False when the projection was deferred (the caller's existing replay
+        owns it); True when it rendered or was not needed.
+    """
+    cadence = _cadence(screen)
+    objects, values, run_active = _projection_inputs(screen)
+    requested = cadence.requested
+    unchanged = (
+        requested == cadence.served
+        and values == cadence.values
+        and len(objects) == len(cadence.objects)
+        and all(now is then for now, then in zip(objects, cadence.objects))
+    )
+    if unchanged and not (
+        run_active and _clock() - cadence.at >= RUN_BACKSTOP_SECONDS
+    ):
+        return True
+    if screen._sync_console_rail_and_controls() is False:
+        return False
+    cadence.served = requested
+    cadence.objects, cadence.values, cadence.at = objects, values, _clock()
+    return True

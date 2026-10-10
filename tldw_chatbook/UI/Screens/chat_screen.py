@@ -171,6 +171,7 @@ from ..Console_Modules.wiring import (
 )
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules import composer_run_controls as run_controls
+from ..Console_Modules import config_sync
 from ..Console_Modules.session import (
     _has_selected_text,
     _is_empty_select_value,
@@ -17526,6 +17527,7 @@ class ChatScreen(BaseAppScreen):
         ``NoMatches``, and killed the app -- after which every later
         ``post_message`` was silently dropped and navigation was dead.
         """
+        config_sync.begin_console_sync(self)  # TASK-33620.15.1 cadence.
         if _console_screen_is_torn_down(self):
             # The re-arm below is skipped for the same reason; clearing the
             # flag keeps a resurrected screen from inheriting this one's
@@ -17548,7 +17550,6 @@ class ChatScreen(BaseAppScreen):
                 if not _console_screen_is_torn_down(self):
                     raise
             return False
-        from ..Console_Modules import config_sync
         visit = self._current_console_attach_visit()
         poll_record = run_controls.preparing_poll_record(self) if _preparing_poll else None
         full_source = run_controls.poll_source(self) if poll_record is None else None
@@ -17656,7 +17657,7 @@ class ChatScreen(BaseAppScreen):
             # build. Task-scoped: only THIS coroutine's task reads the cache —
             # workers and handlers interleaving during the awaits build live.
             with self._workspace.tick_workspace_build_scope():
-                if self._sync_console_rail_and_controls() is False:
+                if config_sync.project_console_tick(self) is False:
                     return config_sync.replay_whole_console_sync(self)
                 # Settings failures may arrive after Apply has returned:
                 # ordinary first persistence and temporary-chat promotion
@@ -17893,7 +17894,12 @@ class ChatScreen(BaseAppScreen):
             # work, and asked for by nothing while it ran, may be the last.
             self._console_transcript_poll_asked = False
             live_before_paint = self._console_transcript_poll_needed()
-            if await run_controls.sync_poll_display_ui(self) is False:
+            if (
+                await config_sync.run_periodic_console_sync(
+                    lambda: run_controls.sync_poll_display_ui(self)
+                )
+                is False
+            ):
                 # Deferred reconciliation still owes a complete final refresh.
                 return
             controller = self._console_chat_controller
