@@ -132,3 +132,61 @@ async def test_a_runtime_build_that_never_finishes_is_still_bounded(monkeypatch)
         store.preparation_for_session("session-1").pause_kind
         is ConsolePreparationPauseKind.RETRIEVAL
     )
+
+
+async def _until(predicate, timeout: float = 5.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        assert asyncio.get_running_loop().time() < deadline, "timed out"
+        await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+async def test_stop_during_a_cold_build_pauses_the_send_at_once(monkeypatch):
+    """A long first build is shown and stoppable; Stop pauses like a timeout."""
+    service, _builds, release = _cold_library(monkeypatch, build_seconds=30.0)
+    controller, store = _controller_for_preparation(
+        _preparation(), service, timeout=SEARCH_BUDGET
+    )
+    store.switch_session("session-1")
+    preparing = asyncio.ensure_future(
+        controller.prepare_library_for_turn("preparation-1")
+    )
+    try:
+        await _until(lambda: controller.is_stop_allowed)
+        assert controller.run_state_for("session-1").visible_copy == (
+            "Searching Library…"
+        )
+        assert controller.stop_active_run() is True
+        outcome = await asyncio.wait_for(preparing, timeout=5)
+    finally:
+        release.set()
+
+    assert outcome.state is ConsoleTurnPreparationState.PAUSED
+    assert outcome.error_code == "library_retrieval_stopped"
+    paused = store.preparation_for_session("session-1")
+    assert paused.pause_kind is ConsolePreparationPauseKind.RETRIEVAL
+    assert not controller.is_stop_allowed
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_send_itself_is_not_a_library_stop(monkeypatch):
+    """Negative control: shutdown/close cancel the send; that is no pause."""
+    service, _builds, release = _cold_library(monkeypatch, build_seconds=30.0)
+    controller, store = _controller_for_preparation(
+        _preparation(), service, timeout=SEARCH_BUDGET
+    )
+    preparing = asyncio.ensure_future(
+        controller.prepare_library_for_turn("preparation-1")
+    )
+    try:
+        await _until(lambda: "session-1" in controller._library_search_tasks)
+        preparing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await preparing
+    finally:
+        release.set()
+
+    assert controller._library_search_tasks == {}
+    current = store.preparation_for_session("session-1")
+    assert current.state is ConsoleTurnPreparationState.PREPARING

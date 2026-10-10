@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from tldw_chatbook.Library.library_rag_service import (
-    LibraryRagSearchRequest,
-    _outcome_from_service_result,
-)
+from tldw_chatbook.Library.library_rag_service import LibraryRagSearchRequest
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
@@ -60,31 +56,12 @@ async def prepare_library_for_turn(
         include_citations=True,
         scope=controller._automatic_scope_for_authority(authority),
     )
-    error_code: str | None = None
-    from .console_library_search import run_bounded_library_search  # TASK-33621.20
+    # TASK-33621.20: bounded, shown ("Searching Library…") and stoppable.
+    from .console_library_search import automatic_search_outcome
 
-    try:
-        result = _outcome_from_service_result(
-            await run_bounded_library_search(
-                getattr(controller.app, "library_rag_search_service", None),
-                request,
-                search_budget=controller._library_preparation_timeout,
-                initialization_budget=controller._library_initialization_timeout,
-            )
-        )
-    except asyncio.CancelledError:
-        raise
-    except TimeoutError:
-        result = None
-        error_code = "library_retrieval_timeout"
-    except Exception as exc:
-        result = None
-        error_code = "library_retrieval_failed"
-        logger.warning(
-            "Console Library retrieval failed | exception_type={}",
-            type(exc).__name__,
-        )
-
+    result, error_code = await automatic_search_outcome(
+        controller, preparation.session_id, request
+    )
     results = tuple(getattr(result, "results", ()) or ()) if result else ()
     status = str(getattr(result, "status", "") or "") if result else ""
     if error_code is None and status not in {"ready", "empty"}:

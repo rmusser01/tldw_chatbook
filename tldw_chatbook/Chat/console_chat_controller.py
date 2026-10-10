@@ -3824,10 +3824,12 @@ class ConsoleChatController:
             0.001, float(library_preparation_timeout)
         )
         # TASK-33621.20: the Library's first-use runtime build is bounded
-        # separately; only the search counts against the turn's budget.
+        # separately; only the search counts against the turn's budget. The
+        # running automatic search per session is what Stop cancels.
         self._library_initialization_timeout = max(
             0.001, float(library_initialization_timeout)
         )
+        self._library_search_tasks: dict[str, asyncio.Task] = {}
         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
         self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
         # TASK-34350: sends held at the compaction threshold (Ask), and the
@@ -17666,6 +17668,7 @@ class ConsoleChatController:
     @property
     def is_stop_allowed(self) -> bool:
         """Project ordinary generation or exact pending Stop ownership for this tab."""
+        search = self._library_search_tasks.get(self.store.active_session_id or "")
         return (
             (
                 self.response_rules is not None
@@ -17673,6 +17676,7 @@ class ConsoleChatController:
                 in {"drafting", "testing", "checking", "repairing"}
             )
             or self.run_state.is_stop_allowed
+            or (search is not None and not search.done())  # TASK-33621.20
             or (
                 self.prompt_queue_coordinator.pending_continuation_stop_available(
                     self.store.active_session_id or ""
@@ -17753,6 +17757,9 @@ class ConsoleChatController:
         if self.prompt_queue_coordinator.stop_pending_continuation(session_id):
             self._signal_stop(session_id=session_id)
             return True
+        library_search = self._library_search_tasks.get(session_id)
+        if library_search is not None and not library_search.done():
+            return library_search.cancel()  # TASK-33621.20: pauses the send
         start = self._chat_start._active.get(session_id)
         if (
             start is not None
