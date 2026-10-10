@@ -432,14 +432,36 @@ detected llama.cpp (127.0.0.1:8080)" focused on the first launch. A guess that
 does NOT reproduce it: setting `raw_participants._local.operation` to a stray
 object — `_runtime_operation` ignores an unregistered operation. The mounted
 real-discovery test passes at both base and head, so the thread is pinned by
-recording the discovery thread, not by a reproduction. The hop moves one
-caller; it does not fix the cause. `raw_participants._local` is a
-`threading.local`, so a raw scope held across an `await` on the UI loop is
-seen, and refused, by every other task on that thread (TASK-33641.6).
+recording the discovery thread, not by a reproduction. The hop moved one
+caller; it did not fix the cause.
+
+**The cause, and why no mounted test saw it (TASK-33641.6, 2026-10-09).** The
+rider guessed a raw scope held across an `await`. There was none. A scratch
+launcher ran discovery on the UI loop again and logged two things: every raw
+scope still open when the loop next ran (none, through boot and minutes of
+idle), and every `_check` made by a task other than the operation's owner
+(exactly one, the discovery worker).
+`run_console_config_sync` (`UI/Console_Modules/config_sync.py`) holds the
+Console's `config` scope while `ChatScreen._sync_console_rail_and_controls`
+renders, and that render reaches `run_worker`. `App.run_async` installs
+`asyncio.eager_task_factory`, so the worker's first step ran inside
+`create_task`, inside the open scope, as a different `asyncio.current_task()`.
+`raw_participants._local` was a plain `threading.local`: the worker found the
+pump task's operation and `_check` refused it. `App.run_test` installs no eager
+factory, so the mounted real-discovery test stayed green. The slot is now kept
+per thread and task (`raw_participants._TaskLocal`) and `_check` is unchanged;
+a task that enters a source other than config while another task of its thread
+is in the middle of it is still refused. The un-hopped launcher then found the
+server on its first launch. A plain `ContextVar` would not have fixed it:
+`create_task` copies the creator's context, and the eager worker read the
+owner's value.
 
 **What to do.** Count the stub's requests before reading the card: zero means
 discovery did not run, not that nothing answered. A test that injects the
-discovery seam does not cover the real entry point. Send a human gap between
+discovery seam does not cover the real entry point. A guard that compares tasks
+needs a test under `loop.set_task_factory(asyncio.eager_task_factory)`
+(`Tests/Backup_Recovery/test_raw_operation_task_discovery.py`), because only
+then does a task run inside its creator. Send a human gap between
 keys when driving Enter, Enter (`send-keys Enter`, ~150 ms, `send-keys
 Enter`): two keys in one tmux write reach the card before Switch model mounts,
 and the second is dropped.
