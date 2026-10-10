@@ -4103,8 +4103,10 @@ class ConsoleChatController:
             0.001, float(library_preparation_timeout)
         )
         # TASK-33621.20: the Library's first-use runtime build is bounded
-        # separately; only the search counts against the turn's budget.
+        # separately; only the search counts against the turn's budget. The
+        # running automatic search per session is what Stop cancels.
         self._library_initialization_timeout = float(library_initialization_timeout)
+        self._library_search_tasks: dict[str, asyncio.Task] = {}
         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
         self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
         # TASK-34350: sends held at the compaction threshold (Ask), and the
@@ -7677,30 +7679,13 @@ class ConsoleChatController:
             include_citations=True,
             scope=self._automatic_scope_for_authority(authority),
         )
-        error_code: str | None = None
-        from tldw_chatbook.Chat.console_library_search import (  # TASK-33621.20
-            run_bounded_library_search,
+        # TASK-33621.20: bounded, shown ("Searching Library…") and stoppable.
+        from tldw_chatbook.Chat.console_library_search import automatic_search_outcome
+
+        result, error_code = await automatic_search_outcome(
+            self, preparation.session_id, request
         )
-
-        try:
-            result = _outcome_from_service_result(
-                await run_bounded_library_search(
-                    getattr(self.app, "library_rag_search_service", None),
-                    request,
-                    search_budget=self._library_preparation_timeout,
-                    initialization_budget=self._library_initialization_timeout,
-                )
-            )
-        except asyncio.CancelledError:
-            raise
-        except TimeoutError:
-            result = None
-            error_code = "library_retrieval_timeout"
-        except Exception:
-            result = None
-            error_code = "library_retrieval_failed"
-
-        results = tuple(getattr(result, "results", ()) or ()) if result else ()
+        results =tuple(getattr(result, "results", ()) or ()) if result else ()
         status = str(getattr(result, "status", "") or "") if result else ""
         if error_code is None and status not in {"ready", "empty"}:
             error_code = "library_retrieval_failed"
@@ -18098,8 +18083,11 @@ class ConsoleChatController:
     @property
     def is_stop_allowed(self) -> bool:
         """Project ordinary generation or exact pending Stop ownership for this tab."""
-        return self.run_state.is_stop_allowed or (
-            self.prompt_queue_coordinator.pending_continuation_stop_available(
+        search = self._library_search_tasks.get(self.store.active_session_id or "")
+        return (
+            self.run_state.is_stop_allowed
+            or (search is not None and not search.done())  # TASK-33621.20
+            or self.prompt_queue_coordinator.pending_continuation_stop_available(
                 self.store.active_session_id or ""
             )
         )
@@ -18129,6 +18117,9 @@ class ConsoleChatController:
         if self.prompt_queue_coordinator.stop_pending_continuation(session_id):
             self._signal_stop(session_id=session_id)
             return True
+        library_search = self._library_search_tasks.get(session_id)
+        if library_search is not None and not library_search.done():
+            return library_search.cancel()  # TASK-33621.20: pauses the send
         start = self._chat_start._active.get(session_id)
         if (
             start is not None

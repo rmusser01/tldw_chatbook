@@ -12,6 +12,11 @@ The build is therefore run first, through the service's optional
 counts against the turn's budget. A service without ``warm_up`` (test
 doubles, other backends) keeps the old single-budget behaviour.
 
+A cold build can still take many seconds, so the wait is shown and can be
+stopped: the run chip reads "Searching Library…" and Stop is offered while
+the search runs. Stop pauses the send exactly as a timeout does, with the
+same Retry / Send once without Library / Cancel choices.
+
 Imported lazily by the controller: nothing here runs unless an Automatic
 send is preparing, so it adds no work or module to boot.
 """
@@ -73,3 +78,72 @@ async def run_bounded_library_search(
         if inspect.isawaitable(raw):
             raw = await raw
     return raw
+
+
+#: The run chip's copy while an automatic Library search (or the Library's
+#: first-use build ahead of it) runs.
+LIBRARY_SEARCHING_COPY = "Searching Library…"
+
+
+async def automatic_search_outcome(
+    controller: Any, session_id: str, request: Any
+) -> tuple[Any, str | None]:
+    """Run one automatic Library search for a preparing send, stoppably.
+
+    The search runs as its own task, registered in the controller's
+    ``_library_search_tasks`` under the session, so the controller's Stop
+    can cancel it (and its Stop button can show) without cancelling the send
+    itself. The run chip says what the send is waiting on meanwhile.
+
+    Args:
+        controller: The Console chat controller preparing the send.
+        session_id: The preparing send's session.
+        request: The frozen ``LibraryRagSearchRequest``.
+
+    Returns:
+        ``(outcome, None)`` with the normalised search outcome, or
+        ``(None, error_code)``: ``library_retrieval_timeout``,
+        ``library_retrieval_stopped`` or ``library_retrieval_failed``.
+
+    Raises:
+        asyncio.CancelledError: The send itself was cancelled (shutdown,
+            session close); only a Stop on the search becomes a pause.
+    """
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+    )
+    from tldw_chatbook.Library.library_rag_service import (
+        _outcome_from_service_result,
+    )
+
+    search = asyncio.ensure_future(
+        run_bounded_library_search(
+            getattr(controller.app, "library_rag_search_service", None),
+            request,
+            search_budget=controller._library_preparation_timeout,
+            initialization_budget=controller._library_initialization_timeout,
+        )
+    )
+    searches: dict[str, asyncio.Task] = controller._library_search_tasks
+    searches[session_id] = search
+    try:
+        controller._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.VALIDATING, LIBRARY_SEARCHING_COPY),
+            session_id=session_id,
+        )
+        return _outcome_from_service_result(await search), None
+    except asyncio.CancelledError:
+        current = asyncio.current_task()
+        if search.cancelled() and (current is None or not current.cancelling()):
+            return None, "library_retrieval_stopped"
+        raise
+    except TimeoutError:
+        return None, "library_retrieval_timeout"
+    except Exception:  # noqa: BLE001 -- any search fault pauses the send
+        return None, "library_retrieval_failed"
+    finally:
+        if searches.get(session_id) is search:
+            del searches[session_id]
+        if not search.done():
+            search.cancel()

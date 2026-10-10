@@ -166,3 +166,35 @@ async def test_shelf_action_on_a_timed_out_preparation_lets_the_next_send_throug
             assert controller.store.preparation_for_session(
                 controller.store.active_session_id
             ) is None or not _paused_retrieval(controller)
+
+
+@pytest.mark.asyncio
+async def test_a_slow_library_search_is_shown_and_stop_pauses_the_send():
+    """AC#4: a long Library wait says so, offers Stop, and Stop pauses it."""
+    host, gateway = _build()
+    library = _StalledLibrary()
+    host.app_instance.library_rag_search_service = library
+    async with host.run_test(size=(120, 40)) as pilot:
+        with eager_tasks():
+            console, controller, composer = await _automatic_console(host, pilot)
+            # Long enough that only Stop, never the budget, can end the wait.
+            controller._library_preparation_timeout = 120.0
+            composer.load_draft(FIRST)
+            await pilot.pause()
+            press(host, "enter", "\r")
+            await until(lambda: library.calls == 1)
+            await until(
+                lambda: "Run: Searching Library…" in "\n".join(_painted_lines(host))
+            )
+            stop = console.query_one("#console-stop-generation", Button)
+            await until(lambda: stop.styles.display == "block" and not stop.disabled)
+            stop.press()
+            await until(lambda: _paused_retrieval(controller))
+            await until(lambda: _shelf_offers_unsent_turn(console))
+            assert gateway.stream_calls == 0
+            assert controller._preparation_outcomes[
+                controller.store.preparation_for_session(
+                    controller.store.active_session_id
+                ).preparation_id
+            ].error_code == "library_retrieval_stopped"
+            library.release.set()

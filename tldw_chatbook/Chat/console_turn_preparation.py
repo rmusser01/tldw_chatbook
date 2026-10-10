@@ -94,6 +94,7 @@ LIBRARY_PAUSE_COPY: Mapping[str, str] = MappingProxyType(
     {
         "library_retrieval_timeout": "Library search timed out",
         "library_retrieval_failed": "Library search failed",
+        "library_retrieval_stopped": "Library search stopped",
     }
 )
 LIBRARY_PAUSE_CANCELLED_COPY = "Library search canceled; nothing was sent."
