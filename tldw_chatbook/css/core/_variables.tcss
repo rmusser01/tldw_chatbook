@@ -8,9 +8,9 @@
 $ds-surface-panel: $panel;
 $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
-/* TASK-33003.6: 3:1 per theme (themes.py BOUNDARY_VARIABLE). */
+/* TASK-33003.6, TASK-33003.15: 3:1 per theme (themes.py BOUNDARY_VARIABLE). */
 $ds-grid-line: $tldw-boundary;
-$ds-column-line: $surface-lighten-2;
+$ds-column-line: $tldw-boundary;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
 $ds-text-disabled: $text-disabled;

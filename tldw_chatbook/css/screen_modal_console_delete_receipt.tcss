@@ -11,7 +11,7 @@ $ds-surface-panel: $panel;
 $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
 $ds-grid-line: $tldw-boundary;
-$ds-column-line: $surface-lighten-2;
+$ds-column-line: $tldw-boundary;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
 $ds-text-disabled: $text-disabled;

@@ -18,7 +18,7 @@
 #   footer-key-foreground, ...) DO override, and are gated for readability by
 #   Tests/UI/test_theme_contrast.py.
 # - TASK-33003.6: `GUARD_VARIABLES` are the app's own such names
-#   (`$ds-grid-line`/`$ds-control-edge` -> BOUNDARY_VARIABLE, `Button:focus`
+#   (`$ds-grid-line`/`$ds-column-line`/`$ds-control-edge` -> BOUNDARY_VARIABLE, `Button:focus`
 #   -> FOCUS_FILL_VARIABLE), so EVERY theme must carry them (an undefined
 #   `$name` fails the stylesheet parse). ensure_readable_text_hues sets them
 #   on the shipped, built-in and user-theme load paths, and

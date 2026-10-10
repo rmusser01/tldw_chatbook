@@ -666,7 +666,7 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
 
 /* TASK-31663 AC#4: the thumb measured 1.01:1 against its own track. It must
    clear the 3:1 non-text floor and nothing in the surface family does on
-   this theme ($ds-column-line 1.28:1, $panel-lighten-3 2.16:1), so it takes
+   this theme ($surface-lighten-2 1.28:1, $panel-lighten-3 2.16:1), so it takes
    $ds-text-muted -- the app's other established thumb token, generated per
    theme polarity. See TASK-31663 notes. */
 #console-inspector-rail-body {

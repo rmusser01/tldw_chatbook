@@ -219,17 +219,23 @@ def _rule_token(sheet: Path, selector: str, prop: str) -> str:
     return match.group(1).split()[-1].lstrip("$")
 
 
+def _assert_edge_visible(theme: Theme, table: dict, token: str, on: str) -> None:
+    """``$token`` painted as a line on the ``$on`` fill reads at 3:1."""
+    fill = Color.parse(_painted(table, on))
+    edge = _resolve_color(_painted(table, token), fill)
+    ratio = _ratio(edge.hex, fill.hex)
+    assert ratio >= NON_TEXT, (
+        f"{theme.name}: {token} {edge.hex} is {ratio:.2f}:1 against "
+        f"{on} {fill.hex} (needs {NON_TEXT}:1)"
+    )
+
+
 def _assert_boundaries_visible(theme: Theme) -> None:
     table = _painted_variables(theme)
-    for token in ("ds-grid-line", "ds-control-edge"):
+    # TASK-33003.15 adds ds-column-line (pane frames, rail rules).
+    for token in ("ds-grid-line", "ds-control-edge", "ds-column-line"):
         for key in ("surface", "panel"):
-            surface = Color.parse(table[key])
-            edge = _resolve_color(_painted(table, token), surface)
-            ratio = _ratio(edge.hex, surface.hex)
-            assert ratio >= NON_TEXT, (
-                f"{theme.name}: {token} {edge.hex} is {ratio:.2f}:1 against "
-                f"{key} {surface.hex} (needs {NON_TEXT}:1)"
-            )
+            _assert_edge_visible(theme, table, token, key)
 
 
 @pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)
@@ -238,6 +244,27 @@ def test_boundary_tokens_clear_non_text_contrast_on_every_theme(theme: Theme) ->
     at 3:1 on both surfaces, on every shipped and Textual built-in theme --
     field borders measured 1.05:1 and the modal frame 1.01:1."""
     _assert_boundaries_visible(theme)
+
+
+LIBRARY_SHEET = CSS_ROOT / "features/_library.tcss"
+LIBRARY_PANE_FRAMES = (
+    "#library-shell-grid",
+    "#library-rail",
+    "#library-file-notes-rail",
+    "#library-canvas",
+)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("theme", MEASURABLE_THEMES, ids=lambda t: t.name)
+def test_library_pane_frames_clear_non_text_contrast(theme: Theme) -> None:
+    """TASK-33003.15: Library's pane frames painted $surface-lighten-2, 1.28:1
+    in textual-dark. Each frame reads at 3:1 on surface and on panel."""
+    table = _painted_variables(theme)
+    for selector in LIBRARY_PANE_FRAMES:
+        token = _rule_token(LIBRARY_SHEET, selector, "border")
+        for key in ("surface", "panel"):
+            _assert_edge_visible(theme, table, token, key)
 
 
 def test_user_saved_themes_get_visible_boundaries(tmp_path) -> None:
