@@ -197,7 +197,9 @@ def _hold_activation(console) -> Gate:
 
 def _named(pairs, a, b) -> list[tuple[str, str]]:
     names = {a.id: "A", b.id: "B"}
-    return [(names.get(session_id, str(session_id)), text) for session_id, text in pairs]
+    return [
+        (names.get(session_id, str(session_id)), text) for session_id, text in pairs
+    ]
 
 
 def _facts(console, composer, a, b) -> dict[str, object]:
@@ -213,8 +215,10 @@ def _facts(console, composer, a, b) -> dict[str, object]:
 
 async def _sync_idle(console) -> None:
     await until(
-        lambda: not console._console_sync_in_progress
-        and not console._console_sync_requested
+        lambda: (
+            not console._console_sync_in_progress
+            and not console._console_sync_requested
+        )
     )
 
 
@@ -331,7 +335,11 @@ async def test_keys_typed_during_a_held_tab_activation_reach_the_new_chat_compos
             "trace opened": traces,
             "composer": composer.draft_text(),
             "B stored draft": store.session_draft(b.id),
-        } == {"trace opened": [], "composer": A_OWN + "yes", "B stored draft": B_LEFTOVER}
+        } == {
+            "trace opened": [],
+            "composer": A_OWN + "yes",
+            "B stored draft": B_LEFTOVER,
+        }
 
 
 @pytest.mark.asyncio

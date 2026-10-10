@@ -142,6 +142,11 @@ class ConsoleSessionTabButton(Button):
     button and stops the event, so the middle-click path must live here.
     """
 
+    # TASK-33622.7: a click switches chats without taking focus, so keys
+    # typed straight after it stay in the composer instead of reaching
+    # single-letter screen bindings (a "y" opened Trace). Tab still focuses it.
+    FOCUS_ON_CLICK = False
+
     # TASK-375: keep the (middle-truncated) label on one line so its ellipsis
     # renders instead of being word-wrapped onto a hidden second row.
     BUNDLED_CSS = """
@@ -693,6 +698,27 @@ class ConsoleSessionSurface(Vertical):
                     session.id == active_session_id,
                     "console-session-tab-active",
                 )
+
+    def show_active_session(self, session_id: str | None, title: str | None) -> None:
+        """Move the active-tab highlight and header title, mounting nothing.
+
+        TASK-33622.7: a session switch shows its chat at once, before the
+        coalescable sync pass reaches ``sync_sessions``, which still owns
+        labels, markers, tooltips and any tab that must be mounted.
+
+        Args:
+            session_id: Session whose tab is now active.
+            title: That session's title for the transcript header.
+        """
+        self.set_session_title(title)
+        try:
+            tab_strip = self.query_one("#console-native-tab-strip", HorizontalScroll)
+        except NoMatches:
+            return
+        active_id = f"console-session-tab-{session_id}"
+        for child in tab_strip.children:
+            if (child.id or "").startswith("console-session-tab-"):
+                child.set_class(child.id == active_id, "console-session-tab-active")
 
     def _record_mount_churn(self, *, mounted: int = 0, removed: int = 0) -> None:
         """Best-effort tab churn diagnostic hook."""

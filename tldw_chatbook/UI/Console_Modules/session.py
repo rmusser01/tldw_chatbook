@@ -3001,8 +3001,30 @@ class ConsoleSessionController:
         Returns:
             Fenced visit intent, or None when no eligible visit can be captured.
         """
+        return await self._read_claimed_visit(
+            self._claim_manual_read_visit(
+                session_id, conversation_id, allow_current=allow_current
+            )
+        )
+
+    def _claim_manual_read_visit(
+        self,
+        session_id: str,
+        conversation_id: str | None = None,
+        *,
+        allow_current: bool = False,
+    ) -> tuple[str, str, int] | None:
+        """Supersede earlier visits and claim this one, without awaiting.
+
+        TASK-33622.7: tab activation claims before it switches the session
+        (the same-conversation check reads the chat being left), then reads
+        the reminder token after the switch has been shown.
+
+        Returns:
+            ``(session_id, conversation_id, generation)``, or None when the
+            visit is ineligible.
+        """
         self._manual_navigation_generation += 1
-        generation = self._manual_navigation_generation
         self._pending_manual_read_visit = None
         store = self._ensure_console_chat_store()
         sessions = {item.id: item for item in store.sessions()}
@@ -3013,6 +3035,14 @@ class ConsoleSessionController:
             not allow_current and current and current.persisted_conversation_id == cid
         ):
             return None
+        return session_id, cid, self._manual_navigation_generation
+
+    async def _read_claimed_visit(
+        self, claim: tuple[str, str, int] | None
+    ) -> ConsoleManualReadVisit | None:
+        if claim is None:
+            return None
+        session_id, cid, generation = claim
         return await self._prepare_manual_read_visit(
             session_id, conversation_id=cid, navigation_generation=generation
         )
@@ -3124,11 +3154,12 @@ class ConsoleSessionController:
     ) -> None:
         """Activate a native Console session through the shared activation sequence.
 
-        Set the active workspace, switch the native session, refresh the
-        retrieval-scope display, await the UI sync, then force composer
-        focus. Shared by the session-tab click handler, the Ctrl+K switcher
-        callback, and Alt+1..9 tab-jump so all three entry points follow
-        one activation path.
+        Set the active workspace, switch the native session and bind the
+        composer, tab highlight and focus to it, all before the first await;
+        then refresh the retrieval-scope display, await the UI sync and
+        force composer focus. Shared by the session-tab click handler, the
+        Ctrl+K switcher callback, and Alt+1..9 tab-jump so all three entry
+        points follow one activation path.
 
         Args:
             session_id: Native Console session id to activate.
@@ -3137,11 +3168,10 @@ class ConsoleSessionController:
         """
         if activate_if is not None and not activate_if():
             return
-        visit = await self.begin_manual_read_visit(session_id)
-        if activate_if is not None and not activate_if():
-            return
+        claim = self._claim_manual_read_visit(session_id)
         controller = self._ensure_console_chat_controller()
-        if controller.store.active_session_id != session_id:
+        switching = controller.store.active_session_id != session_id
+        if switching:
             self._hide_console_activity_notice()
             self._capture_console_draft_switch_snapshot()
             self._note_console_follow_intent()
@@ -3153,6 +3183,15 @@ class ConsoleSessionController:
             # Ctrl+K, and Alt+1..9) rather than rely solely on the rail
             # render path's own defensive re-check on the next sync.
             self._console_agent_drilldown_run_id = None
+            # TASK-33622.7: never leave the rebind to the coalescable sync
+            # pass. While one is in flight (routine during a live run) the
+            # call below only requests another, and Enter went to the chat
+            # the composer was still bound to.
+            self._bind_composer_to_active_session()
+        visit = await self._read_claimed_visit(claim)
+        if activate_if is not None and not activate_if():
+            return
+        if switching:
             # Task-13 review finding 2: this path activates an ALREADY-
             # resumed native session (unlike `_resume_console_workspace_
             # conversation`, which warms the cache itself), so `_console_
@@ -5613,6 +5652,47 @@ class ConsoleSessionController:
             if session.agent_handoff_state == "pending"
             else None
         )
+
+    def _bind_composer_to_active_session(self) -> None:
+        """Show the active chat's draft, tab highlight and title in one step.
+
+        TASK-33622.7: called synchronously by an activation, so the old
+        draft is saved to its own chat, the new chat's draft is loaded, its
+        tab is highlighted and the composer takes focus before any await,
+        whether or not a console-sync pass is in flight.
+        """
+        self._sync_console_session_draft()
+        session = self._active_native_console_session()
+        surface = self._session_surface_accessor()
+        if session is not None and surface is not None and surface.is_mounted:
+            surface.show_active_session(session.id, session.title)
+        self._focus_console_composer_if_needed(force=True)
+
+    def refuse_send_from_unbound_composer(self) -> bool:
+        """Refuse a send while the composer is bound to another chat.
+
+        TASK-33622.7: switch paths that still leave the rebind to the sync
+        pass can show one chat while the composer holds another chat's
+        draft. Sending then would queue the draft into the chat that is no
+        longer on screen, so the send is refused visibly and the draft kept.
+
+        Returns:
+            True when the send was refused.
+        """
+        bound = self._console_visible_draft_session_id
+        active = self._ensure_console_chat_store().active_session_id
+        if bound is None or active is None or bound == active:
+            return False
+        logger.warning(
+            "Console send refused: composer bound to {} while {} is active",
+            bound,
+            active,
+        )
+        self.app_instance.notify(
+            "Still switching chats, so nothing was sent. Your draft was kept.",
+            severity="warning",
+        )
+        return True
 
     # -- Session identity / state -------------------------------------------
 

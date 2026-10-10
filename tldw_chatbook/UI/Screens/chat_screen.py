@@ -18824,6 +18824,8 @@ class ChatScreen(BaseAppScreen):
                 severity="warning",
             )
             return False
+        if self._session.refuse_send_from_unbound_composer():  # TASK-33622.7
+            return False
         stash, composer, draft, raw_cli_handled = raw_cli_ui.prepare_visible_send(
             stash,
             self._console_composer_or_none,
