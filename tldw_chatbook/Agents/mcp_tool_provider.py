@@ -641,6 +641,11 @@ class MCPToolProvider:
         uniqueness), and cache both the `ToolCatalogEntry` list and the
         `{llm_name: (HubTool, EffectiveToolState)}` lookup table.
 
+        Each service read below is its own storage-admission scope. Without
+        captured sources they run on the UI loop, which gets a turn after
+        each (TASK-33620.15.5), so a key press waits for one read, not the
+        whole composition.
+
         Args:
             kill_switch_engaged: The kill switch as the caller read it at this
                 same point (TASK-33620.15.1: Console run start reads it once
@@ -668,8 +673,11 @@ class MCPToolProvider:
             from tldw_chatbook.MCP.console_snapshot import read_console_kill_switch
 
             engaged = await read_console_kill_switch(service, _captured_sources=captured)
+        elif kill_switch_engaged is None:
+            engaged = service.get_kill_switch()
+            await asyncio.sleep(0)  # a store read on the loop (TASK-33620.15.5)
         else:
-            engaged = service.get_kill_switch() if kill_switch_engaged is None else kill_switch_engaged
+            engaged = kill_switch_engaged
         require_current()
         if engaged:
             self._catalog = []
@@ -683,6 +691,8 @@ class MCPToolProvider:
         records = await (
             captured.catalog_callback() if captured is not None else service.local_external_catalog()
         )
+        if captured is None:
+            await asyncio.sleep(0)  # the read may have run on the loop (TASK-33620.15.5)
         require_current()
         for record in records:
             if (
@@ -738,6 +748,8 @@ class MCPToolProvider:
             else:
                 # Keep this run usable, but retry an incomplete inventory next run.
                 self.composed_servers = None
+            if captured is None:
+                await asyncio.sleep(0)  # a store read on the loop (TASK-33620.15.5)
 
         profile_kwargs = self._profile_kwargs()
         if captured is not None:

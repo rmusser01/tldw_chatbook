@@ -2490,15 +2490,18 @@ class UnifiedMCPControlPlaneService:
         permission store's and the local service's admission-checked
         identities (a refusal raises, as the composition's reads would).
 
+        Each store read is its own storage-admission scope, and a Console run
+        start makes them on the UI loop, so the loop gets a turn between them
+        (TASK-33620.15.5).
+
         Args:
             profiles: ``(profile_id, plugin_owned)`` pairs whose connection
                 state to include (the servers a cached composition used).
         """
         store = self.permission_store
-        return (
-            None if store is None else store.catalog_fingerprint(),
-            self.local_service.catalog_fingerprint(profiles),
-        )
+        permission = None if store is None else store.catalog_fingerprint()
+        await asyncio.sleep(0)
+        return (permission, self.local_service.catalog_fingerprint(profiles))
 
     # ---- Typed tool-execution seam (Phase 3) ---------------------------
     # Shared by the Hub Tools mode now and by the Phase 5 chat bridge /
