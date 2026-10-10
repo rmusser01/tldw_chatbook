@@ -5405,7 +5405,7 @@ class ConsoleWorkspaceController:
             if prior_active_session_id != session_id:
                 self._capture_console_draft_switch_snapshot()
                 controller.switch_session(session_id)
-                self._bind_composer_to_active_session(focus=True)
+                self._bind_composer_to_active_session()  # TASK-33622.7
             self._set_active_workspace_for_console_session(session_id)
             session = next(item for item in store.sessions() if item.id == session_id)
             try:

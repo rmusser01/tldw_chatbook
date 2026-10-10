@@ -4036,7 +4036,7 @@ class ConsoleSessionController:
             ephemeral=ephemeral,
             **assistant_kwargs,
         )
-        self._bind_composer_to_active_session()  # TASK-33622.7
+        self._bind_composer_to_active_session(focus=False)  # TASK-33622.7
         # TASK-251: new-chat-tab handler -- invalidate so the browser's
         # "selected" row indicator picks up the new active session promptly.
         self._invalidate_console_persisted_rows_cache()
@@ -5320,7 +5320,7 @@ class ConsoleSessionController:
                     type(exc).__name__,
                 )
         store.switch_session(session.id)
-        self._bind_composer_to_active_session()  # TASK-33622.7
+        self._bind_composer_to_active_session(focus=False)  # TASK-33622.7
         if not duplicate_handoff:
             if local_character_id is None:
                 self._clear_session_manual_reactions(session.id)
@@ -5500,7 +5500,7 @@ class ConsoleSessionController:
                     type(exc).__name__,
                 )
         store.switch_session(session.id)
-        self._bind_composer_to_active_session()  # TASK-33622.7
+        self._bind_composer_to_active_session(focus=False)  # TASK-33622.7
         if not duplicate_handoff:
             # Same defensive cleanup as the server-character path: a persona
             # session never keys reactions by actor, so clear wholesale.
