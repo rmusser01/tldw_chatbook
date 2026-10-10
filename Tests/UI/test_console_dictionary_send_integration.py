@@ -2,12 +2,17 @@
 active CONVERSATION chat dictionaries to the model-bound payload while the
 persisted transcript keeps the raw text (Roleplay P1h Task 3).
 
-Exercises the real ``ChatScreen`` -> ``_ensure_console_chat_controller`` wiring
-(``chat_dictionary_applier=self._console_chat_dictionary_applier``) end to
-end: a real ``CharactersRAGDB`` + ``ChatDictionaryScopeService`` seeded with a
+Exercises the real ``ChatScreen`` -> ``_ensure_console_chat_controller`` ->
+``ConsoleRuntime.ensure_chat_controller`` wiring end to end: a real
+``CharactersRAGDB`` + ``ChatDictionaryScopeService`` seeded with a
 conversation-attached dictionary (the P1e attach seam), a native session
 pinned to that conversation, and a capturing double standing in for the
 provider/agent transport so the actual outbound payload can be inspected.
+The applier in effect is the runtime-owned frozen-input applier
+``_apply_chat_dictionaries_for_app`` that ``ensure_chat_controller`` always
+binds (TASK-34667 removed the dead screen-level applier copy this docstring
+used to name -- ``ensure_chat_controller``'s ``kwargs.update`` had
+overwritten it on every path).
 """
 
 import pytest

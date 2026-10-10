@@ -261,3 +261,33 @@ async def test_mid_turn_book_edit_applies_the_captured_snapshot(db):
     final_user = gateway.messages_seen[-1]
     assert "Dragons hoard turn snapshots." in final_user["content"]
     assert "EDITED MID-TURN" not in final_user["content"]
+
+
+def test_console_screen_level_applier_copies_stay_removed():
+    """TASK-34667 absence pin: the screen-level dictionary/world-info
+    applier copies must not come back.
+
+    ``ChatScreen._console_chat_dictionary_applier`` and
+    ``ChatScreen._console_world_info_applier`` were passed into
+    ``ConsoleRuntime.ensure_chat_controller``, which unconditionally
+    overwrote both via its runtime-owned ``kwargs.update`` -- dead on every
+    path, and already drifted: the screen world-info copy called
+    ``world_info_resolver.apply_world_info_to_message`` with a 3-argument
+    signature the live call site (which passes ``frozen_inputs`` as a
+    fourth argument) would have rejected outright. Dead always-overwritten
+    copies are the ``_library_provider_for_app`` precedent recorded in
+    console_runtime.py: a stale copy silently shadowed the live
+    binding and cost 24 Library tools behind one swallowed warning. The
+    runtime-owned ``_apply_*_for_app`` seams this file pins above are the
+    only live applier wiring; a screen-level copy invites editing the
+    wrong seam with zero effect.
+    """
+    from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
+
+    assert not hasattr(
+        chat_screen_module.ChatScreen, "_console_chat_dictionary_applier"
+    )
+    assert not hasattr(chat_screen_module.ChatScreen, "_console_world_info_applier")
+    # The bounds constants existed only to feed the dead dictionary copy.
+    assert not hasattr(chat_screen_module, "_CHATDICT_MAX_TOKENS")
+    assert not hasattr(chat_screen_module, "_CHATDICT_STRATEGY")
