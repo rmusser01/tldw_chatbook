@@ -70,6 +70,9 @@ WorkflowsScreen #workflow-library-search > .input--placeholder {
 /* TASK-33003.15: on the focused field's fill $ds-text-muted is under 4.5:1 on 59 themes.
  * The hint takes the focus ink there, and italic tells it from a typed value. */
 #workflow-library-search:focus > .input--placeholder { color: $ds-focus-fg; text-style: $ds-text-emphasis; }
+/* The selected query and the caret are that ink reversed. Textual paints both in the theme's own
+ * $foreground, which this fill took under 4.5:1 for selected text on 46 themes (under 2:1 on 5). */
+#workflow-library-search:focus > .input--selection, #workflow-library-search:focus > .input--cursor { background: transparent; color: $ds-focus-fg; text-style: reverse; }
 WorkflowConsoleContext { height: $ds-control-height-compact; padding: $ds-space-0 $ds-space-inset; }
 WorkflowConsoleContext #workflows-run-status,
 WorkflowConsoleContext #workflows-console-unavailable { height: $ds-control-height-compact; width: $ds-width-fill; }

@@ -286,6 +286,7 @@ WORKFLOW_PANES = {
 }
 WORKFLOW_FIELD_FOCUS = "WorkflowLibrary#workflows-library Input:focus"
 WORKFLOW_PLACEHOLDER_FOCUS = "#workflow-library-search:focus > .input--placeholder"
+WORKFLOW_MARKS_FOCUS = [f"#workflow-library-search:focus > .input--{mark}" for mark in ("selection", "cursor")]
 
 
 def _assert_ink_readable(theme: Theme, table: dict, token: str, on: Color, what: str) -> None:
@@ -327,7 +328,13 @@ def test_workflow_pane_edges_clear_non_text_contrast(theme: Theme) -> None:
     luminance (textual-dark 1.00x, under 1.25x on 17 themes). A focused fill
     is at least as far from the pane's as the resting fill is; the field's
     placeholder takes an ink that reads on it; and where that fill shifts the
-    pane by less than the house floor, the field's frame reads at 3:1 on it."""
+    pane by less than the house floor, the field's frame reads at 3:1 on it.
+
+    Review round 5: that fill also sits under the selected query and beside
+    the caret, which Textual paints in the theme's own $foreground whatever
+    the fill is: selected text fell under 4.5:1 on 46 themes (atom-one-dark
+    1.35:1) and the caret under 3:1 on 8. Both are the field's ink reversed,
+    so each is as far from the fill as typed text is."""
     table = _painted_variables(theme)
     focus_ink = _rule_token(WORKFLOWS_SHEET, ".workflow-compact:focus", "color")
     panes = {}
@@ -358,6 +365,10 @@ def test_workflow_pane_edges_clear_non_text_contrast(theme: Theme) -> None:
     _assert_ink_readable(theme, table, typed, field, WORKFLOW_FIELD_FOCUS)
     hint = _rule_token(WORKFLOWS_SHEET, WORKFLOW_PLACEHOLDER_FOCUS, "color")
     _assert_ink_readable(theme, table, hint, field, WORKFLOW_PLACEHOLDER_FOCUS)
+    for mark in WORKFLOW_MARKS_FOCUS:
+        look = [_rule_token(WORKFLOWS_SHEET, mark, prop) for prop in ("background", "text-style")]
+        assert look == ["transparent", "reverse"], f"{mark} is not its ink reversed: {look}"
+        _assert_ink_readable(theme, table, _rule_token(WORKFLOWS_SHEET, mark, "color"), field, mark)
 
 
 def _text_cells(app, region, skip=()) -> set[tuple[str, str]]:
@@ -432,7 +443,12 @@ async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> 
     least as far from the pane's as its resting fill; the search field's sat
     on the rail's own luminance (textual-dark 1.00x, catppuccin-frappe 1.01x).
     The field is read with its placeholder and then with a typed value, and
-    its frame is read where its fill shifts the pane by less than the floor."""
+    its frame is read where its fill shifts the pane by less than the floor.
+
+    Review round 5: and with the value selected, as a keyboard return to the
+    field leaves it. The selected text reads at 4.5:1 on a fill that is told
+    from the field's, and the caret reads at 3:1 against the field's fill.
+    Both were skipped: atom-one-dark painted them at 1.35:1 and 1.79:1."""
     from textual.containers import Horizontal
     from textual.geometry import Region
     from textual.widgets import Button, Input, OptionList
@@ -454,9 +470,11 @@ async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> 
         app.theme = theme_name
         for button in app.query(Button):
             button.disabled = False  # Previous and Next: no page to turn here
+        for field in app.query(Input):
+            field.cursor_blink = False  # the caret is read below
         app.set_focus(None)  # the search field takes focus on mount
         await pilot.pause(0.3)
-        edges, text, fills = {}, {}, {}
+        edges, text, fills, marks = {}, {}, {}, {}
         for selector in WORKFLOW_PANES.values():
             widget = app.query_one(selector)
             pane = widget.region
@@ -470,23 +488,31 @@ async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> 
                 resting = _text_cells(app, control.region)
                 app.set_focus(control)
                 await pilot.pause()
-                frame = []
+                frame, focused = [], f"{selector} with #{control.id} focused"
                 if isinstance(control, Input):
-                    box = control.region
+                    box, (x, y) = control.region, control.content_region.offset
                     frame = _painted_line(app, box.y + 1, box.x, box.x + 1, "│")
                     assert frame, f"no #{control.id} frame"
                     # The placeholder, without its first cell: the caret paints there.
-                    own = _text_cells(app, box, [Region(*control.content_region.offset, 1, 1)])
+                    own = _text_cells(app, box, [Region(x, y, 1, 1)])
                     assert own, f"no #{control.id} placeholder"
+                    carets = _painted_line(app, y, x, x + 1, control.placeholder)
                     # Typed once the focus has landed: focusing selects a value.
                     control.value = "typed 123"
                     await pilot.pause()
                     own |= _text_cells(app, box)
+                    # A keyboard return to the field selects the whole value.
+                    app.set_focus(None)
+                    await pilot.pause()
+                    app.set_focus(control)
+                    await pilot.pause()
+                    end = x + len(control.value)
+                    chosen = _painted_line(app, y, x, end, control.value)
+                    marks[focused] = (own, carets[:1] + chosen, carets + _painted_line(app, y, end, end + 1, " "))
                 else:
                     own = _text_cells(app, control.region)
                 # The lists are empty here, and their fill is opaque either way.
                 assert own or isinstance(control, OptionList), f"no #{control.id} text"
-                focused = f"{selector} with #{control.id} focused"
                 text[focused] = own | _painted_text(app, widget)
                 fills[focused] = (selector, resting, own, frame)
     for selector, cells in edges.items():
@@ -514,6 +540,18 @@ async def test_workflow_panes_paint_readable_edges_and_text(theme_name: str) -> 
                 f"{theme_name}: {focused} fill {fill} is {shift:.2f}x from the pane's "
                 f"{pane_fill} and its frame {edge} is {ratio:.2f}:1 on it"
             )
+    for focused, (own, marked, carets) in marks.items():
+        (field,) = {fill for _, fill in own}
+        assert len(marked) > 1 and len(carets) == 2, f"{theme_name}: {focused}, no selection or no caret"
+        for ink, fill in marked:
+            ratio, shift = _ratio(ink, fill), _ratio(fill, field)
+            assert ratio >= AA and shift >= FOCUS_SHIFT_FLOOR, (
+                f"{theme_name}: {focused}, text under the caret or selected {ink} on {fill} is "
+                f"{ratio:.2f}:1, and that fill is {shift:.2f}x from the field's {field}"
+            )
+        for _, block in carets:
+            ratio = _ratio(block, field)
+            assert ratio >= NON_TEXT, f"{theme_name}: {focused}, caret {block} is {ratio:.2f}:1 on the field's {field}"
 
 
 WIDGETS_SHEET = CSS_ROOT / "components/_widgets.tcss"
@@ -570,18 +608,15 @@ def test_app_chrome_lines_clear_non_text_contrast(theme: Theme, line: str) -> No
 
 
 def _painted_line(app, y: int, x0: int, x1: int, glyphs: str) -> list[tuple[str, str]]:
-    """[(fg hex, bg hex)] of the cells on row y, columns x0..x1, that draw a line."""
+    """[(ink hex, fill hex)] of the cells on row y, columns x0..x1, that draw
+    one of ``glyphs``, as they paint: `reverse` swaps a cell's two colours."""
     cells, position = [], 0
     for segment in app.screen._compositor.render_strips()[y]:
         for glyph in segment.text:
             if x0 <= position < x1 and glyph in glyphs:
                 style = segment.style
-                cells.append(
-                    (
-                        Color.from_rich_color(style.color).hex,
-                        Color.from_rich_color(style.bgcolor).hex,
-                    )
-                )
+                pair = Color.from_rich_color(style.color).hex, Color.from_rich_color(style.bgcolor).hex
+                cells.append(pair[::-1] if style.reverse else pair)
             position += 1
     return cells
 

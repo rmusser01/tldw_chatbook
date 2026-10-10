@@ -19705,6 +19705,8 @@ WorkflowsScreen #workflow-library-search > .input--placeholder {
 }
 
 #workflow-library-search:focus > .input--placeholder { color: $ds-focus-fg; text-style: $ds-text-emphasis; }
+
+#workflow-library-search:focus > .input--selection, #workflow-library-search:focus > .input--cursor { background: transparent; color: $ds-focus-fg; text-style: reverse; }
 WorkflowConsoleContext { height: $ds-control-height-compact; padding: $ds-space-0 $ds-space-inset; }
 WorkflowsScreen WorkflowEditor TextArea.form-textarea { height: $ds-size-6; min-height: $ds-control-height; }
 WorkflowsScreen.workflow-short WorkflowEditor TextArea.form-textarea {

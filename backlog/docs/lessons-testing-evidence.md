@@ -18648,6 +18648,20 @@ measuring them before the commit found both: the placeholder's
 `$primary` focus outline fell under 3:1 on 54 (41 before; the default theme
 went from 3.01:1 to 2.25:1). Each got its own ink in the focused field.
 
+**Update, review round 5.** That list of pairs stopped at the colours the
+field's own rules name. Two more things paint in the field, in colours no
+app rule sets: Textual paints the selected value and the caret in the
+theme's own `$foreground`. On the themes the guard pins, the new fill moves
+toward the opposite pole, and a fixed `$foreground` loses its contrast
+there. Selected text was under 4.5:1 on 46 themes (41 at the task base) and
+under 2:1 on 5 (atom-one-dark 2.00:1 to 1.35:1); the caret was under 3:1
+against the fill on 8 (3 at the base). The state is an ordinary one: an
+Input selects its whole value on every keyboard return to it. The rendered
+test stepped round both. It set the value after the focus had landed, so
+nothing was ever selected, and it skipped the caret's cell. Both are now the
+field's ink reversed, and the test moves the focus away and back with the
+value in the field before it reads them.
+
 **What to do, as well.** A fill added under a line sits under everything
 inside the widget that is transparent or translucent. After adding one, read
 the text cells painted on it on every theme, and compare with the fill they
@@ -18661,6 +18675,12 @@ region, not by colour. A colour fix moves more than the ratio it was written
 for: before choosing one, list what each colour in the rule is read against
 (the text and the placeholder on the fill, the fill on the pane, the frame
 on the fill) and measure every pair on every theme against the task base.
+Add the pairs the widget paints in colours of its own, which no rule in the
+sheet names: for an Input, the selected text on the selection's fill, and
+that fill and the caret on the field's fill. Read them in the state a user
+reaches (focus the field again with a value in it; turn `cursor_blink` off
+so the caret is there to read). A cell painted with `reverse` paints its two
+colours swapped, so swap them before comparing a fill with another fill.
 Gate the pairs the fix must hold, and write down the ones it lowers.
 
 ## A colour built in Python with `dim` is measured on one theme only (TASK-33004.6, 2026-09-30)
