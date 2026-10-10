@@ -27,6 +27,7 @@ from Tests.UI.app_factory import _build_test_app as _build_production_app
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.custom_endpoint_registry import canonical_custom_endpoint_id
 from tldw_chatbook.Constants import TAB_CHAT, TAB_SETTINGS
 from tldw_chatbook.LLM_Calls import anthropic_subscription
 from tldw_chatbook.LLM_Provider_Catalog import (
@@ -62,6 +63,7 @@ from tldw_chatbook.UI.Settings_Modules.provider_return import (
     route_focus,
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 
 CHANNEL = HandoffChannel.CONVERSATION_SETTINGS_RETURN
 SAVED = ConversationSettingsReturnOutcome.CREDENTIAL_SAVED
@@ -398,35 +400,58 @@ def test_a_kept_console_return_lapses_with_its_handoff() -> None:
     assert console_return_lapsed(no_store, modal) is False
 
 
-def test_a_disabled_named_field_gives_way_to_the_first_control_that_can_act() -> None:
-    """Where focus goes from a named field that is disabled: the return when
-    it is offered, otherwise the first of Sign in with and Edit this endpoint
-    in Custom endpoints that is shown and enabled. The rule reads no field
-    name, so a custom endpoint's Endpoint lands as its API key does. The Edit
-    button is hidden through display, which Textual's focusable does not read:
-    for a custom endpoint id whose entry is gone nothing takes focus."""
+def test_a_route_with_no_field_to_focus_lands_on_the_first_control_that_acts() -> None:
+    """Where focus goes when the route names a disabled field, or none: the
+    return when it is offered, otherwise the first control that can act.
+
+    For a disabled field that is Sign in with, then Edit this endpoint in
+    Custom endpoints. The rule reads no field name, so a custom endpoint's
+    Endpoint lands as its API key does. A route that names no field skips
+    Sign in with, which is enabled on every Anthropic route and would take a
+    one-way route that has nothing to do with it. The Edit button is hidden
+    through display, which Textual's focusable does not read: a custom
+    endpoint id whose entry is gone lands on the Provider control instead."""
     field = "#settings-provider-endpoint-value"
     sign_in = "#settings-provider-auth-source"
     edit = "#settings-provider-edit-custom-endpoint"
+    picker = "#settings-provider-search"
 
     def landing(
-        *, field_disabled=True, sign_in_enabled=False, edit_shown=True, outcome=None
+        provider="custom-ep:lab",
+        *,
+        named=True,
+        field_disabled=True,
+        edit_shown=True,
+        outcome=None,
     ):
         widgets = {
             field: SimpleNamespace(disabled=field_disabled),
-            sign_in: SimpleNamespace(display=True, disabled=not sign_in_enabled),
+            sign_in: SimpleNamespace(display=True, disabled=provider != "anthropic"),
             edit: SimpleNamespace(display=edit_shown, disabled=False),
         }
         screen = _settings(None, outcome)
         screen.query = lambda selector: [widgets[selector]]
-        return route_focus(screen, field)
+        screen._provider_widget_value = lambda: provider
+        screen._provider_is_registry_id = SettingsScreen._provider_is_registry_id
+        return route_focus(screen, field if named else None)
 
     assert landing(field_disabled=False) == field
-    assert landing(sign_in_enabled=True) == sign_in
+    # A disabled field: Sign in with first, then the Edit button.
+    assert landing("anthropic") == sign_in
+    assert landing("anthropic", edit_shown=False) == sign_in
     assert landing() == edit
-    assert landing(edit_shown=False) is None
+    assert landing("openai", edit_shown=False) is None
+    # No field named: the Edit button, and never Sign in with.
+    assert landing(named=False) == edit
+    assert landing("anthropic", named=False, edit_shown=False) is None
+    assert landing("openai", named=False, edit_shown=False) is None
+    # The entry is gone, in either spelling of its id: another provider is chosen.
+    for gone in ("custom-ep:gone", "custom_ep:gone"):
+        assert landing(gone, edit_shown=False) == picker
+        assert landing(gone, named=False, edit_shown=False) == picker
     # A return that is offered comes first; after a save it is, for either kind.
     assert landing(outcome=SAVED) == "#settings-provider-return"
+    assert landing(named=False, outcome=SAVED) == "#settings-provider-return"
 
 
 def test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy() -> None:
@@ -749,8 +774,9 @@ async def test_recovery_return_without_saving_lands_on_the_same_chat_unchanged(
             lambda: (
                 app.screen is console
                 and getattr(app.focused, "id", None) == "console-setup-modal-action"
+                and not app.pending_handoffs.has_pending(CHANNEL)
             ),
-            "the Console's card to hold focus again",
+            "the Console's card to hold focus again, its return claimed",
         )
         assert console._ensure_console_chat_store().active_session_id == session.id
         assert console._console_setup_modal_blocking()
@@ -849,8 +875,9 @@ async def test_every_unsaved_recovery_state_offers_return_without_saving(
             lambda: (
                 app.screen is console
                 and getattr(app.focused, "id", None) == "console-setup-modal-action"
+                and not app.pending_handoffs.has_pending(CHANNEL)
             ),
-            "the Console's card to hold focus again",
+            "the Console's card to hold focus again, its return claimed",
         )
         assert console._ensure_console_chat_store().active_session_id == session.id
         assert _saved_config()["chat_defaults"]["provider"] == "openai"
@@ -916,8 +943,9 @@ async def test_a_recovery_that_saves_nothing_returns_from_the_arrival_action(
             lambda: (
                 app.screen is console
                 and getattr(app.focused, "id", None) == "console-setup-modal-action"
+                and not app.pending_handoffs.has_pending(CHANNEL)
             ),
-            "the Console's card to hold focus again",
+            "the Console's card to hold focus again, its return claimed",
         )
         assert console._ensure_console_chat_store().active_session_id == session.id
         assert not _saved_openai_key()
@@ -995,9 +1023,11 @@ async def test_a_route_that_names_no_field_arrives_on_the_return(
         await _until(
             pilot,
             lambda: (
-                app.screen is console and getattr(app.focused, "id", None) == resting
+                app.screen is console
+                and getattr(app.focused, "id", None) == resting
+                and not app.pending_handoffs.has_pending(CHANNEL)
             ),
-            f"the Console's {resting} to hold focus again",
+            f"the Console's {resting} to hold focus again, its return claimed",
         )
         assert console._ensure_console_chat_store().active_session_id == session_id
         assert not app.pending_handoffs.has_pending(CHANNEL)
@@ -1128,11 +1158,140 @@ async def test_a_route_whose_named_field_is_disabled_arrives_where_it_can_act(
             lambda: (
                 app.screen is console
                 and getattr(app.focused, "id", None) == "console-setup-modal-action"
+                and not app.pending_handoffs.has_pending(CHANNEL)
             ),
-            "the Console's card to hold focus again",
+            "the Console's card to hold focus again, its return claimed",
         )
         assert console._ensure_console_chat_store().active_session_id == session_id
         assert not app.pending_handoffs.has_pending(CHANNEL)
+
+
+#: row -> (saved config, the card's action, the control focus arrives on).
+_CUSTOM_ENDPOINT_ROWS = {
+    "no-models": (
+        {
+            "chat_defaults": {"provider": "custom-ep:lab", "model": ""},
+            "custom_endpoints.lab": {
+                "display_name": "Lab",
+                "family": "openai_compatible",
+                "base_url": "http://127.0.0.1:9/v1",
+                "models": [],
+            },
+        },
+        "Choose model",
+        "settings-provider-edit-custom-endpoint",
+    ),
+    "entry-gone": (
+        {"chat_defaults": {"provider": "custom-ep:gone", "model": ""}},
+        "Choose provider",
+        "settings-provider-search",
+    ),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("row", list(_CUSTOM_ENDPOINT_ROWS))
+@private_profile_test
+async def test_a_custom_endpoint_row_that_names_no_field_arrives_where_it_can_act(
+    monkeypatch, request, row: str
+):
+    """A NEEDS SETUP row in Switch model opens Settings too, and for a custom
+    endpoint it can name no field: nothing in Providers & Models fixes an
+    endpoint that lists no models, or one whose entry was deleted. No return
+    can name a custom endpoint either (R35), so nothing took focus and it
+    stayed on the nav bar's Home button, where one more Enter opened Home.
+
+    With its entry in place focus goes to Edit this endpoint in Custom
+    endpoints, and Enter there opens the editor. With the entry gone that
+    button is hidden, and focus goes to the Provider control, where another
+    provider is chosen: Enter there does nothing until its list is open.
+
+    The landing must be painted. Focus also lands on a widget inside a hidden
+    row (Textual's focusable does not read an ancestor's display), and the
+    Select that backs the Provider control is one: its id took focus, Enter
+    opened a list nobody saw, and Down then Enter picked a provider blind."""
+    saved, action, arrives_on = _CUSTOM_ENDPOINT_ROWS[row]
+    provider = saved["chat_defaults"]["provider"]
+    app = _cloud_app(monkeypatch, **saved)
+
+    def in_find() -> bool:
+        """Switch model has the screen and its Find box takes the keys."""
+        return (
+            isinstance(app.screen, ConsoleModelPopover)
+            and getattr(app.focused, "id", None) == "console-popover-find"
+        )
+
+    def on_the_endpoints_row() -> bool:
+        if not in_find():
+            return False
+        highlighted = app.screen.highlighted_row()
+        # The row may spell the id custom_ep:<slug>; both name one endpoint.
+        return (
+            highlighted is not None
+            and highlighted.kind == "setup"
+            and canonical_custom_endpoint_id(highlighted.provider) == provider
+        )
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "console-setup-modal-action",
+            "the Get started card's action to hold focus",
+        )
+        assert str(app.focused.label) == action
+        await pilot.press("enter")
+        if row == "entry-gone":
+            # Find brings the id's own row under the highlight.
+            await _until(pilot, in_find, "Switch model to open on Find")
+            await pilot.press(*"gone")
+        await _until(
+            pilot, on_the_endpoints_row, "the endpoint's NEEDS SETUP row to be the one"
+        )
+        assert app.screen.highlighted_row().note == "Enter: open Settings"
+
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and getattr(app.focused, "id", None) == arrives_on
+            ),
+            f"Settings to open with focus on {arrives_on}",
+        )
+        settings = app.screen
+        # R35: no return can name a custom-ep: id, so this route goes one way.
+        assert settings._provider_return_target is None
+        assert not app.pending_handoffs.has_pending(CHANNEL)
+        assert not settings.query_one("#settings-provider-return-continuation").display
+        assert canonical_custom_endpoint_id(settings._provider_widget_value()) == (
+            provider
+        )
+        edit = settings.query_one("#settings-provider-edit-custom-endpoint", Button)
+        assert edit.display is (row == "no-models")
+        await _until(
+            pilot,
+            lambda: _fully_on_screen(settings, app.focused),
+            f"{arrives_on} to be painted while it holds focus",
+        )
+
+        await pilot.press("enter")
+        if row == "no-models":
+            await _until(
+                pilot,
+                lambda: getattr(app.focused, "id", None) == "settings-cep-edit-url",
+                "the Custom endpoints editor to open on the endpoint's URL",
+            )
+            return
+        # Enter chooses only from the open list: no Home, and nothing edited.
+        await pilot.pause()
+        assert app.screen is settings and app.focused.id == arrives_on
+        assert not settings._category_has_unsaved_changes(
+            settings._active_category_id()
+        )
+        providers = settings.query_one("#settings-provider-picker")
+        assert not providers.display
+        await pilot.press("down")
+        await _until(pilot, lambda: providers.display, "the Provider list to open")
 
 
 @pytest.mark.asyncio

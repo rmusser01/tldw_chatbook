@@ -37,11 +37,9 @@ CHAT_TITLE_LIMIT = 24
 INACTIVE_COPY = "Provider settings handoff is inactive."
 #: A Console return offered with nothing saved: going back loses nothing.
 ARRIVAL_COPY = "No unsaved changes."
-#: Where focus goes from a disabled named field: the first shown and enabled.
-_DISABLED_FIELD_LANDINGS = (
-    "#settings-provider-auth-source",
-    "#settings-provider-edit-custom-endpoint",
-)
+#: Where focus goes with no field and no return: the first shown and enabled.
+_SIGN_IN_WITH = "#settings-provider-auth-source"
+_EDIT_ENDPOINT = "#settings-provider-edit-custom-endpoint"
 #: outcome -> (what was saved, what the save does not prove).
 _SAVED_COPY = {
     Outcome.CREDENTIAL_SAVED: (
@@ -114,18 +112,26 @@ def route_focus(screen: SettingsScreen, selector: str | None) -> str | None:
     """Where focus goes when Settings opens on a provider route.
 
     The field the route names, while it can take focus. Two routes have no
-    such field: one that names none (a cloud Retry), and one whose field is
-    disabled (the API key while a Claude subscription signs in; the API key
-    or Endpoint of a named custom endpoint, which Settings locks). Both arrive
-    on the return when it is offered, so one Enter goes back.
+    such field: one that names none (a cloud Retry; a NEEDS SETUP row of a
+    custom endpoint that lists no models), and one whose field is disabled
+    (the API key while a Claude subscription signs in; the API key or Endpoint
+    of a named custom endpoint, which Settings locks). Both arrive on the
+    return when it is offered, so one Enter goes back.
 
-    A disabled field with no return offered gives way to the control that acts
-    in its place, the first of these that is shown and enabled: Sign in with,
-    which says why no key is asked for, then Edit this endpoint in Custom
-    endpoints, where a custom endpoint's key and Endpoint are changed. No
-    return can name a custom endpoint, so that button is where its routes
-    land. With neither control (a custom endpoint id whose entry is gone, so
-    the button is hidden) focus stays where it is.
+    With no return offered, focus goes to the control that acts instead, the
+    first of these that is shown and enabled. Sign in with, which says why no
+    key is asked for, stands in for a disabled field only: it is enabled on
+    every Anthropic route, and a route that names no field has nothing to do
+    with it. Then Edit this endpoint in Custom endpoints, where a custom
+    endpoint's key, Endpoint and models are changed. No return can name a
+    custom endpoint, so that button is where its routes land.
+
+    A custom endpoint id whose entry is gone has neither control, because the
+    Edit button is hidden for it. It lands on the Provider control, where
+    another provider is chosen: the search box, not the Select behind it,
+    which sits in a hidden row and would take focus unseen. Any other route
+    with no field and no return (a one-way route to a built-in provider)
+    leaves focus where it is.
 
     Args:
         screen: The Settings screen holding the return target and its outcome.
@@ -139,12 +145,12 @@ def route_focus(screen: SettingsScreen, selector: str | None) -> str | None:
         return selector
     if return_outcome(screen) is not None:
         return "#settings-provider-return"
-    if not disabled:
-        return None
-    for landing in _DISABLED_FIELD_LANDINGS:
+    for landing in (_SIGN_IN_WITH, _EDIT_ENDPOINT) if disabled else (_EDIT_ENDPOINT,):
         # display, not focusable: the Edit button is hidden through display.
         if any(w.display and not w.disabled for w in screen.query(landing)):
             return landing
+    if screen._provider_is_registry_id(screen._provider_widget_value()):
+        return "#settings-provider-search"
     return None
 
 

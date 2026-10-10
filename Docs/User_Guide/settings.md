@@ -441,11 +441,15 @@ when it is showing, and on **Sign in with** when it is not.
 The API key and Endpoint of a named custom endpoint are disabled too: its own
 entry holds them (see [Custom endpoints](#custom-endpoints)). The Console's
 **Set up provider** still names the API key for a chat on such an endpoint
-whose key is missing. Settings remembers no way back for a custom endpoint, so
-none of the return buttons described below ever shows for one. Focus starts on
-**Edit this endpoint in Custom endpoints**, and **Enter** there opens the
-entry's editor with focus on its **Endpoint**. When the endpoint is fixed, go
-back to the Console yourself.
+whose key is missing. The endpoint's **NEEDS SETUP** row in Switch model opens
+Settings as well, and names no field at all when the endpoint lists no models.
+Settings remembers no way back for a custom endpoint, so none of the return
+buttons described below ever shows for one. On each of these routes focus
+starts on **Edit this endpoint in Custom endpoints**, and **Enter** there opens
+the entry's editor with focus on its **Endpoint**. When the endpoint is fixed,
+go back to the Console yourself. If the entry was deleted, the row still opens
+Settings but that button is hidden: focus starts on **Provider**, where you
+choose another provider.
 
 From Chat settings nothing shows until you save; the button then reads **Return
 to Chat settings** and reopens the dialog with your unsaved edits. From the

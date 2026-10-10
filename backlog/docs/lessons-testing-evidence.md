@@ -5799,11 +5799,30 @@ fallback candidates with `focusable` and passed, yet `focusable` reads `visible`
 (the `visibility` rule), not `display`: `Button("x").display = False` leaves it
 True (Textual 8.2.8), and one candidate is hidden through `display`.
 
+A third round found the same landing on two routes that name no field at all:
+the NEEDS SETUP row in Switch model of a custom endpoint that lists no models,
+and the row of one whose entry was deleted. The second fix looked for a landing
+only when a named field was disabled. Its note also said that no entry reaches
+Settings with a deleted id, because the card for such a chat opens Switch model.
+Switch model was the entry: the function behind its row had been called
+directly, and the row itself was never pressed.
+
+That round's first landing for the deleted entry was `#settings-provider-value`,
+the selector its review named. A test on the real app passed: the id held focus,
+and Enter set the Select's `expanded`. Only a live run showed that nothing on
+screen had focus. That Select backs the Provider control from a row hidden with
+`display: none`, and an ancestor's `display` does not stop `focus()` either.
+Enter opened a list nobody saw, and Down then Enter changed the provider unseen.
+
 **What to do.** Before focusing a widget that a route names, ask whether it can
 be disabled, and give the rule a landing for that case. Test fallback candidates
-with `w.display and not w.disabled`, not `focusable`. When one disabled-field
-route turns up, list every state that disables the named fields and drive each
-one before closing the finding.
+with `w.display and not w.disabled`, not `focusable`. When one such route turns
+up, list every state that disables the named fields and every route that names
+no field, and drive each one before closing the finding. Drive it from the
+control the user presses, to the end: a screen that only opens another list is
+not where the route ends. Assert that the widget in focus is painted, as well as
+its id: `_fully_on_screen` in `Tests/UI/test_console_provider_return.py` reads
+the compositor's visible widgets, and is False for a widget inside a hidden row.
 
 ---
 
