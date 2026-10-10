@@ -61,6 +61,23 @@ def test_notify_markup_false_is_exempt():
     assert not _scan(src)
 
 
+@pytest.mark.parametrize(
+    "message",
+    ['Text.from_markup(f"{name}")', 'Text(Text.from_markup(f"{name}"))'],
+)
+def test_notify_markup_false_does_not_hide_prior_markup_parse(message):
+    hits = _scan(f"def f(name):\n    self.notify({message}, markup=False)\n")
+    assert hits[("m", "f", _mod.KIND_NOTIFY)] == 1
+
+
+@pytest.mark.parametrize(
+    "message",
+    ['Text.from_markup("[b]Review[/b]")', 'Text.from_markup(f"{escape_markup(name)}")'],
+)
+def test_notify_markup_false_with_safe_prior_parse_is_exempt(message):
+    assert not _scan(f"def f(name):\n    self.notify({message}, markup=False)\n")
+
+
 def test_notify_escape_wrapped_atom_is_exempt():
     assert not _scan(f"def f(name):\n    {NOTIFY_SAFE_ESCAPE}")
 
@@ -224,10 +241,20 @@ def test_guard_fails_on_one_new_site(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "hazard",
-    ['Button(Text.from_markup(f"{name}"))', 'self.button.label = f"{name}"'],
+    "hazard, kind",
+    [
+        ('Button(Text.from_markup(f"{name}"))', _mod.KIND_BUTTON_LABEL),
+        ('self.button.label = f"{name}"', _mod.KIND_BUTTON_LABEL),
+        ('self.notify(Text.from_markup(f"{name}"), markup=False)', _mod.KIND_NOTIFY),
+        (
+            'self.notify(Text(Text.from_markup(f"{name}")), markup=False)',
+            _mod.KIND_NOTIFY,
+        ),
+    ],
 )
-def test_new_label_hazards_fail_the_census_gate(tmp_path, monkeypatch, capsys, hazard):
+def test_new_markup_hazards_fail_the_census_gate(
+    tmp_path, monkeypatch, capsys, hazard, kind
+):
     package = tmp_path / "tldw_chatbook"
     package.mkdir()
     (package / "planted.py").write_text(f"def planted(name):\n    {hazard}\n")
@@ -237,6 +264,4 @@ def test_new_label_hazards_fail_the_census_gate(tmp_path, monkeypatch, capsys, h
     monkeypatch.setattr(sys, "argv", [str(_SCRIPT)])
 
     assert _mod.main() == 1
-    assert (
-        "tldw_chatbook/planted\tplanted\tbutton_label_interp" in capsys.readouterr().out
-    )
+    assert f"tldw_chatbook/planted\tplanted\t{kind}" in capsys.readouterr().out

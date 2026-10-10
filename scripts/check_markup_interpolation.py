@@ -264,7 +264,7 @@ class _Visitor(ast.NodeVisitor):
         func = node.func
 
         # <anything>.notify(<message>) — Textual's App.notify parses markup
-        # unless the call opts out with markup=False.
+        # unless markup=False opts out without an earlier argument parse.
         if (
             isinstance(func, ast.Attribute)
             and func.attr == "notify"
@@ -272,7 +272,7 @@ class _Visitor(ast.NodeVisitor):
             and not _is_escape_markup_call(node.args[0])
             and not _is_text_wrap(node.args[0])
             and _interpolates_unsafe_atom(node.args[0])
-            and not _has_markup_false(node)
+            and (not _has_markup_false(node) or _contains_markup_parse(node.args[0]))
         ):
             self.hits[(self.module, self._symbol, KIND_NOTIFY)] += 1
 
