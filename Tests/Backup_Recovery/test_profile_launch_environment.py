@@ -31,3 +31,26 @@ def test_fresh_windows_profile_can_resolve_home_without_provider_overrides(
         assert ntpath.expanduser("~") == r"C:\Users\fixture"
     assert "OPENAI_API_KEY" not in environment
     assert "TLDW_MEDIA_DB_PATH" not in environment
+
+
+@pytest.mark.parametrize("selector", ["TEMP", "TMP", "TMPDIR"])
+def test_fresh_profile_keeps_native_snapshot_temp_parent(
+    monkeypatch, tmp_path, selector
+):
+    import tempfile
+
+    private_temp = tmp_path / "private-temp"
+    private_temp.mkdir(mode=0o700)
+    for name in ("TEMP", "TMP", "TMPDIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(selector, str(private_temp))
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-provider-secret")
+    monkeypatch.setenv("TLDW_MEDIA_DB_PATH", "/ambient/database")
+    environment = _launch_environment()
+    assert environment[selector] == str(private_temp)
+    with monkeypatch.context() as selected:
+        selected.setattr(os, "environ", environment)
+        selected.setattr(tempfile, "tempdir", None)
+        assert tempfile.gettempdir() == str(private_temp)
+    assert "OPENAI_API_KEY" not in environment
+    assert "TLDW_MEDIA_DB_PATH" not in environment
