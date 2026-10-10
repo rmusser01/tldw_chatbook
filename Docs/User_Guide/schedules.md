@@ -417,8 +417,10 @@ dispatching it also disables it and clears its next run internally, but
 the screen reads that specific shape as **finished**, not disabled —
 the detail badge and Next Run agree with the queue row: **Completed**,
 Next Run **—**, the `✓` glyph, and the **Completed** chip, everywhere at
-once. A task you disabled yourself (its next run is still armed
-underneath) is the only shape that reads **Disabled** / **— (disabled)**.
+once. A task that is disabled while a next run is still stored
+underneath is the only shape that reads **Disabled** / **— (disabled)**:
+one you disabled yourself, or a fired one-time reminder you gave a new
+time and have not enabled yet.
 
 ## Ran late — what happens to overdue reminders
 
