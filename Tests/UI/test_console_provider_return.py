@@ -5,8 +5,8 @@ provider_return.py``) and the Settings offer and copy (``Settings_Modules/
 provider_return.py``) with the real handoff store and the real Console chat
 store. The private-profile tests run the real app: card -> Settings -> key ->
 save -> Enter, the saved model an untouched chat comes back on, Return without
-saving in every unsaved state, the return offered on arrival, and a return
-that lapses when the user walks back by hand.
+saving in every unsaved state, the return offered on arrival, a return that
+lapses when the user walks back by hand, and edits made after the save.
 """
 
 from __future__ import annotations
@@ -45,6 +45,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     PendingHandoffStore,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.UI.Settings_Modules.provider_return import (
     INACTIVE_COPY,
@@ -59,6 +60,7 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 CHANNEL = HandoffChannel.CONVERSATION_SETTINGS_RETURN
 SAVED = ConversationSettingsReturnOutcome.CREDENTIAL_SAVED
 UNSAVED = ConversationSettingsReturnOutcome.WITHOUT_SAVING
+_PROVIDERS_MODELS = SettingsCategoryId.PROVIDERS_MODELS
 
 
 def _console(store: ConsoleChatStore, *, blocking: bool = False, owns: bool = True):
@@ -926,3 +928,125 @@ async def test_an_unused_return_lapses_when_the_user_walks_back_by_hand(
         assert not app.screen.query_one(
             "#settings-provider-return-continuation"
         ).display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_field_edited_after_the_save_waits_in_settings_as_an_unsaved_edit(
+    monkeypatch, request
+):
+    """The guide's after-save sentences, on the real app.
+
+    Edits made after the save keep Return to Console, and the return neither
+    asks about them nor saves them. A field edit (another key) waits in
+    Settings as an unsaved edit, so the next recovery, for another provider,
+    opens on the conflict panel; a snapshot preference is kept by the screen
+    only and is dropped. Saving the waiting edit from the panel is not that
+    recovery's save: the page moves on to its provider as on arrival, with
+    focus in the named field, not on the button, and the next edit asks first
+    again."""
+    app = _cloud_app_without_a_key(monkeypatch)
+    later_key = _KEY[::-1]
+
+    def offered(screen) -> tuple[bool, bool]:
+        """(Return to Console shows, Return without saving shows)."""
+        return (
+            screen.query_one("#settings-provider-return-continuation").display,
+            screen.query_one("#settings-provider-return-without-save").display,
+        )
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        console, session, settings = await _recover_from_the_card(app, pilot)
+        await pilot.press(*_KEY)
+        await pilot.press("escape")  # leave the field, so s is Save
+        await pilot.press("s")
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "settings-provider-return",
+            "focus on the Return to Console action after the save",
+        )
+        saved = _saved_config()
+        assert _saved_openai_key() == _KEY
+
+        settings.query_one("#settings-provider-api-key", Input).focus()
+        await pilot.press(*later_key)
+        snapshots = settings.query_one("#settings-snapshot-enabled", Checkbox)
+        snapshot_saved = snapshots.value
+        snapshots.toggle()
+        await _until(
+            pilot,
+            lambda: (
+                settings._provider_same_target_has_draft()
+                and settings._snapshot_preferences_dirty()
+            ),
+            "both later edits to be unsaved",
+        )
+        assert offered(settings) == (True, False)
+        settings.query_one("#settings-provider-return", Button).focus()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console
+                and console._is_descendant_or_self(
+                    app.focused, console.query_one("#console-native-composer")
+                )
+            ),
+            "the Console's composer, with no question asked",
+        )
+        assert _saved_config() == saved  # Neither later edit was written.
+
+        open_provider_setup(console, "anthropic", field="api_key")
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and app.screen is not settings
+                and bool(app.screen.query("#settings-provider-value SelectOverlay"))
+                and bool(app.screen.query("#settings-snapshot-enabled"))
+                and app.screen._snapshot_preferences_loaded is not None
+                and app.screen.query_one(
+                    "#settings-provider-navigation-conflict"
+                ).display
+            ),
+            "a fresh Settings screen on the conflict panel",
+        )
+        fresh = app.screen
+        assert fresh._provider_draft_value("api_key") == later_key
+        assert fresh._provider_widget_value() == "openai"
+        assert offered(fresh) == (False, False)  # The panel owns the answer.
+        fresh_snapshots = fresh.query_one("#settings-snapshot-enabled", Checkbox)
+        # Loaded from the file again: the old screen's edit went with it.
+        assert fresh_snapshots.value is snapshot_saved
+
+        fresh.query_one("#settings-provider-conflict-review", Button).press()
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "settings-provider-api-key",
+            "the review to put focus in the waiting edit's field",
+        )
+        await pilot.press("escape")  # leave the field, so s is Save
+        await pilot.press("s")
+        await _until(
+            pilot,
+            lambda: _saved_openai_key() == later_key and offered(fresh)[0],
+            "the waiting edit's save to land",
+        )
+        assert fresh._provider_navigation_conflict_target is None
+        assert fresh._provider_return_outcome is None
+        assert fresh._provider_widget_value() == "anthropic"
+        assert offered(fresh) == (True, False)
+        status = fresh.query_one(
+            "#settings-provider-return-continuation-status", Static
+        )
+        assert str(status.renderable) == (
+            f"No unsaved changes. Return to Console to continue in “{session.title}”."
+        )
+        assert app.focused.id == "settings-provider-api-key"
+
+        fresh_snapshots.toggle()
+        await _until(
+            pilot,
+            lambda: offered(fresh) == (False, True),
+            "the next edit to ask first again",
+        )
