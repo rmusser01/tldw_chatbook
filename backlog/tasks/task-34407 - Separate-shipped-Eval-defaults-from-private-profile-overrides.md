@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 17:58'
-updated_date: '2026-10-10 01:12'
+updated_date: '2026-10-10 01:43'
 labels: []
 dependencies: []
 ---
@@ -55,6 +55,8 @@ Diagnostic artifact review: the existing loaded-selected-path info message becam
 Expanded verification follow-up: the first platform run exposed 32 missing-fixture setup errors; affected modules now explicitly reuse the existing helper_resource_root fixture. The shared rebackup oracle now checks canonical private overrides rather than the immutable package resource, and the Eval-specific full-App scenario seeds an actual private override before capture so retention is not vacuous. Native finite recovery coverage: 71 passed, 4 capability skips, with one full-App rebackup exceeding its existing 45-second child deadline. Preserved phase/stack diagnostics locate that delay inside unchanged dev live-capture/startup-reacquisition code; no deadline was increased and the broader result remains unqualified. Removed all temporary diagnostics. The shared child helper now records UTF-8 output to an owned file, avoiding inherited-pipe EOF and decoding failures without changing its deadline. Windows CI initially created fixtures under the elevated default Administrators owner, correctly refused as selector_unverified; CI now reuses the genuine user-default-owner launcher from the existing Console test tooling, changing only test-process TokenOwner and restoring it afterwards, never production guards or ACLs. A new exact-head platform run will verify these corrections before merge.
 
 Linux follow-up reached 75 passing cases with one remaining stale full-App oracle: restored private overrides retain their actual filename instead of eval_config.yaml. The fixture now records exact trusted restore-plan destinations and source digests in its own receipt, verifies each retained file after original/candidate removal, and compares the complete rebackup Eval payload multiset with those exact sources. The Eval-specific scenario requires one actual incoming private source; no retention assertion is removed or made vacuous. Generic media scenarios no longer demand a nonexistent packaged-default payload. All shared and Eval-specific embedded scripts compile with unique replacement anchors.
+
+Precise Windows child evidence identifies the remaining full-App inventory refusal in bundled chat.prompt templates and persona artwork under the Actions checkout, whose native owner is Administrators rather than TokenUser. Linux/macOS are genuinely runner-owned and pass all 76 cases. The Windows workflow now assigns the disposable checkout to the actual authenticated runner using the native ownership operation, verified to be the resolved Git workspace. This changes real fixture ownership, not metadata projections, production policy, guards, file contents, or test deadlines. The original refusal evidence is retained; one more exact-head run will confirm the fixture correction.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering Provenance

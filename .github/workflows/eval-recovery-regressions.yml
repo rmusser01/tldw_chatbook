@@ -33,6 +33,17 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Make the disposable Windows checkout runner-owned
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $checkoutRoot = (Resolve-Path -LiteralPath $env:GITHUB_WORKSPACE).Path
+          if (-not (Test-Path -LiteralPath (Join-Path $checkoutRoot '.git'))) {
+            throw 'Expected checkout is not a Git workspace'
+          }
+          $checkoutOwner = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+          icacls $checkoutRoot /setowner $checkoutOwner /T /Q
+          if ($LASTEXITCODE -ne 0) { throw 'Native checkout ownership could not be established' }
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
