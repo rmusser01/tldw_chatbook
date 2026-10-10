@@ -1,6 +1,6 @@
 # Speech: TTS, voice profiles, dictation, and hands-free
 
-This document describes the speech stack: the TTS service and its lease-based adapter registry, the layered voice selection model, the encrypted-ish profile store, local and remote backends, PCM streaming vs file playback, STT/dictation into the Console composer, and the hands-free loop.
+This document describes the speech stack: the TTS service and its lease-based adapter registry, the layered voice selection model, the private SQLite profile store, local and remote backends, PCM streaming vs file playback, STT/dictation into the Console composer, and the hands-free loop.
 
 ## Authoritative files
 

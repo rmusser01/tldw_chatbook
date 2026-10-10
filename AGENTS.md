@@ -71,7 +71,7 @@ Navigation is screen-based and exclusive (no legacy tab-window UI): every destin
 
 ### Data Layer (`DB/`)
 
-- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes), schema v78 (`_CURRENT_SCHEMA_VERSION`; file-backed migrations in `DB/migrations/`)
+- **`ChaChaNotes_DB.py`** - Main DB (conversations, messages, characters, notes), schema version at `_CURRENT_SCHEMA_VERSION`; file-backed migrations in `DB/migrations/`
 - **`Client_Media_DB_v2.py`** - Media storage with chunking (in-code migration registry; Python-side FTS)
 - **`RAG_Indexing_DB.py`** - Incremental-indexing state (item → last_modified); vectors live in ChromaDB, not here
 - Other DBs: Evals, Prompts, Subscriptions, AgentRuns, Library collections/ingest-jobs, Workspaces
