@@ -82,6 +82,12 @@ FAST_LANE_TARGETS = (
     "Tests/Library/test_ingest_analysis_load_settings.py",
     "Tests/test_config_load_settings_table_guard.py",
     "Tests/Architecture/test_study_handler_service_keywords.py",
+    # TASK-33621.27: the plain-unit Console P0 regression files -- the Save
+    # .md export seam, the trace row sources behind the refused sends, and
+    # the wizard lifecycle guard. About 6 s together under load.
+    "Tests/Console/test_console_markdown_export.py",
+    "Tests/Chat/test_console_trace_row_sources.py",
+    "Tests/Architecture/test_wizard_lifecycle_guards.py",
 )
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
 #: production runtime). They are ``bootstrap_profile``, so they run in the
@@ -324,7 +330,9 @@ def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> Non
     assert not missing, f"not gated on pull requests: {missing}"
     assert len(set(targets)) == len(targets)
     for target in targets:
-        assert (PROJECT_ROOT / target).exists(), f"gated target is gone: {target}"
+        # TASK-33621.27: a target may be one test's node id (`file::test`).
+        path = PROJECT_ROOT / target.split("::", 1)[0]
+        assert path.exists(), f"gated target is gone: {target}"
     # Their enrollment poisons sandboxed suites sharing a process (TASK-32873).
     assert not set(targets) & set(FAST_LANE_TARGETS)
 

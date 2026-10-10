@@ -140,9 +140,20 @@ jobs:
             Tests/Library/test_ingest_analysis_load_settings.py \
             Tests/test_config_load_settings_table_guard.py \
             Tests/Architecture/test_study_handler_service_keywords.py \
+            Tests/Console/test_console_markdown_export.py \
+            Tests/Chat/test_console_trace_row_sources.py \
+            Tests/Architecture/test_wizard_lifecycle_guards.py \
             --timeout=180 \
             --tb=short
 
+      # TASK-33621.27: the Console review's P0 regression tests. The last
+      # three files of the step above are plain unit tests (about 6 s
+      # together). The block the step below lists before
+      # test_console_capacity_refusal_copy.py is bootstrap_profile, so it runs
+      # there. A whole file is gated where it measured ~30 s or less locally;
+      # a slower file only by the node ids that pin the P0 itself. The mounted
+      # private-profile P0 tests are in the UI census.
+      # Tests/CI/test_console_p0_regression_gate.py pins where each one runs.
       # TASK-32873: the admission-sensitive suites enroll the process
       # against the collection-time profile (keep_bootstrap_profile in
       # Tests/conftest.py); running them in the SAME pytest invocation as
@@ -172,6 +183,26 @@ jobs:
             Tests/Notes/test_notes_sync_resave_window.py \
             Tests/Notes/test_notes_sync_attention_fence.py \
             Tests/Agents/test_first_request_window_honest_plan.py \
+            Tests/Agents/test_provider_tool_schema_conformance.py \
+            Tests/Chat/test_console_tool_definition_rejection.py::test_default_console_send_to_anthropic_gets_a_reply \
+            Tests/Chat/test_console_capture_send_triggers.py \
+            "Tests/UI/test_console_blocked_send_recovery.py::test_each_trigger_chat_sends_and_renders_the_reply[system-prompt-before-first-send]" \
+            "Tests/UI/test_console_blocked_send_recovery.py::test_provenance_failure_recovery_actions_work[retry]" \
+            Tests/Chat/test_console_compaction_failure.py \
+            Tests/Chat/test_console_compaction_live_session.py::test_live_automatic_compaction_commits_memory_and_the_send_replies \
+            Tests/Chat/test_console_compaction_live_session.py::test_live_compact_now_succeeds_after_real_durable_sends \
+            Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compaction_records_reason_and_discloses_spend \
+            Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_says_nothing_changed \
+            Tests/Chat/test_console_compaction_live_session.py::test_live_failure_is_not_rebilled_until_the_policy_changes \
+            Tests/UI/test_console_row_menu_action_sweep.py::test_the_sweep_covers_every_declared_action_constant \
+            "Tests/UI/test_console_row_menu_action_sweep.py::test_conversation_row_action_never_ends_the_app[save-markdown]" \
+            Tests/Wizards/test_first_run_provider_catalog.py::test_wizard_provider_list_is_the_settings_picker_set \
+            Tests/Wizards/test_first_run_provider_catalog.py::test_arrowing_through_every_listed_row_keeps_the_step_live \
+            Tests/Wizards/test_first_run_provider_catalog.py::test_a_raising_step_handler_keeps_the_step_and_the_keyboard \
+            Tests/Wizards/test_first_run_provider_catalog.py::test_next_after_a_step_error_never_exits_the_app \
+            Tests/UI/test_console_hook_review_send_freeze.py::test_the_app_pump_answers_ctrl_q_while_the_enter_review_is_open \
+            Tests/UI/test_console_hook_review_send_freeze.py::test_a_declined_send_review_settles_and_keeps_the_draft \
+            Tests/UI/test_console_hook_review_send_freeze.py::test_allow_all_resumes_the_captured_send_exactly_once \
             Tests/Chat/test_console_capacity_refusal_copy.py \
             Tests/UI/test_roleplay_frame_harness.py \
             Tests/UI/test_roleplay_header.py \
