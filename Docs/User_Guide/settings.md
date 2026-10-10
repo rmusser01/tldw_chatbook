@@ -491,7 +491,7 @@ return to that chat the next time you open it.
 **Return without saving** asks "Discard all unsaved changes to Providers &
 Models?". **Discard changes** goes back with nothing written. **Keep editing**,
 where focus starts, changes nothing and puts focus back on **Return without
-saving**. It shows only until you save:
+saving**. **Return without saving** shows only until you save:
 from Chat settings while you have unsaved edits to that provider, and from the
 Console for any unsaved edit on this page, such as another provider picked in
 **Provider** or a snapshot preference. A Console recovery can arrive on edits
