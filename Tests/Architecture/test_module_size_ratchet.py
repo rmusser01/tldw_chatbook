@@ -97,8 +97,11 @@ _BUDGETS: dict[str, int] = {
     # now called from every refusing branch of the locked navigation
     # body, and a flush that accepts `destination` is told the clicked
     # destination's label (`_navigation_destination_label`,
-    # `_flush_accepts_destination`).
-    "tldw_chatbook/app_navigation.py": 1195,
+    # `_flush_accepts_destination`). Review 1: 1195 -> 1208 (+13), the
+    # admission-veto branch says the honest generic ("Couldn't leave this
+    # screen yet; try again in a moment.") -- no admission hook speaks on
+    # its own.
+    "tldw_chatbook/app_navigation.py": 1208,
     # TASK-33011: the command-palette providers moved verbatim out of app.py;
     # governed there, so governed here.
     "tldw_chatbook/app_command_providers.py": 1123,

@@ -36,11 +36,12 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from ...Library.library_notes_session import NoteFlushOutcome, NoteFlushOutcomeKind
+from ...Library.library_notes_session import NoteFlushOutcomeKind
 from ...Widgets.confirmation_dialog import confirm_quit_discarding_edits
 from .screen_constants import LIBRARY_NOTE_BLANK_SEED_TITLE
 
 if TYPE_CHECKING:
+    from ...Library.library_notes_session import NoteFlushOutcome
     from ..Screens.library_screen import LibraryScreen
 
 logger = logger.bind(module="LibraryScreen")
@@ -257,6 +258,9 @@ def _veto_reason(screen: LibraryScreen) -> str:
 
 #: The head of every Esc-path veto sentence in
 #: ``_library_note_editor_exit_veto_message`` (TASK-34000.29 owns that copy).
+#: .29: this literal and the sentences' head in ``library_screen.py`` move
+#: together -- ``test_library_pending_work_veto_notice.py`` pins the match,
+#: and a head that no longer matches falls back to the Esc sentence as-is.
 _ESC_VETO_HEAD = "Can't leave yet — "
 
 
@@ -301,12 +305,15 @@ def library_note_flush_veto_notice(
 def library_file_notes_flush_veto_notice(*, destination: str) -> str:
     """The toast when a Folder-files draft refuses the flush (TASK-34000.27).
 
-    The workspace shows its own save state in place; this names the refusal
-    at the click, which used to get nothing.
+    The workspace shows its own state in place; this names the refusal at
+    the click, which used to get nothing. The workspace refuses for an
+    unsaved or conflicted draft AND for a folder change or git action still
+    running, so the sentence claims no more than "not settled".
     """
     return (
         f"{_leave_head(destination)} — the open file in Folder files isn't "
-        "saved; check its status there first."
+        "settled yet; a save, folder change or action is still running. "
+        "Check its status there first."
     )
 
 

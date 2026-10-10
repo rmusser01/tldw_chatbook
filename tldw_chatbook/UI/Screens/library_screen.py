@@ -11311,8 +11311,13 @@ class LibraryScreen(BaseAppScreen):
         """
         from ..Library_Modules import library_pending_work as pending
 
+        # One click, at most one toast (review 1 Minor 6): the first refusal
+        # speaks; the others are visible in their own editors.
+        spoken: list[str] = []
+
         def say(text: str) -> None:
-            if not quitting:
+            if not quitting and not spoken:
+                spoken.append(text)
                 pending.notify_library_flush_veto(self, text)
 
         if self._prompts_state.mutation_in_flight:
@@ -11335,9 +11340,10 @@ class LibraryScreen(BaseAppScreen):
             say(pending.library_file_notes_flush_veto_notice(destination=destination))
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             say(pending.library_note_flush_veto_notice(note_flush, destination=destination))
-        if not prompt_flush_allowed and not quitting:
+        if not prompt_flush_allowed and not quitting and not spoken:
+            spoken.append("prompt")
             self._notify_prompt_dirty_veto()
-        if not skill_flush_allowed and not quitting:
+        if not skill_flush_allowed and not quitting and not spoken:
             self._notify_skill_dirty_veto()
         return (
             file_notes_flush_allowed

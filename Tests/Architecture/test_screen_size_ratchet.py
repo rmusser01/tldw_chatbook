@@ -951,7 +951,9 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: through the pure `library_note_flush_veto_notice`, the two formerly
     #: silent vetoes through their own sentences) -- one kwarg, its Args
     #: entry, a three-line nested `say`, and the comment. No new method.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37008, 1344),
+    #: Review 1: 37008 -> 37014 (+6), one click says at most one toast
+    #: (the `spoken` guard). No new method.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37014, 1344),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

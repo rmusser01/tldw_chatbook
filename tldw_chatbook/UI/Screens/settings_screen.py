@@ -24627,7 +24627,13 @@ class SettingsScreen(BaseAppScreen):
                 panel = self.query_one(SpeechTTSSettingsPanel)
                 panel._fence_audio_cpp_result_cleanup()  # noqa: SLF001
             except QueryError:
-                pass
+                # TASK-34000.27: the panel normally writes "Finishing
+                # installed package review…" before this refusal; without
+                # the panel, say so here rather than refuse silently.
+                self.app.notify(
+                    "Finishing installed package review; staying in Settings.",
+                    severity="warning",
+                )
             self._speech_tts_model_library_route_token = None
             return False
         if (

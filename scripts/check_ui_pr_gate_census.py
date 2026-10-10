@@ -202,9 +202,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # outgoing screen vetoes (a note title with a trailing space) says why
 # with the destination named, leaves Library on the stack with ⌃3
 # Library still framed, keeps the typed text, and the retry click opens
-# Console once the title is fixed; the flush timeout, flush failure,
-# bare veto and confirm veto all roll the bar back (unit arms); 7 tests,
-# about 30 s locally. The 80x24 and CONFLICTED arms are in
+# Console once the title is fixed (one Pilot arm, one app boot); the flush
+# timeout, flush failure, bare veto, admission veto and confirm veto all
+# roll the bar back (unit arms); 7 tests, about 25 s locally (review 1
+# re-measure). The 80x24 and CONFLICTED arms are in
 # test_nav_veto_keeps_highlight_extended.py, outside the lane.
 MINIMUM_FILES = 162
 

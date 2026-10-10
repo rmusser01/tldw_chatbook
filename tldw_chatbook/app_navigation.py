@@ -661,6 +661,19 @@ class NavigationMixin:
                     f"Navigation to {screen_name} vetoed by the outgoing "
                     "screen's transition admission"
                 )
+                # TASK-34000.27 review 1: no admission hook says why on its
+                # own (checked: the only producer is Library's
+                # `acquire_navigation_transition`, whose Folder-files lease
+                # arm is silent and whose mutation arm the flush above
+                # already refused with its own toast), so the app says the
+                # honest generic here, like the timeout and failure arms.
+                try:
+                    self.notify(
+                        "Couldn't leave this screen yet; try again in a moment.",
+                        severity="warning",
+                    )
+                except Exception:
+                    pass
                 self._restore_nav_bar_highlight(
                     current_screen, screen_name=screen_name
                 )

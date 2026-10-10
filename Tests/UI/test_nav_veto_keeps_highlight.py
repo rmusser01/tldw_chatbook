@@ -10,8 +10,8 @@ click on ⌃2 Console did nothing, because the bar's already-active check
 swallowed it (the swallowed-retry trap `MainNavigationBar.restore_active`
 documents for the crash path, task-2720).
 
-The Pilot arms boot the REAL app into Library (its real ``LibraryScreen``
-with its real ``MainNavigationBar``) and drive the click path
+The Pilot arm boots the REAL app into Library once (its real ``LibraryScreen``
+with its real ``MainNavigationBar``) and drives the click path
 (``_activate_navigation_button``: optimistic highlight + ``NavigateToScreen``
 through the app's own navigation worker). The unit arms mirror
 ``test_screen_navigation_failure_recovery.py`` for the branches a Pilot
@@ -130,13 +130,46 @@ async def _activate_destination(app, pilot, destination_id: str):
     return activated, bar
 
 
-# --- AC#1, AC#2, AC#4: the veto says why and keeps Library highlighted ------
+def _painted_text_in_region(app, region) -> str:
+    """What the compositor actually painted inside ``region``."""
+    strips = list(app.screen._compositor.render_strips())
+    return "\n".join(
+        strips[y].crop(region.x, region.right).text.rstrip()
+        for y in range(region.y, region.bottom)
+    )
 
 
-async def test_vetoed_switch_keeps_library_highlighted_and_says_why(monkeypatch):
-    """Capture 16-veto-t7: Library stays, ⌃3 Library stays framed, the toast
-    names the field and the destination, the typed text is untouched, and the
-    quit flush (its own prompt) still says nothing."""
+def _frame_color(app, button):
+    """The painted colour of the button's top-left frame cell.
+
+    Every nav button has a `border: solid`; the active one differs only in
+    colour (`$primary`, `MainNavigationBar.DEFAULT_CSS`), which is what the
+    user sees as "framed". Read from the composited strips, not the styles.
+    """
+    strips = list(app.screen._compositor.render_strips())
+    region = button.region
+    for segment in strips[region.y].crop(region.x, region.right):
+        if segment.text.strip():
+            return segment.style.color if segment.style is not None else None
+    return None
+
+
+# --- AC#1-AC#4 in one boot (review 1 Important 1): the veto says why, keeps
+# --- Library highlighted and the text intact; the retry then works ---------
+
+
+async def test_vetoed_switch_says_why_keeps_library_framed_and_the_retry_works(
+    monkeypatch,
+):
+    """Captures 16-veto-t7 and 18-retry-console in one app boot.
+
+    Veto: Library stays, ⌃3 Library stays framed (painted frame, not just a
+    class), exactly one toast names the field and the destination, the typed
+    text is untouched, and the quit flush (its own prompt) still says nothing.
+    Retry: after "Saved", ONE click on ⌃2 Console opens Console. On the base
+    the bar still thought Console was active, so
+    ``_activate_navigation_button`` returned False and nothing happened.
+    """
     app = _library_app(monkeypatch)
     toasts = _record_toasts(monkeypatch, app)
 
@@ -146,6 +179,10 @@ async def test_vetoed_switch_keeps_library_highlighted_and_says_why(monkeypatch)
         body_before = screen.query_one("#library-note-body", TextArea).text
         await _set_title_and_wait(screen, pilot, "Draft ", _WHITESPACE_REASON)
         toasts.clear()
+        bar_before = screen.query_one(MainNavigationBar)
+        active_frame = _frame_color(app, bar_before.query_one("#nav-library"))
+        inactive_frame = _frame_color(app, bar_before.query_one("#nav-console"))
+        assert active_frame != inactive_frame, "premise: the active frame differs"
 
         activated, bar = await _activate_destination(app, pilot, "console")
 
@@ -154,11 +191,26 @@ async def test_vetoed_switch_keeps_library_highlighted_and_says_why(monkeypatch)
         assert bar.active_destination_id == "library", (
             f"the bar still frames {bar.active_destination_id!r} after the veto"
         )
-        assert bar.query_one("#nav-library").has_class("is-active")
-        assert not bar.query_one("#nav-console").has_class("is-active")
-        assert [t for t in toasts if _VETO_HEAD in t and _WHITESPACE_REASON in t], (
+        library_button = bar.query_one("#nav-library")
+        console_button = bar.query_one("#nav-console")
+        assert library_button.has_class("is-active")
+        assert not console_button.has_class("is-active")
+        # What the user sees (review 1 Minor 4): the active-coloured frame is
+        # painted around "Library" exactly as before the click, and Console
+        # wears the inactive frame -- not the other way round.
+        assert "Library" in _painted_text_in_region(app, library_button.region)
+        assert _frame_color(app, library_button) == active_frame, (
+            "Library lost its active frame on screen after the veto"
+        )
+        assert _frame_color(app, console_button) == inactive_frame, (
+            "Console is painted with the active frame after the veto"
+        )
+        veto_toasts = [t for t in toasts if _VETO_HEAD in t]
+        assert [t for t in veto_toasts if _WHITESPACE_REASON in t], (
             f"no toast said why the switch was blocked; toasts={toasts!r}"
         )
+        # One click, one toast (review 1 Minor 6).
+        assert len(veto_toasts) == 1, veto_toasts
         # Unsaved text is never lost: the veto keeps the user exactly where
         # they were, with their text intact.
         assert screen.query_one("#library-note-title", Input).value == "Draft "
@@ -169,26 +221,6 @@ async def test_vetoed_switch_keeps_library_highlighted_and_says_why(monkeypatch)
         toasts.clear()
         assert await screen.flush_pending_work(quitting=True) is False
         assert toasts == [], f"the quit flush toasted: {toasts!r}"
-
-
-# --- AC#3, AC#4: the retry click works once the cause is fixed --------------
-
-
-async def test_retry_after_fixing_the_title_navigates_on_the_first_click(
-    monkeypatch,
-):
-    """Capture 18-retry-console: after "Saved", ONE click on ⌃2 Console opens
-    Console. On the base the bar still thought Console was active, so
-    ``_activate_navigation_button`` returned False and nothing happened."""
-    app = _library_app(monkeypatch)
-    _record_toasts(monkeypatch, app)
-
-    async with app.run_test(size=SIZE) as pilot:
-        screen = await _library(app, pilot)
-        await _open_note_editor(screen, pilot)
-        await _set_title_and_wait(screen, pilot, "Draft ", _WHITESPACE_REASON)
-        activated, _bar = await _activate_destination(app, pilot, "console")
-        assert activated is True and app.screen is screen, "premise: vetoed"
 
         await _set_title_and_wait(screen, pilot, "Draft", "Saved")
 
@@ -327,6 +359,30 @@ async def test_plain_false_veto_restores_without_a_second_toast(monkeypatch):
     assert notifications == [], (
         f"the app toasted over the screen's own reason: {notifications!r}"
     )
+
+
+async def test_admission_veto_says_the_honest_generic_and_restores(monkeypatch):
+    """Review 1 Important 2: Library's Folder-files transition lease refuses
+    through ``acquire_navigation_transition`` with no message of its own; the
+    app says the honest generic (like the timeout arm) and rolls back."""
+    app = _build_test_app()
+    bar = _RecordingBar()
+
+    class LeasedScreen(_OutgoingScreen):
+        def acquire_navigation_transition(self):
+            return False
+
+    notifications = _wire(app, monkeypatch, LeasedScreen(bar))
+
+    await app.handle_screen_navigation(NavigateToScreen("chat"))
+
+    assert bar.restored == ["library"], (
+        "an admission veto left the bar on the clicked destination"
+    )
+    assert [m for m, _ in notifications if "Couldn't leave this screen yet" in m], (
+        f"the admission veto was silent: {notifications!r}"
+    )
+    assert len(notifications) == 1, notifications
 
 
 async def test_confirm_navigation_veto_restores_the_highlight(monkeypatch):
