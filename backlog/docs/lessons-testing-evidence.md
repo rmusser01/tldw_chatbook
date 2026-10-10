@@ -19412,3 +19412,30 @@ required check fails whenever the fast lane does. Nothing local had run
 `pytest Tests/CI -q` before pushing, and grep `Tests/` for the job id or the
 changed key (`timeout-minutes`, step names) to find the contract tests that
 pin it. Update the pin in the same commit as the workflow edit.
+
+## A regression test no PR lane runs went red within days, and nobody saw (TASK-33621.27, 2026-10-10)
+
+**Incident.** The Console review's P0 fixes (PRs #2931-#2945, 2026-09-30) each
+shipped a regression test that failed on the pre-fix code. Only the tab-close
+file was added to a pull-request lane. Ten days later, two of the others were
+red on `dev` and nothing had noticed. TASK-33621.1's three rejection-copy tests
+assert `"HTTP 400"`, and TASK-34100.5 (f679524b06, c55fc726df, 2026-10-03)
+reworded provider failures to `"... Status: 400. ..."`. TASK-33621.3's v74
+migration test pins schema version 77, and dev is at 80. Both changes merged
+green, because no lane ran either test.
+
+**What to do.** A regression test does nothing as a guard until a required lane
+runs it. Gate it in the PR that adds it:
+- a fast whole file goes in `scripts/ui_pr_gate_census.txt`, or in the PR Fast
+  Lane step that matches its profile (bootstrap_profile files go in the
+  admission-sensitive step);
+- a slow file is gated by the node ids that pin the fix, since the census
+  accepts node ids now.
+
+Pin a P0's gating so it cannot be dropped quietly
+(`Tests/CI/test_console_p0_regression_gate.py`). When timing a candidate on a
+loaded host, read pytest's own `in N s` line, not wall clock. Here wall clock
+was 985 s for a 17 s run and 2006 s for a 122 s run, because the process hung
+at exit after printing its summary (see "PRINTED ITS FINAL SUMMARY and then
+never exited" above). Normalise against a gated reference file timed the same
+way.
