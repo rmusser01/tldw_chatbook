@@ -76,7 +76,7 @@ The model-catalog refresh worker group is named by `Constants.MODEL_CATALOG_REFR
 
 ## Reactive conventions
 
-`recompose=True` is used sparingly and deliberately. The canonical current use is pane-level data reactives (Watchlists panes rebuild just that pane's children). The documented anti-pattern is a screen-level `recompose=True` reactive; Settings removed three such reactives because watchers raised `NoActiveAppError` during early compose. Any recompose passes through `BaseAppScreen.refresh()`, which releases stale mouse capture and restores keyboard focus.
+`recompose=True` is used sparingly and deliberately. The canonical current use is pane-level data reactives (Watchlists panes rebuild just that pane's children). The documented anti-pattern is a screen-level `recompose=True` reactive; Settings removed three such reactives because watchers raised `NoActiveAppError` during early compose. For screen content, `BaseAppScreen.refresh(recompose=True)` releases mouse capture when recomposition is scheduled. Keyboard focus capture and restoration live in `BaseAppScreen.recompose()`, covering both scheduled refreshes and direct awaits; child widgets such as `ConsoleTranscript` own their recomposition separately.
 
 ## CSS and design tokens
 
