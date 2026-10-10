@@ -199,12 +199,20 @@ def test_real_profile_enrollment_waits_for_old_hold_then_uses_new_companion_guar
     assert old.stop.is_set() and not old.thread.is_alive()
     assert old.key not in storage._holds and old not in storage._retiring_holds
     control_records.bind_profile(root, selected, ("profile",), root / "admission")
+    before = selected.read_bytes()
     with sources._original_scope_acquisitions(source) as observed:
-        assert _read(source) == "retirement"
-    assert len(observed.entries) == 1
-    operation, state, leases = observed.entries[0]
-    assert state.companion_guard is not None and len(leases) == 1
-    assert state.holds[0] is not old and state.holds[0].names == ("profile",)
+        with config_participants.operation(source):
+            assert len(observed.entries) == 1
+            operation, state, leases = observed.entries[0]
+            # The original retirement clears this live-only companion authority.
+            assert state.active and state.companion_guard is not None
+            assert len(leases) == 1
+            assert state.holds[0] is not old and state.holds[0].names == ("profile",)
+            assert (
+                source.get_cli_setting("general", "users_name", "missing")
+                == "retirement"
+            )
+    assert state.companion_guard is None and selected.read_bytes() == before
     assert operation not in raw._states and operation not in storage._raw_operations
     assert not storage._live_leases and not storage._holds
     request.node.user_properties.append(
@@ -213,15 +221,21 @@ def test_real_profile_enrollment_waits_for_old_hold_then_uses_new_companion_guar
 
 
 def test_valid_shaped_profile_insertion_after_first_acquire_keeps_scope_mismatch_refusal(
-    configured_source, request
+    tmp_path, monkeypatch, local_root, request
 ):
     """A real durable tamper cannot turn old unbound evidence into a companion guard."""
-    source = configured_source
+    # Cover every fallback sibling without enrolling the bootstrap control root.
+    parent = tmp_path / "profile"
+    parent.mkdir(mode=0o700)
+    source = sources.retirement_cases.configured_source.__wrapped__(
+        parent, monkeypatch, local_root
+    )
     root = bootstrap.default_bootstrap_root()
     selected = source.get_cli_config_path()
+    assert not root.is_relative_to(selected.parent)
     authority = storage._holds[(os.getpid(), str(root))].authority
     data = source.get_user_data_dir()
-    authority.register("profile", (selected, data))
+    authority.register("profile", (selected.parent, data))
     _, _, hold = _warm_missing(source)
     was_confirmed = _cache_fact(hold, selected)
     registry = bootstrap._registry(root)
