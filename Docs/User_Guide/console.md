@@ -350,6 +350,9 @@ something first, such as the key, the button hides until you save, and the
 save puts focus back on it (saving only **Prompt-cache snapshots**, under
 **Advanced**, brings the button back without moving focus to it); see
 [Settings — Coming back from a provider fix](settings.md#coming-back-from-a-provider-fix).
+When edits to that provider are still unsaved from an earlier visit, Settings
+opens with focus on **Return without saving**, here and for **Review
+credentials**.
 Every test sends the
 API key a message would use, so a local server started with a key (vLLM's
 `--api-key`, for example) is tested with it, and "key rejected" means that

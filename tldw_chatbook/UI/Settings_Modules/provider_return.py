@@ -116,7 +116,10 @@ def route_focus(screen: SettingsScreen, selector: str | None) -> str | None:
     custom endpoint that lists no models), and one whose field is disabled
     (the API key while a Claude subscription signs in; the API key or Endpoint
     of a named custom endpoint, which Settings locks). Both arrive on the
-    return when it is offered, so one Enter goes back.
+    return when it is offered, so one Enter goes back. A Console return that
+    an unsaved edit has withdrawn (one kept from an earlier visit) gives its
+    landing to Return without saving, which asks before it discards. Chat
+    settings' return is not offered on arrival and has no landing to give.
 
     With no return offered, focus goes to the control that acts instead, the
     first of these that is shown and enabled. Sign in with, which says why no
@@ -145,6 +148,11 @@ def route_focus(screen: SettingsScreen, selector: str | None) -> str | None:
         return selector
     if return_outcome(screen) is not None:
         return "#settings-provider-return"
+    if (
+        can_return_without_saving(screen)
+        and screen._provider_return_target.session_id is not None
+    ):
+        return "#settings-provider-return-without-save"
     for landing in (_SIGN_IN_WITH, _EDIT_ENDPOINT) if disabled else (_EDIT_ENDPOINT,):
         # display, not focusable: the Edit button is hidden through display.
         if any(w.display and not w.disabled for w in screen.query(landing)):

@@ -5814,13 +5814,22 @@ screen had focus. That Select backs the Provider control from a row hidden with
 `display: none`, and an ancestor's `display` does not stop `focus()` either.
 Enter opened a list nobody saw, and Down then Enter changed the provider unseen.
 
+A later review found one more arrival with no landing: a cloud Retry that
+arrives on an edit kept from an earlier visit. Every mounted test had made its
+unsaved edit after arriving. A kept draft takes another arrival branch
+(`_apply_same_provider_return_context`) and withdraws the return the rule
+landed on, so focus stayed on the category button with Return without saving
+on screen.
+
 **What to do.** Before focusing a widget that a route names, ask whether it can
 be disabled, and give the rule a landing for that case. Test fallback candidates
 with `w.display and not w.disabled`, not `focusable`. When one such route turns
 up, list every state that disables the named fields and every route that names
 no field, and drive each one before closing the finding. Drive it from the
 control the user presses, to the end: a screen that only opens another list is
-not where the route ends. Assert that the widget in focus is painted, as well as
+not where the route ends. Drive each arrival a second time with the state that
+outlives the screen (a kept draft) already there, not only made after arriving.
+Assert that the widget in focus is painted, as well as
 its id: `_fully_on_screen` in `Tests/UI/test_console_provider_return.py` reads
 the compositor's visible widgets, and is False for a widget inside a hidden row.
 

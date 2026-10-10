@@ -436,7 +436,9 @@ in with** is **Claude subscription**: a missing or expired subscription
 credential is fixed outside the app, by logging in with Claude Code, but the
 Console's **Review credentials** and Chat settings' **Configure credential…**
 still name the API key for such a chat. Focus then starts on the return button
-when it is showing, and on **Sign in with** when it is not.
+when it is showing. When it is not, focus starts on **Sign in with**, or, for a
+Console recovery that arrives on unsaved edits to that provider, on **Return
+without saving**.
 
 The API key and Endpoint of a named custom endpoint are disabled too: its own
 entry holds them (see [Custom endpoints](#custom-endpoints)). The Console's
@@ -490,7 +492,10 @@ return to that chat the next time you open it.
 Models?" and then goes back with nothing written. It shows only until you save:
 from Chat settings while you have unsaved edits to that provider, and from the
 Console for any unsaved edit on this page, such as another provider picked in
-**Provider** or a snapshot preference.
+**Provider** or a snapshot preference. A Console recovery can arrive on edits
+to its provider that an earlier visit left unsaved. When it names no field, or
+a disabled one, focus then starts on **Return without saving**, and **Enter**
+there asks that question first.
 
 If Settings opens while unsaved edits to another provider are already waiting,
 a short panel offers to review them, discard them, or return. Saving them is

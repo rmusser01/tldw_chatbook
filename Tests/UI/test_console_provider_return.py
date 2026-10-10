@@ -410,7 +410,11 @@ def test_a_route_with_no_field_to_focus_lands_on_the_first_control_that_acts() -
     Sign in with, which is enabled on every Anthropic route and would take a
     one-way route that has nothing to do with it. The Edit button is hidden
     through display, which Textual's focusable does not read: a custom
-    endpoint id whose entry is gone lands on the Provider control instead."""
+    endpoint id whose entry is gone lands on the Provider control instead.
+
+    A Console return that an unsaved edit has withdrawn (one kept from an
+    earlier visit) gives its landing to Return without saving. Chat settings'
+    return is not offered on arrival, so it has no landing to give."""
     field = "#settings-provider-endpoint-value"
     sign_in = "#settings-provider-auth-source"
     edit = "#settings-provider-edit-custom-endpoint"
@@ -423,13 +427,15 @@ def test_a_route_with_no_field_to_focus_lands_on_the_first_control_that_acts() -
         field_disabled=True,
         edit_shown=True,
         outcome=None,
+        target=None,
+        **unsaved,
     ):
         widgets = {
             field: SimpleNamespace(disabled=field_disabled),
             sign_in: SimpleNamespace(display=True, disabled=provider != "anthropic"),
             edit: SimpleNamespace(display=edit_shown, disabled=False),
         }
-        screen = _settings(None, outcome)
+        screen = _settings(target, outcome, **unsaved)
         screen.query = lambda selector: [widgets[selector]]
         screen._provider_widget_value = lambda: provider
         screen._provider_is_registry_id = SettingsScreen._provider_is_registry_id
@@ -452,6 +458,19 @@ def test_a_route_with_no_field_to_focus_lands_on_the_first_control_that_acts() -
     # A return that is offered comes first; after a save it is, for either kind.
     assert landing(outcome=SAVED) == "#settings-provider-return"
     assert landing(named=False, outcome=SAVED) == "#settings-provider-return"
+    # Withdrawn by a kept edit, the Console's return hands its landing on.
+    console = ProviderSettingsNavigationTarget(
+        "providers-models", "openai", "gpt-5", None, 2, "session-1"
+    )
+    modal = replace(console, field="api_key", session_id=None)
+    without_saving = "#settings-provider-return-without-save"
+    kept = {"target": console, "own_draft": True, "edit_shown": False}
+    assert landing("openai", named=False, **kept) == without_saving
+    assert landing("anthropic", **kept) == without_saving
+    assert landing("openai", field_disabled=False, **kept) == field
+    # Not beside the conflict panel, which shows no Return without saving.
+    assert landing("openai", named=False, conflict=console, **kept) is None
+    assert landing("anthropic", target=modal, own_draft=True) == sign_in
 
 
 def test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy() -> None:
@@ -1174,6 +1193,127 @@ async def test_a_route_whose_named_field_is_disabled_arrives_where_it_can_act(
         )
         assert console._ensure_console_chat_store().active_session_id == session_id
         assert not app.pending_handoffs.has_pending(CHANNEL)
+
+
+#: route -> (saved config, the field an earlier visit leaves edited, the edit).
+_ROUTES_ONTO_A_KEPT_EDIT = {
+    "retry": ({}, "#settings-provider-api-key", _KEY),
+    "review-credentials": (
+        _SUBSCRIPTION_CHAT,
+        "#settings-provider-endpoint-value",
+        "x",
+    ),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", list(_ROUTES_ONTO_A_KEPT_EDIT))
+@private_profile_test
+async def test_a_route_with_no_field_to_focus_arrives_on_return_without_saving_over_a_kept_edit(
+    monkeypatch, request, route: str
+):
+    """A recovery can arrive on an unsaved edit kept from an earlier visit:
+    a field edited for the same provider, then Settings left by the nav bar.
+    That edit withdraws Return to Console, so Return without saving, which
+    takes its place, takes its focus too, for a route that names no field (a
+    cloud Retry) and for one whose field is disabled (Review credentials).
+    Enter asks before it discards, then goes back with nothing written."""
+    saved, edited, typed = _ROUTES_ONTO_A_KEPT_EDIT[route]
+    # Stubbed, so the user's own Claude Code credential is never read.
+    monkeypatch.setattr(
+        anthropic_subscription,
+        "subscription_credential_status",
+        lambda **_kwargs: "missing",
+    )
+    app = _cloud_app(monkeypatch, **saved)
+    if saved is _SUBSCRIPTION_CHAT:
+        app.providers_models = {"anthropic": ["claude-sonnet-5"]}
+
+    async with app.run_test(size=(211, 44)) as pilot:
+
+        async def recover() -> ChatScreen:
+            await _until(
+                pilot,
+                lambda: (
+                    getattr(app.focused, "id", None) == "console-setup-modal-action"
+                ),
+                "the Get started card's action to hold focus",
+            )
+            console = app._navigation_outgoing_screen()
+            if route == "retry":  # The card's Retry needs a failed key check.
+                open_provider_setup(console, "openai", "gpt-5", field="")
+            else:
+                await pilot.press("enter")
+            return console
+
+        console = await recover()
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and getattr(app.focused, "id", None) == "settings-provider-return"
+            ),
+            "Settings to open with focus on Return to Console",
+        )
+        settings = app.screen
+        settings.query_one(edited, Input).focus()
+        await pilot.pause()
+        assert _fully_on_screen(settings, app.focused), app.focused
+        await pilot.press(*typed)
+        await _until(
+            pilot,
+            settings._provider_same_target_has_draft,
+            "the typed edit to be unsaved",
+        )
+        settings.post_message(NavigateToScreen(TAB_CHAT))  # as the nav bar does
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console and not app.pending_handoffs.has_pending(CHANNEL)
+            ),
+            "the Console to take its unused return back",
+        )
+        saved_before = _saved_config()
+
+        assert await recover() is console
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and app.screen is not settings
+                and getattr(app.focused, "id", None)
+                == "settings-provider-return-without-save"
+            ),
+            "a fresh Settings screen with focus on Return without saving",
+        )
+        fresh = app.screen
+        assert fresh._provider_same_target_has_draft()
+        # The route still has no field to focus: none named, or a disabled one.
+        named = fresh._provider_return_target.field
+        assert named is None or (
+            named == "api_key"
+            and fresh.query_one("#settings-provider-api-key", Input).disabled
+        )
+        assert not fresh.query_one("#settings-provider-return-continuation").display
+        assert _fully_on_screen(fresh, app.focused)
+
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: isinstance(app.screen, ConfirmationDialog),
+            "the discard confirmation",
+        )
+        app.screen.query_one("#confirm-button", Button).press()
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console
+                and getattr(app.focused, "id", None) == "console-setup-modal-action"
+                and not app.pending_handoffs.has_pending(CHANNEL)
+            ),
+            "the Console's card to hold focus again, its return claimed",
+        )
+        assert _saved_config() == saved_before
 
 
 #: row -> (saved config, the card's action, the control focus arrives on).
