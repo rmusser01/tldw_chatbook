@@ -9066,6 +9066,22 @@ or pause proxy; settle `not disabled` before any programmatic `press()`. After
 the class fix: 10/10 full-file runs green (4 under the same 14-burner load)
 plus 5/5 standalone runs of the old reproducer.
 
+**TASK-33006.24 follow-up, 2026-10-09: the pause can also be too LONG.**
+`test_new_focus_supersedes_pending_suspended_anchor_and_is_revealed`
+(`Tests/UI/test_console_settings_geometry.py`) failed 5 of 20 serial runs,
+always on its own precondition: `assert snapshot.scroll_anchor > 0`, got 0. It
+focused a control and scrolled the body away from it in the same step. Focusing
+arms Chat settings' focus reveal, a 0.06 s timer, and `wait_for_idle` keeps
+polling for up to a second while the process is busy. Under load the bare
+`pilot.pause()` outlasted the timer, and the reveal scrolled the control back
+into view before the snapshot was taken. A mounted probe showed it both ways:
+scroll inside the reveal window and the body went from 4 back to 0; let the
+reveal settle first, or disable it, and it stayed at 4. A pause has no upper
+bound short enough to mean "that timer has not fired yet". When a flaky test
+fails on a setup line, look for a timer the widget armed itself and let it
+settle (here `pause(0.12)` then `pause()`) before the test changes the state
+that timer corrects: 20 of 20 after, at a load average of 17.
+
 ## A tiered design's boundary must be probed with a shape the tiers disagree on (task-16839 fix round, 2026-08-20)
 
 Task-16839's first revision computed its change ratio with an order-sensitive

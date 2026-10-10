@@ -23,6 +23,11 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     _settings_screen_region,
 )
 
+# TASK-33006.24: Tests/UI/conftest.py imports tldw_chatbook.app per test, which
+# fails closed with RecoveryRequired("raw_source_selection_changed") under the
+# per-test sandbox, so this file ran only when another file imported the app
+# first. No test here writes config: the shared bootstrap profile is safe.
+pytestmark = pytest.mark.bootstrap_profile
 
 GEOMETRY_SIZES = ((80, 24), (100, 30), (160, 40), (200, 50))
 #: TASK-33006.1 (spec §6, mock (b)): $ds-chat-settings-width by $ds-size-22,
@@ -527,6 +532,12 @@ async def test_new_focus_supersedes_pending_suspended_anchor_and_is_revealed(
         # TASK-33006.4: Change and Temperature replace the deleted pickers
         # as two distinct restorable targets.
         modal.query_one("#console-settings-model-change").focus()
+        # TASK-33006.24: let Change's own focus reveal (a 0.06 s timer) run
+        # before scrolling away from it. Scrolling inside that window raced
+        # the pause below: whenever the pause outlasted the timer, the reveal
+        # scrolled Change back into view and the anchor was 0 (5 of 20 runs).
+        await pilot.pause(0.12)
+        await pilot.pause()
         body.scroll_to(y=7, animate=False)
         await pilot.pause()
         snapshot = modal.capture_suspended_draft()
