@@ -290,34 +290,75 @@ _SETUP_FIELDS = {
 
 
 def open_provider_setup(
-    screen: ChatScreen, provider: str, model: str | None = None
+    screen: ChatScreen,
+    provider: str,
+    model: str | None = None,
+    *,
+    field: str | None = None,
 ) -> None:
     """Open Settings ▸ Providers & Models at one provider's fix (D4, ADR-012).
 
-    Uses the screen-context keys ``_open_console_provider_recovery`` uses; the
-    way back to Console waits for P8's handoff store. Settings keeps its own
-    model field when no model is routed, so the row's pair travels with it.
+    Every Console exit to Settings comes here: the switcher's NEEDS SETUP
+    rows, a cloud key check's Retry and the recovery action
+    (``_open_console_provider_recovery``). TASK-33008.1: it stages a return
+    to the active chat, naming only that chat, so Settings offers "Return to
+    Console". A provider or model the return cannot name opens Settings one
+    way, as before; a navigation that never leaves takes its return back.
 
     Args:
         screen: The Console screen that opens Settings.
         provider: The provider whose fix Settings opens at.
         model: The row's model, when it has one.
+        field: The control to focus ("" for none); None reads it from the
+            pair's readiness.
     """
     from ...Constants import TAB_SETTINGS
+    from ..Navigation.conversation_settings_navigation import (
+        ConsoleProviderReturnIntent,
+        ProviderSettingsNavigationTarget,
+    )
     from ..Navigation.main_navigation import NavigateToScreen
+    from ..Navigation.pending_handoff_store import HandoffChannel, PendingHandoffStore
     from ..Screens.settings_config_models import SettingsCategoryId
 
-    readiness = screen._console_default_readiness(provider, model)
+    if field is None:
+        readiness = screen._console_default_readiness(provider, model)
+        field = _SETUP_FIELDS.get(str(readiness.recovery_action or ""))
     context: dict[str, object] = {
         "category": SettingsCategoryId.PROVIDERS_MODELS.value,
-        "provider": provider,
     }
+    if provider:
+        context["provider"] = provider
     if model:
         context["model"] = model
-    field = _SETUP_FIELDS.get(str(readiness.recovery_action or ""))
     if field:
         context["field"] = field
-    screen.post_message(NavigateToScreen(TAB_SETTINGS, screen_context=context))
+    handoffs = getattr(getattr(screen, "app_instance", None), "pending_handoffs", None)
+    session_id = screen._ensure_console_chat_store().active_session_id
+    try:
+        intent = ConsoleProviderReturnIntent(session_id)
+        target = ProviderSettingsNavigationTarget(
+            "providers-models", provider, model or None, field or None, 1, session_id
+        )
+    except ValueError:  # No chat, or a provider or model Settings cannot name.
+        intent = None
+    if intent is None or not isinstance(handoffs, PendingHandoffStore):
+        screen.post_message(NavigateToScreen(TAB_SETTINGS, screen_context=context))
+        return
+    channel = HandoffChannel.CONVERSATION_SETTINGS_RETURN
+    revision = handoffs.stage(channel, intent)
+
+    def settle(succeeded: bool) -> None:
+        if not succeeded:
+            handoffs.discard_pending_exact(channel, revision, intent)
+
+    navigation = NavigateToScreen(
+        TAB_SETTINGS,
+        replace(target, return_revision=revision).to_context(),
+        on_completion=settle,
+    )
+    if screen.post_message(navigation) is False:
+        navigation.report_completion(False)
 
 
 async def load_provider_catalog(

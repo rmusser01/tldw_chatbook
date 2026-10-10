@@ -98,6 +98,7 @@ from ..Screens.settings_screen import (
     _ProviderTestResult,
     env_var_echo,
 )
+from .provider_return import fitted_chat_title
 from .settings_field_rows import (
     BUILT_IN,
     EDITED,
@@ -181,8 +182,6 @@ PROVIDER_CONTROL_TOOLTIP = (
 #: count moved to the Inspector's New chats row.
 APPLIES_TO_NEW_CHATS = "new chats;"
 NO_CONSOLE_CHAT_COPY = "no Console chat is open."
-#: A longer chat title is cut so the pair stays on the row's one line.
-_APPLIES_TO_TITLE_LIMIT = 24
 #: The Inspector's Applies to block: (id suffix, label, value).
 APPLIES_TO_INSPECTOR_ROWS = (
     ("new", "New chats", "yes (Ctrl+T, temporary, workspace)"),
@@ -1041,10 +1040,7 @@ def applies_to_copy(
     )
     if session is None:
         return f"{APPLIES_TO_NEW_CHATS} {NO_CONSOLE_CHAT_COPY}", ""
-    title = session.title.strip() or "untitled"
-    if len(title) > _APPLIES_TO_TITLE_LIMIT:
-        # The pair is the point of the row; a long title gives way to it.
-        title = title[: _APPLIES_TO_TITLE_LIMIT - 1].rstrip() + "…"
+    title = fitted_chat_title(session.title)  # a long title gives way to the pair
     generation = getattr(screen.app_instance, "console_new_chat_default_generation", 0)
     own = session.settings
     chat = f"{APPLIES_TO_NEW_CHATS} open chat “{title}”"
@@ -1989,7 +1985,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 id="settings-provider-conflict-discard",
             )
             yield Button(
-                "Return to Chat settings",
+                f"Return to {screen._provider_return_destination()}",
                 id="settings-provider-conflict-return",
                 disabled=screen._provider_return_actions_disabled(),
             )
@@ -2003,7 +1999,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 markup=False,
             )
             yield Button(
-                "Return to Chat settings",
+                f"Return to {screen._provider_return_destination()}",
                 id="settings-provider-return",
                 variant="primary",
                 disabled=screen._provider_return_actions_disabled(),

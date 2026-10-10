@@ -1295,7 +1295,14 @@ async def test_a_cloud_key_check_failure_retries_in_settings_not_chat_settings()
     from tldw_chatbook.UI.Console_Modules.connection_probe import (
         retry_console_connection,
     )
+    from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+        ConsoleProviderReturnIntent,
+    )
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+        HandoffChannel,
+        PendingHandoffStore,
+    )
 
     notes: list[str] = []
     app = SimpleNamespace(notify=lambda message, **_kwargs: notes.append(message))
@@ -1307,10 +1314,15 @@ async def test_a_cloud_key_check_failure_retries_in_settings_not_chat_settings()
     async def open_chat_settings(**kwargs):
         chat_settings.append(kwargs)
 
+    handoffs = PendingHandoffStore()
     screen = SimpleNamespace(
         app=app,
+        app_instance=SimpleNamespace(pending_handoffs=handoffs),
         _active_console_settings_readiness=lambda: (settings, readiness()),
         _console_default_readiness=readiness,
+        _ensure_console_chat_store=lambda: SimpleNamespace(
+            active_session_id="session-1"
+        ),
         _open_console_settings=open_chat_settings,
         post_message=posted.append,
     )
@@ -1320,7 +1332,17 @@ async def test_a_cloud_key_check_failure_retries_in_settings_not_chat_settings()
     assert chat_settings == []
     [message] = posted
     assert isinstance(message, NavigateToScreen)
-    assert message.screen_context["category"] == "providers-models"
-    assert message.screen_context["provider"] == "openai"
-    assert message.screen_context["model"] == "gpt-5.1"
+    # TASK-33008.1 (R32): the retry leaves with a way back to this chat; a
+    # key check names no field, so Settings focuses none.
+    assert message.screen_context == {
+        "category": "providers-models",
+        "provider": "openai",
+        "model": "gpt-5.1",
+        "field": None,
+        "return_revision": 1,
+        "session_id": "session-1",
+    }
+    claim = handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert claim is not None
+    assert claim.value == ConsoleProviderReturnIntent("session-1")
     assert notes == ["Press t to test OpenAI again."]

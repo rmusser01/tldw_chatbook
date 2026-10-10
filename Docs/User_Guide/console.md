@@ -268,7 +268,11 @@ dim fill with nothing drawn on it. Under its plain-language line about
 providers, the card says "Cloud setup opens Settings and comes back here.
 Press Enter to use the highlighted action." — Enter is the only key the card
 names, matching the first hint in the footer. Its button follows the current
-step. **Set up provider** opens **Settings ▸ Providers & Models**; **Choose provider** and
+step. **Set up provider** opens **Settings ▸ Providers & Models** on this chat's
+provider with the API key field in focus. Type or paste the key, press **Esc**
+then **s** to save, and focus moves to **Return to Console**: **Enter** there
+brings you back to this chat with the composer ready (see
+[Settings](settings.md), Providers & Models). **Choose provider** and
 **Choose model** open **Switch model**, where a model is always picked as a
 provider·model pair (Choose model opens with Find on this chat's provider, so
 it lists only that provider's models; clear Find to see every provider); an
@@ -328,7 +332,10 @@ unlocks; if not, a "still unreachable" notice says so. A cloud provider's
 key check (Settings **t**) that timed out or could not connect is the
 exception: the Console never contacts a cloud provider itself, so **Retry
 connection** opens **Settings ▸ Providers & Models** at that provider and
-says "Press t to test \<provider\> again". Every test sends the
+says "Press t to test \<provider\> again". If you save a change there, such
+as a new key, **Return to Console** appears and **Enter** on it comes back to
+this chat; a test alone saves nothing, so no return button shows and you go
+back to Console yourself. Every test sends the
 API key a message would use, so a local server started with a key (vLLM's
 `--api-key`, for example) is tested with it, and "key rejected" means that
 key was refused (a 401). A 403 from any model listing, local or cloud, means
@@ -1044,8 +1051,9 @@ and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-b
 1. **Set up a provider from the Get started card.** With a local server
    running, press **Enter** on "Use detected …", then **Enter** on one of
    its models in Switch model. Otherwise press the card's button: **Set up
-   provider** opens Settings ▸ Providers & Models, and **Choose provider** or
-   **Choose model** opens Switch model. The card's steps tick off and the
+   provider** opens Settings ▸ Providers & Models at the API key (paste it,
+   **Esc**, **s**, then **Enter** on **Return to Console** to come back), and
+   **Choose provider** or **Choose model** opens Switch model. The card's steps tick off and the
    composer unlocks.
 2. **Switch model for just this session.** Press **Alt+M**, type part of
    the model's name, and press **Enter** — or open **Settings** and press **Save**

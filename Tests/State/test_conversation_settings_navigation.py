@@ -3,6 +3,8 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+    ConsoleProviderReturnIntent,
+    ConsoleProviderReturnTarget,
     ConsoleSettingsReturnTarget,
     ConversationSettingsReturnIntent,
     ConversationSettingsReturnOutcome,
@@ -84,6 +86,83 @@ def test_provider_settings_target_rejects_invalid_revision(revision: object) -> 
         )
         is None
     )
+
+
+@pytest.mark.parametrize("field", ["endpoint", None])
+def test_console_kind_provider_target_names_its_chat_and_any_field(
+    field: str | None,
+) -> None:
+    """TASK-33008.1 (R34): a Console recovery names its chat; the modal's
+    context stays byte-identical because the key appears only when set."""
+    context = {
+        "category": "providers-models",
+        "provider": "openai",
+        "model": None,
+        "field": field,
+        "return_revision": 3,
+        "session_id": "session-1",
+    }
+    target = ProviderSettingsNavigationTarget.from_context(context)
+    assert target is not None
+    assert target.session_id == "session-1"
+    assert target.destination == "Console"
+    assert target.to_context() == context
+    modal = ProviderSettingsNavigationTarget(
+        "providers-models", "openai", None, "api_key", 3
+    )
+    assert modal.destination == "Chat settings"
+    assert "session_id" not in modal.to_context()
+    for bad in ("", " session-1", "x" * 257, 7):
+        assert (
+            ProviderSettingsNavigationTarget.from_context(
+                {**context, "session_id": bad}
+            )
+            is None
+        )
+
+
+def test_provider_target_matches_only_its_own_return_kind() -> None:
+    """A Console claim for another chat, or the other kind, is stale (R34)."""
+    modal_intent = ConversationSettingsReturnIntent("session-1", 1, "model", None)
+    console_target = ProviderSettingsNavigationTarget(
+        "providers-models", "openai", "gpt-5", "api_key", 2, "session-1"
+    )
+    modal_target = ProviderSettingsNavigationTarget(
+        "providers-models", "openai", "gpt-5", "api_key", 2
+    )
+    assert console_target.matches(ConsoleProviderReturnIntent("session-1"))
+    assert not console_target.matches(ConsoleProviderReturnIntent("session-2"))
+    assert not console_target.matches(modal_intent)
+    assert modal_target.matches(modal_intent)
+    assert not modal_target.matches(ConsoleProviderReturnIntent("session-1"))
+
+
+def test_console_provider_return_target_is_strict_and_disjoint_from_the_modal() -> None:
+    """R36: ``{session_id, return_revision, outcome}`` and nothing else."""
+    target = ConsoleProviderReturnIntent("session-1").return_target(
+        5, ConversationSettingsReturnOutcome.CREDENTIAL_SAVED
+    )
+    assert isinstance(target, ConsoleProviderReturnTarget)
+    context = target.to_context()
+    assert context == {
+        "session_id": "session-1",
+        "return_revision": 5,
+        "outcome": "credential_saved",
+    }
+    assert ConsoleProviderReturnTarget.from_context(context) == target
+    assert ConsoleSettingsReturnTarget.from_context(context) is None
+    assert ConsoleProviderReturnTarget.from_context({**context, "extra": 1}) is None
+    assert (
+        ConsoleProviderReturnTarget.from_context({**context, "return_revision": 0})
+        is None
+    )
+    modal = ConversationSettingsReturnIntent(
+        "session-1", 1, "model", None
+    ).return_target(5, ConversationSettingsReturnOutcome.WITHOUT_SAVING)
+    assert isinstance(modal, ConsoleSettingsReturnTarget)
+    assert ConsoleProviderReturnTarget.from_context(modal.to_context()) is None
+    with pytest.raises(ValueError):
+        ConsoleProviderReturnIntent("")
 
 
 def test_console_return_target_round_trip_and_outcome_allowlist() -> None:

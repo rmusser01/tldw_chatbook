@@ -1072,20 +1072,40 @@ async def test_no_model_never_applies_a_bare_provider() -> None:
             assert row.model
 
 
-def test_needs_setup_route_names_the_provider_its_model_and_the_field() -> None:
-    """AC#14 (R11): the route reuses the recovery keys and carries the pair."""
+def _setup_route_screen(readiness=lambda _provider, _model: NO_KEY):
+    """A Console stand-in with the real handoff store the route stages into."""
     from types import SimpleNamespace
 
-    from tldw_chatbook.Constants import TAB_SETTINGS
-    from tldw_chatbook.UI.Console_Modules.model_switcher import open_provider_setup
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import PendingHandoffStore
 
     posted: list[object] = []
-    resolved: list[tuple[str, str | None]] = []
     screen = SimpleNamespace(
-        _console_default_readiness=lambda provider, model: (
-            resolved.append((provider, model)) or NO_KEY
+        _console_default_readiness=readiness,
+        _ensure_console_chat_store=lambda: SimpleNamespace(
+            active_session_id="session-1"
         ),
+        app_instance=SimpleNamespace(pending_handoffs=PendingHandoffStore()),
         post_message=posted.append,
+    )
+    return screen, posted
+
+
+def test_needs_setup_route_names_the_provider_its_model_and_the_field() -> None:
+    """AC#14 (R11): the route reuses the recovery keys and carries the pair.
+
+    TASK-33008.1 (R32): it is also the Console's way back. It stages a
+    return naming only the chat, and the context carries that revision.
+    """
+    from tldw_chatbook.Constants import TAB_SETTINGS
+    from tldw_chatbook.UI.Console_Modules.model_switcher import open_provider_setup
+    from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+        ConsoleProviderReturnIntent,
+    )
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+
+    resolved: list[tuple[str, str | None]] = []
+    screen, posted = _setup_route_screen(
+        lambda provider, model: resolved.append((provider, model)) or NO_KEY
     )
 
     open_provider_setup(screen, "openrouter", "openai/gpt-4o-mini")
@@ -1097,8 +1117,40 @@ def test_needs_setup_route_names_the_provider_its_model_and_the_field() -> None:
         "provider": "openrouter",
         "model": "openai/gpt-4o-mini",
         "field": "api_key",
+        "return_revision": 1,
+        "session_id": "session-1",
     }
     assert resolved == [("openrouter", "openai/gpt-4o-mini")]
+    handoffs = screen.app_instance.pending_handoffs
+    claim = handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
+    assert claim is not None and claim.revision == 1
+    assert claim.value == ConsoleProviderReturnIntent("session-1")
+    handoffs.release(claim)
+    # A navigation that never leaves the Console takes its return back.
+    message.report_completion(False)
+    assert handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN) is None
+
+
+def test_setup_route_a_target_settings_cannot_name_goes_one_way() -> None:
+    """R35: a provider the return target rejects stages nothing; the route
+    still opens Settings as before (a custom endpoint's ``custom-ep:`` key)."""
+    from tldw_chatbook.UI.Console_Modules.model_switcher import open_provider_setup
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+
+    screen, posted = _setup_route_screen()
+
+    open_provider_setup(screen, "custom-ep:3f2a", "local-model")
+
+    (message,) = posted
+    assert message.screen_context == {
+        "category": "providers-models",
+        "provider": "custom-ep:3f2a",
+        "model": "local-model",
+        "field": "api_key",
+    }
+    assert not screen.app_instance.pending_handoffs.has_pending(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN
+    )
 
 
 def _strip(app) -> str:

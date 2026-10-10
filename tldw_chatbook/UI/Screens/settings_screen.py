@@ -463,7 +463,7 @@ from .settings_speech_tts import (
 )
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.conversation_settings_navigation import (
-    ConsoleSettingsReturnTarget,
+    ConsoleProviderReturnIntent,
     ConversationSettingsReturnIntent,
     ConversationSettingsReturnOutcome,
     ProviderSettingsNavigationTarget,
@@ -13773,23 +13773,14 @@ class SettingsScreen(BaseAppScreen):
         return f"Discard changes and configure {provider}"
 
     def _provider_return_continuation_copy(self) -> str:
-        if (
-            self._provider_return_outcome
-            is ConversationSettingsReturnOutcome.CREDENTIAL_SAVED
-        ):
-            return (
-                "Credential saved. Return to Chat settings to check "
-                "readiness; provider acceptance is not yet verified."
-            )
-        if (
-            self._provider_return_outcome
-            is ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
-        ):
-            return (
-                "Provider settings saved. Return to Chat settings to check "
-                "readiness; generation is not yet verified."
-            )
-        return "Provider settings handoff is inactive."
+        from ..Settings_Modules.provider_return import continuation_copy
+
+        return continuation_copy(self)
+
+    def _provider_return_destination(self) -> str:
+        """Where the return goes: a recovery's Console chat, or Chat settings."""
+        target = self._provider_return_target
+        return "Chat settings" if target is None else target.destination
 
     def _provider_can_return_without_saving(self) -> bool:
         return bool(
@@ -13830,17 +13821,20 @@ class SettingsScreen(BaseAppScreen):
                 "#settings-provider-return-continuation-status", Static
             ).update(self._provider_return_continuation_copy())
             self.query_one(
-                "#settings-provider-return", Button
-            ).disabled = self._provider_return_actions_disabled()
-            self.query_one(
                 "#settings-provider-return-without-save", Button
             ).display = self._provider_can_return_without_saving()
             self.query_one(
                 "#settings-provider-return-without-save", Button
             ).disabled = self._provider_return_actions_disabled()
-            self.query_one(
-                "#settings-provider-conflict-return", Button
-            ).disabled = self._provider_return_actions_disabled()
+            # The target can change kind without a recompose, so the two
+            # returns that name their destination are relabelled here.
+            for selector in (
+                "#settings-provider-return",
+                "#settings-provider-conflict-return",
+            ):
+                button = self.query_one(selector, Button)
+                button.label = f"Return to {self._provider_return_destination()}"
+                button.disabled = self._provider_return_actions_disabled()
         except QueryError:
             return
 
@@ -13866,7 +13860,11 @@ class SettingsScreen(BaseAppScreen):
     def _claim_provider_return_intent(
         self,
     ) -> (
-        tuple[PendingHandoffStore, HandoffClaim, ConversationSettingsReturnIntent]
+        tuple[
+            PendingHandoffStore,
+            HandoffClaim,
+            ConversationSettingsReturnIntent | ConsoleProviderReturnIntent,
+        ]
         | None
     ):
         target = self._provider_return_target
@@ -13876,10 +13874,9 @@ class SettingsScreen(BaseAppScreen):
         claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
         if claim is None:
             return None
-        if (
-            claim.revision != target.return_revision
-            or type(claim.value) is not ConversationSettingsReturnIntent
-        ):
+        # The exact revision and the exact kind: the modal's intent for its
+        # own target, or the Console intent of the chat the target names.
+        if claim.revision != target.return_revision or not target.matches(claim.value):
             store.release(claim)
             return None
         return store, claim, claim.value
@@ -13909,17 +13906,13 @@ class SettingsScreen(BaseAppScreen):
         claimed = self._claim_provider_return_intent()
         if claimed is None:
             self.app.notify(
-                "Chat settings return is no longer available.",
+                f"{self._provider_return_destination()} return is no longer available.",
                 severity="warning",
             )
             self._settle_provider_return_state()
             return False
         store, claim, intent = claimed
-        target = ConsoleSettingsReturnTarget(
-            **intent.to_context(),
-            return_revision=claim.revision,
-            outcome=outcome,
-        )
+        target = intent.return_target(claim.revision, outcome)
         if not store.release(claim):
             self._settle_provider_return_state()
             return False

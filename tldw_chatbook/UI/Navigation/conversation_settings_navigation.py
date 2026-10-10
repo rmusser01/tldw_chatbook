@@ -98,8 +98,9 @@ class _ProviderSettingsNavigationContext(_StrictNavigationContext):
     category: Literal["providers-models"]
     provider: str = Field(min_length=1, max_length=128)
     model: str | None = Field(default=None, max_length=512)
-    field: Literal["api_key"]
+    field: Literal["api_key", "endpoint"] | None
     return_revision: int = Field(ge=1)
+    session_id: str | None = Field(default=None, min_length=1, max_length=256)
 
     @field_validator("provider")
     @classmethod
@@ -116,6 +117,39 @@ class _ProviderSettingsNavigationContext(_StrictNavigationContext):
             name="model",
             max_length=512,
         )
+
+    @field_validator("session_id")
+    @classmethod
+    def _validate_session_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return validate_navigation_context_text(
+            value,
+            name="session_id",
+            max_length=256,
+        )
+
+
+class _ConsoleProviderReturnIntentContext(_StrictNavigationContext):
+    session_id: str = Field(min_length=1, max_length=256)
+
+    @field_validator("session_id")
+    @classmethod
+    def _validate_session_id(cls, value: str) -> str:
+        return validate_navigation_context_text(
+            value,
+            name="session_id",
+            max_length=256,
+        )
+
+
+class _ConsoleProviderReturnContext(_ConsoleProviderReturnIntentContext):
+    return_revision: int = Field(ge=1)
+    outcome: Literal[
+        "credential_saved",
+        "provider_settings_saved",
+        "without_saving",
+    ]
 
 
 class _ConsoleSettingsReturnContext(_ConversationSettingsReturnIntentContext):
@@ -168,16 +202,56 @@ class ConversationSettingsReturnIntent:
         except (TypeError, ValueError, ValidationError):
             return None
 
+    def return_target(
+        self, return_revision: int, outcome: ConversationSettingsReturnOutcome
+    ) -> ConsoleSettingsReturnTarget:
+        """The Console context Settings returns with: the Chat settings modal."""
+        return ConsoleSettingsReturnTarget(
+            **self.to_context(), return_revision=return_revision, outcome=outcome
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleProviderReturnIntent:
+    """Secret-free request to return to one Console chat (TASK-33008.1).
+
+    A Console provider recovery that leaves for Settings stages it on the
+    Chat settings modal's channel: the store keeps one slot per channel, so a
+    newer recovery of either kind supersedes it.
+    """
+
+    session_id: str
+
+    def __post_init__(self) -> None:
+        try:
+            validated = _ConsoleProviderReturnIntentContext.model_validate(
+                {"session_id": self.session_id}
+            )
+        except ValidationError as exc:
+            raise ValueError("Console provider return intent is invalid") from exc
+        object.__setattr__(self, "session_id", validated.session_id)
+
+    def return_target(
+        self, return_revision: int, outcome: ConversationSettingsReturnOutcome
+    ) -> ConsoleProviderReturnTarget:
+        """The Console context Settings returns with: the chat itself."""
+        return ConsoleProviderReturnTarget(self.session_id, return_revision, outcome)
+
 
 @dataclass(frozen=True, slots=True)
 class ProviderSettingsNavigationTarget:
-    """Allowlisted deep-link into the durable Providers & Models settings."""
+    """Allowlisted deep-link into the durable Providers & Models settings.
+
+    ``session_id`` names the Console chat a provider recovery returns to; it
+    is None when the Chat settings modal is the return (TASK-33008.1).
+    """
 
     category: Literal["providers-models"]
     provider: str
     model: str | None
-    field: Literal["api_key"]
+    field: Literal["api_key", "endpoint"] | None
     return_revision: int
+    session_id: str | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -191,15 +265,41 @@ class ProviderSettingsNavigationTarget:
         object.__setattr__(self, "model", validated.model)
         object.__setattr__(self, "field", validated.field)
         object.__setattr__(self, "return_revision", validated.return_revision)
+        object.__setattr__(self, "session_id", validated.session_id)
+
+    @property
+    def destination(self) -> str:
+        """Where the return goes, as its button names it."""
+        return "Chat settings" if self.session_id is None else "Console"
+
+    def matches(self, intent: object) -> bool:
+        """Whether a claimed return intent is the one this target routes back to.
+
+        Args:
+            intent: The value claimed from the return channel.
+
+        Returns:
+            True for the modal's own intent when no chat is named, or for the
+            Console intent of the same chat; a mismatch is stale.
+        """
+        if self.session_id is None:
+            return type(intent) is ConversationSettingsReturnIntent
+        return (
+            type(intent) is ConsoleProviderReturnIntent
+            and intent.session_id == self.session_id
+        )
 
     def to_context(self) -> dict[str, object]:
-        return {
+        context: dict[str, object] = {
             "category": self.category,
             "provider": self.provider,
             "model": self.model,
             "field": self.field,
             "return_revision": self.return_revision,
         }
+        if self.session_id is not None:
+            context["session_id"] = self.session_id
+        return context
 
     @classmethod
     def from_context(
@@ -264,6 +364,49 @@ class ConsoleSettingsReturnTarget:
             return None
         try:
             validated = _ConsoleSettingsReturnContext.model_validate(context)
+            return cls(**validated.model_dump())
+        except (TypeError, ValueError, ValidationError):
+            return None
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleProviderReturnTarget:
+    """Allowlisted Console chat a provider recovery returns to (TASK-33008.1)."""
+
+    session_id: str
+    return_revision: int
+    outcome: ConversationSettingsReturnOutcome
+
+    def __post_init__(self) -> None:
+        try:
+            validated = _ConsoleProviderReturnContext.model_validate(self.to_context())
+        except ValidationError as exc:
+            raise ValueError("Console provider return target is invalid") from exc
+        object.__setattr__(self, "session_id", validated.session_id)
+        object.__setattr__(self, "return_revision", validated.return_revision)
+        object.__setattr__(
+            self, "outcome", ConversationSettingsReturnOutcome(validated.outcome)
+        )
+
+    def to_context(self) -> dict[str, object]:
+        return {
+            "session_id": self.session_id,
+            "return_revision": self.return_revision,
+            "outcome": (
+                self.outcome.value
+                if isinstance(self.outcome, ConversationSettingsReturnOutcome)
+                else self.outcome
+            ),
+        }
+
+    @classmethod
+    def from_context(
+        cls, context: Mapping[str, object]
+    ) -> ConsoleProviderReturnTarget | None:
+        if not isinstance(context, Mapping):
+            return None
+        try:
+            validated = _ConsoleProviderReturnContext.model_validate(context)
             return cls(**validated.model_dump())
         except (TypeError, ValueError, ValidationError):
             return None

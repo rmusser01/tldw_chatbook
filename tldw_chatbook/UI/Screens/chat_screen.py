@@ -3537,7 +3537,10 @@ class ChatScreen(BaseAppScreen):
 
         target = ConsoleSettingsReturnTarget.from_context(context)
         if target is None:
-            logger.debug("Ignoring invalid Conversation settings return context")
+            from ..Console_Modules.provider_return import capture_provider_return
+
+            if not capture_provider_return(self, context):  # a recovery's return
+                logger.debug("Ignoring invalid Conversation settings return context")
             return
         if self._pending_conversation_settings_return_target == target:
             return
@@ -3714,6 +3717,10 @@ class ChatScreen(BaseAppScreen):
     def _consume_pending_conversation_settings_return(self) -> None:
         """Schedule the mounted restore once, retaining transient failures."""
 
+        if self._pending_console_provider_return is not None:
+            from ..Console_Modules.provider_return import consume_provider_return
+
+            consume_provider_return(self)  # TASK-33008.1: a recovery's return.
         if (
             self._conversation_settings_return_restore_in_progress
             or self._pending_conversation_settings_return_target is None
@@ -6987,6 +6994,7 @@ class ChatScreen(BaseAppScreen):
         None
     )
     _conversation_settings_return_restore_in_progress: bool = False
+    _pending_console_provider_return: object | None = None  # provider_return.py
 
     _console_attach_reconciled: bool = False
     _console_attach_visit_generation: int = 0
@@ -19629,26 +19637,16 @@ class ChatScreen(BaseAppScreen):
                 )
             )
             return
+        from ..Console_Modules.model_switcher import open_provider_setup
+
         provider, model, settings = self._active_console_provider_model_display()
         settings_provider = settings.provider if settings is not None else None
-        provider_context = str(settings_provider or provider or "").strip()
-        screen_context: dict[str, object] = {
-            "category": SettingsCategoryId.PROVIDERS_MODELS.value,
-        }
-        if provider_context:
-            screen_context["provider"] = provider_context
         settings_model = settings.model if settings is not None else None
-        model_context = str(model or settings_model or "").strip()
-        if model_context:
-            screen_context["model"] = model_context
-        field_context = self._console_provider_recovery_field()
-        if field_context:
-            screen_context["field"] = field_context
-        self.post_message(
-            NavigateToScreen(
-                TAB_SETTINGS,
-                screen_context=screen_context,
-            )
+        open_provider_setup(  # Settings, with the way back to this chat.
+            self,
+            str(settings_provider or provider or "").strip(),
+            str(model or settings_model or "").strip() or None,
+            field=self._console_provider_recovery_field(),
         )
 
     def _console_change_review_run_id(
