@@ -36,6 +36,10 @@ from tldw_chatbook.UI.Navigation.screen_registry import (
     screen_load_error,
 )
 from tldw_chatbook.UI.Navigation.screen_state_store import ConsolePromptTargetProjection
+from tldw_chatbook.UI.Navigation.shell_destinations import (
+    get_shell_destination,
+    resolve_shell_route,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.UI.Navigation.screen_state_store import RuntimeIdentity
@@ -513,7 +517,14 @@ class NavigationMixin:
         flush = getattr(current_screen, "flush_pending_work", None)
         if callable(flush):
             try:
-                flush_result = flush()
+                # TASK-34000.27: a flush that can name the destination in its
+                # own veto toast ("Can't open Console yet: …") is told the
+                # label; every other screen's flush is called as before.
+                flush_result = (
+                    flush(destination=self._navigation_destination_label(screen_name))
+                    if self._flush_accepts_destination(flush)
+                    else flush()
+                )
                 if inspect.isawaitable(flush_result):
                     # Shielded: giving up on the WAIT must not give up on the
                     # SAVE. The Library File Notes flush persists through
@@ -535,6 +546,15 @@ class NavigationMixin:
                         f"Navigation to {screen_name} vetoed by the outgoing "
                         "screen's pending-work flush"
                     )
+                    # TASK-34000.27: the screen says why (Library, Console
+                    # and Settings all toast before returning False); the
+                    # app's part is the rollback. The bar framed the clicked
+                    # destination optimistically, and left there it also
+                    # swallowed the retry click (task-2720's trap, seen
+                    # live: review S-17).
+                    self._restore_nav_bar_highlight(
+                        current_screen, screen_name=screen_name
+                    )
                     return False
             except asyncio.TimeoutError:
                 # Fail closed, exactly like a flush that raised: the pending
@@ -555,6 +575,9 @@ class NavigationMixin:
                     )
                 except Exception:
                     pass
+                self._restore_nav_bar_highlight(
+                    current_screen, screen_name=screen_name
+                )
                 return False
             except Exception as exc:
                 # The outgoing instance may be the only place pending edits
@@ -571,6 +594,9 @@ class NavigationMixin:
                     )
                 except Exception:
                     pass
+                self._restore_nav_bar_highlight(
+                    current_screen, screen_name=screen_name
+                )
                 return False
 
         # TASK-1143 (F5): give the outgoing screen one awaited chance to
@@ -595,6 +621,11 @@ class NavigationMixin:
                         f"Navigation to {screen_name} vetoed by the outgoing "
                         "screen's confirm_navigation"
                     )
+                    # The user answered "stay" in the screen's own dialog;
+                    # the bar still has to agree with the stack (TASK-34000.27).
+                    self._restore_nav_bar_highlight(
+                        current_screen, screen_name=screen_name
+                    )
                     return False
             except Exception as exc:
                 # A broken confirm hook must not silently let navigation
@@ -612,6 +643,9 @@ class NavigationMixin:
                     )
                 except Exception:
                     pass
+                self._restore_nav_bar_highlight(
+                    current_screen, screen_name=screen_name
+                )
                 return False
 
         release_navigation = None
@@ -626,6 +660,9 @@ class NavigationMixin:
                 logger.info(
                     f"Navigation to {screen_name} vetoed by the outgoing "
                     "screen's transition admission"
+                )
+                self._restore_nav_bar_highlight(
+                    current_screen, screen_name=screen_name
                 )
                 return False
             release_navigation = admission
@@ -697,38 +734,86 @@ class NavigationMixin:
             )
         except Exception:
             logger.debug(f"Could not surface navigation failure for {screen_name!r}.")
-        # task-2720: the nav bar highlighted the destination the moment it was
-        # clicked, before the navigation worker ran. Roll it back to the screen
-        # actually on the stack — otherwise the bar shows a destination that
-        # never loaded AND its already-active check swallows every retry click,
-        # leaving the destination unreachable until restart.
-        #
-        # task-2854: use ``nav_bar_active``, not ``screen_name`` -- a screen
-        # whose route is folded under another destination for routing/label
-        # purposes only (e.g. Study folds under Library) sets
-        # ``nav_bar_active`` to a value that clears its own nav bar's
-        # highlight instead of falsely re-claiming the owning destination
-        # (see ``BaseAppScreen.nav_bar_active``). ``screen_name`` is kept as
-        # a fallback for any screen that predates that attribute.
-        # ``nav_bar_active`` may legitimately be ``""`` (Study's case), which
-        # must still reach ``restore_active`` -- ``resolve_shell_route("")``
-        # matches no destination, so every nav button loses ``is-active``
-        # rather than the call being skipped and the stale optimistic
-        # highlight surviving.
+        # The crash path rolls back the TOP screen's bar, as it always did;
+        # the refusing branches of the locked body roll back the outgoing
+        # content screen's (TASK-16300) through the same helper.
         try:
-            current_screen = self.screen
-            current_route = getattr(current_screen, "nav_bar_active", None)
+            top_screen = self.screen
+        except Exception:
+            top_screen = None
+        self._restore_nav_bar_highlight(top_screen, screen_name=screen_name)
+
+    def _restore_nav_bar_highlight(self, screen: Any, *, screen_name: str) -> None:
+        """Roll ``screen``'s nav bar back to the route actually on the stack.
+
+        task-2720: the nav bar highlighted the destination the moment it was
+        clicked, before the navigation worker ran. Roll it back to the screen
+        actually on the stack — otherwise the bar shows a destination that
+        never loaded AND its already-active check swallows every retry click,
+        leaving the destination unreachable until restart. TASK-34000.27:
+        every refusing branch (flush veto, flush timeout, flush failure,
+        confirm veto, confirm failure, admission veto) calls this too; before,
+        only the crash path did, and a vetoed click left the bar framing the
+        destination the user never reached.
+
+        task-2854: use ``nav_bar_active``, not ``screen_name`` -- a screen
+        whose route is folded under another destination for routing/label
+        purposes only (e.g. Study folds under Library) sets
+        ``nav_bar_active`` to a value that clears its own nav bar's
+        highlight instead of falsely re-claiming the owning destination
+        (see ``BaseAppScreen.nav_bar_active``). ``screen_name`` is kept as
+        a fallback for any screen that predates that attribute.
+        ``nav_bar_active`` may legitimately be ``""`` (Study's case), which
+        must still reach ``restore_active`` -- ``resolve_shell_route("")``
+        matches no destination, so every nav button loses ``is-active``
+        rather than the call being skipped and the stale optimistic
+        highlight surviving.
+
+        Args:
+            screen: The screen whose bar was optimistically highlighted
+                (``None`` when the app has no screen yet: nothing to do).
+            screen_name: The destination that failed to open, for the log.
+        """
+        if screen is None:
+            return
+        try:
+            current_route = getattr(screen, "nav_bar_active", None)
             if current_route is None:
-                current_route = getattr(current_screen, "screen_name", None)
+                current_route = getattr(screen, "screen_name", None)
             if isinstance(current_route, str):
-                current_screen.query_one(MainNavigationBar).restore_active(
-                    current_route
-                )
+                screen.query_one(MainNavigationBar).restore_active(current_route)
         except Exception:
             logger.debug(
                 f"Could not roll back nav-bar state after failing to open "
                 f"{screen_name!r}."
             )
+
+    @staticmethod
+    def _navigation_destination_label(screen_name: str) -> str:
+        """The nav-bar label (``"Console"``) of the destination owning ``screen_name``.
+
+        Returns:
+            The label, or ``""`` for a route no destination owns -- the
+            flush's veto toast then falls back to "Can't leave yet".
+        """
+        try:
+            return get_shell_destination(
+                resolve_shell_route(screen_name).destination_id
+            ).label
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _flush_accepts_destination(flush: Any) -> bool:
+        """Whether ``flush_pending_work`` takes a ``destination`` keyword."""
+        try:
+            parameters = inspect.signature(flush).parameters
+        except (TypeError, ValueError):
+            return False
+        return "destination" in parameters or any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
 
     def _resync_navigation_bar_active(self, screen: Any) -> None:
         """Re-sync the visible screen's nav bar to its own route (CE-007).

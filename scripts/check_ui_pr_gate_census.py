@@ -197,7 +197,16 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # `run_demo_detached` exactly once, no provider disables the run button
 # with the reason, an existing schedule shows the reuse copy; 7 tests,
 # about 21 s locally.
-MINIMUM_FILES = 161
+# TASK-34000.27 (2026-10-09) raised it to 162:
+# Tests/UI/test_nav_veto_keeps_highlight.py -- a nav-bar switch the
+# outgoing screen vetoes (a note title with a trailing space) says why
+# with the destination named, leaves Library on the stack with ⌃3
+# Library still framed, keeps the typed text, and the retry click opens
+# Console once the title is fixed; the flush timeout, flush failure,
+# bare veto and confirm veto all roll the bar back (unit arms); 7 tests,
+# about 30 s locally. The 80x24 and CONFLICTED arms are in
+# test_nav_veto_keeps_highlight_extended.py, outside the lane.
+MINIMUM_FILES = 162
 
 
 def read_census(path: Path) -> list[str]:

@@ -11284,7 +11284,9 @@ class LibraryScreen(BaseAppScreen):
             return False
         return self._acquire_file_notes_transition("screen")
 
-    async def flush_pending_work(self, *, quitting: bool = False) -> bool:
+    async def flush_pending_work(
+        self, *, quitting: bool = False, destination: str = ""
+    ) -> bool:
         """Persist pending note edits before the app navigates away or quits.
 
         The app awaits this from ``handle_screen_navigation`` before
@@ -11297,6 +11299,9 @@ class LibraryScreen(BaseAppScreen):
             quitting: The quit hook asks its own question, so the veto toasts
                 stay quiet, and an untouched new note waits for
                 ``prepare_for_quit`` (after every quit prompt said yes).
+            destination: The nav-bar label of where the user was going
+                (``"Console"``), named in every veto toast (TASK-34000.27);
+                empty when the caller does not know.
 
         Returns:
             True only for the coordinator's typed ``PERMITTED`` result and
@@ -11304,7 +11309,14 @@ class LibraryScreen(BaseAppScreen):
             blocked, and stale Notes outcomes all veto navigation even when a
             presentation scalar or snapshot appears clean.
         """
+        from ..Library_Modules import library_pending_work as pending
+
+        def say(text: str) -> None:
+            if not quitting:
+                pending.notify_library_flush_veto(self, text)
+
         if self._prompts_state.mutation_in_flight:
+            say(pending.library_prompt_mutation_veto_notice(destination=destination))
             return False
         file_notes_flush_allowed = await self._flush_active_file_notes()
         note_flush = await (
@@ -11314,14 +11326,18 @@ class LibraryScreen(BaseAppScreen):
         )
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
+        # task-449 / TASK-34000.27: the app-level navigation veto only logs
+        # and rolls the nav bar back, so every refusing draft says why the
+        # tab switch was refused -- the same toasts as the in-screen Back /
+        # row-switch / rail-switch vetoes. The Notes veto carries its own
+        # reason (the save's message names the field and the fix).
+        if not file_notes_flush_allowed:
+            say(pending.library_file_notes_flush_veto_notice(destination=destination))
+        if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
+            say(pending.library_note_flush_veto_notice(note_flush, destination=destination))
         if not prompt_flush_allowed and not quitting:
             self._notify_prompt_dirty_veto()
         if not skill_flush_allowed and not quitting:
-            # task-449: the app-level navigation veto only logs, so tell
-            # the user why the tab switch was refused -- same toast as the
-            # in-screen Back / row-switch / rail-switch vetoes. Notes show
-            # their own conflict banner and prompts predate this pattern,
-            # so only the skill veto reports here.
             self._notify_skill_dirty_veto()
         return (
             file_notes_flush_allowed

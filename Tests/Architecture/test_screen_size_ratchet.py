@@ -945,7 +945,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: branch, and the one-line delegating action method
     #: (`action_library_artifacts_demo_cancel`). Re-set to the exact
     #: measurement, never above it.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36992, 1344),
+    #: 2026-10-09, TASK-34000.27: 36992 -> 37008 (+16), same owner decision:
+    #: `flush_pending_work` takes the clicked destination's label and
+    #: says why every refusing draft vetoed the switch (the Notes veto
+    #: through the pure `library_note_flush_veto_notice`, the two formerly
+    #: silent vetoes through their own sentences) -- one kwarg, its Args
+    #: entry, a three-line nested `say`, and the comment. No new method.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 37008, 1344),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

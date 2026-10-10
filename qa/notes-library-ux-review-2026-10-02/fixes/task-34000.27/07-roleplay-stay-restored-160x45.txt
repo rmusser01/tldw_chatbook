@@ -1,0 +1,45 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                                                                     │
+│ Editing Default Assistant - unsaved                                                                                                                          │
+│  Ready                                                                                                                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Characters — who the AI plays · 3
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│ ╭─────────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────────╮┌─────────────────────────────────────┐ │
+│ │  Library                         <  ││                     ▸ Try a test chat (nothing saved)                      ││                                     │ │
+│ │  Search...                          ││ Character Editor                                                           ││  Inspector                       >  │ │
+│ │                 New                 ││  Context: whole character  Generate whole character…                       ││ Selected: Default Assistant         │ │
+│ │           New Actor Pack            ││  Name                                                                      ││ Type: character                     │ │
+│ │               Import                ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││ Validation: editing...              │ │
+│ │          Import Actor Pack          ││  ▊  Default Assistant x                                                ▎   ││ Conversations (0)                   │ │
+│ │              Duplicate              ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││   Search this character's chats     │ │
+│ │             Sort: Name              ││  First message  Generate                                                   ││  No saved conversations.            │ │
+│ │              Tag: All               ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││                                     │ │
+│ │  Default Assistant                  ││  ▊ Hello! I'm the Default Assistant -- the character every new         ▎   ││ Readiness                           │ │
+│ │  The built-in Default Assistant c…  ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ▁ ││ Save or discard your edits to chat  │ │
+│ │  pixel-migu                         ││  Description  Generate                                                     ││ in Console.                         │ │
+│ │  A tiny turquoise pixel-art robot…  ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││              Chat now               │ │
+│ │  Samira “Sammy” Vadem               ││  ▊ The built-in Default Assistant character -- used for any new        ▎   ││        Send to Console draft        │ │
+│ │  Samira “Sammy” Vadem appears to …  ││  ▊ conversation until you choose a different character. It also        ▎   ││             Export JSON             │ │
+│ │                                     ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││             Export PNG              │ │
+│ │                                     ││  Personality  Generate                                                     ││          Export Actor Pack          │ │
+│ │                                     ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││               Delete                │ │
+│ │                                     ││  ▊ Concise by default: gives the direct answer first, then             ▎   ││            Manage Buddy             │ │
+│ │                                     ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││             Show Buddy              │ │
+│ │                                     ││  System prompt  Generate                                                   ││             Close Buddy             │ │
+│ │                                     ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││            Disable Buddy            │ │
+│ │                                     ││  ▊ You are {{char}}: a measured, general-purpose assistant.            ▎   ││                                     │ │
+│ │                                     ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││                                     │ │
+│ │                                     ││                                                                            ││                                     │ │
+│ │                                     ││    Save     Cancel                                                         ││                                     │ │
+│ │                                     ││                             ▸ Dictionaries (0)                             ││                                     │ │
+│ │                                     ││                             ▸ World Books (0)                              ││                                     │ │
+│ ╰─────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯└─────────────────────────────────────┘ │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+s save | esc back | f6 pane | c/p/d/l mode | [ ] mode | s sort | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -92,6 +92,7 @@ Tests/UI/test_library_note_delete_prompt_visible.py
 Tests/UI/test_library_note_header_fits_pane.py
 Tests/UI/test_library_notes_sync_attention.py
 Tests/UI/test_library_notes_sync_delete_restore.py
+Tests/UI/test_nav_veto_keeps_highlight.py
 Tests/UI/test_library_reports_demo_consent.py
 Tests/UI/test_library_rag_answer_names_model.py
 Tests/UI/test_library_notes_tree_scrolls_wide.py

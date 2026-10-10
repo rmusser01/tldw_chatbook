@@ -54,6 +54,10 @@ FAST_LANE_TARGETS = (
     # carrying its time. About 6 s together; nothing else gated them.
     "Tests/Library/test_library_file_export.py",
     "Tests/Architecture/test_notes_sync_snapshot_construction.py",
+    # TASK-34000.27: the sentence a vetoed nav-bar click gets from Library
+    # (the save's own field-naming reason, the Esc path's sentence for
+    # the other kinds, the destination in its head); pure, a few seconds.
+    "Tests/UI/Library_Modules/test_library_pending_work_veto_notice.py",
     # TASK-32451: every Manage sync folders row is titled with its folder's
     # name through the published snapshot (real runtime over a tmp DB and
     # vault; the honest fallbacks; no path on the snapshot, row or log).

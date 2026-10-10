@@ -588,6 +588,20 @@ dismissal, not the change under test). Pair the arms on base under the SAME plug
 before attributing anything, and read the plugin's filter before trusting its
 rescue.
 
+**TASK-34000.27, 2026-10-09: a paired arm can flip on its own when the test
+counts pauses.** `test_screen_navigation.py::test_skills_route_lands_on_library_
+with_skills_row_selected` failed only on the branch in the paired plugin run (37
+red at base, 42 at head), then failed twice alone on the branch and passed twice
+alone at base -- every sign of a regression. The next pair, run with
+`-o log_cli=true`, came out the other way round: base failed, branch passed, and
+BOTH logs read `Splash screen enabled: True ... duration: 7.0` with no
+`Navigating to screen` line at all. The test waits `150 x pilot.pause(0.02)` for
+the initial screen and again for the route, so whether it outlasts the splash is
+whether 300 pauses took more than 7 s of wall clock on that run. A paired arm
+settles attribution only for a test whose waits are wall-clock bounded (or whose
+profile has the splash off); for an iteration-counting wait, read the captured
+log for the splash line before believing either arm.
+
 **TASK-33003.20 follow-up, 2026-10-04.** The guard now lives in
 `Tests/UI/test_approval_batch_geometry.py`, on the UI PR census. The supported
 `private_profile_test` wrapper selects the profile before imports, and the test

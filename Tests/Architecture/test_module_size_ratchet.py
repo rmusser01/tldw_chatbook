@@ -90,7 +90,15 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_lifecycle.py": 2134,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
-    "tldw_chatbook/app_navigation.py": 1110,
+    # TASK-34000.27 (2026-10-09): 1110 -> 1195 (+85), owner decision
+    # 2026-10-04 (raise the row to the measured value rather than move
+    # unrelated code to fit): the one nav-bar rollback helper
+    # (`_restore_nav_bar_highlight`, extracted from the crash path) is
+    # now called from every refusing branch of the locked navigation
+    # body, and a flush that accepts `destination` is told the clicked
+    # destination's label (`_navigation_destination_label`,
+    # `_flush_accepts_destination`).
+    "tldw_chatbook/app_navigation.py": 1195,
     # TASK-33011: the command-palette providers moved verbatim out of app.py;
     # governed there, so governed here.
     "tldw_chatbook/app_command_providers.py": 1123,
