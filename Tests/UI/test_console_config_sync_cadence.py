@@ -177,6 +177,22 @@ class _Poll:
         self.console._start_console_transcript_sync_timer()
 
 
+async def _quiesce(tick, seen, limit: int = 10) -> None:
+    """Tick until one projects nothing (the clock stands still, no backstop).
+
+    After a run, real work lands on its own: the conversation is saved and
+    its dictionary scope refreshed, continuation and usage writes move the
+    display revision. Each is an input change and projects, correctly; a
+    count of "unchanged" ticks starts once they have.
+    """
+    for _ in range(limit):
+        before = seen.calls
+        await tick()
+        if seen.calls == before:
+            return
+    raise AssertionError(f"inputs still moving after {limit} ticks")
+
+
 async def _run_over(console) -> None:
     """Wait until no chat has a run going (the backstop's gate is closed)."""
     from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
@@ -256,6 +272,7 @@ async def test_unchanged_poll_ticks_skip_the_operation_but_once_a_second_in_a_ru
             console._console_transcript_poll_needed = lambda: True
             try:
                 await _explicit_sync(console, seen)
+                await _quiesce(tick, seen)
                 tail = seen.calls
                 for _ in range(3):
                     await tick()
