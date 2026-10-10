@@ -1,11 +1,11 @@
 ---
 id: TASK-34780
 title: 'Markup census: two unescaped notify sites keep preflight red on dev'
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-10 17:49'
-updated_date: '2026-10-10 18:01'
+updated_date: '2026-10-10 18:15'
 labels:
   - ui
   - markup
