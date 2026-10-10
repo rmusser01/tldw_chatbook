@@ -114,6 +114,7 @@ from tldw_chatbook.Widgets.Console.console_library_access_modal import (
 )
 from tldw_chatbook.Widgets.Console.console_library_search_modal import (
     ConsoleLibrarySearchModal,
+    ConsoleLibrarySearchResult,
 )
 from tldw_chatbook.Widgets.Console.console_message_delete_receipt import (
     ConsoleMessageDeleteReceiptModal,
@@ -708,12 +709,23 @@ TASK3_MODAL_CONTRACTS = (
         _RESTORE_OPENER,
     ),
     _Task3ModalContract(
+        ConsoleLibrarySearchModal,
+        ConsoleLibrarySearchModal,
+        "#console-rag-settings",
+        None,
+        (ConsoleLibrarySearchResult,),
+        "Console Search Library action",
+        None,
+        "none",
+        _RESTORE_OPENER,
+    ),
+    _Task3ModalContract(
         ConsoleRagSettingsModal,
         ConsoleRagSettingsModal,
         "#console-rag-settings",
         None,
         (ConsoleRagSettingsResult,),
-        "Console Library search chip",
+        "none: the unlaunched base of ConsoleLibrarySearchModal",
         None,
         "none",
         _RESTORE_OPENER,
@@ -1098,9 +1110,10 @@ _CONSOLE_ROOT_SOURCE_PATHS = (
 # feedback comment modal rides the same way (phase 3 task 5:
 # ChatScreen's ConsoleSelectionFeedbackRequested flow pushes it before
 # routing the composed feedback through the prompt queue).
-# TASK-33003.19: the root opens ConsoleLibrarySearchModal, so its
-# ConsoleRagSettingsModal base keeps a contract row but is launched by
-# nothing. The root's restore flows open the workspace rename modal itself.
+# TASK-33003.19: the root opens ConsoleLibrarySearchModal (its own task-3
+# row), so its ConsoleRagSettingsModal base keeps a contract row but is
+# launched by nothing. The root's restore flows open the workspace rename
+# modal itself.
 _CONSOLE_DIRECT_MODAL_TYPES = tuple(
     contract.modal_type
     for contract in (*TASK2_MODAL_CONTRACTS, *TASK3_MODAL_CONTRACTS)
@@ -1137,7 +1150,6 @@ _ROOT_INVENTORY_ONLY_MODAL_TYPES = (
     ConsoleForkChatModal,
     ConsoleHooksReviewModal,
     ConsoleLibraryAccessModal,
-    ConsoleLibrarySearchModal,
     ConsoleMessageDeleteReceiptModal,
     ConsolePromptDraftSaveDialog,
     ConsoleSaveMarkdownModal,
@@ -1610,8 +1622,8 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # The current dev baseline grows to 49 when TASK-26042's Workspace Files
     # owner seam joins the explicit Console launch graph. TASK-33622.15 adds the
     # generated video's two quit-guarded Save-to-disk screens: 49 -> 51.
-    # TASK-33003.19 re-measures it (the 51 was already stale): 32 Console
-    # contract rows, 15 shared rows, 24 inventory-only modals and the two
+    # TASK-33003.19 re-measures it (the 51 was already stale): 33 Console
+    # contract rows, 15 shared rows, 23 inventory-only modals and the two
     # named below, less ConsoleRagSettingsModal, whose
     # ConsoleLibrarySearchModal subclass is what the root opens.
     assert len(reachable_modal_types) == 72
@@ -1810,12 +1822,13 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
 
 
 def test_task3_modal_contract_table_is_complete_and_adopted() -> None:
-    assert len(TASK3_MODAL_CONTRACTS) == 13
+    assert len(TASK3_MODAL_CONTRACTS) == 14
     assert {contract.modal_type.__name__ for contract in TASK3_MODAL_CONTRACTS} == {
         "ConsoleComposerMenuModal",
         "ConsoleEditMessageModal",
         "ConsoleFeedbackCommentModal",
         "ConsoleGenerateImageModal",
+        "ConsoleLibrarySearchModal",
         "ConsoleRagSettingsModal",
         "ConsoleRenameSessionModal",
         "ConsoleRewindModal",
