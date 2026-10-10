@@ -19468,3 +19468,11 @@ RED MountError and final targeted PASS15 receipt. Evidence:
 **TASK-33370 and TASK-33373, 2026-10-01.** A per-test HOME/config redirect after collection can trip `RecoveryRequired('raw_source_selection_changed')` before DB, migration or UI assertions. Broad catch blocks can hide it as a missing first token or another assertion failure. Retain the existing private bootstrap profile for source-bound families; keep their databases under explicit temporary paths and close them in the existing fixtures. A test selecting another independent config source must import the real module after selection and rebind only its explicit consumers. Do not clear participant registries, bypass guarded functions or reload unrelated modules. Config import eagerly creates/loads its file, so establish absent/unsafe/first-creation conditions explicitly before the operation being tested. Deliberate later profile switches must remain environment changes and must still be refused.
 
 Observe guarded config functions without replacing them: use a profiler on their unwrapped body or inject faults through the actual dependency. Lock doubles must implement timed acquire/release as well as context management. Run the real assertions after repairing the seam and retain distinct failures with their owner; identical admission failures on two revisions do not prove the tests passed. Benchmark isolation must encompass validation imports and every measured group, including migration, with HOME and USERPROFILE restored afterward. Never relax performance budgets or child deadlines to turn privacy evidence green.
+
+PR #2955's 2026-10-10 writer-lock review found a passing concurrency test with
+PytestUnhandledThreadExceptionWarning: its writer used an unselected tmp_path
+config, then was refused after the rebuild released. Thread termination and
+negative blocked-entry checks did not prove any successful writer entry.
+Capture thread exceptions and assert positive completion after releasing the
+barrier; the strengthened test must fail on that refusal before the selected
+fixture path is corrected.

@@ -3,10 +3,10 @@ id: TASK-33370
 title: >-
   135 DB and UI tests fail with RecoveryRequired('raw_source_selection_changed')
   under the per-test environment redirect
-status: Done
+status: In Progress
 assignee: []
 created_date: '2026-09-28 20:12'
-updated_date: '2026-10-10 20:34'
+updated_date: '2026-10-10 21:07'
 labels:
   - testing
   - backup-recovery
@@ -46,10 +46,20 @@ These tests are blind: they report the recovery bootstrap, not the behaviour the
 ADR required: no. Test fixture correction preserves ADR-126; reference backlog/decisions/126-complete-local-backup-and-recovery.md.
 
 2026-10-10 PR review follow-up: retain the selected config source for the automatic app-quit encryption regression through the existing private-profile interpreter helper; reproduce the mixed-file import failure, then rerun the changed test selection and preflight. ADR required: no. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: test lifetime repair preserves production admission and persistence contracts.
+
+2026-10-10 PR review: writer-thread evidence completion
+1. Reopen TASK-33370 under existing AC2: config concurrency tests must reach their real guarded writer body, rather than pass after an unobserved thread refusal.
+2. Capture writer exceptions and assert successful guarded entry after the rebuild releases; retain the existing negative lock-order assertions and deadlines. Run this strengthening against the wrong-path fixture first for RED.
+3. Use the fixture-owned selected private config path, with production source-selection guards unchanged. Run the target module and the existing 19-module affected selection, scoped static and preflight checks.
+4. Preserve earlier 331-pass receipts with their thread-warning limitation; append precise new RED/GREEN evidence, then commit for independent review. No rebase or push.
+ADR required: no
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: repair a test's selected-source lifetime and completion oracle under the existing admission contract; no production guard or architecture change. Existing AC2 already covers this scope.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Scope addition (2026-09-28, found while verifying PERF-06): Tests/test_config_*.py fails 186 tests identically at base c174e30f6b and on the PERF-06 branch. The TASK-32804.1 warm-read tests skip with 'raw_source_selection_changed' for the same reason. Under @pytest.mark.bootstrap_profile the same config reads work, so the marker, or the shared conftest seam it uses, is the likely fix for this set too.
 2026-10-01 scoped follow-up: shared conftest families retain the collection-time private profile; independent config tests select a real fresh module through the existing test helper and rebind only explicit consumers. No participant registry, production guard or deadline is reset. Fixed eager-import creation/absence setup, real default-profile selection, lock protocols, guarded-function observations, captured-source retarget assertions and the actual public warm-cache race hook. Legacy cache/publication assertions now match the unchanged recovery rollback/structured result contract; unsafe forced reads remain refused. Prior baseline 560 cases had 292 failures/15 errors/2 skips. Current finite selection /private/tmp/backup-followup-check-pxzt67k1 passed all565 with0 failures/errors/skips; stronger /private/tmp/backup-followup-check-wzpm3jic passed43 and /private/tmp/backup-followup-check-igf4nkk1 passed136. Final four-case /private/tmp/backup-followup-check-rlwf4wjg passed all4, including populated-cache decryption recovery, actual warm-path race and original benchmark CLI privacy/budget assertions. Independent final immutable review /private/tmp/backup-followup-final-independent-review-zxtrobnq/report.md PASS, no actionable P1/P2. Scoped static /private/tmp/backup-followup-final-static-oyhol6q7/corrected-bandit-comparison.json has0 new non-assert Bandit findings,27 identical existing non-assert findings;15 new B101 observations are pytest assertions. Ruff has0 new findings; compile/diff passed. Updated lessons-testing-evidence.md through official Backlog document tools. Evidence above precedes the pending rebase onto current dev922440b93e; assess upstream schema/Console changes and rerun the finite affected selection before publication. Status remains In Progress pending integration.
@@ -109,6 +119,16 @@ Normal latest-dev carry: e355..f0ffcf9e819b577bd38c416f38550969c75fb5a0 changes 
 2026-10-10 review follow-up on dev cc46cc7300: the mixed changed-file run initially passed330 with one app-quit encryption fixture refusal, while the exact case passed alone. That case now uses the existing private-profile interpreter helper so imported app/config consumers share one owned lifetime. The final19 changed test files pass all331 cases in104.11s; the paired app/encryption selection passes22. Preflight, undefined-name checks, formatting and whitespace checks pass. The informational warm-read thread still emits one pytest warning; no full suite or native qualification was repeated. Independent pinned code review found no introduced P1/P2; final fixture diff remains reviewable. ADR-126 is unchanged.
 PR review integration (2026-10-10): against locally integrated predecessor head 732d1de8c29ede5c03d0a0263d4f9cacf29e0321, runtime 02135a825e8252c90db02dc0a89f7614d64b62df passes all 331 tests in the 19 affected modules in 103.67 seconds, with one unchanged strict TASK-34700 shipped-throttle expected failure and one existing worker-thread warning. The hot-reload rebase preserves both native child helpers and explicit source selection; independent carry review cleared all 22 owned test/benchmark paths and both lesson additions. Derived-artifact preflight, undefined-name checks and whitespace checks pass. The existing app-quit isolation repair is retained. No full suite or new native/performance qualification is claimed; TASK-33560 remains separate. All acceptance criteria for these fixture/benchmark tasks are complete; exact-head protected CI remains the PR integration gate.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+2026-10-10 PR2955 writer-thread review correction
+At source 75d3d1c30f7d75149953e14fe49166572ab44547, the existing writer-lock test passed despite PytestUnhandledThreadExceptionWarning: after the rebuild released, its tmp_path/config.toml target was refused as raw_source_selection_changed. The prior 331-pass receipt is retained with that blind writer-entry limitation; it is not relabeled as successful writer execution.
+Strengthened the same test to capture writer exceptions and require actual guarded entry after rebuild release. That strengthening was RED (1 failed in 0.62s, captured RecoveryRequired). The minimum correction uses get_cli_config_path() from the existing fixture-owned private source. Original blocked-entry/file-lock ordering assertions and all timeouts remain unchanged; production admission and source registries are untouched. Existing AC2 covers this behavior, so no new acceptance criterion was needed.
+Fresh GREEN: complete concurrency module 5 passed in 0.91s; exact prior 19-module selection 331 passed / 1 strict TASK-34700 xfail in 100.09s. Both runs treated PytestUnhandledThreadExceptionWarning as an error; no such warning remains. The combined run retains two unrelated existing SyntaxWarnings in Utils/Splash_Screens/environmental/train_journey.py:31-32. These fresh results are separate from prior receipts.
+Black 25.1.0 and full default Ruff 0.13.1 checks passed on the changed test; diff checks and complete preflight passed (502 markup occurrences pinned, 175 UI gate entries). The existing lesson records why thread termination plus negative barrier checks cannot prove positive completion. No full suite, production guard change, rebase, push or native/performance qualification. Task remains In Progress pending independent review of this correction.
+stack_parent: 732d1de8c29ede5c03d0a0263d4f9cacf29e0321
+ADR required: no. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: test-only completion of the selected-source and writer-entry oracle under the existing admission contract.
+<!-- SECTION:NOTES:END -->
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
