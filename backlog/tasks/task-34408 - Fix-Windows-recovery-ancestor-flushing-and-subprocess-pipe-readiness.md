@@ -1,11 +1,11 @@
 ---
 id: TASK-34408
 title: Fix Windows recovery ancestor flushing and subprocess pipe readiness
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-04 18:37'
-updated_date: '2026-10-10 03:42'
+updated_date: '2026-10-10 03:56'
 labels: []
 dependencies: []
 ---
@@ -52,6 +52,8 @@ Updated files: bootstrap/control_records/publication, native Windows and admissi
 PR preparation: feature branch fast-forwarded to dev a7d9bca5da; no upstream file overlaps. Fresh focused PR check: 38 passed in 9.11s (pipe helper, pending durability, private Eval overrides). Backlog ID/frontmatter guards pass after the documented voluntary renumbering.
 
 PR #3018 qualification exposed a separate baseline platform-selector bug: fresh isolated-profile selection dropped TEMP/TMP even though its existing platform allowlist kept TMPDIR. The Windows full-App pipeline passes all 75 cases/one FIFO skip when its qualified temp parent survives selection via TMPDIR. Added a meaningful native launch regression: TEMP and TMP fail before the correction (2 failed, 3 passed), then all five home/temp cases pass after preserving the two native platform selectors. Provider credentials and app overrides remain excluded; native ancestry and SQLite validation remain intact. Removed the TMPDIR CI workaround and assert real TEMP/TMP plus tempfile parent after selection. Existing ADR-126 and the documented platform-selector launch contract apply, with no new boundary or ADR. Added incident-backed testing guidance. Final all-platform pipeline check without the workaround is pending; task stays In Progress.
+
+Final platform proof on 401037ceb1 verifies the actual TEMP/TMP product allowlist repair with TMPDIR workaround removed: Linux/macOS each 81 pass; Windows 80 pass/1 FIFO skip, including completed reopened rebackup and preserved native private snapshot parent. Native environment RED/green: 2 failed/3 passed then all 5 passed, with provider/app overrides excluded. All changed Python formatting/lint and generated-script anchors pass; same final reviewer finds no actionable issues, performance guard passes. Added incident-backed testing lesson. Existing ADR-126/platform-selector contract is preserved. Required exact-head CI still gates PR merge; the separate installed-wheel 300s release limit remains documented.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering Provenance
