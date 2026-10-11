@@ -11,10 +11,12 @@ from textual.containers import ScrollableContainer
 from textual.widgets import Button, Collapsible, Input, Static
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.test_console_settings_model_change import pick_mode_opener, settle
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
 )
+from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID,
 )
@@ -32,6 +34,11 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
 pytestmark = pytest.mark.bootstrap_profile
 
 GEOMETRY_SIZES = ((80, 24), (100, 30), (160, 40), (200, 50))
+#: The two full-screen sizes the app is used at (ThinkPad, MacBook).
+FULL_SCREEN_SIZES = ((211, 44), (235, 52))
+#: The view-tab row as painted: each tab is its label and one cell either side.
+MODEL_VIEW_TAB_ROW = " ● Model and generation  Context and memory "
+CONTEXT_VIEW_TAB_ROW = " Model and generation  ● Context and memory "
 #: TASK-33006.1 (spec §6, mock (b)): $ds-chat-settings-width by $ds-size-22,
 #: each capped at $ds-percent-95 of the viewport. The 196-column wide tier is
 #: gone. The width is 176, not mock (b)'s 150, since TASK-33007 capture
@@ -66,12 +73,19 @@ class GeometryHarness(ConsolidatedCSSApp):
         }
 
 
-def build_geometry_modal(app: GeometryHarness, *, ready: bool) -> ConsoleSettingsModal:
+def build_geometry_modal(
+    app: GeometryHarness, *, ready: bool, **kwargs
+) -> ConsoleSettingsModal:
     """Build either a blocked first-use or configured power-user draft.
 
     The ready draft holds a Temperature the saved chain lacks, so the footer
     offers every action: Save as model default shows only while a save would
     change the defaults (Phase 6 final review I5).
+
+    Args:
+        app: The harness whose configuration the modal reads.
+        ready: Whether the draft names a model and is ready to send.
+        **kwargs: Further ``ConsoleSettingsModal`` arguments.
     """
     return ConsoleSettingsModal(
         settings=ConsoleSessionSettings(
@@ -84,7 +98,63 @@ def build_geometry_modal(app: GeometryHarness, *, ready: bool) -> ConsoleSetting
         providers_models={"llama_cpp": ["model-a", "model-b"] if ready else []},
         context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
         can_save=True,
+        **kwargs,
     )
+
+
+def painted_tab_row(app: GeometryHarness, modal: ConsoleSettingsModal) -> str:
+    """The view-tab row as the compositor paints it.
+
+    A tab's label string holds its '● ' mark even while the tab is too narrow
+    to paint it, so the label alone cannot show a crop.
+    """
+    row = modal.query_one("#console-settings-view-tabs").region.y
+    return app.screen._compositor.render_strips()[row].text
+
+
+@pytest.mark.parametrize("size", FULL_SCREEN_SIZES)
+@pytest.mark.asyncio
+async def test_view_tabs_paint_their_whole_labels_after_each_view_switch(
+    size: tuple[int, int],
+) -> None:
+    """TASK-33003.11: a view tab is laid out again when its label changes.
+
+    ``Button.label`` repaints without a layout, so a tab could keep the width
+    of its old label and crop its '● ' mark. A click or Enter on a tab painted
+    whole labels before the fix too. Alt+M from the Context view, which shows
+    the Model view with no tab pressed, painted the Model tab without its mark.
+
+    Args:
+        size: Terminal size (columns, rows) the harness app runs at.
+    """
+    app = GeometryHarness()
+    modal = build_geometry_modal(
+        app, ready=True, model_picker=pick_mode_opener(app, app.app_config)
+    )
+
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(modal)
+        await settle(pilot, app)
+        assert MODEL_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+        await pilot.click("#console-settings-view-context")
+        await settle(pilot, app)
+        assert CONTEXT_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+        await pilot.click("#console-settings-view-model")
+        await settle(pilot, app)
+        assert MODEL_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+        await pilot.click("#console-settings-view-context")
+        await settle(pilot, app)
+        await pilot.press("alt+m")  # Change, from a Context view field
+        await settle(pilot, app)
+        assert isinstance(app.screen, ConsoleModelPopover)
+        await pilot.press("escape")  # no pick: the Model view shows, Change focused
+        await settle(pilot, app)
+        assert app.screen is modal
+        assert app.focused is modal.query_one("#console-settings-model-change")
+        assert MODEL_VIEW_TAB_ROW in painted_tab_row(app, modal)
 
 
 @pytest.mark.parametrize("size", GEOMETRY_SIZES)

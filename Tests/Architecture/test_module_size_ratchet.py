@@ -301,8 +301,12 @@ _BUDGETS: dict[str, int] = {
     # lowers it to 6,103: Save as model default shows on the saved-defaults
     # answer, so the persisted-table predicate is gone. (Counts above predate
     # PR #2993's ruff reflow of this file, +60 lines AST-identical; Phase 6
-    # rebased onto it measures 6,193.)
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6193,
+    # rebased onto it measures 6,193.) TASK-33003.11 lowers it to 6,178: one
+    # loop sets both view tabs' label, class and tooltip. The loop alone
+    # measures 6,169; the other nine lines are the same plan task's next two
+    # riders, the single mount-time readiness build (TASK-33006.21) and the
+    # Context view's unsaved-endpoint reason (TASK-33006.22).
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6178,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

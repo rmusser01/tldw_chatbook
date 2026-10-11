@@ -2795,24 +2795,17 @@ class ConsoleSettingsModal(
         self.query_one("#console-settings-modal").set_class(
             not model_selected, "-context-view"
         )
-        model_tab = self.query_one("#console-settings-view-model", Button)
-        context_tab = self.query_one("#console-settings-view-context", Button)
-        model_tab.label = _view_tab_label("Model and generation", model_selected)
-        context_tab.label = _view_tab_label("Context and memory", not model_selected)
-        model_tab.variant = "default"
-        context_tab.variant = "default"
-        model_tab.set_class(model_selected, "console-settings-view-active")
-        context_tab.set_class(not model_selected, "console-settings-view-active")
-        model_tab.tooltip = (
-            "Selected view: Model and generation"
-            if model_selected
-            else "Show Model and generation"
-        )
-        context_tab.tooltip = (
-            "Show Context and memory"
-            if model_selected
-            else "Selected view: Context and memory"
-        )
+        for tab_id, name, selected in (
+            ("model", "Model and generation", model_selected),
+            ("context", "Context and memory", not model_selected),
+        ):
+            tab = self.query_one(f"#console-settings-view-{tab_id}", Button)
+            tab.label = _view_tab_label(name, selected)
+            # Button.label only repaints: without a layout the tab can keep
+            # its old width and crop its mark or name (TASK-33003.11).
+            tab.refresh(layout=True)
+            tab.set_class(selected, "console-settings-view-active")
+            tab.tooltip = f"Selected view: {name}" if selected else f"Show {name}"
         self.query_one("#console-settings-scope", Static).update(self._scope_copy())
         self.query_one("#console-settings-make-default", Button).display = show_model
         self.query_one(f"#{USE_SAVED_DEFAULTS_ID}", Button).display = show_model

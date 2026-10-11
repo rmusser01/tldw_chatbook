@@ -668,7 +668,11 @@ with **Budget strategy** focused, and **Model and generation** starts at the
 its fix instead, as it does when Chat settings opens: **Change** when no
 model is chosen, or the open **Connection** disclosure's fix (such as
 **Configure credential…**) below the tuning rows. Pressing the tab of the
-view already shown does nothing.
+view already shown does nothing. The tab of the view shown starts with "●"
+("● Model and generation"), whichever way the view was
+reached: a click, **Enter** on the tab, or **Alt+M** from **Context and
+memory**, which returns to **Model and generation** with **Change** focused
+once you pick a model or press **Esc**.
 
 The footer reads, left to right: the Esc hint (below), **Use saved
 defaults**, **Save as model default**, **Default for new chats (Ctrl+N)** and
