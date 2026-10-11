@@ -11,7 +11,7 @@ Phase 9 is the last phase of the model-configuration redesign, added by owner de
 Scope: every rider that is not Done and is a subtask of TASK-33001 through TASK-33007 or of TASK-33641, plus TASK-33666 and TASK-33667. Phase 8's own tasks (TASK-33008.x) are in flight on the branch below this one and are out of scope.
 
 This plan triaged 59 riders against this branch's HEAD (8b4a1ad23e, stacked on Phase 8's in-progress branch, which is stacked on Phase 7):
-- 52 VALID (TASK-33003.13 joined them once the owner ruled), plus TASK-33641.7 (filed from the wave 1 integration) and TASK-33641.8 (filed from a wave 2 incident): grouped into the 16 plan tasks below.
+- 52 VALID (TASK-33003.13 joined them once the owner ruled), plus TASK-33641.7 (filed from the wave 1 integration) TASK-33641.8 (filed from a wave 2 incident) and TASK-33641.9 (filed from Phase 8's Task 2 review): grouped into the 16 plan tasks below.
 - 7 ALREADY FIXED and 0 OBSOLETE: listed under "Closed without code" with their evidence. They get no plan task; each is closed with that rationale in its own task file.
 - 0 NEEDS OWNER: TASK-33003.13 was ruled on 2026-10-09 and is in Task 15.
 
@@ -703,13 +703,14 @@ Depends on: —
 - Tests/UI/test_console_session_settings.py
 - qa/model-config-p6-t4-2026-10-02 (capture 07)
 
-## Task 16: Switch model shows what the server lists, full provider names and typed sources, and a picker click lands where pointed (TASK-33003.12, TASK-33005.12, TASK-33005.14, TASK-33006.18)
+## Task 16: Switch model shows what the server lists, full provider names and typed sources, and a picker click lands where pointed (TASK-33003.12, TASK-33005.12, TASK-33005.14, TASK-33006.18, TASK-33641.9)
 
 Task files:
 - backlog/tasks/task-33003.12 - A-click-while-a-pickers-results-list-collapses-lands-on-the-control-under-the-pointer.md
 - backlog/tasks/task-33005.12 - Show-the-models-a-local-probe-listed-in-Switch-model.md
 - backlog/tasks/task-33005.14 - Polish-three-small-model-surface-findings-from-the-Phase-5-captures.md
 - backlog/tasks/task-33006.18 - Type-the-switcher-sources-the-Console-hands-pick-mode.md
+- backlog/tasks/task-33641.9 - Switch-model-lists-a-provider-s-own-rows-first-when-Find-is-exactly-that-provider-s-name.md
 Wave: 6
 Depends on: —
 Must not edit: providers_models_card.py (read only). Fix the picker in model_search_picker.py.
@@ -720,6 +721,8 @@ Must not edit: providers_models_card.py (read only). Fix the picker in model_sea
 - TASK-33005.12 (Show the models a local probe listed in Switch model): console_model_popover.py::_saved_models builds rows from _providers_models (or a registry entry) plus self._served. _offer_probes hands the prober refresh_readiness, which re-reads readiness only, so the evidence's model_ids never reach the rows. Phase 8 Task 3 added served_models and highlight_pair for a detected server in model_switcher.py: reuse that path.
 - TASK-33005.14 (Polish three small model-surface findings from the Phase 5 captures): Only AC#2 remains: `_PROVIDER_COLUMNS = 20` is a fixed width in the pair-row format. AC#1 and AC#3 close without code, as their notes say.
 - TASK-33006.18 (Type the switcher sources the Console hands pick mode): UI/Console_Modules/model_switcher.py::_switcher_sources returns dict[str, object], and both callers use `**_switcher_sources(  # type: ignore[arg-type]`. Phase 8 Task 3 added parameters to this function.
+
+- TASK-33641.9 (Switch model lists a provider's own rows first when Find is exactly that provider's name): filed by the controller on 2026-10-11 from Phase 8's Task 2 review. Find ranks by text match alone, so an aggregator whose ids start with a provider's name can outrank that provider's own rows. Phase 8 fixed only the reopen-after-return highlight (`_highlight_target`); this is the typed-query ranking in console_model_popover.py.
 
 ### Acceptance criteria
 
@@ -735,6 +738,10 @@ Must not edit: providers_models_card.py (read only). Fix the picker in model_sea
 - [ ] TASK-33005.14 #4 Each change has a test that fails without it
 - [ ] TASK-33006.18 #1 The sources have a precise type (a TypedDict or dataclass) and no caller needs a type-ignore
 - [ ] TASK-33006.18 #2 Behaviour is unchanged (the pick-mode tests pass)
+
+- [ ] TASK-33641.9 #1 When Find's text is exactly a provider's display name or id, that provider's rows are listed before other providers' rows that merely match the text
+- [ ] TASK-33641.9 #2 A query that is not exactly a provider's name ranks as today, pinned by the existing Find tests or by tests rewritten on purpose and named
+- [ ] TASK-33641.9 #3 A test drives the two measured cases: a provider with an empty list beside a ready aggregator whose ids start with its name, saved and unsaved
 
 ### References
 
