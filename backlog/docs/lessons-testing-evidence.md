@@ -1137,6 +1137,28 @@ claim now looks only in its own session's tree.
 - When a fix makes an id resolvable store-wide, test a second session holding
   the same conversation.
 
+## Two calls under `asyncio.gather` may not overlap where the test needs them to
+
+**TASK-33667, 2026-10-11.** Opening a chat that is already open reuses its
+session. The guarantee rests on one fact: no await separates the reuse check
+from the hydration's registration of the session. A review asked for a test
+that fails if an await is added there, and proposed two opens of one chat
+under `asyncio.gather`. That test still passed with `await asyncio.sleep(0)`
+added between the check and the registration. The conversation tree is read on
+a thread, so the two opens came back from it several loop ticks apart, and the
+first had registered its session before the second reached the check.
+
+The test now wraps the tree load so that both calls return on one loop tick.
+With the same await added it sees two sessions and fails.
+
+**What to do.**
+- A test of "nothing interleaves between A and B" puts both callers at A on
+  the same loop tick. Find the last real await before A and release both
+  callers from it together (an `asyncio.Event` set when the second arrives).
+- Prove it by mutation: add `await asyncio.sleep(0)` between A and B and watch
+  the test fail. A zero-length await is the hardest case, so a test that
+  catches it also catches real I/O.
+
 ## A CI-only pilot failure can be a product race that only a slow runner hits
 
 **TASK-33661, PR #2956, 2026-10-02.** Two real-send Console pilots failed in the

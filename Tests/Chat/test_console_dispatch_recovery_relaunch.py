@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from collections.abc import Iterator
-from contextlib import closing
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, closing
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -340,18 +340,9 @@ async def test_a_second_open_of_the_same_chat_never_settles_the_first_ones_reply
     assert _path(first)[-1].content == DISCARD_COPY
 
 
-@pytest.mark.asyncio
-async def test_opening_an_open_chat_again_reuses_its_session_so_the_recovery_settles(
-    tmp_path, databases
-):
-    """TASK-33667: no second open exists, so no card is left that cannot settle.
-
-    A mounted Console runs its own open path (the tree load, then
-    ``hydrate_console_session``) over the crashed database. Opening the same
-    chat again used to hydrate a second session there; the test above shows why
-    that one's card refuses. It now activates the session that is already open.
-    """
-    db, conversation_id = await _crashed_database(tmp_path, databases)
+@asynccontextmanager
+async def _mounted_console(db) -> AsyncIterator[ChatScreen]:
+    """A mounted Console over ``db``, with the real conversation services."""
     app = _build_test_app()
     app.chachanotes_db = db
     app.chat_conversation_scope_service = ChatConversationScopeService(
@@ -364,7 +355,34 @@ async def test_opening_an_open_chat_again_reuses_its_session_so_the_recovery_set
         await app.push_screen(screen)
         app._initial_screen_pushed = True
         await pilot.pause()
-        # The rail row's call: no reuse flag.
+        yield screen
+
+
+async def _discard_settles_from(screen, session_id) -> None:
+    """Discard settles the crashed reply's recovery from ``session_id``."""
+    store = screen._console_chat_store
+    controller = screen._ensure_console_chat_controller()
+    settled = await controller.discard_dispatch_recovery(session_id)
+    assert settled.accepted, settled.visible_copy
+    assert store.dispatch_recovery_for_session(session_id) is None
+    assert store.messages_for_session(session_id)[-1].content == DISCARD_COPY
+
+
+@pytest.mark.asyncio
+async def test_opening_an_open_chat_again_reuses_its_session_so_the_recovery_settles(
+    tmp_path, databases
+):
+    """TASK-33667: no second open exists, so no card is left that cannot settle.
+
+    A mounted Console runs its own open path (the tree load, then
+    ``hydrate_console_session``) over the crashed database. Opening the same
+    chat again used to hydrate a second session there; the test above shows why
+    that one's card refuses. It now activates the session that is already open.
+    """
+    db, conversation_id = await _crashed_database(tmp_path, databases)
+    async with _mounted_console(db) as screen:
+        # No reuse flag, and none of the lookup a rail row does before it
+        # calls: in production only two overlapping opens get this far.
         open_chat = screen._workspace._resume_console_workspace_conversation
         assert await open_chat(conversation_id) is True
         store = screen._console_chat_store
@@ -382,8 +400,51 @@ async def test_opening_an_open_chat_again_reuses_its_session_so_the_recovery_set
         ]
         assert opens == [first_open]
         assert store.active_session_id == first_open
-        controller = screen._ensure_console_chat_controller()
-        settled = await controller.discard_dispatch_recovery(first_open)
-        assert settled.accepted, settled.visible_copy
-        assert store.dispatch_recovery_for_session(first_open) is None
-        assert store.messages_for_session(first_open)[-1].content == DISCARD_COPY
+        await _discard_settles_from(screen, first_open)
+
+
+@pytest.mark.asyncio
+async def test_two_overlapping_opens_of_a_chat_make_one_session(
+    tmp_path, databases, monkeypatch
+):
+    """TASK-33667: the case the reuse default exists for.
+
+    Both rail callers look the session up before they call, so the default is
+    reached only when two opens of one chat overlap. It holds because no await
+    separates the reuse check from the hydration's registration of the session
+    (``restore_persisted_session``). With an await there, both opens pass the
+    check and this test sees two sessions.
+    """
+    db, conversation_id = await _crashed_database(tmp_path, databases)
+    async with _mounted_console(db) as screen:
+        # The real read runs on a thread, so the two loads would return ticks
+        # apart. Hand both back on one tick: each open is then past its last
+        # await before either reaches the reuse check.
+        service = screen.app.chat_conversation_scope_service
+        load, loaded, both_loaded = service.get_conversation_tree, [], asyncio.Event()
+
+        async def load_together(*args, **kwargs):
+            tree = await load(*args, **kwargs)
+            loaded.append(tree)
+            if len(loaded) == 2:
+                both_loaded.set()
+            await both_loaded.wait()
+            return tree
+
+        monkeypatch.setattr(service, "get_conversation_tree", load_together)
+        open_chat = screen._workspace._resume_console_workspace_conversation
+
+        results = await asyncio.wait_for(
+            asyncio.gather(open_chat(conversation_id), open_chat(conversation_id)), 30
+        )
+
+        assert results == [True, True]
+        store = screen._console_chat_store
+        opens = [
+            session.id
+            for session in store.sessions()
+            if session.persisted_conversation_id == conversation_id
+        ]
+        assert len(opens) == 1
+        assert store.active_session_id == opens[0]
+        await _discard_settles_from(screen, opens[0])
