@@ -14479,6 +14479,97 @@ async def test_console_settings_modal_unsaved_endpoint_requires_provider_setup_w
         assert endpoint.checked is True
 
 
+UNSAVED_ENDPOINT_CONTEXT_REASON = (
+    "Save the Ollama endpoint in Model and generation to continue."
+)
+
+
+def _unsaved_endpoint_modal(app: "ModalHarness", **kwargs) -> ConsoleSettingsModal:
+    """A draft whose Ollama endpoint differs from the saved one.
+
+    Args:
+        app: The harness whose configuration is replaced with the saved endpoint.
+        **kwargs: Further ``ConsoleSettingsModal`` arguments.
+    """
+    app.app_config = {
+        "api_settings": {
+            "ollama": {"api_url": "http://127.0.0.1:11434", "model": "qwen-old"}
+        }
+    }
+    return _basic_modal(
+        ConsoleSessionSettings(
+            provider="ollama", model="qwen-new", base_url="http://127.0.0.1:22434"
+        ),
+        app,
+        providers_models={"ollama": ["qwen-old", "qwen-new"]},
+        **kwargs,
+    )
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_console_settings_context_view_says_where_to_save_an_unsaved_endpoint() -> None:
+    """TASK-33006.22: with an unsaved endpoint the Context view hid Apply and
+    gave no reason; Save endpoint, the way on, is the Model view's."""
+    app = StyledModalHarness()
+    modal = _unsaved_endpoint_modal(app)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        reason = modal.query_one("#console-settings-primary-disabled-reason", Static)
+        save_endpoint = modal.query_one("#console-settings-save-default", Button)
+        assert save_endpoint.display is True
+        assert reason.display is False
+
+        await pilot.click("#console-settings-view-context")
+        await pilot.pause()
+
+        assert modal.query_one("#console-settings-save", Button).display is False
+        assert save_endpoint.display is False
+        assert str(reason.renderable) == UNSAVED_ENDPOINT_CONTEXT_REASON
+        assert any(
+            UNSAVED_ENDPOINT_CONTEXT_REASON in row for row in _painted_rows(app.screen)
+        )
+
+        await pilot.click("#console-settings-view-model")
+        await pilot.pause()
+
+        assert save_endpoint.display is True
+        assert reason.display is False
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("focus_context", [False, True], ids=["model", "context"])
+@pytest.mark.asyncio
+async def test_console_settings_default_recovery_adds_no_unsaved_endpoint_reason(
+    focus_context: bool,
+) -> None:
+    """TASK-33006.22: a default-save recovery hides both views and their tabs,
+    so the line that sends the user to Model and generation stays away.
+
+    Args:
+        focus_context: Whether the modal was opened on the Context view.
+    """
+    from Tests.UI.test_console_resize_reflow import _failed_default_state
+    from tldw_chatbook.Chat.console_settings_defaults import ConsoleDefaultSavePhase
+
+    app = StyledModalHarness()
+    modal = _unsaved_endpoint_modal(app, focus_context=focus_context)
+    modal._default_durability_state = _failed_default_state(
+        ConsoleDefaultSavePhase.BEFORE_REPLACE
+    )
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert modal.query_one("#console-settings-default-recovery").display is True
+        reason = modal.query_one("#console-settings-primary-disabled-reason", Static)
+        assert reason.display is False
+        assert str(reason.renderable) == ""
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_active_run_reason_precedes_endpoint_recovery() -> None:
     """An active run remains the immediate blocker when endpoint recovery also exists."""

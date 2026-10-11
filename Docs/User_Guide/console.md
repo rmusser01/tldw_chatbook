@@ -689,6 +689,15 @@ explains and where that default goes ("Save as model default: future chats on
 this Anthropic model use these values.") and shows only beside **Save as model
 default**, so the **Context and memory** view never shows it.
 
+An **Endpoint** you change here has to be saved before the chat can use it,
+for a provider whose server address is kept in Settings (vLLM or Ollama, for
+example). While it is unsaved the **Model** row reads "Not ready · endpoint
+unsaved", and the **Model and generation** footer offers **Save endpoint &
+use model** in place of **Apply to this chat**: it saves the endpoint and
+model for future conversations, then uses them in this chat. **Context and
+memory** has no save actions, so the line above its footer says where to go:
+"Save the vLLM endpoint in Model and generation to continue."
+
 **Use saved defaults** is how a chat that already holds work picks up
 defaults you saved later (a chat nobody has used yet follows them on its
 own). It replaces the draft with exactly what a new chat on the same

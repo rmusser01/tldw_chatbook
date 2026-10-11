@@ -2840,7 +2840,7 @@ class ConsoleSettingsModal(
             ),
             "endpoint_invalid": f"Enter a valid {provider} endpoint to continue.",
             "endpoint_not_saved": (
-                f"Save the {provider} endpoint in Chat settings before using it here."
+                f"Save the {provider} endpoint in Model and generation to continue."
             ),
             "credential_missing": f"Add or verify the {provider} API key to continue.",
             "credential_rejected": f"Add or verify the {provider} API key to continue.",
@@ -2967,7 +2967,11 @@ class ConsoleSettingsModal(
             reason = "Available when the current run finishes."
         elif not self._can_save:
             reason = "Chat settings cannot be changed right now."
-        elif apply_button.disabled and not needs_endpoint_persistence:
+        # An unsaved endpoint: the Model view offers Save endpoint instead, so
+        # only the Context view says where to save it (TASK-33006.22).
+        elif apply_button.disabled and not (
+            needs_endpoint_persistence and (show_defaults or recovery_active)
+        ):
             reason = self._primary_disabled_reason(readiness)
         disabled_reason.update(reason)
         disabled_reason.display = bool(reason)
