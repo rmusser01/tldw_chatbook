@@ -1369,11 +1369,11 @@ def test_bisected_eviction_keeps_exactly_what_dropping_one_field_at_a_time_kept(
     discovery = openai_compatible_model_discovery
 
     def fits_alone(name: str, field) -> bool:
+        """Whether the field survives on its own (an over-long string scrubs to nothing)."""
         try:
-            discovery._safe_model_metadata({name: field})
+            return bool(discovery._safe_model_metadata({name: field}))
         except ValueError:
             return False
-        return True
 
     records = []
     for _ in range(90):
