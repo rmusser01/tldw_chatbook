@@ -11,6 +11,9 @@ import pytest
 from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError
 from tldw_chatbook.LLM_Calls.qwencloud import normalize_qwencloud_base_url
 from tldw_chatbook.LLM_Provider_Catalog import openai_compatible_model_discovery
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_merge import (
+    resolve_discovered_model_capability_status,
+)
 from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
     build_models_url,
     discover_openai_compatible_models,
@@ -1220,7 +1223,7 @@ def test_fields_that_only_overflow_together_lose_the_largest_and_keep_the_vision
     """Vercel's shape: each field fits alone, tiered pricing pushes the total over 256 items."""
     model = {
         "id": "openai/gpt-5.6-sol",
-        "architecture": {"input_modalities": ["text", "image"]},
+        "modalities": {"input": ["text", "image"], "output": ["text"]},
         "extras": list(range(60)),
         "pricing": {f"tier_{n}": {"input": n, "output": n} for n in range(68)},
     }
@@ -1232,8 +1235,15 @@ def test_fields_that_only_overflow_together_lose_the_largest_and_keep_the_vision
         now_iso="2026-08-12T00:00:00Z",
     )
 
-    assert set(discovered.metadata_raw_safe) == {"id", "architecture", "extras"}
-    assert tuple(discovered.metadata_raw_safe["architecture"]["input_modalities"]) == ("text", "image")
+    assert set(discovered.metadata_raw_safe) == {"id", "modalities", "extras"}
+    assert tuple(discovered.metadata_raw_safe["modalities"]["input"]) == ("text", "image")
+    # Kept AND read: the hint still marks the model as vision-capable (TASK-34402).
+    assert (
+        resolve_discovered_model_capability_status(
+            "Custom", discovered.model_id, discovered.metadata_raw_safe
+        )
+        == "inferred"
+    )
 
 
 def test_normalize_models_drops_an_oversized_field_but_keeps_the_model():

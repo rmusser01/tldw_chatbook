@@ -241,6 +241,9 @@ from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
     load_model_catalog_settings,
 )
+from ...LLM_Provider_Catalog.model_discovery_merge import (
+    resolve_discovered_model_capability_status,
+)
 from ...LLM_Calls.qwencloud import normalize_qwencloud_api_mode
 from ...TTS.adapter_types import TTSNativeCapabilityObservation
 from ...Utils.input_validation import (
@@ -15556,6 +15559,14 @@ class SettingsScreen(BaseAppScreen):
                 continue
             source = str(getattr(model, "source", "runtime_discovered"))
             capability = str(getattr(model, "capability_status", "unknown"))
+            if capability == "unknown":
+                # TASK-34402: a freshly listed model has no status of its own
+                # yet; read it from its listing, as the model pickers do.
+                capability = resolve_discovered_model_capability_status(
+                    str(getattr(model, "provider", "") or ""),
+                    model_id,
+                    getattr(model, "metadata_raw_safe", None),
+                )
             # TASK-387: humanize the row so a first-run user can read it instead
             # of decoding internal enum names (runtime_discovered / capability=…).
             saved_label = (

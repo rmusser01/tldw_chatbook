@@ -10,7 +10,7 @@ labels:
 - discovery
 dependencies: []
 priority: low
-updated_date: 2026-10-11 15:50
+updated_date: 2026-10-11 16:18
 ---
 
 ## Description
@@ -22,8 +22,10 @@ Discovery infers a model's vision capability from its listing metadata (model_di
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 A model whose listing gives modalities as a mapping with an input list that includes image is inferred as vision-capable
-- [x] #2 The existing list-shaped modalities and input_modalities hints behave as before
+- [x] #2 The flat list-shaped modalities and input_modalities hints still infer vision, and any one hint that lists image input is enough
 - [x] #3 A model whose listing nests input_modalities under architecture (OpenRouter's shape) with image in it is inferred as vision-capable
+- [x] #4 The Settings discovery list shows a freshly listed model with an image-input hint as capabilities inferred
+- [x] #5 A model whose listing carries a true supports_image_input flag (Fireworks) or a true vision flag under capabilities is inferred as vision-capable
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -37,15 +39,26 @@ Discovery infers a model's vision capability from its listing metadata (model_di
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Discovery's one inference function (model_discovery_merge._metadata_has_positive_capability) now reads every spelling of the image-input hint: the flat modalities / input_modalities lists as before, Vercel's modalities mapping (its input list only), and OpenRouter's architecture.input_modalities.
+Discovery's inference function (model_discovery_merge._metadata_has_positive_capability) reads the listing shapes it used to miss, and the Settings discovery list now applies the inference too.
 
-- Traced first: the listing normaliser keeps nested mappings in the bounded metadata, so the hint already reached the function and was only ignored there. One test goes through the real normaliser to prove the frozen metadata types are read.
-- Only the input side of a mapping counts. A model that outputs images but takes text stays unknown.
-- AC 3 was added during the work: the repo's own OpenRouter fixture (the live API's field set) nests the hint under architecture, and no product code read that key, so OpenRouter models missing from the capability catalog had the same gap.
-- Behaviour change at one edge: the hints are now any-of. Before, a flat modalities list without image stopped the function before it looked at input_modalities.
-- Effect for the user: such models lose the 'capability unknown' label and warning in model pickers.
+Shapes read, with the evidence for each:
+- Vercel's modalities mapping, input side only. Live listing 2026-10-11: 415 of 415 models use it.
+- OpenRouter's architecture.input_modalities. Live listing 2026-10-11: 458 of 458 models use it.
+- Fireworks' supports_image_input flag. In the repo's capture (Tests/fixtures/cloud_live/fireworks.json): 7 of 20 sampled models.
+- A vision flag nested under capabilities. This is the shape Mistral documents; there is no capture of it in the repo, so it is unverified against a live listing.
+- The flat modalities and input_modalities lists, as before.
 
-Verified: Tests/LLM_Provider_Catalog 402 passed (3 of the 4 new tests failed before the change; the flat-list test pins the old behaviour).
+Measured through the real listing normaliser, before and after: Vercel 0 -> 193 models inferred, OpenRouter 0 -> 296. Both equal the number of models whose raw listing names image input. The two public listings were fetched without a key; nothing was saved to the repo.
 
-Files: tldw_chatbook/LLM_Provider_Catalog/model_discovery_merge.py, Tests/LLM_Provider_Catalog/test_model_discovery_cache_merge_persistence.py
+Behaviour notes:
+- The hints are any-of. Before, a flat modalities list without an image entry ended the reading, so a listing with modalities [text] and input_modalities [text, image] was unknown. It is inferred now (pinned by a test).
+- Wherever a listing separates input from output, an image on the output side never counts (pinned for the mapping, the nested and the top-level spellings). A flat modalities list does not say which side it is and is read as input, as it always was.
+- A listing that declares text-only input stays unknown. An explicit negative has never made a model known or inferred (test_vision_false_does_not_make_capabilities_known pins that), and this task does not change it.
+- Production wires no capability resolver, so before this change every discovered Vercel and OpenRouter model was labelled capability unknown.
+
+What the user sees: in the session that fetched a listing, models with image input lose the capability unknown label and warning in the model pickers, and the Settings discovery list says capabilities inferred. Limit: the on-disk catalog keeps ids and fetch times only, so after a restart inside the 24 hour freshness window the label is back until the next fetch. That was already true of the flat-list hints; TASK-34793 tracks it.
+
+Tests: Tests/LLM_Provider_Catalog and Tests/UI/test_settings_provider_test_draft.py, 516 passed. One other test in that Settings file (test_t_hotkey_does_not_run_test_while_input_focused) fails on this machine on clean dev as well.
+
+Files: tldw_chatbook/LLM_Provider_Catalog/model_discovery_merge.py, tldw_chatbook/UI/Screens/settings_screen.py, Tests/LLM_Provider_Catalog/test_model_discovery_cache_merge_persistence.py, Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py, Tests/UI/test_settings_provider_test_draft.py
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

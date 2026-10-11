@@ -58,14 +58,26 @@ def _lists_image(modalities: object) -> bool:
 def _metadata_has_positive_capability(metadata: Mapping[str, Any]) -> bool:
     """Return whether safe discovery metadata suggests positive capabilities.
 
-    Listings spell the image-input hint several ways (TASK-34402): a flat
-    ``modalities`` or ``input_modalities`` list, Vercel's
-    ``modalities: {"input": [...], "output": [...]}`` mapping, and
-    OpenRouter's ``architecture.input_modalities``. Of a mapping only the
-    input side counts: a model that outputs images but takes text is not
+    Listings say "takes images" in several spellings, and any one of them is
+    enough (TASK-34402):
+
+    - a ``vision`` or ``supports_image_input`` flag (the latter is
+      Fireworks'), or a ``vision`` flag nested under ``capabilities`` (the
+      shape Mistral documents; no capture of it is in this repo);
+    - an ``input_modalities`` list, top-level or nested under
+      ``architecture`` (OpenRouter);
+    - ``modalities``, as Vercel's ``{"input": [...], "output": [...]}``
+      mapping, of which only the input side counts, or as a flat list.
+
+    A flat ``modalities`` list does not say input or output, so an entry in
+    it is read as input, as it always was. Wherever a listing does tell the
+    two apart, a model that outputs images but takes text is not
     vision-capable.
     """
-    if metadata.get("vision") is True:
+    if metadata.get("vision") is True or metadata.get("supports_image_input") is True:
+        return True
+    capabilities = metadata.get("capabilities")
+    if isinstance(capabilities, Mapping) and capabilities.get("vision") is True:
         return True
     modalities = metadata.get("modalities")
     if isinstance(modalities, Mapping):

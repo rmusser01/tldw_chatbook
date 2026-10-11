@@ -27,6 +27,9 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderTestEvidenceStore,
 )
 from tldw_chatbook.config import ConfigMutationResult
+from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    normalize_models_response,
+)
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
 )
@@ -1731,6 +1734,39 @@ def test_discovery_row_labels_use_user_vocabulary_not_internal_jargon():
     assert "discovered" in labels[0]
     assert "capabilities unknown" in labels[0]
     assert "capabilities known" in labels[1]
+
+
+def test_discovery_row_reads_a_fresh_models_capability_from_its_listing():
+    """TASK-34402: a just-listed model has no status of its own; the row must
+    read the listing's vision hint, as the model pickers do, instead of
+    calling every such model "capabilities unknown"."""
+    screen = _bare_settings_screen({})
+    screen._model_discovery_selected_model_ids = set()
+    screen._model_discovery_models = normalize_models_response(
+        {
+            "data": [
+                {
+                    "id": "vendor/sees-images",
+                    "modalities": {"input": ["text", "image"], "output": ["text"]},
+                },
+                {
+                    "id": "vendor/text-only",
+                    "modalities": {"input": ["text"], "output": ["text"]},
+                },
+            ]
+        },
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-10-11T00:00:00Z",
+    )
+
+    labels = [label for label, _id, _sel in screen._model_discovery_selection_options()]
+
+    assert labels[0].startswith("vendor/sees-images")
+    assert "capabilities inferred" in labels[0]
+    assert labels[1].startswith("vendor/text-only")
+    assert "capabilities unknown" in labels[1]
 
 
 # --- Pilot tests: the clickable Test button path (AC#2/AC#3) + widget wiring ---

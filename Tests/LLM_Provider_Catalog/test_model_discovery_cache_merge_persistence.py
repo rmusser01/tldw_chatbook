@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Barrier
 
 import pytest
@@ -14,6 +16,9 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_merge import (
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_persistence import (
     append_models_to_provider_list,
     persist_discovered_models_to_settings,
+)
+from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    normalize_models_response,
 )
 
 
@@ -309,6 +314,17 @@ def _status(metadata: dict) -> str:
     )
 
 
+def _listed(*records: dict) -> tuple[DiscoveredModel, ...]:
+    """Run listing records through the real ``/models`` normaliser."""
+    return normalize_models_response(
+        {"data": list(records)},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-10-11T00:00:00Z",
+    )
+
+
 def test_modalities_given_as_a_mapping_is_read_from_its_input_side():
     """TASK-34402: Vercel lists ``modalities`` as ``{"input": [...], "output": [...]}``."""
     assert (
@@ -325,18 +341,41 @@ def test_modalities_given_as_a_mapping_is_read_from_its_input_side():
 
 def test_openrouter_architecture_input_modalities_is_read():
     """TASK-34402: OpenRouter nests the hint under ``architecture``."""
-    architecture = {"modality": "text+image->text", "output_modalities": ["text"]}
+    assert (
+        _status({"architecture": {"input_modalities": ["text", "image"]}}) == "inferred"
+    )
+    assert _status({"architecture": {"input_modalities": ["text"]}}) == "unknown"
+    assert _status({"architecture": "transformer"}) == "unknown"
+
+
+def test_an_image_output_never_counts_as_image_input():
+    """Image generators list ``image`` on the output side only."""
     assert (
         _status(
-            {"architecture": {**architecture, "input_modalities": ["text", "image"]}}
+            {
+                "architecture": {
+                    "modality": "text->image",
+                    "input_modalities": ["text"],
+                    "output_modalities": ["image"],
+                }
+            }
         )
-        == "inferred"
-    )
-    assert (
-        _status({"architecture": {**architecture, "input_modalities": ["text"]}})
         == "unknown"
     )
-    assert _status({"architecture": "transformer"}) == "unknown"
+    assert (
+        _status({"input_modalities": ["text"], "output_modalities": ["image"]})
+        == "unknown"
+    )
+
+
+def test_boolean_vision_flags_are_read():
+    """Fireworks gives ``supports_image_input``; a ``capabilities`` block may nest ``vision``."""
+    assert _status({"supports_image_input": True}) == "inferred"
+    assert _status({"supports_image_input": False}) == "unknown"
+    assert _status({"supports_image_input": "true"}) == "unknown"
+    assert _status({"capabilities": {"vision": True}}) == "inferred"
+    assert _status({"capabilities": {"vision": False}}) == "unknown"
+    assert _status({"capabilities": ["vision"]}) == "unknown"
 
 
 def test_flat_list_hints_still_infer_vision():
@@ -347,30 +386,89 @@ def test_flat_list_hints_still_infer_vision():
     assert _status({}) == "unknown"
 
 
-def test_a_listed_model_with_a_modalities_mapping_is_inferred_through_real_discovery():
-    """The hint must survive the listing normaliser's bounded, frozen metadata."""
-    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
-        normalize_models_response,
+def test_any_one_hint_is_enough():
+    """One hint without an image no longer hides another that has one.
+
+    Before TASK-34402 a flat ``modalities`` list ended the reading, so this
+    listing was ``unknown``.
+    """
+    assert (
+        _status({"modalities": ["text"], "input_modalities": ["text", "image"]})
+        == "inferred"
     )
 
-    listed = {
-        "id": "vendor/new-model-34402",
-        "modalities": {"input": ["text", "image", "file"], "output": ["text"]},
-    }
-    (discovered,) = normalize_models_response(
-        {"data": [listed]},
+
+@pytest.mark.parametrize(
+    "hint",
+    [
+        {"modalities": {"input": ["text", "image", "file"], "output": ["text"]}},
+        {
+            "architecture": {
+                "modality": "text+image->text",
+                "input_modalities": ["text", "image"],
+                "output_modalities": ["text"],
+            }
+        },
+        {"supports_image_input": True},
+        {"capabilities": {"completion_chat": True, "vision": True}},
+    ],
+    ids=["vercel-mapping", "openrouter-architecture", "fireworks-flag", "nested-flag"],
+)
+def test_a_listed_models_hint_reaches_the_merged_entry(hint: dict):
+    """The hint must survive the normaliser's bounded, frozen metadata and the merge."""
+    (discovered,) = _listed({"id": "vendor/new-model-34402", **hint})
+
+    (entry,) = merge_saved_and_discovered_models(
+        saved_model_ids=[],
+        discovered_models=[discovered],
         provider="Custom",
         provider_list_key="Custom",
-        endpoint_fingerprint="https://api.example.test/v1",
-        now_iso="2026-10-11T00:00:00Z",
     )
 
-    assert (
-        resolve_discovered_model_capability_status(
+    assert entry.capability_status == "inferred"
+
+
+def test_a_listed_text_only_model_stays_unknown_in_the_merged_entry():
+    (discovered,) = _listed(
+        {
+            "id": "vendor/text-model-34402",
+            "modalities": {"input": ["text"], "output": ["text", "image"]},
+        }
+    )
+
+    (entry,) = merge_saved_and_discovered_models(
+        saved_model_ids=[],
+        discovered_models=[discovered],
+        provider="Custom",
+        provider_list_key="Custom",
+    )
+
+    assert entry.capability_status == "unknown"
+
+
+def test_the_captured_fireworks_listing_infers_its_image_models():
+    """The repo's own live capture: the models flagged ``supports_image_input``."""
+    capture = json.loads(
+        (
+            Path(__file__).parents[1] / "fixtures" / "cloud_live" / "fireworks.json"
+        ).read_text(encoding="utf-8")
+    )
+    sample = capture["models_response"]["sample"]
+    flagged = {
+        record["id"] for record in sample if record.get("supports_image_input") is True
+    }
+    assert flagged, "the capture no longer carries the flag this test reads"
+
+    inferred = {
+        discovered.model_id
+        for discovered in _listed(*sample)
+        if resolve_discovered_model_capability_status(
             "Custom", discovered.model_id, discovered.metadata_raw_safe
         )
         == "inferred"
-    )
+    }
+
+    assert inferred == flagged
 
 
 def test_capability_resolver_can_mark_model_known():
