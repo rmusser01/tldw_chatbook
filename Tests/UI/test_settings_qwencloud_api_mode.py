@@ -843,8 +843,8 @@ async def test_qwencloud_malformed_canonical_table_uses_canonical_recovery_witho
         assert "Advanced Config" in recovery
         assert "config.toml" in recovery
         assert env_var.value == ""
-        # TASK-33007.2, rewritten on purpose: the API key row (Source word and
-        # help) replaces _provider_key_status's readiness-block line.
+        # TASK-33007.2, rewritten on purpose: the card's readiness block and
+        # its key line are gone; the API key row's Source word and help say it.
         from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
             api_key_row_copy,
         )
