@@ -1318,6 +1318,10 @@ MODEL_CATALOG_FIELD_IDS = frozenset(
 )
 #: The "Review restored OpenAI connection" action; a review applies at once.
 OPENAI_RECONNECT_REVIEW_ID = "settings-openai-reconnect-review"
+#: Session summary on quit's two controls; both apply at once (no Save).
+SESSION_SUMMARY_FIELD_IDS = frozenset(
+    {"settings-session-summary-enabled", "settings-session-summary-duration"}
+)
 
 RAW_CLI_PERMITTED_DRAFT_KEY = "console.raw_cli_permitted"
 CANVAS_ENABLED_DRAFT_KEY = "canvas.enabled"
@@ -3987,6 +3991,9 @@ class SettingsScreen(BaseAppScreen):
         self._model_catalog_pending_save: (
             tuple[int, dict[str, dict[str, object]]] | None
         ) = None
+        # The quit summary's latest unsaved values; one writer drains them.
+        self._session_summary_save_lock = threading.Lock()
+        self._session_summary_pending_save: dict[str, dict[str, object]] | None = None
         # ADR-146 task-7 custom endpoints panel: the entry slug (if any)
         # whose inline Rename/Edit form is open, the slug whose delete is
         # blocked awaiting the Detach-references confirmation, and the
@@ -17036,36 +17043,84 @@ class SettingsScreen(BaseAppScreen):
                 # The app stopped; admitted writes still drain without UI access.
                 pass
 
-    def _persist_session_summary_settings(self) -> None:
-        checkbox = self.query_one("#settings-session-summary-enabled", Checkbox)
-        duration_input = self.query_one("#settings-session-summary-duration", Input)
-        section_values = _session_summary_section_values(
-            checkbox.value, duration_input.value
-        )
-        current = _session_summary_section_values(
+    def _session_summary_controls(self) -> tuple[Checkbox, Input] | None:
+        try:
+            return (
+                self.query_one("#settings-session-summary-enabled", Checkbox),
+                self.query_one("#settings-session-summary-duration", Input),
+            )
+        except QueryError:  # the card is not mounted (another category)
+            return None
+
+    @staticmethod
+    def _saved_session_summary() -> dict[str, dict[str, object]]:
+        return _session_summary_section_values(
             bool(get_cli_setting("session_summary", "enabled", False)),
             str(get_cli_setting("session_summary", "duration_seconds", 3)),
         )
-        if section_values == current:
-            return
-        self._persist_session_summary_section_values(section_values)
 
-    @work(thread=True)
-    def _persist_session_summary_section_values(
-        self, section_values: dict[str, dict[str, object]]
-    ) -> None:
-        try:
-            save_settings_to_cli_config(section_values)
-        except Exception:  # noqa: BLE001 - recover without exposing config details
-            logger.warning("Failed to persist session_summary settings.")
+    def _persist_session_summary_settings(self) -> None:
+        """Save the quit summary's two controls and show what was saved.
+
+        The checkbox applies at once; the duration when its field is
+        submitted or left. One writer drains the latest values, so a second
+        change never races an older write.
+        """
+        controls = self._session_summary_controls()
+        if controls is None:
+            return
+        section_values = _session_summary_section_values(
+            controls[0].value, controls[1].value
+        )
+        if section_values == self._saved_session_summary():
+            self._show_session_summary(section_values)  # "03" reads 3 again
+            return
+        with self._session_summary_save_lock:
+            start_worker = self._session_summary_pending_save is None
+            self._session_summary_pending_save = section_values
+        if start_worker:
+            self._drain_session_summary_saves()
+
+    def _show_session_summary(self, section_values: Mapping[str, Any]) -> None:
+        """Put saved values in the controls (99 reads 30) and the title."""
+        controls = self._session_summary_controls()
+        if controls is None:
+            return
+        values = section_values["session_summary"]
+        with controls[0].prevent(Checkbox.Changed):
+            controls[0].value = values["enabled"]
+        controls[1].value = str(values["duration_seconds"])
+        self._refresh_advanced()  # the Advanced title says its state
+
+    def _session_summary_save_finished(self, written: Mapping[str, Any] | None) -> None:
+        """Show what is saved; a failed write (None) puts the old values back."""
+        if written is None:
+            self.notify("Could not save session summary settings", severity="warning")
+        self._show_session_summary(written or self._saved_session_summary())
+
+    @work(thread=True, group="settings-session-summary-save")
+    def _drain_session_summary_saves(self) -> None:
+        """Write the latest pending values, one writer at a time."""
+        app = self.app
+        while True:
+            section_values = self._session_summary_pending_save
             try:
-                self.app.call_from_thread(
-                    self.notify,
-                    "Could not save session summary settings",
-                    severity="warning",
+                saved = bool(save_settings_to_cli_config(section_values))
+            except Exception:  # noqa: BLE001 - recover without exposing config details
+                logger.warning("Failed to persist session_summary settings.")
+                saved = False
+            with self._session_summary_save_lock:
+                if self._session_summary_pending_save is not section_values:
+                    continue  # a newer change arrived while this one wrote
+                self._session_summary_pending_save = None
+            try:
+                app.call_from_thread(
+                    self._session_summary_save_finished,
+                    section_values if saved else None,
                 )
-            except Exception:  # noqa: BLE001 - never crash a worker over a toast
+            except RuntimeError:  # the app stopped; the write is done
                 pass
+            return
 
     def _provider_readiness_test_report(
         self,
@@ -18014,7 +18069,11 @@ class SettingsScreen(BaseAppScreen):
         save_copy = (
             INSTANT_APPLY_BEHAVIOR_COPY
             if self._active_settings_field_id
-            in {*MODEL_CATALOG_FIELD_IDS, OPENAI_RECONNECT_REVIEW_ID}
+            in {
+                *MODEL_CATALOG_FIELD_IDS,
+                *SESSION_SUMMARY_FIELD_IDS,
+                OPENAI_RECONNECT_REVIEW_ID,
+            }
             else STAGED_SAVE_BEHAVIOR_COPY
         )
         return self._with_save_behavior_row(rows, save_copy)
@@ -18207,6 +18266,32 @@ class SettingsScreen(BaseAppScreen):
                 (
                     "Validation",
                     "number of hours, 0 or greater; applies on the next refresh cycle",
+                ),
+            )
+        if field_id in SESSION_SUMMARY_FIELD_IDS:
+            enabled = field_id == "settings-session-summary-enabled"
+            return (
+                (
+                    "Focused setting",
+                    "Session summary on quit" if enabled else "Summary duration",
+                ),
+                (
+                    "Purpose",
+                    "Shows this session's usage when you quit."
+                    if enabled
+                    else "Sets how long the quit summary stays before the app exits.",
+                ),
+                (
+                    "Saved as",
+                    "session_summary.enabled"
+                    if enabled
+                    else "session_summary.duration_seconds",
+                ),
+                (
+                    "Validation",
+                    "On or Off"
+                    if enabled
+                    else "whole seconds, 1 to 30; saved on Enter or on leaving the field",
                 ),
             )
         if field_id in MODEL_CATALOG_FIELD_IDS:
@@ -32307,16 +32392,15 @@ class SettingsScreen(BaseAppScreen):
         self._persist_model_catalog_settings()
 
     @on(Checkbox.Changed, "#settings-session-summary-enabled")
-    def handle_session_summary_toggle_changed(self, event: Checkbox.Changed) -> None:
+    @on(Input.Submitted, "#settings-session-summary-duration")
+    @on(Input.Blurred, "#settings-session-summary-duration")
+    def handle_session_summary_committed(
+        self, event: Checkbox.Changed | Input.Submitted | Input.Blurred
+    ) -> None:
+        """Save the quit summary: the checkbox at once, the duration when its
+        field is submitted or left (never per keystroke)."""
         event.stop()
         self._persist_session_summary_settings()
-        self._refresh_advanced()  # the Advanced title says its state
-
-    @on(Input.Changed, "#settings-session-summary-duration")
-    def handle_session_summary_duration_changed(self, event: Input.Changed) -> None:
-        event.stop()
-        self._persist_session_summary_settings()
-        self._refresh_advanced()  # the Advanced title says its state
 
     @on(Select.Changed, "#settings-permission-summary-mode")
     def handle_permission_summary_mode_changed(self, event: Select.Changed) -> None:
