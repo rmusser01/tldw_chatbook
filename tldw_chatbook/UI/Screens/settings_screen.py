@@ -15790,8 +15790,6 @@ class SettingsScreen(BaseAppScreen):
         word, help_line = auth_source_row_copy(self, provider)
         self._set_static_text("#settings-provider-auth-source-word", word)
         self._set_static_text("#settings-provider-auth-source-guidance", help_line)
-        if self._active_settings_field_id == "settings-provider-auth-source":
-            self._refresh_provider_field_guidance()
         locked = self._provider_is_registry_id(provider)
         for selector_id in (
             "#settings-provider-api-key",
