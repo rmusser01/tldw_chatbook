@@ -1,7 +1,6 @@
 ---
 id: TASK-21236
-title: Persona Buddy lazy-controller residue - unlocked setter and an untested ensure-fallback
-status: Done
+title: Persona Buddy lazy-controller residue - unlocked setter and an untested ensure-fallbackstatus: Done
 assignee: []
 created_date: '2026-08-23'
 updated_date: 2026-10-12 01:17
@@ -101,3 +100,46 @@ Controller publication, disabled-profile management, atomic Actor Pack/conversio
 - [x] #5 Independent review and final summary recorded
 - [x] #6 Known coverage limits documented
 <!-- DOD:END -->
+- [ ] The controller slot cannot be written outside the lock that guards its construction, or the setter is shown unreachable from any concurrent context and that constraint is enforced rather than assumed
+- [ ] A screen-level test drives "Use for Buddy" from a profile whose preferences say disabled and asserts the action completes through the constructed controller
+- [ ] That test fails when the ensure-fallback arm is removed
+- [ ] TASK-21103's import-closure guard stays green
+
+## Implementation Plan
+
+1. Lock the setter: `persona_buddy_controller.setter` takes
+   `_persona_buddy_controller_lock` (the notes-sync setter's shape;
+   non-reentrant-safe because the build never assigns through the property).
+2. Screen-level test for the ensure-fallback: the original
+   `personas_screen.py:6666` arm now lives in
+   `BuddyManagementCoordinator.controller` (`UI/Navigation/buddy_management.py`)
+   -- drive a full visibility action from a disabled-preferences app and
+   assert it completes through the CONSTRUCTED controller; mutation-check
+   by replacing the ensure call with a passive read.
+3. Update the mixin setter harness for the now-locked setter.
+
+## Implementation Notes (2026-10-11, dev `a3c47c6c72`)
+
+- **Setter** (`app_service_wiring.py`): takes the builder's lock; the
+  docstring records why an unlocked write was unsafe (lost assignment /
+  replaced controller another caller holds) and that safety no longer
+  rests on the unenforced "setter callers are on the UI thread" property.
+- **Test**: `Tests/UI/test_buddy_entry_points.py::
+  test_buddy_action_from_disabled_profile_completes_via_ensure_fallback`
+  (private-profile wrapped for the local shared-profile sandbox): a
+  disabled-profile app double, the real `BuddyManagementCoordinator`,
+  `ensure_calls == 1`, controller identity, and a full `_set_visibility`
+  action persisting through the constructed controller. Mutation-verified:
+  swapping the ensure call for a passive property read fails it with
+  "Buddy storage is unavailable" (the exact production symptom the arm
+  prevents).
+- **AC3 (TASK-21103 guard stays green)**: it does NOT, and NOT because of
+  this change -- `Tests/Packaging/test_persona_buddy_import_closure.py`
+  fails at HEAD too (verified by checkout swap): "2 heavy module(s)
+  executed by import tldw_chatbook.app" -- PIL and Persona_Visual are
+  already re-eagered on dev `a3c47c6c72` by some unrelated change. This is
+  precisely the single-deferral-regression class TASK-21248 documents
+  (TASK-21200's recurrence); flagged to the owner in the PR notes rather
+  than fixed here (finding the re-eagering edge is 21248/21200
+  territory). The mixin setter suite is green (11/11) with the harness
+  updated for the locked setter.

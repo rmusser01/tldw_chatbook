@@ -1314,6 +1314,14 @@ class ServiceWiringMixin:
     def persona_buddy_controller(self, controller: Any | None) -> None:
         """Inject or clear the controller slot (tests and skeletal doubles).
 
+        TASK-21236: takes the SAME lock as the builder. An unlocked write
+        could interleave with a concurrent first build -- losing the
+        assignment, or replacing a controller another caller already holds
+        -- and that safety currently rests only on "every setter caller is
+        on the UI thread", a caller property nothing enforces. The lock is
+        non-reentrant-safe here because the build never assigns through
+        this property.
+
         Args:
             controller: The controller instance to install, or None to make
                 the lazy property construct anew on next enabled access.

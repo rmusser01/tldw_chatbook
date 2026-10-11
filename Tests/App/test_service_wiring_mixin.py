@@ -47,6 +47,9 @@ def test_mixin_sits_before_app_and_owns_the_properties() -> None:
 def test_property_setter_works_on_a_tldwcli_instance(name: str) -> None:
     app = TldwCli.__new__(TldwCli)
     app._notes_sync_runtime_owner_lock = threading.Lock()
+    # TASK-21236: the Buddy setter takes the builder's lock, so the harness
+    # instance needs it like the notes-sync one above.
+    app._persona_buddy_controller_lock = threading.Lock()
     value = "installed-double" if name.endswith("_reason") else object()
 
     setattr(app, name, value)
