@@ -36,6 +36,7 @@ from textual.widgets import Collapsible, Input, Select, Static
 
 from ...Chat.console_provider_support import MODEL_CONFIG_FIELDS, MODEL_FIELD_LABELS
 from ...Chat.console_session_settings import (
+    _CONSOLE_INT_FIELDS,
     CONSOLE_VALUE_SOURCE_WORDS,
     ConsoleValueLayer,
     build_default_console_session_settings,
@@ -84,7 +85,6 @@ INHERIT_PROMPT = "Inherit"
 #: measured width replaces it (131 cells at 235x52).
 SAMPLING_TITLE_CELLS = 113
 _TITLE_CHROME_CELLS = 4
-_INTEGER_FIELDS = frozenset({"top_k", "max_tokens", "seed", "thinking_budget_tokens"})
 #: A leading minus is typeable so a shown hand-edited ``seed = -1`` can be
 #: backspaced away; Save refuses it with the field's message.
 _INTEGER_RESTRICT = r"^-?[0-9]*$"
@@ -235,11 +235,7 @@ def row_copy(
     if shown:
         return (EDITED if edited else saved_word), MODEL_CONFIG_FIELDS[name].help
     value, word = inherited
-    help_line = (
-        BLANK_FIELD_HELP
-        if value is None
-        else f"inherits {format_value(value)}"
-    )
+    help_line = BLANK_FIELD_HELP if value is None else f"inherits {format_value(value)}"
     return (EDITED if edited else word), help_line
 
 
@@ -413,7 +409,7 @@ def _model_default_control(
         id=control_id(name),
         classes="settings-compact-input",
         placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS[key],
-        restrict=_INTEGER_RESTRICT if name in _INTEGER_FIELDS else None,
+        restrict=_INTEGER_RESTRICT if name in _CONSOLE_INT_FIELDS else None,
         disabled=not supported,
     )
 
@@ -600,7 +596,7 @@ def _console_fallback_control(screen: SettingsScreen, name: str) -> Widget:
         id=console_fallback_id(name),
         classes="settings-compact-input",
         placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key(name)],
-        restrict=_INTEGER_RESTRICT if name in _INTEGER_FIELDS else None,
+        restrict=_INTEGER_RESTRICT if name in _CONSOLE_INT_FIELDS else None,
     )
 
 

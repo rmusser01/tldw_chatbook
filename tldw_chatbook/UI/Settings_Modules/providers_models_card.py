@@ -64,7 +64,11 @@ from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
 from ...MCP.redaction import looks_like_secret_value
-from ...Widgets.model_search_picker import ModelSearchPicker, PickerSearchInput
+from ...Widgets.model_search_picker import (
+    _BLUR_RESTORE_DELAY_SECONDS,
+    ModelSearchPicker,
+    PickerSearchInput,
+)
 from ..Screens.settings_context_memory import model_context_window_state
 from ..Screens.settings_provider_view_model import (
     custom_endpoint_rows,
@@ -170,9 +174,6 @@ PROVIDER_CONTROL_TOOLTIP = (
     "Type to filter providers by name or ID; Up/Down move, Enter chooses, "
     "Esc keeps the current provider."
 )
-#: Focus can pass to the list's parent on a click; the list closes only
-#: once focus has really left the control (ModelSearchPicker's delay).
-_BLUR_CLOSE_DELAY_SECONDS = 0.05
 #: TASK-33007.4: who a Default model choice reaches (spec mock (c)). Capture
 #: fix 4: short enough for one row with a dated model id, so which new chats
 #: count moved to the Inspector's New chats row.
@@ -263,7 +264,9 @@ class ProviderFilterInput(PickerSearchInput):
             close_provider_list(self.screen)
 
     def _on_blur(self, event: events.Blur) -> None:
-        self.set_timer(_BLUR_CLOSE_DELAY_SECONDS, self._close_after_blur)
+        # Focus can pass to the list's parent on a click; the list closes
+        # only once focus has really left the control (the picker's delay).
+        self.set_timer(_BLUR_RESTORE_DELAY_SECONDS, self._close_after_blur)
 
     def _close_after_blur(self) -> None:
         if not self.is_mounted or self.has_focus:
