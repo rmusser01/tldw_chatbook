@@ -3590,6 +3590,29 @@ Two rules out of it:
   reranker was the sole outlier, and being the sole outlier is exactly what broke it.
   Before writing a lookup at a shared seam, count the callers who do not have one.
 
+**No fake needed (TASK-33001.14, 2026-10-11).** A fix can be proved against the real
+function and still miss the app. The rider changed how `summarize_with_tabbyapi`
+resolves its key and proved it with the real summarizer, only the HTTP session
+replaced: 96 green. The app got none of it. Its only caller, `_dispatch_to_api` behind
+`analyze`, passed `(text, prompt, temp, system_message, streaming)` by position against
+`(input_data, custom_prompt_input, system_message, api_key, temp, ...)`. The system
+message arrived as the caller's key, the fixed resolver was skipped, and every request
+carried `Authorization: Bearer <system message>`. One test already went through
+`analyze` and was green, because it asserted the URL and the result, not what landed.
+A reviewer found it by sending the task's own node through `analyze`.
+
+- Before proving a fix by calling a function, grep its production callers. If there is
+  one route, the proof goes through it and asserts what landed in each parameter (the
+  header, the temperature, the first message), not only that a request was made.
+- A dispatcher that calls many functions by position is checked in one pass: for each
+  call, pair the arguments with the callee's parameter names (`ast` over both files)
+  and read the pairs. That listing showed two more wrong bindings in the same
+  function, for KoboldCpp and Ollama.
+- Binding a call correctly makes dead code reachable. The summarizer's "no key
+  declared, refuse the run" branch had never run in the app. Bound correctly, it
+  refused the shipped TabbyAPI section, which readiness reports ready. After such a
+  fix, run the shipped defaults through the real loader.
+
 ---
 
 ## Mutation-test every guard you add
