@@ -1292,7 +1292,7 @@ def compose_providers_models_inspector(screen: SettingsScreen) -> ComposeResult:
         yield screen._detail_row(
             label, value, identifier=f"settings-provider-field-guide-{index}"
         )
-    provider = str(screen._provider_display_setting_values()["provider"])
+    provider = str(screen._provider_display_setting_values()["provider"] or "")
     yield screen._config_key_disclosure(
         screen._detail_row(
             CONFIG_KEY_ROW_LABEL,
@@ -1386,9 +1386,13 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         screen.call_after_refresh(screen._update_guided_action_widgets)
     resolved = screen._resolve_provider_model_for_settings()
     values = screen._provider_display_setting_values()
-    provider = str(values["provider"])
+    # An emptied field stages None, which must not be rebuilt as "None".
+    provider = str(values["provider"] or "")
+    model = str(values["model"] or "")
+    env_var = str(values["credential_env_var"] or "")
+    endpoint = str(values["endpoint"] or "")
     context_window_state = model_context_window_state(
-        screen._app_config_mapping(), provider, str(values["model"])
+        screen._app_config_mapping(), provider, model
     )
     # Qodo #2876: a registry default is edited in Custom endpoints.
     registry_locked = screen._provider_is_registry_id(provider)
@@ -1466,7 +1470,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         ):
             yield Static("Manual", classes="settings-input-label")
             yield Input(
-                value=str(values["provider"])
+                value=provider
                 if screen._provider_select_value_for_provider(provider)
                 == PROVIDER_MANUAL_SELECT_VALUE
                 else "",
@@ -1578,16 +1582,14 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         ):
             yield Static("Env var", classes="settings-input-label")
             yield Input(
-                value=str(values["credential_env_var"]),
+                value=env_var,
                 id="settings-provider-credential-env-var",
                 classes="settings-compact-input",
                 placeholder=screen._provider_credential_placeholder(provider),
                 disabled=registry_locked or subscription_selected,
             )
             yield Static(
-                env_var_source_word(
-                    screen, provider, str(values["credential_env_var"])
-                ),
+                env_var_source_word(screen, provider, env_var),
                 id="settings-provider-env-var-source",
                 classes="settings-source-word",
                 markup=False,
@@ -1598,15 +1600,13 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 classes="settings-row-help",
                 markup=False,
             )
-        endpoint_word, endpoint_help = endpoint_row_copy(
-            screen, provider, str(values["endpoint"])
-        )
+        endpoint_word, endpoint_help = endpoint_row_copy(screen, provider, endpoint)
         with Horizontal(
             id="settings-provider-endpoint-row", classes="settings-input-row"
         ):
             yield Static("Endpoint", classes="settings-input-label")
             yield SettingsURLInput(
-                value=str(values["endpoint"]),
+                value=endpoint,
                 id="settings-provider-endpoint-value",
                 classes="settings-compact-input",
                 placeholder=screen._provider_endpoint_placeholder(provider),
@@ -1672,9 +1672,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 else "settings-status-row settings-gated-profile-hidden"
             ),
         )
-        hosted_guidance = screen._hosted_provider_guidance(
-            provider, values.get("model")
-        )
+        hosted_guidance = screen._hosted_provider_guidance(provider, model)
         yield Static(
             hosted_guidance,
             id="settings-hosted-provider-guidance",
@@ -1770,7 +1768,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             model_picker = DefaultModelPicker(
                 id="settings-model-picker",
                 provider_select_id="#settings-provider-value",
-                current_model=str(values["model"]),
+                current_model=model,
                 # The screen's app owns both, as for every Settings read.
                 providers_models=(
                     providers_models if isinstance(providers_models, Mapping) else None
@@ -1795,7 +1793,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 markup=False,
             )
         model_adapter = Input(
-            value=str(values["model"]),
+            value=model,
             id="settings-model-value",
             disabled=registry_locked,
         )
@@ -1806,7 +1804,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         with Horizontal(id="settings-model-applies-row", classes="settings-input-row"):
             yield Static("Applies to", classes="settings-input-label")
             yield AppliesToLine(
-                *applies_to_copy(screen, provider, str(values["model"])),
+                *applies_to_copy(screen, provider, model),
                 id="settings-model-applies-to",
                 classes="settings-applies-to",
             )
@@ -1864,11 +1862,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         # with the pair it edits; core rows first, then a closed Sampling
         # disclosure that names what the provider does not accept.
         yield from compose_model_defaults(
-            screen,
-            provider,
-            str(values["model"]),
-            values,
-            registry_locked=registry_locked,
+            screen, provider, model, values, registry_locked=registry_locked
         )
         # TASK-33007.6: Advanced -- the rarely used controls, each a closed
         # one-row disclosure whose title says its state (spec mock (c)).
@@ -1881,7 +1875,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             # row; Reset sits in it, as Clear does in API key's, and only
             # while there is a window to return to.
             word, help_line = screen._context_window_row_copy(
-                provider, str(values["model"]), values.get("model_context_window")
+                provider, model, values.get("model_context_window")
             )
             reset = Button(
                 "Reset to detected",
@@ -1941,9 +1935,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 yield Button(
                     "Discover models",
                     id="settings-discover-provider-models",
-                    disabled=not screen._model_discovery_available(
-                        str(values["provider"])
-                    ),
+                    disabled=not screen._model_discovery_available(provider),
                     tooltip=(
                         "Query the configured OpenAI-compatible provider endpoint "
                         "for available models."
