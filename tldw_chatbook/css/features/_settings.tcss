@@ -1866,11 +1866,17 @@ Button.settings-category-group-toggle:focus {
 }
 
 /* TASK-33641.3: 12 cells cut "ComfyUI (H3 image edit)" to "ComfyUI (H3" and
-   left "SD.cpp video" no gap before its status. From 150 columns the row
-   has room for the shared 24-cell column: the longest name (23) and one
-   blank cell. Image Generation and Video Generation share this row class. */
+   left "SD.cpp video" no gap before its status. From 150 columns the name
+   takes what the row's other controls leave, up to the shared 24-cell
+   column: the longest name (23) and one blank cell. At rest (a 14-cell
+   status) every row has the 24, so the statuses share a column. A probe
+   writes a longer result into the status in place; a fixed 24 then pushed
+   Test out of the 67-cell row at 150 columns, so that row shortens its own
+   name instead (never below the 12 above). Image Generation and Video
+   Generation share this row class. */
 App.-wide-viewport .settings-imagegen-backend-row .settings-imagegen-backend-label {
-    width: $ds-size-24;
+    width: $ds-width-fill;
+    max-width: $ds-size-24;
 }
 
 

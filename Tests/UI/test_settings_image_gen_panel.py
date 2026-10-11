@@ -1326,7 +1326,9 @@ enabled_backends = ["openrouter", "swarmui"]
 # "Not configured" with no gap. Image Gen and Video Gen share the row class,
 # so one test covers every label of both panels, under the real stylesheet.
 # The wider column needs the app's wide tier, so the host carries the mixin
-# TldwCli does; 150 columns is where that tier starts.
+# TldwCli does; 150 columns is where that tier starts. Below it the column
+# stays 12 cells, and the 120 and 149 column sizes are what pin that rule:
+# without it the shared 24-cell label pushes Test off the default row.
 # ---------------------------------------------------------------------------
 
 
@@ -1334,7 +1336,20 @@ class _WideTierSettingsHarness(WideViewportTierMixin, _SettingsCssHarness):
     """The Settings CSS harness with the app's ``-wide-viewport`` class."""
 
 
-@pytest.mark.parametrize("size", [(150, 45), (211, 44), (235, 52)])
+async def _open_backends_panel(pilot, host, category, panel):
+    await _settle(pilot)
+    screen = _active_destination_screen(host)
+    screen._select_category(category.value)
+    deadline = time.monotonic() + 5.0
+    while not screen.query(f"#settings-{panel}-default_backend"):
+        assert time.monotonic() < deadline, f"the {panel} panel never loaded"
+        await pilot.pause(0.02)
+    return screen
+
+
+@pytest.mark.parametrize(
+    "size", [(120, 45), (149, 45), (150, 45), (211, 44), (235, 52)]
+)
 @pytest.mark.parametrize("panel", ["imagegen", "videogen"])
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
@@ -1350,13 +1365,7 @@ async def test_backend_rows_paint_each_name_whole_before_one_status_column(size,
     )
     host = _WideTierSettingsHarness(_build_test_app(), "settings")
     async with host.run_test(size=size) as pilot:
-        await _settle(pilot)
-        screen = _active_destination_screen(host)
-        screen._select_category(category.value)
-        deadline = time.monotonic() + 5.0
-        while not screen.query(f"#settings-{panel}-default_backend"):
-            assert time.monotonic() < deadline, f"the {panel} panel never loaded"
-            await pilot.pause(0.02)
+        screen = await _open_backends_panel(pilot, host, category, panel)
 
         status_columns = {}
         for backend_id in backend_ids:
@@ -1377,10 +1386,16 @@ async def test_backend_rows_paint_each_name_whole_before_one_status_column(size,
                 .text
             )
             name = labels[backend_id]
-            assert painted.startswith(f"{name} "), (
-                f"{backend_id} @ {size}: {painted!r} is painted before the "
-                f"status, not the whole name {name!r} and a blank cell"
-            )
+            if size[0] < host.WIDE_VIEWPORT_COLUMNS:
+                assert label.region.width == 12, (
+                    f"{backend_id} @ {size}: the name column is "
+                    f"{label.region.width} cells below the wide tier, not 12"
+                )
+            else:
+                assert painted.startswith(f"{name} "), (
+                    f"{backend_id} @ {size}: {painted!r} is painted before the "
+                    f"status, not the whole name {name!r} and a blank cell"
+                )
             # The default backend's row is the widest: it carries "★ Default".
             assert row.children[-1].region.right <= row.region.right, (
                 f"{backend_id} @ {size}: the row's last control ends at "
@@ -1391,6 +1406,46 @@ async def test_backend_rows_paint_each_name_whole_before_one_status_column(size,
         assert len(set(status_columns.values())) == 1, (
             f"@ {size}: the statuses start at different columns: {status_columns}"
         )
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row():
+    """A probe writes its result into the status in place, and it can be long.
+
+    At 150 columns the row is 67 cells. With a fixed 24-cell name column
+    "Reachable (auth unverified)" put Test outside the default backend's row
+    and "Unreachable: connection refused" clipped it on every other row.
+    """
+    host = _WideTierSettingsHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(150, 45)) as pilot:
+        screen = await _open_backends_panel(
+            pilot, host, SettingsCategoryId.IMAGE_GENERATION, "imagegen"
+        )
+        default_rows = 0
+        for badge in ("Reachable (auth unverified)", "Unreachable: connection refused"):
+            for backend_id in BACKEND_IDS:
+                row = screen.query_one(f"#settings-imagegen-backend-{backend_id}")
+                status = row.query_one(".settings-imagegen-badge", Static)
+                marker = row.query_one(".settings-imagegen-default-marker", Static)
+                test_btn = row.query_one(Button)
+                screen._apply_image_gen_probe_result(
+                    backend_id, badge, screen._image_gen_probe_session
+                )
+                row.scroll_visible(animate=False)
+                laid_out_by = time.monotonic() + 5.0
+                while status.region.width != len(badge):
+                    assert time.monotonic() < laid_out_by, (
+                        f"{backend_id}: {badge!r} never laid out"
+                    )
+                    await pilot.pause(0.02)
+                default_rows += bool(marker.region.width)
+                assert test_btn.region.right <= row.region.right, (
+                    f"{backend_id} with {badge!r}: Test ends at "
+                    f"{test_btn.region.right}, past the row's right edge "
+                    f"({row.region.right})"
+                )
+        assert default_rows, "no row carried the default marker"
 
 
 # ---------------------------------------------------------------------------
