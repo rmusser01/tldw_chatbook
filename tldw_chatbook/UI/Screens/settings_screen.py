@@ -17824,19 +17824,20 @@ class SettingsScreen(BaseAppScreen):
     def _update_provider_test_result(self) -> None:
         from ..Settings_Modules.providers_models_card import key_check_verdict
 
-        try:
-            self.query_one("#settings-provider-test-result", Static).update(
-                self._provider_test_result
-            )
-            # TASK-33007.2: the Key check row states the same verdict.
-            self.query_one("#settings-provider-readiness", Static).update(
-                key_check_verdict(self)
-            )
-        except (QueryError, AttributeError):
-            # QueryError: widget not mounted yet. AttributeError: called on an
-            # unmounted screen (no DOM) — the state is still updated for the next
-            # render either way.
-            pass
+        # TASK-33007.2: the Key check row states the same verdict. One lookup
+        # each, so a missing Inspector row does not skip it, and only the
+        # lookup is guarded: an error building the verdict is a real one.
+        for selector, text in (
+            ("#settings-provider-test-result", lambda: self._provider_test_result),
+            ("#settings-provider-readiness", lambda: key_check_verdict(self)),
+        ):
+            try:
+                row = self.query_one(selector, Static)
+            except (QueryError, AttributeError):
+                # QueryError: not mounted yet. AttributeError: an unmounted
+                # screen (no DOM); the state is kept for the next render.
+                continue
+            row.update(text())
 
     def _mark_provider_test_result_stale(self) -> None:
         """Invalidate a prior Test Provider result when provider inputs change.
@@ -17900,7 +17901,9 @@ class SettingsScreen(BaseAppScreen):
             "#settings-provider-inspector-readiness", self._provider_readiness_label()
         )
         self._set_static_text(
-            "#settings-provider-endpoint-key", self._provider_endpoint_row(provider)
+            "#settings-provider-endpoint-key",
+            # Folded at its dots, as _detail_row composed it.
+            _fold_long_tokens(self._provider_endpoint_row(provider)),
         )
         try:
             api_key_input = self.query_one("#settings-provider-api-key", Input)
