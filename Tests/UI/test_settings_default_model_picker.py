@@ -16,7 +16,8 @@ from pathlib import Path
 import httpx
 import pytest
 import toml
-from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets import Button, Collapsible, Input, OptionList, Select, Static
+from textual.widgets._collapsible import CollapsibleTitle
 from textual.widgets.input import Selection
 
 from Tests.private_profile import private_profile_test
@@ -31,6 +32,7 @@ from Tests.UI.test_settings_configuration_hub import (
     _capture_provider_settings_mutations,
     _discovered_model,
 )
+from Tests.UI.test_settings_connect_rows import _until
 from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 from Tests.UI.test_settings_provider_key_check import _Provider, _route_discovery_to
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
@@ -106,6 +108,23 @@ async def _open_providers(host, pilot):
 async def _settle(host, pilot) -> None:
     await host.workers.wait_for_complete()
     await pilot.pause()
+
+
+async def _press_discover(host, pilot, screen) -> None:
+    """Run Discover models as a keyboard user does: Enter on Advanced ▸ Saved
+    model list's title opens it, Enter on Discover models starts the listing;
+    then wait for what the listing shows."""
+    disclosure = screen.query_one("#settings-advanced-saved-models", Collapsible)
+    discover = screen.query_one("#settings-discover-provider-models", Button)
+    if disclosure.collapsed:
+        disclosure.query_one(CollapsibleTitle).focus()
+        await pilot.press("enter")
+        await _until(pilot, lambda: discover.region.height > 0)
+    discover.focus()
+    await pilot.press("enter")
+    await _until(pilot, lambda: bool(screen._model_discovery_models))
+    assert screen._model_discovery_models, screen._model_discovery_status
+    await _settle(host, pilot)
 
 
 def _widgets(screen):
@@ -184,8 +203,7 @@ async def test_default_model_is_one_row_and_lists_ids_by_where_they_came_from(
         assert adapter not in screen.focus_chain
         assert adapter.suggester is None and field.suggester is None
 
-        await screen._discover_provider_models()
-        await _settle(host, pilot)
+        await _press_discover(host, pilot, screen)
         field.focus()
         await pilot.pause()
 
@@ -218,8 +236,7 @@ async def test_choosing_a_discovered_model_replaces_a_set_default_and_saves_with
         screen = await _open_providers(host, pilot)
         await _settle(host, pilot)
         picker, field, results, adapter = _widgets(screen)
-        await screen._discover_provider_models()
-        await _settle(host, pilot)
+        await _press_discover(host, pilot, screen)
         before = {key: list(value) for key, value in app.providers_models.items()}
 
         field.focus()
@@ -408,7 +425,10 @@ async def test_an_invalid_custom_id_is_rolled_back_when_the_field_is_left(
             await pilot.press("escape")
         else:
             screen.set_focus(None)
-        await pilot.pause(0.2)
+        # The roll-back runs on the picker's blur timer.
+        await _until(
+            pilot, lambda: not picker.custom_mode and adapter.value == "gpt-4.1"
+        )
 
         assert host.focused is None
         assert not picker.custom_mode
@@ -448,7 +468,8 @@ async def test_rolling_back_to_a_bracketed_model_id_names_it_literally(request):
         await pilot.pause()
 
         await pilot.press("escape")
-        await pilot.pause(0.2)
+        # The roll-back runs on the picker's blur timer.
+        await _until(pilot, lambda: not picker.custom_mode and adapter.value == model)
 
         assert not picker.custom_mode
         assert adapter.value == picker.value == model
@@ -471,8 +492,7 @@ async def test_discovered_models_stay_in_the_picker_after_the_card_rebuilds(
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
         await _settle(host, pilot)
-        await screen._discover_provider_models()
-        await _settle(host, pilot)
+        await _press_discover(host, pilot, screen)
 
         if rebuild == "pane":
             screen.mutate_reactive(SettingsScreen.active_category)
@@ -541,10 +561,13 @@ async def test_a_discovered_model_becomes_the_saved_default_without_joining_the_
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_slash_search_for_model_lands_on_the_picker_field(request):
-    """R9: '/' search's Model field match lands on the picker's field, never
-    on the hidden adapter. ("Model" alone opens the category by its title, so
-    the field tier's own match is landed, as Enter does for a field query.)"""
+async def test_the_search_index_model_entry_lands_on_the_picker_field(request):
+    """R9: the search index's Model entry is the picker's field, never the
+    hidden adapter, and landing on it focuses that field. The landing is
+    called directly because no '/' query reaches it: every text that matches
+    the label "Model" also matches the category's own title, "Providers &
+    Models", and a title match opens the category without landing on a field
+    (TASK-23109)."""
     app = _app("openai", "gpt-4o", catalog=("gpt-4o",))
     host = _SettingsCssHarness(app, "settings")
 
@@ -553,6 +576,8 @@ async def test_slash_search_for_model_lands_on_the_picker_field(request):
         await _settle(host, pilot)
         field_id, label = screen._top_field_match("Model", PROVIDERS_MODELS)
         assert (field_id, label) == ("model-search-picker-input", "Model")
+        summary = screen._category_summary_by_id(PROVIDERS_MODELS)
+        assert not screen._search_match_is_field_landing("Model", summary)
 
         screen._land_search_focus_on_field(field_id, label)
         await pilot.pause()
