@@ -33537,9 +33537,13 @@ class SettingsScreen(BaseAppScreen):
                 self._update_provider_dynamic_widgets()
                 from ..Settings_Modules.providers_models_card import (
                     refresh_next_new_chat,
+                    refresh_openai_reconnect_pending,
                 )
 
                 refresh_next_new_chat(self)
+                if provider_key == "openai" and connection_dirty:
+                    # A changed key, env var or endpoint can need a new review.
+                    refresh_openai_reconnect_pending(self)
                 # TASK-33007.2: a saved key or endpoint can change who leads
                 # the provider list and its "configured: ..." help.
                 self._provider_configured_keys = None

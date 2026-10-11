@@ -291,7 +291,7 @@ def prepare_openai_reconnect(*, auth_source=None):
         )
 
 
-def openai_reconnect_pending() -> bool:
+def openai_reconnect_pending() -> bool | None:
     """Whether a restored OpenAI connection awaits its review.
 
     Restored generations exist (the history ``prepare_openai_reconnect``
@@ -299,16 +299,16 @@ def openai_reconnect_pending() -> bool:
     ``openai_call`` would refuse a request.
 
     Returns:
-        True only then. False when nothing was restored, a review matches,
-        or the history cannot be read (``prepare_openai_reconnect`` would
-        refuse a review then too).
+        True only then; False when nothing was restored or a review matches.
+        None when it cannot tell (the history cannot be read, the storage
+        lease is refused): a caller must not keep that as "not pending".
     """
     path = bootstrap.effective_config_path()
     try:
         with acquire_storage(path) as lease:
             restored = bool(_history(path, lease))
     except (OSError, ValueError, RuntimeError):  # ProviderReconnectRequired too
-        return False
+        return None
     if not restored:
         return False
     try:
@@ -316,7 +316,7 @@ def openai_reconnect_pending() -> bool:
     except ProviderReconnectRequired:
         return True
     except (OSError, ValueError, RuntimeError):
-        return False
+        return None
     return False
 
 
