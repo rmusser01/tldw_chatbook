@@ -448,3 +448,75 @@ def test_decrypt_failure_publish_reports_committed_write_and_recovers(tmp_path, 
     recovered = config_module.get_cli_setting("task21124_probe", "decrypt_fail")
     assert recovered == "v1"
     assert config_module._CONFIG_CACHE is not None
+
+
+# --- TASK-21235: the bootstrap cache is published under the path it was read from
+
+
+def test_bootstrap_cache_ignores_a_config_path_flip_between_read_and_publish(
+    tmp_path, monkeypatch
+):
+    """TASK-21235: path-A data must never be labelled as the path-B cache.
+
+    `_install_bootstrap_cache_from_raw` used to recompute the config path at
+    PUBLISH time; a `TLDW_CONFIG_PATH` flip between the caller's read and
+    the publish would set `_CONFIG_CACHE_SOURCE` to the flipped path while
+    the cache held the other path's data -- exactly the identity the fast
+    path's re-check compares against. Callers now thread the path their
+    read used; this test flips the env between "read" and "publish" and
+    asserts the cache stays labelled with the read path.
+    """
+    import tldw_chatbook.config as cfg
+
+    path_a = tmp_path / "config_a.toml"
+    path_b = tmp_path / "config_b.toml"
+    path_a.write_text("[owner]\nwhich = \"a\"\n")
+    path_b.write_text("[owner]\nwhich = \"b\"\n")
+
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(path_a))
+    # The caller's read from path_a produced this raw mapping (built
+    # directly: the on-disk read helper drags in the config-participant
+    # admission machinery, which is not what this test is about).
+    raw_read = {"owner": {"which": "a"}}
+    # ... and the environment flips BEFORE the publish step.
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(path_b))
+
+    original_cache = cfg._CONFIG_CACHE
+    original_source = cfg._CONFIG_CACHE_SOURCE
+    try:
+        installed = cfg._install_bootstrap_cache_from_raw(
+            raw_read, config_path=path_a
+        )
+        assert installed is not None, "strict decrypt must succeed (plain TOML)"
+        assert cfg._CONFIG_CACHE_SOURCE == path_a, (
+            "bootstrap cache labelled with the flipped path: path-A data "
+            f"published as {cfg._CONFIG_CACHE_SOURCE}"
+        )
+        assert cfg._CONFIG_CACHE["owner"]["which"] == "a"
+    finally:
+        cfg._CONFIG_CACHE = original_cache
+        cfg._CONFIG_CACHE_SOURCE = original_source
+
+
+def test_publish_runtime_config_threads_the_caller_path(
+    tmp_path, monkeypatch
+):
+    """TASK-21235: `_publish_runtime_config_unlocked` passes the path through.
+
+    A regression that drops the `config_path` parameter here reintroduces
+    the recompute-at-publish labelling silently; this pin fails with the
+    flipped path named.
+    """
+    import inspect
+
+    import tldw_chatbook.config as cfg
+
+    signature = inspect.signature(cfg._publish_runtime_config_unlocked)
+    assert "config_path" in signature.parameters, (
+        "publish lost its config_path pass-through (TASK-21235)"
+    )
+    publish_source = inspect.getsource(cfg._publish_runtime_config_unlocked)
+    assert "_install_bootstrap_cache_from_raw(" in publish_source
+    assert "config_path=config_path" in publish_source, (
+        "publish no longer forwards its path into the cache install"
+    )

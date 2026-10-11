@@ -18,10 +18,12 @@ from __future__ import annotations
 from collections import deque
 from types import SimpleNamespace
 
+import pytest
 import toml
 from textual.app import ComposeResult
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.config import _get_effective_config_path
 from tldw_chatbook.UI.Logs_Window import (
@@ -135,3 +137,84 @@ async def test_click_and_click_back_writes_nothing():
         assert calls == [], (
             "click-away-and-back must be recognized as a no-op, not written"
         )
+
+
+# --- TASK-21235: a change landing while a debounced write is in flight ---------
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_revert_during_in_flight_write_is_persisted_without_unmount(
+    request, monkeypatch,
+):
+    """TASK-21235: the swallow. A filter change landing while a debounced
+    write is in flight used to compare against the STALE baseline
+    (`_persisted_filter_state` only advances on write completion), so a
+    revert to the on-disk state was judged a no-op and swallowed -- nothing
+    reached disk until unmount repaired it. The dictation module's
+    task-15470 dirty shape replaces the scheduling gate, so the revert
+    always arms its own timer and lands without leaving the screen.
+    """
+    import threading
+
+    import tldw_chatbook.config as cfg
+
+    gate = threading.Event()
+    real_save = cfg.save_settings_to_cli_config
+    writes: list[dict] = []
+
+    def gated_save(settings, *args, **kwargs):
+        writes.append(settings)
+        if len(writes) == 1:
+            # First write blocks on the worker thread until released: the
+            # event loop keeps running, so the revert below lands while
+            # this write is genuinely in flight.
+            gate.wait(timeout=10.0)
+        return real_save(settings, *args, **kwargs)
+
+    monkeypatch.setattr(cfg, "save_settings_to_cli_config", gated_save)
+
+    async with _LogsHarness().run_test(size=(120, 36)) as pilot:
+        window = pilot.app.query_one(LogsWindow)
+        window.load_from_app()
+        await pilot.pause()
+        original_chip = window._level_chip
+
+        # Change the filter; let the debounce fire so a write is in flight.
+        window.query_one("#logs-filter-error", Button).press()
+        await pilot.pause()
+        await pilot.pause(LOGS_FILTER_SAVE_DEBOUNCE_SECONDS + 0.1)
+        for _ in range(40):
+            if writes:
+                break
+            await pilot.pause(0.05)
+        assert len(writes) == 1, "the first (blocked) write did not start"
+        assert writes[0]["logs"]["last_level_chip"] == "error"
+
+        # Revert to the original chip WHILE write #1 is still blocked.
+        window.query_one("#logs-filter-all", Button).press()
+        await pilot.pause()
+        assert window._filter_save_timer is not None, (
+            "TASK-21235 regression: the in-flight-window revert was "
+            "swallowed against the stale baseline (no timer armed)"
+        )
+
+        gate.set()
+        # The revert's own debounce fires and its write lands -- with no
+        # unmount anywhere in this test.
+        for _ in range(60):
+            if len(writes) >= 2:
+                break
+            await pilot.pause(0.05)
+
+        assert len(writes) >= 2, (
+            "the revert never reached disk without unmount (the swallow)"
+        )
+        assert writes[-1]["logs"]["last_level_chip"] == original_chip
+        # The last save may still be mid-flight on its worker thread when
+        # the list record lands; poll the disk to the settled state.
+        for _ in range(40):
+            if _saved_logs_section().get("last_level_chip") == original_chip:
+                break
+            await pilot.pause(0.05)
+        assert _saved_logs_section().get("last_level_chip") == original_chip
