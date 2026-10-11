@@ -1985,7 +1985,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 id="settings-provider-conflict-discard",
             )
             yield Button(
-                f"Return to {screen._provider_return_destination()}",
+                escape_markup(f"Return to {screen._provider_return_destination()}"),
                 id="settings-provider-conflict-return",
                 disabled=screen._provider_return_actions_disabled(),
             )
@@ -1999,7 +1999,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 markup=False,
             )
             yield Button(
-                f"Return to {screen._provider_return_destination()}",
+                escape_markup(f"Return to {screen._provider_return_destination()}"),
                 id="settings-provider-return",
                 variant="primary",
                 disabled=screen._provider_return_actions_disabled(),

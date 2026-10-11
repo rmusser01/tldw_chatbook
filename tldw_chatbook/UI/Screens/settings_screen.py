@@ -13903,6 +13903,7 @@ class SettingsScreen(BaseAppScreen):
             self.app.notify(
                 f"{self._provider_return_destination()} return is no longer available.",
                 severity="warning",
+                markup=False,
             )
             self._settle_provider_return_state()
             return False

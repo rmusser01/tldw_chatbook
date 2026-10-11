@@ -806,6 +806,7 @@ def adopt_detected_local_server(
             f"for {provider_key}; using the detected "
             "server for this session only.",
             severity="warning",
+            markup=False,
         )
     else:
         provider_values["api_url"] = server.base_url
@@ -830,6 +831,7 @@ def adopt_detected_local_server(
             f"Default not saved for {provider_key}/{settings.model}; "
             "it applies to this chat only.",
             severity="warning",
+            markup=False,
         )
     chosen = replace(settings, source="user")
     if keep_saved or not saved:

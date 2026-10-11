@@ -9,6 +9,7 @@
 # module	symbol	kind	count
 tldw_chatbook/Backup_Recovery/launcher	recovery_app.RecoveryApp.open_recovery_profile	notify_interp	1
 tldw_chatbook/Chat/console_cost_tracker	build_cost_state	tooltip_interp	1
+tldw_chatbook/Chat/console_onboarding_state	build_console_detected_server_action	tooltip_interp	1
 tldw_chatbook/Event_Handlers/Chat_Events/chat_rag_events	get_rag_context_capture_for_chat	notify_interp	1
 tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events	_make_path_update_callback._callback	notify_interp	1
 tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events	handle_start_llamafile_server_button_pressed	notify_interp	1
@@ -131,7 +132,6 @@ tldw_chatbook/UI/Screens/change_review_screen	ChangeReviewScreen._land_pr_url	no
 tldw_chatbook/UI/Screens/change_review_screen	ChangeReviewScreen._land_push_error	notify_interp	1
 tldw_chatbook/UI/Screens/change_review_screen	ChangeReviewScreen._land_push_result	notify_interp	3
 tldw_chatbook/UI/Screens/change_review_screen	ChangeReviewScreen._report_outcomes	notify_interp	2
-tldw_chatbook/UI/Screens/chat_screen	ChatScreen._apply_detected_local_server	notify_interp	1
 tldw_chatbook/UI/Screens/chat_screen	ChatScreen._complete_agent_chat_create	notify_interp	1
 tldw_chatbook/UI/Screens/chat_screen	ChatScreen._console_command_redirect	notify_interp	1
 tldw_chatbook/UI/Screens/chat_screen	ChatScreen._console_command_steer	notify_interp	1
