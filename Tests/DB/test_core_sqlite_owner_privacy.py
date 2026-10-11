@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import sqlite3
 import stat
@@ -22,6 +23,43 @@ from tldw_chatbook.DB import (
 )
 from tldw_chatbook.DB.private_sqlite_protocol import PrepareRequest
 from tldw_chatbook.Utils.private_paths import PrivatePathError, PrivatePathStatus
+
+
+def _resolve_is_admission_ledger_evidence() -> bool:
+    """Whether this ``Path.resolve`` call is the storage-admission ledger's
+    per-call evidence key (TASK-19642.14 reconciliation).
+
+    Since TASK-32628 (b5251e9a6e), ``connect_private_sqlite``'s admitted seam
+    calls ``acquire_storage`` -> ``_execution_selection_for`` AFTER
+    ``_classify_target`` has already accepted the path, and that function
+    resolves the selector's and the target's chains to stamp admission
+    evidence -- pinned deliberately by
+    ``Tests/Backup_Recovery/test_admission_evidence_reuse.py`` ("the reuse
+    path included"), because a symlink swap between calls changes the
+    resolved form and must be seen.
+
+    The privacy invariant these tests enforce is narrower and stays intact:
+    the DB owner layer and the backup helper themselves must never resolve
+    the selected path (resolution before/instead of boundary classification
+    is the leak vector). This helper allow-lists EXACTLY one origin -- the
+    first production frame must be ``storage_admission.py``'s
+    ``_execution_selection_for`` -- so a resolve from private_sqlite, any
+    DB owner module, or the backup helper still fails the test.
+    """
+    for frame_info in inspect.stack()[1:]:
+        filename = frame_info.filename
+        if filename == __file__ or "site-packages" in filename or (
+            os.sep + "lib" + os.sep + "python" in filename
+        ):
+            # this test module's own frames and stdlib/pytest internals
+            continue
+        if "tldw_chatbook" not in filename:
+            continue
+        return (
+            filename.endswith("Backup_Recovery/storage_admission.py")
+            and frame_info.function == "_execution_selection_for"
+        )
+    return False
 
 
 @dataclass(frozen=True)
@@ -381,7 +419,7 @@ def test_core_owner_never_resolves_selected_path(
     real_resolve = Path.resolve
 
     def forbid_selected_resolve(selected: Path, *args: Any, **kwargs: Any) -> Path:
-        if selected == target:
+        if selected == target and not _resolve_is_admission_ledger_evidence():
             pytest.fail("core owner resolved the selected database path")
         return real_resolve(selected, *args, **kwargs)
 
@@ -432,14 +470,12 @@ def test_core_owner_normalizes_relative_path_lexically(
     monkeypatch.setattr(private_sqlite.sqlite3, "connect", recording_raw_connect)
     database = _construct(case, relative_target, monkeypatch, [])
     try:
-        expected_stored_path = (
-            relative_target if case.name == "evals" else expected_target
-        )
-        expected_owner_target = (
-            relative_target if case.name == "evals" else expected_target
-        )
-        assert database.db_path == expected_stored_path
-        assert seen == [(case.owner_id, os.fspath(expected_owner_target))]
+        # TASK-19642.14: EvalsDB lost its store-the-relative-path special
+        # case when b5251e9a6e routed every owner through lexical_path()
+        # normalization -- it now absolutizes lexically exactly like its
+        # sibling owners, never touching the filesystem to do so.
+        assert database.db_path == expected_target
+        assert seen == [(case.owner_id, os.fspath(expected_target))]
         assert prepared == [
             PrepareRequest(
                 path=str(expected_target),
@@ -661,7 +697,7 @@ def test_backup_target_uses_centralized_private_backup_helper(
     real_resolve = Path.resolve
 
     def forbid_backup_path_resolve(selected: Path, *args: Any, **kwargs: Any) -> Path:
-        if selected in {source, target}:
+        if selected in {source, target} and not _resolve_is_admission_ledger_evidence():
             pytest.fail("backup resolved its selected source or target path")
         return real_resolve(selected, *args, **kwargs)
 
