@@ -1592,6 +1592,53 @@ async def test_deck_change_and_refresh_do_not_interleave_the_card_list():
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+async def test_a_held_card_list_rebuild_ends_quietly_when_the_sub_view_is_swapped():
+    """A rebuild that resumes after Flashcards was swapped out raises nothing.
+
+    The window stays mounted while its sub-view goes, so every lookup after
+    the rebuild's awaits (`#review-status`, the lifecycle buttons) can miss.
+    Only the two lookups before the first await were guarded (#3057 review
+    R3 #8): the rest raised `NoMatches` into the six controller paths that
+    await `refresh_cards()`, and out of the `study-refresh-cards` worker.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.click("#view-flashcards-btn")
+        await pilot.pause(0.3)
+        window = app.screen.query_one(StudyWindow)
+        controller = window.flashcards_controller
+        scope.gate.set()
+        await pilot.pause(0.3)
+        app.screen.query_one("#deck-select", Select).value = "deck-local-1"
+        await pilot.pause(0.3)
+
+        # Hold one rebuild inside `list_flashcards`, then leave Flashcards.
+        scope.gate.clear()
+        held = scope.list_calls
+        rebuild = asyncio.ensure_future(controller.refresh_cards())
+        for _ in range(200):
+            if scope.list_calls > held:
+                break
+            await pilot.pause(0.01)
+        assert scope.list_calls == held + 1, "the rebuild never reached the service"
+        window.current_view = "quizzes"
+        for _ in range(200):
+            if not window.query("#review-status"):
+                break
+            await pilot.pause(0.01)
+        assert not window.query("#review-status"), "Flashcards was not swapped out"
+
+        scope.gate.set()
+        await rebuild  # NoMatches before the fix
+        await pilot.pause(0.1)
+        assert window.current_view == "quizzes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_two_awaited_card_list_rebuilds_do_not_interleave():
     """The awaited rebuilds share one lock with the worker rebuilds.
 

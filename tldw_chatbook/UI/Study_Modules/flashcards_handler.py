@@ -629,9 +629,18 @@ class StudyFlashcardsController:
 
         Interleaved, one rebuild's clear landed between the other's clear and
         appends, so the list held both rebuilds' rows.
+
+        The Flashcards view can be swapped out while a rebuild waits its turn
+        or awaits the service (the window stays mounted, its sub-view does
+        not), so a lookup that then misses ends the rebuild quietly.
         """
         async with self._refresh_cards_lock:
-            await self._rebuild_card_list(preserve_review_panel=preserve_review_panel)
+            try:
+                await self._rebuild_card_list(
+                    preserve_review_panel=preserve_review_panel
+                )
+            except NoMatches:
+                return
 
     async def _rebuild_card_list(self, *, preserve_review_panel: bool) -> None:
         service = self._scope_service()
@@ -642,15 +651,10 @@ class StudyFlashcardsController:
             self.handle_scope_changed()
             return
 
-        # The Flashcards view can be swapped out while this rebuild waited its
-        # turn (the window stays mounted, its sub-view does not), so both
-        # lookups are guarded; the search box is read before the next await.
-        try:
-            list_view = self.window.query_one("#card-list", ListView)
-            search = self.window.query_one("#flashcard-search-input", Input)
-        except NoMatches:
-            return
-        search_value = search.value
+        # `refresh_cards` catches a lookup that misses; the search box is read
+        # before the next await.
+        list_view = self.window.query_one("#card-list", ListView)
+        search_value = self.window.query_one("#flashcard-search-input", Input).value
         await list_view.clear()
         self.current_cards = []
         self.selected_card_record = None
