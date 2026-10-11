@@ -20,7 +20,6 @@ from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.widgets.input import Selection
 
 from Tests.private_profile import private_profile_test
-from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from Tests.UI.test_destination_shells import _active_destination_screen
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_category_sweep import (
@@ -32,8 +31,9 @@ from Tests.UI.test_settings_configuration_hub import (
     _capture_provider_settings_mutations,
     _discovered_model,
 )
-from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness, _region_rows
+from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 from Tests.UI.test_settings_provider_key_check import _Provider, _route_discovery_to
+from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     MergedModelEntry,
     ModelDiscoveryResult,
@@ -427,6 +427,37 @@ async def test_an_invalid_custom_id_is_rolled_back_when_the_field_is_left(
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_rolling_back_to_a_bracketed_model_id_names_it_literally(request):
+    """A model id may hold "[" and "]". The roll-back toast names the model
+    that was put back, and a toast parses Rich markup unless told not to: a
+    stray "[/]" in the id raised MarkupError when the toast rendered."""
+    model = "local[/]q4"
+    app = _app("openai", model, catalog=(model, "gpt-4.1"))
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        picker, field, _results, adapter = _widgets(screen)
+        field.focus()
+        await pilot.pause()
+        await pilot.press("tab", "enter")
+        await pilot.pause()
+        assert picker.custom_mode and host.focused is field
+        field.value = "m" * 257
+        await pilot.pause()
+
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+
+        assert not picker.custom_mode
+        assert adapter.value == picker.value == model
+        toasts = [str(note.message) for note in host._notifications]
+        assert f"Invalid model ID not kept; the model is still {model}." in toasts
+
+
+@pytest.mark.asyncio
+@private_profile_test
 @pytest.mark.parametrize("rebuild", ["pane", "category-round-trip"])
 async def test_discovered_models_stay_in_the_picker_after_the_card_rebuilds(
     request, rebuild
@@ -476,9 +507,7 @@ async def test_a_discovered_model_becomes_the_saved_default_without_joining_the_
     providers_before = toml.loads(config_path.read_text()).get("providers", {})
     assert served not in providers_before.get("OpenAI", [])
     # The app reads [providers] at boot; discovery needs its OpenAI list.
-    app.providers_models = {
-        key: list(value) for key, value in providers_before.items()
-    }
+    app.providers_models = {key: list(value) for key, value in providers_before.items()}
     host = _SettingsCssHarness(app, "settings")
 
     async with host.run_test(size=_SIZE) as pilot:

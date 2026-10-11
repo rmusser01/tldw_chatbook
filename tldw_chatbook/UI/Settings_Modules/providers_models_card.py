@@ -59,6 +59,7 @@ from ...config import get_cli_setting, provider_settings_for_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
+from ...Utils.input_validation import escape_markup
 from ...Widgets.model_search_picker import ModelSearchPicker, PickerSearchInput
 from ..Screens.settings_context_memory import model_context_window_state
 from ..Screens.settings_provider_view_model import (
@@ -359,6 +360,7 @@ class DefaultModelPicker(ModelSearchPicker):
         self.app.notify(
             f"Invalid model ID not kept; the model is still {previous or 'unset'}.",
             severity="warning",
+            markup=False,  # a model id may hold "[" and "]"
         )
 
 
@@ -1329,6 +1331,7 @@ def compose_providers_models_inspector(screen: SettingsScreen) -> ComposeResult:
         screen._provider_readiness_label(),
         id="settings-provider-inspector-readiness",
         classes="settings-detail-row",
+        markup=False,  # it names the model id, which may hold "[" and "]"
     )
     yield Static(
         PROVIDER_TEST_GUIDANCE,
@@ -1544,7 +1547,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 ),
                 tooltip=(
                     "Clear the API key saved in local config for this provider "
-                    f"({API_KEY_CLEAR_KEY} in the API key field)."
+                    f"({escape_markup(API_KEY_CLEAR_KEY)} in the API key field)."
                 ),
             )
             # Parent AC#2: like Test (t), a key runs it (ApiKeyInput), so it

@@ -151,7 +151,12 @@ _BUDGETS: dict[str, int] = {
     # line, Sign in with's row copy) at 2,194; the Endpoint guide that says
     # required as its row does (2026-10-09) at 2,238; items 11-12 (one-row
     # Context window, -1; its assumed size, +1) leave it at 2,238 measured.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2300,
+    # dev's markup-interpolation gate (TASK-1513) found two sites here, and
+    # the test written for the first found a third: a model id holding "[/]"
+    # raised MarkupError from the Custom ID roll-back toast and from the Key
+    # block's readiness row (which crashed the card at mount, on dev too);
+    # one tooltip interpolated bare. Three guards, +3.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2303,
     "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 729,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
