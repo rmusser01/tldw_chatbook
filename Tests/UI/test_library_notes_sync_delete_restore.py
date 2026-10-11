@@ -89,6 +89,25 @@ def _manage_rows_mounted(screen) -> bool:
     )
 
 
+def _delete_prompt_shown(screen) -> bool:
+    """Whether the delete prompt is displayed, with its state applied.
+
+    TASK-34789: the prompt's nodes are composed with every editor and shown
+    by ``display``, so waiting for ``#library-note-delete-confirm`` to exist
+    waits for nothing. The Delete press is an async handler (a save flush and
+    an admission precede the prompt); read before it finished, the copy is
+    still the compose-time default -- the unsynced wording.
+    """
+    panes = screen.query("#library-note-work-pane")
+    prompts = screen.query("#library-note-delete-confirmation")
+    return (
+        bool(panes)
+        and panes.first()._children_ready
+        and bool(prompts)
+        and bool(prompts.first().display)
+    )
+
+
 async def _open_manage_sync_folders(screen, pilot) -> str:
     # Fix round 1 (review Important 1): Undo's own recompose can leave the
     # toolbar briefly unmounted; wait for the button and press the node the
@@ -238,7 +257,11 @@ async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(
                 screen.query_one("#library-note-context", Button).press()
                 await pilot.pause()
                 screen.query_one("#library-note-context-delete", Button).press()
-                await _wait_for_selector(screen, pilot, "#library-note-delete-confirm")
+                await _until(
+                    pilot,
+                    lambda: _delete_prompt_shown(screen),
+                    "the delete prompt to be shown",
+                )
                 # The prompt for a synced note says what happens to its file.
                 assert (
                     _text(screen, "#library-note-delete-confirm-copy")
