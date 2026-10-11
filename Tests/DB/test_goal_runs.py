@@ -93,3 +93,48 @@ def test_concurrent_launches_and_stale_revision_cannot_fork_identity(tmp_path):
     ):
         conn.execute("UPDATE goal_runs SET request_json=? WHERE id=?", ("{}", first.id))
     db.close()
+
+
+@pytest.mark.parametrize("state", ["prepared", "accepted", "uncertain"])
+def test_payload_removal_refuses_unsettled_allowance_descendant(tmp_path, state):
+    db = AgentRunsDB(tmp_path / "descendant.db")
+    try:
+        goal = db.goal_runs.create(request(), launch_id="root")
+        goal = db.goal_runs.set_provisioning(goal, status="ready")
+        run_id = db.create_run(
+            conversation_id=goal.conversation_id,
+            agent_kind="primary",
+            work_chain_id=goal.chain_id,
+        )
+        child = db.automatic_work.prepare_chat_start(
+            attempt_id="child",
+            source_run_id=run_id,
+            target_conversation_id="child-chat",
+            target_session_id="child-session",
+            target_session_incarnation="incarnation",
+            owner_id="owner",
+            draft_revision=0,
+            context_epoch=0,
+            request_fingerprint="a" * 64,
+        )
+        if state != "prepared":
+            assert db.automatic_work.accept_chat_start(child.id, owner_id="owner")
+        if state == "uncertain":
+            reservation = db.automatic_work.admit_call(
+                child.chain_id,
+                call_id="child-call",
+                owner_id="owner",
+                input_tokens=1,
+                output_tokens=10,
+            )
+            db.automatic_work.settle(reservation, owner_id="owner", actual_amount=None)
+        goal = db.goal_runs.control(goal.id)
+        before = db.goal_runs.get(goal.id)
+        with pytest.raises(ValueError, match="goal_not_settled"):
+            db.goal_runs.remove_payloads(goal.id)
+        after = db.goal_runs.get(goal.id)
+        assert after.request == before.request
+        assert after.accounting == before.accounting
+        assert after.status == "paused"
+    finally:
+        db.close()

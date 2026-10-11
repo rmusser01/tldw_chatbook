@@ -56,7 +56,7 @@ def test_hybrid_goal_catalog_refuses_without_rewrite(tmp_path, case):
     assert path.read_bytes() == before
 
 
-@pytest.mark.parametrize("corruption", ["attempt_kind", "status"])
+@pytest.mark.parametrize("corruption", ["attempt_kind", "status", "reservation_owner"])
 def test_goal_archive_rejects_mismatched_domain_without_rewrite(tmp_path, corruption):
     path = tmp_path / "invalid-domain.db"
     db = AgentRunsDB(path)
@@ -69,11 +69,106 @@ def test_goal_archive_rejects_mismatched_domain_without_rewrite(tmp_path, corrup
                 "UPDATE automatic_wake_attempts SET attempt_kind='fleet_wake' WHERE id=?",
                 (attempt.id,),
             )
-        else:
+        elif corruption == "status":
             conn.execute(
                 "UPDATE goal_runs SET status='invented' WHERE id=?", (goal.id,)
+            )
+    if corruption == "reservation_owner":
+        other = db.goal_runs.create(request(), launch_id="other-owner")
+        with db.connection() as conn:
+            conn.execute(
+                "UPDATE goal_payload_reservations SET goal_id=? WHERE attempt_id=?",
+                (other.id, attempt.id),
             )
     db.close()
     before = path.read_bytes()
     assert validate_candidate(owner(), path, Event(), migrate=True)
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["id", "goal_id", "attempt_id", "run_id", "checkpoint_id", "checkpoint_ordinal"],
+)
+def test_goal_archive_rejects_foreign_payload_identity(tmp_path, field):
+    from tldw_chatbook.Agents.goal_models import (
+        GoalCheckpoint,
+        GoalDecision,
+        GoalEvidence,
+        IterationReport,
+    )
+
+    path = tmp_path / "foreign-payload.db"
+    db = AgentRunsDB(path)
+    goal = db.goal_runs.create(request(), launch_id="payload")
+    goal = db.goal_runs.set_provisioning(goal, status="ready")
+    attempt = db.automatic_work.prepare_goal_iteration(goal.id, owner_id="before")
+    run_id = db.create_run(
+        conversation_id=goal.conversation_id,
+        agent_kind="primary",
+        work_chain_id=goal.chain_id,
+    )
+    evidence = GoalEvidence(
+        id="evidence",
+        goal_id=goal.id,
+        attempt_id=attempt.id,
+        run_id=run_id,
+        verifier_id="check",
+        source_digest="s",
+        checked_manifest="m",
+        verifier_sha256="h",
+        passed=True,
+        fresh=True,
+        reason="passed",
+    )
+    checkpoint = GoalCheckpoint(
+        id=attempt.id,
+        ordinal=1,
+        report=IterationReport(),
+        decision=GoalDecision(action="continue", reason="fixture"),
+    )
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE goal_iterations SET run_id=? WHERE attempt_id=?",
+            (run_id, attempt.id),
+        )
+        conn.execute(
+            "INSERT INTO goal_evidence VALUES (?,?,?,?)",
+            (evidence.id, goal.id, attempt.id, evidence.model_dump_json()),
+        )
+        conn.execute(
+            "INSERT INTO goal_checkpoints VALUES (?,?,?,?)",
+            (attempt.id, goal.id, "fingerprint", checkpoint.model_dump_json()),
+        )
+    db.close()
+    assert validate_candidate(owner(), path, Event(), migrate=False) == ()
+    with closing(sqlite3.connect(path)) as conn:
+        if field.startswith("checkpoint_"):
+            key = field.removeprefix("checkpoint_")
+            corrupted = checkpoint.model_copy(
+                update={key: 2 if key == "ordinal" else "foreign"}
+            )
+            conn.execute(
+                "UPDATE goal_checkpoints SET payload_json=?",
+                (corrupted.model_dump_json(),),
+            )
+        else:
+            corrupted = evidence.model_copy(update={field: "foreign"})
+            conn.execute(
+                "UPDATE goal_evidence SET payload_json=?",
+                (corrupted.model_dump_json(),),
+            )
+        conn.commit()
+    before = path.read_bytes()
+    assert validate_candidate(owner(), path, Event(), migrate=False)
+    assert path.read_bytes() == before
+
+    reopened = AgentRunsDB(path)
+    try:
+        with pytest.raises(ValueError, match="invalid_goal_ownership"):
+            if field.startswith("checkpoint_"):
+                reopened.goal_runs.get(goal.id)
+            else:
+                reopened.goal_runs.evidence(goal.id)
+    finally:
+        reopened.close()

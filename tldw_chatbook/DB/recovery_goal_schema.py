@@ -101,7 +101,11 @@ def validate_goal_rows(connection):
         "WHERE a.attempt_kind!='goal_iteration' OR a.chain_id!=g.chain_id OR a.conversation_id!=g.conversation_id "
         "OR (i.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.id=i.run_id AND r.work_chain_id=g.chain_id AND r.conversation_id=g.conversation_id)) "
         "UNION ALL SELECT 1 FROM automatic_wake_attempts a WHERE a.attempt_kind='goal_iteration' "
-        "AND NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=a.id) LIMIT 1"
+        "AND NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=a.id) "
+        "UNION ALL SELECT 1 FROM goal_reports r JOIN goal_iterations i ON i.id=r.iteration_id WHERE r.goal_id!=i.goal_id "
+        "UNION ALL SELECT 1 FROM goal_checkpoints c WHERE NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=c.attempt_id AND i.goal_id=c.goal_id) "
+        "UNION ALL SELECT 1 FROM goal_evidence e WHERE NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=e.attempt_id AND i.goal_id=e.goal_id) "
+        "UNION ALL SELECT 1 FROM goal_payload_reservations p WHERE NOT EXISTS (SELECT 1 FROM goal_iterations i WHERE i.attempt_id=p.attempt_id AND i.goal_id=p.goal_id) LIMIT 1"
     ).fetchone()
     if invalid is not None:
         return ("invalid_goal_ownership",)
@@ -118,14 +122,27 @@ def validate_goal_rows(connection):
             GoalRequest.model_validate_json(payload)
             if hashlib.sha256(payload.encode()).hexdigest() != digest:
                 return ("invalid_goal_payload",)
-        for table, model in (
-            ("goal_reports", GoalReport),
-            ("goal_checkpoints", GoalCheckpoint),
-            ("goal_evidence", GoalEvidence),
+        for (payload,) in connection.execute("SELECT payload_json FROM goal_reports"):
+            GoalReport.model_validate_json(payload)
+        for attempt_id, ordinal, payload in connection.execute(
+            "SELECT c.attempt_id,i.ordinal,c.payload_json FROM goal_checkpoints c "
+            "JOIN goal_iterations i ON i.attempt_id=c.attempt_id"
         ):
-            # Table names are this fixed owner list, never archive-controlled SQL.
-            for (payload,) in connection.execute("SELECT payload_json FROM " + table):
-                model.model_validate_json(payload)
+            checkpoint = GoalCheckpoint.model_validate_json(payload)
+            if checkpoint.id != attempt_id or checkpoint.ordinal != ordinal:
+                return ("invalid_goal_ownership",)
+        for evidence_id, goal_id, attempt_id, run_id, payload in connection.execute(
+            "SELECT e.id,e.goal_id,e.attempt_id,i.run_id,e.payload_json FROM goal_evidence e "
+            "JOIN goal_iterations i ON i.attempt_id=e.attempt_id"
+        ):
+            evidence = GoalEvidence.model_validate_json(payload)
+            if (
+                evidence.id,
+                evidence.goal_id,
+                evidence.attempt_id,
+                evidence.run_id,
+            ) != (evidence_id, goal_id, attempt_id, run_id):
+                return ("invalid_goal_ownership",)
     except (ValueError, TypeError):
         return ("invalid_goal_payload",)
     return ()
