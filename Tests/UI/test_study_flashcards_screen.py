@@ -1652,27 +1652,52 @@ async def test_two_awaited_card_list_rebuilds_do_not_interleave():
     scope = GatedCardListStudyScopeService()
     app = _study_app_for(scope)
 
+    async def until(condition, what: str) -> None:
+        for _ in range(250):
+            if condition():
+                return
+            await pilot.pause(0.02)
+        raise AssertionError(f"timed out waiting for {what}")
+
     async with app.run_test(size=(180, 60)) as pilot:
-        await pilot.pause(0.2)
+        await until(
+            lambda: bool(app.screen.query("#view-flashcards-btn")), "the Study screen"
+        )
         await pilot.click("#view-flashcards-btn")
-        await pilot.pause(0.3)
+        await until(lambda: bool(app.screen.query("#deck-select")), "Flashcards")
         window = app.screen.query_one(StudyWindow)
         controller = window.flashcards_controller
+        deck_select = app.screen.query_one("#deck-select", Select)
+        card_list = window.query_one("#card-list", ListView)
         scope.gate.set()
-        await pilot.pause(0.3)
-        app.screen.query_one("#deck-select", Select).value = "deck-local-1"
-        await pilot.pause(0.3)
+        await until(
+            lambda: "deck-local-1" in _non_blank_option_values(deck_select._options),
+            "the deck list",
+        )
+        deck_select.value = "deck-local-1"
+        # The deck change's own rebuild: one listing, then its rows.
+        await until(
+            lambda: scope.list_calls >= 1 and len(card_list.children) > 0,
+            "the deck's cards",
+        )
+        await pilot.pause()
 
-        # Hold both awaited rebuilds open together.
+        # Hold both awaited rebuilds open together. The gate stops the one
+        # that reaches the listing; the pauses then let the other run as far
+        # as it can -- to the lock, or without one through its own clear to
+        # the gated listing.
+        listed = scope.list_calls
         scope.gate.clear()
         first = asyncio.ensure_future(controller.refresh_cards())
         second = asyncio.ensure_future(controller.refresh_cards())
-        await pilot.pause(0.1)
+        await until(lambda: scope.list_calls > listed, "a rebuild to reach the listing")
+        await pilot.pause()
+        await pilot.pause()
         scope.gate.set()
         await asyncio.gather(first, second)
-        await pilot.pause(0.1)
+        await pilot.pause()
 
-        rows = len(window.query_one("#card-list", ListView).children)
+        rows = len(card_list.children)
         assert rows == len(controller.current_cards) > 0, (
             f"#card-list holds {rows} rows against "
             f"{len(controller.current_cards)} cards -- two rebuilds interleaved"
