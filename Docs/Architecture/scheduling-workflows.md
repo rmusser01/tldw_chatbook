@@ -17,6 +17,7 @@ This document describes the unified scheduler (reminders, watchlist checks, brie
 | Server sync | `Scheduling/services/sync_engine.py`, `server_client.py` | replays `pending_mutations`; typed server error hierarchy |
 | Automations | `Scheduling/automation_execution.py`, `automation_health.py`, `recurring_question_scope.py` | `execute_recurring_question` = library RAG search + grounded answer; read-time health (never persisted) |
 | Projections | `Scheduling/services/watchlist_projection.py`, `briefing_projection.py` | synthetic tasks from SubscriptionsDB cadences |
+| Dreams | `Scheduling/services/dreams_projection.py`, `Scheduling/scheduler/handlers/dream_track_handler.py`, `Dreams/track_service.py` | `DreamsProjection`, `DreamTrackHandler`, `run_track_check` — local projected discovery/question-track jobs; tracked runs and due clocks live in DreamsDB |
 | Liveness | `Scheduling/scheduler_heartbeat.py`, `tldw_chatbook/emergency_stop.py` | heartbeat JSON each tick; global emergency-stop file checked before dispatch (unreadable reads as **stopped** — fail-safe) |
 | UI | `UI/Screens/scheduling/schedules_workbench.py` + siblings | three-pane workbench, results inbox, conflicts tab, sync status |
 | Workflows | `UI/Screens/workflows_screen.py`, `Workflows/` package | local authoring surface + authoring/document/draft/session services — see below |
@@ -25,15 +26,18 @@ This document describes the unified scheduler (reminders, watchlist checks, brie
 
 1. **Define**: the workbench form → `SchedulingService.create_reminder` / `save_definition` → DB rows (`schedule_kind` one_time/cron for reminders; a `schedule` JSON dict for automations). Mutations call `request_reload()` so a new task arms on the next tick rather than the next periodic reload.
 2. **Arm**: every poll interval (30 s) the loop freezes `now` and pops everything due (`next_run_at <= now`); server-scoped rows (`owner_id` starting `server:`) and rows in dormant transfer states are refused at both queue load and dispatch time.
-3. **Execute**: emergency-stop check → run-ledger row (reminder/briefing types) → optional handler preflight (bounded 10 s) → the handler awaited inline under `wait_for` with the effective timeout (row override > 300 s default; ≤ 0 disables). Long handlers (briefings, automations) spawn `asyncio.Task`s held in strong-ref sets so a multi-minute LLM call cannot stall the serial tick; an overlap guard degrades too-frequent intervals to back-to-back runs, never concurrent.
-4. **Record**: `mark_reminder_dispatched` advances the schedule from **now** (missed slots skipped), records `missed_at`/`missed_count` past the grace window with an attributed cause (`away`/`busy`/`stalled`), closes the ledger row, and dispatches notifications. Startup reconciliation fails `running` ledger rows left by a prior process.
+3. **Execute**: emergency-stop check → run-ledger row (reminder/briefing types) → optional handler preflight (bounded 10 s) → the handler awaited inline under `wait_for` with the effective timeout (row override > 300 s default; ≤ 0 disables). Long handlers (briefings, automations) spawn `asyncio.Task`s held in strong-ref sets so a multi-minute LLM call cannot stall the serial tick; an overlap guard degrades too-frequent intervals to back-to-back runs, never concurrent. For detached jobs, this timeout bounds the awaited handler dispatch, not the spawned job's execution lifetime.
+4. **Record reminders**: `mark_reminder_dispatched` advances the schedule from **now** (missed slots skipped), records `missed_at`/`missed_count` past the grace window with an attributed cause (`away`/`busy`/`stalled`), closes the ledger row, and dispatches notifications. Startup reconciliation fails `running` ledger rows left by a prior process.
 
 ## What can be scheduled
 
 - **Reminders** — one-time or cron-recurring; notification dispatch.
 - **Watchlist checks and briefings** — projected from SubscriptionsDB (see [subscriptions-watchlists.md](./subscriptions-watchlists.md)); flag-gated.
 - **Automations** — family `recurring_question`: a library RAG search plus a grounded answer on a cadence; findings land in `automation_results` and the results-tab inbox. Family `agent_task` exists in the enum only — no executor is registered.
+- **Dreams discovery and question-track checks** — local, opt-in `[dreams]` projections; see below.
 - **Meetings are not schedulable** — no handler, no projection, no task type.
+
+`DreamsProjection` reads `[dreams] enabled` live and emits the local `dreams:cycle` task plus one `dream_track:<id>` task per **active question** item. Page-tracking uses the existing subscription/watchlist projection; paused, retired and page items emit no Dreams track task. `app_service_wiring.py` attaches the projection and `dream_track_check` handler in the same post-`_ui_ready` slice. `DreamTrackHandler` spawns checks into a strong-reference task set so they do not hold up the serial tick; `app_lifecycle.py` cancels them through the handler's separate bounded shutdown seam. `run_track_check` guards per-item overlap and records track runs plus `last_checked` in DreamsDB; that persisted clock drives the next projection instead of `mark_reminder_dispatched`.
 
 ## Server ownership and transfer (ADR-077/112)
 
@@ -62,7 +66,7 @@ Specs: `Docs/superpowers/specs/2026-09-14-workflows-authoring-compatibility.md`,
 | Case | Behavior |
 | --- | --- |
 | Emergency-stop file unreadable | Reads as stopped — holds work (fail-safe) |
-| Handler timeout | Cancels the handler, records `timed_out`, **schedule still advances** |
+| Handler timeout | Cancels the awaited handler; **reminder schedules still advance**. This does not bound work already detached into a spawned task. |
 | Failed preflight | Distinct outcome + grouped incident; does **not** consume the occurrence (one-time stays armed) |
 | Heartbeat/ledger/incident write failure | Never breaks dispatch (guarded, debug-logged) |
 | Callback breakage | `on_reminder_dispatched` / `on_queue_changed` failures never fail a dispatch |
@@ -70,11 +74,11 @@ Specs: `Docs/superpowers/specs/2026-09-14-workflows-authoring-compatibility.md`,
 
 ## Governing decisions
 
-ADR-018 (`018-local-server-hybrid-scheduled-tasks.md`), ADR-019 (watchlist scheduler migration), ADR-077 (`077-server-offloaded-scheduled-agent-tasks.md`), ADR-099 (`099-schedule-editor-shape.md`), ADR-112 (`112-per-task-schedule-ownership-transfer.md`), ADR-116 (`116-schedules-inspector-editing.md`), ADR-138 (workflow definitions and session execution). User guide: `Docs/User_Guide/schedules.md` (the authoritative behavior copy for liveness, preflight, incidents, lateness, run-now, transfers, timeouts).
+ADR-018 (`018-local-server-hybrid-scheduled-tasks.md`), ADR-019 (watchlist scheduler migration), ADR-077 (`077-server-offloaded-scheduled-agent-tasks.md`), ADR-099 (`099-schedule-editor-shape.md`), ADR-112 (`112-per-task-schedule-ownership-transfer.md`), ADR-116 (`116-schedules-inspector-editing.md`), ADR-138 (workflow definitions and session execution), ADR-196 (`196-dreams-daily-discovery-and-tracking.md`; Dreams discovery/tracking). User guide: `Docs/User_Guide/schedules.md` (the authoritative behavior copy for liveness, preflight, incidents, lateness, run-now, transfers, timeouts).
 
 ## Verified gotchas
 
 1. The scheduler worker is a **coroutine** worker (never `thread=True`) — the watchlists in-flight guard is lock-free on the one-event-loop invariant.
 2. Missed-fire cause attribution is falsifiable: `busy` is backed by the previous tick's measured dispatch span.
 3. `automation_health` is read-time only; persisting it would drift from the run ledger.
-4. A handler timeout advances the schedule — a wedged handler can burn occurrences by design (bounded by the timeout).
+4. A reminder handler timeout advances its schedule — a wedged reminder handler can burn occurrences by design (bounded by the handler timeout).
