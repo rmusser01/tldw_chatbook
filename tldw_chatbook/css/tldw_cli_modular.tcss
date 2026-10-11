@@ -12740,8 +12740,6 @@ VerticalScroll.media-content-right-pane > Markdown {
 #snapshot-details,
 #snapshot-preferences-result,
 #snapshot-enabled,
-#settings-snapshot-enabled,
-#settings-snapshot-controls CollapsibleTitle,
 #llamacpp-snapshot-manager CollapsibleTitle,
 #settings-snapshot-controls .settings-help-copy,
 #settings-snapshot-controls .settings-input-label {
@@ -12811,11 +12809,6 @@ VerticalScroll.media-content-right-pane > Markdown {
 
 #llamacpp-snapshot-manager .snapshot-keep-label {
     width: $ds-size-12;
-}
-
-#settings-snapshot-controls {
-    height: auto;
-    margin-bottom: $ds-space-1;
 }
 
 .gguf-source-mode-row {
