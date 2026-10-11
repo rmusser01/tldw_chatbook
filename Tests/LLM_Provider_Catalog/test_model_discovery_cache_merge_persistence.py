@@ -372,10 +372,55 @@ def test_boolean_vision_flags_are_read():
     """Fireworks gives ``supports_image_input``; a ``capabilities`` block may nest ``vision``."""
     assert _status({"supports_image_input": True}) == "inferred"
     assert _status({"supports_image_input": False}) == "unknown"
-    assert _status({"supports_image_input": "true"}) == "unknown"
     assert _status({"capabilities": {"vision": True}}) == "inferred"
     assert _status({"capabilities": {"vision": False}}) == "unknown"
     assert _status({"capabilities": ["vision"]}) == "unknown"
+
+
+def test_a_capabilities_block_counts_only_its_vision_entries():
+    """Other true capabilities say nothing about images."""
+    assert (
+        _status(
+            {
+                "capabilities": {
+                    "completion_chat": True,
+                    "function_calling": True,
+                    "vision": False,
+                }
+            }
+        )
+        == "unknown"
+    )
+    assert (
+        _status({"capabilities": {"structured_outputs": {"supported": True}}})
+        == "unknown"
+    )
+
+
+def test_anthropic_capabilities_image_input_is_read():
+    """Anthropic's Models API: ``capabilities.image_input.supported``."""
+    assert _status({"capabilities": {"image_input": {"supported": True}}}) == "inferred"
+    assert _status({"capabilities": {"image_input": {"supported": False}}}) == "unknown"
+    assert _status({"capabilities": {"image_input": True}}) == "unknown"
+    assert _status({"capabilities": {"image_input": {}}}) == "unknown"
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"vision": 1},
+        {"vision": "true"},
+        {"supports_image_input": "true"},
+        {"supports_image_input": 1},
+        {"capabilities": {"vision": "false"}},
+        {"capabilities": {"vision": 1}},
+        {"capabilities": {"image_input": {"supported": "true"}}},
+        {"capabilities": {"image_input": {"supported": 1}}},
+    ],
+)
+def test_a_flag_counts_only_when_it_is_exactly_true(metadata: dict):
+    """A string or a number is not a yes: ``"false"`` is truthy."""
+    assert _status(metadata) == "unknown"
 
 
 def test_flat_list_hints_still_infer_vision():
@@ -411,8 +456,27 @@ def test_any_one_hint_is_enough():
         },
         {"supports_image_input": True},
         {"capabilities": {"completion_chat": True, "vision": True}},
+        {
+            "capabilities": {
+                "image_input": {"supported": True},
+                "structured_outputs": {"supported": True},
+                "thinking": {
+                    "supported": True,
+                    "types": {
+                        "enabled": {"supported": False},
+                        "adaptive": {"supported": True},
+                    },
+                },
+            }
+        },
     ],
-    ids=["vercel-mapping", "openrouter-architecture", "fireworks-flag", "nested-flag"],
+    ids=[
+        "vercel-mapping",
+        "openrouter-architecture",
+        "fireworks-flag",
+        "mistral-capabilities",
+        "anthropic-capabilities",
+    ],
 )
 def test_a_listed_models_hint_reaches_the_merged_entry(hint: dict):
     """The hint must survive the normaliser's bounded, frozen metadata and the merge."""

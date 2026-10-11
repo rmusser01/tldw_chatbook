@@ -1236,11 +1236,48 @@ def test_fields_that_only_overflow_together_lose_the_largest_and_keep_the_vision
     )
 
     assert set(discovered.metadata_raw_safe) == {"id", "modalities", "extras"}
-    assert tuple(discovered.metadata_raw_safe["modalities"]["input"]) == ("text", "image")
+    assert tuple(discovered.metadata_raw_safe["modalities"]["input"]) == (
+        "text",
+        "image",
+    )
     # Kept AND read: the hint still marks the model as vision-capable (TASK-34402).
     assert (
         resolve_discovered_model_capability_status(
             "Custom", discovered.model_id, discovered.metadata_raw_safe
+        )
+        == "inferred"
+    )
+
+
+def test_shrinking_a_listing_drops_the_capability_hint_last():
+    """TASK-34402: the hint can be one of the largest fields and must outlive the rest.
+
+    200 two-item lists and a ``capabilities`` block overflow the item bound
+    together. Largest-first eviction used to take the block before any list.
+    """
+    model = {
+        "id": "vendor/many-small-fields",
+        "capabilities": {
+            "completion_chat": True,
+            "function_calling": True,
+            "fine_tuning": False,
+            "vision": True,
+        },
+        **{f"field_{n:03d}": [n, n] for n in range(200)},
+    }
+    (discovered,) = normalize_models_response(
+        {"data": [model]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    kept = discovered.metadata_raw_safe
+    assert "capabilities" in kept and 1 < len(kept) < len(model)
+    assert (
+        resolve_discovered_model_capability_status(
+            "Custom", discovered.model_id, kept
         )
         == "inferred"
     )

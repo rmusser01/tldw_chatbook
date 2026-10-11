@@ -45,6 +45,20 @@ def _capabilities_from_resolver(
 
 _IMAGE_MODALITIES = frozenset({"image", "images", "vision", "visual"})
 
+#: The top-level listing fields :func:`_metadata_has_positive_capability`
+#: reads. The listing normaliser drops these last when a model's metadata has
+#: to shrink to fit its bounds, so an oversized listing keeps its hint.
+CAPABILITY_HINT_KEYS = frozenset(
+    {
+        "vision",
+        "supports_image_input",
+        "capabilities",
+        "modalities",
+        "input_modalities",
+        "architecture",
+    }
+)
+
 
 def _lists_image(modalities: object) -> bool:
     """Return whether a listing's modality list names images."""
@@ -55,6 +69,21 @@ def _lists_image(modalities: object) -> bool:
     )
 
 
+def _capabilities_block_has_vision(capabilities: object) -> bool:
+    """Return whether a listing's ``capabilities`` block says "takes images".
+
+    Two spellings: a ``vision`` flag (Mistral's API reference) and
+    ``image_input: {"supported": true}`` (Anthropic's Models API). Neither is
+    captured in this repo; both are read from the providers' documentation.
+    """
+    if not isinstance(capabilities, Mapping):
+        return False
+    if capabilities.get("vision") is True:
+        return True
+    image_input = capabilities.get("image_input")
+    return isinstance(image_input, Mapping) and image_input.get("supported") is True
+
+
 def _metadata_has_positive_capability(metadata: Mapping[str, Any]) -> bool:
     """Return whether safe discovery metadata suggests positive capabilities.
 
@@ -62,8 +91,8 @@ def _metadata_has_positive_capability(metadata: Mapping[str, Any]) -> bool:
     enough (TASK-34402):
 
     - a ``vision`` or ``supports_image_input`` flag (the latter is
-      Fireworks'), or a ``vision`` flag nested under ``capabilities`` (the
-      shape Mistral documents; no capture of it is in this repo);
+      Fireworks');
+    - a ``capabilities`` block (see :func:`_capabilities_block_has_vision`);
     - an ``input_modalities`` list, top-level or nested under
       ``architecture`` (OpenRouter);
     - ``modalities``, as Vercel's ``{"input": [...], "output": [...]}``
@@ -72,12 +101,11 @@ def _metadata_has_positive_capability(metadata: Mapping[str, Any]) -> bool:
     A flat ``modalities`` list does not say input or output, so an entry in
     it is read as input, as it always was. Wherever a listing does tell the
     two apart, a model that outputs images but takes text is not
-    vision-capable.
+    vision-capable. Flags count only when they are exactly ``True``.
     """
     if metadata.get("vision") is True or metadata.get("supports_image_input") is True:
         return True
-    capabilities = metadata.get("capabilities")
-    if isinstance(capabilities, Mapping) and capabilities.get("vision") is True:
+    if _capabilities_block_has_vision(metadata.get("capabilities")):
         return True
     modalities = metadata.get("modalities")
     if isinstance(modalities, Mapping):

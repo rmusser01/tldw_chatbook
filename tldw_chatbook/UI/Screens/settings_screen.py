@@ -15561,7 +15561,7 @@ class SettingsScreen(BaseAppScreen):
             capability = str(getattr(model, "capability_status", "unknown"))
             if capability == "unknown":
                 # TASK-34402: a freshly listed model has no status of its own
-                # yet; read it from its listing, as the model pickers do.
+                # yet; read it from its listing metadata.
                 capability = resolve_discovered_model_capability_status(
                     str(getattr(model, "provider", "") or ""),
                     model_id,

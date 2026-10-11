@@ -34,6 +34,9 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     ModelDiscoveryError,
     ModelDiscoveryResult,
 )
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_merge import (
+    CAPABILITY_HINT_KEYS,
+)
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
@@ -606,7 +609,8 @@ def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
     Vercel's tiered pricing (270 items against a 256-item bound) listed none
     of its 407 models (TASK-34363). A top-level field that breaks a bound on
     its own is dropped first; if the rest together still exceed a bound, the
-    largest fields go, biggest first, until they fit. Nothing unbounded is
+    largest fields go, biggest first, until they fit, and a field the
+    capability inference reads goes only after every other. Nothing unbounded is
     ever kept. The work is bounded: a model with more top-level fields than
     the item bound cannot fit and gets no metadata, and each surviving field
     is measured once.
@@ -630,7 +634,16 @@ def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
         except ValueError:
             continue
         kept[key] = value
-    largest_first = sorted(kept, key=lambda name: len(json.dumps(kept[name])), reverse=True)
+    # Largest first, but the fields capability inference reads go last
+    # (TASK-34402): shrinking a listing should not cost the model its hint.
+    largest_first = sorted(
+        kept,
+        key=lambda name: (
+            name not in CAPABILITY_HINT_KEYS,
+            len(json.dumps(kept[name])),
+        ),
+        reverse=True,
+    )
     for name in largest_first:
         try:
             return _safe_model_metadata(kept)
