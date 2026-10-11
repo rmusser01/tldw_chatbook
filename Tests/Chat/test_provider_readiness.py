@@ -2113,15 +2113,43 @@ def test_loader_names_the_tables_it_filled_from_the_legacy_api_section(
     Settings save can write a copied key into the table. It is always present,
     and empty when the env var outranks the legacy key (nothing is copied) or
     the table has its own key.
+
+    The loaded settings then go to the builder that reads the marker, with the
+    credential source Settings would save for the row. Each side spells the
+    marker's name itself, so only this join fails when one of them renames it.
     """
+    from tldw_chatbook.Chat.provider_setup_persistence import (
+        ProviderSetupDraft,
+        build_provider_setup_mutation,
+    )
+
     _clear_provider_env(monkeypatch)
     if env_key is not None:
         monkeypatch.setenv("OPENAI_API_KEY", env_key)
     with _real_config(tmp_path, monkeypatch, toml_text):
         settings = config_mod.load_settings()
+        source = get_provider_readiness("openai", settings).api_key_source or ""
 
     assert settings["legacy_api_key_providers"] == expected
     assert "sk-legacy-only-33001-15" not in repr(settings["legacy_api_key_providers"])
+
+    from_env = source.startswith("env:")
+    assert from_env is (env_key is not None)
+    mutation = build_provider_setup_mutation(
+        ProviderSetupDraft(
+            provider="openai",
+            model="gpt-4.1-mini",
+            endpoint="",
+            credential_source="environment" if from_env else "stored",
+            credential_revision=0,
+            draft_generation=1,
+            credential_env_var="OPENAI_API_KEY" if from_env else None,
+        ),
+        settings,
+        keep_stored_credential=True,
+    )
+    table = mutation.section_values["api_settings.openai"]
+    assert table.get("api_key") == ("sk-legacy-only-33001-15" if expected else None)
 
 
 # --- TASK-33511: engine presets' documented env vars without a settings table ---
