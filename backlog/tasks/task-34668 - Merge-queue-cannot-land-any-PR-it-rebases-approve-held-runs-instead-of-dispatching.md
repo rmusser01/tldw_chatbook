@@ -1,11 +1,11 @@
 ---
 id: TASK-34668
 title: 'Merge queue cannot land any PR it rebases: approve held runs instead of dispatching'
-status: In Progress
+status: Done
 assignee:
 - '@claude'
 created_date: 2026-10-07 02:30
-updated_date: 2026-10-11 01:45
+updated_date: 2026-10-11 02:00
 labels:
 - ci
 - merge-queue
@@ -27,7 +27,7 @@ The in-repo merge queue dispatches the required check after rebasing a PR, but a
 - [x] #3 A first failure re-runs the failed run in its own check suite; when the deciding tick is the failed run, a woken queue run waits for it to complete and re-runs it; a run already live again is left alone
 - [x] #4 A GitHub outage fails the queue run without disarming any PR; only a re-run refusal or having no CI run to start evicts
 - [x] #5 CLAUDE.md, AGENTS.md, the spec and ADR-218 describe the approve design with the 2026-10-06 evidence
-- [ ] #6 Before the queue is re-enabled, one throwaway PR is merged by the queue end to end, and the owner approves re-enabling
+- [x] #6 Before the queue is re-enabled, one throwaway PR is merged by the queue end to end, and the owner approves re-enabling
 <!-- AC:END -->
 
 ## Implementation Notes
@@ -129,4 +129,5 @@ Incident: the queue was meant to be on for that one PR. The session stalled and 
 Found on that traffic and filed: TASK-34788 (a PR that changes a workflow file cannot be queue-rebased), TASK-34789 (flaky required check: 7 of about 11 rebased heads needed a retry), TASK-34790 (one failed queue run per merge from the racing loser; a double-posted warning).
 
 AC 6 stays open: the queue is off, and re-enabling waits for the owner.
+Owner approved re-enabling on 2026-10-11 ('Turn it on'), with the known costs until TASK-34788 and TASK-34789 land: a PR that hits two flaky failures is evicted and must be re-armed, and a PR that changes a workflow file needs a hand rebase. AC 6 is met; MERGE_QUEUE is set on with this PR.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
