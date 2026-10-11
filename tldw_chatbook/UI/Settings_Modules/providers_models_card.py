@@ -1,11 +1,13 @@
 """The Settings ▸ Providers & Models card (TASK-33007.1).
 
-The card's composition, moved verbatim out of ``SettingsScreen`` (DESIGN.md's
-One Home Rule). Only composition lives here: the card's handlers, workers and
-state stay on the screen, which still receives every event the card's
-widgets bubble (moving them is task-1378's remaining scope).
+What the card composes and what its rows say (DESIGN.md's One Home Rule):
+Connect, Default model, Model defaults' host and Advanced, the Inspector's
+blocks, each row's Source word and help, and the widgets the card owns
+(the Provider filter, the API key field, the Default model picker and the
+Applies-to line). The draft, Save, Revert and the handlers for the events
+these widgets bubble stay on the screen (task-1378's remaining scope).
 
-``settings_screen`` imports this module inside ``_render_provider_detail``,
+``settings_screen`` imports this module inside the functions that use it,
 so the Settings route's pre-import payload does not grow (ADR-097); by then
 ``settings_screen`` is fully loaded, which is what makes the import of its
 constants below safe.
@@ -93,6 +95,7 @@ from ..Screens.settings_screen import (
     ProviderEndpointURLValidator,
     SettingsCategoryId,
     SettingsRegion,
+    SettingsResultLine,
     SettingsURLInput,
     _anthropic_auth_source_options,
     _anthropic_auth_sources,
@@ -1780,8 +1783,8 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             ),
         )
         # Capture fix 3: a Connect row, shown only while a restored OpenAI
-        # connection awaits review; the read is cached (at mount, and on a
-        # switch to OpenAI), so a paint never touches storage.
+        # connection awaits review; the answer is read off the UI thread and
+        # cached on the screen, so a paint never touches storage.
         is_openai = provider_config_key(provider) == "openai"
         read_openai_reconnect_once(screen, provider)
         reconnect_row = Horizontal(
@@ -1833,8 +1836,6 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             # is not a Tab stop between Endpoint and Model; a click still runs it.
             test_button.can_focus = False
             yield test_button
-        from ..Screens.settings_screen import SettingsResultLine
-
         yield SettingsResultLine(
             screen._provider_save_result,
             id="settings-provider-save-result",
@@ -1864,7 +1865,6 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             providers_models = getattr(app_instance, "providers_models", None)
             model_picker = DefaultModelPicker(
                 id="settings-model-picker",
-                provider_select_id="#settings-provider-value",
                 current_model=model,
                 # The screen's app owns both, as for every Settings read.
                 providers_models=(
@@ -2138,8 +2138,8 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                     )
         # task-34384 (issue #365): quit-time session usage summary, ported
         # into Advanced when Phase 7 was rebased onto dev. Instant-apply like
-        # Catalog refresh; the pure helper's no-op guard keeps per-keystroke
-        # Input.Changed off the disk.
+        # Catalog refresh: the screen's handlers write it (ruling C8: the
+        # checkbox at once, the duration when submitted or on leaving it).
         with (
             advanced_disclosure(screen, SESSION_SUMMARY_DISCLOSURE_ID),
             Vertical(
