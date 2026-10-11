@@ -12,7 +12,6 @@ from importlib import import_module
 _SCREEN_EXPORTS = {
     "ChatScreen": ".chat_screen",
     "EvalsScreen": ".evals_screen",
-    "ToolsSettingsScreen": ".tools_settings_screen",
     "LLMScreen": ".llm_screen",
     "LogsScreen": ".logs_screen",
     "StatsScreen": ".stats_screen",
@@ -21,7 +20,6 @@ _SCREEN_EXPORTS = {
 __all__ = [
     "ChatScreen",
     "EvalsScreen",
-    "ToolsSettingsScreen",
     "LLMScreen",
     "LogsScreen",
     "StatsScreen",

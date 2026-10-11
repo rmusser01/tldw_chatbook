@@ -160,7 +160,6 @@ def test_production_routes_share_the_canonical_local_note_authority() -> None:
     "relative_path",
     (
         "UI/Screens/library_screen.py",
-        "UI/Tools_Settings_Window.py",
         "UI/Wizards/FirstRunSetupWizard.py",
         "UI/Wizards/first_run_setup_state.py",
         # TASK-34100.1 moved the wizard's steps and their shared widgets out

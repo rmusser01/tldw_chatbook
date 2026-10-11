@@ -110,11 +110,6 @@ EXPECTED_PARENT_CREATORS = {
         "self.db_path.parent.mkdir(parents=True, exist_ok=True)",
     ),
     (
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        "ToolsSettingsWindow._backup_worker",
-        "backup_dir.mkdir(parents=True, exist_ok=True)",
-    ),
-    (
         "tldw_chatbook/Evals/eval_orchestrator",
         "EvaluationOrchestrator._initialize_database",
         "Path(db_path).parent.mkdir(parents=True, exist_ok=True)",
@@ -749,10 +744,15 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C89 validates recovered-media restore edges against staged catalog
         # rows and archive-relative payload topology under the existing owner.
         # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
-        for number in range(1, 95) if number not in {10, 75}
+        # C08/C09 were the legacy settings window's VACUUM and integrity
+        # workers; they left with the window (TASK-33244).
+        for number in range(1, 95) if number not in {8, 9, 10, 75}
     ]
     assert [row["id"] for row in backup_rows] == [
-        f"B{number:02d}" for number in range(1, 39) if number not in {10, 11, 12, 16, 34}
+        # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).
+        f"B{number:02d}"
+        for number in range(1, 39)
+        if number not in {4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 34}
     ]
 
 
@@ -1356,7 +1356,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
             "backup_connection_to_private": 3,
             "backup_open_connections_to_private": 2,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 26,
+            "copy_private_sqlite": 20,
             "migrate_profile_store_to_candidate": 1,
         }
     )
@@ -1442,13 +1442,6 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
         for source_path in PRODUCTION_ROOT.rglob("*.py")
     )
 
-    settings_path = PROJECT_ROOT / "tldw_chatbook/UI/Tools_Settings_Window.py"
-    settings_copy_count = sum(
-        isinstance(node, ast.Call) and _is_named_call(node, "shutil", "copy2")
-        for node in ast.walk(_parse_source(settings_path))
-    )
-    assert settings_copy_count == 0
-
     expected_calls = Counter(
         {
             ("tldw_chatbook/Backup_Recovery/recovered_media", "_RecoveredAdapter.capture", "copy_private_sqlite"): 1,
@@ -1491,11 +1484,6 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
                 "tldw_chatbook/TTS/profile_migration_candidate",
                 "ProfileMigrationBoundarySnapshot.backup_to",
                 "backup_profile_migration_boundary",
-            ): 1,
-            (
-                "tldw_chatbook/UI/Tools_Settings_Window",
-                "ToolsSettingsWindow._backup_worker",
-                "copy_private_sqlite",
             ): 1,
         }
     )

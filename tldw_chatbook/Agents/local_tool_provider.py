@@ -117,11 +117,10 @@ LOCAL_SERVER_LABEL = "Local workspace, web, and Watchlists"
 
 #: task-3240: relocated here from UI/Tools_Settings_Window.py -- this module
 #: is web_deep_search's actual runtime consumer (the [tools] gate read just
-#: below), which used to re-type the literal. Tools_Settings_Window.py now
-#: imports the constant from here instead of defining it; Agents/
-#: builtin_tool_gate.py's all_tool_gates() enumerator does too -- both reads
-#: (and the write each surface's Save button performs) share this single
-#: name, so they cannot silently drift apart.
+#: below), which used to re-type the literal. That window is gone
+#: (TASK-33244); Agents/builtin_tool_gate.py's all_tool_gates() enumerator
+#: imports the constant from here, so the gate's read and the hub's write
+#: share this single name and cannot silently drift apart.
 WEB_DEEP_SEARCH_GATE_KEY = "web_deep_search_enabled"
 
 #: PRD Feature A (A12): `[tools] ask_user_enabled`, default ON -- a deliberate

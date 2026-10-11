@@ -494,22 +494,6 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_FILE,
         "Server parity repositories use file-backed storage below this parent.",
     ),
-    "settings.bulk_backup": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_AND_READ_ONLY,
-        "Settings bulk backup reads a checked source into a private target.",
-        centralized_backup_allowed=True,
-    ),
-    "settings.integrity": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _READ_ONLY_URI,
-        "Settings integrity checks require validated read-only access.",
-    ),
-    "settings.vacuum": SQLiteOwnerPolicy(
-        "tldw_chatbook/UI/Tools_Settings_Window",
-        _PRIVATE_FILE,
-        "Settings VACUUM requires a checked writable private database.",
-    ),
     "sync.notes_mirror": SQLiteOwnerPolicy(
         "tldw_chatbook/Sync_Interop/notes_mirror",
         _PRIVATE_OR_MEMORY,

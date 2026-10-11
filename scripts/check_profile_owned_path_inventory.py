@@ -676,22 +676,6 @@ APPROVED_EXCEPTIONS: tuple[ExceptionRule, ...] = (
         "reusable Higgs voice configuration artifact directory",
     ),
     ExceptionRule(
-        "tldw_chatbook/UI/Tools_Settings_Window.py",
-        "function:_compose_database_config_form",
-        "literal:~/.local/share/tldw_cli/",
-        1,
-        Disposition.PERSISTED_DEFAULT,
-        "shipped Settings storage default displayed in the database form",
-    ),
-    ExceptionRule(
-        "tldw_chatbook/UI/Tools_Settings_Window.py",
-        "function:_reset_database_config_form",
-        "literal:~/.local/share/tldw_cli/",
-        1,
-        Disposition.PERSISTED_DEFAULT,
-        "shipped Settings storage default restored by the database form",
-    ),
-    ExceptionRule(
         "tldw_chatbook/UI/Voice_Cloning_Window.py",
         "function:_initialize_backends",
         "literal:~/.config/tldw_cli/chatterbox_voices",
