@@ -451,7 +451,9 @@ class _Candidates:
         real_open, real_close = os.open, os.close
 
         def tracked_open(path, flags, mode=0o777, *, dir_fd=None):
-            candidate = bool(flags & os.O_CREAT) and ".tmp-" in os.fspath(path)
+            candidate = (
+                isinstance(path, str) and bool(flags & os.O_CREAT) and ".tmp-" in path
+            )
             if candidate:
                 self.attempts += 1
                 if self.fail_create and self.attempts == self.fail_create[0]:
@@ -617,6 +619,10 @@ def test_asking_stops_at_the_bound_and_no_more_descriptors_are_held(
 
     def claimed(device: int, inode: int) -> bool:
         asked.append((device, inode))
+        # Fail at once if the bound is gone, instead of looping to the timeout.
+        assert len(asked) <= sync_paths._MAX_CLAIMED_CANDIDATES + 2, (
+            "asked past the bound"
+        )
         names.append(len(_candidate_names(root_path)))
         return True
 
@@ -752,8 +758,9 @@ def test_a_refused_name_that_cannot_be_removed_ends_the_search(
 
             def sticky(path, *, dir_fd=None):
                 name = os.fspath(path)
-                if not stuck and name in held.created:
-                    stuck.append(name)
+                if name in stuck or (not stuck and name in held.created):
+                    if name not in stuck:
+                        stuck.append(name)
                     raise OSError(errno.EPERM, "unlink refused")
                 return real_unlink(path, dir_fd=dir_fd)
 
@@ -765,6 +772,124 @@ def test_a_refused_name_that_cannot_be_removed_ends_the_search(
     assert held.open == {}
     assert target.read_bytes() == b"after"
     assert _candidate_names(root_path) == stuck
+
+
+def test_a_name_that_only_goes_once_its_file_is_closed_is_not_stranded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Some filesystems will not unlink an open file. The refused candidate
+    is then closed and removed, and the write goes ahead on the candidate in
+    hand: no name is left behind at all."""
+
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md"
+    target.write_bytes(b"before")
+    asked: list[int] = []
+    real_unlink = os.unlink
+    refused_while_open: list[str] = []
+
+    def claimed(_device: int, inode: int) -> bool:
+        asked.append(inode)
+        return True
+
+    with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
+        observed = root.read_bytes("note.md")
+        with monkeypatch.context() as patch:
+            held = _Candidates(patch)
+
+            def needs_closed(path, *, dir_fd=None):
+                name = os.fspath(path)
+                if name in held.open.values():
+                    refused_while_open.append(name)
+                    raise OSError(errno.EBUSY, "file is open")
+                return real_unlink(path, dir_fd=dir_fd)
+
+            patch.setattr(sync_paths.os, "unlink", needs_closed)
+            root.replace_bytes("note.md", b"after", expected=observed, mode=0o600)
+
+    assert len(refused_while_open) == 1 and len(asked) == 1
+    assert held.open == {}
+    assert target.read_bytes() == b"after"
+    assert _candidate_names(root_path) == []
+
+
+def test_an_abandoned_candidate_is_closed_before_its_name_is_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The claim check raises with a candidate in hand, on a filesystem that
+    will not unlink an open file: the candidate must still not be left behind."""
+
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md"
+    target.write_bytes(b"before")
+    real_unlink = os.unlink
+
+    def claimed(_device: int, _inode: int) -> bool:
+        raise RuntimeError("the store went away")
+
+    with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
+        observed = root.read_bytes("note.md")
+        with monkeypatch.context() as patch:
+            held = _Candidates(patch)
+
+            def needs_closed(path, *, dir_fd=None):
+                if os.fspath(path) in held.open.values():
+                    raise OSError(errno.EBUSY, "file is open")
+                return real_unlink(path, dir_fd=dir_fd)
+
+            patch.setattr(sync_paths.os, "unlink", needs_closed)
+            with pytest.raises(RuntimeError, match="the store went away"):
+                root.replace_bytes("note.md", b"after", expected=observed, mode=0o600)
+
+    assert len(held.created) == 1
+    assert held.open == {}
+    assert target.read_bytes() == b"before"
+    assert _candidate_names(root_path) == []
+
+
+def test_a_refused_name_that_is_already_gone_does_not_end_the_search(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing is stranded when the name has vanished, and its descriptor
+    still holds the number, so the search goes on to an unclaimed candidate."""
+
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md"
+    target.write_bytes(b"before")
+    asked: list[int] = []
+    real_unlink = os.unlink
+    vanished: list[str] = []
+
+    def claimed(_device: int, inode: int) -> bool:
+        asked.append(inode)
+        return len(asked) < 3
+
+    with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
+        observed = root.read_bytes("note.md")
+        with monkeypatch.context() as patch:
+            held = _Candidates(patch)
+
+            def gone(path, *, dir_fd=None):
+                name = os.fspath(path)
+                real_unlink(path, dir_fd=dir_fd)
+                if not vanished and name in held.created:
+                    vanished.append(name)
+                    raise FileNotFoundError(errno.ENOENT, "already gone")
+
+            patch.setattr(sync_paths.os, "unlink", gone)
+            root.replace_bytes("note.md", b"after", expected=observed, mode=0o600)
+
+    assert vanished and len(asked) == 3, asked
+    assert len(set(asked)) == 3, "a refused number was handed out again"
+    assert held.open == {}
+    assert target.read_bytes() == b"after"
+    assert _candidate_names(root_path) == []
 
 
 def test_a_filesystem_that_repeats_a_refused_number_is_not_searched(
@@ -787,6 +912,8 @@ def test_a_filesystem_that_repeats_a_refused_number_is_not_searched(
 
     def claimed(_device: int, inode: int) -> bool:
         asked.append(inode)
+        # Fail at once if the repeat is not noticed, instead of looping to the timeout.
+        assert len(asked) <= 3, "the search went on asking about a repeated number"
         return True
 
     with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:

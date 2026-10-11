@@ -865,8 +865,8 @@ class PinnedSyncRoot:
           is still held, so holding does not work on this filesystem;
         * the next candidate cannot be created (no space, a quota, no
           descriptors left): the spare is used;
-        * the refused candidate before it cannot be unlinked: asking on would
-          strand one more name per refusal.
+        * the refused candidate before it cannot be unlinked, even once it is
+          closed: asking on would strand one more name per refusal.
 
         What can still fail a write that went ahead before the check
         existed: a ``BaseException`` out of the claim callable (the
@@ -895,6 +895,18 @@ class PinnedSyncRoot:
         spare: tuple[int, str] | None = None
         #: Created and not yet decided; cleaned up if the decision raises.
         current: tuple[int, str] | None = None
+
+        def discard(candidate: tuple[int, str]) -> None:
+            """Close, then remove the name: some filesystems will not unlink an open file."""
+            try:
+                os.close(candidate[0])
+            except OSError:
+                pass
+            try:
+                os.unlink(candidate[1], dir_fd=parent_fd)
+            except OSError:
+                pass
+
         refused: set[tuple[int, int]] = set()
         name_collisions = 0
         try:
@@ -922,14 +934,23 @@ class PinnedSyncRoot:
                 current = (descriptor, leaf)
                 if spare is not None:
                     retired, spare = spare, None
-                    held.append(retired[0])
                     try:
                         os.unlink(retired[1], dir_fd=parent_fd)
+                    except FileNotFoundError:
+                        # Already gone, so nothing is stranded; its descriptor
+                        # still holds the number.
+                        held.append(retired[0])
                     except OSError:
-                        # That name stays behind. Asking on would strand one
-                        # more per refusal, so this candidate is used unasked.
+                        # Some filesystems will not unlink an open file: close
+                        # it and try once more. Either way this candidate is
+                        # used unasked: the number is free again once closed,
+                        # and a name that will not go would otherwise be
+                        # stranded once per refusal.
+                        discard(retired)
                         current = None
                         return descriptor, leaf
+                    else:
+                        held.append(retired[0])
                 if (
                     self._identity_claimed is None
                     or len(refused) == _MAX_CLAIMED_CANDIDATES
@@ -948,22 +969,14 @@ class PinnedSyncRoot:
                 refused.add(identity)
                 spare, current = current, None
         finally:
-            for descriptor in held:
+            for held_descriptor in held:
                 try:
-                    os.close(descriptor)
+                    os.close(held_descriptor)
                 except OSError:
                     pass
             for abandoned in (spare, current):
-                if abandoned is None:
-                    continue
-                try:
-                    os.unlink(abandoned[1], dir_fd=parent_fd)
-                except OSError:
-                    pass
-                try:
-                    os.close(abandoned[0])
-                except OSError:
-                    pass
+                if abandoned is not None:
+                    discard(abandoned)
 
     def replace_bytes(
         self,
