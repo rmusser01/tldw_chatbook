@@ -39,7 +39,6 @@ from tldw_chatbook.Chat.provider_readiness import (
 )
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.UI.Screens.settings_screen import (
-    ENDPOINT_NOT_FOUND_SETTINGS_COPY,
     PROVIDER_MANUAL_SELECT_VALUE,
     SettingsScreen,
 )
@@ -118,8 +117,13 @@ async def test_settings_opens_on_a_dangling_registry_default_honestly(request):
 
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle_settings_mount_storm(pilot)
-        rendered = _all_static_text(screen)
-        assert ENDPOINT_NOT_FOUND_SETTINGS_COPY in rendered, rendered
+        # Review of PR #3057 (R1 #11), rewritten on purpose: the 55-cell
+        # sentence was cut by the API key row's ellipsis; the row says it in
+        # its Source word and a help line that fits.
+        assert _text(screen, "#settings-provider-key-status") == "this endpoint"
+        assert _text(screen, "#settings-provider-api-key-help") == (
+            "not found · choose another provider"
+        )
 
 
 # --- readiness seam (no mount) -------------------------------------------

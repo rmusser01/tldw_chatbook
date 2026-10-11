@@ -850,7 +850,10 @@ async def test_qwencloud_malformed_canonical_table_uses_canonical_recovery_witho
         )
 
         key_row = " ".join(api_key_row_copy(screen, "QwenCloud"))
-        assert key_row == "invalid repair in Advanced Config or config.toml"
+        # Review of PR #3057 (R1 #11), rewritten on purpose: the 40-cell
+        # sentence was cut by the row's ellipsis; the guidance line above
+        # still names config.toml.
+        assert key_row == "invalid repair it in Advanced Config"
         assert "ALIAS-SECRET-CANARY" not in key_row
         assert "ALIAS_ENV_CANARY" not in key_row
         assert app.app_config["api_settings"] == original_api_settings

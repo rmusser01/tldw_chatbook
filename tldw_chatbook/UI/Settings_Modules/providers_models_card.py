@@ -75,6 +75,7 @@ from ..Screens.settings_screen import (
     ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY,
     API_URL_PROVIDER_KEYS,
     CONFIG_KEY_ROW_LABEL,
+    ENDPOINT_NOT_FOUND_SETTINGS_COPY,
     INSTANT_APPLY_BEHAVIOR_COPY,
     MODEL_DISCOVERY_CAPABILITY_WARNING,
     MODEL_DISCOVERY_EMPTY_COPY,
@@ -138,6 +139,16 @@ API_KEY_CLEAR_TOOLTIP = (
     "Clear the API key saved in local config for this provider "
     f"({API_KEY_CLEAR_KEY} in the API key field)."
 )
+#: R1 #11: one-row forms of sentences written for the old status block (the
+#: help column is 39 cells at 211x44); the row's Source word says the rest.
+SUBSCRIPTION_KEY_HELP = {
+    "pending": "checking the Claude Code login…",
+    "ready": "Claude Code login · not verified",
+    "expired": "expired · log in with Claude Code",
+    "missing": "missing · log in with Claude Code",
+}
+API_KEY_INVALID_HELP = "repair it in Advanced Config"
+ENDPOINT_NOT_FOUND_HELP = "not found · choose another provider"
 #: ADR-012:29: the env var is the safer path, and the field holds a name.
 ENV_VAR_HELP_COPY = "safer: keeps keys out of config.toml"
 #: Capture fix 7: Sign in with's one-line help per choice; the Inspector's
@@ -532,14 +543,16 @@ def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
         background_credentials=True,
     )
     registry = screen._provider_registry_credential_text(provider, readiness)
+    if registry == ENDPOINT_NOT_FOUND_SETTINGS_COPY:
+        return "this endpoint", ENDPOINT_NOT_FOUND_HELP
     if registry is not None:
-        return "this endpoint", registry
+        # The Source word already says whose key it is.
+        registry = registry.removeprefix("API key source: ")
+        return "this endpoint", registry.removesuffix(" (this endpoint)")
     if readiness.subscription_status is not None:
-        return "subscription", screen._subscription_credential_copy(
-            readiness.subscription_status
-        )
+        return "subscription", SUBSCRIPTION_KEY_HELP[readiness.subscription_status]
     if readiness.reason == "Invalid provider settings":
-        return "invalid", "repair in Advanced Config or config.toml"
+        return "invalid", API_KEY_INVALID_HELP
     draft = screen._provider_draft()
     dirty = draft.dirty_keys if draft is not None else frozenset()
     if "api_key" in dirty:

@@ -172,8 +172,10 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         assert credential_io.readers[0] != threading.get_ident()
         # TASK-33007.2, rewritten on purpose: the Credentials status line is
         # gone; the API key row's help carries the subscription copy.
+        # Review of PR #3057 (R1 #11), rewritten on purpose: the row's help
+        # is one line, so the subscription sentences are their short forms.
         await wait_for_copy(
-            screen, "#settings-provider-api-key-help", "Checking Claude"
+            screen, "#settings-provider-api-key-help", "checking the Claude Code login"
         )
         model = screen.query_one("#settings-model-value", Input)
         model.value = "unsaved-model"
@@ -185,7 +187,7 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         )
         credential_io.release.set()
         await wait_for_copy(
-            screen, "#settings-provider-api-key-help", "Claude subscription"
+            screen, "#settings-provider-api-key-help", "Claude Code login · not verified"
         )
         # TASK-33002.2: labelled rows; the Config row states the outcome.
         await wait_for_copy(
@@ -266,7 +268,7 @@ async def test_settings_late_subscription_result_does_not_replace_edited_draft(
                 screen.query_one("#settings-provider-value", Select).value == "openai"
             )
         else:
-            assert "Claude subscription" in status
+            assert "Claude Code login" in status  # R1 #11: the short form
             assert (
                 screen.query_one("#settings-model-value", Input).value
                 == "another-model"
@@ -289,7 +291,7 @@ async def test_settings_missing_subscription_reports_owner_recovery_after_comple
         await wait_for_copy(
             screen,
             "#settings-provider-api-key-help",
-            "missing; log in with Claude Code",
+            "missing · log in with Claude Code",  # R1 #11: the short form
         )
         await wait_for_copy(
             screen, "#settings-provider-test-result", "Anthropic is not ready"
