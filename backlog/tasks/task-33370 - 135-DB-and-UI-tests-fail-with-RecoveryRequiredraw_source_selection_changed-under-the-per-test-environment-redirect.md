@@ -6,7 +6,7 @@ title: >-
 status: Done
 assignee: []
 created_date: '2026-09-28 20:12'
-updated_date: '2026-10-10 21:20'
+updated_date: '2026-10-11'
 labels:
   - testing
   - backup-recovery
@@ -164,3 +164,15 @@ Earlier reviewed432/777/benchmark phases and ba actual19 keep their source ident
 
 PR https://github.com/rmusser01/tldw_chatbook/pull/2955 remains In Progress pending fresh exact-published-head required CI, current reviews and protected integration. Separate TASK-33560 retains the approved admission performance/native/numerical gates.
 <!-- SECTION:FINAL_SUMMARY:END -->
+
+## Findings 2026-10-11 — Library file-notes batteries: seam diagnosed, per-file treatment shipped
+
+**Reproduction on dev `8332699ae5`.** Every `_production_workspace_context` test in the 12 Library file-notes/wave-4 batteries fails in a plain worktree run with `RecoveryRequired("raw_source_selection_changed")` (`Backup_Recovery/raw_participants.py:132`, the ADR-126 config-participant admission under the per-test env redirect): the workspace battery alone runs 54/65 red without treatment. The batteries were authored before the admission landed (`b5251e9a6e`, 2026-09-16), none is in any CI lane (test.yml has not run on dev since 2026-09-06; the ui-fast-lane census excludes them), so ~478 nodes went red in plain runs unnoticed.
+
+**Treatment (this PR, the TASK-32873/ADR-179 pattern):** the 12 files enrolled in `keep_bootstrap_profile` with rationale comments — same class and same fix as the ~17 files enrolled across the Oct credit-burn program. They mount production screens through `_build_test_app -> load_settings` / read `get_cli_setting("file_notes", ...)` on the guarded loader; none re-selects a config itself.
+
+**Evidence:** with enrollment, the 12 batteries run 451 passed / 27 failed (was: effectively all red). Without: workspace battery 54 failed (sampled). No-leak A/B: two NON-enrolled neighbor batteries (`test_library_notes_reader.py`, `test_library_prompts_canvas.py`) produce byte-identical results with and without the enrollment (231F/151P both ways — that mass is the broader seam population owned by this task's eventual systemic fix, untouched here).
+
+**The important consequence: the mask was hiding 27 genuine failures.** Once admitted, 27 nodes fail with REAL signatures — sampled: `assert task_return.display` on `#library-notes-task-return` (Button not shown after task-return), `ValueError: Local study backend is unavailable.` leaking into notes-authority tests, and 60-column geometry assertions in the riders battery. These are pre-existing product/test defects the admission mask had made invisible since 2026-09-16; they are NOT fixed here (out of scope for a test-infra enrollment) and need their own triage — several look environment-shaped (the study-backend availability), others look like real UX defects.
+
+**Still open for the seam owner (unchanged):** the systemic question — the per-test env redirect vs. config-participant admission interaction — remains; this enrollment is treatment for one family, not the cure. The 231-red neighbor mass in non-enrolled library batteries is the same seam's larger population.
