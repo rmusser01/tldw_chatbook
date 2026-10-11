@@ -82,9 +82,11 @@ RUN_BUDGET = timedelta(minutes=4)
 # only once the warning is at least this old, so one GitHub slowdown failing two attempts a minute
 # apart cannot disarm the PR (spec section 8).
 STRIKE_GAP = timedelta(minutes=10)
-# GitHub's answer when the queue's token tries to rebase a PR whose own commits change a file under
-# .github/workflows: the built-in token can never hold the `workflows` permission, so no retry
-# helps (seen live on #3058, 2026-10-10).
+# GitHub's answer when the queue's rebase would have its token rewrite a file under
+# .github/workflows; the built-in token can never hold the `workflows` permission, so no retry
+# helps. Seen live when the PR and dev had BOTH changed the same workflow file since the PR's base
+# (#3058, 2026-10-10). A PR that changes a workflow file dev has left alone rebases fine (#3062),
+# and so does any PR across workflow files only dev changed (#2892).
 WORKFLOW_REFUSAL = "without `workflows` permission"
 
 
@@ -622,14 +624,19 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool
     # Two racing queue runs can both pass the check above and both post. Each then looks again and
     # the later one removes its own copy, so one comment remains.
     own_id = posted.get("id") if isinstance(posted, dict) else None
-    if own_id is not None:
+    if own_id is None:
+        return True
+    try:
         again = gh.graphql(COMMENTS_QUERY, owner=owner, name=name, number=number)
         ids = [n["databaseId"] for n in again["data"]["repository"]["pullRequest"]["comments"]["nodes"]
                if marker in (n.get("body") or "") and n.get("databaseId") is not None]
         if ids and min(ids) < own_id:
-            _best_effort(lambda _line: None, "remove a duplicate comment",
-                         lambda: gh.rest("DELETE", f"repos/{REPO}/issues/comments/{own_id}"))
+            gh.rest("DELETE", f"repos/{REPO}/issues/comments/{own_id}")
             return False
+    except GhError as exc:
+        # The comment is posted; tidying up must never stop what the caller does next (a disarm, a
+        # wake). At worst two copies stay.
+        print(f"  best-effort comment de-duplication on #{number} failed: {exc}")
     return True
 
 
@@ -994,12 +1001,17 @@ def _strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Action, w
     return _evict(gh, pr, eviction, log)
 
 
-def _wake_if_moved(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None]) -> bool:
-    """Wake a tick if the PR's head moved; return whether it did."""
+def _wake_if_moved(gh: GhApi, pr: PrState, sleep: Callable[[float], None]) -> bool:
+    """Wake a tick if the PR's head moved; return whether it did.
+
+    Raises:
+        GhError: The re-read or the wake failed. The caller then treats the head as unmoved, so a
+            wake that never went out is not mistaken for a stand-down.
+    """
     sleep(REBASE_POLL_S)  # an accepted rebase moves the branch about 1 s after the mutation returns
     if read_pr(gh, pr.number).head_sha == pr.head_sha:
         return False
-    _wake_best_effort(gh, log)
+    wake(gh)
     return True
 
 
@@ -1015,9 +1027,9 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
             # head unmoved it is GitHub's error: fail the run so the next event retries; it never
             # counts toward an eviction (spec section 8).
             try:
-                moved = _wake_if_moved(gh, pr, log, sleep)
+                moved = _wake_if_moved(gh, pr, sleep)
             except GhError as read_exc:
-                log(f"  best-effort re-read after a failed rebase failed: {read_exc}")
+                log(f"  re-read or wake after a failed rebase failed: {read_exc}")
                 moved = False
             if moved:
                 log(f"  rebase of #{pr.number} was answered with an error, but its head moved; standing down")
@@ -1041,10 +1053,10 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
             which = f" (`{named.group(1)}`)" if named else ""
             return _evict(gh, fresh, Action(
                 "evict",
-                f"it changes a workflow file{which}, and GitHub does not let the merge queue's token rebase "
-                "such a PR. Rebase it onto dev yourself (`git pull --rebase origin dev`, then push with "
-                "`--force-with-lease`) and re-arm; while it is up to date with dev the queue lets it land "
-                "without a rebase",
+                f"GitHub refused the queue's rebase because it would rewrite a workflow file{which}; this "
+                "happens when this PR and dev have both changed that file. Rebase it onto dev yourself "
+                "(`git pull --rebase origin dev`, then push with `--force-with-lease`) and re-arm; after that "
+                "the queue can rebase it again unless dev changes that file once more",
                 slug="workflow-file"), log)
         error = str(exc)[:200]
         log(f"  rebase failed: {exc}")

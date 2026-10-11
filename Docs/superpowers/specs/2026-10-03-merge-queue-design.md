@@ -197,9 +197,11 @@ never rebased, dispatched or commented on.
     nothing;
   - now `DIRTY`: evict;
   - GitHub answered "refusing to allow a GitHub App to create or update workflow ... without `workflows` permission":
-    the PR's own commits change a workflow file, which the built-in token may never push. Evict at once
+    the rebase would have the built-in token rewrite a workflow file, which it may never do. Seen when the PR and dev
+    had both changed the same workflow file since the PR's base (#3058, 2026-10-10); a PR that changes a workflow file
+    dev left alone rebases fine (#3062), as does any PR across workflow files only dev changed (#2892). Evict at once
     (`evict-workflow-file`) with the file and the fix (rebase by hand, then re-arm); a strike would only make the author
-    wait ten minutes for a hint-free eviction (#3058, 2026-10-10). Up to date, such a PR still lands without a rebase;
+    wait ten minutes for a hint-free eviction;
   - anything else (same head, still not `DIRTY`): the first time, post a `rebase-failed` comment quoting the error (first
     200 characters). A later failure on the same head evicts ("rebase onto dev keeps failing", `evict-rebase`) only if
     that comment is at least 10 minutes old (its `createdAt`); sooner, the queue leaves it for a later event. A rebase that
@@ -212,7 +214,7 @@ never rebased, dispatched or commented on.
     counts as a strike. A transient error can hide a rebase that went through with its response lost, and the loser of
     the two queue runs each merge wakes is answered the same way: the queue re-reads the PR first, and if the head moved
     it wakes a tick (that head's runs may be held with nothing else to approve them) and stands down without failing.
-    Only with the head unmoved does the queue run fail.
+    With the head unmoved, or if the re-read or the wake itself fails, the queue run fails.
 - The mutation returns the pre-rebase head, and the branch moves about a second later. After a successful rebase the queue
   re-reads the PR up to 10 times, 3 seconds apart, until the head moves, and uses that new head for the comment. If it never
   moves, the queue posts a `rebase-unmoved` comment and wakes a queue tick, once per head: if the branch moves later,
@@ -250,7 +252,7 @@ never rebased, dispatched or commented on.
   puts the PR at the back of the line.
 - **Comments** carry a hidden marker `<!-- merge-queue:<kind>:<head-sha> -->`. The queue never posts a kind twice for the same
   head. Two racing queue runs can both pass that check, so each looks again after posting and the later one removes its
-  own copy. An eviction's kind names its cause (`evict-conflict`, `evict-failed-twice`, `evict-blocked`, `evict-stuck`,
+  own copy (best-effort: a failed look or removal leaves two copies and never stops the caller's next step). An eviction's kind names its cause (`evict-conflict`, `evict-failed-twice`, `evict-blocked`, `evict-stuck`,
   `evict-rebase`, `evict-rebase-unmoved`, `evict-workflow-file`, `evict-rerun`, `evict-no-run`, `evict-approve`), so a re-armed PR evicted again on the same head for a different reason is still told
   why.
 - **Forbidden**, and enforced by a guard test:

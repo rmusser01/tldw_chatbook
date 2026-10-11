@@ -1660,10 +1660,10 @@ WORKFLOW_REFUSAL = ("gh api graphql -f failed: gh: refusing to allow a GitHub Ap
 
 
 def test_a_pr_that_changes_a_workflow_file_is_told_why_and_leaves_at_once():
-    """TASK-34788, seen live on #3058: GitHub never lets the queue's token rebase a PR whose commits
-    change a workflow file. That used to be a rebase strike: a generic warning, then an eviction ten
-    minutes later with no hint. Now one comment names the file and the fix, with no waiting, and the
-    line moves on in the same run."""
+    """TASK-34788, seen live on #3058: GitHub refuses a rebase that would have the queue's token
+    rewrite a workflow file (the PR and dev had both changed it). That used to be a rebase strike: a
+    generic warning, then an eviction ten minutes later with no hint. Now one comment names the file
+    and the fix, with no waiting, and the line moves on in the same run."""
     gh = FakeGh([_node(1), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")], rebase_error=WORKFLOW_REFUSAL,
                 reread={1: _node(1, state="BEHIND")})
     decisions = _run(gh)
@@ -1677,8 +1677,9 @@ def test_a_pr_that_changes_a_workflow_file_is_told_why_and_leaves_at_once():
 
 
 def test_an_up_to_date_workflow_pr_lands_without_a_rebase():
-    """TASK-34788: hand-rebased and green, a workflow-changing PR needs nothing from the queue's
-    token; the queue waits for auto-merge like any other up-to-date PR."""
+    """TASK-34788 AC 3, a pin rather than a regression test (it passes on the old script too):
+    hand-rebased and green, such a PR needs nothing from the queue's token; the queue waits for
+    auto-merge like any other up-to-date PR."""
     gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check()]}, rebase_error=WORKFLOW_REFUSAL)
     decisions = _run(gh)
     assert decisions[0][1].kind == "wait" and gh.calls == []
@@ -1687,11 +1688,13 @@ def test_an_up_to_date_workflow_pr_lands_without_a_rebase():
 class _CommentRace:
     """A gh whose comment list gains a racing queue run's copy between this run's check and its post."""
 
-    def __init__(self, racer_id, own_id):
-        self.racer_id, self.own_id, self.reads, self.calls = racer_id, own_id, 0, []
+    def __init__(self, racer_id, own_id, fail=None):
+        self.racer_id, self.own_id, self.reads, self.calls, self.fail = racer_id, own_id, 0, [], fail
 
     def graphql(self, query, **variables):
         self.reads += 1
+        if self.fail == "look-again" and self.reads == 2:
+            raise mq.GhError("gh api graphql -f failed: gh: HTTP 502")
         marker = f"<!-- merge-queue:rebased:{NEW} -->"
         nodes = [] if self.reads == 1 else [{"databaseId": i, "body": marker} for i in (self.racer_id, self.own_id)
                                             if i is not None]
@@ -1699,6 +1702,8 @@ class _CommentRace:
 
     def rest(self, method, path, fields=None):
         self.calls.append((method, path))
+        if method == "DELETE" and self.fail == "delete":
+            raise mq.GhError("gh api -X DELETE failed: gh: Not Found (HTTP 404)")
         return {"id": self.own_id} if method == "POST" else None
 
 
@@ -1716,3 +1721,66 @@ def test_two_racing_runs_leave_one_copy_of_a_comment(racer_id, kept):
     assert mq.comment_once(gh, 7, "rebased", NEW, "this PR is next") is kept
     deletes = [c for c in gh.calls if c[0] == "DELETE"]
     assert deletes == ([] if kept else [("DELETE", f"repos/{mq.REPO}/issues/comments/100")])
+
+
+@pytest.mark.parametrize("fail", ["look-again", "delete"])
+def test_comment_tidying_never_stops_the_caller(fail, capsys):
+    """Review of #3073: the comment is already posted when the queue looks again. If that read or the
+    removal fails, comment_once must still return, or an eviction would skip its disarm and a strike
+    its wake. At worst two copies stay, and the job log says so.
+
+    Args:
+        fail: Which tidy-up call fails.
+    """
+    gh = _CommentRace(90, 100, fail=fail)
+    assert mq.comment_once(gh, 7, "rebased", NEW, "this PR is next") is True
+    assert "de-duplication" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(("reread", "expected"), [
+    (_node(1, head=NEW, state="BLOCKED"), [("rebase", "PR_1", OLD)]),
+    (_node(1, state="DIRTY"), None),
+], ids=["head-moved", "now-dirty"])
+def test_a_workflow_refusal_is_checked_after_a_moved_head_and_a_conflict(reread, expected):
+    """Review of #3073: the head-moved and conflict checks come first. If someone else moved the head
+    there is nothing to evict for, and a conflict is the more useful thing to tell the author.
+
+    Args:
+        reread: What a fresh read of the PR shows after the refusal.
+        expected: The exact calls when the head moved; None for the conflict case.
+    """
+    gh = FakeGh([_node(1)], rebase_error=WORKFLOW_REFUSAL, reread={1: reread})
+    _run(gh)
+    if expected is not None:
+        assert gh.calls == expected
+    else:
+        comment = next(c[2] for c in gh.calls if c[0] == "comment")
+        assert f"<!-- merge-queue:evict-conflict:{OLD} -->" in comment and "workflow" not in comment
+
+
+@pytest.mark.parametrize("broken", ["re-read", "wake"])
+def test_a_failed_reread_or_wake_after_an_outage_is_not_a_stand_down(broken):
+    """Review of #3073: standing down is only right when the head moved AND a tick was woken to approve
+    it. If the re-read fails, or the wake does not go out, the run fails as before, so the next event
+    retries and a red run shows something is wrong.
+
+    Args:
+        broken: Which follow-up call fails.
+    """
+    error = 'gh api graphql -f failed: Post "https://api.github.com/graphql": EOF'
+    if broken == "wake":
+        gh = FakeGh([_node(1)], rebase_error=error, reread={1: _node(1, head=NEW, state="BLOCKED")},
+                    dispatch_refused={"derived-artifacts.yml"}, dispatch_status=502)
+    else:
+        gh = FakeGh([_node(1)], rebase_error=error)
+        original = gh.graphql
+
+        def graphql(query, **v):
+            if "pullRequest(number" in query and "comments(last" not in query:
+                raise mq.GhError("gh api graphql -f failed: gh: HTTP 502")
+            return original(query, **v)
+
+        gh.graphql = graphql
+    with pytest.raises(mq.GhError, match="EOF"):
+        _run(gh)
+    assert not any(c[0] in ("disarm", "comment") for c in gh.calls)
