@@ -14514,6 +14514,60 @@ async def test_console_settings_modal_active_run_reason_precedes_endpoint_recove
         ) == "Available when the current run finishes."
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("opened", ["model", "context", "suspended"])
+@pytest.mark.asyncio
+async def test_console_settings_mount_builds_default_readiness_once(
+    opened: str,
+) -> None:
+    """TASK-33006.21: opening Chat settings builds default readiness once.
+
+    on_mount built it four times: twice through the view switch (its own call
+    and the recovery-region sync's), once directly and once through the
+    completion sync. Restoring a suspended draft added a fifth.
+
+    Args:
+        opened: How the modal opens: on a view, or with a suspended draft.
+    """
+    app = ModalHarness()
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    built_while_mounting: list[bool] = []
+
+    def resolver(provider: str, model: str | None) -> ConsoleSettingsReadiness:
+        built_while_mounting.append(not modal.is_mounted)
+        return build_console_settings_readiness(
+            ConsoleSessionSettings(provider=provider, model=model),
+            app_config=app.app_config,
+            environ={},
+        )
+
+    kwargs: dict = {"focus_context": opened == "context"}
+    if opened == "suspended":
+        kwargs["suspended_draft"] = ConsoleSettingsDraftSnapshot(
+            settings=settings,
+            context_policy_overrides=ConsoleContextPolicyOverrides(),
+            raw_values={"console-settings-temperature": "0.4"},
+            provider_model_drafts={"llama_cpp": "model-a"},
+            provider_base_url_drafts={},
+            active_view="model",
+            scroll_anchor=0,
+            focus_control_id="console-settings-temperature",
+            disclosure_state={"advanced_generation": False, "connection_details": False},
+        )
+    modal = _basic_modal(settings, app, default_readiness_resolver=resolver, **kwargs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        assert built_while_mounting.count(True) == 1
+        # The one build is the last word: the footer reads the settled draft.
+        assert modal.query_one("#console-settings-save", Button).disabled is False
+        if opened == "suspended":
+            assert modal.query_one("#console-settings-temperature", Input).value == "0.4"
+            assert modal.query_one("#console-settings-save-default", Button).display
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_exposes_selected_view_in_tab_copy_and_tooltips() -> None:
     """Selected destination must remain legible without adding a layout row.

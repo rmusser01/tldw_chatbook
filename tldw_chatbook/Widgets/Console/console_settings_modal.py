@@ -1301,6 +1301,7 @@ class ConsoleSettingsModal(
         # refresh, once every mounted control reflects the transferred state.
         self._updating_controls = True
         self._initial_feedback_sync = True
+        self._defer_default_readiness = True  # until on_mount's last step
         self._edited_generation_fields: set[str] = set()
         self._submit_pending = False
         self._rebase_event_guard = False
@@ -2266,7 +2267,6 @@ class ConsoleSettingsModal(
         self._sync_action_layout(self.size.width)
         self._show_settings_view(self._active_view)
         self._sync_default_recovery_region()
-        self._sync_default_readiness()
         self.call_after_refresh(self._reveal_default_feedback)
         self.call_after_refresh(self._finish_initial_control_sync)
         if self._suspended_draft is not None:
@@ -2279,6 +2279,9 @@ class ConsoleSettingsModal(
                 self.call_after_refresh(self._focus_context_control)
         self._sync_generation_control_support()
         self._sync_generation_test_controls()
+        # The steps above each reach the default-readiness sync; it waited for
+        # this one build of the settled draft (TASK-33006.21).
+        self._defer_default_readiness = False
         self._sync_completion_actions()
         self._apply_accessible_control_metadata()
         if (
@@ -2861,6 +2864,8 @@ class ConsoleSettingsModal(
     def _sync_default_readiness(self) -> None:
         """Gate default actions on an exact model and future-chat readiness."""
 
+        if self._defer_default_readiness:
+            return
         try:
             save_button = self.query_one("#console-settings-save-default", Button)
             make_button = self.query_one("#console-settings-make-default", Button)
