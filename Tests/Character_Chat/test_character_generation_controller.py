@@ -15,7 +15,7 @@ from tldw_chatbook.Character_Chat.character_generation_controller import (
     CharacterGenerationController,
 )
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
 def _controller(reply, *, capture=None):

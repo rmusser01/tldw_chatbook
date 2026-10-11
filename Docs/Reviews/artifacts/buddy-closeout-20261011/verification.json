@@ -17,7 +17,10 @@
     "Tests/UI/test_buddy_management_journey.py": "e224cf0462d55e12a85992186bc797f15bfa998c9560d529f9946560190973d1",
     "Tests/Actor_Packs/test_actor_pack_contracts.py": "e2cd9c8a2b977efd9dd399d5aa18739106706569a56e5427383d66331a9e1a73",
     "Tests/Actor_Packs/test_actor_pack_activation.py": "2e3d65ac08aa5099e3a22f77ab2514b0565128401a8bd477341af33a6eb3622f",
-    "Tests/Character_Chat/test_buddy_conversion.py": "00df204f024beecfd330e23e4ee7097ebef28fe26a74b8e502ecedf3de23ae53"
+    "Tests/Character_Chat/test_buddy_conversion.py": "00df204f024beecfd330e23e4ee7097ebef28fe26a74b8e502ecedf3de23ae53",
+    "tldw_chatbook/UI/Screens/personas_screen.py": "986e84e8e8421f7aaa03dc37d4ee19abd0962fd94191adcc797dad6a7e6ebbcd",
+    "Tests/Character_Chat/test_character_generation_controller.py": "bceb08246a402991613aae68c0ac22ca324959b59c6e793181e2d73ac98b8021",
+    "Tests/UI/test_personas_generation_wiring.py": "09805dd9660e74e6074a6b78a0ac46d728562094fbe7e5afa34a4641e34f67f3"
   },
   "runs": [
     {
@@ -200,9 +203,69 @@
       ],
       "junit_sha256": "73194759c7291192ec57c07499f48f4eeaf71829b00f3df6d8862d3419591d97",
       "log_sha256": "bd3d9916b29a18b84a1ae658d49284bc852a88cfe7d5e96f6933cdc696cbfa57"
+    },
+    {
+      "name": "preimport-generation-final",
+      "command_cwd": "/Users/macbook-dev/.codex/worktrees/buddy-task-burndown/tldw_chatbook",
+      "command": "python -m pytest Tests/Performance/test_screen_preimport_payload_budget.py Tests/Character_Chat/test_character_generation_controller.py Tests/UI/test_personas_generation_wiring.py -q --tb=short --junitxml=/private/tmp/buddy-preimport-generation-final-20261011.xml",
+      "python_binary": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "exit": 0,
+      "tests": 22,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 32.293,
+      "test_identities": [
+        "Tests.Performance.test_screen_preimport_payload_budget::test_preimport_pass_payload_stays_within_budget",
+        "Tests.Character_Chat.test_character_generation_controller::test_generate_field_returns_finished_text",
+        "Tests.Character_Chat.test_character_generation_controller::test_generate_field_strips_surrounding_quotes_and_fences",
+        "Tests.Character_Chat.test_character_generation_controller::test_generate_field_strips_a_restated_field_label",
+        "Tests.Character_Chat.test_character_generation_controller::test_generate_field_rejects_an_empty_reply",
+        "Tests.Character_Chat.test_character_generation_controller::test_generate_field_passes_the_selected_context_mode_through",
+        "Tests.Character_Chat.test_character_generation_controller::test_generate_whole_character_returns_parsed_fields",
+        "Tests.Character_Chat.test_character_generation_controller::test_generate_whole_character_surfaces_unparseable_replies",
+        "Tests.Character_Chat.test_character_generation_controller::test_runner_failure_is_reported_as_a_generation_error",
+        "Tests.Character_Chat.test_character_generation_controller::test_gateway_runner_accumulates_streamed_chunks",
+        "Tests.Character_Chat.test_character_generation_controller::test_gateway_runner_reports_an_unready_provider",
+        "Tests.Character_Chat.test_character_generation_controller::test_generate_field_streams_partial_text_as_it_arrives",
+        "Tests.Character_Chat.test_character_generation_controller::test_gateway_runner_reports_chunks_as_they_stream",
+        "Tests.UI.test_personas_generation_wiring::test_generate_button_previews_the_result",
+        "Tests.UI.test_personas_generation_wiring::test_generate_uses_the_editors_selected_context_mode",
+        "Tests.UI.test_personas_generation_wiring::test_generate_sends_the_live_editor_values_not_the_saved_record",
+        "Tests.UI.test_personas_generation_wiring::test_generation_failure_notifies_and_leaves_no_preview",
+        "Tests.UI.test_personas_generation_wiring::test_regenerate_reruns_the_pending_field",
+        "Tests.UI.test_personas_generation_wiring::test_whole_character_button_reveals_a_concept_input",
+        "Tests.UI.test_personas_generation_wiring::test_whole_character_fills_empty_fields",
+        "Tests.UI.test_personas_generation_wiring::test_whole_character_does_not_clobber_fields_the_author_wrote",
+        "Tests.UI.test_personas_generation_wiring::test_whole_character_requires_a_concept"
+      ],
+      "junit_sha256": "0e60e672fac15eb03b98f4267782b28ea26a170ef86f06c4d2a49dd2b7b04c3b",
+      "log_sha256": "c846e567da1f8096f3e90af949ad0dd360a3fd6314799e81038c7e905e2e8705"
+    },
+    {
+      "name": "post-ci-boundaries",
+      "command_cwd": "/Users/macbook-dev/.codex/worktrees/buddy-task-burndown/tldw_chatbook",
+      "command": "python -m pytest Tests/Persona_Buddy/_temporary_generation_factory_check.py Tests/Packaging/test_persona_buddy_import_closure.py Tests/UI/test_buddy_management_journey.py -q --tb=short --junitxml=/private/tmp/buddy-post-ci-boundaries-20261011.xml",
+      "python_binary": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "exit": 0,
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 66.408,
+      "test_identities": [
+        "Tests.Persona_Buddy._temporary_generation_factory_check::test_deferred_default_controller_constructs",
+        "Tests.Packaging.test_persona_buddy_import_closure::test_app_import_does_not_execute_persona_visual_or_pil",
+        "Tests.Packaging.test_persona_buddy_import_closure::test_persona_package_inits_are_lazy_and_single_sourced",
+        "Tests.Packaging.test_persona_buddy_import_closure::test_actor_pack_modules_do_not_execute_persona_visual_or_pil",
+        "Tests.UI.test_buddy_management_journey::test_fresh_install_selects_independent_buddy_and_opens_pinned_chat_from_home",
+        "Tests.UI.test_buddy_management_journey::test_roleplay_manage_buddy_constructs_controller_from_disabled_profile"
+      ],
+      "junit_sha256": "eab1e6dbaffa9e918b919d50f396f1da790232108f0d0056a9c8fee62dd91831",
+      "log_sha256": "00f88f750ccc90dc148877d3b53a5ab3055bb7b8a54d750d0605ec43b566ee02"
     }
   ],
-  "unique_passing_test_identities": 129,
+  "unique_passing_test_identities": 152,
   "controls": [
     {
       "name": "controller-red",
@@ -342,5 +405,67 @@
     "published_sha256": "640e53bdb1728cd30ab61c545e297771cdf4225df21745d54bcdb7060f24d6ab",
     "ast_unchanged": true,
     "change": "Removed one blank line between deferred imports to resolve the added import-order diagnostic."
+  },
+  "ci_followup_source_sha256": {
+    "tldw_chatbook/UI/Screens/personas_screen.py": "986e84e8e8421f7aaa03dc37d4ee19abd0962fd94191adcc797dad6a7e6ebbcd",
+    "Tests/Character_Chat/test_character_generation_controller.py": "bceb08246a402991613aae68c0ac22ca324959b59c6e793181e2d73ac98b8021",
+    "Tests/UI/test_personas_generation_wiring.py": "09805dd9660e74e6074a6b78a0ac46d728562094fbe7e5afa34a4641e34f67f3"
+  },
+  "unique_passing_repository_test_identities": 151,
+  "default_factory_selfcheck": {
+    "source": "from types import SimpleNamespace\nimport pytest\n\npytestmark = pytest.mark.bootstrap_profile\n\ndef test_deferred_default_controller_constructs():\n    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen\n    from tldw_chatbook.Character_Chat.character_generation_controller import CharacterGenerationController\n    host = SimpleNamespace(preview=SimpleNamespace(ensure_gateway=lambda: None), app_instance=SimpleNamespace(app_config={}))\n    controller = PersonasScreen._character_generation_controller(host)\n    assert isinstance(controller, CharacterGenerationController)\n    assert callable(controller._runner)\n    injected = object()\n    host._generation_controller_override = injected\n    assert PersonasScreen._character_generation_controller(host) is injected\n",
+    "source_sha256": "7ab5efcfb483744797c3fb08e8e5ecbe3de925abbf811d3181169b539769bfaa",
+    "context": "Executed under Tests/Persona_Buddy and its admitted private bootstrap_profile fixture; temporary source removed after terminal exit0. No gateway/provider invoked."
+  },
+  "ci_followup": {
+    "failed_run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/38181804925",
+    "failed_head": "e5a6cdf11caac57f62b48e1f6bd7c7a14f27974f",
+    "failure": "Screen pre-import census559modules exceeds unchanged558 limit.",
+    "repair": "Defer the existing character-generation controller/runner at the only runtime caller after its override; keep class annotationTYPE_CHECKING.",
+    "module_budget": 558,
+    "measured_modules": 558,
+    "measured_loc": 417835,
+    "loc_budget": 425347,
+    "warning": "Existing ratchet headroom0modules;7512LOC. No threshold/snapshot changed.",
+    "static": {
+      "ruff": {
+        "current": 216,
+        "baseline": 216,
+        "introduced": [],
+        "comparison": "Per-relative-file code/message counts, identical explicit project config, exact a3 base bytes."
+      },
+      "bandit": {
+        "current": {
+          "findings": 6,
+          "errors": [],
+          "signatures": {
+            "B110:Try, Except, Pass detected.": 4,
+            "B101:Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.": 1,
+            "B112:Try, Except, Continue detected.": 1
+          }
+        },
+        "baseline": {
+          "findings": 6,
+          "errors": [],
+          "signatures": {
+            "B110:Try, Except, Pass detected.": 4,
+            "B101:Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.": 1,
+            "B112:Try, Except, Continue detected.": 1
+          }
+        },
+        "introduced": {}
+      },
+      "compile_exit": 0
+    },
+    "github_recheck": "Pending normal current-head CI after publication.",
+    "existing_generation_test_bodies_unchanged": true,
+    "fixture_control": {
+      "before_import_move_failures": 2,
+      "category": "raw_source_selection_changed",
+      "controller_bytes_equal_pinned_base": true,
+      "junit_sha256": "e4136fe62ceaf8ce891f418b50d9612f1a50cc74523e1fee48c21434f45069e4",
+      "log_sha256": "6734748296cd6a6637c51189305ef1c124e6cb7af89ac6086f076ff8a5b5cb45",
+      "resolution": "Existing collection-bound prompt/config suites retain their admitted private bootstrap profile, without assertion or runtime-guard changes."
+    }
   }
 }
