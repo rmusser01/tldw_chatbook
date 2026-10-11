@@ -482,7 +482,11 @@ enable or keep-count setting of **Prompt-cache snapshots**, under **Advanced**
 — which is dropped), so save again first if the chat should use them.
 
 The return lands on that chat with the composer in focus (on the Get started
-card instead, while setup is still unfinished). A chat with no messages and no
+card instead, while setup is still unfinished). When a **NEEDS SETUP** row in
+Switch model is what opened Settings, Switch model then reopens over it with
+that provider's name in **Find**, saved or not (see
+[Console — Session settings & model selection](console.md#session-settings--model-selection)).
+A chat with no messages and no
 edited settings then uses the provider · model you saved; a chat that holds
 work keeps its own, as **Applies to** says. **Stay in Settings** drops the
 return, and so does going back to the Console yourself: Settings offers no
@@ -509,7 +513,8 @@ that edit.
 If a newer request has replaced this one, Settings says the return is no longer
 available and stays where it is; if the chat has closed meanwhile, the Console
 opens as usual and says nothing changed. The return carries only which chat to
-open — never a key, an endpoint or message text.
+open and, from a **NEEDS SETUP** row, which provider and model Switch model
+reopens on — never a key, an endpoint or message text.
 
 #### QwenCloud
 

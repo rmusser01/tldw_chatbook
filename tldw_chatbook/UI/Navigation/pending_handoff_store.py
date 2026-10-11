@@ -701,7 +701,9 @@ class PendingHandoffStore:
         if channel is HandoffChannel.CONVERSATION_SETTINGS_RETURN:
             # One slot for both returns, so either kind supersedes the other.
             if isinstance(value, ConsoleProviderReturnIntent):
-                return ConsoleProviderReturnIntent(value.session_id)
+                return ConsoleProviderReturnIntent(
+                    value.session_id, value.switcher_provider, value.switcher_model
+                )
             if not isinstance(value, ConversationSettingsReturnIntent):
                 raise TypeError("Conversation settings return handoff must be typed")
             return ConversationSettingsReturnIntent(

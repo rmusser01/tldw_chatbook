@@ -9,6 +9,12 @@ saving in every unsaved state, the return offered on arrival, where focus
 arrives when the route names no field or a disabled one, where it goes after
 Keep editing, a return that lapses when the user walks back by hand, and edits
 made after the save.
+
+TASK-33008.2: a NEEDS SETUP row in Switch model leaves through the same route,
+and its return reopens Switch model on that row's provider. The unit tests
+drive the consumer's reopen; the private-profile tests run the row -> Settings
+-> Switch model round trip on the real app, saved and unsaved, and from the
+Get started card.
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ from tldw_chatbook.LLM_Calls import anthropic_subscription
 from tldw_chatbook.LLM_Provider_Catalog import (
     openai_compatible_model_discovery as discovery_module,
 )
+from tldw_chatbook.UI.Console_Modules import model_switcher
 from tldw_chatbook.UI.Console_Modules.model_switcher import open_provider_setup
 from tldw_chatbook.UI.Console_Modules.provider_return import (
     MISSING_CHAT_COPY,
@@ -98,6 +105,8 @@ def _console(store: ConsoleChatStore, *, blocking: bool = False, owns: bool = Tr
         _ensure_console_chat_store=lambda: store,
         _sync_native_console_chat_ui=sync,
         _focus_console_setup_modal_if_blocking=focus_card,
+        _console_setup_modal_blocking=lambda: blocking,
+        _provider_readiness_app_config=dict,
         _focus_console_composer_if_needed=lambda *, force=False: events.append(
             ("composer", force)
         ),
@@ -111,11 +120,17 @@ def _console(store: ConsoleChatStore, *, blocking: bool = False, owns: bool = Tr
     return screen, events, workers
 
 
-def _stage_return(screen, session_id: str) -> dict[str, object]:
-    """Stage a recovery's return as the Console does; give Settings' answer."""
-    intent = ConsoleProviderReturnIntent(session_id)
+def _stage_return(
+    screen, session_id: str, *switcher_pair: str | None, outcome=SAVED
+) -> dict[str, object]:
+    """Stage a recovery's return as the Console does; give Settings' answer.
+
+    ``switcher_pair`` is the NEEDS SETUP row's provider and model, when a row
+    in Switch model is what left for Settings (TASK-33008.2).
+    """
+    intent = ConsoleProviderReturnIntent(session_id, *switcher_pair)
     revision = screen.app_instance.pending_handoffs.stage(CHANNEL, intent)
-    return intent.return_target(revision, SAVED).to_context()
+    return intent.return_target(revision, outcome).to_context()
 
 
 @pytest.mark.asyncio
@@ -297,6 +312,150 @@ def test_an_unused_return_is_taken_back_when_the_console_is_reached_by_hand(
         "settled" if newer is None else "superseded"
     )
     assert workers == [] and events == []  # Nothing lands, nothing is said.
+
+
+# --- TASK-33008.2: a NEEDS SETUP row's return reopens Switch model ------------
+
+
+def _record_switch_model(monkeypatch, screen, events) -> list[dict[str, object]]:
+    """Record how the return reopens Switch model, in place of pushing it."""
+    opened: list[dict[str, object]] = []
+
+    def open_switcher(opened_for, **options) -> None:
+        assert opened_for is screen
+        events.append("switch-model")
+        opened.append(options)
+
+    monkeypatch.setattr(model_switcher, "_open_switcher", open_switcher)
+    return opened
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome, blocking, model",
+    [
+        (SAVED, False, "gpt-5"),
+        (UNSAVED, False, "gpt-5"),
+        (UNSAVED, True, "gpt-5"),
+        (SAVED, False, None),
+    ],
+    ids=["saved", "without-saving", "card-still-blocks", "provider-lists-no-model"],
+)
+async def test_a_needs_setup_rows_return_reopens_switch_model_on_its_provider(
+    monkeypatch, outcome, blocking: bool, model: str | None
+) -> None:
+    """AC#2, AC#3 (R44-R46): the return lands as any recovery's does, then
+    Switch model reopens with the provider's name in Find and the row's own
+    pair to highlight, in the mode the chat is in now (the card's while it
+    still blocks). It reopens whether or not anything was saved. Focus is put
+    on the composer or the card first, so Esc from the switcher leaves it
+    there."""
+    store = ConsoleChatStore()
+    origin = store.create_session(title="Origin")
+    store.create_session(title="Other")
+    screen, events, workers = _console(store, blocking=blocking)
+    opened = _record_switch_model(monkeypatch, screen, events)
+    context = _stage_return(screen, origin.id, "openai", model, outcome=outcome)
+
+    assert capture_provider_return(screen, context) is True
+    consume_provider_return(screen)
+    (landing,) = workers
+    await landing
+
+    assert store.active_session_id == origin.id
+    assert events[1:] == [
+        "sync",
+        "card" if blocking else ("composer", True),
+        "switch-model",
+    ]
+    assert opened == [
+        {
+            "query": "OpenAI ",
+            "card": blocking,
+            "highlight": ("openai", model) if model else None,
+        }
+    ]
+    assert not screen.app_instance.pending_handoffs.has_pending(CHANNEL)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lost", ["chat-closed", "superseded", "another-pair"])
+async def test_a_return_that_does_not_land_reopens_nothing(monkeypatch, lost) -> None:
+    """R46: Switch model does not reopen when the chat has closed, when a
+    newer request replaced this one, or when Settings' answer names another
+    pair than the one that was staged (it is stale, like another chat's)."""
+    store = ConsoleChatStore()
+    origin = store.create_session(title="Origin")
+    store.create_session(title="Other")
+    screen, events, workers = _console(store)
+    opened = _record_switch_model(monkeypatch, screen, events)
+    context = _stage_return(screen, origin.id, "openai", "gpt-5")
+    if lost == "chat-closed":
+        store.close_session(origin.id)
+    elif lost == "superseded":
+        screen.app_instance.pending_handoffs.stage(
+            CHANNEL, ConsoleProviderReturnIntent(origin.id, "openai", "gpt-5")
+        )
+    else:
+        context["switcher_model"] = "gpt-4.1"
+
+    assert capture_provider_return(screen, context) is True
+    consume_provider_return(screen)
+    for landing in workers:
+        await landing
+
+    assert opened == []
+    assert events[1:] == [
+        ("notice", MISSING_CHAT_COPY if lost == "chat-closed" else STALE_RETURN_COPY)
+    ]
+    assert bool(workers) is (lost == "chat-closed")
+
+
+@pytest.mark.asyncio
+async def test_a_return_reopens_nothing_over_a_screen_that_took_the_consoles_place(
+    monkeypatch,
+) -> None:
+    """The landing awaits the Console's sync. If another screen has the stack
+    by the time it ends, Switch model would open over that screen, so it is
+    not opened; the handoff still settles."""
+    store = ConsoleChatStore()
+    origin = store.create_session(title="Origin")
+    screen, events, workers = _console(store)
+    opened = _record_switch_model(monkeypatch, screen, events)
+    context = _stage_return(screen, origin.id, "openai", "gpt-5")
+
+    async def sync_while_the_user_leaves() -> None:
+        events.append("sync")
+        screen._owns_console_screen_stack = lambda: False
+
+    screen._sync_native_console_chat_ui = sync_while_the_user_leaves
+
+    assert capture_provider_return(screen, context) is True
+    consume_provider_return(screen)
+    (landing,) = workers
+    await landing
+
+    assert opened == []
+    assert "switch-model" not in events
+    assert not screen.app_instance.pending_handoffs.has_pending(CHANNEL)
+
+
+def test_a_recoverys_return_names_no_pair_and_reopens_nothing(monkeypatch) -> None:
+    """R43: only a NEEDS SETUP row asks for the reopen. The card's action, a
+    blocked chat's and a cloud Retry stage a return that names the chat alone,
+    and land on the composer as before."""
+    store = ConsoleChatStore()
+    origin = store.create_session(title="Origin")
+    screen, _events, _workers = _console(store)
+    posted: list[NavigateToScreen] = []
+    screen.post_message = posted.append
+
+    open_provider_setup(screen, "openai", "gpt-5", field="api_key")
+
+    claim = screen.app_instance.pending_handoffs.claim(CHANNEL)
+    assert claim is not None
+    assert claim.value == ConsoleProviderReturnIntent(origin.id)
+    assert (claim.value.switcher_provider, claim.value.switcher_model) == (None, None)
 
 
 def _settings(
@@ -1773,3 +1932,290 @@ async def test_a_field_edited_after_the_save_waits_in_settings_as_an_unsaved_edi
             lambda: offered(fresh) == (False, True),
             "the next edit to ask first again",
         )
+
+
+# --- TASK-33008.2: the real app, NEEDS SETUP row -> Settings -> Switch model --
+
+_GROQ_MODEL = "llama-3.3-70b-versatile"
+#: Not OpenAI's saved key: until a routed provider's key is saved, Settings
+#: reads an edit to it against the default provider's saved key, so the same
+#: text would read as no change.
+_GROQ_KEY = "p8groqkey9876543210"
+
+
+def _switcher_app(monkeypatch, **saved):
+    """The real app: OpenAI is the default and has a key, so the chat can
+    send. Groq lists one model and has no key, so Switch model puts it under
+    NEEDS SETUP. No listing needs the network: both model lists are saved."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    app = _cloud_app(
+        monkeypatch,
+        **{
+            "api_settings.openai": {"api_key": _KEY},
+            "api_settings.groq": {"api_key": ""},
+            **saved,
+        },
+    )
+    app.providers_models = {"openai": ["gpt-5"], "groq": [_GROQ_MODEL]}
+    return app
+
+
+def _groq_row(app) -> tuple[str, str] | None:
+    """The highlighted row's kind and readiness words, once Switch model has
+    the screen with focus in Find and Groq's own pair is the highlight."""
+    switcher = app.screen
+    if not isinstance(switcher, ConsoleModelPopover) or (
+        getattr(app.focused, "id", None) != "console-popover-find"
+    ):
+        return None
+    row = switcher.highlighted_row()
+    if row is None or (row.provider, row.model) != ("groq", _GROQ_MODEL):
+        return None
+    pairs = switcher.query_one("#console-popover-pairs").region
+    painted = [strip.text for strip in switcher._compositor.render_strips()]
+    line = next(
+        (text for text in painted[pairs.y : pairs.bottom] if _GROQ_MODEL in text), ""
+    )
+    words = next(
+        (
+            words
+            for words in ("Not ready · no key", "Ready · not tested")
+            if words in line
+        ),
+        "",
+    )
+    return row.kind, words
+
+
+async def _leave_a_groq_row_for_settings(app, pilot, console):
+    """Alt+M, find Groq's NEEDS SETUP row, Enter: Settings opens on its key."""
+    store = console._ensure_console_chat_store()
+    session_id = store.active_session_id
+    await pilot.press("alt+m")
+    await _until(
+        pilot,
+        lambda: getattr(app.focused, "id", None) == "console-popover-find",
+        "Switch model to open on Find",
+    )
+    first = app.screen
+    await pilot.press(*"groq")
+    await _until(
+        pilot,
+        lambda: _groq_row(app) == ("setup", "Not ready · no key"),
+        "Groq's NEEDS SETUP row to be the highlight",
+    )
+    assert first.highlighted_row().note == "Enter: add key in Settings"
+
+    await pilot.press("enter")
+    await _until(
+        pilot,
+        lambda: (
+            isinstance(app.screen, SettingsScreen)
+            and getattr(app.focused, "id", None) == "settings-provider-api-key"
+        ),
+        "Settings to open with focus in Groq's API key field",
+    )
+    settings = app.screen
+    target = settings._provider_return_target
+    assert target is not None
+    assert (target.provider, target.model, target.field, target.session_id) == (
+        "groq",
+        _GROQ_MODEL,
+        "api_key",
+        session_id,
+    )
+    assert settings._provider_widget_value() == "groq"
+    # R43: the return names the chat and the row's pair, nothing else.
+    claim = app.pending_handoffs.claim(CHANNEL)
+    assert claim is not None
+    assert claim.value == ConsoleProviderReturnIntent(session_id, "groq", _GROQ_MODEL)
+    app.pending_handoffs.release(claim)
+    return first, settings
+
+
+def _chat_pair(console) -> tuple[str, str | None]:
+    chat, _readiness = console._active_console_settings_readiness()
+    return chat.provider, chat.model
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saves", [True, False], ids=["saves-a-key", "without-saving"])
+@private_profile_test
+async def test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider(
+    monkeypatch, request, saves: bool
+):
+    """AC#1-AC#4 (R47): the real store, Settings and Switch model on a scratch
+    config. Enter on Groq's NEEDS SETUP row opens Settings at its API key.
+
+    With the key saved, Return to Console reopens Switch model with "Groq "
+    in Find and the row's pair highlighted, now "Ready · not tested": the
+    chat holds work, so it kept openai · gpt-5 through the save (ADR-095),
+    and one Enter moves it to the pair.
+
+    Return without saving reopens it the same way, unchanged: the row is
+    still NEEDS SETUP, and Esc leaves the chat on its own pair with the
+    composer in focus."""
+    app = _switcher_app(monkeypatch)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "console-native-composer",
+            "the composer to hold focus",
+        )
+        console = app._navigation_outgoing_screen()
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.append_message(session_id, role=ConsoleMessageRole.USER, content="hi")
+        assert _chat_pair(console) == ("openai", "gpt-5")
+
+        first, settings = await _leave_a_groq_row_for_settings(app, pilot, console)
+        await pilot.press(*_GROQ_KEY)
+        if saves:
+            await pilot.press("escape")  # leave the field, so s is Save
+            await pilot.press("s")
+            await _until(
+                pilot,
+                lambda: getattr(app.focused, "id", None) == "settings-provider-return",
+                "focus on the Return to Console action after the save",
+            )
+            # The key went to Groq's table; OpenAI's is as it was.
+            assert _saved_config()["api_settings"]["groq"]["api_key"] == _GROQ_KEY
+            assert _saved_openai_key() == _KEY
+            await pilot.press("enter")
+        else:
+            without_saving = settings.query_one(
+                "#settings-provider-return-without-save", Button
+            )
+            await _until(pilot, lambda: without_saving.display, "the unsaved key")
+            without_saving.focus()
+            await pilot.press("enter")
+            await _until(
+                pilot,
+                lambda: isinstance(app.screen, ConfirmationDialog),
+                "the discard confirmation",
+            )
+            app.screen.query_one("#confirm-button", Button).press()
+
+        await _until(
+            pilot,
+            lambda: (
+                _groq_row(app)
+                == (
+                    ("pair", "Ready · not tested")
+                    if saves
+                    else ("setup", "Not ready · no key")
+                )
+            ),
+            "Switch model to reopen on Groq's pair, with its readiness words",
+        )
+        reopened = app.screen
+        assert reopened is not first
+        assert reopened.query_one("#console-popover-find", Input).value == "Groq "
+        assert reopened._scope_copy == model_switcher.SCOPE_THIS_CHAT
+        assert not app.pending_handoffs.has_pending(CHANNEL)
+        assert store.active_session_id == session_id
+        # The chat holds work: the save did not move it (ADR-095).
+        assert _chat_pair(console) == ("openai", "gpt-5")
+
+        await pilot.press("enter" if saves else "escape")
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console
+                and getattr(app.focused, "id", None) == "console-native-composer"
+                and (_chat_pair(console) == ("groq", _GROQ_MODEL)) is saves
+            ),
+            "the Console again, composer in focus, on the pair this path ends on",
+        )
+        chat, readiness = console._active_console_settings_readiness()
+        if saves:
+            assert (chat.provider, chat.model) == ("groq", _GROQ_MODEL)
+            assert readiness.operability == "ready_to_send"
+        else:
+            assert (chat.provider, chat.model) == ("openai", "gpt-5")
+            assert not _saved_config()["api_settings"]["groq"].get("api_key")
+        assert store.active_session_id == session_id
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_card_opened_rows_return_reopens_switch_model_over_the_card(
+    monkeypatch, request
+):
+    """AC#3 (R44, R46) on first run: the Get started card's Choose provider
+    opens Switch model, and a NEEDS SETUP row there leaves for Settings. The
+    arrival Return to Console saves nothing, so the card still blocks, and
+    Alt+M stays shut under it. Switch model reopens all the same, in the
+    card's mode: its scope line still says the pick also becomes the default
+    for new chats. Esc puts focus back on the card's action."""
+    app = _switcher_app(
+        monkeypatch, chat_defaults={"provider": "custom-ep:gone", "model": ""}
+    )
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "console-setup-modal-action",
+            "the Get started card's action to hold focus",
+        )
+        assert str(app.focused.label) == "Choose provider"
+        console = app._navigation_outgoing_screen()
+        session_id = console._ensure_console_chat_store().active_session_id
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "console-popover-find",
+            "Switch model to open on Find",
+        )
+        first = app.screen
+        assert first._scope_copy == model_switcher.SCOPE_THIS_CHAT_AND_NEW_CHATS
+        await pilot.press(*"groq")
+        await _until(
+            pilot,
+            lambda: _groq_row(app) == ("setup", "Not ready · no key"),
+            "Groq's NEEDS SETUP row to be the highlight",
+        )
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and getattr(app.focused, "id", None) == "settings-provider-api-key"
+            ),
+            "Settings to open with focus in Groq's API key field",
+        )
+        settings = app.screen
+        settings.query_one("#settings-provider-return", Button).focus()
+        await pilot.press("enter")
+
+        await _until(
+            pilot,
+            lambda: _groq_row(app) == ("setup", "Not ready · no key"),
+            "Switch model to reopen on Groq's row, still NEEDS SETUP",
+        )
+        reopened = app.screen
+        assert reopened is not first
+        assert reopened.query_one("#console-popover-find", Input).value == "Groq "
+        assert reopened._scope_copy == model_switcher.SCOPE_THIS_CHAT_AND_NEW_CHATS
+        assert console._console_setup_modal_blocking()
+        assert not app.pending_handoffs.has_pending(CHANNEL)
+
+        await pilot.press("escape")
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console
+                and getattr(app.focused, "id", None) == "console-setup-modal-action"
+            ),
+            "the card's action to hold focus again",
+        )
+        assert console._console_setup_modal_blocking()
+        assert console._ensure_console_chat_store().active_session_id == session_id
+        provider, model = _chat_pair(console)
+        # The chat may spell the id custom_ep:<slug>; both name one endpoint.
+        assert (canonical_custom_endpoint_id(provider), model) == (
+            "custom-ep:gone",
+            None,
+        )
+        assert not _saved_config()["api_settings"]["groq"].get("api_key")

@@ -180,6 +180,52 @@ def test_console_provider_return_target_is_strict_and_disjoint_from_the_modal() 
         ConsoleProviderReturnIntent("")
 
 
+def test_console_provider_return_carries_the_pair_switch_model_reopens_on() -> None:
+    """TASK-33008.2 (R43): a NEEDS SETUP row's return also names the provider
+    and the model Switch model reopens on. The keys are sent only when set,
+    so a recovery's context is unchanged, and they are held to the navigation
+    contract's provider key and text rules."""
+    saved = ConversationSettingsReturnOutcome.CREDENTIAL_SAVED
+    intent = ConsoleProviderReturnIntent("session-1", "OpenAI", "gpt-5")
+    assert (intent.switcher_provider, intent.switcher_model) == ("openai", "gpt-5")
+    target = intent.return_target(5, saved)
+    context = target.to_context()
+    assert context == {
+        "session_id": "session-1",
+        "return_revision": 5,
+        "outcome": "credential_saved",
+        "switcher_provider": "openai",
+        "switcher_model": "gpt-5",
+    }
+    assert ConsoleProviderReturnTarget.from_context(context) == target
+    assert ConsoleSettingsReturnTarget.from_context(context) is None
+    # A provider that lists no model reopens on the provider alone.
+    bare = ConsoleProviderReturnIntent("session-1", "openai").return_target(5, saved)
+    assert bare.to_context() == {
+        "session_id": "session-1",
+        "return_revision": 5,
+        "outcome": "credential_saved",
+        "switcher_provider": "openai",
+    }
+    assert ConsoleProviderReturnTarget.from_context(bare.to_context()) == bare
+    # Not the same return: the Console's consumer compares the two whole.
+    assert target != ConsoleProviderReturnIntent("session-1").return_target(5, saved)
+    for provider, model in (
+        ("custom-ep:lab", "lab-model"),  # R35: no return can name one.
+        ("", "gpt-5"),
+        ("openai", ""),
+        ("openai", "gpt-5\nsk-secret"),
+    ):
+        with pytest.raises(ValueError):
+            ConsoleProviderReturnIntent("session-1", provider, model)
+        assert (
+            ConsoleProviderReturnTarget.from_context(
+                {**context, "switcher_provider": provider, "switcher_model": model}
+            )
+            is None
+        )
+
+
 def test_console_return_target_round_trip_and_outcome_allowlist() -> None:
     context = {
         "session_id": "session-1",

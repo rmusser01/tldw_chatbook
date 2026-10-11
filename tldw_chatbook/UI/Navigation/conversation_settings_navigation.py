@@ -80,6 +80,22 @@ def _session_id_text(value: str) -> str:
 _SessionId = Annotated[
     str, Field(min_length=1, max_length=256), AfterValidator(_session_id_text)
 ]
+
+
+def _model_text(value: str) -> str:
+    return validate_navigation_context_text(value, name="model", max_length=512)
+
+
+#: The provider and model Switch model reopens on (TASK-33008.2), held to the
+#: rules a provider route's own provider and model are.
+_SwitcherProvider = Annotated[
+    str,
+    Field(min_length=1, max_length=128),
+    AfterValidator(validate_navigation_provider_key),
+]
+_SwitcherModel = Annotated[
+    str, Field(min_length=1, max_length=512), AfterValidator(_model_text)
+]
 #: ``ConversationSettingsReturnOutcome``'s values, as a context spells them.
 _ReturnOutcome = Literal[
     "credential_saved", "provider_settings_saved", "without_saving"
@@ -142,6 +158,8 @@ class _ProviderSettingsNavigationContext(_StrictNavigationContext):
 
 class _ConsoleProviderReturnIntentContext(_StrictNavigationContext):
     session_id: _SessionId
+    switcher_provider: _SwitcherProvider | None = None
+    switcher_model: _SwitcherModel | None = None
 
 
 class _ConsoleProviderReturnContext(_ConsoleProviderReturnIntentContext):
@@ -211,24 +229,46 @@ class ConsoleProviderReturnIntent:
     A Console provider recovery that leaves for Settings stages it on the
     Chat settings modal's channel: the store keeps one slot per channel, so a
     newer recovery of either kind supersedes it.
+
+    A NEEDS SETUP row in Switch model also names its provider and model, so
+    the return reopens Switch model on them (TASK-33008.2). Neither is a key,
+    an endpoint or prompt text.
     """
 
     session_id: str
+    switcher_provider: str | None = None
+    switcher_model: str | None = None
 
     def __post_init__(self) -> None:
         try:
             validated = _ConsoleProviderReturnIntentContext.model_validate(
-                {"session_id": self.session_id}
+                self.to_context()
             )
         except ValidationError as exc:
             raise ValueError("Console provider return intent is invalid") from exc
-        object.__setattr__(self, "session_id", validated.session_id)
+        for name in type(validated).model_fields:
+            object.__setattr__(self, name, getattr(validated, name))
+
+    def to_context(self) -> dict[str, object]:
+        """The chat, plus the switcher's pair only when a row asked for it."""
+        context: dict[str, object] = {"session_id": self.session_id}
+        if self.switcher_provider is not None:
+            context["switcher_provider"] = self.switcher_provider
+        if self.switcher_model is not None:
+            context["switcher_model"] = self.switcher_model
+        return context
 
     def return_target(
         self, return_revision: int, outcome: ConversationSettingsReturnOutcome
     ) -> ConsoleProviderReturnTarget:
         """The Console context Settings returns with: the chat itself."""
-        return ConsoleProviderReturnTarget(self.session_id, return_revision, outcome)
+        return ConsoleProviderReturnTarget(
+            self.session_id,
+            return_revision,
+            outcome,
+            self.switcher_provider,
+            self.switcher_model,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,25 +413,31 @@ class ConsoleSettingsReturnTarget:
 
 @dataclass(frozen=True, slots=True)
 class ConsoleProviderReturnTarget:
-    """Allowlisted Console chat a provider recovery returns to (TASK-33008.1)."""
+    """Allowlisted Console chat a provider recovery returns to (TASK-33008.1).
+
+    It repeats the pair its intent asked Switch model to reopen on
+    (TASK-33008.2), so the Console can tell an answer to another request.
+    """
 
     session_id: str
     return_revision: int
     outcome: ConversationSettingsReturnOutcome
+    switcher_provider: str | None = None
+    switcher_model: str | None = None
 
     def __post_init__(self) -> None:
         try:
             validated = _ConsoleProviderReturnContext.model_validate(self.to_context())
         except ValidationError as exc:
             raise ValueError("Console provider return target is invalid") from exc
-        object.__setattr__(self, "session_id", validated.session_id)
-        object.__setattr__(self, "return_revision", validated.return_revision)
+        for name in type(validated).model_fields:
+            object.__setattr__(self, name, getattr(validated, name))
         object.__setattr__(
             self, "outcome", ConversationSettingsReturnOutcome(validated.outcome)
         )
 
     def to_context(self) -> dict[str, object]:
-        return {
+        context: dict[str, object] = {
             "session_id": self.session_id,
             "return_revision": self.return_revision,
             "outcome": (
@@ -400,6 +446,11 @@ class ConsoleProviderReturnTarget:
                 else self.outcome
             ),
         }
+        if self.switcher_provider is not None:
+            context["switcher_provider"] = self.switcher_provider
+        if self.switcher_model is not None:
+            context["switcher_model"] = self.switcher_model
+        return context
 
     @classmethod
     def from_context(

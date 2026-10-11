@@ -265,9 +265,10 @@ by a **Get started** card with three numbered steps — "Connect a provider
 marked with ● (current) and ○ (pending) glyphs, plus the note "Composer
 unlocks after setup". Behind the card, the workbench is covered by a plain
 dim fill with nothing drawn on it. Under its plain-language line about
-providers, the card says "Cloud setup opens Settings and comes back here.
-Press Enter to use the highlighted action." — Enter is the only key the card
-names, matching the first hint in the footer. Its button follows the current
+providers, the card says "Cloud setup opens Settings and comes back here,
+except for custom endpoints. Press Enter to use the highlighted action." —
+Enter is the only key the card names, matching the first hint in the footer.
+Its button follows the current
 step. **Set up provider** opens **Settings ▸ Providers & Models** on this chat's
 provider with the API key field in focus. Type or paste the key, press **Esc**
 then **s** to save, and focus moves to **Return to Console**: **Enter** there
@@ -761,7 +762,24 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
 - **NEEDS SETUP**, providers with a blocker such as a missing key. **Enter**
   on one never applies it: it closes the list and opens **Settings ▸
   Providers & Models** at that provider, with its key or endpoint field in
-  focus. Keys are only ever entered in Settings. A local server that refused
+  focus. Keys are only ever entered in Settings. **Return to Console** there
+  (see
+  [Settings — Coming back from a provider fix](settings.md#coming-back-from-a-provider-fix))
+  comes back to this chat and reopens Switch model with the provider's name
+  in **Find** and the row's model highlighted, whether or not you saved. Once
+  the key is saved the provider's models read "Ready · not tested" and
+  **Enter** applies the highlighted pair to this chat: a chat that holds work
+  keeps its own pair through the save, so this is the step that moves it (a
+  chat with no messages and no edited settings already follows the saved
+  pair, and the list marks it **● CURRENT**). If you came back without
+  saving, the row is still under NEEDS SETUP, and **Esc** leaves the chat as
+  it was with the composer in focus. Opened from the Get started card, the
+  list comes back over the card while setup is unfinished, and **Esc**
+  returns to the card. **Stay in Settings**, or walking back to the Console
+  yourself, drops the return, so the list does not reopen. A custom
+  endpoint's row opens Settings too, where its own entry is edited, but
+  Settings offers no way back from there, so nothing reopens for it. A local
+  server that refused
   or timed out is listed first and reads "start it; rechecked on open": the
   fix is outside the app, so **Enter** on it only repeats that hint (the
   group's heading says "Enter opens the fix or explains it"). A cloud

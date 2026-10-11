@@ -1,10 +1,14 @@
 """Land on the Console chat a provider recovery left for Settings (TASK-33008.1).
 
 ``open_provider_setup`` (``model_switcher.py``) stages a
-``ConsoleProviderReturnIntent`` that names only the active chat, and Settings
+``ConsoleProviderReturnIntent`` that names the active chat, and Settings
 comes back with a ``ConsoleProviderReturnTarget``. This claims that exact
 revision and returns to the chat: the composer takes focus, or the Get started
 card's primary action while the card still blocks.
+
+A NEEDS SETUP row in Switch model also names its provider and model in the
+intent. Its return then reopens Switch model on them, saved or not
+(TASK-33008.2); a return that does not land reopens nothing.
 
 It applies nothing. A Providers & Models save sets the new-chat default, and
 D1's pristine refresh moves an untouched chat onto it in the sync below; a chat
@@ -94,7 +98,8 @@ def consume_provider_return(screen: ChatScreen) -> None:
         claim is None
         or claim.revision != target.return_revision
         or type(claim.value) is not ConsoleProviderReturnIntent
-        or claim.value.session_id != target.session_id
+        # The same chat, and the same pair for Switch model to reopen on.
+        or claim.value.return_target(claim.revision, target.outcome) != target
     ):
         if claim is not None:
             handoffs.release(claim)  # Another owner's newer request stays.
@@ -113,7 +118,13 @@ async def _land(
     handoffs: PendingHandoffStore,
     claim: HandoffClaim[ConsoleProviderReturnIntent],
 ) -> None:
-    """Switch to the chat, sync it, and focus where the user continues."""
+    """Switch to the chat, sync it, and focus where the user continues.
+
+    A NEEDS SETUP row's return then reopens Switch model over that focus, so
+    Esc there leaves it on the composer, or on the card while it blocks. Not
+    if the Console lost the screen during the sync: the list would open over
+    whatever took it.
+    """
     try:
         store = screen._ensure_console_chat_store()
         if store.active_session_id != claim.value.session_id:
@@ -127,5 +138,11 @@ async def _land(
         await screen._sync_native_console_chat_ui()
         if not screen._focus_console_setup_modal_if_blocking():
             screen._focus_console_composer_if_needed(force=True)
+        if claim.value.switcher_provider and screen._owns_console_screen_stack():
+            from .model_switcher import reopen_model_switcher
+
+            reopen_model_switcher(
+                screen, claim.value.switcher_provider, claim.value.switcher_model
+            )
     finally:
         handoffs.acknowledge(claim)  # One landing; nothing is left to replay.

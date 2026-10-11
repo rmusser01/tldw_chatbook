@@ -154,10 +154,14 @@ async def test_card_draws_on_a_plain_dim_fill_with_no_backdrop_widget() -> None:
 
 def test_card_copy_names_the_settings_round_trip_and_only_footer_keys() -> None:
     """AC#4: cloud setup opens Settings and comes back here, and the only key
-    named is Enter, the one the blocked footer teaches (ADR-031 rule 5)."""
+    named is Enter, the one the blocked footer teaches (ADR-031 rule 5).
+
+    TASK-33008.2 (R35): the line promises no return for a custom endpoint.
+    Settings offers none there, on the card's own step or from a NEEDS SETUP
+    row in Switch model."""
     assert ("Enter", "continue setup") in CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
     assert "Settings" in CONSOLE_SETUP_CARD_SUBTITLE
-    assert "back here" in CONSOLE_SETUP_CARD_SUBTITLE
+    assert "back here, except for custom endpoints." in CONSOLE_SETUP_CARD_SUBTITLE
     assert "Enter" in CONSOLE_SETUP_CARD_SUBTITLE
     for key in ("Tab", "Esc", "Shift", "Ctrl", "Alt", "Space", "F1", "F6"):
         assert key not in CONSOLE_SETUP_CARD_SUBTITLE, key

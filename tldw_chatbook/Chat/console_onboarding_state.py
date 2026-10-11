@@ -20,11 +20,13 @@ CONSOLE_SETUP_CARD_TITLE = "Get started"
 #: to connect one. Kept provider-agnostic (no settings jargon). TASK-33008.4:
 #: its second line says where cloud setup goes, and Enter is the only key it
 #: names, matching the blocked footer's first hint (ADR-031 rule 5).
+#: TASK-33008.2: the line promises no return for a custom endpoint, because
+#: Settings offers none there (no return can name a ``custom-ep:`` id).
 CONSOLE_SETUP_CARD_SUBTITLE = (
     "A provider is the AI service that answers your messages — "
     "for example OpenAI, Anthropic, or a server running on this computer.\n"
-    "Cloud setup opens Settings and comes back here. "
-    "Press Enter to use the highlighted action."
+    "Cloud setup opens Settings and comes back here, except for custom "
+    "endpoints. Press Enter to use the highlighted action."
 )
 CONSOLE_READY_EMPTY_COPY = "Ready — type a message to begin."
 CONSOLE_QUIET_EMPTY_COPY = "No messages yet."

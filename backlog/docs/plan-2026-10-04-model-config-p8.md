@@ -226,7 +226,7 @@ This subtask absorbs TASK-32572. That task's 100x30 capture is replaced by captu
 - [ ] #1 Behind the card, the workbench is dimmed with a plain fill from existing tokens and no decorative glyphs, and the snow backdrop's code and CSS are removed.
 - [ ] #2 Boot-parsed CSS bytes measure lower than before, MAX_BOOT_PARSED_CSS_BYTES (Tests/Performance/test_boot_css_byte_budget.py:117) is not raised, and the hex ratchet does not rise.
 - [ ] #3 Tab and Shift+Tab cycle every action the card is showing, including the detected-server action when present, and the focus cue marks each stop (TASK-32572 AC#1, AC#2).
-- [ ] #4 The card's copy says that cloud setup opens Settings and comes back here, and it names only keys the footer shows.
+- [ ] #4 The card's copy says that cloud setup opens Settings and comes back here, except for custom endpoints, and it names only keys the footer shows.
 - [ ] #5 Esc still does not dismiss the card.
 - [ ] #6 The tests that pin the snow field are deleted or rewritten on purpose and named in the PR, and Tests/UI/test_console_background_effects.py stays green.
 - [ ] #7 Keyboard-only live captures at 211x44 and 235x52, on a scratch profile with no provider, show one capture per Tab stop.

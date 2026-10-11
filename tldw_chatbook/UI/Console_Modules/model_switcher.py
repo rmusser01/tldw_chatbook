@@ -16,6 +16,9 @@ The Get started card has its own way in (``open_setup_card_switcher``,
 TASK-33008.3): "Use detected <server>" opens the switcher on that provider,
 and Enter there adopts the picked model (``adopt_detected_local_server``).
 
+A NEEDS SETUP row's return from Settings reopens the switcher on that row's
+provider (``reopen_model_switcher``, TASK-33008.2).
+
 ADR-097: import this module lazily from the switcher's openers only; it is not
 on the boot path.
 """
@@ -295,17 +298,20 @@ def open_provider_setup(
     model: str | None = None,
     *,
     field: str | None = None,
+    reopen_switcher: bool = False,
 ) -> None:
     """Open Settings ▸ Providers & Models at one provider's fix (D4, ADR-012).
 
     Every Console exit to Settings comes here: the switcher's NEEDS SETUP
     rows, a cloud key check's Retry and the recovery action
     (``_open_console_provider_recovery``). TASK-33008.1: it stages a return
-    to the active chat, naming only that chat, so Settings offers "Return to
-    Console". A provider or model the return cannot name opens Settings one
-    way, as before; a navigation that never leaves takes its return back, and
-    so does a Console the user reaches again by hand (``provider_return.py``).
-    Either way Settings keeps its own model field when no model is routed.
+    to the active chat, so Settings offers "Return to Console". The return
+    names that chat and, for a NEEDS SETUP row, the row's provider and model
+    (TASK-33008.2); never a key or an endpoint. A provider or model the
+    return cannot name opens Settings one way, as before; a navigation that
+    never leaves takes its return back, and so does a Console the user
+    reaches again by hand (``provider_return.py``). Either way Settings keeps
+    its own model field when no model is routed.
 
     Args:
         screen: The Console screen that opens Settings.
@@ -313,6 +319,8 @@ def open_provider_setup(
         model: The row's model, when it has one.
         field: The control to focus ("" for none); None reads it from the
             pair's readiness.
+        reopen_switcher: Reopen Switch model on this provider after the
+            return (``reopen_model_switcher``): a NEEDS SETUP row's Enter.
     """
     from ...Constants import TAB_SETTINGS
     from ..Navigation.conversation_settings_navigation import (
@@ -338,7 +346,9 @@ def open_provider_setup(
     handoffs = getattr(getattr(screen, "app_instance", None), "pending_handoffs", None)
     session_id = screen._ensure_console_chat_store().active_session_id
     try:
-        intent = ConsoleProviderReturnIntent(session_id)
+        intent = ConsoleProviderReturnIntent(
+            session_id, *((provider, model or None) if reopen_switcher else ())
+        )
         target = ProviderSettingsNavigationTarget(
             "providers-models", provider, model or None, field or None, 1, session_id
         )
@@ -562,12 +572,41 @@ def open_card_recovery_switcher(screen: ChatScreen) -> bool:
     return True
 
 
+def reopen_model_switcher(screen: ChatScreen, provider: str, model: str | None) -> None:
+    """Reopen Switch model on the provider a NEEDS SETUP row left to fix.
+
+    TASK-33008.2: the row's Enter went to Settings, and the return comes back
+    here (``provider_return.py``). A chat that holds work keeps its own pair
+    after a Settings save (ADR-095), so the pick is still to make: Find holds
+    the provider's name, as "… N more" does, and the row's own pair is
+    highlighted when the list has it, so one Enter applies it. With nothing
+    saved the row is still under NEEDS SETUP and nothing has changed.
+
+    It opens in the mode the chat is in now: the Get started card's while the
+    card still blocks, where Alt+M itself stays shut.
+
+    Args:
+        screen: The Console screen the return landed on.
+        provider: The row's provider.
+        model: The row's model, when it had one.
+    """
+    key = provider_config_key(provider)
+    name = provider_display_name(key, screen._provider_readiness_app_config())
+    _open_switcher(
+        screen,
+        query=f"{name} ",
+        card=screen._console_setup_modal_blocking(),
+        highlight=(key, model) if model else None,
+    )
+
+
 def _open_switcher(
     screen: ChatScreen,
     *,
     query: str = "",
     card: bool = False,
     server: DiscoveredLocalServer | None = None,
+    highlight: tuple[str, str] | None = None,
 ) -> None:
     """Push Switch model in apply mode for the active chat.
 
@@ -576,6 +615,8 @@ def _open_switcher(
         query: Text Find opens with ("" lists everything).
         card: Opened from the Get started card.
         server: The card's detected local server, if that is what opened it.
+        highlight: The pair highlighted first when the list has it; a
+            detected server's first model takes its place.
     """
     from ...Chat.console_settings_apply import (
         QUICK_MODEL_DEFAULT_FIELDS,
@@ -677,7 +718,7 @@ def _open_switcher(
             ),
             live_committer=commit,
             setup_opener=lambda provider, model: open_provider_setup(
-                screen, provider, model
+                screen, provider, model, reopen_switcher=True
             ),
             query=query,
             served_models=(
@@ -687,7 +728,7 @@ def _open_switcher(
             highlight_pair=(
                 (detected, server.model_ids[0])
                 if server is not None and server.model_ids
-                else None
+                else highlight
             ),
             **_switcher_sources(  # type: ignore[arg-type]
                 screen,

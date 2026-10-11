@@ -820,6 +820,53 @@ async def test_a_highlight_pair_applies_while_providers_are_still_checked() -> N
     assert (settings.provider, settings.model) == ("llama_cpp", "srv-1")
 
 
+async def test_a_highlight_pair_no_server_listed_waits_for_readiness() -> None:
+    """TASK-33008.2: Switch model reopens on the pair of the NEEDS SETUP row
+    the user left to fix. Unless a server listed that pair, nothing says it
+    can send yet, so it is not offered as a pair while providers are checked:
+    a fast Enter there would apply a pair whose key was never saved. Once
+    readiness lands it is highlighted as what it is, here a NEEDS SETUP row,
+    and Enter opens its fix again."""
+    release = threading.Event()
+
+    class SlowRecorder(Recorder):
+        def readiness(self, provider, model):  # type: ignore[no-untyped-def]
+            release.wait(10)
+            return super().readiness(provider, model)
+
+    recorder = SlowRecorder()
+    app = SwitcherHarness()
+    try:
+        async with app.run_test(size=(211, 44)) as pilot:
+            switcher = build_switcher(
+                recorder, query="OpenAI ", highlight_pair=("openai", "gpt-5.1")
+            )
+            app.push_screen(switcher, callback=lambda result: None)
+            await pilot.pause()
+            await pilot.pause()
+            assert not switcher._first_readiness_done
+            assert any("checking providers" in row.text for row in switcher._rows)
+            # The chat's own pair, nothing else.
+            listed = [(row.provider, row.model) for row in switcher._rows if row.model]
+            assert listed == [("llama_cpp", "model-a")]
+
+            release.set()
+            await _settle(app, pilot)
+            row = switcher.highlighted_row()
+            assert row is not None and (row.kind, row.provider, row.model) == (
+                "setup",
+                "openai",
+                "gpt-5.1",
+            )
+            await pilot.press("enter")
+            await pilot.pause()
+    finally:
+        release.set()
+
+    assert recorder.setup == [("openai", "gpt-5.1")]
+    assert recorder.submissions == []
+
+
 async def test_custom_endpoints_show_display_names_and_builtin_slots_stay() -> None:
     """AC#13 (ADR-146): registry entries by display name; custom/custom_2 listable."""
     recorder = Recorder()
@@ -1129,6 +1176,55 @@ def test_needs_setup_route_names_the_provider_its_model_and_the_field() -> None:
     # A navigation that never leaves the Console takes its return back.
     message.report_completion(False)
     assert handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN) is None
+
+
+@pytest.mark.parametrize(
+    "recovery_action, field",
+    [
+        ("configure_credential", "api_key"),
+        ("configure_endpoint", "endpoint"),
+        ("save_endpoint", "endpoint"),
+    ],
+)
+def test_a_needs_setup_row_route_carries_its_field_and_the_pair_to_reopen_on(
+    recovery_action, field
+) -> None:
+    """TASK-33008.2 AC#1 (R42, R43): a NEEDS SETUP row leaves through the
+    return route, at the control its blocker names. Its return also names the
+    provider and model Switch model reopens on. Settings is not told them:
+    its context is the recovery's own."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules.model_switcher import open_provider_setup
+    from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
+        ConsoleProviderReturnIntent,
+    )
+    from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+
+    # The route reads the readiness for its recovery action and nothing else.
+    screen, posted = _setup_route_screen(
+        lambda _provider, _model: SimpleNamespace(recovery_action=recovery_action)
+    )
+
+    open_provider_setup(
+        screen, "openrouter", "openai/gpt-4o-mini", reopen_switcher=True
+    )
+
+    (message,) = posted
+    assert message.screen_context == {
+        "category": "providers-models",
+        "provider": "openrouter",
+        "model": "openai/gpt-4o-mini",
+        "field": field,
+        "return_revision": 1,
+        "session_id": "session-1",
+    }
+    claim = screen.app_instance.pending_handoffs.claim(
+        HandoffChannel.CONVERSATION_SETTINGS_RETURN
+    )
+    assert claim is not None and claim.value == ConsoleProviderReturnIntent(
+        "session-1", "openrouter", "openai/gpt-4o-mini"
+    )
 
 
 def test_setup_route_a_target_settings_cannot_name_goes_one_way() -> None:

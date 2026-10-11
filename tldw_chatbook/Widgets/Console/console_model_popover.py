@@ -489,9 +489,12 @@ class ConsoleModelPopover(
                 listed beside the saved ones (a new entry's, TASK-33006.4), or
                 that a detected server listed. A served provider is used, so
                 it is listed even as a legacy alias.
-            highlight_pair: The pair highlighted first, listed even while
-                providers are checked, until Find changes (the Get started
-                card's detected server: its first listed model, TASK-33008.3).
+            highlight_pair: The pair highlighted first, until Find changes.
+                A pair of a served provider is listed even while providers
+                are checked (the Get started card's detected server: its
+                first listed model, TASK-33008.3). Any other waits for
+                readiness (a NEEDS SETUP row's pair, reopened after its fix,
+                TASK-33008.2).
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -1122,11 +1125,14 @@ class ConsoleModelPopover(
             preferred = self._highlight_pair
             if (
                 preferred is not None
+                and preferred[0] in self._served
                 and preferred not in shown
                 and preferred != (current_key, current_model)
             ):
                 # A server that just answered lists it; a fast Enter applies
                 # it (the commit still checks readiness) instead of an error.
+                # A pair no server listed (a NEEDS SETUP row's, reopened after
+                # its fix) waits for readiness: its key may not be saved.
                 members.append(self._pair_row("pair", *preferred))
             members.append(SwitcherRow("info", "  checking providers…"))
             group("READY PROVIDERS", members)
