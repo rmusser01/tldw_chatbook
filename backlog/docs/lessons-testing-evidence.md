@@ -7412,6 +7412,35 @@ tempting, and I did briefly claim, that a failing save in tests meant a failing
 save in the product. Check which layer makes a failure fatal before assigning it
 user impact.
 
+**A second incident, same rule (TASK-33641.7, 2026-10-10).** Twelve nodes of
+`Tests/Backup_Recovery/test_skills_recovery_controls.py` were filed with one
+cause: their subprocess host was a plain `App`, so `$tldw-boundary` had no
+source and the Library sheet failed to parse. Giving the host
+`ThemeVariableDefaultsMixin` did not make them pass. The stylesheet error had
+been the first of three:
+
+1. The script still read `_library_skills_trust_posture` and wrote
+   `_library_skills_view`, flat attributes the screen lost on 2026-09-04
+   (`ed4c29d45f`). With the mixin alone the node failed with `AttributeError`.
+2. It waited for `#skill-trust-bootstrap-input` and then pressed
+   `#skill-trust-bootstrap-submit`, which mounts one container level later.
+   That raised `NoMatches` in 2 of 13 nodes, then 1 of 13 twice, with the file
+   run alone. A second script in the file had the same wait against the unlock
+   modal and lost its race only once, in the ninth run.
+
+A test that has been red for weeks keeps collecting causes behind the first
+one, because nothing downstream of the crash runs. Count on that when sizing
+such a rider.
+
+**And prove which change did the fixing.** The fix added an import of
+`css/Themes/themes.py` beside the mixin. That module guards Textual's built-in
+themes in place when it is imported, so the import alone gave the plain `App`
+the names: with the mixin taken off again and the import left in, the three
+nodes tried still passed. The mixin is kept because it is what `TldwCli` uses and it also
+covers a theme registered without the guard, but the red-to-green run was not
+evidence for it. Remove each half of a two-part fix in turn before saying
+which half matters.
+
 ## A DOM swap moved into a worker is invisible to `pilot.pause()` (task-15461, 2026-08-11)
 
 **The trap.** `Pilot.pause(delay)` is `await self._wait_for_screen()` then
