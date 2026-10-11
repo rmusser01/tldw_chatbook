@@ -1,11 +1,11 @@
 ---
 id: TASK-34783
 title: Correct architecture references against implemented runtime contracts
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-10 19:27'
-updated_date: '2026-10-11 16:55'
+updated_date: '2026-10-11 16:58'
 labels: []
 dependencies: []
 ---
@@ -20,10 +20,10 @@ Keep the new engineering reference accurate about live hooks, workflow execution
 <!-- AC:BEGIN -->
 - [x] #1 Hooks documentation describes the wired v2 runtime and its permission/checkpoint requirements
 - [x] #2 Workflow execution scope and reranking request counts match actual source
-- [ ] #3 Schema, module paths and storage descriptions avoid known stale or inaccurate claims
+- [x] #3 Schema, module paths and storage descriptions avoid known stale or inaccurate claims
 - [x] #4 Console documentation distinguishes streamed transcript polling from synchronous composer, active-tab, title and focus binding during a session switch.
 - [x] #5 Dictation documentation describes installed-provider substitution, unavailable resolution when no local provider is installed, and the substitution notice and startup warning.
-- [ ] #6 Tool-catalog documentation distinguishes fresh per-run registries from conditional reuse of a complete MCP composition and preserves approval-stamp freshness.
+- [x] #6 Tool-catalog documentation distinguishes fresh per-run registries from conditional reuse of a complete MCP composition and preserves approval-stamp freshness.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -107,4 +107,6 @@ Durable receipts are under /Users/macbook-dev/.codex/visualizations/2026/10/10/0
 Independent immutable copy review (2026-10-11) cleared 6b12175d9f1615f93c5afe8644e7eec9aedae9b6 on exact source parent 43475e0273d27afde395a5eb5128fe3737bd1f66. Reviewer review_2873 verified the changed Settings, CSS and Dreams claims against runtime source, preserved Console/speech/recomposition copy and incoming merge-queue guidance, all 83 relative Architecture links, exact runtime/tests/scripts/workflow tree equality and supplied 5124-task/179-UI guard receipts. No actionable findings remain. AC3 is verified and task restored to Done through Backlog CLI. This closeout changes only task metadata and this receipt; no runtime tests, wider preflight or new platform qualification. Durable independent receipt: pr-review-evidence/pr3038-434-independent-review.json under the evidence directory recorded above.
 
 MCP cache-description correction (2026-10-11): independent carry review found that tool-catalog.md overstated compose_catalog as running once per registration. Verified compose_run_mcp_provider identity/key/connection checks and install_composition against the immutable source. Corrected the MCP paragraph and added its authoritative helper row: complete compositions may be reused across runs, incomplete inventories are not kept, valid empty inventories remain reusable and installation clears approval stamps. Full registry freshness, persona call-cap scope and invocation/permission descriptions are preserved. No new ADR or runtime/test/script/workflow change; Task33620.15.1 remains In Progress with performance AC2/5/6 open. Existing Markdown links are byte-identical, the new source path exists, all5124 task files pass uniqueness/readability and whitespace passes. Independent immutable copy review remains pending before AC3/AC6 and Done. Durable receipt: pr3059-mcp-copy-proof.json in the evidence directory recorded above.
+
+Independent immutable MCP carry/copy review (2026-10-11) cleared da231b87b27107b4f95cc6b213f3df8aa527a6e8 on source parent fcef65bfbdb12984979778271e8d4dcbb647ea97, stack boundary ec0ea2f1db7d57415f5c9d8f289f2965488e536c. Reviewer review_3038 confirmed the helper-owned composition cache description, validity checks, complete/empty inventory distinction, approval-stamp clearing and preserved fresh registry/persona scope. The finding is resolved; AC3 and AC6 are verified and Task34783 is restored to Done through CLI. Runtime repair source and test seams remain unchanged; its bound evidence is122 passes plus one identical unchanged-base failure. Task33620.15.1 remains In Progress with AC2/5/6 open. No runtime test replay or new performance qualification for this copy/metadata correction. Durable receipt: pr3059-pr3075-review3038.md and companion proof in the evidence directory recorded above.
 <!-- SECTION:NOTES:END -->
