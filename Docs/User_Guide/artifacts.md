@@ -56,6 +56,27 @@ Chatbook packs…** opens the existing manager, including Create, Import,
 Templates, Export, and Delete. The manager remains a separate workflow linked
 from Library.
 
+### Importing a pack: the conflict step
+
+The import wizard's third step asks how to handle items that already exist
+in your databases (skip, rename, replace, or merge). What it reports there
+is checked, not assumed: when the step opens, the conversations, notes,
+characters and media in the pack are looked up against your databases, and
+the step shows one of exactly three states:
+
+- **Potential Conflicts Detected** — a list naming each pack item whose
+  name (or, for media, URL) is already present, and the existing name it
+  matches.
+- **✅ No conflicts detected** — only shown after that lookup ran and found
+  nothing.
+- Nothing at all — when no pack has been validated yet, or the lookup
+  could not run, the step makes no claim either way.
+
+Prompts and kept briefings are not part of the check: the skip/rename/
+replace/merge choice does not apply to them (prompts that collide with an
+existing name fail their import instead), and kept briefings are matched by
+content rather than by name.
+
 The inventory covers registered Chatbooks and reports. It does not scan folders
 for unregistered exports or invent empty Datasets/Drafts sections.
 

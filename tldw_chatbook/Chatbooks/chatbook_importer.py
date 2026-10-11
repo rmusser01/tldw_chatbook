@@ -152,6 +152,41 @@ _IMPORTABLE_CONTENT_TYPES: Tuple["ContentType", ...] = (
 )
 
 
+class ImportConflict:
+    """One chatbook item whose collision key already exists at the destination.
+
+    Produced by :meth:`ChatbookImporter.scan_conflicts` (task-19861): the
+    wizard's conflict step shows exactly these findings, and only their
+    absence -- after the scan ran -- may ever be phrased as "no conflicts".
+    """
+
+    def __init__(self, content_type: "ContentType", title: str, existing_name: str):
+        #: The chatbook content type the colliding item belongs to.
+        self.content_type = content_type
+        #: The colliding item's own name in the chatbook.
+        self.title = title
+        #: The name (or URL, for media) already present at the destination.
+        self.existing_name = existing_name
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return (
+            f"ImportConflict({self.content_type.value!r}, {self.title!r}, "
+            f"{self.existing_name!r})"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ImportConflict):
+            return NotImplemented
+        return (
+            self.content_type == other.content_type
+            and self.title == other.title
+            and self.existing_name == other.existing_name
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.content_type, self.title, self.existing_name))
+
+
 class ImportTypeResult:
     """Per-content-type outcome counters for a single import run.
 
@@ -825,6 +860,216 @@ class ChatbookImporter:
         finally:
             if extract_dir is not None:
                 shutil.rmtree(extract_dir, ignore_errors=True)
+
+    # --- Pre-import conflict scan (task-19861) ----------------------------
+    #
+    # The wizard's conflict-resolution step used to ship an unconditional
+    # "✅ No conflicts detected - all content is new" with no check behind it.
+    # This scan is what that claim is now earned with: it answers, from the
+    # destination databases, "would any of this chatbook's items collide with
+    # something that is already there?" -- using the same lookup keys the
+    # import path itself uses when it decides to skip, rename, replace or
+    # merge. Every answer the step shows is one of these findings (or the
+    # absence of them, after the scan actually ran).
+
+    @staticmethod
+    def _import_prefix_variants(name: str) -> Tuple[str, str]:
+        """The two names an item can be imported under, by the rename option.
+
+        ``prefix_imported`` is chosen on the options step, which runs AFTER the
+        conflict step, so the scan cannot know which name will be used. Both
+        are therefore checked and a match on either is a potential conflict --
+        the honest answer to "could this collide?".
+        """
+        return name, f"[Imported] {name}"
+
+    def _scan_conflict_keys(
+        self, archive: zipfile.ZipFile, manifest: ChatbookManifest
+    ) -> Dict[ContentType, List[Tuple[str, str]]]:
+        """Read every item's collision key out of the validated archive.
+
+        Returns, per content type this scan covers, a list of
+        ``(display_title, lookup_key)`` pairs. For name-keyed types the lookup
+        key is the item's import name; for media it is the URL, which is what
+        the import path itself conflicts on (a media item's title is never
+        consulted).
+
+        The keys are read from the same files the importer reads at import
+        time -- the conversation file's ``name`` field, the note's manifest
+        title, the parsed character card's name, the media metadata's ``url``
+        -- so the scan cannot quietly disagree with the import about what a
+        conflict is. A member that is missing or unreadable simply produces
+        no key for that item: the scan declines to guess rather than
+        fabricating one.
+        """
+        by_name = {
+            member.filename: member
+            for member in archive.infolist()
+            if not member.is_dir()
+        }
+        keys: Dict[ContentType, List[Tuple[str, str]]] = {
+            ContentType.CONVERSATION: [],
+            ContentType.NOTE: [],
+            ContentType.CHARACTER: [],
+            ContentType.MEDIA: [],
+        }
+
+        def _read_member_json(name: str) -> Optional[Any]:
+            member = by_name.get(name)
+            if member is None:
+                return None
+            try:
+                payload = self._stream_member_bytes(
+                    archive, member, maximum=_MAX_ARCHIVE_MEMBER_BYTES
+                )
+                return json.loads(payload.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                return None
+
+        for item in manifest.content_items:
+            if item.type == ContentType.CONVERSATION:
+                file_name = item.file_path
+                if file_name:
+                    for part in Path(file_name).parts:
+                        validate_filename(part)
+                else:
+                    fallback = f"conversation_{item.id}.json"
+                    validate_filename(fallback)
+                    file_name = f"content/conversations/{fallback}"
+                data = _read_member_json(file_name)
+                if isinstance(data, dict) and isinstance(data.get("name"), str):
+                    keys[ContentType.CONVERSATION].append(
+                        (data["name"], data["name"])
+                    )
+            elif item.type == ContentType.NOTE:
+                # The import path conflicts notes on the manifest title.
+                keys[ContentType.NOTE].append((item.title, item.title))
+            elif item.type == ContentType.CHARACTER:
+                fallback = f"character_{item.id}.json"
+                validate_filename(fallback)
+                data = _read_member_json(
+                    f"content/characters/{fallback}"
+                )
+                if isinstance(data, dict):
+                    try:
+                        parsed_card, _format = detect_and_parse_character_card(data)
+                    except Exception:
+                        parsed_card = None
+                    if parsed_card:
+                        char_data = parsed_card.get("data", parsed_card)
+                        name = char_data.get("name")
+                        if isinstance(name, str) and name:
+                            keys[ContentType.CHARACTER].append((name, name))
+            elif item.type == ContentType.MEDIA:
+                fallback = f"media_{item.id}.json"
+                validate_filename(fallback)
+                data = _read_member_json(
+                    f"content/media/metadata/{fallback}"
+                )
+                if isinstance(data, dict) and isinstance(data.get("url"), str):
+                    url = data["url"]
+                    if url:
+                        keys[ContentType.MEDIA].append((item.title, url))
+        return keys
+
+    @content_call(_content_sources)
+    def scan_conflicts(
+        self, chatbook_path: Path
+    ) -> Tuple[Optional[List["ImportConflict"]], Optional[str]]:
+        """Report items in this chatbook that already exist at the destination.
+
+        A pre-import read-only check that mirrors the import path's own
+        conflict decisions: conversations, notes and characters conflict when
+        the destination already holds an item with the same name (either the
+        plain name or the ``[Imported] ``-prefixed one, since the rename
+        option is chosen after this scan runs), and media conflicts when the
+        destination already holds the same URL. Only those four types are
+        covered, because they are the only ones the conflict-resolution
+        strategy applies to; prompts do not go through the strategy at all.
+
+        Args:
+            chatbook_path: The chatbook archive to scan.
+
+        Returns:
+            ``(findings, None)`` with one :class:`ImportConflict` per
+            chatbook item whose key already exists at the destination, or
+            ``(None, error)`` when the archive could not be read. An empty
+            list means the check ran and found nothing -- the only state in
+            which a caller may tell the user "no conflicts detected".
+        """
+        try:
+            try:
+                chatbook_path = validate_path_simple(
+                    chatbook_path, probe_existing=False
+                )
+            except ValueError:
+                return None, _ARCHIVE_SOURCE_PATH_ERROR
+            if chatbook_path.suffix != ".zip":
+                return None, "Unsupported chatbook format. Only ZIP files are supported."
+            with chatbook_path.open("rb") as archive_source:
+                if (
+                    os.fstat(archive_source.fileno()).st_size
+                    > _MAX_ARCHIVE_CONTAINER_BYTES
+                ):
+                    return None, _ARCHIVE_LIMIT_ERROR
+                with zipfile.ZipFile(archive_source, "r") as archive:
+                    manifest, _manifest_data = self._preflight_archive(archive)
+                    keys = self._scan_conflict_keys(archive, manifest)
+        except Exception as e:
+            error_text = _bounded_error_text(e)
+            logger.error(f"Error scanning chatbook for conflicts: {error_text}")
+            return None, f"Error scanning chatbook for conflicts: {error_text}"
+
+        findings: List[ImportConflict] = []
+        chacha_path = self.db_paths.get("ChaChaNotes")
+        if chacha_path and any(keys[content_type] for content_type in (
+            ContentType.CONVERSATION,
+            ContentType.NOTE,
+            ContentType.CHARACTER,
+        )):
+            db = own_database(CharactersRAGDB(
+                chacha_path,
+                "chatbook_importer",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            ))
+            try:
+                for title, key in keys[ContentType.CONVERSATION]:
+                    for variant in self._import_prefix_variants(key):
+                        if db.get_conversation_by_name(
+                            variant, archive_scope="all"
+                        ):
+                            findings.append(
+                                ImportConflict(
+                                    ContentType.CONVERSATION, title, variant
+                                )
+                            )
+                            break
+                for title, key in keys[ContentType.NOTE]:
+                    for variant in self._import_prefix_variants(key):
+                        if db.get_note_by_title(variant):
+                            findings.append(ImportConflict(ContentType.NOTE, title, variant))
+                            break
+                for title, key in keys[ContentType.CHARACTER]:
+                    for variant in self._import_prefix_variants(key):
+                        if db.get_character_card_by_name(variant):
+                            findings.append(
+                                ImportConflict(ContentType.CHARACTER, title, variant)
+                            )
+                            break
+            finally:
+                db.close_connection()
+
+        media_path = self.db_paths.get("Media")
+        if media_path and keys[ContentType.MEDIA]:
+            db = own_database(MediaDatabase(media_path, "chatbook_importer"))
+            try:
+                for title, url in keys[ContentType.MEDIA]:
+                    if db.get_media_by_url(url):
+                        findings.append(ImportConflict(ContentType.MEDIA, title, url))
+            finally:
+                db.close_connection()
+
+        return findings, None
 
     @content_call(_content_sources)
     def import_chatbook(

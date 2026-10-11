@@ -15,7 +15,7 @@ Implements the chatbook import workflow:
 
 import asyncio
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple, TYPE_CHECKING
+from typing import ClassVar, Dict, List, Any, Optional, Tuple, TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.containers import Container
@@ -45,6 +45,7 @@ from ...Chatbooks.chatbook_importer import (
     IMPORT_OUTCOME_SKIPPED,
     UNSUPPORTED_BY_IMPORTER_NOUN,
     ChatbookImporter,
+    ImportConflict,
     ImportStatus,
     ImportTypeResult,
 )
@@ -590,7 +591,44 @@ class PreviewValidationStep(WizardStep):
 
 
 class ConflictResolutionStep(WizardStep):
-    """Step 3: Conflict Resolution."""
+    """Step 3: Conflict Resolution.
+
+    Whether the destination already holds any of this chatbook's items is a
+    COMPUTED fact, not a default: this step used to render an unconditional
+    "✅ No conflicts detected - all content is new" that no code had checked,
+    under a "Potential Conflicts Detected" panel that no code could ever
+    reveal (task-19861). Both elements are now driven by
+    ``ChatbookImporter.scan_conflicts``, which runs when the step is shown:
+
+    * findings -> the conflict panel lists them, and no "no conflicts" claim
+      is made anywhere on the step;
+    * a completed scan with no findings -> the "no conflicts" message is
+      shown, worded as what was actually checked;
+    * no manifest yet, or the scan failed -> the step says nothing about
+      conflicts either way.
+    """
+
+    #: What one rendered conflict line calls the item's content type.
+    _TYPE_LABELS: ClassVar[Dict[ContentType, str]] = {
+        ContentType.CONVERSATION: "Conversation",
+        ContentType.NOTE: "Note",
+        ContentType.CHARACTER: "Character",
+        ContentType.MEDIA: "Media item",
+    }
+
+    #: The coverage sentence both outcomes state, so neither can over- or
+    #: under-claim what "conflict" was measured over. Prompts are not listed
+    #: because the resolution strategy does not apply to them; kept briefings
+    #: and canvas graphs are matched by content, not by name.
+    _COVERAGE_NOTE: ClassVar[str] = (
+        "Checked the conversations, notes, characters and media in this "
+        "chatbook against your databases."
+    )
+
+    def on_show(self) -> None:
+        """Run the conflict scan every time the step is shown."""
+        super().on_show()
+        self.conflict_worker = self.run_worker(self._scan_conflicts(), exclusive=True)
 
     def compose(self) -> ComposeResult:
         """Compose conflict resolution UI."""
@@ -630,17 +668,76 @@ class ConflictResolutionStep(WizardStep):
                 classes="strategy-description",
             )
 
-        # Conflict preview (placeholder for now)
+        # Conflicts the scan found. Hidden until the scan reports findings;
+        # ``_apply_scan_result`` is the code path that reveals it.
         with Container(id="conflict-container", classes="conflict-preview hidden"):
             yield Static("Potential Conflicts Detected:", classes="conflict-title")
             yield Container(id="conflict-list", classes="conflict-list")
 
-        # No conflicts message
+        # No conflicts message. Hidden until a scan actually ran and found
+        # nothing -- an unearned reassurance is the defect this step is
+        # named after (task-19861).
         yield Static(
             "✅ No conflicts detected - all content is new",
             id="no-conflicts",
-            classes="no-conflicts",
+            classes="no-conflicts hidden",
         )
+
+    async def _scan_conflicts(self) -> None:
+        """Scan the destination for items this chatbook would collide with."""
+        self._reset_conflict_ui()
+        file_path = self.wizard.wizard_data.get("file-selection", {}).get("file_path")
+        manifest = self.wizard.wizard_data.get("preview-validation", {}).get("manifest")
+        if not file_path or not manifest:
+            # Nothing validated yet: say nothing about conflicts either way.
+            return
+        try:
+            db_paths = get_chatbook_database_paths()
+            findings, error = ChatbookImporter(db_paths).scan_conflicts(Path(file_path))
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"ConflictResolutionStep._scan_conflicts: scan failed: {e}"
+            )
+            return
+        if error is not None or findings is None:
+            logger.error(
+                f"ConflictResolutionStep._scan_conflicts: {error or 'no result'}"
+            )
+            return
+        self._apply_scan_result(findings)
+
+    def _reset_conflict_ui(self) -> None:
+        """Hide both conflict elements until the scan says which to show."""
+        self.query_one("#conflict-container", Container).add_class("hidden")
+        self.query_one("#no-conflicts", Static).add_class("hidden")
+        self.query_one("#conflict-list", Container).remove_children()
+
+    def _apply_scan_result(self, findings: List["ImportConflict"]) -> None:
+        """Render one completed scan: the findings, or their earned absence."""
+        no_conflicts = self.query_one("#no-conflicts", Static)
+        if findings:
+            conflict_list = self.query_one("#conflict-list", Container)
+            for finding in findings:
+                label = self._TYPE_LABELS.get(finding.content_type, "Item")
+                conflict_list.mount(
+                    Static(
+                        f"• {label} \"{finding.title}\" — already present as "
+                        f"\"{finding.existing_name}\"",
+                        classes="conflict-item",
+                    )
+                )
+            self.query_one("#conflict-container", Container).remove_class("hidden")
+            # The reassurance copy does not merely get hidden here: a claim
+            # this scan just falsified is cleared outright, so it cannot be
+            # read back out of the widget tree (task-19861).
+            no_conflicts.update("")
+        else:
+            no_conflicts.update(
+                "✅ No conflicts detected — no conversation, note, character "
+                "or media item in this chatbook already exists in your "
+                "databases. " + self._COVERAGE_NOTE
+            )
+            no_conflicts.remove_class("hidden")
 
     def get_step_data(self) -> Dict[str, Any]:
         """Get selected resolution strategy."""

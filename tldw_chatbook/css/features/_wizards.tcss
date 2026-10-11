@@ -828,6 +828,11 @@ ConflictResolutionStep .conflict-list {
     color: $text-muted;
 }
 
+ConflictResolutionStep .conflict-item {
+    margin-bottom: $ds-space-1;
+    color: $warning;
+}
+
 ConflictResolutionStep .no-conflicts {
     text-align: center;
     padding: $ds-space-3;
