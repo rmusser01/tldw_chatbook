@@ -2,8 +2,9 @@
 id: TASK-19868
 title: >-
   Chatbook Import embeddings control is inert in local mode and defaults on
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@t1-chatbook'
 created_date: '2026-08-22'
 labels:
   - ux

@@ -19,6 +19,7 @@ from typing import ClassVar, Dict, List, Any, Optional, Tuple, TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.containers import Container
+from textual import on
 from textual.widgets import (
     Static,
     Button,
@@ -761,13 +762,6 @@ class ConflictResolutionStep(WizardStep):
 class ImportOptionsStep(WizardStep):
     """Step 4: Import Options."""
 
-    def on_show(self) -> None:
-        """Apply initial execution mode when the step is first shown."""
-        super().on_show()
-        if getattr(self.wizard, "initial_execution_mode", "local") == "server":
-            self.query_one("#execution-mode", RadioSet).pressed_index = 1
-        self._update_server_mode_availability()
-
     def compose(self) -> ComposeResult:
         """Compose import options UI."""
         # The next step starts writing as soon as it is shown, so this is the
@@ -812,16 +806,25 @@ class ImportOptionsStep(WizardStep):
                 classes="option-description",
             )
 
-            yield Checkbox(
-                "Import embeddings",
-                value=True,
-                id="import-embeddings",
-                classes="checkbox-option",
-            )
-            yield Static(
-                "Import vector embeddings for RAG search (if available)",
-                classes="option-description",
-            )
+            # Embedding items are a SERVER-request option only: the local
+            # importer cannot write them (it reports the type as unsupported),
+            # and chatbooks produced by this app never contain any -- the
+            # exporter never writes embedding data, so there is nothing to
+            # import even in principle (task-19868). The control is therefore
+            # hidden in local mode rather than shown doing nothing: a
+            # default-ON box that does nothing is a claim.
+            with Container(id="embeddings-option-group", classes="hidden"):
+                yield Checkbox(
+                    "Import embeddings",
+                    value=False,
+                    id="import-embeddings",
+                    classes="checkbox-option",
+                )
+                yield Static(
+                    "Server import: include embedding items in the request "
+                    "(left out when unchecked)",
+                    classes="option-description",
+                )
 
             # This box used to read "Merge with existing tags" and was wired
             # straight to the importer's `prefix_imported` flag, which never
@@ -842,6 +845,41 @@ class ImportOptionsStep(WizardStep):
                 "Tags and keywords are unaffected.",
                 classes="option-description",
             )
+
+    def on_show(self) -> None:
+        """Apply initial execution mode when the step is first shown."""
+        super().on_show()
+        if getattr(self.wizard, "initial_execution_mode", "local") == "server":
+            # ``RadioSet.pressed_index`` has no setter (textual 8.x); pressing
+            # the radio through its value is the public API and fires the
+            # same ``RadioSet.Changed`` a user click does.
+            self.query_one("#mode-server", RadioButton).value = True
+        self._update_embeddings_control_visibility()
+        self._update_server_mode_availability()
+
+    @on(RadioSet.Changed, "#execution-mode")
+    def _on_execution_mode_changed(self, event: RadioSet.Changed) -> None:
+        """Re-evaluate the options the newly selected mode actually has."""
+        self._update_embeddings_control_visibility()
+        self._update_server_mode_availability()
+
+    def _update_embeddings_control_visibility(self) -> None:
+        """Show the embeddings option only in the mode that consumes it.
+
+        The option changes what the SERVER request includes; the local import
+        call takes no embeddings option at all (task-19868), so in local mode
+        the control is absent rather than present-and-inert.
+        """
+        mode_set = self.query_one("#execution-mode", RadioSet)
+        server_selected = (
+            mode_set.pressed_button is not None
+            and mode_set.pressed_button.id == "mode-server"
+        )
+        group = self.query_one("#embeddings-option-group", Container)
+        if server_selected:
+            group.remove_class("hidden")
+        else:
+            group.add_class("hidden")
 
     async def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         """Re-evaluate server mode availability when content-affecting options change."""
@@ -866,7 +904,7 @@ class ImportOptionsStep(WizardStep):
         if blockers:
             server_radio.disabled = True
             if mode_set.pressed_button and mode_set.pressed_button.id == "mode-server":
-                mode_set.pressed_index = 0
+                self.query_one("#mode-local", RadioButton).value = True
             warning.update(
                 "Server import unavailable for this selection. Unsupported content: "
                 + ", ".join(blockers)
@@ -882,15 +920,28 @@ class ImportOptionsStep(WizardStep):
         if mode_set.pressed_button and mode_set.pressed_button.id == "mode-server":
             execution_mode = "server"
 
-        # Every key here is consumed by the import call below. Two former
-        # keys, `preserve_timestamps` and `import_tags`, were collected and
-        # read by nothing at all; their controls are gone (task-19734).
-        return {
+        # Every key here is consumed by the import dispatch that follows, in
+        # the mode it is collected in: `execution_mode` picks the path,
+        # `import_media` and `prefix_imported` are parameters of BOTH import
+        # calls, and `import_embeddings` -- collected in server mode only --
+        # is a parameter of the server request (it filters embedding items
+        # out of the selection). The local importer takes no embeddings
+        # option: it cannot write embeddings, and chatbooks contain none
+        # because the exporter never writes them (task-19868). Three former
+        # keys were collected and read by nothing at all
+        # (`preserve_timestamps`, `import_tags` -- task-19734 -- and the
+        # local-mode `import_embeddings`, task-19868); their controls are
+        # gone from the mode that ignored them.
+        options: Dict[str, Any] = {
             "execution_mode": execution_mode,
             "import_media": self.query_one("#import-media", Checkbox).value,
-            "import_embeddings": self.query_one("#import-embeddings", Checkbox).value,
             "prefix_imported": self.query_one("#prefix-imported", Checkbox).value,
         }
+        if execution_mode == "server":
+            options["import_embeddings"] = self.query_one(
+                "#import-embeddings", Checkbox
+            ).value
+        return options
 
 
 class ImportProgressStep(WizardStep):
@@ -1178,7 +1229,6 @@ class ImportProgressStep(WizardStep):
                 conflict_resolution=resolution_strategy,
                 prefix_imported=options.get("prefix_imported", False),
                 import_media=options.get("import_media", True),
-                import_embeddings=options.get("import_embeddings", False),
                 import_status=self.import_status,
             )
 

@@ -1079,11 +1079,16 @@ class ChatbookImporter:
         conflict_resolution: ConflictResolution = ConflictResolution.ASK,
         prefix_imported: bool = False,
         import_media: bool = True,
-        import_embeddings: bool = False,
         import_status: Optional[ImportStatus] = None,
     ) -> Tuple[bool, str]:
         """
         Import a chatbook into the application.
+
+        There is deliberately no ``import_embeddings`` parameter: this
+        importer cannot write embeddings (it reports ``ContentType.EMBEDDING``
+        items as unsupported), and chatbooks contain no embedding data even in
+        principle -- the exporter never writes any (task-19868). An option
+        that nothing can honour is a claim, not a feature.
 
         Args:
             chatbook_path: Path to the chatbook file
@@ -1091,7 +1096,6 @@ class ChatbookImporter:
             conflict_resolution: How to handle conflicts
             prefix_imported: Whether to prefix imported content titles
             import_media: Whether to import media files
-            import_embeddings: Whether to import embeddings
             import_status: Optional status object populated with item-level results
 
         Returns:
@@ -1113,7 +1117,7 @@ class ChatbookImporter:
                 f"ChatbookImporter.import_chatbook: Starting import of {chatbook_path}"
             )
             logger.info(
-                f"ChatbookImporter.import_chatbook: Options - conflict_resolution={conflict_resolution}, prefix_imported={prefix_imported}, import_media={import_media}, import_embeddings={import_embeddings}"
+                f"ChatbookImporter.import_chatbook: Options - conflict_resolution={conflict_resolution}, prefix_imported={prefix_imported}, import_media={import_media}"
             )
             logger.info(f"Importing chatbook from {chatbook_path}")
 

@@ -1064,6 +1064,11 @@ class LocalChatbookService:
 
         conflict_resolution = ConflictResolution(str(conflict_value))
         importer = ChatbookImporter(self.db_paths)
+        # No `import_embeddings` is forwarded: the local importer takes no
+        # such option (it cannot write embeddings, and chatbooks contain
+        # none because the exporter never writes them -- task-19868). The
+        # shared ChatbookImportRequest schema keeps the field for the
+        # SERVER import path, which does consume it.
         success, message = importer.import_chatbook(
             Path(chatbook_file_path),
             content_selections=self._normalize_content_selections(
@@ -1072,7 +1077,6 @@ class LocalChatbookService:
             conflict_resolution=conflict_resolution,
             prefix_imported=bool(payload.get("prefix_imported", False)),
             import_media=bool(payload.get("import_media", True)),
-            import_embeddings=bool(payload.get("import_embeddings", False)),
         )
         return {
             "success": success,
