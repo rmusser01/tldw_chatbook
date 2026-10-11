@@ -53,6 +53,9 @@ from tldw_chatbook.Widgets.Console.console_settings_field_row import (
 )
 
 _SIZE = (211, 44)
+#: A whole-app mount outlasts _wait_for_selector's 2 s default on a loaded
+#: runner (the allowance test_settings_save_reach.py gives the same mounts).
+_MOUNT_TIMEOUT = 30.0
 CONSOLE_BEHAVIOR = SettingsCategoryId.CONSOLE_BEHAVIOR
 _KEY = "sk-proj-abcdefghijklmnop1234"
 _ENUM_FIELDS = ("reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort")
@@ -208,7 +211,10 @@ async def test_fallbacks_use_model_defaults_rows_core_first_then_closed_sampling
         assert streaming.has_class("settings-compact-select")
         assert streaming.parent.has_class("settings-select-row")
 
-        # '/' still reaches a sampler: landing opens the closed disclosure.
+        # A search landing on a sampler opens the closed disclosure. The
+        # landing is called directly: no '/' query reaches it, because every
+        # sampler label is indexed for Providers & Models too and that
+        # category sorts first ("/seed" lands on the model default's Seed).
         screen._land_search_focus_on_field(_cid("seed"), "Seed")
         await pilot.pause()
         await pilot.pause()
@@ -771,7 +777,9 @@ async def test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults
         app.providers_models = {"llama_cpp": ["model-a"]}
         app.post_message(NavigateToScreen("settings", {"category": CONSOLE_BEHAVIOR}))
         screen = await _wait_for_screen(app, pilot, "SettingsScreen")
-        await _wait_for_selector(screen, pilot, f"#{_cid('streaming')}")
+        await _wait_for_selector(
+            screen, pilot, f"#{_cid('streaming')}", timeout=_MOUNT_TIMEOUT
+        )
         await pilot.pause()
         streaming = screen.query_one(f"#{_cid('streaming')}", Select)
         assert streaming.value == "true"
@@ -799,7 +807,10 @@ async def test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults
 
         screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
         await _wait_for_selector(
-            screen, pilot, "#settings-model-profile-streaming-help"
+            screen,
+            pilot,
+            "#settings-model-profile-streaming-help",
+            timeout=_MOUNT_TIMEOUT,
         )
         await pilot.pause()
         await pilot.pause()
@@ -808,10 +819,15 @@ async def test_saving_global_streaming_off_reaches_a_new_chat_and_model_defaults
         assert _text(screen, "#settings-model-profile-streaming-help") == (
             "inherits Off"
         )
+        assert _text(screen, "#settings-model-profile-streaming-source") == (
+            "Console Behavior"
+        )
 
         app.post_message(NavigateToScreen("chat"))
         console = await _wait_for_screen(app, pilot, "ChatScreen")
-        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        await _wait_for_selector(
+            console, pilot, "#console-settings-summary", timeout=_MOUNT_TIMEOUT
+        )
         store = console._ensure_console_chat_store()
         before = store.active_session_id
         await pilot.press("ctrl+t")
@@ -863,7 +879,9 @@ async def test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_val
         app.providers_models = {"llama_cpp": ["model-a"]}
         app.post_message(NavigateToScreen("settings", {"category": CONSOLE_BEHAVIOR}))
         screen = await _wait_for_screen(app, pilot, "SettingsScreen")
-        await _wait_for_selector(screen, pilot, f"#{_cid('streaming')}")
+        await _wait_for_selector(
+            screen, pilot, f"#{_cid('streaming')}", timeout=_MOUNT_TIMEOUT
+        )
         await pilot.pause()
         streaming = screen.query_one(f"#{_cid('streaming')}", Select)
         assert streaming.value == ("false" if seed else "true")

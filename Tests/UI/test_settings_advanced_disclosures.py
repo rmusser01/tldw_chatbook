@@ -318,7 +318,9 @@ async def test_catalog_refresh_rows_say_on_off_and_whether_choices_apply(startup
             assert startup_off.display is startup
             assert ("startup refresh Off" in _title(screen, disclosure_id)) is startup
             openai.toggle()
-            await pilot.pause()
+            # The row re-says its word once the toggle's write is queued; one
+            # pause was too short on a loaded runner.
+            await _until(pilot, lambda: openai.label.plain == "OpenAI: refresh On")
             assert openai.label.plain == "OpenAI: refresh On"
             # Instant apply: written straight away, never staged.
             assert save_mock.called
@@ -433,9 +435,13 @@ async def test_field_search_opens_the_closed_disclosure_it_lands_in(
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open(host, pilot)
         assert screen.query_one(f"#{disclosure_id}", Collapsible).collapsed
-        screen._submit_category_search(query)
-        for _ in range(12):
-            await pilot.pause()
+        # Esc releases the rail first: "/" typed into an Input is a slash.
+        search = screen.query_one("#settings-category-search", Input)
+        await pilot.press("escape", "slash")
+        await _until(pilot, lambda: host.focused is search)
+        assert host.focused is search
+        await pilot.press(*query, "enter")
+        await _until(pilot, lambda: getattr(host.focused, "id", None) == field_id)
         focused = host.focused
         assert focused is not None and focused.id == field_id, f"focused={focused!r}"
         assert not screen.query_one(f"#{disclosure_id}", Collapsible).collapsed
