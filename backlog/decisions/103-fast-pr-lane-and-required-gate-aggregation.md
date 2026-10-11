@@ -166,6 +166,14 @@ cron entry on `dev`.
   failures are `RecoveryRequired: raw_source_selection_changed`). So until that
   harness gate is fixed (CI throughput sub-project 3), an edit confined to `app.py`,
   `config.py` or `css/**` does not exercise the GGUF screens on any PR.
+- **GGUF source evidence narrowed again (2026-10-11, owner decision).** `task-2062-2` no longer
+  fires on `Tests/UI/app_factory.py` or `Tests/private_profile.py`. In the 13 days after the
+  first narrowing, 110 of its 230 runs (1,706 of 3,903 runner-minutes) were fired by those two
+  files and no other trigger path. The two-week review (TASK-33160) measured the changed
+  workflows at 70% below baseline against an 80% target; replaying those 13 days without the two
+  paths gives 82%. `pyproject.toml` and both `conftest.py` files still trigger both workflows.
+  The gap this adds: an edit confined to `app_factory.py` or `private_profile.py` does not
+  exercise the GGUF source screens on any PR.
 - **Strict.** Restored on 2026-09-27 (see the note under the 2026-08-30 amendment).
 - Spec: `Docs/superpowers/specs/2026-09-27-ci-conflicts-and-waste-design.md`.
 
