@@ -1377,6 +1377,57 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
 
+            # TASK-19642.7 (ADR-179 class): the QwenCloud native-tool suite
+            # and the Kimi/Z.ai provider-contract suite drive the same real
+            # hosted handlers (owned_json_post session construction and the
+            # streaming adapter read the guarded config loader); same
+            # admission signature and same no-config-re-selection check as
+            # test_kimi_zai_native_tools.py above.
+            "test_qwencloud_native_tools.py",
+            "test_kimi_zai_provider_contract.py",
+
+            # TASK-19642.8.1/.8.5/.8.7/.8.8: the attachment save-toast,
+            # diff-feedback delivery, provider-failure copy, and
+            # stop-reliability suites drive the real Console controller /
+            # image-command paths whose hot reads (hook-consent send gate,
+            # user-templates dir via get_user_data_dir) go through the
+            # guarded config loader -- the exact RecoveryRequired("raw_
+            # source_selection_changed") signature TASK-19425 documented
+            # for the local-citation suite. None re-selects a config.
+            "test_console_attachment_riders.py",
+            "test_console_diff_feedback_delivery.py",
+            "test_console_provider_failure_copy.py",
+            "test_console_stop_reliability.py",
+
+            # TASK-19642.16: the MCP watchlists provider suites resolve the
+            # real watchlists database through the guarded config/data-dir
+            # readers; same admission signature as the MCP widget class
+            # above. Neither file re-selects a config.
+            "test_gateway_runtime_tools.py",
+            "test_local_server_tools.py",
+
+            # TASK-19642.18: the deferred startup reconciliation/migration
+            # policy suites mount the real deferred-startup machinery whose
+            # policy reads go through the guarded config loader; same
+            # admission signature as the suites above, no config
+            # re-selection in the file.
+            "test_app_startup_performance.py",
+
+            # TASK-19642.25: the websearch prompt-parity suite renders
+            # through the internal-prompt resolver, whose override lookup
+            # reads get_cli_setting on the guarded config loader; same
+            # admission signature, no config re-selection.
+            "test_websearch_prompt_parity.py",
+
+            # TASK-19642.27: the project-skills import-modal suite drives
+            # maybe_offer_project_skills_import, whose kill-switch/ledger
+            # reads go through the guarded config loader; a predecessor
+            # test's sandbox pins the selection and every later offer call
+            # fails closed. Same admission signature, no config
+            # re-selection (the ledger tests only redirect the module's
+            # get_user_data_dir to tmp_path).
+            "test_project_skills_import_modal.py",
+
 
             # TASK-592/609 (egress hardening arc): the three SSRF/egress
             # regression suites -- every guarded_fetch_* helper and

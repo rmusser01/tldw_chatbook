@@ -3663,10 +3663,23 @@ class _StreamingModelAdapter:
                     owner_id = row.get(self._continuation_owner_key)
                     if type(owner_id) is str and owner_id in owner_ids:
                         row[CONTINUATION_OWNER_KEY] = owner_id
+                    # The pop drops the run's TEMPORARY owner key after its
+                    # value has been copied onto the canonical key. When the
+                    # run already uses the canonical key itself (the
+                    # default, e.g. an auto-derived native continuation),
+                    # popping would delete the marker the line above just
+                    # wrote, and every later continuation request would die
+                    # at build_console_request with "Every continuation
+                    # group must attach to one request owner" (TASK-19642.7,
+                    # red for the Kimi/Z.ai tool-error continuation since
+                    # 798d9c28bf).
                     if (
-                        is_subagent
-                        or not self._thinking_sidecar
-                        or self._thinking_owner_key != self._continuation_owner_key
+                        self._continuation_owner_key != CONTINUATION_OWNER_KEY
+                        and (
+                            is_subagent
+                            or not self._thinking_sidecar
+                            or self._thinking_owner_key != self._continuation_owner_key
+                        )
                     ):
                         row.pop(self._continuation_owner_key, None)
                     rewritten_messages.append(row)
