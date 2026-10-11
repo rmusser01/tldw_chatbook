@@ -157,6 +157,53 @@ async def test_view_tabs_paint_their_whole_labels_after_each_view_switch(
         assert MODEL_VIEW_TAB_ROW in painted_tab_row(app, modal)
 
 
+@pytest.mark.parametrize("size", FULL_SCREEN_SIZES)
+@pytest.mark.asyncio
+async def test_a_selected_view_tab_paints_its_mark_while_it_holds_focus(
+    size: tuple[int, int],
+) -> None:
+    """TASK-33006.23: a selected tab that holds focus paints its '●' mark.
+
+    Shift+Tab reaches the selected tab with no view switch. Enter on the
+    other tab switches by keyboard and moves focus into the view, and
+    Shift+Tab then returns to the tab that is now selected.
+
+    Args:
+        size: Terminal size (columns, rows) the harness app runs at.
+    """
+    app = GeometryHarness()
+    modal = build_geometry_modal(app, ready=True)
+
+    async with app.run_test(size=size) as pilot:
+
+        async def focus_tab(view: str) -> None:
+            """Shift+Tab until the ``view`` tab holds focus."""
+            tab = modal.query_one(f"#console-settings-view-{view}")
+            for _ in range(40):  # more than one lap of the focus order
+                if app.focused is tab:
+                    break
+                await pilot.press("shift+tab")
+            await settle(pilot, app)
+            assert app.focused is tab
+
+        await app.push_screen(modal)
+        await settle(pilot, app)
+
+        await focus_tab("model")  # the open view's tab: no switch
+        assert MODEL_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+        await pilot.press("tab", "enter")  # the Context tab
+        await settle(pilot, app)
+        assert app.focused is not modal.query_one("#console-settings-view-context")
+        await focus_tab("context")
+        assert CONTEXT_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+        await pilot.press("shift+tab", "enter")  # the Model tab
+        await settle(pilot, app)
+        await focus_tab("model")
+        assert MODEL_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
+
 @pytest.mark.parametrize("size", GEOMETRY_SIZES)
 @pytest.mark.parametrize("ready", [False, True], ids=["blocked", "ready"])
 @pytest.mark.asyncio
