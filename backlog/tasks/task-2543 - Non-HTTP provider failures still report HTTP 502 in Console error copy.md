@@ -1,7 +1,7 @@
 ---
 id: TASK-2543
 title: Non-HTTP provider failures still report "HTTP 502" in Console error copy
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-06 09:48'
 labels:
@@ -47,17 +47,27 @@ block), so any fix must cover both, not just the streaming path.
 
 ## Acceptance Criteria
 
-- [ ] A provider stream failure with no real HTTP status (timeout, connection reset, a
+- [x] A provider stream failure with no real HTTP status (timeout, connection reset, a
       bare adapter exception with no `status_code` attribute) surfaces user-facing
       copy naming the actual failure mode (e.g. "request timed out…",
       "could not connect to the provider…") and does not assert `HTTP 502` or any
       other status the provider never returned.
-- [ ] The fix covers both call sites that share the `502` fallback default: the stream
+- [x] The fix covers both call sites that share the `502` fallback default: the stream
       consumer's re-raise in `console_provider_gateway.py` and `complete_auxiliary`'s
       parallel `except Exception` default.
-- [ ] `Tests/Chat/test_console_chat_controller.py`'s existing pin for a genuine 502
+- [x] `Tests/Chat/test_console_chat_controller.py`'s existing pin for a genuine 502
       HTTP response keeps passing unchanged (that case is a real gateway error, not
       this fallback).
-- [ ] Additive regression test: a raw `TimeoutError` (or `ConnectionError`) with no
+- [x] Additive regression test: a raw `TimeoutError` (or `ConnectionError`) with no
       `status_code` attribute, propagating through the stream, produces copy that
       never contains "HTTP 502" or any fabricated status.
+
+## Closeout audit 2026-10-11
+
+Verdict: DONE (verified against origin/dev @ a3c47c6c72).
+
+Evidence:
+- `tldw_chatbook/Chat/provider_failures.py:117-147` now names the actual failure mode for status-less errors: "request timed out waiting for the provider", "connection refused - is the provider server running?", "could not connect to the provider", task-32342's "the app could not build the request or read the reply", and plain "unexpected provider error" as the terminal fallback. `provider returned HTTP {status_code}` fires only when a real status exists.
+- The gateway's stream-consumer/auxiliary re-raise maps exception classes before wrapping (`console_provider_gateway.py:5569-5582`: TimeoutError→408, ConnectionError/OSError→503, HTTPStatusError→real status) and re-raises status-less ChatConfigurationError untouched.
+- Regression pins: `Tests/Chat/test_console_chat_controller.py:2528-2531` (TimeoutError → "timed out", ConnectionError → "could not connect") alongside the unchanged genuine-502 pin (:2536-2538). Landed via `7dbbc401bb` (TASK-2154 honest error semantics) and refined by `f679524b06` (TASK-34100.5).
+- All four ACs ticked.
