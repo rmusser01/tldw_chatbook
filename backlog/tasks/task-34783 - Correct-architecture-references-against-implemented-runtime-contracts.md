@@ -1,11 +1,11 @@
 ---
 id: TASK-34783
 title: Correct architecture references against implemented runtime contracts
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-10 19:27'
-updated_date: '2026-10-11 16:01'
+updated_date: '2026-10-11 16:55'
 labels: []
 dependencies: []
 ---
@@ -20,9 +20,10 @@ Keep the new engineering reference accurate about live hooks, workflow execution
 <!-- AC:BEGIN -->
 - [x] #1 Hooks documentation describes the wired v2 runtime and its permission/checkpoint requirements
 - [x] #2 Workflow execution scope and reranking request counts match actual source
-- [x] #3 Schema, module paths and storage descriptions avoid known stale or inaccurate claims
+- [ ] #3 Schema, module paths and storage descriptions avoid known stale or inaccurate claims
 - [x] #4 Console documentation distinguishes streamed transcript polling from synchronous composer, active-tab, title and focus binding during a session switch.
 - [x] #5 Dictation documentation describes installed-provider substitution, unavailable resolution when no local provider is installed, and the substitution notice and startup warning.
+- [ ] #6 Tool-catalog documentation distinguishes fresh per-run registries from conditional reuse of a complete MCP composition and preserves approval-stamp freshness.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,6 +61,16 @@ Reason: routine copy corrections describe already implemented settings retiremen
 3. Add only a bounded Dreams authoritative-file row and active question-track scheduling paragraph, including post-UI-ready binding, retained bare-task shutdown and persisted track-run/last_checked ownership. Qualify reminder-only advancement and timeout claims so they do not describe projected jobs.
 4. Verify the affected claims against exact source, all 83 relative Architecture links, whitespace, Backlog uniqueness/readability and the existing 179-node UI census. No pytest or broad preflight for this copy-only correction.
 5. Commit the scoped docs and task while AC3 and task status remain pending independent immutable review; do not publish or resolve PR comments.
+
+MCP cache-description review follow-up (2026-10-11):
+ADR required: no
+ADR path: N/A
+Reason: copy-only correction describes the already implemented run-start reuse contract; no runtime, storage, permission or caller contract changes.
+
+1. Verify helper-owned cross-run MCP composition reuse, matching service/fingerprint/key/connection states, incomplete-inventory refusal and approval-stamp reset against the exact follow-up source.
+2. Correct only tool-catalog.md and add the authoritative helper path, preserving full-registry per-run freshness and invocation/permission descriptions.
+3. Verify unchanged Markdown links, source paths, whitespace and Backlog readability; commit with AC3/AC6 pending independent immutable copy review.
+4. After source review clears, check AC3/AC6 and restore Done through Backlog CLI. Preserve Task33620.15.1 In Progress and its open performance criteria.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -94,4 +105,6 @@ Source evidence is pinned to the exact parent: settings_backup_helpers.py:1-14; 
 Durable receipts are under /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-evidence/: pr3038-434-carry-correspondence.json, pr3038-434-range-diff.log, pr3038-434-copy-source-links.json and pr3038-434-final-guards.json. Old historical qualifications retain their original limits; purged temporary receipts are not presented as durable evidence. AC3 and task status remain pending independent immutable review before Done or publication.
 
 Independent immutable copy review (2026-10-11) cleared 6b12175d9f1615f93c5afe8644e7eec9aedae9b6 on exact source parent 43475e0273d27afde395a5eb5128fe3737bd1f66. Reviewer review_2873 verified the changed Settings, CSS and Dreams claims against runtime source, preserved Console/speech/recomposition copy and incoming merge-queue guidance, all 83 relative Architecture links, exact runtime/tests/scripts/workflow tree equality and supplied 5124-task/179-UI guard receipts. No actionable findings remain. AC3 is verified and task restored to Done through Backlog CLI. This closeout changes only task metadata and this receipt; no runtime tests, wider preflight or new platform qualification. Durable independent receipt: pr-review-evidence/pr3038-434-independent-review.json under the evidence directory recorded above.
+
+MCP cache-description correction (2026-10-11): independent carry review found that tool-catalog.md overstated compose_catalog as running once per registration. Verified compose_run_mcp_provider identity/key/connection checks and install_composition against the immutable source. Corrected the MCP paragraph and added its authoritative helper row: complete compositions may be reused across runs, incomplete inventories are not kept, valid empty inventories remain reusable and installation clears approval stamps. Full registry freshness, persona call-cap scope and invocation/permission descriptions are preserved. No new ADR or runtime/test/script/workflow change; Task33620.15.1 remains In Progress with performance AC2/5/6 open. Existing Markdown links are byte-identical, the new source path exists, all5124 task files pass uniqueness/readability and whitespace passes. Independent immutable copy review remains pending before AC3/AC6 and Done. Durable receipt: pr3059-mcp-copy-proof.json in the evidence directory recorded above.
 <!-- SECTION:NOTES:END -->
