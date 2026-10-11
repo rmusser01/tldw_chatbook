@@ -14,7 +14,9 @@ TASK-33008.2: a NEEDS SETUP row in Switch model leaves through the same route,
 and its return reopens Switch model on that row's provider. The unit tests
 drive the consumer's reopen; the private-profile tests run the row -> Settings
 -> Switch model round trip on the real app, saved and unsaved, and from the
-Get started card.
+Get started card. One more runs the real Settings screen on a routed provider
+that is not the saved default, from that row and from Chat settings: what the
+page shows while its key is typed, and what the save writes.
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from Tests.UI.app_factory import _build_test_app as _build_production_app
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.custom_endpoint_registry import canonical_custom_endpoint_id
 from tldw_chatbook.Constants import TAB_CHAT, TAB_SETTINGS
 from tldw_chatbook.LLM_Calls import anthropic_subscription
@@ -72,6 +75,7 @@ from tldw_chatbook.UI.Settings_Modules.provider_return import (
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
+from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 
 CHANNEL = HandoffChannel.CONVERSATION_SETTINGS_RETURN
 SAVED = ConversationSettingsReturnOutcome.CREDENTIAL_SAVED
@@ -1942,10 +1946,6 @@ _GROQ_MODEL = "llama-3.3-70b-versatile"
 #: Groq's second model: never Find's best match for "Groq ", so only the
 #: highlight the return asks for puts the reopened list on it.
 _GROQ_SECOND = "llama-3.1-8b-instant"
-#: Not OpenAI's saved key: until a routed provider's key is saved, Settings
-#: reads an edit to it against the default provider's saved key, so the same
-#: text would read as no change.
-_GROQ_KEY = "p8groqkey9876543210"
 
 
 def _switcher_app(monkeypatch, **saved):
@@ -2085,7 +2085,7 @@ async def test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider
         assert _chat_pair(console) == ("openai", "gpt-5")
 
         first, settings = await _leave_a_groq_row_for_settings(app, pilot, console)
-        await pilot.press(*_GROQ_KEY)
+        await pilot.press(*_KEY)  # the same text as OpenAI's saved key
         if saves:
             await pilot.press("escape")  # leave the field, so s is Save
             await pilot.press("s")
@@ -2095,7 +2095,7 @@ async def test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider
                 "focus on the Return to Console action after the save",
             )
             # The key went to Groq's table; OpenAI's is as it was.
-            assert _saved_config()["api_settings"]["groq"]["api_key"] == _GROQ_KEY
+            assert _saved_config()["api_settings"]["groq"]["api_key"] == _KEY
             assert _saved_openai_key() == _KEY
             await pilot.press("enter")
         else:
@@ -2152,6 +2152,122 @@ async def test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider
             assert (chat.provider, chat.model) == ("openai", "gpt-5")
             assert not _saved_config()["api_settings"]["groq"].get("api_key")
         assert store.active_session_id == session_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "route, model_first",
+    [("needs-setup-row", False), ("chat-settings", False), ("needs-setup-row", True)],
+    ids=["needs-setup-row", "chat-settings", "model-picked-first"],
+)
+@private_profile_test
+async def test_a_routed_providers_key_is_typed_under_its_own_name(
+    monkeypatch, request, route: str, model_first: bool
+):
+    """The controller's ruling of 2026-10-10 (Option A), on the real Settings
+    screen: Groq is routed while OpenAI is the saved default, from a NEEDS
+    SETUP row and from Chat settings' Configure credential.
+
+    The first typed character made the Provider row read "OpenAI" on Groq's
+    page, and Chat settings' route then offered no Return without saving.
+    The edit was read against OpenAI's saved key, so typing that same text
+    for Groq read as no change. A model picked on the page did the same to
+    the row, and to any key typed after it. The row keeps the routed
+    provider's name, the key reads "edited *" against Groq's own saved key
+    (none), and the save writes Groq's table."""
+    app = _switcher_app(monkeypatch)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "console-native-composer",
+            "the composer to hold focus",
+        )
+        console = app._navigation_outgoing_screen()
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.append_message(session_id, role=ConsoleMessageRole.USER, content="hi")
+        if route == "needs-setup-row":
+            _first, settings = await _leave_a_groq_row_for_settings(app, pilot, console)
+            model = _GROQ_SECOND
+        else:
+            store.replace_session_settings(
+                session_id, ConsoleSessionSettings(provider="groq", model=_GROQ_MODEL)
+            )
+            assert await console._open_console_settings() is True
+            await _until(
+                pilot,
+                lambda: bool(
+                    app.screen.query("#console-settings-configure-credential")
+                ),
+                "Chat settings to offer Configure credential",
+            )
+            app.screen.query_one("#console-settings-configure-credential").focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await _until(
+                pilot,
+                lambda: (
+                    isinstance(app.screen, SettingsScreen)
+                    and getattr(app.focused, "id", None) == "settings-provider-api-key"
+                ),
+                "Settings to open with focus in Groq's API key field",
+            )
+            settings = app.screen
+            assert settings._provider_return_target.session_id is None
+            model = _GROQ_MODEL
+        provider_row = settings.query_one("#settings-provider-search", Input)
+        key_word = settings.query_one("#settings-provider-key-status", Static)
+        without_saving = settings.query_one(
+            "#settings-provider-return-without-save", Button
+        )
+
+        def shown() -> tuple[str, str, bool]:
+            return provider_row.value, str(key_word.renderable), without_saving.display
+
+        assert shown()[0] == "Groq" and shown()[1] != "edited *"
+
+        if model_first:
+            # Groq's other model, chosen in the Default model picker.
+            model = _GROQ_MODEL
+            settings.query_one(ModelSearchPicker).post_message(
+                ModelSearchPicker.ModelSelected(model)
+            )
+            await _until(
+                pilot,
+                lambda: without_saving.display,
+                "the picked model to be an unsaved edit",
+            )
+            assert shown()[0] == "Groq"
+
+        await pilot.press(_KEY[0])
+        await _until(
+            pilot,
+            lambda: shown()[1] == "edited *",
+            "the first typed character to be an unsaved edit",
+        )
+        assert shown() == ("Groq", "edited *", True)
+        # The rest makes it the same text as OpenAI's saved key.
+        assert _saved_openai_key() == _KEY
+        await pilot.press(*_KEY[1:])
+        await pilot.pause()
+        assert settings.query_one("#settings-provider-api-key", Input).value == _KEY
+        assert shown() == ("Groq", "edited *", True)
+        assert settings._provider_same_target_has_draft()
+
+        await pilot.press("escape")  # leave the field, so s is Save
+        await pilot.press("s")
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "settings-provider-return",
+            "focus on the return action after the save",
+        )
+        saved = _saved_config()
+        assert saved["api_settings"]["groq"]["api_key"] == _KEY
+        assert _saved_openai_key() == _KEY
+        defaults = saved["chat_defaults"]
+        assert (defaults["provider"], defaults["model"]) == ("groq", model)
+        assert provider_row.value == "Groq"
 
 
 @pytest.mark.asyncio

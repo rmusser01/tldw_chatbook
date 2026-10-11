@@ -976,7 +976,9 @@ async def test_ctrl_o_with_no_model_before_first_readiness_names_the_wait() -> N
     assert recorder.submissions == []
 
 
-async def test_ctrl_o_with_a_row_highlighted_before_first_readiness_carries_it() -> None:
+async def test_ctrl_o_with_a_row_highlighted_before_first_readiness_carries_it() -> (
+    None
+):
     """TASK-33008.2: the guide's "with no row highlighted" decides Ctrl+O
     too. On a chat with no model, RECENT's load lists PREVIOUS and highlights
     it while providers are still checked. The draft has that row's pair, so

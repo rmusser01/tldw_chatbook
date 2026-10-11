@@ -869,6 +869,19 @@ reaches the unchanged geometry assertions; restoring the actual retired bare
 the compact-height assertion fail. A plugin-assisted pass is useful diagnosis,
 not the final qualification of a guard intended to run in CI.
 
+**TASK-33008.2, 2026-10-11.** A one-line change to `SettingsScreen._stage_provider_value` was
+covered by tests that fail here in their bodies with `RecoveryRequired`
+(`Tests/UI/test_settings_configuration_hub.py`'s provider-navigation tests, which the phase's
+ledger counts as "not evidence" in this worktree). They ran, unedited, from a temporary file under `Tests/UI`
+that imports each test function and wraps it in `private_profile_test` (an inner coroutine with
+the function's own fixture names plus `request`, and the function's `pytestmark` copied over, so
+a parametrised test keeps its cases). 29 cases passed in about 70 seconds; the file
+was deleted and never committed. Two limits, both met: a fixture defined in the test's own
+module does not come along (`fixture 'no_snapshot_splash' not found`), and each case starts a
+child pytest, so under load two focus assertions that wait one `pilot.pause()` failed and then
+passed alone three times. This is diagnosis for a local change, as above: it does not make the
+tests run in CI.
+
 ## A finding verified on the review's commit may already be fixed on your base -- diff the two before designing the RED (TASK-34000.4, 2026-10-04)
 
 **Incident.** The task said a regression test for the Library Media "Export…"
@@ -15013,6 +15026,22 @@ no other. Preflight went last, and its worker-contract check
 changed the code (the line's text is recorded where it is set, and the worker reads no widget),
 which voided both runs, and both were run again. Preflight takes about 35 seconds: run it as
 soon as the change is written, and start the long runs only once it exits 0.
+
+### TASK-33008.2: a provider-route test must route a provider that is not the saved default
+
+Settings pinned a new Providers & Models draft to the saved default provider, not to the provider
+a route had opened the page on. On Groq's page, with OpenAI the default, the first typed key
+character made the Provider row read "OpenAI", the edit was compared with OpenAI's saved key (the
+same text read as "no changes to save"), and Chat settings' route offered no Return without
+saving. The save still wrote Groq's table, because the save reads the widgets. TASK-33008.1's
+real-app tests could not see any of it: each routed the provider that was also the saved
+default, so the wrong pin was the right provider. TASK-33008.2's NEEDS SETUP row is always
+another provider; its round-trip test picked a different key text to get past the fault
+(2026-10-10), and the fix came a day later by a controller ruling. In a test that opens
+Settings on a provider: make that provider differ from `chat_defaults.provider`, give both the
+same key text, and assert what the page shows while the edit is unsaved, not only what the save
+writes. The order of edits matters too: a model picked before the key reached the same wrong
+pin by another line.
 
 ## Trace recovery tests need the failure before a boundary exists
 
