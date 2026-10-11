@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-02 19:30'
-updated_date: '2026-10-11 02:10'
+updated_date: '2026-10-11 07:00'
 labels:
   - console
   - lifecycle
@@ -66,11 +66,15 @@ TASK-33628.5's exit wait is not it. That wait (`console_durable_writes.end_store
 **Rulings.**
 - Ruling: the adapter passes its plain cancel predicate, not `stream_cut` — a redirect (TASK-28227) is not a cancel, and this rider is about Stop and quit — cost if wrong: a redirect sent during a silent first-token wait still takes effect at the first chunk, as it did before.
 - Ruling: the threaded transport's blocked read is left to TASK-30015 — ending it needs the bridge to hold the response's socket and close it (that task's AC#2), which changes how the gateway owns its provider worker — cost if wrong: quitting during a silent non-llama.cpp provider still holds the terminal for up to 120 s and ends with status 1.
-- Ruling: no User Guide change — console.md already says Stop "ends the wait", and no page states how long a quit takes.
+- Ruling: the User Guide states the limit instead of staying silent — console.md, "Quirks & troubleshooting", gains "Quitting while a reply waits can hold the terminal": a few seconds with llama.cpp; with any other provider, the connection's timeout or 120 s, then the watchdog's message and status 1 — a two-minute hold that ends in an error line reads as a crash unless the guide names it — cost if wrong: one bullet to delete. TASK-30015's notes say to update it when that task lands.
+
+**Checked again at the commit (2026-10-11, at 2748183de7).**
+- Failing first: this rider's two test files and TASK-33667's, run against 10fead87cb's source, give 3 failed, 23 passed, 7 errors. `test_stop_during_a_silent_provider_releases_the_run_thread` fails after 15.5 s with "run_reply stayed blocked on a silent provider after the cancel flag was set", and the seven new watchdog nodes error at setup because `STOP_POLL_SECONDS` does not exist. The other two failures are TASK-33667's new test and `test_non_finite_config_falls_back_to_default`, named below.
+- Live, same scratch profile and stub, 211x44: `llama_cpp` with no response headers exited 1.3 s after Quit was confirmed, status 0; vLLM with headers followed by silence exited after 120.4 s, status 1, with the watchdog's line naming `asyncio_0(daemon)`. After both runs the reply's row reads `assistant_generation_state = 'stopped'` and `console_dispatch_checkpoints` has no row.
 
 **Tests.** `Tests/Chat/test_console_stop_silent_provider.py::test_stop_during_a_silent_provider_releases_the_run_thread` reproduces the hang at the bridge (AC#3): a gateway that accepts the request and never streams, a 120 s stall window and a 300 s first-token window, and the run thread must be back within 15 s of the cancel flag, with the run and the reply settled as cancelled and stopped and the provider request closed. Before the fix it fails with "run_reply stayed blocked on a silent provider after the cancel flag was set". `Tests/Chat/test_stream_stall_watchdog.py` gains seven nodes for the stop path: a stop ends a silent stream with the watchdog on, off (`None`) and disabled (`0`); items several polls apart are neither dropped nor reordered; the stall still trips between polls; a task cancel still propagates and closes the source; and a stop that lands on the tick the window expires ends as a stop and raises nothing into the loop.
 
 `Tests/Chat/test_stream_stall_watchdog.py::test_non_finite_config_falls_back_to_default` fails on 10fead87cb and on the fix alike (RecoveryRequired, raw_source_selection_changed): it reads config with no profile marker.
 
-Files: `tldw_chatbook/Chat/stream_stall_watchdog.py`, `tldw_chatbook/Chat/console_agent_bridge.py`, `Tests/Chat/test_stream_stall_watchdog.py`, `Tests/Chat/test_console_stop_silent_provider.py`, `backlog/docs/lessons-live-verification.md`, and TASK-30015's notes.
+Files: `tldw_chatbook/Chat/stream_stall_watchdog.py`, `tldw_chatbook/Chat/console_agent_bridge.py`, `Tests/Chat/test_stream_stall_watchdog.py`, `Tests/Chat/test_console_stop_silent_provider.py`, `backlog/docs/lessons-live-verification.md`, `Docs/User_Guide/console.md`, and TASK-30015's notes.
 <!-- SECTION:NOTES:END -->

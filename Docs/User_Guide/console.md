@@ -1354,6 +1354,14 @@ run, use **Stop**, **Ctrl+G**, or `/stop` instead.
   that same setting. Console stops waiting at once, but a local server may
   keep reading the abandoned prompt for up to 30 seconds more, until its
   connection times out.
+- **Quitting while a reply waits can hold the terminal.** If you quit while
+  the provider is sending nothing (a model that is still loading, say), Quit
+  stops the reply and saves it as stopped. With llama.cpp, Chatbook then
+  exits within a few seconds. With any other provider, the abandoned request
+  keeps the process alive until its connection times out or 120 seconds pass
+  (`[general] shutdown_grace_seconds`), whichever comes first. At 120 seconds
+  Chatbook prints "Shutdown did not finish within the grace period" and exits
+  with status 1. The reply is saved either way.
 - **There's no Tools chip before the first send.** Tools are counted lazily,
   so the chip stays hidden until your first send in the session; it then
   reads e.g. "Tools: 10 ready".

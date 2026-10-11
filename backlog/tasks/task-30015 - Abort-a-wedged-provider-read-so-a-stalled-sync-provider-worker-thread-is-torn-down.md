@@ -75,5 +75,7 @@ was blocked in either run. The worker is a daemon thread (it inherits that from
 the model loop's thread) and is joined all the same, because it is a
 `ThreadPoolExecutor` worker. So AC#1's "on a stall/stop" also sets how long a
 quit takes for every provider on this transport: the provider's HTTP read
-timeout or the watchdog's 120 s, whichever comes first.
+timeout or the watchdog's 120 s, whichever comes first. The User Guide states
+that hold (console.md, "Quitting while a reply waits can hold the terminal");
+rewrite that bullet when this task lands.
 <!-- SECTION:NOTES:END -->
