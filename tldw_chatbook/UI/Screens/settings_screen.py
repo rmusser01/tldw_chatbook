@@ -30430,9 +30430,16 @@ class SettingsScreen(BaseAppScreen):
         )
 
         event.stop()
+        label = shown_provider_label(self)
+        if event.value == label and not any(
+            picker.display for picker in self.query("#settings-provider-picker")
+        ):
+            # The name the control was built with, delivered after focus
+            # arrived (the '/' search lands here): nobody typed it.
+            return
         if event.input.has_focus:
             open_provider_list(self)
-        elif event.value != shown_provider_label(self):
+        elif event.value != label:
             self._refresh_provider_picker(event.value)
 
     @on(OptionList.OptionSelected, "#settings-provider-picker")
