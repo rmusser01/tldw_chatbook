@@ -9,7 +9,8 @@ from textual.worker import WorkerState
 
 from Tests.app_module_patches import set_app_global
 
-pytestmark = pytest.mark.unit
+# Real app mounts read the config source bound at collection (TASK-33370).
+pytestmark = [pytest.mark.unit, pytest.mark.bootstrap_profile]
 
 
 @pytest.mark.asyncio

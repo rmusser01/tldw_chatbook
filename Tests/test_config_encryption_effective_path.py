@@ -20,10 +20,12 @@ mid-write.
 
 import stat
 
-import toml
 import pytest
+import toml
 
 import tldw_chatbook.config as cfg
+from Tests.Backup_Recovery.config_test_support import select_config_source
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Utils.config_encryption import config_encryption
 
 
@@ -49,7 +51,7 @@ def isolated_config_paths(tmp_path, monkeypatch):
     profile_path.parent.mkdir(parents=True, exist_ok=True)
     decoy_path = tmp_path / "default_home" / ".config" / "tldw_cli" / "config.toml"
 
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile_path))
+    select_config_source(monkeypatch, str(profile_path), globals())
     monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", decoy_path)
 
     yield profile_path, decoy_path
@@ -200,7 +202,11 @@ def test_enable_config_encryption_write_is_atomic(tmp_path, monkeypatch):
     cfg._CONFIG_CACHE_SOURCE = None
 
 
-def test_app_quit_save_writes_active_file_not_default(isolated_config_paths):
+@pytest.mark.asyncio
+@private_profile_test
+async def test_app_quit_save_writes_active_file_not_default(
+    isolated_config_paths, request
+):
     """Regression test for task-851 review finding 1.
 
     ``enable_config_encryption``/``disable_config_encryption``/
@@ -304,10 +310,11 @@ def test_enable_config_encryption_creates_new_file_with_restrictive_mode(
     a freshly created one must still get a restrictive (not 0o644) mode --
     it can hold plaintext API keys and the password verifier.
     """
-    monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
     config_path = tmp_path / "profile" / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(cfg, "DEFAULT_CONFIG_PATH", config_path)
+    select_config_source(monkeypatch, str(config_path), globals())
+    config_path.unlink()
+    cfg._invalidate_config_caches()
     assert not config_path.exists()
 
     try:

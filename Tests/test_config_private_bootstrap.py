@@ -8,8 +8,9 @@ from threading import Barrier
 import pytest
 import toml
 
-from tldw_chatbook import config as config_module
 import tldw_chatbook.Utils.private_paths as private_paths
+from Tests.Backup_Recovery.config_test_support import select_config_source
+from tldw_chatbook import config as config_module
 from tldw_chatbook.Utils.config_encryption import config_encryption
 from tldw_chatbook.Utils.private_paths import PrivatePathError
 
@@ -25,7 +26,8 @@ def _clear_config_cache():
 @pytest.mark.skipif(os.name != "posix", reason="POSIX mode contract")
 def test_first_config_creation_is_private(tmp_path, monkeypatch):
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
+    target.unlink()
     _clear_config_cache()
     previous = os.umask(0o022)
     try:
@@ -40,7 +42,8 @@ def test_first_config_creation_is_private(tmp_path, monkeypatch):
 @pytest.mark.skipif(os.name != "posix", reason="POSIX creation contract")
 def test_first_config_creation_is_serialized_across_workers(tmp_path, monkeypatch):
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
+    target.unlink()
     _clear_config_cache()
     worker_count = 5
     ready = Barrier(worker_count)
@@ -61,7 +64,7 @@ def test_first_config_creation_is_serialized_across_workers(tmp_path, monkeypatc
 def test_whole_config_replacement_uses_effective_private_path(tmp_path, monkeypatch):
     target = tmp_path / "custom" / "config.toml"
     target.parent.mkdir(mode=0o700)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear_config_cache()
     previous = os.umask(0)
     try:
@@ -80,7 +83,7 @@ def test_whole_config_replacement_uses_effective_private_path(tmp_path, monkeypa
 def test_config_snapshot_is_private_and_uses_effective_parent(tmp_path, monkeypatch):
     target = tmp_path / "custom" / "config.toml"
     target.parent.mkdir(mode=0o700)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     previous = os.umask(0)
     try:
         snapshot = config_module.export_cli_config_snapshot(
@@ -108,7 +111,7 @@ def test_encryption_lifecycle_uses_effective_private_config_path(
     )
     target.chmod(0o644)
     ignored_default = tmp_path / "ignored-default" / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     monkeypatch.setattr(config_module, "DEFAULT_CONFIG_PATH", ignored_default)
     _clear_config_cache()
     previous = os.umask(0)
@@ -159,7 +162,7 @@ def test_whole_replacement_and_snapshot_preserve_encryption_at_rest(
     )
     target.write_text(toml.dumps(encrypted), encoding="utf-8")
     target.chmod(0o600)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear_config_cache()
     config_module.set_encryption_password(password)
     try:
@@ -196,7 +199,7 @@ def test_incremental_config_writes_harden_existing_effective_file(
         encoding="utf-8",
     )
     target.chmod(0o644)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear_config_cache()
 
     assert config_module.save_settings_to_cli_config(
@@ -226,7 +229,7 @@ def test_locked_encrypted_config_rejects_plaintext_incremental_secret(
     )
     target.write_text(toml.dumps(encrypted), encoding="utf-8")
     target.chmod(0o600)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     config_module.clear_encryption_password()
     _clear_config_cache()
 
@@ -261,9 +264,10 @@ def test_default_application_config_directory_is_created_as_0700(
     tmp_path,
     monkeypatch,
 ):
-    target = tmp_path / "application-config" / "config.toml"
-    monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
-    monkeypatch.setattr(config_module, "DEFAULT_CONFIG_PATH", target)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    target = tmp_path / ".config" / "tldw_cli" / "config.toml"
+    select_config_source(monkeypatch, None, globals())
     _clear_config_cache()
 
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
@@ -277,13 +281,14 @@ def test_existing_default_config_directory_is_hardened_before_read(
     tmp_path,
     monkeypatch,
 ):
-    target = tmp_path / "application-config" / "config.toml"
-    target.parent.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    target = tmp_path / ".config" / "tldw_cli" / "config.toml"
+    target.parent.mkdir(parents=True)
     target.parent.chmod(0o755)
     target.write_text("[chat_defaults]\ntemperature = 0.17\n", encoding="utf-8")
     target.chmod(0o644)
-    monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
-    monkeypatch.setattr(config_module, "DEFAULT_CONFIG_PATH", target)
+    select_config_source(monkeypatch, None, globals())
     _clear_config_cache()
 
     loaded = config_module.load_cli_config_and_ensure_existence(force_reload=True)
@@ -298,7 +303,7 @@ def test_existing_config_is_hardened_before_read(tmp_path, monkeypatch):
     target = tmp_path / "config.toml"
     target.write_text("[chat_defaults]\nstreaming = false\n", encoding="utf-8")
     target.chmod(0o644)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear_config_cache()
 
     loaded = config_module.load_cli_config_and_ensure_existence(force_reload=True)
@@ -317,11 +322,8 @@ def test_config_loader_rejects_final_symlink_without_reading_outside(
     outside.chmod(0o644)
     selected = tmp_path / "config.toml"
     selected.symlink_to(outside)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selected))
-    _clear_config_cache()
-
     with pytest.raises(PrivatePathError):
-        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+        select_config_source(monkeypatch, str(selected), globals())
 
     assert stat.S_IMODE(outside.stat().st_mode) == 0o644
 
@@ -336,12 +338,9 @@ def test_config_loader_rejects_missing_file_in_shared_sticky_parent(
     shared.chmod(0o1777)
     selected = shared / "config.toml"
     fallback = tmp_path / ".tldw_cli_config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selected))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
-    _clear_config_cache()
-
     with pytest.raises(PrivatePathError):
-        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+        select_config_source(monkeypatch, str(selected), globals())
 
     assert not selected.exists()
     assert not fallback.exists()
@@ -353,33 +352,38 @@ def test_config_loader_does_not_create_custom_config_parent(
     monkeypatch,
 ):
     selected = tmp_path / "custom" / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selected))
-    _clear_config_cache()
-
     with pytest.raises(PrivatePathError):
-        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+        select_config_source(monkeypatch, str(selected), globals())
 
     assert not selected.parent.exists()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX namespace contract")
-def test_failed_private_creation_clears_existing_config_cache(
+def test_failed_private_creation_preserves_pre_operation_config_cache(
     tmp_path,
     monkeypatch,
 ):
     shared = tmp_path / "shared"
     shared.mkdir()
-    shared.chmod(0o1777)
+    shared.chmod(0o700)
     selected = shared / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(selected))
-    config_module._CONFIG_CACHE = {"stale": True}
+    select_config_source(monkeypatch, str(selected), globals())
+    selected.unlink()
+    shared.chmod(0o1777)
+    before = {"stale": True}
+    config_module._CONFIG_CACHE = before
     config_module._CONFIG_CACHE_SOURCE = selected.absolute()
 
     with pytest.raises(PrivatePathError):
         config_module.load_cli_config_and_ensure_existence(force_reload=True)
 
-    assert config_module._CONFIG_CACHE is None
-    assert config_module._CONFIG_CACHE_SOURCE is None
+    # Admission refuses before the loader and rolls back the complete config
+    # state. It must not publish defaults or partially cleared cache cells.
+    assert config_module._CONFIG_CACHE is before
+    assert config_module._CONFIG_CACHE_SOURCE == selected.absolute()
+    with pytest.raises(PrivatePathError):
+        config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    assert not selected.exists()
 
 
 def test_malformed_config_defaults_are_not_cached_and_repaired_file_is_reloaded(
@@ -388,7 +392,7 @@ def test_malformed_config_defaults_are_not_cached_and_repaired_file_is_reloaded(
 ):
     target = tmp_path / "config.toml"
     target.write_text("[chat_defaults\n", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear_config_cache()
 
     loaded = config_module.load_cli_config_and_ensure_existence(force_reload=True)
@@ -405,13 +409,13 @@ def test_malformed_config_defaults_are_not_cached_and_repaired_file_is_reloaded(
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX link contract")
-def test_failed_forced_settings_reload_clears_normalized_cache(
+def test_failed_forced_settings_reload_preserves_pre_operation_cache(
     tmp_path,
     monkeypatch,
 ):
     target = tmp_path / "config.toml"
     target.write_text("[chat_defaults]\ntemperature = 0.17\n", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear_config_cache()
 
     loaded = config_module.load_settings(force_reload=True)
@@ -419,17 +423,22 @@ def test_failed_forced_settings_reload_clears_normalized_cache(
 
     outside = tmp_path / "outside.toml"
     outside.write_text("[chat_defaults]\ntemperature = 0.99\n", encoding="utf-8")
+    outside.chmod(0o644)
     target.unlink()
     target.symlink_to(outside)
 
     with pytest.raises(PrivatePathError):
         config_module.load_settings(force_reload=True)
 
-    assert config_module._SETTINGS_CACHE is None
-    assert config_module._SETTINGS_CACHE_SOURCE is None
+    assert config_module._SETTINGS_CACHE is loaded
+    assert config_module._SETTINGS_CACHE_SOURCE == target.absolute()
 
+    # A warm read may return the prior validated in-memory view. A forced
+    # read must still refuse the unsafe file and never publish its contents.
+    assert config_module.load_settings()["chat_defaults"]["temperature"] == 0.17
     with pytest.raises(PrivatePathError):
-        config_module.load_settings()
+        config_module.load_settings(force_reload=True)
+    assert stat.S_IMODE(outside.stat().st_mode) == 0o644
 
 
 def test_malformed_config_defaults_are_not_cached_by_load_settings(
@@ -438,7 +447,7 @@ def test_malformed_config_defaults_are_not_cached_by_load_settings(
 ):
     target = tmp_path / "config.toml"
     target.write_text("[chat_defaults\n", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear_config_cache()
 
     loaded = config_module.load_settings(force_reload=True)
@@ -463,7 +472,7 @@ def test_decryptor_failure_returns_uncached_defaults_and_retries(
         "[encryption]\nenabled = true\n[chat_defaults]\ntemperature = 0.17\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     monkeypatch.setattr(config_module, "_ENCRYPTION_PASSWORD", "test-password")
 
     class EncryptionModule:
@@ -522,7 +531,7 @@ def test_corrupt_encrypted_value_fails_bootstrap_without_poisoning_caches(
         "temperature = 0.17\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     monkeypatch.setattr(config_module, "_ENCRYPTION_PASSWORD", "test-password")
     monkeypatch.setattr(config_module, "_ENCRYPTION_MODULE", config_encryption)
     _clear_config_cache()
@@ -588,7 +597,7 @@ def test_config_loader_reports_unverified_platform_without_claiming_acl_safety(
 ):
     target = tmp_path / "config.toml"
     target.write_text("[chat_defaults]\nstreaming = true\n", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     monkeypatch.setattr(
         private_paths,
         "_posix_guards_available",
@@ -650,7 +659,7 @@ def test_config_rewrite_refuses_to_commit_a_serialization_that_would_duplicate_a
         '[api_settings.google]\napi_key = "user-real-key"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear_config_cache()
 
     # Pass 1: a legitimate settings write through the real rewrite path.
@@ -724,7 +733,7 @@ def test_corrupt_config_produces_a_loud_load_failure_not_a_silent_default_fallba
         'api_key = "sk-real-key"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear_config_cache()
 
     assert config_module.get_config_load_failure() is None

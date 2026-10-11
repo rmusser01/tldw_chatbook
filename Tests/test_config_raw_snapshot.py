@@ -8,7 +8,10 @@ from pathlib import Path
 import pytest
 import toml
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook import config
+from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+from tldw_chatbook.UI.Screens import settings_config_adapter
 from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 from tldw_chatbook.Utils.config_encryption import config_encryption
 
@@ -16,7 +19,10 @@ from tldw_chatbook.Utils.config_encryption import config_encryption
 @pytest.fixture
 def config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(
+        monkeypatch, str(target), globals(), vars(settings_config_adapter)
+    )
+    target.unlink()
     config._invalidate_config_caches()
     config.clear_encryption_password()
     yield target
@@ -85,7 +91,7 @@ def test_snapshot_save_rejects_profile_change_even_when_files_match(
     other_path.write_text(original, encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(other_path))
 
-    with pytest.raises(config.ConfigSnapshotConflictError):
+    with pytest.raises(RecoveryRequired, match="^raw_source_selection_changed$"):
         config.replace_cli_config_snapshot('[global]\nvalue = "draft"\n', snapshot)
 
     assert config_path.read_text(encoding="utf-8") == original
@@ -135,7 +141,7 @@ def test_snapshot_save_rejects_profile_switch_while_waiting_for_write_lock(
 
     monkeypatch.setattr(config, "_config_write_lock", switch_profile_at_lock)
 
-    with pytest.raises(config.ConfigSnapshotConflictError):
+    with pytest.raises(RecoveryRequired, match="^raw_source_selection_changed$"):
         config.replace_cli_config_snapshot('[global]\nvalue = "draft"\n', snapshot)
 
     assert config_path.read_text(encoding="utf-8") == original

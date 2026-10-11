@@ -124,16 +124,17 @@ def _hf_downloads_allowed() -> bool:
 if not _hf_downloads_allowed():
     os.environ["HF_HUB_OFFLINE"] = "1"
 
+import asyncio  # noqa: E402
+import gc  # noqa: E402
+import sqlite3  # noqa: E402
+import sys  # noqa: E402
+import time  # noqa: E402
+import warnings  # noqa: E402
+from typing import Iterator  # noqa: E402
+
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from loguru import logger  # noqa: E402
-import asyncio  # noqa: E402
-import sqlite3  # noqa: E402
-import sys  # noqa: E402
-import gc  # noqa: E402
-import time  # noqa: E402
-from typing import Iterator  # noqa: E402
-import warnings  # noqa: E402
 
 # Add project root to Python path for consistent imports
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -223,7 +224,8 @@ importlib.import_module("tldw_chatbook.model_capabilities").get_model_capabiliti
 # back up" as an apparent improvement; timing belongs in benchmarks, not in
 # correctness properties.
 try:  # pragma: no cover - hypothesis is a test-only dependency
-    from hypothesis import HealthCheck, settings as _hypothesis_settings
+    from hypothesis import HealthCheck
+    from hypothesis import settings as _hypothesis_settings
 
     # Example counts are env-scaled (task-1452): 'dev' keeps routine runs fast,
     # CI sets TLDW_HYPOTHESIS_PROFILE=ci, and the scheduled deep run uses
@@ -285,6 +287,28 @@ if hasattr(sys.stderr, "fileno"):
         import io
 
         sys.stderr = io.StringIO()
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_teardown(
+    item: pytest.Item, nextitem: pytest.Item | None
+) -> Iterator[None]:
+    """Finish config-source imports after normal fixture/resource cleanup.
+
+    Args:
+        item: Test whose owned fixtures and resources are being retired.
+        nextitem: Next test, or None at session end, for pytest's fixture teardown.
+
+    Yields:
+        Control to pytest so resource and monkeypatch teardown finishes before
+        selected-source consumer bindings are restored.
+    """
+    yield
+    from Tests.Backup_Recovery.config_test_support import (
+        restore_config_source_consumers,
+    )
+
+    restore_config_source_consumers()
 
 
 # ========== Path and File System Fixtures ==========
@@ -1210,6 +1234,21 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
     # failing since TASK-32628 landed) are this exact signature swallowed.
     keep_bootstrap_profile = (
         is_private_profile_child(request)
+        # TASK-33370/33373: these families exercise real source-bound config
+        # consumers. Their databases remain tmp_path-owned and are closed by
+        # their fixtures; redirecting the already imported config blinds the
+        # DB/migration assertions, UI setup and benchmark Console controller.
+        or request.node.path.parent.name in {"DB", "ChaChaNotesDB"}
+        or (
+            request.node.path.parent == Path(__file__).parent
+            and request.node.path.name.startswith("test_config_")
+        )
+        or request.node.path.name
+        in {
+            "test_environment_isolation.py",
+            "test_personas_lore.py",
+            "test_rag_citation_provenance_benchmark.py",
+        }
         # TASK-32873: per-NODE opt-in for suites that are MOSTLY sandbox
         # unit tests but contain real-app mounts (the runtime-ownership
         # suite): mark only the mounting tests.

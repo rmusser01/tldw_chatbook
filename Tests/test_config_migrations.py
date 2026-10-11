@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook import config as config_module
 from tldw_chatbook.config import (
     CONFIG_SCHEMA_VERSION_KEY,
@@ -17,12 +18,18 @@ def test_unversioned_config_is_treated_as_baseline_and_stamped():
     migrated, changed, conflict = migrate_config_forward(old)
     assert conflict is None
     assert changed is True
-    assert migrated[CONFIG_SCHEMA_VERSION_KEY] == config_module._CURRENT_CONFIG_SCHEMA_VERSION
+    assert (
+        migrated[CONFIG_SCHEMA_VERSION_KEY]
+        == config_module._CURRENT_CONFIG_SCHEMA_VERSION
+    )
     assert migrated["general"]["users_name"] == "Alice", "values preserved"
 
 
 def test_current_version_config_is_unchanged():
-    current = {CONFIG_SCHEMA_VERSION_KEY: config_module._CURRENT_CONFIG_SCHEMA_VERSION, "x": 1}
+    current = {
+        CONFIG_SCHEMA_VERSION_KEY: config_module._CURRENT_CONFIG_SCHEMA_VERSION,
+        "x": 1,
+    }
     migrated, changed, conflict = migrate_config_forward(current)
     assert changed is False
     assert conflict is None
@@ -31,7 +38,10 @@ def test_current_version_config_is_unchanged():
 
 def test_newer_version_is_detected_not_mangled():
     """AC#5."""
-    future = {CONFIG_SCHEMA_VERSION_KEY: config_module._CURRENT_CONFIG_SCHEMA_VERSION + 5, "x": 1}
+    future = {
+        CONFIG_SCHEMA_VERSION_KEY: config_module._CURRENT_CONFIG_SCHEMA_VERSION + 5,
+        "x": 1,
+    }
     migrated, changed, conflict = migrate_config_forward(future)
     assert conflict is not None
     assert "newer" in conflict.lower()
@@ -81,6 +91,7 @@ def test_stepwise_migrations_preserve_values(monkeypatch):
 
 # --- load-path + persist integration (AC#1/#2/#3/#4/#5) ---
 
+
 def _clear():
     config_module._CONFIG_CACHE = None
     config_module._CONFIG_CACHE_SOURCE = None
@@ -93,7 +104,7 @@ def test_load_stamps_and_migrates_unversioned_file_in_memory(tmp_path, monkeypat
     """AC#2/#6: an unversioned file on disk is read as the baseline and the
     running config carries the current version, without rewriting the file."""
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear()
     target.write_text('[general]\nusers_name = "Alice"\n')
     original = target.read_text()
@@ -101,7 +112,10 @@ def test_load_stamps_and_migrates_unversioned_file_in_memory(tmp_path, monkeypat
     result = config_module._load_cli_config_bootstrap_unlocked(force_reload=True)
 
     assert result.succeeded is True
-    assert result.config[CONFIG_SCHEMA_VERSION_KEY] == config_module._CURRENT_CONFIG_SCHEMA_VERSION
+    assert (
+        result.config[CONFIG_SCHEMA_VERSION_KEY]
+        == config_module._CURRENT_CONFIG_SCHEMA_VERSION
+    )
     assert result.config["general"]["users_name"] == "Alice"
     assert config_module.get_config_schema_conflict() is None
     # a bare stamp must NOT rewrite the file (would strip user comments)
@@ -111,7 +125,7 @@ def test_load_stamps_and_migrates_unversioned_file_in_memory(tmp_path, monkeypat
 def test_load_reports_newer_version_and_does_not_mangle(tmp_path, monkeypatch):
     """AC#5: a config from a newer version is served untouched with a warning."""
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear()
     future = config_module._CURRENT_CONFIG_SCHEMA_VERSION + 3
     target.write_text(
@@ -133,11 +147,10 @@ def test_persist_migration_backs_up_and_rewrites(tmp_path, monkeypatch):
     """AC#3/#4/#7: a real forward migration backs up the original and
     atomically rewrites the migrated result with values preserved."""
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear()
     target.write_text(
-        f"{CONFIG_SCHEMA_VERSION_KEY} = 1\n"
-        "[old_section]\nkept_value = 42\n"
+        f"{CONFIG_SCHEMA_VERSION_KEY} = 1\n[old_section]\nkept_value = 42\n"
     )
 
     def _v1_to_v2(cfg):
@@ -153,6 +166,7 @@ def test_persist_migration_backs_up_and_rewrites(tmp_path, monkeypatch):
     assert backup is not None and backup.exists()
     assert "old_section" in backup.read_text(), "backup keeps the pre-migration file"
     import tomllib
+
     rewritten = tomllib.loads(target.read_text())
     assert rewritten[CONFIG_SCHEMA_VERSION_KEY] == 2
     assert "old_section" not in rewritten
@@ -162,11 +176,10 @@ def test_persist_migration_backs_up_and_rewrites(tmp_path, monkeypatch):
 def test_failed_migration_leaves_original_untouched(tmp_path, monkeypatch):
     """AC#3: a migration that raises must not corrupt or replace the file."""
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear()
     target.write_text(
-        f"{CONFIG_SCHEMA_VERSION_KEY} = 1\n"
-        "[general]\nusers_name = \"Safe\"\n"
+        f'{CONFIG_SCHEMA_VERSION_KEY} = 1\n[general]\nusers_name = "Safe"\n'
     )
     original = target.read_text()
 
@@ -185,9 +198,9 @@ def test_failed_migration_leaves_original_untouched(tmp_path, monkeypatch):
 def test_bare_stamp_does_not_persist(tmp_path, monkeypatch):
     """No migration function in range => no file rewrite (comments preserved)."""
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear()
-    target.write_text("[general]\nusers_name = \"Alice\"  # a comment\n")
+    target.write_text('[general]\nusers_name = "Alice"  # a comment\n')
     original = target.read_text()
 
     assert config_module.migrate_config_file_if_needed() is None

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook import config as config_module
 
 
@@ -30,7 +31,7 @@ _BAD = '[general]\nusers_name = "Alice'  # unterminated string
 
 def test_parse_failure_after_a_good_load_serves_last_known_good(tmp_path, monkeypatch):
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear()
 
     target.write_text(_GOOD)
@@ -57,7 +58,7 @@ def test_parse_failure_after_a_good_load_serves_last_known_good(tmp_path, monkey
 
 def test_parse_failure_on_first_run_uses_defaults(tmp_path, monkeypatch):
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear()
 
     target.write_text(_BAD)
@@ -71,7 +72,7 @@ def test_parse_failure_on_first_run_uses_defaults(tmp_path, monkeypatch):
 
 def test_recovery_after_the_file_is_fixed_clears_everything(tmp_path, monkeypatch):
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear()
 
     target.write_text(_GOOD)
@@ -95,11 +96,11 @@ def test_corrupt_file_is_preserved_once_not_every_read(tmp_path, monkeypatch):
     TUI reading config hundreds of times per render accumulates a new
     .corrupt-<stamp> file and a full file copy on every read."""
     import shutil as _shutil
-    from tldw_chatbook import config as cfg
 
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, str(target), globals())
     _clear()
+    cfg = config_module
     cfg._LAST_PRESERVED_CORRUPT_KEY = None
 
     target.write_text('[general]\nusers_name = "Alice')  # unterminated -> corrupt

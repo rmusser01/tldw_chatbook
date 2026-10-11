@@ -1,17 +1,17 @@
 """Console configuration defaults."""
 
 import os
-from pathlib import Path
 import tomllib
+from pathlib import Path
 
 import pytest
 from loguru import logger
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from Tests.private_profile import private_profile_test
 
 CONFIG_PATH_BEFORE_CONFIG_IMPORT = os.environ.get("TLDW_CONFIG_PATH")
 from tldw_chatbook import config as config_module  # noqa: E402
-
 
 LOCAL_STREAMING_PROVIDER_SECTIONS = (
     "llama_cpp",
@@ -110,7 +110,7 @@ def test_console_rag_auto_retrieve_future_default_round_trips_as_a_strict_bool(
 ):
     """A valid saved boolean remains available to policy-default readers."""
     config_path = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     assert config_module.save_setting_to_cli_config(
         "chat_defaults", "rag_auto_retrieve_on_send", value
@@ -133,7 +133,7 @@ def test_malformed_legacy_console_rag_auto_retrieve_value_falls_back_safely(
         f"[chat_defaults]\\nrag_auto_retrieve_on_send = {raw_value}\\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
     seed = config_module.load_console_library_migration_seed(settings)
@@ -179,7 +179,7 @@ def test_console_background_effect_defaults_disabled():
 
 
 def test_load_settings_exposes_console_defaults(tmp_path, monkeypatch):
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+    select_config_source(monkeypatch, str(tmp_path / "missing-config.toml"), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -210,7 +210,7 @@ def test_load_settings_normalizes_console_rail_label_style(
         f"[console]\nstack_collapsed_rail_labels = {raw_value}\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -236,7 +236,7 @@ def test_load_settings_normalizes_console_rail_layout_scope(
         f"[console]\nrail_layout_scope = {raw_value}\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -264,7 +264,7 @@ def test_console_sidechat_prompt_template_default():
 
 
 def test_load_settings_exposes_console_sidechat_defaults(tmp_path, monkeypatch):
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+    select_config_source(monkeypatch, str(tmp_path / "missing-config.toml"), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -284,7 +284,7 @@ def test_console_sidechat_keys_survive_loader_coercion(tmp_path, monkeypatch):
         'sidechat_prompt_template = "Summarize this simply: {selection}"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -304,7 +304,7 @@ def test_console_sidechat_non_string_values_fall_back_to_defaults(
         "[console]\nsidechat_model = 123\nsidechat_prompt_template = 789\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -321,7 +321,7 @@ def test_load_settings_coerces_console_paste_threshold(tmp_path, monkeypatch):
         '[console]\npaste_collapse_threshold = "120"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -330,7 +330,7 @@ def test_load_settings_coerces_console_paste_threshold(tmp_path, monkeypatch):
 
 def test_load_settings_rejects_boolean_console_paste_threshold(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     for raw_value in ("true", "false"):
         config_path.write_text(
@@ -362,7 +362,7 @@ def test_load_settings_normalizes_console_background_effects(request, monkeypatc
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -381,7 +381,7 @@ def test_load_settings_coerces_console_string_false(tmp_path, monkeypatch):
         '[console]\ncollapse_large_pastes = "false"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -389,7 +389,7 @@ def test_load_settings_coerces_console_string_false(tmp_path, monkeypatch):
 
 
 def test_console_local_tools_defaults(tmp_path, monkeypatch):
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+    select_config_source(monkeypatch, str(tmp_path / "missing-config.toml"), globals())
 
     settings = config_module.load_settings(force_reload=True)
     console = settings["console"]
@@ -405,7 +405,7 @@ def test_console_raw_cli_permitted_defaults_false(tmp_path, monkeypatch):
         config_module.DEFAULT_CONFIG_FROM_TOML["console"]["raw_cli_permitted"] is False
     )
 
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+    select_config_source(monkeypatch, str(tmp_path / "missing-config.toml"), globals())
     console = config_module.load_settings(force_reload=True)["console"]
 
     assert console["raw_cli_permitted"] is False
@@ -430,7 +430,7 @@ def test_console_raw_cli_permitted_uses_bool_coercion(
         f"[console]\nraw_cli_permitted = {raw_value}\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     console = config_module.load_settings(force_reload=True)["console"]
 
@@ -465,7 +465,7 @@ def test_console_project_instruction_byte_limits_default_to_32_kib(
     assert template_console["project_instructions_startup_max_bytes"] == 32768
     assert template_console["project_instructions_nested_max_bytes"] == 32768
 
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+    select_config_source(monkeypatch, str(tmp_path / "missing-config.toml"), globals())
 
     settings = config_module.load_settings(force_reload=True)
     console = settings["console"]
@@ -499,7 +499,7 @@ def test_console_project_instruction_byte_limits_are_bounded(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     console = config_module.load_settings(force_reload=True)["console"]
 
@@ -513,7 +513,7 @@ def test_console_local_tools_coerced(tmp_path, monkeypatch):
         '[console]\nlocal_tools_enabled = "yes"\nworkspace_root = 123\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
     console = settings["console"]
@@ -530,7 +530,7 @@ def test_save_setting_respects_tldw_config_path_override(tmp_path, monkeypatch):
         "[console]\ncollapse_large_pastes = true\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(override_config))
+    select_config_source(monkeypatch, str(override_config), globals())
     monkeypatch.setattr(config_module, "DEFAULT_CONFIG_PATH", default_config)
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
 
@@ -552,8 +552,14 @@ def test_config_path_is_bootstrapped_before_config_import():
     assert bootstrap_config.parent.is_dir()
 
 
-def test_autouse_fixture_isolates_config_saves(tmp_path):
-    isolated_config = tmp_path / "test_data" / "config" / "config.toml"
+def test_autouse_fixture_isolates_config_saves(
+    isolate_test_environment, tmp_path, monkeypatch
+):
+    isolated_config = tmp_path / "config" / "config.toml"
+    isolated_config.parent.mkdir(mode=0o700)
+    select_config_source(monkeypatch, isolated_config, globals())
+    collection_config = Path(CONFIG_PATH_BEFORE_CONFIG_IMPORT)
+    collection_contents = collection_config.read_bytes()
     default_config = config_module.DEFAULT_CONFIG_PATH
     default_contents = default_config.read_bytes() if default_config.exists() else None
 
@@ -569,13 +575,14 @@ def test_autouse_fixture_isolates_config_saves(tmp_path):
     assert (
         default_config.read_bytes() if default_config.exists() else None
     ) == default_contents
+    assert collection_config.read_bytes() == collection_contents
 
 
 def test_save_setting_redacts_sensitive_value_in_attempt_log(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
     secret = "sk-review-secret-redaction-source"
     messages = []
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     sink_id = logger.add(
         lambda message: messages.append(message.record["message"]),
@@ -601,7 +608,7 @@ def test_save_settings_batches_multiple_sections(tmp_path, monkeypatch):
         "[console]\ncollapse_large_pastes = true\n[chat_defaults]\nstreaming = true\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     assert config_module.save_settings_to_cli_config(
         {
@@ -625,7 +632,7 @@ def test_chat_defaults_streaming_prefers_canonical_key(monkeypatch, tmp_path):
         "[chat_defaults]\nstreaming = true\nenable_streaming = false\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     assert config_module.get_chat_defaults_streaming(default=False) is True
 
@@ -636,7 +643,7 @@ def test_chat_defaults_streaming_uses_legacy_fallback(monkeypatch, tmp_path):
         "[chat_defaults]\nenable_streaming = false\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     assert config_module.get_chat_defaults_streaming(default=True) is False
 
@@ -650,7 +657,7 @@ def test_chat_display_name_uses_chat_defaults_not_general_users_name(
         "[chat_defaults]\nuser_display_name = 'Rowan'\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     assert config_module.get_chat_defaults_user_display_name() == "Rowan"
 
@@ -661,7 +668,7 @@ def test_blank_chat_display_name_falls_back_to_user(monkeypatch, tmp_path):
         "[chat_defaults]\nuser_display_name = '   '\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     assert config_module.get_chat_defaults_user_display_name() == "User"
 
@@ -673,7 +680,7 @@ def test_invalid_chat_display_name_warns_without_echoing_value(monkeypatch, tmp_
         f'[chat_defaults]\nuser_display_name = "{invalid_value}"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     messages = []
     sink_id = logger.add(
         lambda message: messages.append(message.record["message"]),
