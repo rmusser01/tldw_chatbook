@@ -1235,6 +1235,27 @@ MODEL_CATALOG_CHECKBOX_IDS = frozenset(
 )
 
 
+def env_var_echo(name: str) -> str:
+    """Name an env var in another row's copy, unless it looks like a key.
+
+    Ruling C4 (review of #3057): the Env var field is not masked, so a key
+    pasted there by mistake is not repeated where another row prints it.
+
+    Args:
+        name: The Env var field's value, saved or being typed.
+
+    Returns:
+        The name, or "that variable" for a secret-shaped value or one over
+        40 characters with no underscore.
+    """
+    from ...MCP.redaction import looks_like_secret_value
+
+    looks_like_key = looks_like_secret_value(name) or (
+        len(name) > 40 and "_" not in name
+    )
+    return "that variable" if looks_like_key else name
+
+
 def _session_summary_section_values(
     enabled: bool, duration_text: str
 ) -> dict[str, dict[str, object]]:
@@ -15290,7 +15311,8 @@ class SettingsScreen(BaseAppScreen):
         if declared is None:
             return "API key source: none required by this endpoint"
         if declared[1] == "environment":
-            return f"API key source: env var {entry.api_key_env} (this endpoint)"
+            name = env_var_echo(entry.api_key_env or "")
+            return f"API key source: env var {name} (this endpoint)"
         return "API key source: saved in this endpoint"
 
     def _provider_registry_endpoint(
@@ -17273,7 +17295,7 @@ class SettingsScreen(BaseAppScreen):
             }[readiness.subscription_status]
         elif source.startswith("env:"):
             draft_tag = " (draft)" if "credential_env_var" in dirty else ""
-            key = f"from env var {readiness.env_var}{draft_tag}"
+            key = f"from env var {env_var_echo(readiness.env_var or '')}{draft_tag}"
         elif source:
             key = (
                 "entered here, not saved yet"
@@ -17287,7 +17309,8 @@ class SettingsScreen(BaseAppScreen):
         elif not readiness.requires_api_key:
             key = "not required"
         elif readiness.env_var:
-            key = f"missing — enter one in the API key field or set {readiness.env_var}"
+            name = env_var_echo(readiness.env_var)
+            key = f"missing — enter one in the API key field or set {name}"
         else:
             key = "missing — enter one in the API key field"
         credential = getattr(evidence, "credential", "")
