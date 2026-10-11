@@ -610,8 +610,9 @@ def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
     largest fields go, biggest first, until they fit, and a field the
     capability inference reads goes only after every other. Nothing unbounded is
     ever kept. The work is bounded: a model with more top-level fields than
-    the item bound cannot fit and gets no metadata, and each surviving field
-    is measured once.
+    the item bound cannot fit and gets no metadata, each field is measured
+    once on its own, and the number to drop is found by bisection (about
+    nine measurements of the record, however many fields it has).
 
     Args:
         model_payload: One model object from a ``/models`` response.
@@ -642,12 +643,32 @@ def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
         ),
         reverse=True,
     )
-    for name in largest_first:
-        try:
-            return _safe_model_metadata(kept)
-        except ValueError:
-            del kept[name]
-    return {}
+    # Every kept field passed on its own, so what remains can only break a
+    # total (items or serialized bytes), and removing a field never raises
+    # either: whether the record fits is monotone in how many fields are gone.
+    # Bisect for the fewest evictions. Re-measuring after each one scrubbed a
+    # record of 255 small fields 255 times, minutes of CPU for a large listing.
+    measured: dict[int, dict[str, Any] | None] = {}
+
+    def without(evicted: int) -> dict[str, Any] | None:
+        if evicted not in measured:
+            gone = set(largest_first[:evicted])
+            try:
+                measured[evicted] = _safe_model_metadata(
+                    {name: value for name, value in kept.items() if name not in gone}
+                )
+            except ValueError:
+                measured[evicted] = None
+        return measured[evicted]
+
+    fewest, most = 0, len(largest_first)
+    while fewest < most:
+        middle = (fewest + most) // 2
+        if without(middle) is None:
+            fewest = middle + 1
+        else:
+            most = middle
+    return without(fewest) or {}
 
 
 def normalize_models_response(

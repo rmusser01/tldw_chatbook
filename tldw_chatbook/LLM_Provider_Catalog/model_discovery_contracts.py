@@ -11,6 +11,15 @@ from typing import Any, Literal
 DiscoverySource = Literal["saved", "runtime_discovered", "persisted_discovered"]
 CapabilityStatus = Literal["known", "inferred", "unknown"]
 ProviderKeyResolutionStatus = Literal["resolved", "missing", "ambiguous"]
+DiscoveryErrorKind = Literal[
+    "unsupported_endpoint",
+    "malformed_endpoint",
+    "missing_endpoint",
+    "missing_credentials",
+    "ambiguous_provider_key",
+    "request_failed",
+    "invalid_response",
+]
 
 #: The top-level listing fields capability inference reads
 #: (``model_discovery_merge._metadata_has_positive_capability``). The listing
@@ -26,15 +35,6 @@ CAPABILITY_HINT_KEYS = frozenset(
         "architecture",
     }
 )
-DiscoveryErrorKind = Literal[
-    "unsupported_endpoint",
-    "malformed_endpoint",
-    "missing_endpoint",
-    "missing_credentials",
-    "ambiguous_provider_key",
-    "request_failed",
-    "invalid_response",
-]
 
 
 def _freeze_metadata_value(value: Any) -> Any:

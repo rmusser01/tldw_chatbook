@@ -441,9 +441,17 @@ def test_the_inference_reads_exactly_the_declared_hint_keys():
     read: set[str] = set()
 
     class _Spy(dict):
+        """Records ``.get``; any other way of reading the listing fails the test."""
+
         def get(self, key, default=None):
             read.add(key)
             return default
+
+        def _other_read(self, *_args, **_kwargs):
+            raise AssertionError("the inference read the listing without .get")
+
+        __getitem__ = __contains__ = __iter__ = _other_read
+        items = keys = values = _other_read
 
     assert _status(_Spy()) == "unknown"
     assert read == CAPABILITY_HINT_KEYS

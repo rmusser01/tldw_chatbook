@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
+import threading
 import time
 from unittest.mock import Mock
 
@@ -1309,6 +1311,128 @@ def test_hint_fields_that_overflow_by_themselves_lose_the_largest_first():
         )
         == "inferred"
     )
+
+
+def _linear_reference(model: dict) -> dict:
+    """The eviction as it was first written: re-measure after every dropped field."""
+    discovery = openai_compatible_model_discovery
+    try:
+        return discovery._safe_model_metadata(model)
+    except ValueError:
+        pass
+    if len(model) > discovery.MODEL_METADATA_MAX_ITEMS:
+        return {}
+    kept = {}
+    for key, value in model.items():
+        try:
+            discovery._safe_model_metadata({key: value})
+        except ValueError:
+            continue
+        kept[key] = value
+    order = sorted(
+        kept,
+        key=lambda name: (
+            name not in discovery.CAPABILITY_HINT_KEYS,
+            len(json.dumps(kept[name])),
+        ),
+        reverse=True,
+    )
+    for name in order:
+        try:
+            return discovery._safe_model_metadata(kept)
+        except ValueError:
+            del kept[name]
+    return {}
+
+
+def test_bisected_eviction_keeps_exactly_what_dropping_one_field_at_a_time_kept():
+    """The bisection is a faster way to the same answer, never a different one."""
+    rng = random.Random(34402)
+    hint_names = sorted(openai_compatible_model_discovery.CAPABILITY_HINT_KEYS)
+
+    def value(depth: int = 0):
+        kind = rng.randrange(7 if depth < 2 else 4)
+        if kind == 0:
+            return rng.randrange(10**6)
+        if kind == 1:
+            return "x" * rng.choice([1, 8, 80, 900, 5000])
+        if kind == 2:
+            return rng.choice([True, False, None, 1.5, float("nan")])
+        if kind == 3:
+            return [rng.randrange(9) for _ in range(rng.choice([1, 3, 40, 130, 300]))]
+        if kind == 4:
+            return [value(depth + 1) for _ in range(rng.randrange(6))]
+        return {
+            f"k{n}": value(depth + 1) for n in range(rng.choice([1, 2, 6, 30, 120]))
+        }
+
+    differing = trimmed = 0
+    for _ in range(90):
+        names = [f"field_{n:03d}" for n in range(rng.choice([2, 9, 20, 40, 70]))]
+        names += rng.sample(hint_names, rng.randrange(len(hint_names) + 1))
+        rng.shuffle(names)
+        model = {name: value() for name in names}
+        expected = _linear_reference(model)
+        got = openai_compatible_model_discovery._bounded_model_metadata(model)
+        differing += got != expected or list(got) != list(expected)
+        trimmed += 0 < len(expected) < len(model)
+
+    assert differing == 0
+    assert trimmed > 25, "the generator stopped producing records that need trimming"
+
+
+def test_trimming_a_record_of_many_small_fields_takes_a_handful_of_measurements(
+    monkeypatch,
+):
+    """255 two-item lists overflow together; they used to cost 255 full re-measurements."""
+    model = {f"field_{n:03d}": [n, n] for n in range(255)}
+    real = openai_compatible_model_discovery._safe_model_metadata
+    whole_record: list[int] = []
+
+    def counting(payload):
+        if len(payload) > 1:
+            whole_record.append(len(payload))
+        return real(payload)
+
+    monkeypatch.setattr(
+        openai_compatible_model_discovery, "_safe_model_metadata", counting
+    )
+
+    kept = openai_compatible_model_discovery._bounded_model_metadata(model)
+
+    assert 0 < len(kept) < len(model)
+    assert len(whole_record) <= 12, whole_record
+
+
+@pytest.mark.asyncio
+async def test_a_listing_is_normalised_off_the_event_loop(monkeypatch):
+    """Bounding a large listing is CPU work; on the loop it froze the UI (TASK-34402)."""
+    loop_thread = threading.get_ident()
+    real = openai_compatible_model_discovery.normalize_models_response
+    ran_on: list[int] = []
+
+    def recording(*args, **kwargs):
+        ran_on.append(threading.get_ident())
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(
+        openai_compatible_model_discovery, "normalize_models_response", recording
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "runtime-a"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await discover_openai_compatible_models(
+            provider="Custom",
+            provider_list_key="Custom",
+            endpoint="https://api.example.test/v1/chat/completions",
+            api_key="test-key",
+            client=client,
+        )
+
+    assert result.status == "success"
+    assert ran_on and loop_thread not in ran_on
 
 
 def test_normalize_models_drops_an_oversized_field_but_keeps_the_model():
