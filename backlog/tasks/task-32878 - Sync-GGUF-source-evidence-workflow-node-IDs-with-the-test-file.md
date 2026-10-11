@@ -1,7 +1,7 @@
 ---
 id: TASK-32878
 title: Sync GGUF source-evidence workflow node IDs with the test file
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-20 09:30'
 labels:
@@ -23,3 +23,18 @@ Dev-side CI breakage (found blocking PRs #2746/#2747/#2750, 2026-09-20): the GGU
 <!-- AC:BEGIN -->
 - [ ] #1 The workflow's node list matches what Tests/UI/test_llm_gguf_source_modes.py collects at dev, and the GGUF source-evidence job is green on dev and on PRs #2746/#2747/#2750
 <!-- AC:END -->
+
+## Closeout audit 2026-10-11
+
+Board audit (branch `chore/board-prune-prune-d`, dev at a3c47c6c72): this task's work is
+landed on `origin/dev` but the status field was never flipped. Verdict: **Done**.
+
+The node-ID desync was repaired in a2d89bd3fc (2026-09-19, "fix(models): defer GGUF
+inventory until selectors mount"), which added the three `test_llm_gguf_source_modes.py` node IDs
+to `task-2062-2-gguf-source-evidence.yml` in the same commit that added the tests; the three
+blocked PRs (#2746, #2747, #2750) then merged on 2026-09-20. Verified today in this worktree:
+all 7 node IDs listed by the workflow exist in `Tests/UI/test_llm_gguf_source_modes.py`
+(ALL_NODES_PRESENT), and the later trigger narrowing (98f038494a, c3897ae846) kept the workflow
+and the `test_task2062_*.py` contracts in sync.
+
+AC checkboxes are left as found; this section is the audit's evidence record.
