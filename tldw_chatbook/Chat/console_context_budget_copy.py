@@ -4,8 +4,12 @@ TASK-34350, owner ruling 2026-10-03: a send over budget prompts to compact,
 auto-compacts when that is enabled, or alerts when compacting cannot make
 room. Before this, Ask mode blocked with "Review and approve compaction before
 sending again" and offered nothing to approve, and a send that compaction
-could not help was refused with copy that treated an estimated context window
+could not help was refused with copy that treated an assumed context window
 as fact (the 4,096-token fallback fixed in TASK-33940.5 refused every send).
+
+One fact, one word (TASK-33007 #12): a window no source knows is "assumed",
+as Chat settings and Settings say it ("unknown, 32,000 assumed"). The
+``estimated`` arguments keep their name; only the words changed.
 
 Pure functions over token counts: no Console widget, store, or controller
 imports.
@@ -18,7 +22,7 @@ from enum import Enum
 #: Where the response reservation is set (``MODEL_FIELD_LABELS["max_tokens"]``).
 MAX_TOKENS_SETTING = "Max tokens in Conversation settings > Model and generation"
 #: Where a model's real context window is set; the same destination the
-#: Context and memory view names for an estimated window.
+#: Context and memory view names for an assumed window.
 MODEL_WINDOW_SETTING = "F4 Settings > Providers & Models"
 
 
@@ -41,15 +45,15 @@ def _window_phrase(window_tokens: int | None, *, estimated: bool) -> str:
     if window_tokens is None:
         return "context window"
     phrase = f"{_tokens(window_tokens)}-token context window"
-    return f"{phrase} (an estimate)" if estimated else phrase
+    return f"{phrase} (assumed)" if estimated else phrase
 
 
 def _estimate_hint(estimated: bool) -> str:
     if not estimated:
         return ""
     return (
-        " This model's context window is an estimate; if it is larger, set "
-        f"the real value in {MODEL_WINDOW_SETTING}."
+        " This model's context window is assumed, not known; if it is larger, "
+        f"set the real value in {MODEL_WINDOW_SETTING}."
     )
 
 
@@ -68,14 +72,14 @@ def context_overflow_alert_copy(
         cause: What leaves no room.
         model: The selected model's name.
         window_tokens: The context window the limit was computed from.
-        window_estimated: True when that window is a fallback estimate rather
-            than detected or set by the user.
+        window_estimated: True when that window is assumed (a fallback)
+            rather than detected or set by the user.
         response_tokens: The response reservation (Max tokens).
         input_ceiling_tokens: Input tokens the window leaves for the request.
 
     Returns:
         Copy that says the message was not sent, what fills the window, the
-        setting that changes it, and, for an estimate, where to set the real
+        setting that changes it, and, for an assumed one, where to set the real
         window.
     """
 
@@ -112,7 +116,7 @@ def _estimate_window_sentence(estimated: bool) -> str:
     if not estimated:
         return ""
     return (
-        " The budget comes from an estimated context window; set the real "
+        " The budget comes from an assumed context window; set the real "
         f"value in {MODEL_WINDOW_SETTING}."
     )
 
@@ -128,7 +132,7 @@ def compaction_prompt_copy(
     Args:
         used_tokens: Conversation tokens this send would carry.
         budget_tokens: The conversation budget the threshold is a share of.
-        estimated: True when the budget comes from an estimated window.
+        estimated: True when the budget comes from an assumed window.
 
     Returns:
         Copy stating the hold, the numbers and the three choices.
@@ -153,7 +157,7 @@ def compaction_hold_detail(
     Args:
         used_tokens: Conversation tokens this send would carry.
         budget_tokens: The conversation budget the threshold is a share of.
-        estimated: True when the budget comes from an estimated window.
+        estimated: True when the budget comes from an assumed window.
 
     Returns:
         ``(usage, choices)``: the numbers, then what each action does.

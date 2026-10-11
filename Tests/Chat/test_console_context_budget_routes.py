@@ -95,7 +95,8 @@ async def test_mandatory_context_over_the_window_alerts_with_what_fills_it(
     assert result.visible_copy.startswith("Your message was not sent:")
     assert "system prompt, tools and attached context" in result.visible_copy
     assert MAX_TOKENS_SETTING in result.visible_copy
-    assert ("an estimate" in result.visible_copy) is estimated
+    # Rewritten on purpose (review of #3057, R4 M13): the word is "assumed".
+    assert ("(assumed)" in result.visible_copy) is estimated
 
 
 @pytest.mark.asyncio

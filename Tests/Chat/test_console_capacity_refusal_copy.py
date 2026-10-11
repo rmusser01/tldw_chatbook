@@ -83,7 +83,8 @@ async def test_unknown_window_refusal_names_the_model_and_the_fix(
     # The cause and its setting, and the window flagged as a guess with
     # where to set the real one -- only because it is one.
     assert "Max tokens" in copy
-    assert "(an estimate)" in copy
+    # Rewritten on purpose (review of #3057, R4 M13): the word is "assumed".
+    assert "(assumed)" in copy
     assert "F4 Settings > Providers & Models" in copy
     for jargon in _POLICY_JARGON:
         assert jargon not in copy
@@ -117,7 +118,7 @@ async def test_a_known_window_refusal_never_claims_the_size_is_unknown(
     assert gateway.stream_calls == 0
     rows = [row for row in _system_rows(store) if "gpt-test-live" in row]
     assert len(rows) == 1, _system_rows(store)
-    assert "estimate" not in rows[0]
+    assert "assumed" not in rows[0]
     assert "isn't known" not in rows[0]
     assert "1,000-token context window" in rows[0]
     for jargon in _POLICY_JARGON:

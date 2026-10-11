@@ -421,10 +421,7 @@ def build_field_search_index() -> None:
                 ),
                 ("settings-console-agent-max-model-turns", "Model turns (backstop)"),
                 ("settings-console-agent-max-steps", "Steps (backstop)"),
-                (
-                    "settings-console-default-user-display-name",
-                    "Default chat display name",
-                ),
+                ("settings-console-default-user-display-name", "Chat display name"),
                 ("settings-console-default-streaming", "Streaming"),
                 ("settings-console-default-temperature", "Temperature"),
                 ("settings-console-default-top-p", "Top P"),
