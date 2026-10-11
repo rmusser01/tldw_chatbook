@@ -1,5 +1,12 @@
 # Lessons: what counts as evidence a change works
 
+
+## A stale-review category can hide a storage-scope refusal (TASK-21236, 2026-10-11)
+
+**Incident.** Four existing Actor Pack artwork/conversion round trips failed with `actor_pack_import_review_stale` after the Buddy import-closure repair. Adding a bootstrap-profile marker did not change the failure. Tracing the original exception identified `operation_path_outside_scope`: review validation asked for the profile directory while the active SQLite operation owned only `actors.db`.
+
+**What to do.** Trace the original boundary exception before changing fixtures or weakening stale-review checks. Keep ordinary directory/capacity preflight outside the SQL operation and recheck exact source, staged bytes, UUID and visual authority inside the transaction. The repaired round trips and the conversion pre-insert/final-write source controls verify both sides; a fixture marker cannot grant a transaction unrelated path authority.
+
 ## A Console host does not retire the borrowed application (TASK-34786, 2026-10-10)
 
 **Incident.** A 90-case Console review run passed but grew by203 file descriptors. The new session-tab composer harness contributed161: it constructed a real TldwCli, then stopped only ConsoleHarness. A constructor-only control retained SQLite owners even after garbage collection; a real mounted control reduced descriptors from34 to21 only after draining the borrowed runtime and closing its four actual database owners.

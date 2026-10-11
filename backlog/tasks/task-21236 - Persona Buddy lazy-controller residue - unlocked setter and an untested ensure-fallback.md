@@ -53,7 +53,7 @@ of `Persona_Visual` off the boot path — **−80 modules**, and the PIL chain a
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md and backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md and backlog/decisions/126-complete-local-backup-and-recovery.md (existing)
+ADR path: backlog/decisions/079-workspace-assistant-defaults.md and backlog/decisions/074-portable-actor-packs-and-local-persona-visual-runtime.md and backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md and backlog/decisions/126-complete-local-backup-and-recovery.md (existing)
 Reason: retain the existing lazy controller, lock, independent management and storage-admission authority. The routine activation repair separates ordinary directory preflight from unchanged atomic source/UUID/visual revalidation under existing ADR-126; no new durable ownership or storage policy.
 1. Reproduce setter publication while the construction lock is held using real thread synchronization.
 2. Acquire that same lock in the existing setter; retain lazy construction and injection/clear behavior.
@@ -67,6 +67,7 @@ Reason: retain the existing lazy controller, lock, independent management and st
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 2026-10-11: Resumed under the requester-approved Buddy burn-down. The service wiring moved to app_service_wiring.py and the explicit action is now Manage Buddy under ADR-139. Retain the existing lazy import and ownership contracts; serialize setter publication with the existing construction lock and qualify the current mounted action from disabled saved preferences. Focused tests only; accepted human/native/voice UAT is preserved.
 Completed controller setter locking and mounted disabled-profile Manage Buddy coverage, with a failing ensure-path mutation. Deferred attribution imports preserve the boot guard. Repaired inherited database-only activation scope refusal by keeping directory preflight outside SQL and exact source/UUID/visual revalidation inside Character and Persona commits; conversion before-insert and final source guards remain. Carried validated Persona policy_rules through reviewed Actor Packs under ADR-079 without dropping malformed rules or local authority exclusion. 104 affected activation/conversion/policy cases and 26 final boundary cases pass, 129 unique identities; expected RED/mutation controls retained. Zero introduced Ruff/Bandit findings; ten files formatted, existing service-wiring formatting debt unchanged, compile/whitespace pass. Independent review has no actionable findings. Report and exact evidence: Docs/Reviews/2026-10-11-chatbook-buddy-closeout.md and artifacts/buddy-closeout-20261011/verification.json. ADR-074/079/126/139 apply; no new ADR. No full suite, accepted UAT repetition, provider/audio call or normal-profile mutation.
+Recorded the traced stale-review/storage-scope incident and its verified boundary repair in backlog/docs/lessons-testing-evidence.md.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 
