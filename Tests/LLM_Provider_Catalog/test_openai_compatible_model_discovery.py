@@ -1366,19 +1366,42 @@ def test_bisected_eviction_keeps_exactly_what_dropping_one_field_at_a_time_kept(
             f"k{n}": value(depth + 1) for n in range(rng.choice([1, 2, 6, 30, 120]))
         }
 
-    differing = trimmed = 0
+    discovery = openai_compatible_model_discovery
+
+    def fits_alone(name: str, field) -> bool:
+        try:
+            discovery._safe_model_metadata({name: field})
+        except ValueError:
+            return False
+        return True
+
+    records = []
     for _ in range(90):
         names = [f"field_{n:03d}" for n in range(rng.choice([2, 9, 20, 40, 70]))]
         names += rng.sample(hint_names, rng.randrange(len(hint_names) + 1))
         rng.shuffle(names)
-        model = {name: value() for name in names}
+        records.append({name: value() for name in names})
+    # Few items, many bytes: these can only overflow the serialized-size bound.
+    byte_heavy = [
+        {f"text_{n:02d}": "x" * 900 for n in range(30)},
+        {"capabilities": {"vision": True}, **{f"t{n}": "y" * 2000 for n in range(12)}},
+        {f"text_{n:02d}": "z" * rng.choice([600, 900, 1500]) for n in range(40)},
+    ]
+
+    differing = together = 0
+    for model in records + byte_heavy:
         expected = _linear_reference(model)
-        got = openai_compatible_model_discovery._bounded_model_metadata(model)
+        got = discovery._bounded_model_metadata(model)
         differing += got != expected or list(got) != list(expected)
-        trimmed += 0 < len(expected) < len(model)
+        alone = sum(fits_alone(name, field) for name, field in model.items())
+        # Lost a field that was fine on its own: the together stage, the bisect.
+        together += len(expected) < alone
 
     assert differing == 0
-    assert trimmed > 25, "the generator stopped producing records that need trimming"
+    assert together > 20, "the generator stopped producing records the bisect has to trim"
+    for model in byte_heavy:
+        kept = discovery._bounded_model_metadata(model)
+        assert 0 < len(kept) < len(model), "a byte-heavy record was not trimmed by size"
 
 
 def test_trimming_a_record_of_many_small_fields_takes_a_handful_of_measurements(

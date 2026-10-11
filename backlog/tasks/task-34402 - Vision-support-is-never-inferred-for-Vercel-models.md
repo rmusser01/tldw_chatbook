@@ -10,7 +10,7 @@ labels:
 - discovery
 dependencies: []
 priority: low
-updated_date: 2026-10-11 17:18
+updated_date: 2026-10-11 21:56
 ---
 
 ## Description
@@ -27,6 +27,7 @@ Discovery infers a model's vision capability from its listing metadata (model_di
 - [x] #4 The Settings discovery list shows a freshly listed model with an image-input hint as capabilities inferred
 - [x] #5 A model whose listing carries a true supports_image_input flag (Fireworks), a true vision flag under capabilities (Mistral), or capabilities.image_input.supported true (Anthropic) is inferred as vision-capable
 - [x] #6 When a listing's metadata has to shrink to fit its bounds, the field carrying the vision hint is dropped last
+- [x] #7 Normalising a listing does not block the UI event loop, and trimming an oversized record takes a bounded number of measurements with the same result as dropping one field at a time
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,7 +63,7 @@ Behaviour notes:
 
 What the user sees: in the session that fetched a listing, models with image input lose the capability unknown label and warning in the model pickers, and the Settings discovery list says capabilities inferred. Limit: the on-disk catalog keeps ids and fetch times only, so after a restart inside the cache's freshness window (24 hours by default) the label is back until the next fetch. That was already true of the flat-list hints; TASK-34793 tracks it.
 
-Tests: Tests/LLM_Provider_Catalog and Tests/UI/test_settings_provider_test_draft.py, 533 passed. One other test in that Settings file (test_t_hotkey_does_not_run_test_while_input_focused) fails on this machine on clean dev as well. None of the three changed test files is in the PR gate, so the required CI check does not run the new tests; the evidence for them is the local run and four independent review rounds with mutation checks and a 300,000-shape fuzz against dev.
+Tests: Tests/LLM_Provider_Catalog and Tests/UI/test_settings_provider_test_draft.py, 533 passed. One other test in that Settings file (test_t_hotkey_does_not_run_test_while_input_focused) fails on this machine on clean dev as well. None of the three changed test files is in the PR gate, so the required CI check does not run the new tests; the evidence for them is the local run and five independent review rounds with mutation checks, a 300,000-shape fuzz of the inference against dev, and a 9,649-record fuzz of the trim against the one-at-a-time loop.
 
 Files: tldw_chatbook/LLM_Provider_Catalog/model_discovery_merge.py, tldw_chatbook/LLM_Provider_Catalog/model_discovery_contracts.py, tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py, tldw_chatbook/UI/Screens/settings_screen.py, Tests/LLM_Provider_Catalog/test_model_discovery_cache_merge_persistence.py, Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py, Tests/UI/test_settings_provider_test_draft.py
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
