@@ -1,7 +1,7 @@
 ---
 id: TASK-2704
 title: 'Console Chat Context viewer: Current-tab fold titles leak the role enum repr'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-31'
 labels: [console, polish, ui]
@@ -20,7 +20,14 @@ and real-terminal alike.
 
 ## Acceptance Criteria (the what)
 
-- [ ] Current-tab fold titles show a human role word (e.g. `[user]
+- [x] Current-tab fold titles show a human role word (e.g. `[user]
       complete`), never the enum repr.
-- [ ] Covered by a test that would fail if an enum repr reappears in the
+- [x] Covered by a test that would fail if an enum repr reappears in the
       fold title.
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+Fixed by TASK-32336: commit 8c350147e0 'fix(console): human role names in Current Context viewer titles (TASK-32336)'; the older task-2704 footnote was retired by 3f5a25b807 'docs: retire the task-2704 role-form footnote (fixed by TASK-32336)'. Boundary labels now use human role names (Console_Modules/session.py:2567).

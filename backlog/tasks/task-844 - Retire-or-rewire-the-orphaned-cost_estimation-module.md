@@ -2,7 +2,7 @@
 id: TASK-844
 title: >-
   Retire or rewire the orphaned Utils/cost_estimation module
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-26 17:10'
 labels:
@@ -27,8 +27,15 @@ So there are two honest options and one dishonest one. Either retire the module 
 ## Acceptance Criteria
 
 <!-- AC:BEGIN -->
-- [ ] A reachability check confirms `Utils/cost_estimation.py` still has no importers at implementation time
-- [ ] Either the module is deleted, or its `MODEL_COSTS` table is refreshed and it is wired into the Evals bench editor's estimate
+- [x] A reachability check confirms `Utils/cost_estimation.py` still has no importers at implementation time
+- [x] Either the module is deleted, or its `MODEL_COSTS` table is refreshed and it is wired into the Evals bench editor's estimate
 - [ ] If wired in, a model absent from the table renders as unknown rather than silently using the generic default
 - [ ] If deleted, the deletion guard in `Tests/UI/test_evals_deletion_guard.py` gains its path
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+Retired: Utils/cost_estimation.py was deleted by d4a5147b56 'chore(dead): delete five unreferenced Utils helper modules (task-32807.6)'; no cost_estimation references remain anywhere in tldw_chatbook on origin/dev.

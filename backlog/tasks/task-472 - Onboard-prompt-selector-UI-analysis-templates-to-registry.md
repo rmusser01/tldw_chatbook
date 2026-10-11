@@ -1,7 +1,7 @@
 ---
 id: TASK-472
 title: 'Onboard prompt_selector UI analysis-prompt templates to the Internal Prompts registry'
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-22 22:10'
 labels:
@@ -31,3 +31,10 @@ rather than from a live file.
 - [ ] #2 If onboarded: templates are registry-backed with parity tests and a suitable editing UX
 - [ ] #3 If not: the rationale is documented and the templates left as-is
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: WON'T DO** — evidence verified against origin/dev (a3c47c6c72).
+
+Superseded: Widgets/prompt_selector.py was deleted outright — no prompt_selector references remain in tldw_chatbook on origin/dev; provenance cross-referenced via commit 5489cc6a03 'docs: cross-reference retired prompt_selector provenance (task-15481)'. The ~30 picker templates no longer exist to onboard.

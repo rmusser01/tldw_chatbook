@@ -2,7 +2,7 @@
 id: TASK-617
 title: >-
   Bring Roleplay personas to parity with tldw_server's personas module
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-24 14:45'
 labels:
@@ -27,9 +27,16 @@ Supersedes the archived TASK-442, which had the concept inverted.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A persona in chatbook is modeled as a character-side assistant identity that matches tldw_server's persona profile concept (derived from / linked to a character), not as the user's own identity
-- [ ] #2 A persona projects into a chat as the assistant (system prompt / exemplar assembly), mirroring tldw_server's persona-backed chat behavior
-- [ ] #3 Macro substitution matches tldw_server: `{{user}}` resolves to the human user; `{{persona}}`/`{{char}}`/`{{character}}` resolve to the character/persona
-- [ ] #4 A persona can be selected/active and persists across sessions, consistent with tldw_server's persona selection semantics
-- [ ] #5 The "persona = who you are" framing is removed from the Roleplay/Settings surfaces and copy
+- [x] #1 A persona in chatbook is modeled as a character-side assistant identity that matches tldw_server's persona profile concept (derived from / linked to a character), not as the user's own identity
+- [x] #2 A persona projects into a chat as the assistant (system prompt / exemplar assembly), mirroring tldw_server's persona-backed chat behavior
+- [x] #3 Macro substitution matches tldw_server: `{{user}}` resolves to the human user; `{{persona}}`/`{{char}}`/`{{character}}` resolve to the character/persona
+- [x] #4 A persona can be selected/active and persists across sessions, consistent with tldw_server's persona selection semantics
+- [x] #5 The "persona = who you are" framing is removed from the Roleplay/Settings surfaces and copy
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+Persona parity landed: Character_Chat/local_character_persona_service.py models character-side assistant personas (assistant_kind in {'character','persona'}, persona_memory_mode, exemplar assembly — commits 1921dea238 'Add local persona profile parity' and cd8bf5c004 'Add local persona exemplar parity'); macro semantics fixed via task-442 ('{{character}}' and '{{persona}}' are character-side aliases, Character_Chat_Lib.py:553); persona selection persists (Tests/Character_Chat/test_character_persona_scope_service.py); no 'persona = who you are' copy remains in tldw_chatbook.
