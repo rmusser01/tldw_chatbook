@@ -12795,10 +12795,12 @@ VerticalScroll.media-content-right-pane > Markdown {
     padding-right: $ds-space-1;
 }
 
+
 .gguf-source-mode {
     width: $ds-width-fill;
     min-width: $ds-size-12;
     height: $ds-size-3;
+    padding-top: $ds-space-1;
 }
 
 .gguf-source-region {
