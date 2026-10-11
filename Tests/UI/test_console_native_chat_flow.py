@@ -4891,7 +4891,13 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
             source="user",
         )
     )
-    console._sync_console_control_bar()
+    # While another thread holds a config lock the sync below defers to a
+    # 0.2s timer and returns False (TASK-34415): Send keeps its mount-time
+    # disabled state and the caller's next ``press()`` is a silent no-op.
+    # Holding both locks first (the sync's own order; they are reentrant)
+    # makes it render before this helper returns (TASK-34789).
+    with config_module._settings_rebuild_lock(), config_module._config_file_lock():
+        assert console._sync_console_control_bar()
 
 
 @pytest.mark.asyncio
