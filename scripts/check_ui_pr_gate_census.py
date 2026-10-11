@@ -284,7 +284,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Phase 7's counts above were taken on its own base; over dev's 179 its eleven
 # files make 190, and the node that pins the Study card-list lock (the review
 # of #3057) 191.
-MINIMUM_FILES = 206
+# The review of #3057 (ruling C11, 2026-10-11) raised it by 18, to 209: one
+# new file and 17 node ids that were the only evidence for a ticked Phase 7
+# criterion and ran in no PR lane (the census names the criterion beside
+# each). They sit above the Phase 7 tail by that ruling, which moves the
+# tail's files four shards on (18 mod 7): the replay is re-run after them.
+MINIMUM_FILES = 224
 
 
 def read_census(path: Path) -> list[str]:

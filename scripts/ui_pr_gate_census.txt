@@ -281,6 +281,50 @@ Tests/UI/test_settings_default_model_picker.py
 # interleaving. The gated real-service test waits for the settled list, so this
 # node is the only one that goes red without the lock.
 Tests/UI/test_study_flashcards_screen.py::test_two_awaited_card_list_rebuilds_do_not_interleave
+
+# TASK-33007 (review of #3057, ruling C11): a test that is the only evidence for
+# a ticked Phase 7 criterion runs in a PR lane. These 18 ran in none. Each passed
+# three serial runs alone; the seconds are pytest's for one run on a loaded
+# machine (load average 40 and up). Node ids, because their files are slow or
+# hold reds that are not this phase's. The ruling puts them above the Phase 7
+# block, so that block's files move four shards on (18 mod 7): re-run the
+# replay.
+# Parent AC#1: no listed provider's closed card needs scrolling at 211x44 (26-44 s).
+Tests/UI/test_settings_providers_models_card_fits_the_pane.py
+# Parent AC#5 (a field the provider does not accept is not saved), 10-13 s.
+Tests/UI/test_settings_configuration_hub.py::test_settings_model_default_save_leaves_values_for_hidden_rows_untouched
+# Parent AC#11 (ADR-033: the State line and each control's commit model are
+# labelled) and TASK-33007.6 AC#7, four nodes at 17-29 s.
+Tests/UI/test_settings_provider_save_scope.py::test_providers_models_state_line_names_its_scope_in_one_row
+Tests/UI/test_settings_save_commit_models.py::test_model_catalog_controls_are_labeled_and_visually_separated
+Tests/UI/test_settings_save_commit_models.py::test_staged_fields_document_staged_save_in_the_inspector
+Tests/UI/test_settings_save_commit_models.py::test_model_catalog_fields_document_instant_apply_in_the_inspector
+# TASK-33007.3 AC#9: Save selected fills an empty default; prefix search finds
+# a discovered id (17-27 s each).
+Tests/UI/test_settings_provider_test_draft.py::test_model_to_activate_after_save_prefers_first_saved_when_field_empty
+Tests/UI/test_settings_provider_test_draft.py::test_model_picker_prefix_search_finds_a_discovered_id
+# TASK-33007.4 AC#6: the catalog and reference rows read from the Inspector's
+# closed disclosure (33-38 s and 16-19 s).
+Tests/UI/test_settings_configuration_hub.py::test_settings_provider_category_lists_console_supported_catalog
+Tests/UI/test_settings_configuration_hub.py::test_settings_provider_model_defaults_appear_before_reference_copy
+# TASK-33007.6 AC#2: Prompt-cache snapshots' controls, copy and keyboard save
+# (28-38 s). The whole file fails in one process (its notes: a shared profile).
+Tests/UI/test_llamacpp_snapshot_settings.py::test_f9_snapshot_controls_paint_and_keyboard_save[size1]
+# TASK-33007.7 AC#7: memory and compaction defaults render and save (15-28 s each).
+Tests/UI/test_settings_context_memory_controls.py::test_console_memory_controls_mount_stage_and_fit_narrow_settings
+Tests/UI/test_settings_context_memory_controls.py::test_console_memory_save_blocks_invalid_trigger_target_pair
+Tests/UI/test_settings_context_memory_controls.py::test_console_memory_save_routes_normalized_values_to_console_section
+# Finding 12b: Chat settings' field widths, re-keyed to the control types after
+# the last capture (three cases, 13-20 s each).
+Tests/UI/test_console_session_settings.py::test_console_settings_fields_are_sized_by_value_type
+# The restored-OpenAI review against the real recovery_review (the lane's
+# Connect test stubs it), 7 s.
+Tests/UI/test_settings_openai_reconnect.py::test_actual_settings_confirms_only_selected_restored_openai[approve]
+# A custom endpoint as the default: the row that was red in no lane, and Revert
+# relocking Discover, Save selected and Clear (11-19 s each; the file is 3.4 min).
+Tests/UI/test_settings_custom_endpoint_default.py::test_settings_opens_on_a_dangling_registry_default_honestly
+Tests/UI/test_settings_custom_endpoint_default.py::test_revert_to_a_registry_default_relocks_model_discovery
+
 # Phase 7's Settings files: about half of the lane's pytest minutes on CI. They sit
 # at the end, in this order, so round-robin over seven shards spreads them and no
 # other file's shard depends on them. Append new entries below this block: one

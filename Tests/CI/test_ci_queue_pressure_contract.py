@@ -114,6 +114,13 @@ FAST_LANE_TARGETS = (
     "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[canvas-denied]",
     "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_during_project_preview_discard_snapshot",
     "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_discard_late_profile_preview",
+    # TASK-33007 (review of #3057, ruling C11): the size rows of the three
+    # Settings modules Phase 7 pins ran in no PR lane, so a PR could grow them
+    # unseen. Three node ids (under a second), not the file: it holds rows of
+    # modules this phase does not touch that are red (11 at 37f5e55b5b).
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/settings_screen.py]",
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Settings_Modules/providers_models_card.py]",
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Settings_Modules/settings_field_rows.py]",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.
