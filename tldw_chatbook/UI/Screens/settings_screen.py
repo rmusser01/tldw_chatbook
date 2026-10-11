@@ -13584,8 +13584,8 @@ class SettingsScreen(BaseAppScreen):
 
         Returns:
             ``(Source word, help)``: "detected", "saved in config" (an
-            override), "edited *" (staged) or "not set" (unknown, with the
-            size the Console assumes, e.g. "unknown, 32,000 assumed · ...").
+            override), "edited *" (staged) or "not set" (unknown: the size
+            the Console assumes, or that it reads the size from the server).
         """
         model_id = str(model or "").strip()
         if not model_id:
@@ -13603,10 +13603,10 @@ class SettingsScreen(BaseAppScreen):
         edited = tokens != (state.effective_tokens or 0) or bool(
             self._provider_draft_value("model_context_window_reset")
         )
+        if tokens <= 0 and not edited and state.server_reported:
+            return "not set", state.unknown_copy  # no assumed size is true
         if tokens <= 0 and not edited and state.assumed_tokens:
-            # Finding 12: the Console's fallback, in the title's words.
-            assumed = f"unknown, {state.assumed_tokens:,} assumed"
-            return "not set", f"{assumed} · budgets use it until set"
+            return "not set", f"{state.unknown_copy} · budgets use it until set"
         if tokens <= 0:
             return ("edited *" if edited else "not set"), CONTEXT_WINDOW_REQUIRED_HELP
         detected = (

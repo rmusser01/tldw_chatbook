@@ -105,11 +105,25 @@ class ModelContextWindowState:
     configured_override_tokens: int | None
     #: The fallback the Console budgets with while no source knows the
     #: window (TASK-33007 #12): shown as "assumed", never staged as a value.
+    #: None too when the provider's server reports its window (below).
     assumed_tokens: int | None = None
+    #: Unknown here, and the Console reads it from the provider's server
+    #: (llama.cpp, Ollama, vLLM, ...): no assumed size would be true.
+    server_reported: bool = False
 
     @property
     def has_configured_override(self) -> bool:
         return self.configured_override_tokens is not None
+
+    @property
+    def unknown_copy(self) -> str:
+        """Name a window nothing here knows, in the one set of words the
+        Context window row and its title both print."""
+        if self.server_reported:
+            return "unknown here · the Console reads it from the server"
+        if self.assumed_tokens:
+            return f"unknown, {self.assumed_tokens:,} assumed"
+        return "unknown"
 
 
 def load_context_memory_values(
@@ -261,12 +275,42 @@ def model_context_window_state(
         provider, model_id, capabilities=ModelCapabilities(detected_section)
     )
     detected = resolved.tokens if resolved.verified else None
+    known = resolved.verified or configured_override is not None
+    server_reported = not known and _server_reports_window(app_config, provider)
     return ModelContextWindowState(
         configured_override or detected,
         detected,
         configured_override,
-        None if resolved.verified or configured_override else resolved.tokens,
+        None if known or server_reported else resolved.tokens,
+        server_reported,
     )
+
+
+def _server_reports_window(
+    app_config: Mapping[str, object] | None, provider: str
+) -> bool:
+    """Whether the Console's live probe reads this provider's window.
+
+    The family is resolved the way the Console's gateway resolves its probe
+    target (``_project_context_window_target``), a custom endpoint through
+    its entry. The probe module is imported here so it stays off the
+    Settings route's import payload.
+
+    Args:
+        app_config: The config holding the custom endpoint registry.
+        provider: A provider id, alias or ``custom-ep:<slug>`` id.
+
+    Returns:
+        True for llama.cpp, Ollama, vLLM and the other probed families.
+    """
+    from ...Chat.console_context_window import SERVER_REPORTED_WINDOW_FAMILIES
+    from ...Chat.console_provider_support import resolve_console_provider_identity
+    from ...Chat.custom_endpoint_registry import entry_for, family_execution_key
+
+    entry = entry_for(app_config or {}, provider)
+    family = family_execution_key(entry.family) if entry else str(provider or "")
+    family = resolve_console_provider_identity(family).readiness_key or family
+    return family in SERVER_REPORTED_WINDOW_FAMILIES
 
 
 def model_context_window_save_entry(

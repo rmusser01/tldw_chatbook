@@ -983,7 +983,7 @@ def context_window_summary(screen: SettingsScreen) -> str:
 
     Returns:
         E.g. "200,000 tokens · detected, no override", "... · override set",
-        "... · edited *" before a save, or "unknown, 32,000 assumed · ...".
+        "... · edited *" before a save, or the state's ``unknown_copy``.
     """
     values = screen._provider_display_setting_values()
     model = str(values.get("model") or "").strip()
@@ -1001,8 +1001,8 @@ def context_window_summary(screen: SettingsScreen) -> str:
         screen._app_config_mapping(), str(values.get("provider") or ""), model
     )
     if tokens <= 0:
-        assumed = f", {state.assumed_tokens:,} assumed" if state.assumed_tokens else ""
-        return f"unknown{assumed} · enter the model's documented limit"
+        ask = "" if state.server_reported else " · enter the model's documented limit"
+        return state.unknown_copy + ask
     if tokens != state.effective_tokens or screen._provider_draft_value(
         "model_context_window_reset"
     ):  # a staged Reset is an edit even when the number does not change

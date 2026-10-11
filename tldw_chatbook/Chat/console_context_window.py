@@ -32,6 +32,30 @@ METADATA_SUCCESS_TTL = 60
 # TASK-32923: a 5 s failure TTL re-probed an unreachable or slow endpoint on
 # nearly every send, each costing up to the 1 s timeout before the message left.
 METADATA_FAILURE_TTL = METADATA_SUCCESS_TTL
+#: The families whose server reports the loaded model's window to the probe
+#: below. Settings reads it too: it prints no assumed size for them
+#: (TASK-33007, review of #3057, R3 #4).
+SERVER_REPORTED_WINDOW_FAMILIES = frozenset(
+    {
+        "llama_cpp",
+        "local_llamacpp",
+        "llamafile",
+        "local_llamafile",
+        "vllm",
+        "local_vllm",
+        "ollama",
+        "local_ollama",
+        "custom",
+        "custom_2",
+        "tabbyapi",
+        "aphrodite",
+        "koboldcpp",
+        "oobabooga",
+        # Not "openrouter": its model list (~750 KB) always exceeds
+        # METADATA_MAX_BYTES, so the probe could only fail; the model
+        # catalog resolves OpenRouter windows instead (TASK-32923).
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,26 +212,7 @@ class ContextWindowCache:
         if not target.model or not target.endpoint:
             return None
         family = target.family
-        supported = {
-            "llama_cpp",
-            "local_llamacpp",
-            "llamafile",
-            "local_llamafile",
-            "vllm",
-            "local_vllm",
-            "ollama",
-            "local_ollama",
-            "custom",
-            "custom_2",
-            "tabbyapi",
-            "aphrodite",
-            "koboldcpp",
-            "oobabooga",
-            # Not "openrouter": its model list (~750 KB) always exceeds
-            # METADATA_MAX_BYTES, so the probe could only fail; the model
-            # catalog resolves OpenRouter windows instead (TASK-32923).
-        }
-        if family not in supported:
+        if family not in SERVER_REPORTED_WINDOW_FAMILIES:
             return None
         endpoint = resolve_provider_endpoint(
             "custom" if family == "openrouter" else family, target.endpoint
