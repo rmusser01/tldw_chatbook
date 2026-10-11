@@ -328,6 +328,14 @@ class DefaultModelPicker(ModelSearchPicker):
         event.stop()
         self.app.call_later(self.screen.set_focus, None)
 
+    def toggle_custom_mode(self) -> None:
+        """Switch modes; "Model list" over an invalid id puts the model back."""
+        if not self._holds_invalid_custom_id():
+            super().toggle_custom_mode()
+            return
+        self._roll_back_invalid_custom_id()
+        self.focus_input()
+
     def _restore_committed_display_after_blur(self) -> None:
         focused = self.app.focused
         left = focused is None or self not in focused.ancestors_with_self
@@ -341,7 +349,8 @@ class DefaultModelPicker(ModelSearchPicker):
 
         Returns:
             True in Custom ID mode when the text is not blank and is not
-            bounded single-line text (AC#5); a blank field clears the model.
+            bounded single-line text (AC#5). A blank field is not invalid:
+            it holds no model.
         """
         if not self.custom_mode or not self.is_mounted:
             return False
