@@ -1,0 +1,304 @@
+{
+  "date": "2026-10-11",
+  "base": "a3c47c6c72d885db2af0971515ddcdcb6cee78fa",
+  "tasks": [
+    "TASK-21236",
+    "TASK-31585"
+  ],
+  "python": "Python 3.12.11",
+  "source_sha256": {
+    "tldw_chatbook/app_service_wiring.py": "bcd40bf39a23fbafbfcbbe72c837a7c5e74c76ac24f218c390cc40d8adf9f8a7",
+    "tldw_chatbook/Actor_Packs/activation.py": "8f256ef2a911e3ae0d3e714287050b5a5ce1cf9d7717044381c1d94af2289e48",
+    "tldw_chatbook/Actor_Packs/contracts.py": "b779707b1b6fec38e67770f07e225633d03be50fca10a119bd9062f7df3e72fa",
+    "tldw_chatbook/Actor_Packs/importer.py": "4d5ee031ea1fef6384e78a2c2e0ea404ec33629e4c5ae30e2633b42e463c5337",
+    "tldw_chatbook/Character_Chat/buddy_conversion.py": "e9b4340e87b8346a1478465ff10773d0a500e68dc916794de31ce4afc404b0b0",
+    "Tests/Persona_Buddy/test_buddy_controller_publication.py": "7142b9f8fe0dc1966e001e8706ae81bad3ca01d041ffd19150fb29af701e1079",
+    "Tests/Persona_Buddy/test_buddy_startup.py": "60b148cd2b18200e7b404c8c631c880a84276e8483c73de17a34cab0a3ebfa44",
+    "Tests/UI/test_buddy_management_journey.py": "e224cf0462d55e12a85992186bc797f15bfa998c9560d529f9946560190973d1",
+    "Tests/Actor_Packs/test_actor_pack_contracts.py": "e2cd9c8a2b977efd9dd399d5aa18739106706569a56e5427383d66331a9e1a73",
+    "Tests/Actor_Packs/test_actor_pack_activation.py": "2e3d65ac08aa5099e3a22f77ab2514b0565128401a8bd477341af33a6eb3622f",
+    "Tests/Character_Chat/test_buddy_conversion.py": "00df204f024beecfd330e23e4ee7097ebef28fe26a74b8e502ecedf3de23ae53"
+  },
+  "runs": [
+    {
+      "name": "policy-activation",
+      "command_cwd": "/Users/macbook-dev/.codex/worktrees/buddy-task-burndown/tldw_chatbook",
+      "python_binary": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "command": "python -m pytest Tests/Actor_Packs/test_actor_pack_contracts.py Tests/Actor_Packs/test_actor_pack_activation.py Tests/Character_Chat/test_buddy_conversion.py -q --tb=short --junitxml=/private/tmp/buddy-policy-activation-20261011.xml",
+      "exit": 0,
+      "tests": 104,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 92.756,
+      "test_identities": [
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_minimal_character_document_is_immutable_and_path_free",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_manifest_contract_fails_closed_with_fixed_categories[mutation0-actor_pack_schema_unsupported]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_manifest_contract_fails_closed_with_fixed_categories[mutation1-actor_pack_manifest_invalid]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_manifest_contract_fails_closed_with_fixed_categories[mutation2-actor_pack_inventory_invalid]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_manifest_contract_fails_closed_with_fixed_categories[mutation3-actor_pack_feature_unsupported]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_manifest_contract_fails_closed_with_fixed_categories[mutation4-actor_pack_digest_mismatch]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[/actor/actor.json]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[../actor.json]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[actor/../actor.json]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[actor\\\\actor.json]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[c:/actor.json]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[Actor/actor.json]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[actor/\\xe9.json]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[actor//actor.json]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[actor/./actor.json]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[actor/con.txt]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[actor/con.json]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[actor/trailing.]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_member_paths_are_canonical_lowercase_ascii_posix[actor/trailing ]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_declared_files_must_equal_supplied_files",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_inventory_sha_and_size_are_rechecked",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_payload_rejects_local_private_and_external_fields[id]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_payload_rejects_local_private_and_external_fields[local_id]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_payload_rejects_local_private_and_external_fields[record_id]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_payload_rejects_local_private_and_external_fields[chat_id]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_payload_rejects_local_private_and_external_fields[api_key]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_payload_rejects_local_private_and_external_fields[path]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_payload_rejects_values_outside_local_mutation_contracts[persona-actor_data0]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_payload_rejects_values_outside_local_mutation_contracts[persona-actor_data1]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_payload_rejects_values_outside_local_mutation_contracts[persona-actor_data2]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_payload_rejects_values_outside_local_mutation_contracts[character-actor_data3]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_payload_rejects_values_outside_local_mutation_contracts[character-actor_data4]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_payload_rejects_values_outside_local_mutation_contracts[character-actor_data5]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_character_cannot_declare_persona_runtime_section",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_actor_pack_manifest_cannot_inventory_itself",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_canonical_json_bytes_have_one_exact_utf8_representation",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_content_digest_has_an_independent_literal_oracle",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_deterministic_zip_metadata_contract_is_frozen_without_a_writer",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_character_projection_strips_only_known_local_authority_fields",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_strips_linked_local_portrait_id",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_preserves_policy_rules[rules0]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_preserves_policy_rules[rules1]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_rejects_malformed_policy_without_dropping_rules[rules0]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_rejects_malformed_policy_without_dropping_rules[rules1]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_rejects_malformed_policy_without_dropping_rules[rules2]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_rejects_malformed_policy_without_dropping_rules[rules3]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_rejects_malformed_policy_without_dropping_rules[rules4]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_rejects_malformed_policy_without_dropping_rules[rules5]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_rejects_malformed_policy_without_dropping_rules[rules6]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_rejects_malformed_policy_without_dropping_rules[rules7]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_projection_rejects_unknown_private_or_external_fields[api_key]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_projection_rejects_unknown_private_or_external_fields[credentials]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_projection_rejects_unknown_private_or_external_fields[chats]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_projection_rejects_unknown_private_or_external_fields[provider_settings]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_projection_rejects_unknown_private_or_external_fields[avatar_url]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_build_file_inventory_is_sorted_and_rechecks_exact_bytes",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_canonical_json_rejects_nonfinite_and_oversized_scalars[hostile0]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_canonical_json_rejects_nonfinite_and_oversized_scalars[hostile1]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_canonical_json_rejects_nonfinite_and_oversized_scalars[hostile2]",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_canonical_json_rejects_excessive_depth_and_nodes",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_portrait_must_decode_and_remain_within_pixel_limits",
+        "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_can_declare_both_typed_visual_sections",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_create_new_character_preserves_incoming_uuid",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_create_copy_character_gets_fresh_uuid_and_source_provenance",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_create_new_persona_preserves_incoming_uuid",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_persona_policy_rules_roundtrip_without_local_authority",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_cancel_after_section_publication_removes_owned_orphans",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_partial_immutable_publication_is_removed",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_cancellation_before_commit_leaves_no_actor_or_identity",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_staged_inode_substitution_prevents_activation",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_action_must_be_offered_by_the_exact_review",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_update_character_changes_only_present_portable_fields",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_update_persona_changes_only_present_portable_fields",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_persona_review_becomes_stale_when_portrait_authority_changes",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_update_persona_rebinds_shared_portrait_without_mutating_character",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_persona_portrait_anchor_uses_normal_sequential_character_id",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_persona_portrait_plans_reserve_distinct_sequential_ids",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_character_activation_binds_included_shared_visual_identity",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_persona_activation_commits_included_runtime_visual_with_identity",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_character_update_preserves_omitted_shared_visual_byte_for_byte",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_persona_update_preserves_omitted_runtime_visual_byte_for_byte",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_character_visual_failure_rolls_back_actor_identity_and_visual_rows",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_persona_visual_failure_compensates_profile_identity_and_visual_rows",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_review_becomes_stale_when_shared_visual_authority_changes",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_import_rejects_shared_visual_manifest_dimension_mismatch",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_import_rejects_persona_runtime_without_required_state",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_persona_update_replaces_present_shared_visual_and_preserves_runtime",
+        "Tests.Actor_Packs.test_actor_pack_activation::test_persona_ambiguous_post_commit_keeps_identity_and_visual_graph",
+        "Tests.Character_Chat.test_buddy_conversion::test_coalesced_animation_preserves_pixels_duration_loop_and_independent_portrait[False]",
+        "Tests.Character_Chat.test_buddy_conversion::test_coalesced_animation_preserves_pixels_duration_loop_and_independent_portrait[True]",
+        "Tests.Character_Chat.test_buddy_conversion::test_identical_sequence_is_published_as_png",
+        "Tests.Character_Chat.test_buddy_conversion::test_static_uses_first_composited_frame_and_alignment",
+        "Tests.Character_Chat.test_buddy_conversion::test_missing_states_are_labelled_as_fallback_and_collisions_need_review",
+        "Tests.Character_Chat.test_buddy_conversion::test_memory_budget_refuses_before_decoding",
+        "Tests.Character_Chat.test_buddy_conversion::test_unused_animation_keeps_preview_asset_and_cannot_replace_authored_state",
+        "Tests.Character_Chat.test_buddy_conversion::test_codec_cannot_silently_drop_distinct_frames",
+        "Tests.Character_Chat.test_buddy_conversion::test_unavailable_animation_codec_reports_static_fallback",
+        "Tests.Character_Chat.test_buddy_conversion::test_encoded_output_enforces_limit_during_write",
+        "Tests.Character_Chat.test_buddy_conversion::test_publication_is_independent_and_roundtrips_lineage",
+        "Tests.Character_Chat.test_buddy_conversion::test_publication_rolls_back_character_identity_and_files_after_writes[source_changed]",
+        "Tests.Character_Chat.test_buddy_conversion::test_publication_rolls_back_character_identity_and_files_after_writes[binding_failure]",
+        "Tests.Character_Chat.test_buddy_conversion::test_cleanup_failure_after_commit_reports_created_character",
+        "Tests.Character_Chat.test_buddy_conversion::test_timeline_ignores_only_invisible_rgb_and_preserves_alpha",
+        "Tests.Character_Chat.test_buddy_conversion::test_publication_rechecks_source_before_character_insert"
+      ],
+      "junit_sha256": "a101c296dc617bb9d5f713f4f5ae909f814d44d15be0a8a1d936fe004038389f",
+      "log_sha256": "74b211587916e5e9798144184fec13ac5d56c2155eb007042e2f1f3ec7370011"
+    },
+    {
+      "name": "final-boundaries",
+      "command_cwd": "/Users/macbook-dev/.codex/worktrees/buddy-task-burndown/tldw_chatbook",
+      "python_binary": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "command": "python -m pytest Tests/Persona_Buddy/test_buddy_controller_publication.py Tests/Persona_Buddy/test_buddy_startup.py Tests/Packaging/test_persona_buddy_import_closure.py Tests/UI/test_buddy_management_journey.py Tests/Actor_Packs/test_actor_pack_attribution.py Tests/Actor_Packs/test_buddy_conversion_lineage.py Tests/Character_Chat/test_buddy_conversion.py::test_publication_rechecks_source_before_character_insert -q --tb=short --junitxml=/private/tmp/buddy-final-boundaries-20261011.xml",
+      "exit": 0,
+      "tests": 26,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 91.838,
+      "test_identities": [
+        "Tests.Persona_Buddy.test_buddy_controller_publication::test_controller_setter_waits_for_construction_lock",
+        "Tests.Persona_Buddy.test_buddy_startup::test_unclaimed_migration_commits_before_first_controller_can_read",
+        "Tests.Persona_Buddy.test_buddy_startup::test_controller_claim_during_copy_hands_off_without_overwriting",
+        "Tests.Packaging.test_persona_buddy_import_closure::test_app_import_does_not_execute_persona_visual_or_pil",
+        "Tests.Packaging.test_persona_buddy_import_closure::test_persona_package_inits_are_lazy_and_single_sourced",
+        "Tests.Packaging.test_persona_buddy_import_closure::test_actor_pack_modules_do_not_execute_persona_visual_or_pil",
+        "Tests.UI.test_buddy_management_journey::test_fresh_install_selects_independent_buddy_and_opens_pinned_chat_from_home",
+        "Tests.UI.test_buddy_management_journey::test_roleplay_manage_buddy_constructs_controller_from_disabled_profile",
+        "Tests.Actor_Packs.test_actor_pack_attribution::test_attribution_survives_review_activation_reopen_edit_and_export",
+        "Tests.Actor_Packs.test_actor_pack_attribution::test_invalid_attribution_never_activates[changes0]",
+        "Tests.Actor_Packs.test_actor_pack_attribution::test_invalid_attribution_never_activates[changes1]",
+        "Tests.Actor_Packs.test_actor_pack_attribution::test_invalid_attribution_never_activates[changes2]",
+        "Tests.Actor_Packs.test_actor_pack_attribution::test_invalid_attribution_never_activates[changes3]",
+        "Tests.Actor_Packs.test_actor_pack_attribution::test_invalid_attribution_never_activates[changes4]",
+        "Tests.Actor_Packs.test_actor_pack_attribution::test_invalid_attribution_never_activates[changes5]",
+        "Tests.Actor_Packs.test_actor_pack_attribution::test_notice_edit_invalidates_existing_review_without_mutating_actor",
+        "Tests.Actor_Packs.test_actor_pack_attribution::test_legacy_archive_bytes_match_golden_at_its_declared_producer_version[character]",
+        "Tests.Actor_Packs.test_actor_pack_attribution::test_legacy_archive_bytes_match_golden_at_its_declared_producer_version[persona]",
+        "Tests.Actor_Packs.test_actor_pack_attribution::test_export_rejects_notice_change_between_snapshot_reads",
+        "Tests.Actor_Packs.test_buddy_conversion_lineage::test_lineage_carrier_feature_pairing_and_stale_hashes_rejected[carrier0-features0]",
+        "Tests.Actor_Packs.test_buddy_conversion_lineage::test_lineage_carrier_feature_pairing_and_stale_hashes_rejected[carrier1-features1]",
+        "Tests.Actor_Packs.test_buddy_conversion_lineage::test_lineage_carrier_feature_pairing_and_stale_hashes_rejected[carrier2-features2]",
+        "Tests.Actor_Packs.test_buddy_conversion_lineage::test_lineage_carrier_feature_pairing_and_stale_hashes_rejected[carrier3-features3]",
+        "Tests.Actor_Packs.test_buddy_conversion_lineage::test_lineage_carrier_feature_pairing_and_stale_hashes_rejected[carrier4-features4]",
+        "Tests.Actor_Packs.test_buddy_conversion_lineage::test_lineage_roundtrip_reopen_edit_and_replacement",
+        "Tests.Character_Chat.test_buddy_conversion::test_publication_rechecks_source_before_character_insert"
+      ],
+      "junit_sha256": "c4e27be565426dabafe67333b06ee93e8b434a25c3999b44d5c6eb526ebdff6e",
+      "log_sha256": "3b546513bbe185265a413d693fa61b26b1f5f9b1d663d126c03efb21b200f014"
+    }
+  ],
+  "unique_passing_test_identities": 129,
+  "controls": [
+    {
+      "name": "controller-red",
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "failures_expected": true,
+      "junit_sha256": "db79051d2aed70627e7e013e42ade0e8630be68a559f0a172fffbd248ae308b5",
+      "log_sha256": "746e7da4211f2473a65b47f02380657977595e6451b7acb27befcd3d217141b1",
+      "failures_observed": [
+        {
+          "test": "Tests.Persona_Buddy.test_buddy_controller_publication::test_controller_setter_waits_for_construction_lock",
+          "failure_message": "AssertionError: setter bypassed the construction lock\nassert False\n +  where False = wait(2)\n +    where wait = <threading.Event at 0x11c7c5190: unset>.wait",
+          "assertion_excerpt": "@pytest.mark.unit\n    @pytest.mark.bootstrap_profile\n    def test_controller_setter_waits_for_construction_lock():\n        from tldw_chatbook.app_service_wiring import ServiceWiringMixin\n    \n        attempted = threading.Event()\n        lock = threading.Lock()\n    "
+        }
+      ]
+    },
+    {
+      "name": "management-negative",
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "failures_expected": true,
+      "junit_sha256": "5261446eb66e9f8f56ff6835bb2ee504fab18dc45d5d94ba765691563ffa7f4a",
+      "log_sha256": "f4ac68b91f5245cb45bf4c8f751e991a9ed9e8c4eeb82b9d15341f39631a23de",
+      "failures_observed": [
+        {
+          "test": "Tests.UI.test_buddy_management_journey::test_roleplay_manage_buddy_constructs_controller_from_disabled_profile",
+          "failure_message": "Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/pytest.log\n--- child failure: AssertionError: Console transition stalled\nassert 28290.678672 < 28290.676751583\n +  where 28290.678672 = time()\n +    where time = <_UnixSelectorEventLoop running=True closed=False debug=False>.time\n +      where <_UnixSelectorEventLoop running=True closed=False debug=False> = <built-in function get_running_loop>()\n +        where <built-in function get_running_loop> = asyncio.get_running_loop\nrequest = <FixtureRequest for <Coroutine test_roleplay_manage_buddy_constructs_controller_from_disabled_profile>>\n\n    @pytest.mark.asyncio\n    @pytest.mark.ui\n    @private_profile_test\n    async def test_roleplay_manage_buddy_constructs_controller_from_disabled_profile(\n        request: pytest.FixtureRequest,\n    ):\n        from tldw_chatbook.config import save_settings_to_cli_config\n    \n        assert save_settings_to_cli_config(\n            {\n                \"first_run\": {\"setup_completed\": True},\n                \"splash_screen\": {\"enabled\": False},\n                \"persona_buddy\": {\"enabled\": False},\n            }\n        )\n        from tldw_chatbook.app import TldwCli\n        from tldw_chatbook.UI.Navigation.buddy_management import get_buddy_management\n        from tldw_chatbook.Widgets.Persona_Widgets.buddy_management_modal import (\n            BuddyManagementModal,\n        )\n    \n        app = TldwCli()\n        async with app.run_test(size=(170, 48)) as pilot:\n            await _boot_settled(app, pilot)\n            await _press_until_screen(pilot, \"ctrl+4\", \"PersonasScreen\")\n            await pilot.pause()\n            assert app.persona_buddy_controller is None\n            button = app.screen.query_one(\"#personas-buddy-use\", Button)\n            assert not button.disabled\n            button.focus(scroll_visible=True)\n            await pilot.pause()\n            await pilot.press(\"enter\")\n>           await _until(lambda: isinstance(app.screen, BuddyManagementModal))\n\nTests/UI/test_buddy_management_journey.py:134: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\npredicate = <function test_roleplay_manage_buddy_constructs_controller_from_disabled_profile.<locals>.<lambda> at 0x121bc18a0>\n\n    async def _until(\n        predicate, *, seconds=15.0, detail=lambda: \"Console transition stalled\"\n    ):\n        deadline = asyncio.get_running_loop().time() + seconds\n        while not predicate():\n>           assert asyncio.get_running_loop().time() < deadline, detail()\nE           AssertionError: Console transition stalled\nE           assert 28290.678672 < 28290.676751583\nE            +  where 28290.678672 = time()\nE            +    where time = <_UnixSelectorEventLoop running=True closed=False debug=False>.time\nE            +      where <_UnixSelectorEventLoop running=True closed=False debug=False> = <built-in function get_running_loop>()\nE            +        where <built-in function get_running_loop> = asyncio.get_running_loop\n\nTests/UI/test_console_navigation_decisions.py:22: AssertionError\n--- child log tail ---\nhatbook.DB.ChaChaNotes_DB:execute_query:3578 - Executing SQL (script=False): \n                SELECT *\n                  FROM visual_identity_assets\n                 WHERE pack_version_id = ?\n                   AND owner_user_id = ?\n                   AND deleted = 0\n                 ORDER BY original_expression_key, id\n                ... Params: (2, 0)\n2026-10-11 15:22:05.599 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24814 - Transaction (outermost) committed successfully on thread 6167228416.\n2026-10-11 15:22:05.602 | SUCCESS  | tldw_chatbook.config:get_chachanotes_db_lazy:11425 - ChaChaNotes_DB lazy-initialized successfully at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db\n2026-10-11 15:22:05.607 | INFO     | tldw_chatbook.app:_init_notes_service:2048 - NotesInteropService successfully initialized for user 'default_user'.\n2026-10-11 15:22:05.607 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3405 - Attempting WAL checkpoint (TRUNCATE) before close db_sha256=65767f149282 thread=6167228416.\n2026-10-11 15:22:05.615 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3411 - WAL checkpoint TRUNCATE executed db_sha256=65767f149282.\n2026-10-11 15:22:05.620 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3431 - Closed SQLite connection db_sha256=65767f149282 thread=6167228416.\n2026-10-11 15:22:05.623 | INFO     | tldw_chatbook.app:__init__:1365 - Parallel init task 'notes_service' completed in 2.438s\n2026-10-11 15:22:05.731 | INFO     | tldw_chatbook.DB.base_db:__init__:994 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_library_collections.db [Client: tldw_cli_local_instance_v1]\n2026-10-11 15:22:05.868 | INFO     | tldw_chatbook.DB.base_db:__init__:994 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_workspaces.db [Client: tldw_cli_local_instance_v1]\n2026-10-11 15:22:06.067 | INFO     | tldw_chatbook.DB.base_db:__init__:994 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_subscriptions.db [Client: tldw_cli_local_instance_v1]\n2026-10-11 15:22:06.079 | INFO     | tldw_chatbook.DB.base_db:__init__:994 - ClientNotificationsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_notifications.db [Client: tldw_cli_local_instance_v1]\n2026-10-11 15:22:06.083 | INFO     | tldw_chatbook.DB.base_db:__init__:994 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]\n2026-10-11 15:22:06.083 | INFO     | tldw_chatbook.DB.base_db:__init__:994 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]\n2026-10-11 15:22:06.409 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)\n2026-10-11 15:22:06.483 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)\n2026-10-11 15:22:06.670 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)\n2026-10-11 15:22:06.780 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)\n2026-10-11 15:22:06.901 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)\n2026-10-11 15:22:07.048 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)\n2026-10-11 15:22:07.051 | INFO     | tldw_chatbook.DB.base_db:__init__:994 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_scheduled_tasks.db [Client: default]\n2026-10-11 15:22:07.181 | DEBUG    | tldw_chatbook.app:__init__:1436 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']\n2026-10-11 15:22:07.184 | DEBUG    | tldw_chatbook.app:__init__:1439 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>\n2026-10-11 15:22:07.277 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3083 - Opened/Reopened SQLite connection db_sha256=65767f149282 thread=8461753728\n2026-10-11 15:22:07.285 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24749 - Started outermost transaction on thread 8461753728.\n2026-10-11 15:22:07.286 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24814 - Transaction (outermost) committed successfully on thread 8461753728.\n2026-10-11 15:22:07.301 | DEBUG    | tldw_chatbook.Evals.config_loader:_load_config:115 - Loaded evaluation configuration from /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/config/eval_overrides.yaml\n2026-10-11 15:22:07.467 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:602 - Created EvalsDB schema version 6\n2026-10-11 15:22:07.471 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:237 - EvalsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db\n2026-10-11 15:22:07.471 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized\n2026-10-11 15:22:07.564 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler\n2026-10-11 15:22:07.566 | INFO     | tldw_chatbook.app:_init_worker_handlers:2177 - Worker handler registry initialized with all handlers\n2026-10-11 15:22:07.566 | INFO     | tldw_chatbook.app:__init__:1619 - === STARTUP TIMING SUMMARY ===\n2026-10-11 15:22:07.567 | INFO     | tldw_chatbook.app:__init__:1620 - Total initialization time: 5.046 seconds\n2026-10-11 15:22:07.570 | INFO     | tldw_chatbook.app:__init__:1626 -   basic_init: 0.660s (13.1%)\n2026-10-11 15:22:07.570 | INFO     | tldw_chatbook.app:__init__:1626 -   attribute_init: 0.000s (0.0%)\n2026-10-11 15:22:07.574 | INFO     | tldw_chatbook.app:__init__:1626 -   parallel_init: 2.439s (48.3%)\n2026-10-11 15:22:07.574 | INFO     | tldw_chatbook.app:__init__:1639 -     - notes_service: 2.438s (100.0% of parallel_init)\n2026-10-11 15:22:07.574 | INFO     | tldw_chatbook.app:__init__:1639 -     - media_db: 0.585s (24.0% of parallel_init)\n2026-10-11 15:22:07.574 | INFO     | tldw_chatbook.app:__init__:1639 -     - prompts_service: 0.359s (14.7% of parallel_init)\n2026-10-11 15:22:07.574 | INFO     | tldw_chatbook.app:__init__:1639 -     - providers_models: 0.003s (0.1% of parallel_init)\n2026-10-11 15:22:07.574 | INFO     | tldw_chatbook.app:__init__:1643 - ==============================\n------------------------------ Captured log call -------------------------------\nINFO     root:Client_Media_DB_v2.py:1044 Initializing Database object for path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_media_v2.db [Client ID: tldw_cli_local_instance_v1]\nINFO     root:Client_Media_DB_v2.py:2174 Checking DB schema. Current version: 0. Code supports: 9\nINFO     root:Client_Media_DB_v2.py:2217 Applying migration: Initial schema creation (v0 \u2192 v1)\nINFO     root:Client_Media_DB_v2.py:1476 Applying initial schema (Version 1) to DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_media_v2.db...\nINFO     root:Client_Media_DB_v2.py:1561 [Schema V1] Core Schema V1 (incl. version update) applied and committed successfully for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_media_v2.db.\nINFO     root:Client_Media_DB_v2.py:1570 [Schema V1] FTS Tables created successfully.\nINFO     root:Client_Media_DB_v2.py:2231 Successfully migrated to version 1\nINFO     root:Client_Media_DB_v2.py:2217 Applying migration: Add chunking configuration support (v1 \u2192 v2)\nINFO     root:Client_Media_DB_v2.py:1726 Applying migration from version 1 to 2 (chunking support) to DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_media_v2.db...\nINFO     root:Client_Media_DB_v2.py:1790 [Migration v1->v2] Chunking configuration migration applied successfully.\nINFO     root:Client_Media_DB_v2.py:2231 Successfully migrated to version 2\nINFO     root:Client_Media_DB_v2.py:2217 Applying migration: Add local reading progress store (v2 \u2192 v3)\nINFO     root:Client_Media_DB_v2.py:1808 Applying migration from version 2 to 3 (reading progress store) to DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_media_v2.db...\nINFO     root:Client_Media_DB_v2.py:1820 [Migration v2->v3] ReadingProgress migration applied successfully.\nINFO     root:Client_Media_DB_v2.py:2231 Successfully migrated to version 3\nINFO     root:Client_Media_DB_v2.py:2217 Applying migration: Add local read-it-later store (v3 \u2192 v4)\nINFO     root:Client_Media_DB_v2.py:1837 Applying migration from version 3 to 4 (read-it-later store) to DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_media_v2.db...\nINFO     root:Client_Media_DB_v2.py:1851 [Migration v3->v4] MediaReadItLaterState migration applied successfully.\nINFO     root:Client_Media_DB_v2.py:2231 Successfully migrated to version 4\nINFO     root:Client_Media_DB_v2.py:2217 Applying migration: Add persisted STT provenance (v4 \u2192 v5)\nINFO     root:Client_Media_DB_v2.py:2231 Successfully migrated to version 5\nINFO     root:Client_Media_DB_v2.py:2217 Applying migration: Add chunk engine version stamp to UnvectorizedMediaChunks (v5 \u2192 v6)\nINFO     root:Client_Media_DB_v2.py:2231 Successfully migrated to version 6\nINFO     root:Client_Media_DB_v2.py:2217 Applying migration: Rebuild ChunkingTemplates with uuid/tags/is_builtin/version/deleted, convert rows, seed six server built-ins (v6 \u2192 v7)\nINFO     root:Client_Media_DB_v2.py:1974 [Migration v6->v7] Dropping old seed 'academic_paper'; the six built-ins re-seed it\nINFO     root:Client_Media_DB_v2.py:1974 [Migration v6->v7] Dropping old seed 'code_documentation'; the six built-ins re-seed it\nINFO     root:Client_Media_DB_v2.py:2008 [Migration v6->v7] ChunkingTemplates rebuild applied successfully.\nINFO     root:Client_Media_DB_v2.py:2231 Successfully migrated to version 7\nINFO     root:Client_Media_DB_v2.py:2217 Applying migration: Add the engine-version census covering index to UnvectorizedMediaChunks (v7 \u2192 v8)\nINFO     root:Client_Media_DB_v2.py:2231 Successfully migrated to version 8\nINFO     root:Client_Media_DB_v2.py:2217 Applying migration: Add four active-media partial indexes so the stats-free planner stops sorting the whole library per list render (v8 \u2192 v9)\nINFO     root:Client_Media_DB_v2.py:2231 Successfully migrated to version 9\nINFO     root:Client_Media_DB_v2.py:2233 Database schema fully migrated to version 9\nINFO     tldw_chatbook.Notes.Notes_Library:Notes_Library.py:102 NotesInteropService: Verified base directory: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user\nINFO     tldw_chatbook.Notes.Notes_Library:Notes_Library.py:116 NotesInteropService initialized with unified DB template: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_ChaChaNotes.db\nINFO     root:app.py:1391 App __init__: Determined initial tab value: chat\nINFO     root:app.py:1488 Assigned prompts_interop.get_db_instance() to self.prompts_db\nINFO     root:app.py:1513 Assigned lazy-loaded chachanotes_db to self.chachanotes_db as fallback.\nINFO     root:app.py:2286 Splash screen enabled: False\nINFO     tldw_chatbook.diagnostics.app:persistent_diagnostics.py:275 event=app_started component=app\nINFO     tldw_chatbook.diagnostics.dictation:persistent_diagnostics.py:275 event=speech_stack_available component=dictation model=base provider=faster-whisper status=ok\nINFO     root:Logging_Config.py:809 --- _setup_logging START (from Logging_Config.py) ---\nINFO     root:Logging_Config.py:821 Loguru: All pre-existing sinks removed.\nINFO     root:Logging_Config.py:850 Loguru: Configured to forward its messages to standard Python logging system.\n---------------------------- Captured log teardown -----------------------------\nINFO     tldw_chatbook.Prompt_Management.Prompts_Interop:Logging_Config.py:651 Shutting down Prompts Interop Library for DB: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/tldw_chatbook_prompts.db.\nINFO     tldw_chatbook.Prompt_Management.Prompts_Interop:Logging_Config.py:651 Prompts Interop Library shut down.\n- generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/pytest-120/test_roleplay_manage_buddy_con0/private-profile-process/pytest.xml -\n============================= slowest 25 durations =============================\n32.96s call     Tests/UI/test_buddy_management_journey.py::test_roleplay_manage_buddy_constructs_controller_from_disabled_profile\n1.61s setup    Tests/UI/test_buddy_management_journey.py::test_roleplay_manage_buddy_constructs_controller_from_disabled_profile\n\n(1 durations < 1s hidden.)\n=========================== short test summary info ============================\nFAILED Tests/UI/test_buddy_management_journey.py::test_roleplay_manage_buddy_constructs_controller_from_disabled_profile\n1 failed in 35.30s",
+          "assertion_excerpt": "self = <Coroutine test_roleplay_manage_buddy_constructs_controller_from_disabled_profile>\n\n    def runtest(self) -> None:\n        runner_fixture_id = f\"_{self._loop_scope}_scoped_runner\"\n        runner = self._request.getfixturevalue(runner_fixture_id)\n        context = contextvars.copy_context()\n        synchronized_obj = _synchronize_coroutine(\n            getattr(*self._synchronization_target_attr), runner, context"
+        }
+      ]
+    },
+    {
+      "name": "policy-red",
+      "tests": 10,
+      "failures": 2,
+      "errors": 0,
+      "failures_expected": true,
+      "junit_sha256": "cf92461d27dfe6ed28fd209e5b7cd12e9e233f80ade2de7f3bb9748486149e8d",
+      "log_sha256": "224927bf0b94648a78b155f8aa140eb628e60a91e23afa82bff9345c89833be8",
+      "failures_observed": [
+        {
+          "test": "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_preserves_policy_rules[rules0]",
+          "failure_message": "tldw_chatbook.Actor_Packs.contracts.ActorPackValidationError: actor_pack_actor_invalid",
+          "assertion_excerpt": "Tests/Actor_Packs/test_actor_pack_contracts.py:346: in test_persona_projection_preserves_policy_rules\n    payload = actor_pack_contracts.canonicalize_actor_payload(\ntldw_chatbook/Actor_Packs/contracts.py:232: in canonicalize_actor_payload\n    raise ActorPackValidationError(\"actor_pack_actor_invalid\")\nE   tldw_chatbook.Actor_Packs.contracts.ActorPackValidationError: actor_pack_actor_invalid"
+        },
+        {
+          "test": "Tests.Actor_Packs.test_actor_pack_contracts::test_persona_projection_preserves_policy_rules[rules1]",
+          "failure_message": "tldw_chatbook.Actor_Packs.contracts.ActorPackValidationError: actor_pack_actor_invalid",
+          "assertion_excerpt": "Tests/Actor_Packs/test_actor_pack_contracts.py:346: in test_persona_projection_preserves_policy_rules\n    payload = actor_pack_contracts.canonicalize_actor_payload(\ntldw_chatbook/Actor_Packs/contracts.py:232: in canonicalize_actor_payload\n    raise ActorPackValidationError(\"actor_pack_actor_invalid\")\nE   tldw_chatbook.Actor_Packs.contracts.ActorPackValidationError: actor_pack_actor_invalid"
+        }
+      ]
+    },
+    {
+      "name": "conversion-negative",
+      "tests": 1,
+      "failures": 1,
+      "errors": 0,
+      "failures_expected": true,
+      "junit_sha256": "36da1f165b9a4e774154625c94f92696021976433f6292ac9c8034e51cd8a87d",
+      "log_sha256": "9e4a663c2f18a5e01eb3724e07ac9c930db1f4e8625d0a75c417ecac444f82ff",
+      "failures_observed": [
+        {
+          "test": "Tests.Character_Chat.test_buddy_conversion::test_publication_rechecks_source_before_character_insert",
+          "failure_message": "assert [True] == []\n  \n  Left contains one more item: True\n  Use -v to get more diff",
+          "assertion_excerpt": "Tests/Character_Chat/test_buddy_conversion.py:396: in test_publication_rechecks_source_before_character_insert\n    assert inserted == []\nE   assert [True] == []\nE     \nE     Left contains one more item: True\nE     Use -v to get more diff"
+        }
+      ]
+    }
+  ],
+  "static": {
+    "ruff": {
+      "current": 51,
+      "baseline": 53,
+      "introduced": []
+    },
+    "bandit": {
+      "current": {
+        "findings": 2,
+        "errors": [],
+        "signatures": {
+          "B112:Try, Except, Continue detected.": 1,
+          "B105:Possible hardcoded password: 'unspecified'": 1
+        }
+      },
+      "baseline": {
+        "findings": 2,
+        "errors": [],
+        "signatures": {
+          "B112:Try, Except, Continue detected.": 1,
+          "B105:Possible hardcoded password: 'unspecified'": 1
+        }
+      },
+      "introduced": {}
+    },
+    "format": {
+      "touched_except_service_exit": 0,
+      "output": "10 files already formatted\n",
+      "service_baseline_debt": "Current and untouched HEAD app_service_wiring.py have the same existing formatting differences; setter block is formatted."
+    },
+    "compile": {
+      "exit": 0,
+      "stderr": ""
+    },
+    "whitespace": {
+      "exit": 0,
+      "output": ""
+    }
+  },
+  "independent_review": "No actionable findings; atomic character/Persona authority, conversion source guards, portable policy validation, local field exclusion and lazy imports reviewed.",
+  "limits": [
+    "Targeted verification only; no full suite.",
+    "No new provider, microphone, playback, credential access or accepted UAT repetition.",
+    "Existing app_service_wiring formatting debt and Ruff/Bandit baseline findings remain.",
+    "Black is absent from both available venvs; installed Ruff formatter used."
+  ]
+}

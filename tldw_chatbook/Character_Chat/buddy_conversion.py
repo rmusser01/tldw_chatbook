@@ -581,8 +581,8 @@ def publish_buddy_character(
     )
 
     class GuardedImporter(ActorPackImportService):
-        def revalidate_review(self, review, **kwargs):
-            super().revalidate_review(review, **kwargs)
+        def _revalidate_review_authority(self, review, **kwargs):
+            super()._revalidate_review_authority(review, **kwargs)
             require_current()  # Also called inside the existing outer SQLite transaction.
 
     class GuardedActivation(ActorPackActivationService):

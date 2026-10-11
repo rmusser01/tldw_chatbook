@@ -1112,7 +1112,8 @@ class ServiceWiringMixin:
             controller: The controller instance to install, or None to make
                 the lazy property construct anew on next enabled access.
         """
-        self._persona_buddy_controller = controller
+        with self._persona_buddy_controller_lock:
+            self._persona_buddy_controller = controller
 
     def _wire_server_context_provider(self) -> None:
         self.unified_mcp_target_store = ConfiguredServerTargetStore(
