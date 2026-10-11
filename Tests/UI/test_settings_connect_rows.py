@@ -33,7 +33,9 @@ _SIZE = (211, 44)
 _FAKE_KEY = "sk-proj-abcdefghijklmnop1234"
 #: Owner ruling 2026-10-04: Clear is this key on the API key field.
 _CLEAR_KEY = "ctrl+l"
-_CLEAR_HINT = f"(t) test · ({_CLEAR_KEY}) clear"
+#: Review of PR #3057 (ruling C2), rewritten on purpose: "(t) test" left the
+#: row, because "t" in the focused field is typed into it.
+_CLEAR_HINT = f"{_CLEAR_KEY} clears the saved key"
 
 
 async def _open_providers(app, pilot):

@@ -222,7 +222,9 @@ async def test_clear_is_not_a_tab_stop_stays_clickable_and_the_row_names_its_key
     request, monkeypatch
 ):
     """Owner ruling 2026-10-04: like Test (t), Clear is a visible action that
-    Tab skips; the API key row's help names both keys in full at 211x44."""
+    Tab skips; the API key row's help names Clear's key in full at 211x44
+    (ruling C2 on PR #3057, rewritten on purpose: "t" is not a key there, and
+    C5: a saved key is "hidden", not "masked")."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
@@ -239,7 +241,7 @@ async def test_clear_is_not_a_tab_stop_stays_clickable_and_the_row_names_its_key
         # Test carries its key in its label; Clear's is in its tooltip.
         assert f"({_CLEAR_KEY} in the API key field)" in str(clear.tooltip)
         assert _text(screen, "#settings-provider-api-key-help") == (
-            f"masked · {_CLEAR_HINT}"
+            f"hidden · {_CLEAR_HINT}"
         )
         assert row.region.height == 1
         assert _CLEAR_HINT in "\n".join(_region_rows(screen, row))

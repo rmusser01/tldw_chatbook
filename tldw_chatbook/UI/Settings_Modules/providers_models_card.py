@@ -59,7 +59,6 @@ from ...config import get_cli_setting, provider_settings_for_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
-from ...Utils.input_validation import escape_markup
 from ...Widgets.model_search_picker import ModelSearchPicker, PickerSearchInput
 from ..Screens.settings_context_memory import model_context_window_state
 from ..Screens.settings_provider_view_model import (
@@ -123,8 +122,14 @@ KEY_CHECK_ACTION_LABEL = "Test (t)"
 #: rule 2 reserves it. ctrl+l is unbound in Settings, the app and Input, and
 #: the Speech playground already clears with it.
 API_KEY_CLEAR_KEY = "ctrl+l"
-#: The API key row's help names both keys while a saved key can be cleared.
-API_KEY_KEYS_HINT = f"(t) test · ({API_KEY_CLEAR_KEY}) clear"
+#: C2: beside a saved key the row's help names only the key that works in
+#: the field ("t" there is typed text). C5: the saved key is never loaded
+#: into the field, so it is "hidden"; "masked" is for a key being typed.
+API_KEY_SAVED_HELP = f"hidden · {API_KEY_CLEAR_KEY} clears the saved key"
+API_KEY_CLEAR_TOOLTIP = (
+    "Clear the API key saved in local config for this provider "
+    f"({API_KEY_CLEAR_KEY} in the API key field)."
+)
 #: ADR-012:29: the env var is the safer path, and the field holds a name.
 ENV_VAR_HELP_COPY = "safer: keeps keys out of config.toml"
 #: Capture fix 7: Sign in with's one-line help per choice; the Inspector's
@@ -510,7 +515,7 @@ def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
             return EDITED, "masked · s saves it to config"
         return "cleared *", "s removes the saved key"
     if screen._provider_saved_api_key_present(provider):
-        return SAVED_IN_CONFIG, f"masked · {API_KEY_KEYS_HINT}"
+        return SAVED_IN_CONFIG, API_KEY_SAVED_HELP
     # The table, not readiness, says where the key is: readiness drops the
     # source while a base URL is still to set (Azure, Cloudflare, Databricks).
     source = provider_credential_source(
@@ -1586,10 +1591,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                     not screen._provider_saved_api_key_present(provider)
                     and not bool(str(values.get("api_key") or "").strip())
                 ),
-                tooltip=(
-                    "Clear the API key saved in local config for this provider "
-                    f"({escape_markup(API_KEY_CLEAR_KEY)} in the API key field)."
-                ),
+                tooltip=API_KEY_CLEAR_TOOLTIP,
             )
             # Parent AC#2: like Test (t), a key runs it (ApiKeyInput), so it
             # is not a Tab stop between API key and Env var; a click still does.
