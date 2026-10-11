@@ -70,11 +70,13 @@ class Host(ThemeVariableDefaultsMixin,App):
   self.subject._skills_state.view='list'
   self.subject._local_source_records['skills']=(None,context)
   self.push_screen(self.subject)
+# A wall-clock deadline, not a poll count: under a parallel run 250 polls ran
+# out waiting for the review modal. 20 s stays inside the 45 s process limit.
 async def wait_for(predicate):
- for _ in range(250):
-  if predicate():return
+ clock=asyncio.get_running_loop().time;deadline=clock()+20
+ while not predicate():
+  assert clock()<deadline,'Skills UI checkpoint did not settle'
   await asyncio.sleep(.02)
- raise AssertionError('Skills UI checkpoint did not settle')
 async def run():
  host=Host()
  async with host.run_test(size=(110,44)) as pilot:
