@@ -35,7 +35,6 @@ except ImportError:
     logger.warning(
         "defusedxml not available, using standard xml.etree. Install defusedxml for better security."
     )
-from loguru import logger
 
 #
 # Local Imports
@@ -76,14 +75,13 @@ from .watchlist_failure import InvalidFeedError, WatchlistPolicyFailure
 #
 ########################################################################################################################
 
-# bs4 is extras-only (`[subscriptions]` among others) while this module is
-# imported eagerly at boot via the scheduler handlers (app.py ->
-# Scheduling/scheduler/handlers -> here), so a module-level
-# `from bs4 import BeautifulSoup` made an install without the extra unable to
-# import the app at all, and made every install pay the bs4+soupsieve import
-# at boot (TASK-21104). BeautifulSoup is therefore resolved lazily at first
-# HTML extraction; a missing install degrades to a per-check ImportError that
-# the monitors' existing exception handling records against the subscription.
+# bs4 is a declared CORE dependency (ADR-225 / TASK-21231: markdownify, also
+# core, transitively pinned it all along), but this module still resolves
+# `BeautifulSoup` lazily (TASK-21104): a damaged/partial install without it
+# can still import the app, and no install pays the bs4+soupsieve import at
+# boot. A missing install degrades to a per-check ImportError with an
+# actionable install hint that the monitors' existing exception handling
+# records against the subscription.
 _BS4_INSTALL_HINT = (
     "beautifulsoup4 is required to extract text from HTML for "
     "watchlist/subscription monitoring, but it is not installed. "

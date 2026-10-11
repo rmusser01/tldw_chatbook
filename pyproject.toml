@@ -73,6 +73,10 @@ dependencies = [
     "pycryptodomex",
     "keyring",
     "markdownify",
+    # ADR-225 / TASK-21231: markdownify transitively pins beautifulsoup4, so
+    # every base install already had it -- declared directly now instead of
+    # by accident. The TASK-21104 lazy guard stays as a safety net.
+    "beautifulsoup4",
     "aiofiles",
     "croniter>=1.4.0",
     "textual-image",
@@ -121,7 +125,6 @@ embeddings_rag = [
 ]
 websearch = [
     "lxml",
-    "beautifulsoup4",
     "pandas",
     "playwright",
     #"playwright_stealth",
@@ -190,7 +193,6 @@ pdf = [
 ]
 ebook = [
     "ebooklib",
-    "beautifulsoup4",
     "lxml",
     "html2text",
     "markdownify",
@@ -348,8 +350,8 @@ subscriptions = [
     # markdown/schedule/feedparser were dropped in TASK-1221: nothing imported
     # them, and because the feature gate requires every listed package to
     # import, their absence disabled Watchlists for no reason. Feeds are parsed
-    # by defusedxml/ElementTree plus bs4, never feedparser.
-    "beautifulsoup4", # HTML parsing for subscription monitors (hard import)
+    # by defusedxml/ElementTree plus bs4 (a core dependency, ADR-225),
+    # never feedparser.
     "cryptography", # Security.py -- without it credentials are stored plaintext
     "defusedxml",  # Safe XML parsing; falls back to stdlib xml.etree if absent
     "tqdm",
@@ -393,7 +395,6 @@ all-tools = [
     
     # === Web and Search ===
     "lxml",
-    "beautifulsoup4",
     "pandas",
     "playwright",
     "trafilatura",
