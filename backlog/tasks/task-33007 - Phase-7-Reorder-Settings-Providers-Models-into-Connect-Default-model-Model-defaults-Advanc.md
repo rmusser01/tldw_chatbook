@@ -161,6 +161,18 @@ The full-screen captures' review notes 1-8 (`qa/model-config-33007-captures/READ
 - Follow-up (a): Context window's unknown row read **not set** with "required for Automatic conversation budgets", though under the item 12 ruling Automatic budgets use the assumed size. Its help now names that size in the title's words, "unknown, 32,000 assumed · budgets use it until set" (200,000 for an unlisted Anthropic model), from `ModelContextWindowState.assumed_tokens`; an emptied known window still reads "required …". `test_an_unknown_context_window_opens_to_one_row_and_no_reset` is rewritten on purpose (OpenAI and Anthropic).
 - Follow-up (b): the dead `ConsoleContextControlState.request_row` (no caller or test in tldw_chatbook or Tests; it still said "estimated input; model unverified") is deleted.
 
+### Review of #3057: evidence corrections (2026-10-11)
+
+The independent review of the whole PR (R4, tests / docs / CI) found criteria whose tick, wording or notes did not agree with what shipped. Each is corrected where it was wrong; no behaviour changed for these.
+
+- AC#1 ("without scrolling") was asserted for OpenAI · gpt-4.1 alone. `Tests/UI/test_settings_providers_models_card_fits_the_pane.py` now chooses every provider the picker lists, in turn on one mounted card at 211x44 with Advanced closed, and none needs scrolling.
+- AC#2: with "Enter provider ID" opened, its row is a Tab stop the user opened, so Anthropic's chain to Model is six presses. Accepted by the review's ruling C10 (the budget of five is for the card at rest) and pinned by `test_an_opened_provider_id_row_is_a_sixth_stop_for_anthropic`.
+- AC#14: the captures in `qa/model-config-33007-captures/` were taken at `0cd360a642` on 2026-10-09. The reviewed head `37f5e55b5b` is later and was rebased again, and this review's fixes change copy the captures show, so the PR description's "all taken on this head" did not hold. They are retaken after the fixes are integrated.
+- Captures behind subtask criteria that the final set does not repeat: TASK-33007.3 AC#11 (the picker with discovered models) and TASK-33007.6 AC#9 and AC#12 (Saved model list and Catalog refresh open) rest on `qa/model-config-p7-2026-10-03/task-3/` and `task-6/`, taken on 2026-10-03 and 2026-10-04 and showing the card as it was then. They are retaken with the final set (the review's ruling C13); their task files say so.
+- AC#15: the PR description's generated list of rewritten tests had been cut off after most headings (15 of 17 names missing). The full list, taken from the subtasks' notes, was handed to the controller for the PR description, with the TASK-33007.8 mutation check.
+- Subtask wording corrected in their own files: TASK-33007.2 AC#9 (the OpenAI review row's condition changed on purpose), TASK-33007.5 AC#6 (Anthropic's hidden fields are counted in the title, not named), TASK-33007.6 AC#1 (six disclosures) and AC#10 (the search-index test was red before and after, on the same two tests), and the notes of TASK-33007.7 (AC#8) and TASK-33007.9 (AC#4, AC#5), which still said "open" under ticked criteria and now name the captures.
+- There is no TASK-33007.10: the phase plan's Task 10 (Clear becomes a key on the API key field) is recorded under TASK-33007.2.
+
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
