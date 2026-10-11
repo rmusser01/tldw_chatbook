@@ -5333,6 +5333,24 @@ after import is too late; even an early HOME-only change leaves an ambient
 `TLDW_CONFIG_PATH` authoritative. A metrics failure must not abandon resources,
 and a setup failure must not be reported as behavioral RED.
 
+**Recurrence with a write — TASK-33008.2 fix round 1, 2026-10-10.** A scratch
+probe that only imported a test module (`Tests.UI.test_console_model_switcher`,
+for its popover harness) was run from the scratchpad with `--rootdir` and `-c`
+pointing at the worktree. Neither option loads `Tests/conftest.py`: only a test
+file's own location does. The harness read the configuration under the real
+`HOME`, and that admitted the user's real recovery registry: it created
+`~/.config/tldw_cli/recovery-bootstrap/ancestry-settled.json` (birth time equal
+to the run's minute; `config.toml`, the data directory and both lock files were
+unchanged). The mechanism was then reproduced under a scratch `HOME`, where the
+same run created the same file. "Read-only" is therefore not a property of a
+probe that reads the configuration: on a profile this code has not started on,
+the first read writes the registry's ancestry record, and a build without that
+record (`origin/main` then) raises `unknown_record` when its scan of the
+registry root meets a file it does not know (read from the code, not run).
+The probe was rerun as a temporary file under `Tests/UI/` and deleted, which is
+what the rule above already said to do. Check the registry directory's times
+after any run that might have escaped, not only `config.toml`'s.
+
 ---
 
 ## A hand-rolled normalizer used as a safety guard must be proven canonical, not just plausible

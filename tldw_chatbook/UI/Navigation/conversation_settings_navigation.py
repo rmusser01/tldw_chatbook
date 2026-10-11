@@ -261,7 +261,8 @@ class ConsoleProviderReturnIntent:
     def return_target(
         self, return_revision: int, outcome: ConversationSettingsReturnOutcome
     ) -> ConsoleProviderReturnTarget:
-        """The Console context Settings returns with: the chat itself."""
+        """The Console context Settings returns with: the chat, and the pair
+        of the NEEDS SETUP row that left for Settings when one did."""
         return ConsoleProviderReturnTarget(
             self.session_id,
             return_revision,

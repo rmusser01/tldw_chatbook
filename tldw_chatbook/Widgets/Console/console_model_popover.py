@@ -490,11 +490,14 @@ class ConsoleModelPopover(
                 that a detected server listed. A served provider is used, so
                 it is listed even as a legacy alias.
             highlight_pair: The pair highlighted first, until Find changes.
+                Until then no row cap cuts its row, its provider's NEEDS SETUP
+                rows include its model whatever lists it, and that row is
+                preferred to PREVIOUS's or RECENT's copy of the pair.
                 A pair of a served provider is listed even while providers
                 are checked (the Get started card's detected server: its
                 first listed model, TASK-33008.3). Any other waits for
-                readiness (a NEEDS SETUP row's pair, reopened after its fix,
-                TASK-33008.2).
+                readiness, with nothing highlighted (a NEEDS SETUP row's
+                pair, reopened after its fix, TASK-33008.2).
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -1020,6 +1023,22 @@ class ConsoleModelPopover(
             return 1
         return 2 if query in folded else 3
 
+    def _leads(self, row: SwitcherRow) -> bool:
+        """Whether ``row`` is the highlight pair's, while Find is as it opened."""
+        pair = (provider_key(row.provider), row.model)
+        return self._query == self._opened_query and pair == self._highlight_pair
+
+    def _capped(self, rows: list[SwitcherRow], cap: int) -> list[SwitcherRow]:
+        """The first ``cap`` rows; the highlight pair's row is never cut.
+
+        The list opened on that pair, so past the cut its row takes the last
+        place: left out, Enter acted on Find's best match instead, which can
+        be another provider's model (an aggregator id that starts with the
+        provider's name outranks the provider's own models).
+        """
+        late = next((row for row in rows[cap:] if self._leads(row)), None)
+        return rows[:cap] if late is None else [*rows[: cap - 1], late]
+
     def _is_current(self, provider: str, model: str | None) -> bool:
         current_provider, current_model = self._current
         return bool(model) and (provider_key(provider), model) == (
@@ -1190,13 +1209,17 @@ class ConsoleModelPopover(
                 ready_rows.extend(self._catalog_status_rows(key, bool(models)))
                 continue
             setup = self._setup_rows(key, readiness, query, tokens, current_shown)
-            if setup and len(setup_rows) >= _SETUP_ROWS:
+            if (
+                setup
+                and len(setup_rows) >= _SETUP_ROWS
+                and not any(map(self._leads, setup))
+            ):
                 setup_extra += 1
                 continue
             setup_rows.extend(setup)
         if tokens:
             matches.sort(key=lambda match: match[:3])
-            ready_rows = [match[3] for match in matches[:_MATCH_ROWS]]
+            ready_rows = self._capped([match[3] for match in matches], _MATCH_ROWS)
             if len(matches) > _MATCH_ROWS:
                 ready_rows.append(
                     SwitcherRow(
@@ -1272,16 +1295,22 @@ class ConsoleModelPopover(
         if not tokens:
             model = current_model if is_current_provider and not current_shown else None
             return [self._pair_row("setup", key, model, hint, 99)]
+        models = self._models_for(key)
+        pair = self._highlight_pair
+        if pair is not None and pair[0] == key and self._query == self._opened_query:
+            # The row the list opened on, whatever lists its model: with
+            # nothing in Find a chat's own row names a model no list may hold.
+            models = tuple(dict.fromkeys((*models, pair[1])))
         rows = [
             self._pair_row("setup", key, model, hint, score)
-            for model in self._models_for(key)
+            for model in models
             if (score := self._pair_score(query, tokens, key, model)) is not None
         ]
         if not rows:
             score = self._pair_score(query, tokens, key, "")
             if score is not None:
                 rows.append(self._pair_row("setup", key, None, hint, score))
-        return rows[:3]
+        return self._capped(rows, 3)
 
     def _typed_rows(self, tokens: Sequence[str]) -> list[SwitcherRow]:
         """The escape hatch: a model id no catalog lists (TASK-14812 AC#5).
@@ -1407,10 +1436,19 @@ class ConsoleModelPopover(
                 if self._rows[index].key == self._highlight_key:
                     return index
         if self._highlight_pair is not None and self._query == self._opened_query:
-            for index in selectable:
-                row = self._rows[index]
-                if (provider_key(row.provider), row.model) == self._highlight_pair:
-                    return index
+            if (
+                not self._first_readiness_done
+                and self._highlight_pair[0] not in self._served
+            ):
+                # Nothing says yet that it can send, and PREVIOUS and RECENT
+                # list a pair whatever its readiness: no row, so a fast Enter
+                # applies neither their copy nor Find's best match.
+                return None
+            own = [index for index in selectable if self._leads(self._rows[index])]
+            if own:
+                # Its NEEDS SETUP row, not a copy above it that would apply
+                # the pair: Enter reopens the fix the user came back from.
+                return min(own, key=lambda index: self._rows[index].kind != "setup")
         if self._query.strip():
             ranked = [index for index in selectable if self._rows[index].kind != "more"]
             if ranked:

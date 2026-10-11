@@ -772,8 +772,11 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   keeps its own pair through the save, so this is the step that moves it (a
   chat with no messages and no edited settings already follows the saved
   pair, and the list marks it **● CURRENT**). If you came back without
-  saving, the row is still under NEEDS SETUP, and **Esc** leaves the chat as
-  it was with the composer in focus. Opened from the Get started card, the
+  saving, the row is still under NEEDS SETUP and is the one highlighted, even
+  when PREVIOUS or RECENT lists the same pair, so **Enter** opens its fix
+  again; **Esc** leaves the chat as it was with the composer in focus. Other
+  matches for the provider's name, however many, never push the row's model
+  off the list. Opened from the Get started card, the
   list comes back over the card while setup is unfinished, and **Esc**
   returns to the card. **Stay in Settings**, or walking back to the Console
   yourself, drops the return, so the list does not reopen. A custom

@@ -1937,6 +1937,9 @@ async def test_a_field_edited_after_the_save_waits_in_settings_as_an_unsaved_edi
 # --- TASK-33008.2: the real app, NEEDS SETUP row -> Settings -> Switch model --
 
 _GROQ_MODEL = "llama-3.3-70b-versatile"
+#: Groq's second model: never Find's best match for "Groq ", so only the
+#: highlight the return asks for puts the reopened list on it.
+_GROQ_SECOND = "llama-3.1-8b-instant"
 #: Not OpenAI's saved key: until a routed provider's key is saved, Settings
 #: reads an edit to it against the default provider's saved key, so the same
 #: text would read as no change.
@@ -1945,7 +1948,7 @@ _GROQ_KEY = "p8groqkey9876543210"
 
 def _switcher_app(monkeypatch, **saved):
     """The real app: OpenAI is the default and has a key, so the chat can
-    send. Groq lists one model and has no key, so Switch model puts it under
+    send. Groq lists two models and has no key, so Switch model puts it under
     NEEDS SETUP. No listing needs the network: both model lists are saved."""
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     app = _cloud_app(
@@ -1956,26 +1959,25 @@ def _switcher_app(monkeypatch, **saved):
             **saved,
         },
     )
-    app.providers_models = {"openai": ["gpt-5"], "groq": [_GROQ_MODEL]}
+    app.providers_models = {"openai": ["gpt-5"], "groq": [_GROQ_MODEL, _GROQ_SECOND]}
     return app
 
 
-def _groq_row(app) -> tuple[str, str] | None:
+def _groq_row(app, model: str = _GROQ_MODEL) -> tuple[str, str] | None:
     """The highlighted row's kind and readiness words, once Switch model has
-    the screen with focus in Find and Groq's own pair is the highlight."""
+    the screen with focus in Find and Groq's pair on ``model`` is the
+    highlight."""
     switcher = app.screen
     if not isinstance(switcher, ConsoleModelPopover) or (
         getattr(app.focused, "id", None) != "console-popover-find"
     ):
         return None
     row = switcher.highlighted_row()
-    if row is None or (row.provider, row.model) != ("groq", _GROQ_MODEL):
+    if row is None or (row.provider, row.model) != ("groq", model):
         return None
     pairs = switcher.query_one("#console-popover-pairs").region
     painted = [strip.text for strip in switcher._compositor.render_strips()]
-    line = next(
-        (text for text in painted[pairs.y : pairs.bottom] if _GROQ_MODEL in text), ""
-    )
+    line = next((text for text in painted[pairs.y : pairs.bottom] if model in text), "")
     words = next(
         (
             words
@@ -1988,7 +1990,8 @@ def _groq_row(app) -> tuple[str, str] | None:
 
 
 async def _leave_a_groq_row_for_settings(app, pilot, console):
-    """Alt+M, find Groq's NEEDS SETUP row, Enter: Settings opens on its key."""
+    """Alt+M, find Groq's NEEDS SETUP rows, Down to the second, Enter:
+    Settings opens on Groq's key, for that row's model."""
     store = console._ensure_console_chat_store()
     session_id = store.active_session_id
     await pilot.press("alt+m")
@@ -2003,6 +2006,12 @@ async def _leave_a_groq_row_for_settings(app, pilot, console):
         pilot,
         lambda: _groq_row(app) == ("setup", "Not ready · no key"),
         "Groq's NEEDS SETUP row to be the highlight",
+    )
+    await pilot.press("down")
+    await _until(
+        pilot,
+        lambda: _groq_row(app, _GROQ_SECOND) == ("setup", "Not ready · no key"),
+        "Groq's second NEEDS SETUP row to be the highlight",
     )
     assert first.highlighted_row().note == "Enter: add key in Settings"
 
@@ -2020,7 +2029,7 @@ async def _leave_a_groq_row_for_settings(app, pilot, console):
     assert target is not None
     assert (target.provider, target.model, target.field, target.session_id) == (
         "groq",
-        _GROQ_MODEL,
+        _GROQ_SECOND,
         "api_key",
         session_id,
     )
@@ -2028,7 +2037,7 @@ async def _leave_a_groq_row_for_settings(app, pilot, console):
     # R43: the return names the chat and the row's pair, nothing else.
     claim = app.pending_handoffs.claim(CHANNEL)
     assert claim is not None
-    assert claim.value == ConsoleProviderReturnIntent(session_id, "groq", _GROQ_MODEL)
+    assert claim.value == ConsoleProviderReturnIntent(session_id, "groq", _GROQ_SECOND)
     app.pending_handoffs.release(claim)
     return first, settings
 
@@ -2054,7 +2063,11 @@ async def test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider
 
     Return without saving reopens it the same way, unchanged: the row is
     still NEEDS SETUP, and Esc leaves the chat on its own pair with the
-    composer in focus."""
+    composer in focus.
+
+    The row is Groq's second: Find's best match for "Groq " is its first, so
+    the reopened highlight is on the row's pair only because the return
+    carries that pair all the way to the list."""
     app = _switcher_app(monkeypatch)
 
     async with app.run_test(size=(211, 44)) as pilot:
@@ -2100,14 +2113,14 @@ async def test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider
         await _until(
             pilot,
             lambda: (
-                _groq_row(app)
+                _groq_row(app, _GROQ_SECOND)
                 == (
                     ("pair", "Ready · not tested")
                     if saves
                     else ("setup", "Not ready · no key")
                 )
             ),
-            "Switch model to reopen on Groq's pair, with its readiness words",
+            "Switch model to reopen on the row's own pair, with its readiness words",
         )
         reopened = app.screen
         assert reopened is not first
@@ -2124,13 +2137,13 @@ async def test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider
             lambda: (
                 app.screen is console
                 and getattr(app.focused, "id", None) == "console-native-composer"
-                and (_chat_pair(console) == ("groq", _GROQ_MODEL)) is saves
+                and (_chat_pair(console) == ("groq", _GROQ_SECOND)) is saves
             ),
             "the Console again, composer in focus, on the pair this path ends on",
         )
         chat, readiness = console._active_console_settings_readiness()
         if saves:
-            assert (chat.provider, chat.model) == ("groq", _GROQ_MODEL)
+            assert (chat.provider, chat.model) == ("groq", _GROQ_SECOND)
             assert readiness.operability == "ready_to_send"
         else:
             assert (chat.provider, chat.model) == ("openai", "gpt-5")
