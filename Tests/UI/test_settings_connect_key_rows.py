@@ -19,10 +19,12 @@ from Tests.UI.test_settings_connect_rows import (
     _FAKE_KEY,
     _SAVED_KEY,
     _SIZE,
+    _no_provider_key_env,
     _open_providers,
     _resting_help_counts,
     _squeezed,
     _text,
+    _until,
 )
 from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 
@@ -99,15 +101,37 @@ async def test_api_key_row_says_where_the_key_comes_from(
 
 @pytest.mark.asyncio
 @private_profile_test
+@pytest.mark.parametrize(
+    ("settings", "at_rest", "checked"),
+    [
+        pytest.param({}, "Not ready · no key", "Not ready · no key", id="no-key"),
+        pytest.param(
+            dict(_SAVED_KEY),
+            "Ready · not tested",
+            "Ready · verified",
+            id="key-accepted",
+        ),
+    ],
+)
 async def test_key_check_row_ends_connect_and_its_detail_lives_in_the_inspector(
-    request, monkeypatch
+    request, monkeypatch, settings, at_rest, checked
 ):
-    """AC#6, AC#7, AC#8: the verdict and a t action on one row; the labelled
-    rows go to the Inspector's Key block, so Default model does not move."""
+    """AC#6, AC#7, AC#8: the verdict and a t action on one row, the last of
+    Connect; t runs the check and the row then says its verdict (a saved key
+    the provider's model listing accepts reads "Ready · verified"); the
+    labelled rows go to the Inspector's Key block, so Default model does not
+    move."""
+    import httpx
+
+    from Tests.UI.test_settings_provider_key_check import _Provider, _route_discovery_to
+
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    listing = _Provider(httpx.Response(200, json={"data": [{"id": "gpt-4.1"}]}))
+    _route_discovery_to(monkeypatch, listing)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
-    app.app_config["api_settings"] = {"openai": {}}
+    app.app_config["api_settings"] = {"openai": dict(settings)}
+    app.providers_models = {"OpenAI": ["gpt-4.1"]}  # the key check lists it
     host = _SettingsCssHarness(app, "settings")
 
     async with host.run_test(size=_SIZE) as pilot:
@@ -118,7 +142,8 @@ async def test_key_check_row_ends_connect_and_its_detail_lives_in_the_inspector(
         result = screen.query_one("#settings-provider-test-result", Static)
         default_model = screen.query_one("#settings-default-model-title", Static)
 
-        assert str(verdict.renderable) == "Not ready · no key"
+        assert str(verdict.renderable) == at_rest
+        assert not str(result.renderable).startswith("Readiness")  # no check yet
         assert "(t)" in str(button.label)
         assert button.parent is verdict.parent
         assert verdict.parent.region.height == 1
@@ -129,15 +154,22 @@ async def test_key_check_row_ends_connect_and_its_detail_lives_in_the_inspector(
         ]
         assert _text(screen, "#settings-provider-source") == "new-chat default"
         assert _text(screen, "#settings-model-source") == "new-chat default"
-        widgets = list(card.query("*"))
-        assert widgets.index(verdict.parent) < widgets.index(default_model)
+        # The Key check row is the last shown row of Connect: the next shown
+        # child of the card is Default model's header.
+        shown = [child for child in card.children if child.display]
+        assert shown[shown.index(verdict.parent) + 1] is default_model
 
         default_model_y = default_model.virtual_region.y
-        button.press()
-        await pilot.pause(0.2)
+        # Esc releases the focused control; t then runs the check.
+        await pilot.press("escape", "t")
+        await _until(pilot, lambda: str(result.renderable).startswith("Readiness"))
+        await host.workers.wait_for_complete()
+        await _until(pilot, lambda: str(verdict.renderable).startswith(checked))
 
         assert str(result.renderable).startswith("Readiness")
-        assert str(verdict.renderable) == "Not ready · no key"
+        # A verified verdict carries the time of the check after the word.
+        assert str(verdict.renderable).startswith(checked), str(result.renderable)
+        assert len(listing.requests) == (1 if settings else 0)
         assert default_model.virtual_region.y == default_model_y
 
 
@@ -263,7 +295,7 @@ async def test_a_key_reads_saved_before_its_base_url_is_set(
 
     env_var = default_api_key_env_var(provider)
     assert env_var
-    monkeypatch.delenv(env_var, raising=False)
+    _no_provider_key_env(monkeypatch)
     if where == "env":
         monkeypatch.setenv(env_var, _FAKE_KEY)
     app = _build_test_app()
@@ -382,14 +414,15 @@ async def test_the_card_result_line_takes_no_row_until_there_is_a_result(
 ):
     """Checkpoint review (captures): every card opened with "… have not been
     saved this session." -- a row saying nothing happened, while the Inspector
-    already says "Save (s) — no changes". The line now shows only once a save
-    or revert has something to report."""
+    already says "Save (s) — no changes". The line now shows only once a
+    revert (r, Discard changes) or a save (s) has something to report."""
     from Tests.UI.test_settings_configuration_hub import (
         _capture_provider_settings_mutations,
     )
+    from Tests.UI.test_settings_provider_keyboard_journeys import _revert
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    _capture_provider_settings_mutations(monkeypatch)
+    mutations = _capture_provider_settings_mutations(monkeypatch)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": dict(_SAVED_KEY)}
@@ -401,17 +434,25 @@ async def test_the_card_result_line_takes_no_row_until_there_is_a_result(
         assert result.display is False
         assert result.region.height == 0
 
-        screen.query_one("#settings-provider-api-key", Input).focus()
+        screen.query_one("#settings-provider-endpoint-value", Input).focus()
         await pilot.pause()
-        from tldw_chatbook.UI.Screens.settings_config_models import (
-            SettingsCategoryId,
-        )
+        await pilot.press(*"https://first.invalid/v1")
+        await pilot.pause()
+        assert result.display is False
 
-        await pilot.press("x")
-        await pilot.pause()
-        # What "r" then "Discard changes" runs once confirmed.
-        screen._revert_category(SettingsCategoryId.PROVIDERS_MODELS)
-        await pilot.pause()
-        await pilot.pause()
-        assert result.display is True
+        await _revert(host, pilot, discard=True)
+        await _until(pilot, lambda: result.display)
+        assert result.display is True and result.region.height >= 1
         assert "reverted" in _text(screen, "#settings-provider-save-result")
+        assert mutations == []
+
+        screen.query_one("#settings-provider-endpoint-value", Input).focus()
+        await pilot.pause()
+        await pilot.press(*"https://second.invalid/v1", "escape", "s")
+        await _until(pilot, lambda: len(mutations) == 1)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(mutations) == 1
+        assert result.display is True and result.region.height >= 1
+        saved = _text(screen, "#settings-provider-save-result")
+        assert saved and "reverted" not in saved, saved
