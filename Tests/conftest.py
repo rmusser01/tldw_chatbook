@@ -1506,6 +1506,30 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # with RecoveryRequired("raw_source_selection_changed") before any
             # assertion runs -- same admission signature as the suites above.
             "test_chatbook_thinking_round_trip.py",
+
+            # TASK-33370 (2026-10-10, EXPERIMENT): the Library file-notes and
+            # wave-4 Notes batteries -- every suite that mounts the production
+            # TldwCli/LibraryScreen through _build_test_app -> load_settings,
+            # or mounts LibraryFileNotesWorkspace whose empty-state surface
+            # reads get_cli_setting("file_notes", ...) on the guarded loader.
+            # All were authored before the ADR-126 config-participant
+            # admission landed (b5251e9a6e, 2026-09-16) and none is in any
+            # CI lane (test.yml has not run on dev since 2026-09-06; the
+            # ui-fast-lane census excludes them), so ~123 nodes went red in
+            # plain worktree runs unnoticed. Same admission signature as the
+            # suites above.
+            "test_library_file_notes_workspace.py",
+            "test_library_file_notes_git.py",
+            "test_library_file_notes_git_push.py",
+            "test_library_notes_w4_file_notes.py",
+            "test_library_notes_w4_sync_roots.py",
+            "test_library_notes_w4_console_handoff.py",
+            "test_library_notes_w4_data_truth.py",
+            "test_library_notes_w4_editor.py",
+            "test_library_notes_w4_import_keyboard.py",
+            "test_library_notes_w4_layout.py",
+            "test_library_notes_riders_r_file_notes.py",
+            "test_library_notes_wave_file_notes.py",
         }
     )
     test_data_dir = (
