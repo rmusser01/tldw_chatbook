@@ -246,11 +246,6 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Settings screen) and timed the shard out. It is split by topic into itself
 # (the Provider control), _tab_budget.py, _key_rows.py and _paint.py, listed
 # together so round-robin puts each part in a different shard; the lane went
-# to six shards in the same commit. The four sit after
-# test_settings_default_model_picker.py: replaying per-file seconds from
-# #3057's five shard logs, that spot gives at most 12.8 min of pytest in one
-# of six shards, where right after test_settings_anthropic_auth_source.py
-# stacked three of the slowest Settings files in one shard (15.6 min).
 # to six shards in the same commit.
 # Placement (measured on #3057's six shard logs, every file timed): the eleven
 # Phase 7 Settings files are 35.2 of the lane's 71.4 pytest minutes, and where
@@ -263,6 +258,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # the tail shifts its shards: re-run the replay then.
 # Phase 7's counts above were taken on its own base; over B1's 163 its eleven
 # files make the floor 174.
+# ordered by a search over the tail for the flattest split. Over dev's 179
+# entries (node ids among them) that order replays at 12.3 min at most with
+# seven shards, so the lane went to seven. An entry added above the tail
+# shifts its shards: re-run the replay then.
+# Phase 7's counts above were taken on its own base; over dev's 179 its eleven
+# files make the floor 190.
 MINIMUM_FILES = 201
 
 
