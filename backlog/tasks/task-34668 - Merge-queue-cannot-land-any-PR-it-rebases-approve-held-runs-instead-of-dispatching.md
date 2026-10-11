@@ -1,17 +1,15 @@
 ---
 id: TASK-34668
-title: >-
-  Merge queue cannot land any PR it rebases: approve held runs instead of
-  dispatching
-status: In Progress
+title: 'Merge queue cannot land any PR it rebases: approve held runs instead of dispatching'
+status: Done
 assignee:
-  - '@claude'
-created_date: '2026-10-07 02:30'
-updated_date: '2026-10-07 03:04'
+- '@claude'
+created_date: 2026-10-07 02:30
+updated_date: 2026-10-11 02:00
 labels:
-  - ci
-  - merge-queue
-  - bug
+- ci
+- merge-queue
+- bug
 dependencies: []
 priority: high
 ---
@@ -29,12 +27,12 @@ The in-repo merge queue dispatches the required check after rebasing a PR, but a
 - [x] #3 A first failure re-runs the failed run in its own check suite; when the deciding tick is the failed run, a woken queue run waits for it to complete and re-runs it; a run already live again is left alone
 - [x] #4 A GitHub outage fails the queue run without disarming any PR; only a re-run refusal or having no CI run to start evicts
 - [x] #5 CLAUDE.md, AGENTS.md, the spec and ADR-218 describe the approve design with the 2026-10-06 evidence
-- [ ] #6 Before the queue is re-enabled, one throwaway PR is merged by the queue end to end, and the owner approves re-enabling
+- [x] #6 Before the queue is re-enabled, one throwaway PR is merged by the queue end to end, and the owner approves re-enabling
 <!-- AC:END -->
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 scripts/merge_queue.py no longer dispatches the required check, which never counted: a workflow_dispatch run's checks are absent from the PR's statusCheckRollup (spec V4; #2874 and #3026 stranded, #3025 the pull_request control). Instead:
 - Every on-mode tick approves the front PR's held pull_request runs triggered by github-actions[bot] (approve_held_runs, best-effort), before deciding.
 - After a rebase the queue waits, bounded at 10 x 3 s, for the new head's held required run and approves it (_approve_until_required), then cancels old-head runs. The re-dispatch of other workflows and the deletion of held runs (cleanup_approval_runs) are gone.
@@ -124,4 +122,12 @@ Independent review round 9: no critical or major findings; fixed:
 2. Spec drift (sections 7 and 11), the _strike docstring, and this task's 'start' bullet now describe the approve-error strike.
 3. _retry passing the approval's eviction through was untested; a test now pins it. Both new guards were mutation-checked (killed).
 Left as is, per the reviewer: with two or more held required runs on one head, a refused first approval can strike before a later one is approved. Two held derived-artifacts pull_request runs on one head have not been seen; revisit if they are.
-<!-- SECTION:NOTES:END -->
+Live end-to-end test, 2026-10-10 (AC 6, first half): throwaway PR #3060 was cut from dev before #3039 merged, armed, and MERGE_QUEUE set on at 01:57Z. The queue rebased it (01:59Z, head deddc0edae, 'approved its CI'), re-ran the required check after one failure (02:39Z), rebased again when dev moved (02:45Z, head 44dc0245c0), re-ran once more (03:23Z), and auto-merge landed it at 03:39:04Z (ebd4b7ddee). Attempt 1 of each queue-rebased run is action_required; attempt 2 is the approved run, whose required check counted. Both failures were flaky tests, not the queue.
+
+Incident: the queue was meant to be on for that one PR. The session stalled and it stayed on until 2026-10-11 01:27Z (23.5 h) without the owner's go-ahead. In that time it rebased and landed #3041 #3040 #3059 #3063 #3062 #3065 #3068 and evicted #3058 (rebase refused: its commits change a workflow file), #3059 and #2882 (failed twice, on flakes). Four PRs disarmed for the test (#2890 #2921 #2868 #2892) stayed disarmed for the day and were re-armed at 01:32Z. Lesson recorded in backlog/docs/lessons-live-verification.md.
+
+Found on that traffic and filed: TASK-34788 (a PR that changes a workflow file cannot be queue-rebased), TASK-34789 (flaky required check: 7 of about 11 rebased heads needed a retry), TASK-34790 (one failed queue run per merge from the racing loser; a double-posted warning).
+
+AC 6 stays open: the queue is off, and re-enabling waits for the owner.
+Owner approved re-enabling on 2026-10-11 ('Turn it on'), with the known costs until TASK-34788 and TASK-34789 land: a PR that hits two flaky failures is evicted and must be re-armed, and a PR that changes a workflow file needs a hand rebase. AC 6 is met; MERGE_QUEUE is set on with this PR.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
