@@ -9448,9 +9448,8 @@ class SettingsScreen(BaseAppScreen):
                             widget.value = str(value.keep_count)
                         for widget in self.query("#settings-snapshot-enabled"):
                             widget.value = value.enabled
-            message = (
-                "Snapshot preferences saved. Enable/disable applies on next launch."
-            )
+            # The launch-scope line sits right above this one; it is not repeated.
+            message = "Snapshot preferences saved."
             if provider_dirty:
                 message = "Snapshot preferences saved separately. Provider changes have their own Save result."
             self._set_static_text("#settings-snapshot-result", message)
