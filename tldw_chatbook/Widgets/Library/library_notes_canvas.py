@@ -70,6 +70,7 @@ from tldw_chatbook.Widgets.Library.library_notes_add_from_files_canvas import (
 from tldw_chatbook.Widgets.Library.library_notes_sync_roots_canvas import (
     LibraryNotesSyncRootsCanvas,
 )
+from tldw_chatbook.Widgets.detach_safe_text_area import DetachSafeTextArea
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 _SORT_LABELS = {"newest": "Newest", "oldest": "Oldest", "title": "Title"}
@@ -864,7 +865,7 @@ class NoteEditorInput(Input):
             self.action_end()
 
 
-class NoteEditorTextArea(TextArea):
+class NoteEditorTextArea(DetachSafeTextArea):
     """The note body, with the same synchronous Tab as the fields around it.
 
     task-32247: it also carries the document-end and document-start keys.
@@ -888,6 +889,14 @@ class NoteEditorTextArea(TextArea):
     a reader leaves it. Under ``"indent"`` this binding would steal the key
     the ``TextArea`` needs, so the pin asserts that behaviour rather than
     trusting the default.
+
+    TASK-34789: a ``DetachSafeTextArea``. A rail switch away from an open
+    note removes this pane (``LibraryBrowseReaderShell.swap_work``) while the
+    screen's own handler is still running, so the screen cannot process the
+    reflow request yet and the next repaint still renders the removed body;
+    stock ``TextArea`` raises ``KeyError: text-area--gutter`` there. The
+    ``batch_update`` around that removal ends before the reflow can happen,
+    so it narrows the window without closing it.
     """
 
     BINDINGS = _NOTE_BODY_BINDINGS
