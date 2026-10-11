@@ -1175,6 +1175,32 @@ value; only `action_show_overlay`, bound to Enter/Down/Space/Up, then calls
 construction; see the task-33003.8 Implementation Notes and the live captures
 in Docs/QA/model-config-p3-2026-09-28/task-8/.)
 
+## A gap that is only spare column width is gone when the column fits its text: make it padding
+
+**TASK-33641.3, Settings backend rows, 2026-10-10.** Image Gen and Video Gen
+name each backend in a label that is followed directly by its status. A
+`Static` wraps inside its column, and a one-row label shows the first line, so
+a column can come out exactly as wide as what it paints. The rider was filed
+for "SD.cpp videoNot configured": 12 cells, and "SD.cpp video" is 12. The
+first fix made the column 24 cells from 150 columns (the longest name is 23,
+so one cell was spare). A review round then made it `1fr` capped at 24, so
+that a long probe result could shorten the name instead of pushing Test out of
+the row. The width now depended on the status text, and at 151 columns a
+31-cell result left "SwarmUI (local)" exactly its 15 cells: "SwarmUI
+(local)Unreachable: connection refused". The tests ran at five sizes and
+passed, because at rest the column was always 24. The 12-cell column below 150
+columns still painted "SD.cpp videoNot configured" as well: its nodes asserted
+the column's width, not what was painted.
+
+**What to do.** Put the gap in the label's own `padding-right`. Padding is
+inside the width, so no column and no control moves. Assert the cell painted
+just before the neighbour (crop `screen._compositor.render_strips()[y]`), not
+region widths. Once a width is `fr` or `auto` it is a function of its
+siblings' content: sweep the content states and the columns between the sizes
+the criteria name. One scratch app per width over 150 to 171 columns, with ten
+status texts on each row, ran in about 35 seconds on six workers; run before
+the review, it would have shown the flush names.
+
 ## A Collapsible's background paints only its title row: the body is `Contents`
 
 **TASK-33003.3 follow-up, Chat settings Advanced generation, 2026-09-30.**

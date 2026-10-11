@@ -1347,6 +1347,15 @@ async def _open_backends_panel(pilot, host, category, panel):
     return screen
 
 
+def _painted_before_status(screen, label, status) -> str:
+    """The cells painted on the name's line, from its column to the status."""
+    return (
+        screen._compositor.render_strips()[label.region.y]
+        .crop(label.region.x, status.region.x)
+        .text
+    )
+
+
 @pytest.mark.parametrize(
     "size", [(120, 45), (149, 45), (150, 45), (211, 44), (235, 52)]
 )
@@ -1380,11 +1389,7 @@ async def test_backend_rows_paint_each_name_whole_before_one_status_column(size,
             while not (label.region.width and status.region.width):
                 assert time.monotonic() < laid_out_by, f"{backend_id} never laid out"
                 await pilot.pause(0.02)
-            painted = (
-                screen._compositor.render_strips()[label.region.y]
-                .crop(label.region.x, status.region.x)
-                .text
-            )
+            painted = _painted_before_status(screen, label, status)
             name = labels[backend_id]
             if size[0] < host.WIDE_VIEWPORT_COLUMNS:
                 assert label.region.width == 12, (
@@ -1396,6 +1401,12 @@ async def test_backend_rows_paint_each_name_whole_before_one_status_column(size,
                     f"{backend_id} @ {size}: {painted!r} is painted before the "
                     f"status, not the whole name {name!r} and a blank cell"
                 )
+            # A cut name needs the gap too: the 12-cell column painted
+            # "SD.cpp video" for "SD.cpp video (local)", flush to its status.
+            assert painted.endswith(" "), (
+                f"{backend_id} @ {size}: {painted!r} is painted right up to "
+                "the status, with no blank cell"
+            )
             # The default backend's row is the widest: it carries "★ Default".
             assert row.children[-1].region.right <= row.region.right, (
                 f"{backend_id} @ {size}: the row's last control ends at "
@@ -1408,17 +1419,23 @@ async def test_backend_rows_paint_each_name_whole_before_one_status_column(size,
         )
 
 
+@pytest.mark.parametrize("size", [(150, 45), (151, 45)])
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row():
+async def test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row(size):
     """A probe writes its result into the status in place, and it can be long.
 
     At 150 columns the row is 67 cells. With a fixed 24-cell name column
     "Reachable (auth unverified)" put Test outside the default backend's row
     and "Unreachable: connection refused" clipped it on every other row.
+
+    The shortened name keeps a blank cell before the status. At 151 columns
+    that second result leaves the default SwarmUI row 15 cells for the name,
+    and a column with no padding painted "SwarmUI (local)Unreachable:
+    connection refused".
     """
     host = _WideTierSettingsHarness(_build_test_app(), "settings")
-    async with host.run_test(size=(150, 45)) as pilot:
+    async with host.run_test(size=size) as pilot:
         screen = await _open_backends_panel(
             pilot, host, SettingsCategoryId.IMAGE_GENERATION, "imagegen"
         )
@@ -1426,6 +1443,7 @@ async def test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row()
         for badge in ("Reachable (auth unverified)", "Unreachable: connection refused"):
             for backend_id in BACKEND_IDS:
                 row = screen.query_one(f"#settings-imagegen-backend-{backend_id}")
+                label = row.query_one(".settings-input-label", Static)
                 status = row.query_one(".settings-imagegen-badge", Static)
                 marker = row.query_one(".settings-imagegen-default-marker", Static)
                 test_btn = row.query_one(Button)
@@ -1433,17 +1451,26 @@ async def test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row()
                     backend_id, badge, screen._image_gen_probe_session
                 )
                 row.scroll_visible(animate=False)
+                # The painted line is read at the name's row, so the scroll
+                # has to have landed as well as the new status width.
                 laid_out_by = time.monotonic() + 5.0
-                while status.region.width != len(badge):
+                while status.region.width != len(badge) or not screen.find_widget(
+                    label
+                ).clip.contains_region(label.region):
                     assert time.monotonic() < laid_out_by, (
-                        f"{backend_id}: {badge!r} never laid out"
+                        f"{backend_id} @ {size}: {badge!r} never laid out"
                     )
                     await pilot.pause(0.02)
                 default_rows += bool(marker.region.width)
                 assert test_btn.region.right <= row.region.right, (
-                    f"{backend_id} with {badge!r}: Test ends at "
+                    f"{backend_id} @ {size} with {badge!r}: Test ends at "
                     f"{test_btn.region.right}, past the row's right edge "
                     f"({row.region.right})"
+                )
+                painted = _painted_before_status(screen, label, status)
+                assert painted.endswith(" "), (
+                    f"{backend_id} @ {size} with {badge!r}: {painted!r} is "
+                    "painted right up to the status, with no blank cell"
                 )
         assert default_rows, "no row carried the default marker"
 
