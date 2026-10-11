@@ -159,8 +159,8 @@ async def test_advanced_follows_model_defaults_as_closed_one_row_disclosures(req
 @private_profile_test
 async def test_saved_model_list_counts_and_each_row_says_selected_and_saved(request):
     """AC#1, AC#3, AC#4: the title counts saved against discovered models;
-    Discover and Save selected still work inside the disclosure; each row says
-    in words whether it is selected and whether it is already saved."""
+    Discover, Save selected and Clear still work inside the disclosure; each
+    row says in words whether it is selected and whether it is already saved."""
     app = _app(discovered=_DISCOVERED)
     host = _SettingsCssHarness(app, "settings")
 
@@ -207,6 +207,27 @@ async def test_saved_model_list_counts_and_each_row_says_selected_and_saved(requ
         await host.workers.wait_for_complete()
         await pilot.pause()
         assert [call["model_ids"] for call in scope.persist_calls] == [["gpt-new-1"]]
+
+        # Clear (parent AC#9, ADR-002): Enter on it drops the discovered list
+        # and keeps the saved one.
+        saved = {key: list(value) for key, value in app.providers_models.items()}
+        clear = screen.query_one("#settings-clear-discovered-provider-models", Button)
+        assert not clear.disabled
+        clear.focus()
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: bool(scope.clear_calls) and not screen._model_discovery_models,
+        )
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert len(scope.clear_calls) == 1
+        assert not screen._model_discovery_models
+        assert _title(screen, disclosure_id).endswith(" · none discovered")
+        listed = screen.query_one("#settings-discovered-models-list", SelectionList)
+        assert listed.option_count == 0
+        assert clear.disabled
+        assert app.providers_models == saved
 
 
 @pytest.mark.asyncio
