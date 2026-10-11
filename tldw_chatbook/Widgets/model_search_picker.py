@@ -1093,6 +1093,8 @@ class ModelSearchPicker(Widget):
     def _handle_key(self, event: events.Key) -> None:
         if event.key == "down" and self._matches:
             results = self.query_one("#model-search-picker-results", OptionList)
+            if results.has_focus:
+                return  # the list's own binding moves its cursor
             results.focus()
             if self._highlight_typed_match(results):
                 event.stop()
