@@ -10,11 +10,13 @@ from textual.widgets import Input
 
 from Tests.Widgets.test_model_search_picker import (
     PickerTestApp,
+    _BlockingScope,
     _entries,
     _provenance_option,
     _result_prompts,
     _results,
     _status_text,
+    _until,
     _wait_for_catalog,
 )
 from tldw_chatbook.UI.Screens.provider_model_resolution import ConsoleModelProvenance
@@ -161,3 +163,82 @@ async def test_clearing_the_filter_puts_the_catalog_line_back(grouped):
         assert field.value == ""
         assert not results.display
         assert _status_text(app) == "3 models available. Type to filter."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refresh", ["discovered", "provenance", "catalog-reload"])
+async def test_a_late_refresh_keeps_the_open_list_whole(refresh):
+    """R3 #6: the field shows the committed id and the list is open on every
+    model; a discovery result, a regrouping or a catalog reload arrives.
+
+    Each re-rendered the list with the field's text as the filter, so it
+    collapsed to the rows holding the committed id.
+    """
+    model_ids = ["a/one", "b/two", "c/three"]
+    app = PickerTestApp(
+        {"OpenRouter": []}, _entries("OpenRouter", model_ids), current_model="b/two"
+    )
+    async with app.run_test() as pilot:
+        picker, field, results = await _mounted(pilot, model_ids, grouped=False)
+        marked = f"b/two  {CURRENT_MARK}"
+        assert _result_prompts(results) == ["a/one", marked, "c/three"]
+
+        if refresh == "discovered":
+            picker.set_discovered_models("OpenRouter", ["d/found"])
+            expected = ["a/one", marked, "c/three", "d/found"]
+        elif refresh == "provenance":
+            picker.set_provenance_options(
+                "OpenRouter",
+                tuple(_provenance_option(model_id, _CATALOG) for model_id in model_ids),
+            )
+            expected = ["Current catalog", "a/one", marked, "c/three"]
+        else:
+            app.llm_provider_catalog_scope_service = _BlockingScope(
+                _entries("OpenRouter", [*model_ids, "d/reloaded"])
+            )
+            picker.refresh_provider("OpenRouter", current_model="b/two", force=True)
+            await app.llm_provider_catalog_scope_service.started.wait()
+            app.llm_provider_catalog_scope_service.release.set()
+            expected = ["a/one", marked, "c/three", "d/reloaded"]
+        await _until(pilot, lambda: _result_prompts(results) == expected)
+
+        assert field.has_focus and field.value == "b/two"
+        assert _result_prompts(results) == expected
+
+        # A filter still being typed is kept as the filter.
+        await pilot.press(*"thr")
+        await pilot.pause()
+        picker.set_discovered_models("OpenRouter", ["d/found", "e/three-more"])
+        await pilot.pause()
+        assert [
+            str(option.prompt) for option in results.options if not option.disabled
+        ] == ["c/three", "e/three-more"]  # a group heading is a disabled row
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("grouped", [False, True], ids=["flat", "grouped"])
+async def test_a_catalog_load_that_ends_after_the_field_is_gone_exits_nothing(grouped):
+    """R3 #7: the load worker resumes into a picker whose children are gone.
+
+    Teardown prunes the children before the picker's own Unmount cancels its
+    workers; a load that resolves in between ran ``query_one`` on the missing
+    field, and an unhandled ``NoMatches`` in a worker exits the whole app.
+    """
+    app = PickerTestApp({"OpenRouter": []}, _entries("OpenRouter", ["a/one"]))
+    errors: list[BaseException] = []
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        app._handle_exception = errors.append
+        picker = app.query_one(ModelSearchPicker)
+        picker._show_provenance = grouped
+        scope = _BlockingScope(_entries("OpenRouter", ["a/one", "b/two"]))
+        app.llm_provider_catalog_scope_service = scope
+        picker.refresh_provider("OpenRouter", force=True)
+        await scope.started.wait()
+
+        await picker.remove_children()
+        scope.release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert errors == [], f"the load worker raised: {errors!r}"

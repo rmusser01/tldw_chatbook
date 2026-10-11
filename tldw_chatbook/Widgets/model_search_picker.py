@@ -403,21 +403,16 @@ class ModelSearchPicker(Widget):
             self._load_errors[cache_key] = False
         if provider_config_key(self._provider) != cache_key:
             return
-        if self._show_provenance:
-            self.set_provenance_options(normalized_provider, options)
-        else:
-            self._options_by_provider[cache_key] = tuple(options)
-        self._render_catalog_status()
-        input_widget = self.query_one("#model-search-picker-input", Input)
-        input_shows_committed_model = bool(self._selected_model) and (
-            input_widget.value == self._selected_model
-        )
-        if (
-            input_widget.has_focus
-            and not self._custom_mode
-            and not input_shows_committed_model
-        ):
-            self._render_matches(input_widget.value, show_empty_query=True)
+        try:
+            if self._show_provenance:
+                self.set_provenance_options(normalized_provider, options)
+            else:
+                self._options_by_provider[cache_key] = tuple(options)
+                self._render_catalog_status()
+                self._rerender_focused_list()
+        except NoMatches:
+            # Teardown prunes the field before Unmount cancels this worker.
+            return
 
     def refresh_provider(
         self,
@@ -498,9 +493,7 @@ class ModelSearchPicker(Widget):
         if provider_config_key(self._provider) != cache_key:
             return
         self._render_catalog_status()
-        input_widget = self.query_one("#model-search-picker-input", Input)
-        if input_widget.has_focus and not self._custom_mode:
-            self._render_matches(input_widget.value, show_empty_query=True)
+        self._rerender_focused_list()
         if notify and self._uses_provenance_options():
             self.post_message(self.ProvenanceOptionsChanged(provider))
 
@@ -582,9 +575,7 @@ class ModelSearchPicker(Widget):
         if provider_config_key(self._provider) != cache_key:
             return
         self._render_catalog_status()
-        input_widget = self.query_one("#model-search-picker-input", Input)
-        if input_widget.has_focus and not self._custom_mode:
-            self._render_matches(input_widget.value, show_empty_query=True)
+        self._rerender_focused_list()
         if notify:
             self.post_message(self.ProvenanceOptionsChanged(provider))
 
@@ -764,6 +755,21 @@ class ModelSearchPicker(Widget):
         self._shown_query = ""
         results.clear_options()
         results.display = False
+
+    def _rerender_focused_list(self) -> None:
+        """Show the list for a focused field after its options changed.
+
+        The committed id the field echoes is no filter, as on focus: a list
+        open on every model stays whole. A typed filter (a short window blur,
+        Tab to Custom ID and back) keeps its own list, empty or not.
+        """
+        input_widget = self.query_one("#model-search-picker-input", Input)
+        if input_widget.has_focus and not self._custom_mode:
+            value = input_widget.value
+            self._render_matches(
+                "" if value == (self._selected_model or "") else value,
+                show_empty_query=True,
+            )
 
     def _render_matches(self, query: str, *, show_empty_query: bool = False) -> None:
         results = self.query_one("#model-search-picker-results", OptionList)
@@ -965,17 +971,9 @@ class ModelSearchPicker(Widget):
         if self._preserve_committed_on_next_input_focus:
             self._preserve_committed_on_next_input_focus = False
             return
-        if self._custom_mode:
-            return
         # TASK-33001.7: keep the committed model painted. The input selects
-        # it on focus, so the first keystroke replaces it. A typed filter the
-        # blur timer has not dropped yet (a short window blur, Tab to Custom
-        # ID and back) keeps its own list, empty or not (TASK-33007.9).
-        value = event.control.value
-        self._render_matches(
-            "" if value == (self._selected_model or "") else value,
-            show_empty_query=True,
-        )
+        # it on focus, so the first keystroke replaces it (TASK-33007.9).
+        self._rerender_focused_list()
 
     def on_descendant_blur(self, event: events.DescendantBlur) -> None:
         """Restore committed copy after focus leaves the compound picker."""
