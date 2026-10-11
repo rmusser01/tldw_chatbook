@@ -493,6 +493,84 @@ def _install_deferred_notes_sync_facades(app: Any) -> bool:
     return True
 
 
+def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
+    """Whether the notes-sync state DB on disk carries real configuration.
+
+    TASK-21240: the TASK-21112 start gate's second clause was a bare
+    ``state_path.exists()``, which an ABANDONED first-time setup satisfies
+    forever -- opening setup force-starts the runtime (creating and
+    schema-initializing the file), and abandoning it without configuring a
+    sync directory leaves an empty store that re-arms the gate on every
+    subsequent boot. The honest evidence is a configured ROOT in
+    ``notes_sync_roots``.
+
+    Side-effect free by construction (the TASK-21112 rule): read-only URI
+    open, SELECT only. Never creates the file, never opens for write, never
+    migrates. Raises on a corrupt/unopenable store -- callers treat that as
+    fail-open (start attempt), the same safe direction the runtime's own
+    ``_start_once`` probe handling takes.
+
+    Args:
+        state_path: The state DB path from ``get_notes_sync_state_db_path()``.
+
+    Returns:
+        True when at least one sync root is configured; False when the file
+        is absent, schema-only (the abandoned-setup case), or missing the
+        roots table entirely.
+    """
+    from pathlib import Path as _Path
+
+    path = _Path(state_path)
+    if not path.exists():
+        return False
+    import sqlite3
+
+    connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    try:
+        row = connection.execute(
+            "SELECT 1 FROM notes_sync_roots LIMIT 1"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        # No such table: a store whose schema never reached root creation.
+        return False
+    finally:
+        connection.close()
+    return row is not None
+
+
+def _notes_sync_boot_start_evidence(app: Any) -> bool:
+    """The TASK-21112 start gate, shared by start() and boot construction.
+
+    TASK-21247: the same predicate that decides whether the runtime should
+    START now also decides whether ``on_mount`` may CONSTRUCT it -- reading
+    the lazy property unconditionally relocated the ~15-module construction
+    chain from boot to just before first paint, paying it on every boot
+    including zero-profile ones. Both call sites must evaluate the SAME
+    evidence or construction and start drift apart.
+
+    Exceptions propagate: a broken probe must fail OPEN (a full start
+    attempt), never silently disable a configured user's sync -- the
+    runtime's ``_start_once`` catches and does exactly that, and the boot
+    caller wraps this the same way.
+
+    Args:
+        app: The ``TldwCli`` (or harness double) carrying ``app_config``.
+
+    Returns:
+        True when configuration evidence exists (legacy ``[notes]``
+        sync-directory key, or a configured root in the on-disk state DB).
+    """
+    from tldw_chatbook.Notes.notes_sync_legacy import (
+        legacy_sync_directory_configured,
+    )
+
+    if legacy_sync_directory_configured(app.app_config):
+        return True
+    return _notes_sync_state_db_has_configured_roots(
+        get_notes_sync_state_db_path()
+    )
+
+
 def _wire_notes_sync_services(app: Any) -> None:
     """Finish Notes Sync composition after both SQLite owners exist."""
 
@@ -850,42 +928,58 @@ class ServiceWiringMixin:
             build_notes_sync_runtime_owner,
         )
 
+        # TASK-21249: THE single read point for every value the owner is
+        # built from. All of them are captured HERE — inside the construct,
+        # under the property's lock — and flow only into the build call
+        # below; nothing is re-read at start() or at use time. That is what
+        # makes "moving the property's first access" (TASK-21247 gated the
+        # boot read; the Library screen reads it at its own mount) unable to
+        # change WHAT the owner is built with: whenever construction fires,
+        # it reads the same slots, once, atomically.
         notes_sync_state_path = get_notes_sync_state_db_path()
+        local_user_id = self.notes_user_id
+        app_config = self.app_config
+        notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
+            get_notes_sync_watcher_intervals(app_config)
+        )
         notes_sync_migrator = build_notes_sync_legacy_migrator(
             database_path=notes_sync_state_path,
             legacy_connection=lambda: self.chachanotes_db.get_connection(),
-            settings=self.app_config,
+            settings=app_config,
             note_scope_id=ScopeType.LOCAL_NOTE.value,
             file_notes_binding=self._notes_sync_file_notes_binding,
             private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
         )
-        notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
-            get_notes_sync_watcher_intervals(self.app_config)
-        )
         return build_notes_sync_runtime_owner(
             notes_scope_service=self._notes_sync_scope_service,
             cutover_admitted=True,
+            # Read live here (the restart-cutover fence pins this shape):
+            # the sole-process flag is read once, at construction, under the
+            # property's lock -- part of the same single read point above.
             profile_process_is_sole=self._instance_lock_status.acquired,
             database_path=notes_sync_state_path,
             migrate_legacy=notes_sync_migrator,
             file_notes_binding=self._notes_sync_file_notes_binding,
-            local_user_id=self.notes_user_id,
+            local_user_id=local_user_id,
             recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(
-                self.app_config
+                app_config
             ),
             # TASK-21112 boot gate: start only on actual configuration — the
             # legacy [notes] sync-directory key (one-time migration path) or
-            # a state DB already on disk. Path.exists() never opens or
-            # creates the database; a zero-profile boot therefore creates no
-            # notes-sync state at all. First-time setup (review_setup)
-            # force-starts the runtime on demand. On Python 3.12
-            # Path.exists() RAISES PermissionError (pathlib no longer
-            # swallows EACCES); on a sandboxed profile that deliberately
-            # rides the gate's fail-open path — one full start attempt,
-            # which is the safe direction and is memoized.
+            # a configured root in the state DB already on disk. The
+            # read-only roots probe never opens or creates the database for
+            # write; a zero-profile boot therefore creates no notes-sync
+            # state at all, and — TASK-21240 — neither does the EMPTY store
+            # an abandoned first-time setup leaves behind re-arm this gate.
+            # First-time setup (review_setup) force-starts the runtime on
+            # demand. On Python 3.12 Path.exists() RAISES PermissionError
+            # (pathlib no longer swallows EACCES); on a sandboxed profile
+            # that deliberately rides the gate's fail-open path — one full
+            # start attempt, which is the safe direction and is memoized.
             start_evidence=(
-                lambda settings=self.app_config, state_path=notes_sync_state_path: (
-                    legacy_sync_directory_configured(settings) or state_path.exists()
+                lambda settings=app_config, state_path=notes_sync_state_path: (
+                    legacy_sync_directory_configured(settings)
+                    or _notes_sync_state_db_has_configured_roots(state_path)
                 )
             ),
             watcher_interval_seconds=notes_sync_watcher_interval,
@@ -923,6 +1017,41 @@ class ServiceWiringMixin:
         """
         with self._notes_sync_runtime_owner_lock:
             self._notes_sync_runtime_owner = owner
+            # A substituted double (tests, recovery) supersedes any recorded
+            # build failure -- the safe reader must not keep shadowing it.
+            self.__dict__.pop("_notes_sync_runtime_build_failure", None)
+
+    def _read_notes_sync_runtime_owner_safe(self) -> "NotesSyncRuntimeOwner | None":
+        """Read the runtime owner WITHOUT letting a build failure vanish.
+
+        TASK-21249: the Library screen used to read this through
+        ``getattr(app, "notes_sync_runtime_owner", None)`` -- which is right
+        for harness doubles that lack the property, but once the name became
+        a lazily-BUILDING property the getattr default also swallowed an
+        exception raised INSIDE the build, painting a construction failure
+        to the user as "awaiting cutover" (feature not available yet).
+        This reader distinguishes the two: a real build failure is recorded
+        on ``_notes_sync_runtime_build_failure`` (and logged once) so the UI
+        can show a distinct, honest state; the owner slot stays None.
+
+        Returns:
+            The built (or substituted) owner, or None when the property is
+            absent, unbuildable, or previously failed to build.
+        """
+        if self.__dict__.get("_notes_sync_runtime_build_failure") is not None:
+            return None
+        descriptor = getattr(type(self), "notes_sync_runtime_owner", None)
+        if not isinstance(descriptor, property):
+            return getattr(self, "notes_sync_runtime_owner", None)
+        try:
+            return self.notes_sync_runtime_owner
+        except Exception as error:  # noqa: BLE001 - UI read must not crash
+            self._notes_sync_runtime_build_failure = error
+            logger.opt(exception=True).error(
+                "notes-sync runtime construction failed; the Library screen "
+                "will report a runtime error rather than feature-unavailable."
+            )
+            return None
 
     def _build_rag_admin_services(self) -> None:
         """Construct the RAG admin service trio on first access (task-254).

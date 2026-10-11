@@ -221,6 +221,20 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Chat.console_voice_trace_gateway",
     "tldw_chatbook.Chat.console_voice_trace_promotion",
     "tldw_chatbook.Widgets.Console.console_voice_preview",
+    # TASK-21247: the notes-sync runtime CONSTRUCTION chain. A zero-profile
+    # boot must neither construct the owner nor import what constructing it
+    # pulls in -- on_mount gates the lazy property read on the same
+    # TASK-21112 start evidence start() uses. Deliberately NOT listed
+    # (measured still resident, 2026-10-11): notes_sync_legacy (imported by
+    # the gate predicate itself) + filesystem it pulls, and
+    # conflicts/models/reconciler (module-level imports of the Library
+    # notes-sync controller, pre-existing boot cost unrelated to
+    # construction).
+    "tldw_chatbook.Notes.notes_sync_authority",
+    "tldw_chatbook.Notes.notes_sync_coordinator",
+    "tldw_chatbook.Notes.notes_sync_executor",
+    "tldw_chatbook.Notes.notes_sync_runtime",
+    "tldw_chatbook.Notes.notes_sync_watcher",
     # PCM wrapping belongs to requested playback, not Console first paint.
     "tldw_chatbook.TTS.pcm_playback",
     # Inspect's Environment implementation is first-open work, not closed-rail boot.

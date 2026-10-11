@@ -380,6 +380,7 @@ from tldw_chatbook.app_service_wiring import (
     _build_terminal_backend,  # noqa: F401 -- re-export
     _extract_collections_article,  # noqa: F401 -- re-export
     _install_deferred_notes_sync_facades,
+    _notes_sync_boot_start_evidence,
     _read_app_raw_cli_permitted,
     _resolve_collections_media_reference,  # noqa: F401 -- re-export
     _resolve_collections_note_reference,  # noqa: F401 -- re-export
@@ -3220,13 +3221,33 @@ class TldwCli(
         self._wire_watchlists_command_service()
         self._bind_tts_service()
         self._start_backup_maintenance_monitor()
-        self._notes_sync_runtime_start_task = asyncio.create_task(
-            self.notes_sync_runtime_owner.start(),
-            name="start_notes_sync_runtime",
-        )
-        self._notes_sync_runtime_start_task.add_done_callback(
-            self._observe_notes_sync_runtime_start
-        )
+        # TASK-21247: gate CONSTRUCTION, not only start. Reading the lazy
+        # property unconditionally paid the ~15-module notes-sync
+        # construction chain just before first paint on EVERY boot,
+        # including zero-profile ones -- exactly what TASK-21112 was filed
+        # to avoid. The predicate is the same TASK-21112 start-evidence gate
+        # the runtime's own start() evaluates (empty-store refinement per
+        # TASK-21240), evaluated BEFORE the property is touched; a broken
+        # probe fails OPEN (one full attempt) exactly as start() does.
+        try:
+            _notes_sync_start_evidence = _notes_sync_boot_start_evidence(self)
+        except Exception:
+            _notes_sync_start_evidence = True
+        if _notes_sync_start_evidence:
+            self._notes_sync_runtime_start_task = asyncio.create_task(
+                self.notes_sync_runtime_owner.start(),
+                name="start_notes_sync_runtime",
+            )
+            self._notes_sync_runtime_start_task.add_done_callback(
+                self._observe_notes_sync_runtime_start
+            )
+        else:
+            # First-time setup force-starts the runtime on demand
+            # (`review_setup`), constructing it lazily at that point.
+            self.loguru_logger.debug(
+                "Notes-sync start gate: no configuration evidence; runtime "
+                "not constructed this boot."
+            )
         mount_start = time.perf_counter()
 
         # task-19561: hand the process-level SIGTERM/SIGINT handler this app

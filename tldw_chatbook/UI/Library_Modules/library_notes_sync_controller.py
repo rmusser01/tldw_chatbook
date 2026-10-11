@@ -161,10 +161,29 @@ class _ImportOncePort(Protocol):
 
 
 class InertLastingSyncRuntime:
-    """Honest structural adapter when the app-owned runtime is unavailable."""
+    """Honest structural adapter when the app-owned runtime is unavailable.
+
+    TASK-21249: the default snapshot keeps reporting the cutover-shaped
+    ``("awaiting_cutover", "finish_upgrade")`` pair for harness doubles and
+    pre-cutover builds. When the app's lazy runtime property FAILED to
+    build, construct with ``status="failed", next_action="review_settings"``
+    instead -- a construction failure must be distinguishable from
+    "feature not available yet", both in the UI (the ``failed`` status
+    branch already exists) and in support logs (the wiring mixin logs the
+    build exception at ERROR before handing this adapter over).
+    """
+
+    def __init__(
+        self,
+        *,
+        status: str = "awaiting_cutover",
+        next_action: str = "finish_upgrade",
+    ) -> None:
+        self._status = status
+        self._next_action = next_action
 
     def snapshot(self) -> NotesSyncRuntimeSnapshot:
-        return NotesSyncRuntimeSnapshot("awaiting_cutover", "finish_upgrade")
+        return NotesSyncRuntimeSnapshot(self._status, self._next_action)
 
     async def _blocked(self) -> Never:
         raise RuntimeError("notes_sync_cutover_not_admitted")
