@@ -140,3 +140,24 @@ async def test_the_committed_model_and_a_typed_id_both_keep_a_row_past_the_cap()
         assert "gpt-4" in rows
         assert f"gpt-4-committed  {CURRENT_MARK}" in rows
         assert _highlighted_row(results) == "gpt-4"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("grouped", [False, True], ids=["flat", "grouped"])
+async def test_clearing_the_filter_puts_the_catalog_line_back(grouped):
+    """R3 #5: "N found · Enter picks · Esc cancels" stayed after the filter
+    was deleted, over a closed list that Enter picks nothing from."""
+    model_ids = ["gpt-a", "gpt-b", "other"]
+    app = PickerTestApp({"OpenRouter": []}, _entries("OpenRouter", model_ids))
+    async with app.run_test() as pilot:
+        _picker, field, results = await _mounted(pilot, model_ids, grouped=grouped)
+
+        await pilot.press(*"gpt")
+        await pilot.pause()
+        assert _status_text(app) == "2 found · Enter picks · Esc cancels"
+
+        await pilot.press("backspace", "backspace", "backspace")
+        await pilot.pause()
+        assert field.value == ""
+        assert not results.display
+        assert _status_text(app) == "3 models available. Type to filter."

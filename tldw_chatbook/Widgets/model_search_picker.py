@@ -768,24 +768,21 @@ class ModelSearchPicker(Widget):
     def _render_matches(self, query: str, *, show_empty_query: bool = False) -> None:
         results = self.query_one("#model-search-picker-results", OptionList)
         normalized_query = query.strip().lower()
-        if self._uses_provenance_options():
-            self._render_provenance_matches(
-                results,
-                normalized_query,
-                show_empty_query=show_empty_query,
-            )
+        if not normalized_query and not show_empty_query:
+            # The filter was deleted: its list closes and its count goes too.
+            self._hide_results()
+            self._render_catalog_status()
             return
-        catalog_model_ids = self._catalog_model_ids()
-        model_ids = catalog_model_ids
+        if self._uses_provenance_options():
+            self._render_provenance_matches(results, normalized_query)
+            return
+        model_ids = self._catalog_model_ids()
         if normalized_query:
             model_ids = [
                 model_id
                 for model_id in model_ids
                 if normalized_query in model_id.lower()
             ]
-        elif not show_empty_query:
-            self._hide_results()
-            return
         self._matches = self._capped(model_ids, str, normalized_query)
         self._result_model_ids_by_option_id = {}
         self._committed_index = None
@@ -867,16 +864,9 @@ class ModelSearchPicker(Widget):
         return True
 
     def _render_provenance_matches(
-        self,
-        results: OptionList,
-        normalized_query: str,
-        *,
-        show_empty_query: bool,
+        self, results: OptionList, normalized_query: str
     ) -> None:
         """Render only populated provenance groups with stable option IDs."""
-        if not normalized_query and not show_empty_query:
-            self._hide_results()
-            return
         options = self._typed_provider_options()
         if normalized_query:
             options = [
