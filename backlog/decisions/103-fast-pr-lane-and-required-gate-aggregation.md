@@ -104,11 +104,15 @@ cron entry on `dev`.
 - The fast-test jobs and derived-artifact job remain separate. The required job
   declares both fast lanes as prerequisites, runs with `always()`, and fails
   explicitly on pull requests unless both prerequisite results are `success`.
-- The required workflow runs its two fast lanes in parallel (at most two
-  runners at a time), then the install-free derived-artifact checks. With
-  one routine path-scoped guard (perf-guard), an ordinary unlabeled, non-GGUF PR has a
-  peak of at most three runners instead of approximately thirteen.
-- That three-runner figure is not a global maximum. The two path-scoped GGUF
+- The required workflow runs its test lanes in parallel, then the install-free
+  derived-artifact checks. As amended on 2026-09-27 that was two fast lanes
+  (at most two runners at a time), three runners with the one routine
+  path-scoped guard (perf-guard), instead of approximately thirteen. It has
+  grown since: the UI lane runs its census as shards (TASK-34353; seven since
+  TASK-33007) and the Console P0 gate is a third lane (TASK-33621.27), so an
+  ordinary unlabeled, non-GGUF PR now runs nine test runners at once, ten with
+  perf-guard (see the 2026-10-10 note below).
+- That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
   the opt-in TASK-19637 label can add three more. Those exceptional evidence
   suites retain their explicit contracts.

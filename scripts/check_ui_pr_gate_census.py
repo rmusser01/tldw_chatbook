@@ -241,7 +241,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # The capture review's items 9-11 (p7cf-b) raised it to 143:
 # test_settings_console_behavior_grammar.py (5 cases) pins Console
 # Behavior's one frame, one control column, its labels and prose inset.
-# TASK-33007 (CI on #3057) raised it to 170: test_settings_connect_rows.py
+# TASK-33007 (CI on #3057) raised it by three: test_settings_connect_rows.py
 # ran 15+ min of one 20-min shard on CI (61 cases, each mounting the whole
 # Settings screen) and timed the shard out. It is split by topic into itself
 # (the Provider control), _tab_budget.py, _key_rows.py and _paint.py; the
@@ -279,7 +279,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # of pytest at most with six shards, 13.1 with seven and 13.7 with eight
 # (dev's own entries fall unevenly over eight), so the lane runs seven. An
 # entry added above the tail shifts its shards: re-run the replay then, and
-# add a shard only if the best order still nears the cap.
+# change the shard count only if the best order still nears the cap -- a new
+# count re-deals every entry, and one more shard is not always lighter.
 # Phase 7's counts above were taken on its own base; over dev's 179 its eleven
 # files make 190, and the node that pins the Study card-list lock (the review
 # of #3057) 191.

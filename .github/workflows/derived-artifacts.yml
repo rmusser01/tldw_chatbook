@@ -281,7 +281,10 @@ jobs:
     # the census, in census order, on the same minimal dependency set. What
     # changes is only which files run before a given file -- a file that needed
     # a particular predecessor was relying on leaked state, which is a bug the
-    # split surfaces, not hides. Add a shard (not minutes) when one nears the cap.
+    # split surfaces, not hides. When a shard nears the cap, do not raise the
+    # minutes: replay the shard logs (scripts/ui_lane_shard_replay.py) and
+    # re-order the census first. A different shard count re-deals every entry
+    # and is not always lighter (on #3057 eight replayed heavier than seven).
     #
     # TASK-34917: four shards measured median 13.8 / 9.7 / 16.5 / 15.3 min and
     # shard 3 max 19.7 over 91 PR runs (to 2026-10-14). Shard 3 holds the

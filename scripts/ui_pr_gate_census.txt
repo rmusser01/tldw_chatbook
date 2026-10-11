@@ -282,9 +282,11 @@ Tests/UI/test_settings_default_model_picker.py
 # node is the only one that goes red without the lock.
 Tests/UI/test_study_flashcards_screen.py::test_two_awaited_card_list_rebuilds_do_not_interleave
 # Phase 7's Settings files: about half of the lane's pytest minutes on CI. They sit
-# last, in this order, so round-robin over seven shards spreads them and no
-# other file's shard depends on them. Re-order them with
-# scripts/ui_lane_shard_replay.py --tail 11 (see check_ui_pr_gate_census.py).
+# at the end, in this order, so round-robin over seven shards spreads them and no
+# other file's shard depends on them. Append new entries below this block: one
+# added above it moves these files to other shards. To re-order them, run
+# scripts/ui_lane_shard_replay.py with --tail counting from this block's first
+# entry to the end of the file (see check_ui_pr_gate_census.py).
 Tests/UI/test_settings_console_behavior_grammar.py
 Tests/UI/test_settings_connect_paint.py
 Tests/UI/test_settings_advanced_disclosures.py
