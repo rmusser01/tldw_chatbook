@@ -929,6 +929,13 @@ def get_provider_readiness(
         provider_settings,
         environ=env,
     )
+    if env_var is not None:
+        try:
+            _validate_env_var(env_var)
+        except ValueError:
+            # A hand-edited api_key_env_var no record can carry raised from
+            # every return below and killed Settings while it composed.
+            return _invalid_settings_readiness(provider_name, provider_key)
     if configured_key and provider_key in _STRICT_HOSTED_PROVIDER_KEYS:
         try:
             configured_key = _resolved_hosted_api_key(provider_key, app_config, env)
