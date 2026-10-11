@@ -121,9 +121,10 @@ says what fills the window and what to change:
 - The message does not fit and there are no older complete turns to compact:
   shorten it or its attachments, lower Max tokens, or start a new chat.
 
-If the model's context window is an estimate (shown as "Model window (est.)"),
-the card and the note say so. Set the real value in **F4 Settings > Providers
-& Models**.
+If no catalog knows the model's context window, the app assumes a size (the
+**Model window** row in Chat settings > Context and memory reads "unknown,
+32,000 assumed"), and the card and the note say so. Set the real value in
+**F4 Settings > Providers & Models**, under Advanced > Context window.
 
 ### Per-turn micro-compaction
 

@@ -281,9 +281,10 @@ Master password (leave empty if you forgot it):
 A saved key that is still encrypted is never treated as a usable key. If a
 key cannot be decrypted, its provider shows as not ready, never ready. A
 provider that needs a key reads as missing its key ("API key missing", and
-"API key source: missing" in Providers & Models). A local provider that
-needs no key still says why: "Saved API key is still encrypted". Either
-way, re-enter or clear the key in Settings ▸ Providers & Models.
+the API key row's source word **missing** in Providers & Models). A local
+provider that needs no key still says why: "Saved API key is still
+encrypted". Either way, re-enter or clear the key in Settings ▸ Providers &
+Models.
 
 ## Setting up another machine
 
