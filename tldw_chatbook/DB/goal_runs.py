@@ -227,13 +227,17 @@ class GoalRunsStore:
             return max(0, row[0] // RECORD_BYTES - 2) if row else 0
 
     def _checkpoints(self, conn, goal_id: str) -> tuple[GoalCheckpoint, ...]:
-        return tuple(
-            GoalCheckpoint.model_validate_json(r[0])
-            for r in conn.execute(
-                "SELECT c.payload_json FROM goal_checkpoints c JOIN goal_iterations i ON i.attempt_id=c.attempt_id WHERE c.goal_id=? ORDER BY i.ordinal",
-                (goal_id,),
-            )
-        )
+        checkpoints = []
+        for row in conn.execute(
+            "SELECT c.payload_json,c.attempt_id,i.ordinal,i.goal_id FROM goal_checkpoints c "
+            "JOIN goal_iterations i ON i.attempt_id=c.attempt_id WHERE c.goal_id=? ORDER BY i.ordinal",
+            (goal_id,),
+        ):
+            checkpoint = GoalCheckpoint.model_validate_json(row[0])
+            if (checkpoint.id, checkpoint.ordinal, goal_id) != (row[1], row[2], row[3]):
+                raise ValueError("invalid_goal_ownership")
+            checkpoints.append(checkpoint)
+        return tuple(checkpoints)
 
     def evidence(self, goal_id: str) -> tuple[GoalEvidence, ...]:
         """Read only private copies; source logs and scratch artifacts may be pruned."""
@@ -242,16 +246,20 @@ class GoalRunsStore:
 
     def _evidence(self, conn, goal_id):
         # Only observations belonging to accepted stored checkpoints are reusable.
-        return tuple(
-            GoalEvidence.model_validate_json(r[0])
-            for r in conn.execute(
-                "SELECT e.payload_json FROM goal_evidence e JOIN goal_checkpoints c ON c.attempt_id=e.attempt_id "
-                "JOIN goal_iterations i ON i.attempt_id=e.attempt_id JOIN agent_runs r ON r.id=i.run_id "
-                "JOIN goal_runs g ON g.id=e.goal_id WHERE e.goal_id=? AND c.goal_id=g.id AND i.goal_id=g.id "
-                "AND r.conversation_id=g.conversation_id AND r.work_chain_id=g.chain_id ORDER BY e.rowid",
-                (goal_id,),
-            )
-        )
+        evidence = []
+        for row in conn.execute(
+            "SELECT e.payload_json,e.id,e.goal_id,e.attempt_id,i.run_id FROM goal_evidence e "
+            "JOIN goal_checkpoints c ON c.attempt_id=e.attempt_id "
+            "JOIN goal_iterations i ON i.attempt_id=e.attempt_id JOIN agent_runs r ON r.id=i.run_id "
+            "JOIN goal_runs g ON g.id=e.goal_id WHERE e.goal_id=? AND c.goal_id=g.id AND i.goal_id=g.id "
+            "AND r.conversation_id=g.conversation_id AND r.work_chain_id=g.chain_id ORDER BY e.rowid",
+            (goal_id,),
+        ):
+            item = GoalEvidence.model_validate_json(row[0])
+            if (item.id, item.goal_id, item.attempt_id, item.run_id) != tuple(row[1:]):
+                raise ValueError("invalid_goal_ownership")
+            evidence.append(item)
+        return tuple(evidence)
 
     def checkpoint(self, result, *, binding_available: bool = True) -> GoalSnapshot:
         """Persist private evidence and exact matching attempt transition in FULL commit."""
@@ -562,14 +570,23 @@ class GoalRunsStore:
                 raise ValueError("unknown_goal")
             if row["status"] == "removed":
                 return self._snapshot(conn, row)
+            root_id = self.db.automatic_work._allowance_chain(conn, row["chain_id"])[
+                "id"
+            ]
             active = conn.execute(
-                "SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id "
-                "WHERE i.goal_id=? AND a.state IN ('prepared','accepted','review_required')",
-                (goal_id,),
+                "SELECT 1 FROM automatic_work_chains c WHERE (c.id=? OR c.allowance_root_chain_id=?) "
+                "AND (c.status='review_required' "
+                "OR EXISTS (SELECT 1 FROM automatic_wake_attempts a WHERE a.chain_id=c.id "
+                "AND a.state IN ('prepared','accepted','review_required')) "
+                "OR EXISTS (SELECT 1 FROM automatic_chat_start_attempts a WHERE a.chain_id=c.id "
+                "AND a.state IN ('prepared','accepted','review_required'))) LIMIT 1",
+                (root_id, root_id),
             ).fetchone()
             uncertain = conn.execute(
-                "SELECT 1 FROM automatic_work_reservations WHERE chain_id=? AND (state IN ('reserved','uncertain') OR (kind='tokens' AND state='committed'))",
-                (row["chain_id"],),
+                "SELECT 1 FROM automatic_work_reservations r JOIN automatic_work_chains c ON c.id=r.chain_id "
+                "WHERE (c.id=? OR c.allowance_root_chain_id=?) "
+                "AND (r.state IN ('reserved','uncertain') OR (r.kind='tokens' AND r.state='committed')) LIMIT 1",
+                (root_id, root_id),
             ).fetchone()
             if (
                 row["status"]
@@ -602,6 +619,12 @@ class GoalRunsStore:
             )
 
     def _snapshot(self, conn: sqlite3.Connection, row: sqlite3.Row) -> GoalSnapshot:
+        if conn.execute(
+            "SELECT 1 FROM goal_reports r JOIN goal_iterations i ON i.id=r.iteration_id "
+            "WHERE r.goal_id=? AND i.goal_id!=r.goal_id LIMIT 1",
+            (row["id"],),
+        ).fetchone():
+            raise ValueError("invalid_goal_ownership")
         reports = conn.execute(
             "SELECT payload_json FROM goal_reports WHERE goal_id=? ORDER BY rowid",
             (row["id"],),
