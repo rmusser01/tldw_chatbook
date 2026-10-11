@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -110,13 +111,13 @@ class _Gate:
         real = getattr(NotesSyncExecutor, point)
         gate = self
 
-        async def gated(executor, request):
+        async def gated(executor, request, *args, **kwargs):
             if request.root_id == root_id:
                 gate.count += 1
                 if gate.count == 1:
                     gate.reached.set()
                     await gate.release.wait()
-            return await real(executor, request)
+            return await real(executor, request, *args, **kwargs)
 
         monkeypatch.setattr(NotesSyncExecutor, point, gated)
 
@@ -885,4 +886,280 @@ async def test_a_save_in_one_folder_never_waits_for_another_folders_pass(
         assert other_file.read_bytes() == _file_bytes(other_text)
     finally:
         gate.release.set()
+        await owner.shutdown()
+
+
+def _commit_refusals(monkeypatch: pytest.MonkeyPatch) -> list[BaseException]:
+    """Every exception ``commit_binding_stage`` raises from now on (a recorder
+    around the real method; it changes nothing).
+
+    The row a refused commit leaves says ``executor_failed``, which is what
+    EVERY untyped exception becomes. This is the exception itself."""
+
+    refused: list[BaseException] = []
+    real = NotesDeviceStateStore.commit_binding_stage
+
+    def recording(store, operation_id, *, expected, replacement):
+        try:
+            return real(store, operation_id, expected=expected, replacement=replacement)
+        except BaseException as error:
+            refused.append(error)
+            raise
+
+    monkeypatch.setattr(NotesDeviceStateStore, "commit_binding_stage", recording)
+    return refused
+
+
+def _is_the_identity_index_refusal(refusals: list[BaseException]) -> bool:
+    """Exactly one refusal: the unique identity index saying no."""
+
+    return (
+        len(refusals) == 1
+        and type(refusals[0]) is sqlite3.IntegrityError
+        and "notes_sync_bindings.stable_identity_digest" in str(refusals[0])
+    )
+
+
+@pytest.mark.parametrize(
+    "avoided",
+    [True, False],
+    ids=["as_shipped", "control_recycled_number_adopted"],
+)
+async def test_a_folders_write_never_lands_on_an_identity_another_folder_records(
+    vault: Vault, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, avoided: bool
+) -> None:
+    """TASK-34789: why the test above failed in CI and not on macOS.
+
+    A guarded replace unlinks the file it displaced, and ext4 gives the next
+    new file in that allocation group the inode number at once (APFS does
+    not reuse one). The replaced file's binding still records the number
+    until its own commit, 40 to 300 ms after the write as measured
+    (typically about 130 ms), so root-2 -- released the moment root-1's file
+    held its bytes -- wrote a file carrying a number binding-1 still
+    recorded. Whenever root-2 then committed first, the store's unique
+    identity index refused it:
+    ``update_file | needs_attention | executor_failed``, in 14 CI attempts
+    by 2026-10-11.
+
+    No inode is reused here. The state ext4 produces is installed instead:
+    the first number root-2's write is offered becomes the one binding-1
+    records, at the moment the filesystem adapter asks about it. As shipped
+    that candidate is refused and the file lands on another number. The
+    control answers the adapter "unclaimed", which is the product before the
+    fix, and ends in exactly the row CI showed.
+    """
+
+    other_file = _add_second_root(vault, tmp_path)
+    real_claimed = NotesDeviceStateStore.active_identity_claimed
+    offered: list[str] = []
+
+    def recycled(store: NotesDeviceStateStore, digest: str) -> bool:
+        if not offered:
+            with store.transaction(immediate=True) as connection:
+                connection.execute(
+                    "UPDATE notes_sync_bindings SET stable_identity_digest = ? "
+                    "WHERE binding_id = 'binding-1'",
+                    (digest,),
+                )
+        offered.append(digest)
+        return real_claimed(store, digest) if avoided else False
+
+    monkeypatch.setattr(NotesDeviceStateStore, "active_identity_claimed", recycled)
+    refusals = _commit_refusals(monkeypatch)
+    owner = build_owner(vault)
+    await owner.start()
+    other_text = OTHER_TEXT + "edited in the other folder"
+    try:
+        other = vault.database.get_note_by_id("note-2")
+        assert other is not None and vault.database.update_note(
+            "note-2",
+            {"title": other["title"], "content": other_text},
+            int(other["version"]),
+        )
+        assert await owner.note_changed("note-2") == ("root-2",)
+        await asyncio.wait_for(owner.settle(), 30)
+
+        second = _root(owner, "root-2")
+        assert other_file.read_bytes() == _file_bytes(other_text)
+        if avoided:
+            assert vault.incomplete() == []
+            assert (second.status, second.next_action) == ("up_to_date", "sync_now")
+            assert len(offered) == 2 and offered[0] != offered[1], offered
+            assert _binding(vault, "binding-2").stable_identity_digest == offered[1]
+            assert refusals == []
+        else:
+            assert _is_the_identity_index_refusal(refusals), refusals
+            assert vault.incomplete() == [
+                ("update_file", "needs_attention", "executor_failed")
+            ]
+            assert (second.status, second.next_action) == (
+                "needs_attention",
+                "resolve_cleanup",
+            )
+            assert len(offered) == 1
+    finally:
+        await owner.shutdown()
+
+
+def _identity(path: Path) -> str:
+    """The binding fingerprint of the file at ``path`` right now."""
+
+    entry = path.stat()
+    return NotesSyncExecutor.identity_digest(entry.st_dev, entry.st_ino)
+
+
+@pytest.mark.parametrize(
+    "avoided",
+    [True, False],
+    ids=["as_shipped", "control_claim_check_off"],
+)
+async def test_the_second_folder_writes_inside_the_first_folders_commit_window(
+    vault: Vault, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, avoided: bool
+) -> None:
+    """TASK-34789 on REAL inode numbers: nothing is modelled and no row is
+    rewritten. Root-1 does its guarded replace and is held one await before
+    its own ``commit_binding_stage``; root-2's whole pass runs inside that
+    window; root-1 is then released. Events only, every wait bounded.
+
+    What the filesystem did is read back from the run, never assumed from the
+    platform: the identity root-2's file landed on is compared with the one
+    binding-1 still records, and the store's true answer for each candidate
+    is kept.
+
+    * As shipped, both folders end healthy on any filesystem, and root-2's
+      file does not carry the identity binding-1 records: the adapter found
+      it another number.
+    * The control answers the adapter "unclaimed" -- the product before the
+      fix. Where the filesystem handed root-2 the recycled number, root-2's
+      commit is refused by the unique identity index and the run ends in the
+      row CI showed; where it did not, both folders end healthy.
+
+    An arm PASSES only when the filesystem really recycled the number in its
+    run (ext4); otherwise it SKIPS after its assertions (APFS, or another
+    process took the freed number first), so the summary line says which
+    happened.
+    """
+
+    other_file = _add_second_root(vault, tmp_path)
+    gate = _Gate(monkeypatch, "_desired_managed_memberships")
+    real_claimed = NotesDeviceStateStore.active_identity_claimed
+    #: The store's true answer for every candidate file, in order.
+    answers: list[bool] = []
+
+    def claimed(store: NotesDeviceStateStore, digest: str) -> bool:
+        answers.append(real_claimed(store, digest))
+        return answers[-1] if avoided else False
+
+    monkeypatch.setattr(NotesDeviceStateStore, "active_identity_claimed", claimed)
+    refusals = _commit_refusals(monkeypatch)
+    owner = build_owner(vault)
+    await owner.start()
+    second_published = asyncio.Event()
+    owner.add_status_listener(
+        lambda snapshot: snapshot.root_id == "root-2" and second_published.set()
+    )
+    other_text = OTHER_TEXT + "edited in the other folder"
+    try:
+        # Root-1: the file is replaced, the displaced original is unlinked,
+        # and the pass stops before its binding commit.
+        vault.edit_note(FIRST_SAVE)
+        assert await owner.note_changed("note-1") == ("root-1",)
+        await asyncio.wait_for(gate.reached.wait(), 30)
+        assert vault.file.read_bytes() == _file_bytes(FIRST_SAVE)
+        recorded = _binding(vault).stable_identity_digest
+        assert recorded != _identity(vault.file), "the commit window is not open"
+        asked = len(answers)
+
+        # Root-2: its whole pass, inside that window.
+        other = vault.database.get_note_by_id("note-2")
+        assert other is not None and vault.database.update_note(
+            "note-2",
+            {"title": other["title"], "content": other_text},
+            int(other["version"]),
+        )
+        second_published.clear()
+        assert await owner.note_changed("note-2") == ("root-2",)
+        await asyncio.wait_for(second_published.wait(), 30)
+        assert other_file.read_bytes() == _file_bytes(other_text)
+        assert _binding(vault).stable_identity_digest == recorded, (
+            "root-1 committed before root-2 finished"
+        )
+        offered = answers[asked:]
+        collided = _identity(other_file) == recorded
+
+        gate.release.set()
+        await asyncio.wait_for(owner.settle(), 30)
+
+        first, second = _root(owner), _root(owner, "root-2")
+        assert (first.status, first.next_action) == ("up_to_date", "sync_now")
+        assert vault.file.read_bytes() == _file_bytes(FIRST_SAVE)
+        assert _binding(vault).stable_identity_digest == _identity(vault.file)
+        if avoided:
+            assert not collided, "root-2's file carries the identity binding-1 held"
+            assert offered[-1] is False and all(offered[:-1]), offered
+            assert refusals == []
+            assert vault.incomplete() == []
+            assert (second.status, second.next_action) == ("up_to_date", "sync_now")
+            assert _binding(vault, "binding-2").stable_identity_digest == _identity(
+                other_file
+            )
+            if not offered[0]:
+                pytest.skip(
+                    "this filesystem did not hand the second folder the recycled "
+                    "inode number in this run, so no candidate was refused"
+                )
+        elif collided:
+            assert offered == [True], offered
+            assert _is_the_identity_index_refusal(refusals), refusals
+            assert vault.incomplete() == [
+                ("update_file", "needs_attention", "executor_failed")
+            ]
+            assert (second.status, second.next_action) == (
+                "needs_attention",
+                "resolve_cleanup",
+            )
+        else:
+            assert offered == [False], offered
+            assert refusals == []
+            assert vault.incomplete() == []
+            assert (second.status, second.next_action) == ("up_to_date", "sync_now")
+            pytest.skip(
+                "this filesystem did not hand the second folder the recycled "
+                "inode number in this run"
+            )
+    finally:
+        gate.release.set()
+        await owner.shutdown()
+
+
+async def test_a_claim_check_the_store_cannot_answer_never_stops_a_write(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-34789: the claim check is advisory; the binding commit's unique
+    identity index is the authority. When the store cannot answer (locked,
+    paused), the write goes ahead exactly as it did before the check existed
+    -- it is not fenced before its bytes land, which would hold the folder
+    for Recovery over a question nothing depended on."""
+
+    asked: list[str] = []
+
+    def locked(_store: NotesDeviceStateStore, digest: str) -> bool:
+        asked.append(digest)
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(NotesDeviceStateStore, "active_identity_claimed", locked)
+    owner = build_owner(vault)
+    await owner.start()
+    published = _recorded(owner)
+    try:
+        vault.edit_note(FIRST_SAVE)
+        assert await owner.note_changed("note-1") == ("root-1",)
+        await asyncio.wait_for(owner.settle(), 30)
+
+        assert len(asked) == 1, "the write never asked"
+        _healthy_at(vault, owner, FIRST_SAVE)
+        assert [entry for entry in published if entry[1] in HELD] == []
+        assert [entry.name for entry in vault.root.iterdir()] == ["quotes.md"]
+        assert _binding(vault).stable_identity_digest == _identity(vault.file)
+    finally:
         await owner.shutdown()

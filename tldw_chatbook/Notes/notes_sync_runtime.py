@@ -876,10 +876,43 @@ class _ProductionRuntimeAdapter:
             note_scope_id=root.note_scope_id,
         )
 
+    def _identity_claimed(self, device: int, inode: int) -> bool:
+        """Whether an active binding records this file identity (TASK-34789).
+
+        The filesystem adapter asks before it adopts a new file's inode
+        number, so that a file sync writes avoids a number an active binding
+        still records. ext4 reuses the number a replaced file gave back at
+        once, that file's binding keeps recording it until its own commit,
+        and a second binding committed on it ends ``executor_failed`` on the
+        store's unique identity index. That takes two folders allocating from
+        the same group: reproduced on ext4 in CI by a test that forces the
+        order, and under a model of the numbering; not observed in the app.
+
+        Advisory. That index stays the authority, so when the store cannot
+        answer, the write goes ahead exactly as it did before this check
+        existed and the binding commit decides. What else gets through: a
+        file sync did not create (an editor's rename, a file copied in), more
+        claimed numbers in a row than the adapter holds at once, and the
+        number of a binding migrated from the legacy engine and not committed
+        since, whose record uses another formula. Runs on the worker thread
+        the executor gave the filesystem call, on that thread's own
+        connection.
+        """
+
+        try:
+            return self._store.active_identity_claimed(
+                NotesSyncExecutor.identity_digest(device, inode)
+            )
+        except Exception as error:  # noqa: BLE001 - advisory read, see above
+            _log_bounded_failure("identity claim read", error)
+            return False
+
     def _filesystem(self, root: NotesSyncRootRecord) -> PosixNotesSyncFilesystem:
         filesystem = self._filesystems.get(root.root_id)
         if filesystem is None:
-            filesystem = PosixNotesSyncFilesystem(root.canonical_path)
+            filesystem = PosixNotesSyncFilesystem(
+                root.canonical_path, identity_claimed=self._identity_claimed
+            )
             filesystem.__enter__()
             self._filesystems[root.root_id] = filesystem
         return filesystem

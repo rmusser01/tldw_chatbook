@@ -1020,7 +1020,26 @@ class NotesSyncExecutor:
         if type(snapshot) is not NotesSyncFileSnapshot:
             raise TypeError("snapshot must be a supported private file observation.")
         identity = snapshot.observation.identity
-        value = f"{identity.device}\0{identity.inode}".encode("ascii")
+        return NotesSyncExecutor.identity_digest(identity.device, identity.inode)
+
+    @staticmethod
+    def identity_digest(device: int, inode: int) -> str:
+        """Return the binding fingerprint of one POSIX ``(device, inode)``.
+
+        What :meth:`stable_identity_digest` computes for a POSIX snapshot,
+        exposed for the caller that holds a bare descriptor stat and no
+        snapshot yet: the runtime's claimed-identity check on a file about to
+        be written (TASK-34789).
+
+        It is not the only place a fingerprint is computed.
+        ``notes_sync_filesystem._windows_stable_identity_digest`` repeats this
+        formula for Windows observations (that module cannot import this
+        one), and the legacy migration records a different one
+        (``notes_sync_legacy``'s ``file-identity`` digest), which a migrated
+        binding keeps until its first commit.
+        """
+
+        value = f"{device}\0{inode}".encode("ascii")
         return hashlib.sha256(value).hexdigest()
 
     async def execute(

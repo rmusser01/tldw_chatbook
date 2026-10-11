@@ -583,6 +583,7 @@ blocker. New calls in an existing symbol also change the expected count and fail
 | tldw_chatbook/Notes/note_import_receipts.py | NoteImportReceiptRepository._connect | connect_private_sqlite | 1 | qualified | notes.sync_state |
 | tldw_chatbook/Notes/sync_engine.py | NotesSyncEngine._write_file_info | write_text | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot.__enter__ | open | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._create_temporary | open | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._read_file | open | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._verified_child_directory | mkdir | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._verified_child_directory | open | 1 | external_input | external-notes-workspace-or-export |
@@ -1102,6 +1103,7 @@ The control owner now exclusively creates bounded version-1 before/after write i
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.move_file | os.unlink | 2 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.delete_file | os.unlink | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/file_notes_service.py | FileNotesService.restore_file | os.unlink | 1 | external_input | external-notes-workspace-or-export |
+| tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot._create_temporary | os.unlink | 2 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/Notes/sync_paths.py | PinnedSyncRoot.write_text | os.unlink | 1 | external_input | external-notes-workspace-or-export |
 | tldw_chatbook/TTS/audio_cpp_guided_launch.py | AudioCppGeneratedLaunchArtifact.cleanup | os.unlink | 1 | unsupported | tts |
 | tldw_chatbook/TTS/audio_cpp_guided_launch.py | _remove_partial_artifact | os.unlink | 1 | unsupported | tts |

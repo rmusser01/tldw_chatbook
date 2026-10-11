@@ -1228,6 +1228,47 @@ class NotesDeviceStateStore:
             rows = connection.execute(statement, parameters).fetchall()
         return tuple(str(row[0]) for row in rows)
 
+    def active_identity_claimed(self, stable_identity_digest: str) -> bool:
+        """Report whether an active binding records this file identity.
+
+        TASK-34789: ``idx_notes_sync_active_identity`` allows one active
+        binding per identity, and a binding keeps the identity of a file that
+        was replaced or deleted until its own commit. The filesystem adapter
+        asks this before it adopts a new file's inode number, so that a number
+        the filesystem recycled is not committed under a second binding. The
+        index stays the authority; this read is advisory.
+
+        Only a record written with ``NotesSyncExecutor.identity_digest`` can
+        match. A binding activated from the legacy migration
+        (:meth:`activate_migration_candidate` does not recompute it) keeps
+        the migration's own fingerprint until its first commit, so the
+        number of its file is not seen here until then.
+
+        Args:
+            stable_identity_digest: ``NotesSyncExecutor.identity_digest`` of
+                the candidate ``(device, inode)``.
+
+        Returns:
+            bool: True when an active binding, in any root, records it.
+
+        Raises:
+            ValueError: If the digest is not a lowercase SHA-256 digest.
+        """
+
+        validate_notes_sync_digest(
+            stable_identity_digest, field_name="stable_identity_digest"
+        )
+        with self.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM notes_sync_bindings
+                WHERE stable_identity_digest = ? AND state = 'active'
+                LIMIT 1
+                """,
+                (stable_identity_digest,),
+            ).fetchone()
+        return row is not None
+
     def has_binding_for_note_or_path(
         self,
         root_id: str,

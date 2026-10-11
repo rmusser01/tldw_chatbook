@@ -8,6 +8,7 @@ import os
 import stat
 import sys
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,6 +27,13 @@ _MAX_XATTR_NAMES_BYTES = 64 * 1024
 _MAX_XATTR_COUNT = 128
 _MAX_XATTR_VALUE_BYTES = 256 * 1024
 _MAX_XATTR_TOTAL_BYTES = 1024 * 1024
+# TASK-34789: how many refused candidates one write holds open at once, and so
+# how many claimed inode numbers it steps over before it stops asking. It is a
+# descriptor budget (macOS's default soft limit is 256), not a count of what
+# can be stale: with more than this many recorded numbers free at the low end
+# of one allocation group, the next candidate is used unasked and the write
+# has the outcome it had before the check existed.
+_MAX_CLAIMED_CANDIDATES = 64
 
 
 def _descriptor_guards_available() -> bool:
@@ -265,7 +273,22 @@ def guarded_rename_available(*, platform: str | None = None) -> bool:
 class PinnedSyncRoot:
     """Pin a selected Notes root and contain all descendant operations."""
 
-    def __init__(self, selected_root: Path | str):
+    def __init__(
+        self,
+        selected_root: Path | str,
+        *,
+        identity_claimed: Callable[[int, int], bool] | None = None,
+    ):
+        """Pin ``selected_root``.
+
+        Args:
+            selected_root: The root directory every operation stays inside.
+            identity_claimed: Whether ``(device, inode)`` is a file identity
+                some other record still holds. A file this root creates
+                avoids such a number; :meth:`_create_temporary` says how, and
+                what gets through. ``None`` asks nothing.
+        """
+
         self.lexical_root = Path(selected_root)
         try:
             lexical = self.lexical_root.lstat()
@@ -276,6 +299,7 @@ class PinnedSyncRoot:
             raise SyncPathError("root_link_or_reparse")
         if not self.canonical_root.is_dir():
             raise SyncPathError("root_not_directory")
+        self._identity_claimed = identity_claimed
         self._root_fd: int | None = None
         self._root_stat: os.stat_result | None = None
         self._supported = _descriptor_guards_available()
@@ -799,6 +823,148 @@ class PinnedSyncRoot:
             and observed.has_extended_acl == expected.has_extended_acl
         )
 
+    def _create_temporary(
+        self,
+        parent_fd: int,
+        selected: Path,
+        mode: int,
+    ) -> tuple[int, str]:
+        """Create the private file a replacement or a create is written to.
+
+        TASK-34789: the file renamed into place keeps this file's inode
+        number, and a filesystem that reuses numbers gives it one a deleted
+        file just gave back -- ext4 hands out the lowest free number of the
+        directory's allocation group, so the number the previous guarded
+        replace freed (its displaced original) is the next one out. A sync
+        binding records ``(device, inode)`` until its own commit, 40 to 300
+        ms after its write as measured, so that number can still be recorded.
+        A second binding committed on it broke the store's
+        one-identity-per-active-binding index and its operation ended
+        ``executor_failed``. That takes two files allocating from the same
+        group and the second commit landing inside the first's window:
+        reproduced on ext4 in CI by a test that forces that order, and under
+        a model of the numbering; not observed in the app. APFS does not
+        reuse numbers.
+
+        A candidate whose number is claimed is refused, and its number has to
+        stay taken or the next candidate is handed it again. Its descriptor
+        does that: an open file keeps its inode number after its name is
+        gone. A refused candidate's name is removed as soon as its
+        replacement exists and its descriptor is held until the search ends,
+        so a directory walk, the polling watcher and a kill see none of them.
+        One refused candidate keeps its name at any moment -- the most
+        recent, a spare.
+
+        The check is advisory: the binding commit's unique index decides. A
+        candidate is used unasked, which is what every write did before the
+        check existed, when
+
+        * ``_MAX_CLAIMED_CANDIDATES`` candidates have been refused;
+        * it cannot be examined (``os.fstat`` fails);
+        * it reports a number already refused in this search while that one
+          is still held, so holding does not work on this filesystem;
+        * the next candidate cannot be created (no space, a quota, no
+          descriptors left): the spare is used;
+        * the refused candidate before it cannot be unlinked: asking on would
+          strand one more name per refusal.
+
+        What can still fail a write that went ahead before the check
+        existed: a ``BaseException`` out of the claim callable (the
+        runtime's answers "not claimed" on any ``Exception``), and 32 name
+        collisions within one search. An ``OSError`` creating a candidate
+        while there is no spare is raised as it always was; that is the
+        first candidate. The search also holds up to
+        ``_MAX_CLAIMED_CANDIDATES`` descriptors while it runs.
+
+        Returns:
+            The open descriptor and leaf name of the file to write. Every
+            other descriptor is closed and every other name removed on any
+            return or exception, unless removing a name itself fails (at
+            most one is then left). A hard kill can leave the spare and the
+            candidate being examined: two empty files, against one before
+            the check existed.
+
+        Raises:
+            SyncPathError: ``temporary_name_exhausted`` after 32 name
+                collisions; a refused candidate does not count towards it.
+        """
+
+        #: Refused candidates whose names are gone; each keeps its number.
+        held: list[int] = []
+        #: The latest refused candidate, still named: (descriptor, leaf).
+        spare: tuple[int, str] | None = None
+        #: Created and not yet decided; cleaned up if the decision raises.
+        current: tuple[int, str] | None = None
+        refused: set[tuple[int, int]] = set()
+        name_collisions = 0
+        try:
+            while True:
+                leaf = f".{selected.name}.tmp-{uuid.uuid4().hex}"
+                try:
+                    descriptor = os.open(
+                        leaf,
+                        _FILE_WRITE_FLAGS,
+                        mode,
+                        dir_fd=parent_fd,
+                    )
+                except FileExistsError:
+                    name_collisions += 1
+                    if name_collisions == 32:
+                        raise SyncPathError(
+                            "temporary_name_exhausted", selected
+                        ) from None
+                    continue
+                except OSError:
+                    if spare is None:
+                        raise
+                    chosen, spare = spare, None
+                    return chosen
+                current = (descriptor, leaf)
+                if spare is not None:
+                    retired, spare = spare, None
+                    held.append(retired[0])
+                    try:
+                        os.unlink(retired[1], dir_fd=parent_fd)
+                    except OSError:
+                        # That name stays behind. Asking on would strand one
+                        # more per refusal, so this candidate is used unasked.
+                        current = None
+                        return descriptor, leaf
+                if (
+                    self._identity_claimed is None
+                    or len(refused) == _MAX_CLAIMED_CANDIDATES
+                ):
+                    current = None
+                    return descriptor, leaf
+                try:
+                    entry = os.fstat(descriptor)
+                except OSError:
+                    current = None
+                    return descriptor, leaf
+                identity = (entry.st_dev, entry.st_ino)
+                if identity in refused or not self._identity_claimed(*identity):
+                    current = None
+                    return descriptor, leaf
+                refused.add(identity)
+                spare, current = current, None
+        finally:
+            for descriptor in held:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+            for abandoned in (spare, current):
+                if abandoned is None:
+                    continue
+                try:
+                    os.unlink(abandoned[1], dir_fd=parent_fd)
+                except OSError:
+                    pass
+                try:
+                    os.close(abandoned[0])
+                except OSError:
+                    pass
+
     def replace_bytes(
         self,
         relative_path: Path | str,
@@ -831,21 +997,9 @@ class PinnedSyncRoot:
             existing = self._existing_target(parent_fd, selected.name, selected)
             if not self._matches_reviewed_state(existing, expected):
                 raise SyncPathError("target_identity_changed", selected)
-            for _ in range(32):
-                candidate = f".{selected.name}.tmp-{uuid.uuid4().hex}"
-                try:
-                    temporary_fd = os.open(
-                        candidate,
-                        _FILE_WRITE_FLAGS,
-                        mode,
-                        dir_fd=parent_fd,
-                    )
-                    temporary_leaf = candidate
-                    break
-                except FileExistsError:
-                    continue
-            else:
-                raise SyncPathError("temporary_name_exhausted", selected)
+            temporary_fd, temporary_leaf = self._create_temporary(
+                parent_fd, selected, mode
+            )
             try:
                 try:
                     self._write_all(temporary_fd, content)

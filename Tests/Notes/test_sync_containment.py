@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import errno
 import os
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -425,6 +427,426 @@ def test_move_fsync_failure_surfaces_committed_partial_state(
     assert raised.value.cleanup_leaf == "after.md"
     assert not source.exists()
     assert (root_path / "after.md").read_bytes() == b"before"
+
+
+class _Candidates:
+    """The candidate descriptors ``_create_temporary`` has open right now.
+
+    Counted by wrapping the two calls that open and close them. ``/dev/fd``
+    is the whole process: another thread or a finaliser moves it.
+    Install it inside the ``with PinnedSyncRoot(...)`` block: the root checks
+    ``os.open`` against ``os.supports_dir_fd`` when it is constructed.
+    """
+
+    def __init__(self, patch: pytest.MonkeyPatch) -> None:
+        self.open: dict[int, str] = {}
+        self.created: list[str] = []
+        self.attempts = 0
+        self.peak = 0
+        #: Raise this from the Nth candidate create (1-based), if set.
+        self.fail_create: tuple[int, OSError] | None = None
+        #: Report an error from the close of these descriptors (after closing).
+        self.fail_close: set[int] = set()
+        self.failed_closes: list[int] = []
+        real_open, real_close = os.open, os.close
+
+        def tracked_open(path, flags, mode=0o777, *, dir_fd=None):
+            candidate = bool(flags & os.O_CREAT) and ".tmp-" in os.fspath(path)
+            if candidate:
+                self.attempts += 1
+                if self.fail_create and self.attempts == self.fail_create[0]:
+                    raise self.fail_create[1]
+            descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+            if candidate:
+                self.created.append(os.fspath(path))
+                self.open[descriptor] = os.fspath(path)
+                self.peak = max(self.peak, len(self.open))
+            return descriptor
+
+        def tracked_close(descriptor):
+            tracked = self.open.pop(descriptor, None) is not None
+            real_close(descriptor)
+            if tracked and descriptor in self.fail_close:
+                self.failed_closes.append(descriptor)
+                raise OSError(errno.EIO, "close failed")
+
+        patch.setattr(sync_paths.os, "open", tracked_open)
+        patch.setattr(sync_paths.os, "close", tracked_close)
+
+
+def _candidate_names(root_path: Path) -> list[str]:
+    return sorted(name for name in os.listdir(root_path) if ".tmp-" in name)
+
+
+@pytest.mark.parametrize("existing", [True, False], ids=["replace", "create"])
+def test_a_written_file_never_takes_a_claimed_inode_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing: bool
+) -> None:
+    """TASK-34789: ext4 gives a new file the inode number the last replaced
+    file gave back, and a sync binding records that number until its own
+    commit. A candidate whose number is claimed is not the file that lands
+    while an unclaimed one can be had.
+
+    A refused candidate keeps its number by its DESCRIPTOR, not its name: at
+    every question the directory holds the one candidate being asked about
+    and none of the refused ones, and one more descriptor is open per
+    refusal. On ext4 the three numbers differ only because of that."""
+
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md"
+    if existing:
+        target.write_bytes(b"before")
+    #: (device, inode, candidate names listed, candidate descriptors open).
+    asked: list[tuple[int, int, int, int]] = []
+
+    def claimed(device: int, inode: int) -> bool:
+        asked.append((device, inode, len(_candidate_names(root_path)), len(held.open)))
+        return len(asked) <= 2  # the first two numbers are someone else's
+
+    with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
+        expected = root.read_bytes("note.md") if existing else None
+        with monkeypatch.context() as patch:
+            held = _Candidates(patch)
+            result = root.replace_bytes(
+                "note.md", b"after", expected=expected, mode=0o600
+            )
+
+    landed = target.stat()
+    refused = {(device, inode) for device, inode, _, _ in asked[:2]}
+    assert target.read_bytes() == b"after"
+    assert (landed.st_dev, landed.st_ino) == asked[2][:2]
+    assert (landed.st_dev, landed.st_ino) not in refused
+    assert result.identity.inode == landed.st_ino
+    assert len({inode for _, inode, _, _ in asked}) == 3
+    assert [names for _, _, names, _ in asked] == [1, 1, 1], "a refused name stayed"
+    assert [open_ for _, _, _, open_ in asked] == [1, 2, 3], "a number was not held"
+    assert held.open == {}
+    assert os.listdir(root_path) == ["note.md"]
+
+
+class _Stop(BaseException):
+    """Not an ``Exception``: nothing in the write path may swallow it."""
+
+
+@pytest.mark.parametrize("error", [RuntimeError, _Stop], ids=["exception", "base"])
+def test_a_claim_check_that_raises_leaves_nothing_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: type[BaseException]
+) -> None:
+    """Raised at the third question: two refused candidates are held and a
+    third is being examined. All three descriptors are closed, no name
+    stays, and the exception arrives unchanged."""
+
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md"
+    target.write_bytes(b"before")
+    asked: list[int] = []
+
+    def claimed(_device: int, inode: int) -> bool:
+        asked.append(inode)
+        if len(asked) == 3:
+            raise error("store unavailable")
+        return True
+
+    with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
+        observed = root.read_bytes("note.md")
+        with monkeypatch.context() as patch:
+            held = _Candidates(patch)
+            with pytest.raises(error, match="store unavailable"):
+                root.replace_bytes("note.md", b"after", expected=observed, mode=0o600)
+
+    assert held.peak == 3
+    assert held.open == {}
+    assert target.read_bytes() == b"before"
+    assert os.listdir(root_path) == ["note.md"]
+
+
+def test_a_close_that_fails_does_not_skip_the_other_cleanups(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three refused candidates are held when the search ends; closing the
+    first reports an error. The other two are still closed, no name stays,
+    and the write lands."""
+
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md"
+    target.write_bytes(b"before")
+    asked: list[int] = []
+
+    def claimed(_device: int, inode: int) -> bool:
+        asked.append(inode)
+        if len(asked) == 1:
+            held.fail_close.update(held.open)
+        return len(asked) <= 3
+
+    with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
+        observed = root.read_bytes("note.md")
+        with monkeypatch.context() as patch:
+            held = _Candidates(patch)
+            root.replace_bytes("note.md", b"after", expected=observed, mode=0o600)
+
+    assert len(held.failed_closes) == 1, "the held descriptor's close never failed"
+    assert held.peak == 4
+    assert held.open == {}
+    assert target.read_bytes() == b"after"
+    assert os.listdir(root_path) == ["note.md"]
+
+
+def test_asking_stops_at_the_bound_and_no_more_descriptors_are_held(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every number is claimed. After ``_MAX_CLAIMED_CANDIDATES`` refusals
+    the next candidate is used unasked; a refusal is not a name collision,
+    so the write does not end in ``temporary_name_exhausted``.
+
+    Before this PR: the write used its first candidate, also unasked. The
+    outcome is the same kind -- a file on a claimed number, for the commit
+    to decide -- and not a failed write."""
+
+    bound = sync_paths._MAX_CLAIMED_CANDIDATES
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md"
+    target.write_bytes(b"before")
+    asked: list[tuple[int, int]] = []
+    names: list[int] = []
+
+    def claimed(device: int, inode: int) -> bool:
+        asked.append((device, inode))
+        names.append(len(_candidate_names(root_path)))
+        return True
+
+    with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
+        observed = root.read_bytes("note.md")
+        with monkeypatch.context() as patch:
+            held = _Candidates(patch)
+            root.replace_bytes("note.md", b"after", expected=observed, mode=0o600)
+
+    landed = target.stat()
+    assert len(asked) == bound
+    assert len(held.created) == bound + 1
+    assert held.peak == bound + 1, "the refused candidates and the one in hand"
+    assert set(names) == {1}
+    assert (landed.st_dev, landed.st_ino) not in set(asked)
+    assert held.open == {}
+    assert target.read_bytes() == b"after"
+    assert os.listdir(root_path) == ["note.md"]
+
+
+@pytest.mark.parametrize("spare", [True, False], ids=["a_spare", "no_spare"])
+def test_when_the_next_candidate_cannot_be_created_the_spare_is_used(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spare: bool
+) -> None:
+    """Fallback: the disk is full (or a quota, or no descriptors) when the
+    candidate after a refusal is created. The refused one still has its name
+    -- it is the spare -- and is used unasked.
+
+    Before this PR: the write used that same first candidate. Failing here
+    would be a failure the check added. With no spare (the first candidate
+    cannot be created) the write fails ``operation_failed``, as it always
+    did."""
+
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md"
+    target.write_bytes(b"before")
+    asked: list[tuple[int, int]] = []
+
+    def claimed(device: int, inode: int) -> bool:
+        asked.append((device, inode))
+        return True
+
+    with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
+        observed = root.read_bytes("note.md")
+        with monkeypatch.context() as patch:
+            held = _Candidates(patch)
+            held.fail_create = (2 if spare else 1, OSError(errno.ENOSPC, "full"))
+            if spare:
+                root.replace_bytes("note.md", b"after", expected=observed, mode=0o600)
+            else:
+                with pytest.raises(SyncPathError) as raised:
+                    root.replace_bytes(
+                        "note.md", b"after", expected=observed, mode=0o600
+                    )
+
+    assert held.open == {}
+    assert os.listdir(root_path) == ["note.md"]
+    if spare:
+        landed = target.stat()
+        assert asked == [(landed.st_dev, landed.st_ino)], "not the refused spare"
+        assert target.read_bytes() == b"after"
+    else:
+        assert raised.value.reason == "operation_failed"
+        assert asked == []
+        assert target.read_bytes() == b"before"
+
+
+def test_a_candidate_that_cannot_be_examined_is_used_unasked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fallback: ``os.fstat`` on the candidate fails, so there is no number
+    to ask about. Before this PR the candidate was never examined at all and
+    the write went ahead; it still does."""
+
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md"
+    target.write_bytes(b"before")
+    asked: list[int] = []
+    real_fstat = os.fstat
+
+    def claimed(_device: int, inode: int) -> bool:
+        asked.append(inode)
+        return True
+
+    with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
+        observed = root.read_bytes("note.md")
+        with monkeypatch.context() as patch:
+            held = _Candidates(patch)
+
+            def unreadable(descriptor: int) -> os.stat_result:
+                if descriptor in held.open:
+                    raise OSError(errno.EIO, "fstat failed")
+                return real_fstat(descriptor)
+
+            patch.setattr(sync_paths.os, "fstat", unreadable)
+            root.replace_bytes("note.md", b"after", expected=observed, mode=0o600)
+
+    assert asked == []
+    assert len(held.created) == 1
+    assert held.open == {}
+    assert target.read_bytes() == b"after"
+    assert os.listdir(root_path) == ["note.md"]
+
+
+def test_a_refused_name_that_cannot_be_removed_ends_the_search(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fallback: the refused candidate's name cannot be unlinked once its
+    replacement exists. Asking on would strand one more name per refusal, so
+    the replacement is used unasked and at most one name is ever left. Before
+    this PR there was one candidate and no question."""
+
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md"
+    target.write_bytes(b"before")
+    asked: list[int] = []
+    real_unlink = os.unlink
+    stuck: list[str] = []
+
+    def claimed(_device: int, inode: int) -> bool:
+        asked.append(inode)
+        return True
+
+    with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
+        observed = root.read_bytes("note.md")
+        with monkeypatch.context() as patch:
+            held = _Candidates(patch)
+
+            def sticky(path, *, dir_fd=None):
+                name = os.fspath(path)
+                if not stuck and name in held.created:
+                    stuck.append(name)
+                    raise OSError(errno.EPERM, "unlink refused")
+                return real_unlink(path, dir_fd=dir_fd)
+
+            patch.setattr(sync_paths.os, "unlink", sticky)
+            root.replace_bytes("note.md", b"after", expected=observed, mode=0o600)
+
+    assert len(asked) == 1, "the search went on after a name it could not remove"
+    assert len(held.created) == 2
+    assert held.open == {}
+    assert target.read_bytes() == b"after"
+    assert _candidate_names(root_path) == stuck
+
+
+def test_a_filesystem_that_repeats_a_refused_number_is_not_searched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fallback: the second candidate reports the number of the first, which
+    was refused and is still held open. Holding does not keep numbers apart
+    on this filesystem, so there is nothing to search: the candidate is used
+    unasked, after two creates instead of the whole bound on every write.
+
+    Before this PR: the write used its first candidate unasked."""
+
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md"
+    target.write_bytes(b"before")
+    asked: list[int] = []
+    real_fstat = os.fstat
+
+    def claimed(_device: int, inode: int) -> bool:
+        asked.append(inode)
+        return True
+
+    with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
+        observed = root.read_bytes("note.md")
+        with monkeypatch.context() as patch:
+            held = _Candidates(patch)
+
+            def one_number(descriptor: int):
+                entry = real_fstat(descriptor)
+                if descriptor not in held.open:
+                    return entry
+                return SimpleNamespace(st_dev=entry.st_dev, st_ino=7)
+
+            patch.setattr(sync_paths.os, "fstat", one_number)
+            root.replace_bytes("note.md", b"after", expected=observed, mode=0o600)
+
+    assert asked == [7]
+    assert len(held.created) == 2
+    assert held.open == {}
+    assert target.read_bytes() == b"after"
+    assert os.listdir(root_path) == ["note.md"]
+
+
+def test_a_recreated_file_never_takes_the_number_its_deleted_predecessor_had(
+    tmp_path: Path,
+) -> None:
+    """TASK-34789 on REAL inode numbers, in one root: a bound file is deleted
+    outside the app, its binding still records ``(device, inode)``, and sync
+    creates the file again. The claim is the writer's own binding's; nothing
+    tells it apart from anyone else's and nothing needs to -- the candidate
+    is refused and the file lands on another number.
+
+    Passes where the filesystem really handed the new file the freed number
+    (ext4); skips, after the same assertions, where it did not (APFS)."""
+
+    root_path = tmp_path / "root"
+    root_path.mkdir()
+    target = root_path / "note.md"
+    target.write_bytes(b"before")
+    recorded = target.stat()
+    target.unlink()
+    offered: list[bool] = []
+
+    def claimed(device: int, inode: int) -> bool:
+        offered.append((device, inode) == (recorded.st_dev, recorded.st_ino))
+        return offered[-1]
+
+    with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
+        root.replace_bytes("note.md", b"after", expected=None, mode=0o600)
+
+    landed = target.stat()
+    assert target.read_bytes() == b"after"
+    assert (landed.st_dev, landed.st_ino) != (recorded.st_dev, recorded.st_ino)
+    assert offered[-1] is False
+    assert os.listdir(root_path) == ["note.md"]
+    if not any(offered):
+        pytest.skip(
+            "this filesystem did not hand the recreated file its deleted "
+            "predecessor's inode number in this run"
+        )
 
 
 def test_replace_maps_raw_precommit_oserror_to_bounded_refusal(
