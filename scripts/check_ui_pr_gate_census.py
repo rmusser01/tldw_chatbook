@@ -244,9 +244,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33007 (CI on #3057) raised it to 170: test_settings_connect_rows.py
 # ran 15+ min of one 20-min shard on CI (61 cases, each mounting the whole
 # Settings screen) and timed the shard out. It is split by topic into itself
-# (the Provider control), _tab_budget.py, _key_rows.py and _paint.py, listed
-# together so round-robin puts each part in a different shard; the lane went
-# to six shards in the same commit.
+# (the Provider control), _tab_budget.py, _key_rows.py and _paint.py; the
+# lane went to six shards in the same commit. Where the four sit in the
+# census is decided with the other Phase 7 files, below.
 # Placement (measured on #3057's six shard logs, every file timed): the eleven
 # Phase 7 Settings files are 35.2 of the lane's 71.4 pytest minutes, and where
 # they fall decides the split as much as the shard count does -- listed where
@@ -271,7 +271,19 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # the tail shifts its shards: re-run the replay then.
 # Phase 7's counts above were taken on its own base; over dev's 179 its eleven
 # files make the floor 190.
-MINIMUM_FILES = 201
+# ordered by scripts/ui_lane_shard_replay.py for the flattest split. Per-file
+# seconds move about 40% between runs on the hosted runners (one file took
+# 204 s in one run of #3057 and 295 s in the next), so the replay scores each
+# file at the worst of the runs it is given. Over three runs of #3057 and
+# dev's 180 entries above the tail, the best tail order replays at 14.2 min
+# of pytest at most with six shards, 13.1 with seven and 13.7 with eight
+# (dev's own entries fall unevenly over eight), so the lane runs seven. An
+# entry added above the tail shifts its shards: re-run the replay then, and
+# add a shard only if the best order still nears the cap.
+# Phase 7's counts above were taken on its own base; over dev's 179 its eleven
+# files make 190, and the node that pins the Study card-list lock (the review
+# of #3057) 191.
+MINIMUM_FILES = 206
 
 
 def read_census(path: Path) -> list[str]:

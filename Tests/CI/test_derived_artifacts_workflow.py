@@ -180,7 +180,13 @@ def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     assert "-p no:randomly" not in run  # not installed; order is collection order
 
 
-@pytest.mark.parametrize("total", [1, 2, 3, 4, 5, 6, 7, 8])
+def _ui_lane_shard_count() -> int:
+    return len(_workflow()["jobs"]["ui-fast-lane"]["strategy"]["matrix"]["shard"])
+
+
+# Every split up to the one the workflow runs, read from the workflow so a
+# shard added there is covered here without a second edit.
+@pytest.mark.parametrize("total", range(1, _ui_lane_shard_count() + 1))
 def test_ui_gate_shards_cover_the_census_once_each_in_census_order(total):
     """TASK-34353: the shards the UI lane runs are exactly the census.
 

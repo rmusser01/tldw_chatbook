@@ -194,7 +194,10 @@ sandboxed / admission-sensitive split. They first went into the PR Fast Lane,
 which then took 33m41s of its 35-min cap (run 38064483856). The required check
 now `needs` all three lanes and fails when any of them is not `success`. This is
 one more runner per PR: the PR Fast Lane, four UI shards and the P0 gate make
-six concurrent test runners, then the aggregate.
+six concurrent test runners, then the aggregate. (TASK-33007, PR #3057, then
+took the UI lane to seven shards: one of four neared its 20-minute cap once
+Phase 7's Settings files joined the census. That makes nine concurrent test
+runners per PR, and the matrix sets no `max-parallel`.)
 `Tests/CI/test_console_p0_regression_gate.py` pins where each P0 test runs. The
 required context name, event cadence and dependency boundary are unchanged.
 
