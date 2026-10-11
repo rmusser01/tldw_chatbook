@@ -776,7 +776,12 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   when PREVIOUS or RECENT lists the same pair, so **Enter** opens its fix
   again; **Esc** leaves the chat as it was with the composer in focus. Other
   matches for the provider's name, however many, never push the row's model
-  off the list. Opened from the Get started card, the
+  off the list. If the list has no row for that model (the row named none,
+  or the provider no longer lists it), that provider's first row is
+  highlighted instead, and nothing is when it has no row at all. Until you
+  change **Find** or move the highlight yourself, it never lands on another
+  provider's match for the name, so **Enter** cannot apply one by accident.
+  Opened from the Get started card, the
   list comes back over the card while setup is unfinished, and **Esc**
   returns to the card. **Stay in Settings**, or walking back to the Console
   yourself, drops the return, so the list does not reopen. A custom

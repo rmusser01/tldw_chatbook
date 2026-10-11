@@ -579,8 +579,11 @@ def reopen_model_switcher(screen: ChatScreen, provider: str, model: str | None) 
     here (``provider_return.py``). A chat that holds work keeps its own pair
     after a Settings save (ADR-095), so the pick is still to make: Find holds
     the provider's name, as "… N more" does, and the row's own pair is
-    highlighted when the list has it, so one Enter applies it. With nothing
-    saved the row is still under NEEDS SETUP and nothing has changed.
+    highlighted when the list has it, so one Enter applies it. When it has
+    not (the row named no model, or the catalog dropped it), the highlight is
+    that provider's first row or nothing, never another provider's match for
+    the name. With nothing saved the row is still under NEEDS SETUP and
+    nothing has changed.
 
     It opens in the mode the chat is in now: the Get started card's while the
     card still blocks, where Alt+M itself stays shut.
@@ -597,6 +600,7 @@ def reopen_model_switcher(screen: ChatScreen, provider: str, model: str | None) 
         query=f"{name} ",
         card=screen._console_setup_modal_blocking(),
         highlight=(key, model) if model else None,
+        reopened=key,
     )
 
 
@@ -607,6 +611,7 @@ def _open_switcher(
     card: bool = False,
     server: DiscoveredLocalServer | None = None,
     highlight: tuple[str, str] | None = None,
+    reopened: str | None = None,
 ) -> None:
     """Push Switch model in apply mode for the active chat.
 
@@ -617,6 +622,8 @@ def _open_switcher(
         server: The card's detected local server, if that is what opened it.
         highlight: The pair highlighted first when the list has it; a
             detected server's first model takes its place.
+        reopened: The provider a return from Settings reopened the list on;
+            the highlight stays on its rows until Find changes.
     """
     from ...Chat.console_settings_apply import (
         QUICK_MODEL_DEFAULT_FIELDS,
@@ -730,6 +737,7 @@ def _open_switcher(
                 if server is not None and server.model_ids
                 else highlight
             ),
+            reopened_provider=reopened,
             **_switcher_sources(  # type: ignore[arg-type]
                 screen,
                 session.id,

@@ -455,6 +455,7 @@ class ConsoleModelPopover(
         connection_prober: ConnectionProber | None = None,
         served_models: Mapping[str, Sequence[str]] | None = None,
         highlight_pair: tuple[str, str] | None = None,
+        reopened_provider: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize one exact-origin Switch model transaction.
@@ -506,6 +507,12 @@ class ConsoleModelPopover(
                 first listed model, TASK-33008.3). Any other waits for
                 readiness, with nothing highlighted (a NEEDS SETUP row's
                 pair, reopened after its fix, TASK-33008.2).
+            reopened_provider: The provider of the NEEDS SETUP row whose
+                return from Settings reopened the list. Until Find changes,
+                the highlight never leaves that provider: ``highlight_pair``'s
+                row, else the provider's first row (its NEEDS SETUP row
+                before a copy that would apply), else none, and none while
+                providers are checked.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -558,6 +565,7 @@ class ConsoleModelPopover(
             if highlight_pair is not None
             else None
         )
+        self._reopened = provider_key(reopened_provider or "")
         self._rows: list[SwitcherRow] = []
         self._model_columns = _MODEL_COLUMNS
         self._painted_index: int | None = None
@@ -1451,20 +1459,32 @@ class ConsoleModelPopover(
             for index in selectable:
                 if self._rows[index].key == self._highlight_key:
                     return index
-        if self._highlight_pair is not None and self._query == self._opened_query:
-            if (
-                not self._first_readiness_done
-                and self._highlight_pair[0] not in self._served
+        pair, reopened = self._highlight_pair, self._reopened
+        if (pair is not None or reopened) and self._query == self._opened_query:
+            if not self._first_readiness_done and (
+                reopened or pair[0] not in self._served
             ):
                 # Nothing says yet that it can send, and PREVIOUS and RECENT
                 # list a pair whatever its readiness: no row, so a fast Enter
                 # applies neither their copy nor Find's best match.
                 return None
             own = [index for index in selectable if self._leads(self._rows[index])]
+            if reopened and not own:
+                # Back from Settings with no row for the pair (the row named
+                # no model, or the catalog dropped it): that provider's first
+                # row, never Find's best match, which can be an aggregator's
+                # id that starts with the provider's name.
+                own = [
+                    index
+                    for index in selectable
+                    if provider_key(self._rows[index].provider) == reopened
+                ]
             if own:
                 # Its NEEDS SETUP row, not a copy above it that would apply
                 # the pair: Enter reopens the fix the user came back from.
                 return min(own, key=lambda index: self._rows[index].kind != "setup")
+            if reopened:
+                return None
         if self._query.strip():
             ranked = [index for index in selectable if self._rows[index].kind != "more"]
             if ranked:

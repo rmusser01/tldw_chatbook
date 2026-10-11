@@ -1139,6 +1139,121 @@ async def test_a_highlight_pair_keeps_its_needs_setup_row(
     assert recorder.submissions == []
 
 
+_AGGREGATOR_ROW = ("openrouter", "openai/gpt-y")
+
+
+@pytest.mark.parametrize(
+    "own_models, saved, model, highlighted",
+    [
+        # The row named no model (its provider lists none). With the key
+        # saved the provider has no row to offer; unsaved, its own NEEDS
+        # SETUP row is still there.
+        ([], True, None, None),
+        ([], False, None, ("setup", "openai", None)),
+        # The key is saved, and the catalog no longer lists the row's model.
+        (["gpt-a", "gpt-b"], True, "gpt-5.1", ("pair", "openai", "gpt-a")),
+    ],
+    ids=["no-models-saved", "no-models-unsaved", "model-no-longer-listed"],
+)
+async def test_a_list_reopened_from_settings_never_highlights_another_providers_row(
+    own_models, saved, model, highlighted
+) -> None:
+    """TASK-33008.2 (controller ruling of 2026-10-11): a NEEDS SETUP row's
+    return reopens Switch model with the provider's name in Find. A ready
+    aggregator's id that starts with that name is Find's best match, and with
+    no row for the returned pair the highlight fell back to it, so the Enter
+    the guide describes applied another provider's model. Reopened this way,
+    the highlight is the returned pair's row, else that provider's first row,
+    else nothing, until Find changes."""
+    ready = {"openrouter", "openai"} if saved else {"openrouter"}
+    recorder = Recorder(ready=frozenset(ready))
+    app = SwitcherHarness()
+
+    def highlight(switcher) -> tuple[str, str, str | None] | None:
+        row = switcher.highlighted_row()
+        return None if row is None else (row.kind, row.provider, row.model)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                providers_models={"OpenAI": own_models, "OpenRouter": ["openai/gpt-y"]},
+                query="OpenAI ",
+                highlight_pair=("openai", model) if model else None,
+                reopened_provider="openai",
+            ),
+        )
+        listed = [(row.provider, row.model) for row in switcher._rows if row.model]
+        assert _AGGREGATOR_ROW in listed and ("openai", model) not in listed
+        assert highlight(switcher) == highlighted
+
+        find = switcher.query_one("#console-popover-find", Input)
+        find.value = "OpenAI"  # the user's own query: Find's best match again
+        await pilot.pause()
+        assert highlight(switcher) == ("pair", *_AGGREGATOR_ROW)
+        find.value = "OpenAI "
+        await pilot.pause()
+        assert highlight(switcher) == highlighted
+
+        await pilot.press("enter")
+        await pilot.pause()
+        if highlighted is None:
+            assert app.screen is switcher  # nothing applied by accident
+            error = switcher.query_one("#console-popover-error")
+            assert str(error.render()) == "Choose a model: type to search, then Enter."
+
+    applied = [
+        (submission.draft.settings.provider, submission.draft.settings.model)
+        for submission in recorder.submissions
+    ]
+    assert applied == ([highlighted[1:]] if highlighted and saved else [])
+    assert recorder.setup == ([] if saved else [("openai", None)])
+
+
+async def test_a_list_reopened_with_no_pair_waits_for_readiness_too() -> None:
+    """TASK-33008.2: before readiness RECENT can already list the
+    aggregator's id, and it is Find's best match there too. A list reopened
+    from Settings highlights nothing until providers are checked, with or
+    without a pair, so a fast Enter applies no other provider's model."""
+    recorder, release = _held_recorder()
+    recorder.ready = frozenset({"openrouter"})
+    app = SwitcherHarness()
+    try:
+        async with app.run_test(size=(211, 44)) as pilot:
+            switcher = build_switcher(
+                recorder,
+                providers_models={"OpenAI": [], "OpenRouter": ["openai/gpt-y"]},
+                recent=(_Use(*_AGGREGATOR_ROW, timedelta(hours=1)),),
+                query="OpenAI ",
+                reopened_provider="openai",
+            )
+            app.push_screen(switcher, callback=lambda result: None)
+            await pilot.pause()
+            await pilot.pause()
+            assert not switcher._first_readiness_done
+            listed = [(row.provider, row.model) for row in switcher._rows if row.model]
+            assert _AGGREGATOR_ROW in listed
+            assert switcher.highlighted_row() is None
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.screen is switcher and recorder.submissions == []
+
+            release.set()
+            await _settle(app, pilot)
+            row = switcher.highlighted_row()
+            assert row is not None and (row.kind, row.provider, row.model) == (
+                "setup",
+                "openai",
+                None,
+            )
+    finally:
+        release.set()
+
+    assert recorder.submissions == [] and recorder.setup == []
+
+
 async def test_custom_endpoints_show_display_names_and_builtin_slots_stay() -> None:
     """AC#13 (ADR-146): registry entries by display name; custom/custom_2 listable."""
     recorder = Recorder()

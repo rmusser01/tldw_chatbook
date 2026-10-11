@@ -373,6 +373,8 @@ async def test_a_needs_setup_rows_return_reopens_switch_model_on_its_provider(
             "query": "OpenAI ",
             "card": blocking,
             "highlight": ("openai", model) if model else None,
+            # Without a pair too: the highlight must not leave the provider.
+            "reopened": "openai",
         }
     ]
     assert not screen.app_instance.pending_handoffs.has_pending(CHANNEL)
@@ -2125,6 +2127,7 @@ async def test_a_needs_setup_row_round_trip_reopens_switch_model_on_its_provider
         reopened = app.screen
         assert reopened is not first
         assert reopened.query_one("#console-popover-find", Input).value == "Groq "
+        assert reopened._reopened == "groq"  # the highlight stays on Groq's rows
         assert reopened._scope_copy == model_switcher.SCOPE_THIS_CHAT
         assert not app.pending_handoffs.has_pending(CHANNEL)
         assert store.active_session_id == session_id
