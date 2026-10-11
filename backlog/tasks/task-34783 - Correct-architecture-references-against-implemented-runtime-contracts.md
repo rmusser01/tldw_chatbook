@@ -1,11 +1,11 @@
 ---
 id: TASK-34783
 title: Correct architecture references against implemented runtime contracts
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-10 19:27'
-updated_date: '2026-10-11 00:16'
+updated_date: '2026-10-11 00:23'
 labels: []
 dependencies: []
 ---
@@ -21,8 +21,8 @@ Keep the new engineering reference accurate about live hooks, workflow execution
 - [x] #1 Hooks documentation describes the wired v2 runtime and its permission/checkpoint requirements
 - [x] #2 Workflow execution scope and reranking request counts match actual source
 - [x] #3 Schema, module paths and storage descriptions avoid known stale or inaccurate claims
-- [ ] #4 Console documentation distinguishes streamed transcript polling from synchronous composer, active-tab, title and focus binding during a session switch.
-- [ ] #5 Dictation documentation describes installed-provider substitution, unavailable resolution when no local provider is installed, and the substitution notice and startup warning.
+- [x] #4 Console documentation distinguishes streamed transcript polling from synchronous composer, active-tab, title and focus binding during a session switch.
+- [x] #5 Dictation documentation describes installed-provider substitution, unavailable resolution when no local provider is installed, and the substitution notice and startup warning.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -71,4 +71,6 @@ Incoming-base source-accuracy copy follow-up (2026-10-10): the six carried docum
 Corrected the Console reference to distinguish streamed transcript/background activity projection (periodic polling and explicit sync calls) from synchronous session-switch draft custody, active-tab highlight and title updates. The shared tab/switcher activation path also restores composer focus before its first await; background binding preserves focus. Corrected dictation resolution to select the configured provider when installed or the first installed local provider in declaration order; only no installed local provider makes resolution unavailable. Replacing a configured provider reports both names in the app-scoped warning toast and the startup WARNING diagnostic (fallback with VAD, degraded-fallback without VAD). Existing model override and provider-scoped model behavior is preserved.
 
 Exact source evidence at 496fb4962133fce8f7abfb9805de9308b2a44654: UI/Console_Modules/session.py:3206-3207 and 5680-5699; Chat/console_voice_input.py:342-367, 413 and 1573-1580; Utils/local_stt_providers.py:120-127; UI/Console_Modules/dictation.py:1535-1559; app.py:3266-3289. All 83 relative Architecture links resolve; source references exist, whitespace passes, and the configured project Python verifies all 5105 Backlog task files readable. Receipt: /private/tmp/pr3038-b68-copy-checks.json. Changes are limited to the two Markdown documents and this task; no runtime, tests, UI, scripts or CI edits, no new ADR, test replay or full preflight. AC #4/#5 and task status remain pending independent immutable review before closeout.
+
+Incoming-base accuracy follow-up: source70b395762b100cd7afb8752e37d5928a78c9bd10 scopes poll-only Console descriptions to streaming/transcript projections and documents immediate draft/highlight/title/focus binding before session activation awaits. Speech now distinguishes missing configured providers (installed declaration-order substitution, warning toast and startup WARNING with both names) from no installed local provider (unavailable). Source-backed independent review2873 clears both corrections;83Architecture relative links, whitespace and task readability5105 pass. Onlyconsole.md/speech.md and this task changed; no runtime/test/CI changes or new ADR. Prior source qualification remains separate and unchanged.
 <!-- SECTION:NOTES:END -->
