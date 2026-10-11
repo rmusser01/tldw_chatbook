@@ -55,7 +55,11 @@ from ...Chat.provider_readiness import (
     provider_credential_source,
     required_base_url_target,
 )
-from ...config import get_cli_setting, provider_settings_for_key
+from ...config import (
+    get_cli_setting,
+    is_valid_provider_api_key,
+    provider_settings_for_key,
+)
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
@@ -709,7 +713,7 @@ def refresh_openai_reconnect_pending(screen: SettingsScreen) -> None:
 
 
 def env_var_source_word(screen: SettingsScreen, provider: str, env_var: str) -> str:
-    """Say whether the key's env var is set in this shell.
+    """Say whether the key's env var holds a key in this shell.
 
     Args:
         screen: The Settings screen holding the draft.
@@ -717,7 +721,8 @@ def env_var_source_word(screen: SettingsScreen, provider: str, env_var: str) -> 
         env_var: The Env var field's value; blank means the default name.
 
     Returns:
-        The Env var row's Source word.
+        The Env var row's Source word. "set in shell" is readiness's rule (a
+        placeholder is not a key); a Claude subscription reads no variable.
     """
     if screen._provider_is_registry_id(provider):
         return "this endpoint"
@@ -725,9 +730,13 @@ def env_var_source_word(screen: SettingsScreen, provider: str, env_var: str) -> 
     if draft is not None and "credential_env_var" in draft.dirty_keys:
         return EDITED
     name = env_var.strip() or default_api_key_env_var(provider_config_key(provider))
-    if not name:
+    if not name or (
+        screen._provider_auth_source_value(provider) == _anthropic_auth_sources()[1]
+    ):
         return "not used"
-    return "set in shell" if os.environ.get(name, "").strip() else NOT_SET
+    return (
+        "set in shell" if is_valid_provider_api_key(os.environ.get(name)) else NOT_SET
+    )
 
 
 def endpoint_requirement(provider: str) -> str | None:
