@@ -15002,6 +15002,18 @@ and committed without `./scripts/preflight.sh`; the next task's implementer hit 
 inventory drift and had to re-pin someone else's row. The rule the implementers follow ("any
 `logger.*` change -> read the rows, `--write`") binds the controller too.
 
+### TASK-33008.2: run preflight before the long covering runs, not after them
+
+Fix round 2 (2026-10-10) added one `query_one` after an `await` in the switcher's readiness
+worker, to read what the error line showed. The covering runs went first: a 5-minute parallel
+set and the 16-minute serial `Tests/Architecture` directory, both with the base's failures and
+no other. Preflight went last, and its worker-contract check
+(`scripts/check_textual_worker_contract.py`) refused the lookup. No test under
+`Tests/Architecture` wraps that check, so the 16-minute run could not have shown it. The fix
+changed the code (the line's text is recorded where it is set, and the worker reads no widget),
+which voided both runs, and both were run again. Preflight takes about 35 seconds: run it as
+soon as the change is written, and start the long runs only once it exits 0.
+
 ## Trace recovery tests need the failure before a boundary exists
 
 **TASK-31976, 2026-09-07.** A user reported “Trace capture blocked” on a fresh

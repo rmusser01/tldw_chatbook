@@ -774,11 +774,8 @@ async def test_a_highlight_pair_outranks_previous_and_current_until_find_changes
     assert (settings.provider, settings.model) == ("llama_cpp", "srv-2")
 
 
-async def test_a_highlight_pair_applies_while_providers_are_still_checked() -> None:
-    """TASK-33008.3 (parent AC#1, Enter, Enter at speed): before the first
-    readiness lands, the list holds only the chat's pair and "checking
-    providers…". The detected server's first model is listed and highlighted
-    there too, so a fast second Enter applies it instead of an error."""
+def _held_recorder() -> tuple[Recorder, threading.Event]:
+    """A recorder whose readiness waits for the event (10 s at most)."""
     release = threading.Event()
 
     class SlowRecorder(Recorder):
@@ -786,7 +783,15 @@ async def test_a_highlight_pair_applies_while_providers_are_still_checked() -> N
             release.wait(10)
             return super().readiness(provider, model)
 
-    recorder = SlowRecorder()
+    return SlowRecorder(), release
+
+
+async def test_a_highlight_pair_applies_while_providers_are_still_checked() -> None:
+    """TASK-33008.3 (parent AC#1, Enter, Enter at speed): before the first
+    readiness lands, the list holds only the chat's pair and "checking
+    providers…". The detected server's first model is listed and highlighted
+    there too, so a fast second Enter applies it instead of an error."""
+    recorder, release = _held_recorder()
     app = SwitcherHarness()
     try:
         async with app.run_test(size=(211, 44)) as pilot:
@@ -843,17 +848,12 @@ async def test_a_highlight_pair_no_server_listed_waits_for_readiness(held) -> No
     can send yet. While providers are checked it is not offered as a pair,
     and nothing is highlighted: PREVIOUS and RECENT list a pair whatever its
     readiness, and a fast Enter on their copy would apply a pair whose key
-    was never saved. Once readiness lands the pair is highlighted as what it
-    is, here its NEEDS SETUP row and not the copy above it, so Enter opens
-    its fix again."""
-    release = threading.Event()
-
-    class SlowRecorder(Recorder):
-        def readiness(self, provider, model):  # type: ignore[no-untyped-def]
-            release.wait(10)
-            return super().readiness(provider, model)
-
-    recorder = SlowRecorder()
+    was never saved. That Enter says providers are still checked, not
+    "Choose a model: type to search": there is nothing to type or choose.
+    Once readiness lands the line goes and the pair is highlighted as what
+    it is, here its NEEDS SETUP row and not the copy above it, so Enter
+    opens its fix again."""
+    recorder, release = _held_recorder()
     app = SwitcherHarness()
     try:
         async with app.run_test(size=(211, 44)) as pilot:
@@ -878,9 +878,14 @@ async def test_a_highlight_pair_no_server_listed_waits_for_readiness(held) -> No
             await pilot.pause()
             assert app.screen is switcher  # nothing applied, nothing opened
             assert recorder.submissions == [] and recorder.setup == []
+            error = switcher.query_one("#console-popover-error")
+            assert error.display and str(error.render()) == (
+                "Still checking providers: press Enter again when the list fills."
+            )
 
             release.set()
             await _settle(app, pilot)
+            assert not error.display and str(error.render()) == ""
             kinds = [
                 row.kind
                 for row in switcher._rows
@@ -899,6 +904,38 @@ async def test_a_highlight_pair_no_server_listed_waits_for_readiness(held) -> No
         release.set()
 
     assert recorder.setup == [("openai", "gpt-5.1")]
+    assert recorder.submissions == []
+
+
+async def test_first_readiness_clears_no_error_but_the_one_about_the_wait() -> None:
+    """TASK-33008.2: when the first readiness lands it clears Enter's "Still
+    checking providers" line and no other. A value error raised while
+    providers were checked is as true once the list fills."""
+    recorder, release = _held_recorder()
+    app = SwitcherHarness()
+    try:
+        async with app.run_test(size=(211, 44)) as pilot:
+            # RECENT's load lists the chat's own pair before readiness.
+            switcher = build_switcher(recorder, recent=())
+            app.push_screen(switcher, callback=lambda result: None)
+            await pilot.pause()
+            await pilot.pause()
+            assert not switcher._first_readiness_done
+            row = switcher.highlighted_row()
+            assert row is not None and row.model == "model-a"
+            await pilot.press("tab", *"hot", "enter")
+            await pilot.pause()
+            error = switcher.query_one("#console-popover-error")
+            invalid = "Temperature must be a finite number from 0 to 2."
+            assert str(error.render()) == invalid
+
+            release.set()
+            await _settle(app, pilot)
+            assert switcher._first_readiness_done
+            assert error.display and str(error.render()) == invalid
+    finally:
+        release.set()
+
     assert recorder.submissions == []
 
 

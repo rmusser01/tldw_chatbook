@@ -103,6 +103,8 @@ _VALUE_ERRORS = {
     "temperature": "Temperature must be a finite number from {low:g} to {high:g}.",
     "max_tokens": "Max tokens must be a whole number of at least 1 (blank: no cap).",
 }
+#: Enter with no row while providers are checked: nothing to type or choose yet.
+_CHECKING_ERROR = "Still checking providers: press Enter again when the list fills."
 
 #: Spec §2 / mockup (a): READY PROVIDERS shows this many models per provider.
 TOP_MODELS_PER_PROVIDER = 3
@@ -490,9 +492,15 @@ class ConsoleModelPopover(
                 that a detected server listed. A served provider is used, so
                 it is listed even as a legacy alias.
             highlight_pair: The pair highlighted first, until Find changes.
-                Until then no row cap cuts its row, its provider's NEEDS SETUP
-                rows include its model whatever lists it, and that row is
-                preferred to PREVIOUS's or RECENT's copy of the pair.
+                Until then its NEEDS SETUP row is preferred to PREVIOUS's or
+                RECENT's copy of the pair. In a list opened with text in Find
+                (``query``), no row cap cuts its row and its provider's NEEDS
+                SETUP rows include its model whatever lists it. With Find
+                empty neither holds: READY PROVIDERS lists three models a
+                provider and NEEDS SETUP one row a provider, so a pair past
+                those is not listed there and the highlight falls back to
+                PREVIOUS, then this chat's pair. Both callers pass the
+                provider's name as ``query``.
                 A pair of a served provider is listed even while providers
                 are checked (the Get started card's detected server: its
                 first listed model, TASK-33008.3). Any other waits for
@@ -538,6 +546,7 @@ class ConsoleModelPopover(
         self._guard_focus: Widget | None = None
         self._updating_controls = False
         self._submit_pending = False
+        self._error = ""  # what the error line shows
         self._current: tuple[str, str | None] = (
             str(settings.provider or "").strip(),
             settings.model or None,
@@ -882,6 +891,8 @@ class ConsoleModelPopover(
         if not self.is_mounted:
             return
         self._rebuild_rows()
+        if self._first_readiness_done and self._error == _CHECKING_ERROR:
+            self._set_error("")  # the wait is over; any other error still holds
         self._sync_find_placeholder()
         self._load_ready_catalogs(tuple(resolved))
         self._offer_probes(resolved)
@@ -1025,8 +1036,13 @@ class ConsoleModelPopover(
 
     def _leads(self, row: SwitcherRow) -> bool:
         """Whether ``row`` is the highlight pair's, while Find is as it opened."""
-        pair = (provider_key(row.provider), row.model)
-        return self._query == self._opened_query and pair == self._highlight_pair
+        pair = self._highlight_pair
+        return (
+            # Per row on every typed search: the row's key is built last.
+            pair is not None
+            and self._query == self._opened_query
+            and (provider_key(row.provider), row.model) == pair
+        )
 
     def _capped(self, rows: list[SwitcherRow], cap: int) -> list[SwitcherRow]:
         """The first ``cap`` rows; the highlight pair's row is never cut.
@@ -1576,7 +1592,9 @@ class ConsoleModelPopover(
         if row is None:
             # Spec rule 1: with no row highlighted there is no pair to act on.
             self._set_error(
-                "Choose a model: type to search, then Enter.",
+                "Choose a model: type to search, then Enter."
+                if self._first_readiness_done
+                else _CHECKING_ERROR,
                 focus=self.query_one("#console-popover-find", Input),
             )
             return
@@ -1624,6 +1642,7 @@ class ConsoleModelPopover(
     # -- draft editing --------------------------------------------------
 
     def _set_error(self, message: str, *, focus: Widget | None = None) -> None:
+        self._error = message
         try:
             error = self.query_one("#console-popover-error", Static)
         except NoMatches:
