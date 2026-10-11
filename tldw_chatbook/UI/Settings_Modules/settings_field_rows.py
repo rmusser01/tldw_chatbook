@@ -406,13 +406,10 @@ def _model_default_control(
         )
     if key in MODEL_PROFILE_SELECT_FIELD_KEYS:
         return screen._model_profile_enum_select(provider, key, dict(values))
-    value = (
-        screen._model_profile_input_value(provider, key, model, values[key])
-        if name == "thinking_budget_tokens"
-        else screen._profile_input_value(values[key])
-    )
     return Input(
-        value=value,
+        # Blank for a field the provider does not accept, as the screen's
+        # sync leaves it.
+        value=screen._model_profile_input_value(provider, key, model, values[key]),
         id=control_id(name),
         classes="settings-compact-input",
         placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS[key],
