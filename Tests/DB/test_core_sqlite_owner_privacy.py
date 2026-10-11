@@ -48,8 +48,10 @@ def _resolve_is_admission_ledger_evidence() -> bool:
     """
     for frame_info in inspect.stack()[1:]:
         filename = frame_info.filename
-        if filename == __file__ or "site-packages" in filename or (
-            os.sep + "lib" + os.sep + "python" in filename
+        if (
+            filename == __file__
+            or "site-packages" in filename
+            or (os.sep + "lib" + os.sep + "python" in filename)
         ):
             # this test module's own frames and stdlib/pytest internals
             continue

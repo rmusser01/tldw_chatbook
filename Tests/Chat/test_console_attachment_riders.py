@@ -226,9 +226,7 @@ class TestSaveImageToastEscaping:
         screen._session = SimpleNamespace(
             _project_project_instruction_binding=None,
             _project_project_instruction_dispatch=lambda *_a, **_k: None,
-            _dismiss_project_instruction_decision_projection=(
-                lambda *_a, **_k: None
-            ),
+            _dismiss_project_instruction_decision_projection=lambda *_a, **_k: None,
         )
         screen._console_chat_store = store
         screen._ensure_console_chat_store = lambda: store
