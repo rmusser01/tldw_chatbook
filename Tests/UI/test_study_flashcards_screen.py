@@ -1595,7 +1595,7 @@ async def test_deck_change_and_refresh_do_not_interleave_the_card_list():
 async def test_two_awaited_card_list_rebuilds_do_not_interleave():
     """The awaited rebuilds share one lock with the worker rebuilds.
 
-    `create_deck`, `create_card` and three other controller paths await
+    `create_deck`, `create_card` and four other controller paths await
     `refresh_cards()` directly, outside the exclusive `study-refresh-cards`
     worker group. `create_deck` also changes `#deck-select`, whose worker
     rebuilds the list again, so two rebuilds ran together: the list showed

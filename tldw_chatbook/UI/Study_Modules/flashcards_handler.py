@@ -56,7 +56,7 @@ class StudyFlashcardsController:
         # TASK-19559: rating submissions are serialised, never cancelled --
         # see `submit_rating`.
         self._review_submit_lock = asyncio.Lock()
-        # One `#card-list` rebuild at a time: five paths await
+        # One `#card-list` rebuild at a time: six paths await
         # `refresh_cards()` outside the exclusive `study-refresh-cards` worker
         # group, and `create_deck` also triggers that group's rebuild.
         self._refresh_cards_lock = asyncio.Lock()
@@ -631,9 +631,6 @@ class StudyFlashcardsController:
         appends, so the list held both rebuilds' rows.
         """
         async with self._refresh_cards_lock:
-            # The view can be removed while this rebuild waits its turn.
-            if not getattr(self.window, "is_mounted", True):
-                return
             await self._rebuild_card_list(preserve_review_panel=preserve_review_panel)
 
     async def _rebuild_card_list(self, *, preserve_review_panel: bool) -> None:
@@ -645,10 +642,15 @@ class StudyFlashcardsController:
             self.handle_scope_changed()
             return
 
-        list_view = self.window.query_one("#card-list", ListView)
-        # Read before the first await: a lookup that resumes after one can
-        # find its subtree removed.
-        search_value = self.window.query_one("#flashcard-search-input", Input).value
+        # The Flashcards view can be swapped out while this rebuild waited its
+        # turn (the window stays mounted, its sub-view does not), so both
+        # lookups are guarded; the search box is read before the next await.
+        try:
+            list_view = self.window.query_one("#card-list", ListView)
+            search = self.window.query_one("#flashcard-search-input", Input)
+        except NoMatches:
+            return
+        search_value = search.value
         await list_view.clear()
         self.current_cards = []
         self.selected_card_record = None
