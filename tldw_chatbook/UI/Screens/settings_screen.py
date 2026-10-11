@@ -15945,6 +15945,7 @@ class SettingsScreen(BaseAppScreen):
         return str(value if value is not None else "")
 
     def _clear_provider_auxiliary_draft_keys(self) -> None:
+        self._provider_api_key_cleared = None  # it goes with the staged key
         draft = self._provider_draft()
         if draft is None:
             return
@@ -33517,6 +33518,7 @@ class SettingsScreen(BaseAppScreen):
                 ):
                     reload_capabilities()
                 self._settings_drafts.pop(category, None)
+                self._provider_api_key_cleared = None
                 self._restore_provider_api_mode_draft_snapshot(retained_api_mode_draft)
                 self._provider_save_result = (
                     f"Provider settings saved: {PROVIDER_SAVE_SCOPE_COPY}"
@@ -34058,6 +34060,7 @@ class SettingsScreen(BaseAppScreen):
                 exclusive=True,
                 exit_on_error=False,
             )
+            self._provider_api_key_cleared = None
             # A deep link's form goes back to the linked provider, not the default.
             values = self._provider_display_setting_values()
             try:
