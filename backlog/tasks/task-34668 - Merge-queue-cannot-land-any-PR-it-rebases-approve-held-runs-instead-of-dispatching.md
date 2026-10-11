@@ -126,8 +126,8 @@ Live end-to-end test, 2026-10-10 (AC 6, first half): throwaway PR #3060 was cut 
 
 Incident: the queue was meant to be on for that one PR. The session stalled and it stayed on until 2026-10-11 01:27Z (23.5 h) without the owner's go-ahead. In that time it rebased and landed #3041 #3040 #3059 #3063 #3062 #3065 #3068 and evicted #3058 (rebase refused: its commits change a workflow file), #3059 and #2882 (failed twice, on flakes). Four PRs disarmed for the test (#2890 #2921 #2868 #2892) stayed disarmed for the day and were re-armed at 01:32Z. Lesson recorded in backlog/docs/lessons-live-verification.md.
 
-Found on that traffic and filed: TASK-34788 (a PR that changes a workflow file cannot be queue-rebased), TASK-34789 (flaky required check: 7 of about 11 rebased heads needed a retry), TASK-34790 (one failed queue run per merge from the racing loser; a double-posted warning).
+Found on that traffic and filed: TASK-34788 (GitHub refuses the queue's rebase when a PR and dev have both changed the same workflow file), TASK-34789 (flaky required check: 7 of about 11 rebased heads needed a retry), TASK-34790 (one failed queue run per merge from the racing loser; a double-posted warning).
 
 AC 6 stays open: the queue is off, and re-enabling waits for the owner.
-Owner approved re-enabling on 2026-10-11 ('Turn it on'), with the known costs until TASK-34788 and TASK-34789 land: a PR that hits two flaky failures is evicted and must be re-armed, and a PR that changes a workflow file needs a hand rebase. AC 6 is met; MERGE_QUEUE is set on with this PR.
+Owner approved re-enabling on 2026-10-11 ('Turn it on'), with the known costs until TASK-34788 and TASK-34789 land: a PR that hits two flaky failures is evicted and must be re-armed, and a PR whose rebase GitHub refuses over a workflow file needs a hand rebase. AC 6 is met; MERGE_QUEUE is set on with this PR.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

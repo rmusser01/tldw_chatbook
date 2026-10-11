@@ -1659,7 +1659,7 @@ WORKFLOW_REFUSAL = ("gh api graphql -f failed: gh: refusing to allow a GitHub Ap
                     "`.github/workflows/derived-artifacts.yml` without `workflows` permission")
 
 
-def test_a_pr_that_changes_a_workflow_file_is_told_why_and_leaves_at_once():
+def test_a_refused_workflow_file_rebase_is_told_why_and_leaves_at_once():
     """TASK-34788, seen live on #3058: GitHub refuses a rebase that would have the queue's token
     rewrite a workflow file (the PR and dev had both changed it). That used to be a rebase strike: a
     generic warning, then an eviction ten minutes later with no hint. Now one comment names the file
@@ -1676,7 +1676,7 @@ def test_a_pr_that_changes_a_workflow_file_is_told_why_and_leaves_at_once():
     assert ("disarm", "PR_1") in gh.calls
 
 
-def test_an_up_to_date_workflow_pr_lands_without_a_rebase():
+def test_an_up_to_date_pr_needs_no_rebase_whatever_github_would_refuse():
     """TASK-34788 AC 3, a pin rather than a regression test (it passes on the old script too):
     hand-rebased and green, such a PR needs nothing from the queue's token; the queue waits for
     auto-merge like any other up-to-date PR."""
@@ -1733,8 +1733,9 @@ def test_comment_tidying_never_stops_the_caller(fail, capsys):
         fail: Which tidy-up call fails.
     """
     gh = _CommentRace(90, 100, fail=fail)
-    assert mq.comment_once(gh, 7, "rebased", NEW, "this PR is next") is True
-    assert "de-duplication" in capsys.readouterr().out
+    lines = []
+    assert mq.comment_once(gh, 7, "rebased", NEW, "this PR is next", lines.append) is True
+    assert any("de-duplication" in line for line in lines) and capsys.readouterr().out == ""
 
 
 @pytest.mark.parametrize(("reread", "expected"), [

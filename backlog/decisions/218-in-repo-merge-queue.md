@@ -49,7 +49,7 @@ GitHub's native merge queue needs an organization-owned repository, and this one
   the queue keeps its counts in comments.
 - Amendment 2026-10-11 (found on the first day of real traffic): when a PR and dev have both changed the same
   workflow file, GitHub refuses the built-in token's rebase; the queue evicts that PR at once (`evict-workflow-file`)
-  and the author rebases by hand. (A PR that changes a workflow file dev left alone rebases normally: #3062.)
+  and the author rebases by hand. (A PR that changes a workflow file dev left alone rebases normally: #3062. The rule is inferred from the cases seen; GitHub does not document it.)
   The loser of the two queue runs a merge wakes stands down instead of failing, and a comment both posted is reduced
   to one.
 - The dispatch-safe rule above no longer serves the queue. It still keeps manual dispatches safe.

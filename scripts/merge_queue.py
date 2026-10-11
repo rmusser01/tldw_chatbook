@@ -591,7 +591,8 @@ def marker_age(gh: GhApi, number: int, kind: str, sha: str, now: datetime) -> ti
     return None
 
 
-def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool:
+def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str,
+                 log: Callable[[str], None] = print) -> bool:
     """Post a comment unless one of this kind already exists for this head.
 
     Args:
@@ -600,6 +601,7 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool
         kind: The comment's kind, part of its hidden marker.
         sha: The head the comment is about, part of its hidden marker.
         body: The visible text.
+        log: Receives a line if the tidy-up after posting fails.
 
     Returns:
         True if it posted, False if the marker was already there (or a racing queue run posted
@@ -636,7 +638,7 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool
     except GhError as exc:
         # The comment is posted; tidying up must never stop what the caller does next (a disarm, a
         # wake). At worst two copies stay.
-        print(f"  best-effort comment de-duplication on #{number} failed: {exc}")
+        log(f"  best-effort comment de-duplication on #{number} failed: {exc}")
     return True
 
 
@@ -906,6 +908,7 @@ def _rerun(gh: GhApi, pr: PrState, run: dict, failed_only: bool, log: Callable[[
                     gh, pr.number, "rerun-error", pr.head_sha,
                     f"Merge queue: re-running the required check failed ({str(exc)[:200]}); will try again, and "
                     "remove it from the line if it still fails 10 minutes from now.",
+                    log,
                 )
                 raise
             if age < STRIKE_GAP:
@@ -940,6 +943,7 @@ def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -
         gh, pr.number, f"evict-{action.slug}", pr.head_sha,
         f"Merge queue: removed from the line ({action.reason}). Auto-merge is now off. Fix the cause, then "
         f"re-arm with `gh pr merge {pr.number} --auto --merge` to rejoin at the back.{links}",
+        log,
     )
     _disarm(gh, pr, log)
     log(f"  evicted #{pr.number}: {action.reason}")
@@ -948,7 +952,7 @@ def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -
 
 def _comment_if_allowed(gh: GhApi, number: int, kind: str, sha: str, log: Callable[[str], None], body: str) -> None:
     try:
-        comment_once(gh, number, kind, sha, body)
+        comment_once(gh, number, kind, sha, body, log)
     except CommentRefused as exc:
         log(f"  cannot comment on #{number} ({exc}); skipped")
 
@@ -991,7 +995,7 @@ def _strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Action, w
     """
     age = marker_age(gh, pr.number, kind, pr.head_sha, now())
     if age is None:
-        comment_once(gh, pr.number, kind, pr.head_sha, warning)
+        comment_once(gh, pr.number, kind, pr.head_sha, warning, log)
         if wake_first:
             _wake_best_effort(gh, log)
         return False
@@ -1054,7 +1058,7 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
             return _evict(gh, fresh, Action(
                 "evict",
                 f"GitHub refused the queue's rebase because it would rewrite a workflow file{which}; this "
-                "happens when this PR and dev have both changed that file. Rebase it onto dev yourself "
+                "has been seen when a PR and dev have both changed that file. Rebase it onto dev yourself "
                 "(`git pull --rebase origin dev`, then push with `--force-with-lease`) and re-arm; after that "
                 "the queue can rebase it again unless dev changes that file once more",
                 slug="workflow-file"), log)
@@ -1226,6 +1230,7 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
         gh, pr.number, "retry", pr.head_sha,
         f"Merge queue: the required check failed once on `{pr.head_sha[:10]}`; re-running it. "
         f"Failed run: {action.links[0]}",
+        log,
     )
     if outcome == "pending":
         _wake_best_effort(gh, log)
@@ -1304,7 +1309,7 @@ def comment_unqueued(gh: GhApi, prs: list[PrState], mode: str, log: Callable[[st
         if mode == "on":
             _best_effort(
                 log, f"comment on {kind} PR #{pr.number}",
-                lambda p=pr, k=kind: comment_once(gh, p.number, k, p.head_sha, UNQUEUED_NOTES[k]),
+                lambda p=pr, k=kind: comment_once(gh, p.number, k, p.head_sha, UNQUEUED_NOTES[k], log),
             )
 
 

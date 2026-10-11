@@ -181,6 +181,7 @@ variable is unset, which means off.
   (`evict-workflow-file`). Rebase it onto `dev` yourself (`git pull --rebase origin dev`, push with
   `--force-with-lease`) and re-arm; after that the queue can rebase it again unless `dev` changes that file once more.
   A PR that changes a workflow file `dev` has left alone is rebased normally (verified on #3062, 2026-10-10).
+  This rule is inferred from the cases seen so far (#3058 refused; #3062 and #2892 rebased); GitHub does not document it.
 
 **Queue `off` or `dry`:**
 - Re-sync a PR that is behind by **rebasing** it: `gh pr update-branch --rebase <n>`, or a local `git rebase origin/dev`
