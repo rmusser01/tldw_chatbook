@@ -10,7 +10,7 @@
     "tldw_chatbook/app_service_wiring.py": "bcd40bf39a23fbafbfcbbe72c837a7c5e74c76ac24f218c390cc40d8adf9f8a7",
     "tldw_chatbook/Actor_Packs/activation.py": "8f256ef2a911e3ae0d3e714287050b5a5ce1cf9d7717044381c1d94af2289e48",
     "tldw_chatbook/Actor_Packs/contracts.py": "b779707b1b6fec38e67770f07e225633d03be50fca10a119bd9062f7df3e72fa",
-    "tldw_chatbook/Actor_Packs/importer.py": "4d5ee031ea1fef6384e78a2c2e0ea404ec33629e4c5ae30e2633b42e463c5337",
+    "tldw_chatbook/Actor_Packs/importer.py": "640e53bdb1728cd30ab61c545e297771cdf4225df21745d54bcdb7060f24d6ab",
     "tldw_chatbook/Character_Chat/buddy_conversion.py": "e9b4340e87b8346a1478465ff10773d0a500e68dc916794de31ce4afc404b0b0",
     "Tests/Persona_Buddy/test_buddy_controller_publication.py": "7142b9f8fe0dc1966e001e8706ae81bad3ca01d041ffd19150fb29af701e1079",
     "Tests/Persona_Buddy/test_buddy_startup.py": "60b148cd2b18200e7b404c8c631c880a84276e8483c73de17a34cab0a3ebfa44",
@@ -181,6 +181,25 @@
       ],
       "junit_sha256": "c4e27be565426dabafe67333b06ee93e8b434a25c3999b44d5c6eb526ebdff6e",
       "log_sha256": "3b546513bbe185265a413d693fa61b26b1f5f9b1d663d126c03efb21b200f014"
+    },
+    {
+      "name": "publication-closure",
+      "command_cwd": "/Users/macbook-dev/.codex/worktrees/buddy-task-burndown/tldw_chatbook",
+      "python_binary": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "command": "python -m pytest Tests/Packaging/test_persona_buddy_import_closure.py -q --tb=short --junitxml=/private/tmp/buddy-publication-closure-20261011.xml",
+      "exit": 0,
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 17.854,
+      "test_identities": [
+        "Tests.Packaging.test_persona_buddy_import_closure::test_app_import_does_not_execute_persona_visual_or_pil",
+        "Tests.Packaging.test_persona_buddy_import_closure::test_persona_package_inits_are_lazy_and_single_sourced",
+        "Tests.Packaging.test_persona_buddy_import_closure::test_actor_pack_modules_do_not_execute_persona_visual_or_pil"
+      ],
+      "junit_sha256": "73194759c7291192ec57c07499f48f4eeaf71829b00f3df6d8862d3419591d97",
+      "log_sha256": "bd3d9916b29a18b84a1ae658d49284bc852a88cfe7d5e96f6933cdc696cbfa57"
     }
   ],
   "unique_passing_test_identities": 129,
@@ -257,9 +276,12 @@
   ],
   "static": {
     "ruff": {
-      "current": 51,
+      "current": 50,
       "baseline": 53,
-      "introduced": []
+      "introduced": [],
+      "comparison": "Per-file diagnostic code/message multiplicities, using the same explicit pyproject.toml for current and exact HEAD snapshot.",
+      "current_result_sha256": "22879c5a8b45df710cc12e14c9a5c7f7aa0eaaabc59b94a867632428e1be2fca",
+      "baseline_result_sha256": "2fb7b74eddd937bfaf53622e86109c530d5b9d31734aaddfab8a3cbce9b7e357"
     },
     "bandit": {
       "current": {
@@ -300,5 +322,25 @@
     "No new provider, microphone, playback, credential access or accepted UAT repetition.",
     "Existing app_service_wiring formatting debt and Ruff/Bandit baseline findings remain.",
     "Black is absent from both available venvs; installed Ruff formatter used."
-  ]
+  ],
+  "tested_source_sha256": {
+    "tldw_chatbook/app_service_wiring.py": "bcd40bf39a23fbafbfcbbe72c837a7c5e74c76ac24f218c390cc40d8adf9f8a7",
+    "tldw_chatbook/Actor_Packs/activation.py": "8f256ef2a911e3ae0d3e714287050b5a5ce1cf9d7717044381c1d94af2289e48",
+    "tldw_chatbook/Actor_Packs/contracts.py": "b779707b1b6fec38e67770f07e225633d03be50fca10a119bd9062f7df3e72fa",
+    "tldw_chatbook/Actor_Packs/importer.py": "4d5ee031ea1fef6384e78a2c2e0ea404ec33629e4c5ae30e2633b42e463c5337",
+    "tldw_chatbook/Character_Chat/buddy_conversion.py": "e9b4340e87b8346a1478465ff10773d0a500e68dc916794de31ce4afc404b0b0",
+    "Tests/Persona_Buddy/test_buddy_controller_publication.py": "7142b9f8fe0dc1966e001e8706ae81bad3ca01d041ffd19150fb29af701e1079",
+    "Tests/Persona_Buddy/test_buddy_startup.py": "60b148cd2b18200e7b404c8c631c880a84276e8483c73de17a34cab0a3ebfa44",
+    "Tests/UI/test_buddy_management_journey.py": "e224cf0462d55e12a85992186bc797f15bfa998c9560d529f9946560190973d1",
+    "Tests/Actor_Packs/test_actor_pack_contracts.py": "e2cd9c8a2b977efd9dd399d5aa18739106706569a56e5427383d66331a9e1a73",
+    "Tests/Actor_Packs/test_actor_pack_activation.py": "2e3d65ac08aa5099e3a22f77ab2514b0565128401a8bd477341af33a6eb3622f",
+    "Tests/Character_Chat/test_buddy_conversion.py": "00df204f024beecfd330e23e4ee7097ebef28fe26a74b8e502ecedf3de23ae53"
+  },
+  "format_only_source_change": {
+    "path": "tldw_chatbook/Actor_Packs/importer.py",
+    "tested_sha256": "4d5ee031ea1fef6384e78a2c2e0ea404ec33629e4c5ae30e2633b42e463c5337",
+    "published_sha256": "640e53bdb1728cd30ab61c545e297771cdf4225df21745d54bcdb7060f24d6ab",
+    "ast_unchanged": true,
+    "change": "Removed one blank line between deferred imports to resolve the added import-order diagnostic."
+  }
 }

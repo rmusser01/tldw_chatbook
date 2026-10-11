@@ -1,6 +1,12 @@
 # Lessons: what counts as evidence a change works
 
 
+## Aggregate lint counts can hide a new per-file finding (TASK-21236, 2026-10-11)
+
+**Incident.** The Buddy closeout removed two old import-order findings and added one elsewhere. Comparing total code/message counts reported no introduced finding; independent review found importer.py grew from three I001 diagnostics to four. Removing one blank line fixed it without changing the Python AST, and the three startup guards passed again.
+
+**What to do.** Compare diagnostic code/message multiplicities per file against exact base bytes, with the same explicit linter configuration. Keep tested and published source hashes distinct when a final formatting correction changes bytes.
+
 ## A stale-review category can hide a storage-scope refusal (TASK-21236, 2026-10-11)
 
 **Incident.** Four existing Actor Pack artwork/conversion round trips failed with `actor_pack_import_review_stale` after the Buddy import-closure repair. Adding a bootstrap-profile marker did not change the failure. Tracing the original exception identified `operation_path_outside_scope`: review validation asked for the profile directory while the active SQLite operation owned only `actors.db`.

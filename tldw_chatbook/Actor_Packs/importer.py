@@ -1216,7 +1216,6 @@ def _validate_sections(
         ARTWORK_MEMBER,
         decode_artwork_attribution,
     )
-
     from tldw_chatbook.Character_Chat.visual_identity import (
         validate_visual_identity_manifest,
     )
