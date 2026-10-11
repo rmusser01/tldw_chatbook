@@ -1853,11 +1853,24 @@ Button.settings-category-group-toggle:focus {
    word beside it (switch_word) stays the text carrier. */
 /* task-1713 counterweight: the widened shared label column (24) does not
    fit the Image Gen backend rows' five controls at 120 cols -- the
-   geometry guard test pins that width. Backend-row labels are short
-   backend names; 12 never truncated them. */
-.settings-imagegen-backend-row .settings-input-label {
+   geometry guard test pins that width. The row is 52 cells there, and the
+   default backend's row (it carries "★ Default") can spare 16 at most.
+   TASK-33641.3: keyed on the row label's own class, not on the shared
+   .settings-input-label. That token is pinned to the boot bundle (another
+   screen composes it), and these two rules belong in the lazy Settings
+   sheet with the rest of the row. Two classes outrank the shared rule
+   whichever sheet loads last. */
+.settings-imagegen-backend-row .settings-imagegen-backend-label {
     width: $ds-size-12;
     min-width: $ds-size-12;
+}
+
+/* TASK-33641.3: 12 cells cut "ComfyUI (H3 image edit)" to "ComfyUI (H3" and
+   left "SD.cpp video" no gap before its status. From 150 columns the row
+   has room for the shared 24-cell column: the longest name (23) and one
+   blank cell. Image Generation and Video Generation share this row class. */
+App.-wide-viewport .settings-imagegen-backend-row .settings-imagegen-backend-label {
+    width: $ds-size-24;
 }
 
 

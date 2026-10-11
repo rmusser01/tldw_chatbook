@@ -11142,14 +11142,6 @@ RecoveryPassphraseDialog {
     min-width: $ds-size-0;
 }
 
-
-
-
-.settings-imagegen-backend-row .settings-input-label {
-    width: $ds-size-12;
-    min-width: $ds-size-12;
-}
-
 /* ===== MODULE: features/_home.tcss ===== */
 
 

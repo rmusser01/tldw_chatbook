@@ -30,6 +30,8 @@ from Tests.UI.test_settings_configuration_hub import (
     _wait_for_settings_search_focus,
     _wait_for_settings_text,
 )
+from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness, _settle
+from tldw_chatbook.app import WideViewportTierMixin
 from tldw_chatbook.Image_Generation.config import (
     DEFAULT_SWARMUI_TIMEOUT_SECONDS,
     get_image_generation_config,
@@ -38,8 +40,10 @@ from tldw_chatbook.Image_Generation.config import (
 from tldw_chatbook.config import ConfigMutationResult
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+from tldw_chatbook.UI.Screens import settings_video_gen_defaults as video_defaults
 from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     BACKEND_IDS,
+    BACKEND_LABELS,
     ImageGenProbeResult,
     effective_placeholder,
 )
@@ -1313,6 +1317,79 @@ enabled_backends = ["openrouter", "swarmui"]
         widget, _offset = screen.screen.get_widget_at(*save_btn.region.center)
         assert widget is save_btn, (
             f"@ {size}: Save button not reachable/clickable via scroll"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TASK-33641.3: the backend names. A 12-cell label column cut
+# "ComfyUI (H3 image edit)" to "ComfyUI (H3" and ran "SD.cpp video" into
+# "Not configured" with no gap. Image Gen and Video Gen share the row class,
+# so one test covers every label of both panels, under the real stylesheet.
+# The wider column needs the app's wide tier, so the host carries the mixin
+# TldwCli does; 150 columns is where that tier starts.
+# ---------------------------------------------------------------------------
+
+
+class _WideTierSettingsHarness(WideViewportTierMixin, _SettingsCssHarness):
+    """The Settings CSS harness with the app's ``-wide-viewport`` class."""
+
+
+@pytest.mark.parametrize("size", [(150, 45), (211, 44), (235, 52)])
+@pytest.mark.parametrize("panel", ["imagegen", "videogen"])
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_backend_rows_paint_each_name_whole_before_one_status_column(size, panel):
+    category, backend_ids, labels = (
+        (SettingsCategoryId.IMAGE_GENERATION, BACKEND_IDS, BACKEND_LABELS)
+        if panel == "imagegen"
+        else (
+            SettingsCategoryId.VIDEO_GENERATION,
+            video_defaults.BACKEND_IDS,
+            video_defaults.BACKEND_LABELS,
+        )
+    )
+    host = _WideTierSettingsHarness(_build_test_app(), "settings")
+    async with host.run_test(size=size) as pilot:
+        await _settle(pilot)
+        screen = _active_destination_screen(host)
+        screen._select_category(category.value)
+        deadline = time.monotonic() + 5.0
+        while not screen.query(f"#settings-{panel}-default_backend"):
+            assert time.monotonic() < deadline, f"the {panel} panel never loaded"
+            await pilot.pause(0.02)
+
+        status_columns = {}
+        for backend_id in backend_ids:
+            row = screen.query_one(f"#settings-{panel}-backend-{backend_id}")
+            label = row.query_one(".settings-input-label", Static)
+            status = row.query_one(".settings-imagegen-badge", Static)
+            row.scroll_visible(animate=False)
+            await pilot.pause(0.1)
+            # A fixed pause is not enough on a loaded machine: the first row
+            # was once read before its layout pass, with a zero-width label.
+            laid_out_by = time.monotonic() + 5.0
+            while not (label.region.width and status.region.width):
+                assert time.monotonic() < laid_out_by, f"{backend_id} never laid out"
+                await pilot.pause(0.02)
+            painted = (
+                screen._compositor.render_strips()[label.region.y]
+                .crop(label.region.x, status.region.x)
+                .text
+            )
+            name = labels[backend_id]
+            assert painted.startswith(f"{name} "), (
+                f"{backend_id} @ {size}: {painted!r} is painted before the "
+                f"status, not the whole name {name!r} and a blank cell"
+            )
+            # The default backend's row is the widest: it carries "★ Default".
+            assert row.children[-1].region.right <= row.region.right, (
+                f"{backend_id} @ {size}: the row's last control ends at "
+                f"{row.children[-1].region.right}, past the row's right edge "
+                f"({row.region.right})"
+            )
+            status_columns[backend_id] = status.region.x
+        assert len(set(status_columns.values())) == 1, (
+            f"@ {size}: the statuses start at different columns: {status_columns}"
         )
 
 

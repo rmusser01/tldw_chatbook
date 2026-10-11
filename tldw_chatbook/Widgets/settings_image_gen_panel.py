@@ -235,7 +235,10 @@ class ImageGenSettingsPanel(Vertical):
                 id=f"settings-imagegen-backend-{row.backend_id}",
                 classes="settings-imagegen-backend-row",
             ):
-                yield Static(row.label, classes="settings-input-label")
+                yield Static(
+                    row.label,
+                    classes="settings-input-label settings-imagegen-backend-label",
+                )
                 yield Static(
                     "Configured" if row.configured else "Not configured",
                     id=f"settings-imagegen-status-{row.backend_id}",
