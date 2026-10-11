@@ -19,7 +19,6 @@ from typing import (
     Mapping,
     Sequence,
     get_args,
-    overload,
 )
 from urllib.parse import urlparse, urlunparse
 
@@ -58,7 +57,6 @@ from tldw_chatbook.Chat.provider_readiness import (
     provider_config_key,
     safe_provider_label,
 )
-from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_test_evidence import (
     ConfigurationFacet,
     ConfigurationIssueCode,
@@ -1305,7 +1303,8 @@ def resolve_console_value_layers(
         extra_sources: ADR-147 registry params, as the builder takes them.
         excluded_model_profile_fields: Model-default fields to skip, so a
             blank Settings model default names the layer it inherits from
-            (TASK-33007.5), as the builder takes them.
+            (TASK-33007.5), as the builder takes them. The chain the chat is
+            compared with skips them too.
 
     Returns:
         ``{name: layer}`` for every name.
@@ -1319,7 +1318,11 @@ def resolve_console_value_layers(
     )
     defaults = (
         build_default_console_session_settings(
-            app_config, provider, model, extra_sources=extra_sources
+            app_config,
+            provider,
+            model,
+            excluded_model_profile_fields=excluded_model_profile_fields,
+            extra_sources=extra_sources,
         )
         if chat_settings is not None
         else None
@@ -1358,6 +1361,8 @@ def build_default_console_session_settings(
         app_config: The live app configuration snapshot.
         provider: An explicit provider override, or ``None``.
         model: An explicit model override, or ``None``.
+        excluded_model_profile_fields: Exact model-profile fields to skip so
+            inherited controls can re-resolve lower-precedence defaults.
         extra_sources: Optional param-name → value mappings slotted between
             the saved console provider defaults and ``chat_defaults`` in the
             precedence walk (ADR-147: registry entry params ride this seam).
