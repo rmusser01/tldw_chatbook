@@ -10698,6 +10698,90 @@ async def test_settings_model_save_keeps_the_stored_key_that_resolves(
         assert after[1] == f"config:api_settings.{provider}.api_key"
 
 
+_LEGACY_API_SECTION_KEY = "sk-settings-legacy-api-canary-33001"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_model_save_writes_a_legacy_api_section_key_into_the_provider_table(
+    request, monkeypatch
+):
+    """TASK-33001.15: a key that only exists under legacy ``[API]`` is saved.
+
+    The loader copies ``[API] openai_api_key`` into ``api_settings.openai`` in
+    memory, and only while ``OPENAI_API_KEY`` is unset, so Settings shows a
+    stored key. A model-only save recorded ``credential_source = "stored"``
+    and left the table on disk without an ``api_key``. Once the variable was
+    exported readiness found no stored key while requests spent the env key.
+    The save now writes the key into the table, so both resolve the stored
+    key with the variable unset, set, and after the quit rewrite. The app's
+    config is the real loader's and the real writer runs on this private
+    profile's TLDW_CONFIG_PATH.
+
+    Args:
+        request: Pytest request; ``private_profile_test`` runs this test in a
+            child pytest on a fresh HOME, XDG dirs and TLDW_CONFIG_PATH.
+        monkeypatch: Clears, then exports, ``OPENAI_API_KEY``.
+    """
+    import os
+
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    config_path = Path(config_module.get_cli_config_path())
+    assert config_path.resolve() == Path(os.environ["TLDW_CONFIG_PATH"]).resolve()
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config_module.load_cli_config_and_ensure_existence(force_reload=True)
+    assert config_module.apply_settings_mutation_to_cli_config(
+        {"API": {"openai_api_key": _LEGACY_API_SECTION_KEY}}
+    ).file_replaced
+
+    def table_on_disk() -> dict:
+        return tomllib.loads(config_path.read_text(encoding="utf-8"))["api_settings"][
+            "openai"
+        ]
+
+    def readiness_and_send_keys() -> tuple[str | None, str | None]:
+        """The key Console readiness resolves and the one a request spends."""
+        runtime = config_module.load_settings(force_reload=True)
+        return (
+            get_provider_readiness("openai", runtime).api_key,
+            runtime["openai_api"]["api_key"],
+        )
+
+    stored = (_LEGACY_API_SECTION_KEY, _LEGACY_API_SECTION_KEY)
+    assert "api_key" not in table_on_disk()
+    assert readiness_and_send_keys() == stored
+
+    app = _build_test_app()
+    assert app.app_config["api_settings"]["openai"]["api_key"] == (
+        _LEGACY_API_SECTION_KEY
+    )
+    app.app_config["chat_defaults"] = {
+        "provider": "openai",
+        "model": str(table_on_disk().get("model") or ""),
+    }
+    host = DestinationHarness(app, "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        model = screen.query_one("#settings-model-value", Input)
+        model.value = "gpt-4.1-mini"
+        screen.handle_model_value_changed(Input.Changed(model, model.value))
+        await pilot.pause()
+        await pilot.click("#settings-save-category")
+        await pilot.pause()
+        assert screen._provider_save_result == _PROVIDER_SAVED_WITH_SCOPE
+
+    assert table_on_disk()["model"] == "gpt-4.1-mini"
+    assert table_on_disk()["credential_source"] == "stored"
+    assert readiness_and_send_keys() == stored
+    monkeypatch.setenv("OPENAI_API_KEY", _ENV_KEY_CANARY)
+    assert readiness_and_send_keys() == stored
+    assert table_on_disk()["api_key"] == _LEGACY_API_SECTION_KEY
+    assert config_module.persist_cli_config_for_shutdown()
+    assert readiness_and_send_keys() == stored
+
+
 @pytest.mark.asyncio
 async def test_settings_provider_endpoint_validation_blocks_bad_url(monkeypatch):
     app = _build_test_app()

@@ -823,7 +823,9 @@ def build_provider_setup_mutation(
             for an unchanged Anthropic subscription selection only.
         keep_stored_credential: For a "stored" draft with no new value, leave
             the existing stored key in place verbatim (neither re-set nor
-            revalidated); it must still resolve as a usable key.
+            revalidated); it must still resolve as a usable key. One key is
+            written: a key the loader copied from legacy ``[API]``, which
+            the provider's table on disk does not hold (TASK-33001.15).
     """
 
     if type(draft) is not ProviderSetupDraft:
@@ -908,6 +910,19 @@ def build_provider_setup_mutation(
             # a key the resolver accepts never fails a model-only save.
             if not is_valid_provider_api_key(existing_value):
                 raise ValueError("Credential setup is invalid.")
+            # TASK-33001.15: a key the loader copied from legacy `[API]` is
+            # not in this table on disk. Left unwritten, "stored" named a
+            # key the table lacked once the env var was exported: readiness
+            # found none while requests spent the env key. A key the setup
+            # validator would refuse stays unwritten, as before.
+            legacy_tables = app_config.get("legacy_api_key_providers")
+            legacy_key = _existing_credential_value(existing_value)
+            if (
+                legacy_key is not None
+                and isinstance(legacy_tables, (tuple, list))
+                and provider_section.removeprefix("api_settings.") in legacy_tables
+            ):
+                provider_values[stored_key] = legacy_key
         else:
             stored_value = credential_value or _existing_credential_value(
                 existing_value

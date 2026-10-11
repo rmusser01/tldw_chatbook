@@ -973,6 +973,53 @@ def test_credential_source_is_persisted_for_each_authoritative_auth_decision():
     )
 
 
+@pytest.mark.parametrize(
+    ("stored_key", "legacy_tables", "written"),
+    [
+        ("sk-legacy-33001-15", ("openai",), True),
+        ("sk-own-table-33001-15", (), False),
+        ("sk-own-table-33001-15", ("anthropic",), False),
+        ("sk-legacy-33001-15", "openai", False),
+        ("sk-over-limit-" + "x" * 8200, ("openai",), False),
+    ],
+    ids=[
+        "copied-from-legacy-api",
+        "own-table-key",
+        "another-provider-copied",
+        "malformed-marker",
+        "copied-but-over-the-setup-limit",
+    ],
+)
+def test_keep_stored_writes_only_a_key_the_loader_copied_from_legacy_api(
+    stored_key, legacy_tables, written
+):
+    """TASK-33001.15: a kept "stored" key is written into the provider table
+    only when the loader says that table got it from legacy ``[API]``.
+
+    A key the table already holds stays out of the mutation (TASK-33001.13:
+    kept in place, never revalidated). A copied key the setup validator would
+    refuse is left unwritten too, so the save still succeeds as it did.
+    """
+    config = {
+        "api_settings": {"openai": {"api_key": stored_key}},
+        "legacy_api_key_providers": legacy_tables,
+    }
+
+    mutation = build_provider_setup_mutation(
+        _draft(provider="openai", endpoint="", credential_source="stored"),
+        config,
+        keep_stored_credential=True,
+    )
+
+    table = mutation.section_values["api_settings.openai"]
+    assert table["credential_source"] == "stored"
+    assert ("api_key" in table) is written
+    if written:
+        assert table["api_key"] == stored_key
+        assert stored_key not in repr(mutation)
+    assert "api_key" not in mutation.delete_keys.get("api_settings.openai", ())
+
+
 def test_unset_environment_declaration_changes_credential_routing_identity(
     monkeypatch,
 ):

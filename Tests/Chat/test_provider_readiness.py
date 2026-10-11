@@ -2088,6 +2088,42 @@ def test_legacy_only_google_key_lands_in_the_table_chat_with_google_reads(
     assert "google_api" not in settings["api_settings"]
 
 
+@pytest.mark.parametrize(
+    ("toml_text", "env_key", "expected"),
+    [
+        ('[API]\nopenai_api_key = "sk-legacy-only-33001-15"\n', None, ("openai",)),
+        ('[API]\nopenai_api_key = "sk-legacy-only-33001-15"\n', "sk-env", ()),
+        (
+            (
+                '[API]\nopenai_api_key = "sk-legacy-only-33001-15"\n'
+                '[api_settings.openai]\napi_key = "sk-own-table-33001-15"\n'
+            ),
+            None,
+            (),
+        ),
+    ],
+    ids=["legacy-only", "legacy-outranked-by-env", "own-table-key"],
+)
+def test_loader_names_the_tables_it_filled_from_the_legacy_api_section(
+    tmp_path, monkeypatch, toml_text, env_key, expected
+):
+    """TASK-33001.15: ``api_settings.<provider>.api_key`` reads the same whether
+    the table on disk holds it or the loader copied it from legacy ``[API]``.
+    ``legacy_api_key_providers`` tells the two apart, by name only, so a
+    Settings save can write a copied key into the table. It is always present,
+    and empty when the env var outranks the legacy key (nothing is copied) or
+    the table has its own key.
+    """
+    _clear_provider_env(monkeypatch)
+    if env_key is not None:
+        monkeypatch.setenv("OPENAI_API_KEY", env_key)
+    with _real_config(tmp_path, monkeypatch, toml_text):
+        settings = config_mod.load_settings()
+
+    assert settings["legacy_api_key_providers"] == expected
+    assert "sk-legacy-only-33001-15" not in repr(settings["legacy_api_key_providers"])
+
+
 # --- TASK-33511: engine presets' documented env vars without a settings table ---
 
 _ENGINE_PRESETS_FOR_ENV = [

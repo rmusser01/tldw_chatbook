@@ -1,6 +1,6 @@
 # ADR 012: Provider Credential Settings Boundary
 
-Status: Accepted (amended 2026-09-26: explicit key check by model listing; amended 2026-10-03: the OS keychain as an optional credential store, TASK-34100.17)
+Status: Accepted (amended 2026-09-26: explicit key check by model listing; amended 2026-10-03: the OS keychain as an optional credential store, TASK-34100.17; amended 2026-10-10: a "stored" save writes a key copied from legacy `[API]`, TASK-33001.15)
 Date: 2026-06-30
 Related Task: [backlog/tasks/task-145 - Restore-provider-credential-onboarding-and-polish-Console-setup-UX.md](../tasks/task-145%20-%20Restore-provider-credential-onboarding-and-polish-Console-setup-UX.md)
 Supersedes: N/A
@@ -260,6 +260,31 @@ storage, keyring migration…" is narrowed.
 Rejected: the keychain as the default store for new keys (the owner's ruling), and
 encryption as a per-key choice at the key field (encryption stays one profile-wide
 choice under TASK-34100.4's lifecycle; the key field only names it).
+
+## Amendment 2026-10-10: a "stored" save writes a key copied from legacy `[API]` (TASK-33001.15)
+
+The loader copies `[API] <provider>_api_key` into `api_settings.<provider>` in
+memory, for nine cloud providers and only while the provider's environment
+variable is unset. Settings therefore shows such a key as saved. A save that
+touched no credential field recorded `credential_source = "stored"` and, since
+TASK-33001.13, wrote no `api_key`. The table on disk then said "stored" and held
+no key. Once the variable was exported the loader copied nothing, so readiness
+found no key while requests spent the environment key.
+
+**Ruling: a save that records "stored" for a key copied from legacy `[API]`
+writes that key into `[api_settings.<provider>]`.** The loaded settings name the
+tables the loader filled this way in `legacy_api_key_providers` (table names
+only, never a key). `build_provider_setup_mutation` writes the key for a table
+named there and for no other, so a key the table already holds is still kept
+in place and never revalidated (TASK-33001.13).
+
+- The `[API]` entry is left as it is. From then on the table's key outranks
+  both it and the environment variable, which is the 2026-09-19 order.
+- A copied key that the setup validator refuses (longer than 8192 characters,
+  or holding control characters) is not written. The save succeeds as before
+  and that table keeps the old gap.
+- The list is made at load. After a save in the same session it still names
+  the table, so a later save writes the table's current key again, unchanged.
 
 ## Links
 

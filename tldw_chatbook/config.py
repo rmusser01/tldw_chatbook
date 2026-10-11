@@ -1845,6 +1845,7 @@ def _normalize_legacy_provider_api_key(
     raw_api_section: Dict[str, Any],
     toml_key: str,
     env_var: str,
+    bridged_from_legacy: set[str] | None = None,
 ) -> Optional[str]:
     """One normalized credential for `provider_key` -- PR-T2 Task 7.
 
@@ -1969,6 +1970,8 @@ def _normalize_legacy_provider_api_key(
             `"anthropic_api_key"`.
         env_var: The conventional environment variable, e.g.
             `"ANTHROPIC_API_KEY"`.
+        bridged_from_legacy: When given, `provider_key` is added to it if
+            the TOML-sourced fallback filled the table (TASK-33001.15).
 
     Returns:
         The normalized credential (feeds the legacy `<provider>_api` dict
@@ -2007,6 +2010,8 @@ def _normalize_legacy_provider_api_key(
             provider_table = {}
             api_settings_section[provider_key] = provider_table
         provider_table["api_key"] = legacy_value
+        if bridged_from_legacy is not None:
+            bridged_from_legacy.add(provider_key)
         return legacy_value
 
     return None
@@ -2619,6 +2624,7 @@ def _load_settings_uncached(
     # never disagree about the same config. `elevenlabs` is untouched: it
     # is a TTS credential, not a Chat provider `get_provider_readiness`
     # resolves.
+    _legacy_api_key_providers: set[str] = set()
     _bridged_provider_api_keys = {
         provider_key: _normalize_legacy_provider_api_key(
             final_api_settings,
@@ -2626,6 +2632,7 @@ def _load_settings_uncached(
             raw_api_section=api_section_legacy,
             toml_key=toml_key,
             env_var=env_var,
+            bridged_from_legacy=_legacy_api_key_providers,
         )
         for provider_key, toml_key, env_var in _LEGACY_PROVIDER_API_KEY_BRIDGE
     }
@@ -2762,6 +2769,11 @@ def _load_settings_uncached(
         "logging": final_logging_settings,  # For TUI log settings like log_max_bytes
         "database": final_database_settings_cli,  # For TUI DB paths
         "api_settings": final_api_settings,  # CRUCIAL for local API calls
+        # TASK-33001.15: provider tables whose `api_key` above is not in the
+        # table on disk -- the loader copied it from legacy `[API]`. Names
+        # only, always present; a Settings save that records "stored" for one
+        # of them writes the key into the table (provider_setup_persistence).
+        "legacy_api_key_providers": tuple(sorted(_legacy_api_key_providers)),
         "providers": final_providers_settings,  # For UI dropdowns
         "model_catalog": final_model_catalog_settings_cli,
         "chat_defaults": final_chat_defaults_cli,
