@@ -253,6 +253,12 @@ async def test_real_service_create_deck_select_deck_and_add_card_in_local_mode()
         assert db.get_deck(deck_id)["name"] == "Cell biology"
 
         card_list = app.screen.query_one("#card-list", ListView)
+        # Select.Changed may still be rebuilding rows after the direct refresh.
+        await _wait_until(
+            pilot,
+            lambda: _card_list_labels(card_list) == ["No cards in this deck."],
+            what="the empty card list to render",
+        )
         assert _card_list_labels(card_list) == ["No cards in this deck."]
 
         app.screen.query_one("#card-front", TextArea).text = "What is a ribosome?"
