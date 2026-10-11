@@ -4016,3 +4016,23 @@ exception at `issue_code` in the real app before you guess. Probes outside the
 app hit different fences. Never print the recorded text raw if credentials
 could be in it.
 
+
+## A live test that flips a repo-wide switch must restore it in the same command (TASK-34668, 2026-10-10)
+
+**Incident.** The live test of the merge-queue fix (#3039) needed
+`MERGE_QUEUE=on` for one throwaway PR (#3060). The agent set the variable at
+01:57Z, started a watcher capped at 50 minutes, and planned to set it back to
+`off` in its next turn. The machine slept, the session stalled, and the next
+turn came 23.5 hours later. The queue ran live for that whole day without the
+owner's go-ahead to re-enable it. It rebased and landed seven real PRs and
+evicted three (#3058 on a refused rebase, #3059 and #2882 on flaky tests).
+Four PRs the agent had disarmed "for a few minutes" stayed disarmed for the
+day and lost their place in the line. Nothing was damaged, and the day of
+traffic turned up three real defects (TASK-34788, 34789, 34790), but none of
+that was approved.
+
+**Rule.** Put the restore in the command that runs the test: end the watch
+loop with the command that turns the switch back (or set a `trap ... EXIT`),
+and give the loop a hard deadline. The same goes for anything disarmed,
+disabled or paused "temporarily". A restore that depends on the agent coming
+back is not a restore. Tell the owner the deadline before flipping the switch.
