@@ -11245,7 +11245,12 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
                 str(screen.query_one(selector, Static).renderable) == "edited *"
             ), selector
         assert "settings_draft" not in text
-        assert "Endpoint key: api_settings.ollama.api_url" in text
+        # Rewritten on purpose (review of #3057, R2 F5): the refreshed row is
+        # folded at its dots, as it was composed, not left as one long token.
+        endpoint_key = screen.query_one("#settings-provider-endpoint-key", Static)
+        assert str(endpoint_key.renderable) == (
+            "Endpoint key: api_settings.ollama.\n  api_url"
+        )
         assert (
             screen.query_one("#settings-provider-endpoint-value", Input).value
             == "http://localhost:11434/v1/chat/completions"
