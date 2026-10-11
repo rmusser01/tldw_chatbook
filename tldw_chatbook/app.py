@@ -1589,6 +1589,14 @@ class TldwCli(
         self._notes_sync_runtime_start_task: asyncio.Task[None] | None = None
         self._notes_sync_runtime_shutdown_task: asyncio.Task[None] | None = None
         self._recover_inflight_transfers_task: asyncio.Task[None] | None = None
+        # Kanban trio (server/local/scope) is built lazily on first access
+        # (TASK-21239): zero in-app consumers, and building it drags the
+        # 76-model `tldw_api.kanban_schemas` import chain (TASK-21107), so
+        # an unused subsystem costs neither construction nor import at boot.
+        self._server_kanban_service: Any = None
+        self._local_kanban_service: Any = None
+        self._kanban_scope_service: Any = None
+        self._kanban_services_lock = threading.Lock()
         # RAG admin trio (server/local/scope) is built lazily on first access
         # (task-254): its legacy UI consumers were deleted and nothing reads
         # these services at startup, so eager construction only added launch

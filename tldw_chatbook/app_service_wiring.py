@@ -133,11 +133,13 @@ from tldw_chatbook.Feedback_Interop import (
 from tldw_chatbook.Home.active_work_adapter import (
     LocalNotificationHomeActiveWorkAdapter,
 )
-from tldw_chatbook.Kanban_Interop import (
-    KanbanScopeService,
-    LocalKanbanService,
-    ServerKanbanService,
-)
+# TASK-21107 / TASK-21239: Kanban_Interop is deliberately NOT imported at
+# module scope. `server_kanban_service.py`'s module-level 31-name import
+# from `..tldw_api` forces the 76-pydantic-model `kanban_schemas` module
+# through the package's otherwise-lazy PEP-562 facade, and the subsystem
+# has zero in-app consumers -- so both its construction and its import are
+# deferred to first property access (see the `kanban_scope_service`
+# property below).
 from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Library.library_local_rag_search_service import (
     LibraryLocalRagSearchService,
@@ -1020,6 +1022,80 @@ class ServiceWiringMixin:
             # A substituted double (tests, recovery) supersedes any recorded
             # build failure -- the safe reader must not keep shadowing it.
             self.__dict__.pop("_notes_sync_runtime_build_failure", None)
+
+    def _build_kanban_services(self) -> None:
+        """Construct the Kanban trio on first access (TASK-21239, keep path).
+
+        The owner decision recorded in that task: the Kanban interop surface
+        is KEPT (retiring a filed subsystem is the owner's call, not this
+        burn-down's), but its boot-time construction is deferred to first
+        use exactly like the other lazy stores, because nothing in the app
+        consumes it -- no screen reads these services, and the only other
+        references are the Backup/Recovery participant registry (module-path
+        strings) and tests. Building the trio also drags in
+        `tldw_api.kanban_schemas` (76 pydantic models, TASK-21107), which is
+        why the imports are function-local, not module-level: an unused
+        subsystem must cost neither construction nor import at boot.
+
+        Idempotent under the lock; the trio is built as ONE unit because
+        the scope service composes the other two.
+        """
+        with self._kanban_services_lock:
+            if self._kanban_scope_service is not None:
+                return
+            from tldw_chatbook.Kanban_Interop import (  # noqa: PLC0415
+                KanbanScopeService,
+                LocalKanbanService,
+                ServerKanbanService,
+            )
+
+            try:
+                server_service = ServerKanbanService.from_config(
+                    self.app_config,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
+            except ValueError:
+                server_service = ServerKanbanService(
+                    client=None,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
+            local_service = LocalKanbanService(
+                db_path=get_user_data_dir() / "tldw_chatbook_kanban.db",
+                policy_enforcer=self.service_policy_enforcer,
+            )
+            self._server_kanban_service = server_service
+            self._local_kanban_service = local_service
+            self._kanban_scope_service = KanbanScopeService(
+                local_service=local_service,
+                server_service=server_service,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+
+    @property
+    def kanban_scope_service(self) -> Any:
+        """The Kanban scope service, built lazily with its trio (TASK-21239)."""
+        if self._kanban_scope_service is None:
+            self._build_kanban_services()
+        return self._kanban_scope_service
+
+    @property
+    def server_kanban_service(self) -> Any:
+        """The server Kanban service, built lazily with its trio (TASK-21239)."""
+        if self._server_kanban_service is None:
+            self._build_kanban_services()
+        return self._server_kanban_service
+
+    @property
+    def local_kanban_service(self) -> Any:
+        """The local Kanban service, built lazily with its trio (TASK-21239).
+
+        First access creates `tldw_chatbook_kanban.db` in the user data dir
+        -- deliberately: only a consumer that actually touches Kanban pays
+        for the store, instead of every profile getting the file at boot.
+        """
+        if self._local_kanban_service is None:
+            self._build_kanban_services()
+        return self._local_kanban_service
 
     def _read_notes_sync_runtime_owner_safe(self) -> "NotesSyncRuntimeOwner | None":
         """Read the runtime owner WITHOUT letting a build failure vanish.
@@ -3049,25 +3125,13 @@ class ServiceWiringMixin:
             server_service=self.server_prompt_studio_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.server_kanban_service = ServerKanbanService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_kanban_service = ServerKanbanService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        self.local_kanban_service = LocalKanbanService(
-            db_path=get_user_data_dir() / "tldw_chatbook_kanban.db",
-            policy_enforcer=self.service_policy_enforcer,
-        )
-        self.kanban_scope_service = KanbanScopeService(
-            local_service=self.local_kanban_service,
-            server_service=self.server_kanban_service,
-            policy_enforcer=self.service_policy_enforcer,
-        )
+        # TASK-21239: the Kanban trio used to be constructed here, at boot,
+        # paying the module import chain (76 pydantic models in
+        # `tldw_api.kanban_schemas`, TASK-21107) and creating
+        # `tldw_chatbook_kanban.db` in the user data dir for a subsystem
+        # with zero in-app consumers. It is now a lazy property trio -- see
+        # `kanban_scope_service` -- so an unused subsystem costs nothing at
+        # boot and no Kanban DB file is created until first access.
         try:
             self.server_translation_service = ServerTranslationService.from_config(
                 self.app_config,

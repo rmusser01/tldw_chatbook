@@ -165,6 +165,11 @@ MAX_TLDW_MODULES_AT_UI_READY = 1033
 #: The two package prefixes are TASK-21731's; the exact module names are the
 #: trajectory family TASK-22213 took off the Chat leg.
 ABSENT_AT_READY_PREFIXES = (
+    # TASK-21239: the Kanban interop trio is a zero-consumer subsystem
+    # built lazily on first property access; its import chain (including
+    # the 76-model `tldw_api.kanban_schemas`, TASK-21107) must stay off the
+    # whole first-paint window, not just the import phase.
+    "tldw_chatbook.Kanban_Interop",
     # Resend execution is first-use work; pure row eligibility is already resident.
     "tldw_chatbook.Chat.console_turn_resend",
     "tldw_chatbook.Chunking",
@@ -235,6 +240,11 @@ ABSENT_AT_READY_MODULES = (
     "tldw_chatbook.Notes.notes_sync_executor",
     "tldw_chatbook.Notes.notes_sync_runtime",
     "tldw_chatbook.Notes.notes_sync_watcher",
+    # TASK-21107: the 76-pydantic-model kanban schema module rides the
+    # Kanban_Interop prefix above; named separately so a re-eagering that
+    # bypasses the package (a direct `..tldw_api` import elsewhere) still
+    # fails with this module named.
+    "tldw_chatbook.tldw_api.kanban_schemas",
     # PCM wrapping belongs to requested playback, not Console first paint.
     "tldw_chatbook.TTS.pcm_playback",
     # Inspect's Environment implementation is first-open work, not closed-rail boot.
