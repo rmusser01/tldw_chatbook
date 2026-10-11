@@ -750,7 +750,8 @@ row's notes and readiness words give way first. The Provider and Model chips, th
 the palette's "Console: Switch model…" and `/model` open it too. `/model
 <query>` (for example `/model son`) opens it with the query already in
 **Find** and the best match highlighted; nothing applies until you press
-**Enter**. Focus starts in **Find** and the rows are grouped:
+**Enter**, and what you type next is added to the query. Focus starts in
+**Find** and the rows are grouped:
 
 - **PREVIOUS**, highlighted when the list opens, so **Alt+M** then **Enter**
   swaps back to the model you used before.
@@ -778,9 +779,15 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   matches for the provider's name, however many, never push the row's model
   off the list. If the list has no row for that model (the row named none,
   or the provider no longer lists it), that provider's first row is
-  highlighted instead, and nothing is when it has no row at all. Until you
-  change **Find** or move the highlight yourself, it never lands on another
-  provider's match for the name, so **Enter** cannot apply one by accident.
+  highlighted instead, and nothing is when the list has no row of that
+  provider's. A provider that is ready to send and lists no models has
+  none: READY PROVIDERS then opens with that provider's own line, "<name> ·
+  no models reported · type its name and an id". Its name is already in
+  **Find**, so type the model id after it (as in "Ollama qwen3:32b"): the
+  pair appears under **TYPED MODEL ID**, and **Enter** on that row applies
+  it. Until you change **Find** or move the highlight yourself, the
+  highlight never lands on another provider's match for the name, so
+  **Enter** cannot apply one by accident.
   Opened from the Get started card, the
   list comes back over the card while setup is unfinished, and **Esc**
   returns to the card. **Stay in Settings**, or walking back to the Console

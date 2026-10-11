@@ -1066,8 +1066,16 @@ async def test_a_highlight_pair_past_the_match_cap_stays_listed() -> None:
     assert (settings.provider, settings.model) == ("openai", "gpt-5.1")
 
 
+#: Three keyless providers listed ahead of OpenAI, three rows each for
+#: "OpenAI" in Find: they fill NEEDS SETUP's eight rows before its turn.
+_EIGHT_ROWS_AHEAD = {
+    name: [f"openai-{name}-{number}" for number in range(3)]
+    for name in ("Anthropic", "DeepSeek", "Groq")
+}
+
+
 @pytest.mark.parametrize(
-    "providers_models, chat, own_rows",
+    "providers_models, chat, model, own_rows, typed_rows",
     [
         # A provider lists three NEEDS SETUP rows; the pair is its fourth
         # model, and a ready aggregator's id outranks them all.
@@ -1077,20 +1085,27 @@ async def test_a_highlight_pair_past_the_match_cap_stays_listed() -> None:
                 "OpenRouter": ["openai/gpt-y"],
             },
             ("llama_cpp", "model-a"),
+            "gpt-5.1",
             ["gpt-a", "gpt-b", "gpt-5.1"],
+            ["gpt-a", "gpt-b", "gpt-c"],
         ),
         # Eight NEEDS SETUP rows end the group; three providers listed ahead
         # of OpenAI fill it.
         (
-            {
-                **{
-                    name: [f"openai-{name}-{number}" for number in range(3)]
-                    for name in ("Anthropic", "DeepSeek", "Groq")
-                },
-                "OpenAI": ["gpt-5.1"],
-            },
+            {**_EIGHT_ROWS_AHEAD, "OpenAI": ["gpt-5.1"]},
             ("llama_cpp", "model-a"),
+            "gpt-5.1",
             ["gpt-5.1"],
+            [],
+        ),
+        # The same eight rows, and a return that names no model: OpenAI
+        # lists none, so its one NEEDS SETUP row names none and is no pair's.
+        (
+            {**_EIGHT_ROWS_AHEAD, "OpenAI": []},
+            ("llama_cpp", "model-a"),
+            None,
+            [None],
+            [],
         ),
         # The pair is the chat's own, on a model no saved list holds: with
         # nothing in Find its NEEDS SETUP row names that model, and a query
@@ -1098,21 +1113,40 @@ async def test_a_highlight_pair_past_the_match_cap_stays_listed() -> None:
         (
             {"OpenAI": ["gpt-a"], "OpenRouter": ["openai/gpt-y"]},
             ("openai", "gpt-5.1"),
+            "gpt-5.1",
             ["gpt-a", "gpt-5.1"],
+            ["gpt-a"],
         ),
     ],
-    ids=["three-rows-a-provider", "eight-rows-a-group", "a-model-no-list-holds"],
+    ids=[
+        "three-rows-a-provider",
+        "eight-rows-a-group",
+        "eight-rows-a-group-no-pair",
+        "a-model-no-list-holds",
+    ],
 )
 async def test_a_highlight_pair_keeps_its_needs_setup_row(
-    providers_models, chat, own_rows
+    providers_models, chat, model, own_rows, typed_rows
 ) -> None:
     """TASK-33008.2: the NEEDS SETUP rows left the row's pair out too, and
     Enter then acted on Find's best match: it applied a ready aggregator's
     model, or opened another provider's fix. While Find is as it opened, the
     pair's own row is listed (in the third row's place, when the provider
-    has more) and highlighted, and Enter opens its fix."""
+    has more) and highlighted, and Enter opens its fix. A return from
+    Settings that names no model (``model`` is None: its provider lists none)
+    keeps that provider's one row the same way; the row went into "… N more
+    providers need setup" and nothing was highlighted. Once Find changes the
+    caps cut as ever (``typed_rows``)."""
     recorder = Recorder(ready=frozenset({"openrouter"}))
     app = SwitcherHarness()
+
+    def own(switcher) -> list[str | None]:
+        return [row.model for row in switcher._rows if row.provider == "openai"]
+
+    def highlight(switcher) -> tuple[str, str, str | None] | None:
+        row = switcher.highlighted_row()
+        return None if row is None else (row.kind, row.provider, row.model)
+
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = await open_switcher(
             app,
@@ -1122,22 +1156,26 @@ async def test_a_highlight_pair_keeps_its_needs_setup_row(
                 draft=_draft(*chat),
                 providers_models=providers_models,
                 query="OpenAI ",
-                highlight_pair=("openai", "gpt-5.1"),
+                highlight_pair=("openai", model) if model else None,
+                reopened_provider=None if model else "openai",
             ),
         )
-        assert [
-            row.model for row in switcher._rows if row.provider == "openai"
-        ] == own_rows
-        row = switcher.highlighted_row()
-        assert row is not None and (row.kind, row.provider, row.model) == (
-            "setup",
-            "openai",
-            "gpt-5.1",
-        )
+        assert own(switcher) == own_rows
+        assert highlight(switcher) == ("setup", "openai", model)
+
+        find = switcher.query_one("#console-popover-find", Input)
+        find.value = "OpenAI"  # the user's own query: the caps cut as ever
+        await pilot.pause()
+        assert own(switcher) == typed_rows
+        find.value = "OpenAI "
+        await pilot.pause()
+        assert own(switcher) == own_rows
+        assert highlight(switcher) == ("setup", "openai", model)
+
         await pilot.press("enter")
         await pilot.pause()
 
-    assert recorder.setup == [("openai", "gpt-5.1")]
+    assert recorder.setup == [("openai", model)]
     assert recorder.submissions == []
 
 
@@ -1166,7 +1204,12 @@ async def test_a_list_reopened_from_settings_never_highlights_another_providers_
     no row for the returned pair the highlight fell back to it, so the Enter
     the guide describes applied another provider's model. Reopened this way,
     the highlight is the returned pair's row, else that provider's first row,
-    else nothing, until Find changes."""
+    else nothing, until Find changes.
+
+    With nothing to highlight (the key is saved and the provider lists no
+    models) the list said nothing about that provider: text in Find lists
+    matches only. Until Find changes, READY PROVIDERS opens with that
+    provider's own line, and the id typed after its name applies."""
     ready = {"openrouter", "openai"} if saved else {"openrouter"}
     recorder = Recorder(ready=frozenset(ready))
     app = SwitcherHarness()
@@ -1174,6 +1217,14 @@ async def test_a_list_reopened_from_settings_never_highlights_another_providers_
     def highlight(switcher) -> tuple[str, str, str | None] | None:
         row = switcher.highlighted_row()
         return None if row is None else (row.kind, row.provider, row.model)
+
+    def says_no_models(switcher) -> bool:
+        lines = list_lines(app, switcher)
+        line = "OpenAI · no models reported · type its name and an id"
+        said = [index for index, text in enumerate(lines) if line in text]
+        # First under the heading, where 30 other matches cannot hide it.
+        assert all("READY PROVIDERS" in lines[index - 1] for index in said)
+        return bool(said)
 
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = await open_switcher(
@@ -1190,27 +1241,39 @@ async def test_a_list_reopened_from_settings_never_highlights_another_providers_
         listed = [(row.provider, row.model) for row in switcher._rows if row.model]
         assert _AGGREGATOR_ROW in listed and ("openai", model) not in listed
         assert highlight(switcher) == highlighted
+        assert says_no_models(switcher) == (highlighted is None)
 
         find = switcher.query_one("#console-popover-find", Input)
         find.value = "OpenAI"  # the user's own query: Find's best match again
         await pilot.pause()
         assert highlight(switcher) == ("pair", *_AGGREGATOR_ROW)
+        assert not says_no_models(switcher)
         find.value = "OpenAI "
         await pilot.pause()
         assert highlight(switcher) == highlighted
+        assert says_no_models(switcher) == (highlighted is None)
 
         await pilot.press("enter")
         await pilot.pause()
+        expected = [highlighted[1:]] if highlighted and saved else []
         if highlighted is None:
             assert app.screen is switcher  # nothing applied by accident
             error = switcher.query_one("#console-popover-error")
             assert str(error.render()) == "Choose a model: type to search, then Enter."
+            assert recorder.submissions == []
+
+            find.value = "OpenAI gpt-new"  # what the line asks for
+            await pilot.pause()
+            assert highlight(switcher) == ("typed", "openai", "gpt-new")
+            await pilot.press("enter")
+            await pilot.pause()
+            expected = [("openai", "gpt-new")]
 
     applied = [
         (submission.draft.settings.provider, submission.draft.settings.model)
         for submission in recorder.submissions
     ]
-    assert applied == ([highlighted[1:]] if highlighted and saved else [])
+    assert applied == expected
     assert recorder.setup == ([] if saved else [("openai", None)])
 
 
@@ -1254,6 +1317,87 @@ async def test_a_list_reopened_with_no_pair_waits_for_readiness_too() -> None:
         release.set()
 
     assert recorder.submissions == [] and recorder.setup == []
+
+
+async def test_a_returned_provider_says_once_that_its_models_are_loading() -> None:
+    """TASK-33008.2: the returned provider's line leads READY PROVIDERS, and
+    every loading catalog has a line after the matches. While its own catalog
+    loads it has the one line, in the leading place, which then becomes "no
+    models reported"."""
+    release = asyncio.Event()
+
+    async def catalog(provider: str) -> list[str]:
+        if provider == "openai":
+            await release.wait()
+            return []
+        return ["openai/gpt-y"]
+
+    def about_openai(switcher) -> list[str]:
+        lines = [line.strip() for line in list_lines(app, switcher)]
+        ready = next(i for i, line in enumerate(lines) if "READY PROVIDERS" in line)
+        assert lines[ready + 1].startswith("OpenAI · "), lines
+        return [line for line in lines if line.startswith("OpenAI · ")]
+
+    recorder = Recorder(ready=frozenset({"openrouter", "openai"}))
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build_switcher(
+            recorder,
+            providers_models={"OpenAI": [], "OpenRouter": ["openai/gpt-y"]},
+            catalog_loader=catalog,
+            query="OpenAI ",
+            reopened_provider="openai",
+        )
+        app.push_screen(switcher)
+        for _ in range(20):
+            await pilot.pause()
+            if "loading models…" in "\n".join(list_lines(app, switcher)):
+                break
+        assert about_openai(switcher) == ["OpenAI · loading models…"]
+        release.set()
+        await _settle(app, pilot)
+        assert about_openai(switcher) == [
+            "OpenAI · no models reported · type its name and an id"
+        ]
+        assert switcher.highlighted_row() is None
+
+
+async def test_a_query_the_list_opened_with_is_typed_after_not_over() -> None:
+    """TASK-33008.2: the list reopens with the provider's name and a space in
+    Find, and its "no models reported" line asks for an id after the name.
+    Focus selected the whole query, so the first key typed replaced the name
+    and the id paired with the chat's provider (seen live: Enter moved the
+    chat to OpenAI · llama-live-x where SambaNova was meant). A query the
+    list opens with starts with the cursor after it and nothing selected, as
+    the "… N more" row leaves it."""
+    recorder = Recorder(ready=frozenset({"openrouter", "openai"}))
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                providers_models={"OpenAI": [], "OpenRouter": ["openai/gpt-y"]},
+                query="OpenAI ",
+                reopened_provider="openai",
+            ),
+        )
+        await pilot.press(*"gpt-new")  # real keys: a set value selects nothing
+        await pilot.pause()
+        find = switcher.query_one("#console-popover-find", Input)
+        assert find.value == "OpenAI gpt-new"
+        row = switcher.highlighted_row()
+        assert row is not None and (row.kind, row.provider, row.model) == (
+            "typed",
+            "openai",
+            "gpt-new",
+        )
+        await pilot.press("enter")
+        await pilot.pause()
+
+    settings = recorder.submissions[0].draft.settings
+    assert (settings.provider, settings.model) == ("openai", "gpt-new")
 
 
 async def test_custom_endpoints_show_display_names_and_builtin_slots_stay() -> None:

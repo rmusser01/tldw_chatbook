@@ -3670,6 +3670,18 @@ Preserve the search cursor on programmatic refocus. The two-theme failing test,
 minimal `select_on_focus=False` repair and corrected native captures are retained
 in `Docs/superpowers/qa/2026-09-18-console-appearance/README.md`.
 
+**Recurrence — TASK-33008.2, 2026-10-11.** Switch model opens with a query
+in Find ("<provider> ", kept with its space "for the model id") and its own
+status line says "type its name and an id". Find takes focus on open, the
+query was selected, and the first key replaced the provider's name: the id
+paired with the chat's provider instead, and Enter moved the chat to OpenAI ·
+llama-live-x where SambaNova was meant. No test that opened the list with a
+query pressed a text key (each set `find.value`; the ones that typed opened
+with an empty Find), so it was found on a live look at the guide's new
+sentence. A
+field that opens with text the user is told to type after needs one test
+that presses the keys (`pilot.press(*"gpt-new")`) and asserts the whole value.
+
 
 ## A CSS route tour can leave a native compiler alive (TASK-32818, 2026-09-18)
 

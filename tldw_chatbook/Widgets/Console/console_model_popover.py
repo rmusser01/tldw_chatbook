@@ -485,7 +485,8 @@ class ConsoleModelPopover(
                 ``live_committer`` or ``setup_opener``, and NEEDS SETUP rows
                 cannot be picked.
             query: Text Find opens with (``/model <query>``); the best match
-                is highlighted, and nothing applies until Enter.
+                is highlighted, and nothing applies until Enter. The cursor
+                starts after it with nothing selected, so typing adds to it.
             connection_prober: The screen's local-server probe, run once per
                 listed provider per open; this widget calls no network.
             served_models: Models a Chat settings listing found per provider,
@@ -512,7 +513,11 @@ class ConsoleModelPopover(
                 the highlight never leaves that provider: ``highlight_pair``'s
                 row, else the provider's first row (its NEEDS SETUP row
                 before a copy that would apply), else none, and none while
-                providers are checked.
+                providers are checked. No row cap cuts its NEEDS SETUP row,
+                with or without a model. When it can send and lists no
+                models it has no row, and READY PROVIDERS opens with its
+                "no models reported" line. Its READY rows are cut at 30
+                matches like any other's, the pair's row excepted.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -686,6 +691,9 @@ class ConsoleModelPopover(
                     placeholder=self._find_placeholder(),
                     id="console-popover-find",
                     compact=True,
+                    # A query the list opens with ("<provider> ") is typed
+                    # after: selected on focus, the first key replaced it.
+                    select_on_focus=not self._query,
                 )
             error = Static("", id="console-popover-error", markup=False)
             error.display = False
@@ -1052,6 +1060,11 @@ class ConsoleModelPopover(
             and (provider_key(row.provider), row.model) == pair
         )
 
+    def _returned_to(self, key: str) -> bool:
+        """Whether a return from Settings reopened the list on provider
+        ``key``, while Find is as it opened."""
+        return key == self._reopened and self._query == self._opened_query
+
     def _capped(self, rows: list[SwitcherRow], cap: int) -> list[SwitcherRow]:
         """The first ``cap`` rows; the highlight pair's row is never cut.
 
@@ -1183,6 +1196,7 @@ class ConsoleModelPopover(
             return rows
 
         ready_rows: list[SwitcherRow] = []
+        returned: list[SwitcherRow] = []
         matches: list[tuple[int, int, int, SwitcherRow]] = []
         setup_rows: list[SwitcherRow] = []
         setup_extra = 0
@@ -1215,6 +1229,10 @@ class ConsoleModelPopover(
                         if score is not None and (key, model) not in shown:
                             row = self._pair_row("pair", key, model, score=score)
                             matches.append((score, rank, index, row))
+                    if not models and self._returned_to(key):
+                        # Its key is saved and it lists nothing: no row to
+                        # highlight, so its own line says what to type.
+                        returned = self._catalog_status_rows(key, False)
                     continue
                 visible = [model for model in models if (key, model) not in shown]
                 ready_rows.extend(
@@ -1237,13 +1255,18 @@ class ConsoleModelPopover(
                 setup
                 and len(setup_rows) >= _SETUP_ROWS
                 and not any(map(self._leads, setup))
+                # A return that names no model has no pair to lead with.
+                and not self._returned_to(key)
             ):
                 setup_extra += 1
                 continue
             setup_rows.extend(setup)
         if tokens:
             matches.sort(key=lambda match: match[:3])
-            ready_rows = self._capped([match[3] for match in matches], _MATCH_ROWS)
+            # The returned provider's line leads: 30 matches would hide it.
+            ready_rows = returned + self._capped(
+                [match[3] for match in matches], _MATCH_ROWS
+            )
             if len(matches) > _MATCH_ROWS:
                 ready_rows.append(
                     SwitcherRow(
@@ -1255,6 +1278,7 @@ class ConsoleModelPopover(
                 row
                 for key in self._catalog_state
                 if self._catalog_state[key] == "loading"
+                and not (returned and key == self._reopened)
                 for row in self._catalog_status_rows(key, False)
             )
         if setup_extra:

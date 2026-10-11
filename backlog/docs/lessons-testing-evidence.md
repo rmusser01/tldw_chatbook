@@ -19845,6 +19845,18 @@ sibling need not be another class: before changing when a user-facing
 sentence is shown, grep the SENTENCE, and let one method choose it for every
 site (here `_refuse_no_pair`).
 
+**Recurrence, a second marker for the same row — TASK-33008.2, 2026-10-11.**
+Fix round 1 spared the reopened Switch model's own row from three row caps by
+testing the highlight pair (`_leads`). A later ruling added a second way for
+the list to say which provider it reopened on, `reopened_provider`, for a
+return that names no model and so has no pair. Only the highlight was taught
+the new marker. The eight-row NEEDS SETUP cap still asked `_leads`, cut that
+provider's one row and left nothing highlighted, while the guide said the row
+"is the one highlighted"; the next review found it by reading the code. When
+a second marker for the same thing is added, grep every reader of the first
+(`grep -n "_leads\|_highlight_pair"` on the file prints them) and decide each
+one, in the commit that adds the marker.
+
 
 ## Malformed-response tests can stop at the wrong guard (PR #3052, TASK-34434)
 
