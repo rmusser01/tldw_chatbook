@@ -14,9 +14,15 @@ test is the soft half -- when the lookup cannot resolve the gated nodes
 must not raise and must not skip the gates: it logs once at WARNING and
 gates the mounted tree one refresh later.
 
+TASK-34789: the third test is the same rule for the canvas's OWN recompose.
+While it removes and remounts its children the header row can be in the DOM
+without its children, and a shell resize handled on the screen's pump in
+that window (``apply_work_width``) must not raise -- the shape it asked for
+lands on the new children when the recompose completes.
+
 Fast lane: a bare Textual app (``run_test``), no product app boot; the
-fallback test mounts one ``LibraryNotesCanvas`` under the app stylesheets
-(``ConsolidatedCSSApp``) because its claim is paint-level.
+fallback and recompose tests mount one ``LibraryNotesCanvas`` under the app
+stylesheets (``ConsolidatedCSSApp``) because their claims are paint-level.
 """
 
 from __future__ import annotations
@@ -151,3 +157,63 @@ async def test_an_empty_pending_lookup_never_aborts_compose_and_gates_after_one_
             assert len(warnings) == 1, warnings
     finally:
         logger.remove(sink)
+
+
+#: Either side of ``_HEADER_ONE_ROW_MIN_WIDTH`` (100): the editor header is
+#: one row at the first width and stacked at the second.
+ONE_ROW_WORK_WIDTH = 120
+STACKED_WORK_WIDTH = 60
+
+
+@pytest.mark.asyncio
+async def test_a_resize_landing_mid_recompose_is_applied_when_the_recompose_completes():
+    """TASK-34789: ``apply_work_width`` on a half-remounted canvas never raises.
+
+    The half-mounted state is driven directly, not by timing: the resize is
+    delivered from inside the recompose's own ``mount_all``, after the new
+    top-level children are registered and before their children exist --
+    the state a notes-tree or trash reload leaves the work pane in for as
+    long as its recompose runs, while the screen's pump is free to handle
+    ``AdaptiveReaderShellResized``.
+
+    RED on dev 1115b492f8: ``NoMatches: No nodes match
+    '#library-note-status' on LibraryNotesCanvas(...)`` from
+    ``apply_compact_presentation`` -- the UI Fast Lane crash of
+    ``test_new_note_with_saved_content_survives_a_rail_round_trip``.
+    """
+    app = _EditorCanvasApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesCanvas)
+        canvas.apply_work_width(ONE_ROW_WORK_WIDTH)
+        one_row = canvas.query_one("#library-note-header-second-row")
+        assert one_row.styles.layout.name == "horizontal"
+
+        real_mount_all = canvas.mount_all
+        landed: list[str] = []
+
+        def mount_all_then_resize(widgets, **kwargs):
+            pending = real_mount_all(widgets, **kwargs)
+            if not landed:
+                # Registered, not yet awaited: the row is there, its
+                # children are still pending.
+                assert canvas.query("#library-note-header-second-row")
+                assert not canvas.query("#library-note-status")
+                landed.append("resized")
+                canvas.apply_work_width(STACKED_WORK_WIDTH)
+            return pending
+
+        canvas.mount_all = mount_all_then_resize
+        canvas.refresh(recompose=True)
+        for _ in range(100):
+            if landed and canvas.query("#library-note-status"):
+                break
+            await pilot.pause(0.02)
+        await pilot.pause()
+
+        assert landed == ["resized"]
+        stacked = canvas.query_one("#library-note-header-second-row")
+        assert stacked is not one_row, "the canvas never recomposed"
+        # The shape the mid-recompose resize asked for, on the NEW children.
+        assert stacked.styles.layout.name == "vertical"
+        assert canvas.query_one("#library-note-status").has_class("h-1")

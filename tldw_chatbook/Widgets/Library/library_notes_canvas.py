@@ -3557,7 +3557,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Update responsive copy without remounting the canvas."""
         self.compact = compact
         self.styles.min_width = 0 if compact else 40
-        if not self.is_mounted:
+        if not self.is_mounted or not self._children_ready:
+            # TASK-34789: this canvas's own ``recompose()`` prunes its
+            # children leaf-first and remounts them root-first, so for its
+            # whole duration the header row can be in the DOM without the
+            # save state and toolbars the block below reads unguarded. A
+            # shell resize handled on the SCREEN's pump in that window
+            # (``apply_work_width``, on a work pane a notes-tree or trash
+            # reload was recomposing) raised ``NoMatches`` and took the app
+            # down. Same early-out as ``apply_session_state``, and as
+            # complete: ``compact`` is stored above and the widths by the
+            # callers, and ``_after_recompose`` re-applies them to the new
+            # children through ``_apply_post_compose_state``.
             return
         if self.mode == "list" and self.list_state is not None:
             try:
