@@ -3976,6 +3976,8 @@ class SettingsScreen(BaseAppScreen):
         # The provider whose discovery listing the Default model picker shows.
         self._model_picker_overlay_provider = ""
         self._model_discovery_revision = 0
+        # Save selected is serialised, never cancelled (TASK-19559's rule).
+        self._discovered_models_save_lock = asyncio.Lock()
         self._model_catalog_form_values: dict[str, dict[str, object]] | None = None
         self._model_catalog_save_status = ""
         self._model_catalog_save_failed = False
@@ -16602,9 +16604,12 @@ class SettingsScreen(BaseAppScreen):
         self._refresh_model_discovery_widgets()
         self.app.notify("Provider model discovery failed.", severity="warning")
 
-    @work(exclusive=True, group="settings-model-discovery")
+    # Not in Discover and Clear's exclusive group: a press on either would
+    # cancel this durable write mid-save. A second save waits its turn.
+    @work(group="settings-model-discovery-save")
     async def _save_selected_discovered_provider_models_worker(self) -> None:
-        await self._save_selected_discovered_provider_models()
+        async with self._discovered_models_save_lock:
+            await self._save_selected_discovered_provider_models()
 
     def _refresh_model_picker_discovered(self) -> None:
         """Merge the current discovery listing into the Default model picker.
