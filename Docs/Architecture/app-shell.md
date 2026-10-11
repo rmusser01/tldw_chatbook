@@ -15,7 +15,7 @@ This document describes the `TldwCli` Textual application: startup phases, the s
 | `tldw_chatbook/UI/Navigation/screen_state_store.py` | `ScreenStateStore` — per-route snapshots keyed by runtime identity (ADR-033) |
 | `tldw_chatbook/Utils/boot_worker_policy.py` | `BOOT_WORKER_POLICY`, `StaggeredBootWorkerGate` — two-tier boot worker fleet |
 | `tldw_chatbook/Logging_Config.py` | redacting rotating file logs, loguru→stdlib bridge, in-app log screen feed, crash forensics |
-| `tldw_chatbook/css/build_css.py` | CSS module build: 65 ordered `.tcss` sources → 5 generated sheets |
+| `tldw_chatbook/css/build_css.py` | CSS module build: 64 ordered `.tcss` sources → 5 generated sheets |
 
 ## The app class
 
@@ -80,7 +80,7 @@ The model-catalog refresh worker group is named by `Constants.MODEL_CATALOG_REFR
 
 ## CSS and design tokens
 
-Sources live in `tldw_chatbook/css/{core,layout,components,features,utilities}/*.tcss`; `build_css.py` compiles 65 ordered modules (starting `core/_variables.tcss`, `_reset.tcss`, `_base.tcss`, `_typography.tcss`) into five generated sheets: the app bundle, two consolidated widget-defaults sheets (class-level `BUNDLED_CSS` consolidation dodges Textual's `LRUCache(64)` parse cache — a full destination tour used to hit 94 sources and 125–380 ms cold parses), and two screen-CSS sheets bracketing the bundle. Never edit `tldw_cli_modular.tcss` directly; rebuild with `python tldw_chatbook/css/build_css.py`. `check_bundle_sync.py` plus a build manifest guard the generated files.
+Sources live in `tldw_chatbook/css/{core,layout,components,features,utilities}/*.tcss`; `build_css.py` compiles 64 ordered modules (starting `core/_variables.tcss`, `_reset.tcss`, `_base.tcss`, `_typography.tcss`) into five generated sheets: the app bundle, two consolidated widget-defaults sheets (class-level `BUNDLED_CSS` consolidation dodges Textual's `LRUCache(64)` parse cache — a full destination tour used to hit 94 sources and 125–380 ms cold parses), and two screen-CSS sheets bracketing the bundle. Never edit `tldw_cli_modular.tcss` directly; rebuild with `python tldw_chatbook/css/build_css.py`. `check_bundle_sync.py` plus a build manifest guard the generated files.
 
 The Console sheet is deliberately boot-parsed (the Console is the initial tab; lazy loading cost a ~100 ms full-app restyle), while the library/settings sheets load lazily via each screen's `CSS_PATH` and the evals/scheduling/watchlists feature sheets load app-side on first navigation.
 
@@ -96,7 +96,7 @@ All visual values are `$ds-*` tokens in `core/_variables.tcss` (ADR-150): spacin
 
 ## Settings surface
 
-`UI/Screens/settings_screen.py` is the canonical settings destination (~30 categories via `SettingsCategoryId`), with companion modules `settings_config_models.py`, `settings_config_adapter.py`, and per-category default modules. The legacy `UI/Tools_Settings_Window.py` is deprecated and unreachable through navigation; `Widgets/enhanced_settings_sidebar.py` no longer exists. Do not add new settings anywhere but the Settings screen.
+`UI/Screens/settings_screen.py` is the canonical settings destination (~30 categories via `SettingsCategoryId`), with companion modules `settings_config_models.py`, `settings_config_adapter.py`, and per-category default modules. The legacy `UI/Tools_Settings_Window.py` was removed (TASK-33244); its surviving test-driven backup helpers live in `Backup_Recovery/settings_backup_helpers.py`. `Widgets/enhanced_settings_sidebar.py` no longer exists. Do not add new settings anywhere but the Settings screen.
 
 ## Splash subsystem
 

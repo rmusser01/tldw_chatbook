@@ -49,7 +49,7 @@ Navigation is screen-based and exclusive (no legacy tab-window UI): every destin
 - `settings_screen.py` - Settings (canonical surface)
 - `watchlists_collections_screen.py`, `scheduling/schedules_workbench.py`, `llm_screen.py`, `image_gen_demo_screen.py`, and other feature screens
 
-**Settings**: `UI/Screens/settings_screen.py` (F4 Settings destination) is the canonical settings surface. The legacy `UI/Tools_Settings_Window.py` is deprecated/unreachable — do not add new settings there (`Widgets/enhanced_settings_sidebar.py` no longer exists).
+**Settings**: `UI/Screens/settings_screen.py` (F4 Settings destination) is the canonical settings surface. The legacy `UI/Tools_Settings_Window.py` was removed (TASK-33244); its surviving test-driven backup helpers live in `Backup_Recovery/settings_backup_helpers.py`. `Widgets/enhanced_settings_sidebar.py` no longer exists. Add new settings only to the canonical Settings screen.
 
 **Key Widgets**:
 - `Widgets/Console/console_transcript.py` - Live Console transcript and tool-result rendering, including file-write diffs

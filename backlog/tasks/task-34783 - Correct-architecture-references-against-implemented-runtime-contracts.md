@@ -1,11 +1,11 @@
 ---
 id: TASK-34783
 title: Correct architecture references against implemented runtime contracts
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-10 19:27'
-updated_date: '2026-10-11 00:23'
+updated_date: '2026-10-11 15:50'
 labels: []
 dependencies: []
 ---
@@ -20,7 +20,7 @@ Keep the new engineering reference accurate about live hooks, workflow execution
 <!-- AC:BEGIN -->
 - [x] #1 Hooks documentation describes the wired v2 runtime and its permission/checkpoint requirements
 - [x] #2 Workflow execution scope and reranking request counts match actual source
-- [x] #3 Schema, module paths and storage descriptions avoid known stale or inaccurate claims
+- [ ] #3 Schema, module paths and storage descriptions avoid known stale or inaccurate claims
 - [x] #4 Console documentation distinguishes streamed transcript polling from synchronous composer, active-tab, title and focus binding during a session switch.
 - [x] #5 Dictation documentation describes installed-provider substitution, unavailable resolution when no local provider is installed, and the substitution notice and startup warning.
 <!-- AC:END -->
@@ -49,6 +49,17 @@ Reason: routine copy corrections describe existing Console session-binding and d
 2. Verify local dictation provider selection, substitution notice and startup fallback diagnostics against the exact carried source.
 3. Correct only console.md and speech.md, preserving their existing streaming, model and privacy descriptions.
 4. Check all 83 relative Architecture links, source citations, whitespace and Backlog readability; commit while Task34783 remains In Progress for independent immutable review.
+
+Overnight incoming-source accuracy follow-up (2026-10-11), exact source parent 43475e0273d27afde395a5eb5128fe3737bd1f66:
+ADR required: no
+ADR path: backlog/decisions/196-dreams-daily-discovery-and-tracking.md; backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: routine copy corrections describe already implemented settings retirement, CSS build inputs and Dreams tracking/scheduler ownership; no runtime, storage, security or caller contract change.
+
+1. Preserve the prior verified Console session-binding, speech substitution and BaseAppScreen/ConsoleTranscript recomposition descriptions while carrying PR3038 onto the exact source parent. Preserve the PR3040 follow-up reference.
+2. Correct AGENTS and app-shell.md to describe the removed legacy Tools Settings surface and surviving test-driven backup helpers; keep F4 Settings and the removed enhanced sidebar accurate. Correct both CSS input counts to 64.
+3. Add only a bounded Dreams authoritative-file row and active question-track scheduling paragraph, including post-UI-ready binding, retained bare-task shutdown and persisted track-run/last_checked ownership. Qualify reminder-only advancement and timeout claims so they do not describe projected jobs.
+4. Verify the affected claims against exact source, all 83 relative Architecture links, whitespace, Backlog uniqueness/readability and the existing 179-node UI census. No pytest or broad preflight for this copy-only correction.
+5. Commit the scoped docs and task while AC3 and task status remain pending independent immutable review; do not publish or resolve PR comments.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -73,4 +84,12 @@ Corrected the Console reference to distinguish streamed transcript/background ac
 Exact source evidence at 496fb4962133fce8f7abfb9805de9308b2a44654: UI/Console_Modules/session.py:3206-3207 and 5680-5699; Chat/console_voice_input.py:342-367, 413 and 1573-1580; Utils/local_stt_providers.py:120-127; UI/Console_Modules/dictation.py:1535-1559; app.py:3266-3289. All 83 relative Architecture links resolve; source references exist, whitespace passes, and the configured project Python verifies all 5105 Backlog task files readable. Receipt: /private/tmp/pr3038-b68-copy-checks.json. Changes are limited to the two Markdown documents and this task; no runtime, tests, UI, scripts or CI edits, no new ADR, test replay or full preflight. AC #4/#5 and task status remain pending independent immutable review before closeout.
 
 Incoming-base accuracy follow-up: source70b395762b100cd7afb8752e37d5928a78c9bd10 scopes poll-only Console descriptions to streaming/transcript projections and documents immediate draft/highlight/title/focus binding before session activation awaits. Speech now distinguishes missing configured providers (installed declaration-order substitution, warning toast and startup WARNING with both names) from no installed local provider (unavailable). Source-backed independent review2873 clears both corrections;83Architecture relative links, whitespace and task readability5105 pass. Onlyconsole.md/speech.md and this task changed; no runtime/test/CI changes or new ADR. Prior source qualification remains separate and unchanged.
+
+Overnight incoming-source copy correction (2026-10-11): carried the eight docs patches from 58d8439f4ec44aae87d05e0e7a4c8e778e5f8b92..7101faef2ccd1e00fa8713f751a89d438400fd58 onto exact source parent 43475e0273d27afde395a5eb5128fe3737bd1f66. Pre-copy head e53b0d81c56359a47c512e84dc62484600689aa6 preserves 24 non-AGENTS owned blobs/modes; the first AGENTS patch has one context conflict, with incoming merge-queue guidance retained and the reviewed screen list, F4 Settings and removed sidebar copy preserved. The PR3040 follow-up reference remains 0b9f95b4b74173343e8fe40b88fe3c2b08c08e11.
+
+Corrected the removed legacy Tools Settings description and identified its surviving test-driven Backup_Recovery helpers in AGENTS and app-shell; corrected both CSS source-module counts to 64. Added a bounded Dreams row and paragraph for active question-only track projections, page-tracking through watchlists, post-UI-ready handler binding, separately retained/cancelled checks and DreamsDB track-run/last_checked ownership. Qualified reminder advancement and handler-timeout copy so it does not describe detached projected jobs. Existing ADR196/126 contracts apply; no new ADR, feature or runtime change.
+
+Source evidence is pinned to the exact parent: settings_backup_helpers.py:1-14; shell_destinations.py:197-212; build_css.py:195 and 297-299; dreams_projection.py:225-289; dream_track_handler.py:24-79 and 119-139; app_service_wiring.py:3513-3562; app_lifecycle.py:1219-1237; track_service.py:1074-1094 and 1224-1256; scheduler/loop.py:797-853. All 83 relative Architecture links resolve. Seven prior Console/speech/recompose source seams are blob-identical, the console.md/speech.md bytes are preserved and the app-shell recompose distinction remains unchanged. Whitespace, task ID/readability and 179-entry UI census checks pass. Verification is copy/source/guard-only: no pytest, wider preflight, runtime, tests, scripts or CI edits.
+
+Durable receipts are under /Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-evidence/: pr3038-434-carry-correspondence.json, pr3038-434-range-diff.log, pr3038-434-copy-source-links.json and pr3038-434-final-guards.json. Old historical qualifications retain their original limits; purged temporary receipts are not presented as durable evidence. AC3 and task status remain pending independent immutable review before Done or publication.
 <!-- SECTION:NOTES:END -->
