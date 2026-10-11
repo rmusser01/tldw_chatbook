@@ -19,8 +19,11 @@ from Tests.UI.test_settings_connect_rows import (
     _CLEAR_KEY,
     _SAVED_KEY,
     _SIZE,
+    _anthropic_host,
     _open_providers,
     _text,
+    _type_filter,
+    _until,
 )
 from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 
@@ -141,6 +144,36 @@ async def test_model_is_at_most_five_tab_presses_from_provider(
         assert len(stops) <= 5
         assert test_button.display and not test_button.disabled
         assert clear.display and clear.disabled == (not settings)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_opened_provider_id_row_is_a_sixth_stop_for_anthropic(
+    request, monkeypatch
+):
+    """Parent AC#2's budget of five is for the card at rest. "Enter provider
+    ID" opens a row for typing an id no list holds, and that row is a Tab stop
+    the user opened: with Anthropic's Sign in with Select the chain to Model
+    is then six presses. Accepted by the controller's ruling C10 on the review
+    of #3057; pinned here so a seventh stop, or a lost one, turns this red."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    host = _anthropic_host()
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+        assert manual not in screen.focus_chain  # at rest the row is closed
+
+        # No provider matches, so only "Enter provider ID" is left to choose.
+        await _type_filter(pilot, screen, "zzzz")
+        await pilot.press("enter")
+        await _until(pilot, lambda: host.focused is manual)
+        assert host.focused is manual
+
+        stops = await _tab_stops_to_model(host, pilot, screen)
+
+        assert stops == [manual.id, *_ANTHROPIC_STOPS, "model-search-picker-input"]
+        assert len(stops) == 6
 
 
 def _cloud_provider_ids() -> list[str]:
@@ -323,7 +356,10 @@ async def test_restored_openai_connection_row_shows_only_while_a_review_awaits(
     the Inspector named no setting. It is a Connect row now, shown only while
     a restored connection awaits review: read at mount, on a provider switch
     to OpenAI, and cleared once a review is recorded."""
+    from types import SimpleNamespace
+
     from tldw_chatbook.LLM_Calls import recovery_review
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
@@ -368,9 +404,25 @@ async def test_restored_openai_connection_row_shows_only_while_a_review_awaits(
         assert guide[1].startswith("Purpose: This profile was restored from a backup")
         assert guide[2] == "Save: applies immediately - no Save needed"
 
-        monkeypatch.setattr(
-            recovery_review, "confirm_openai_reconnect", lambda _r: None
+        # Enter on the focused Review button asks, and "Allow OpenAI
+        # requests" records the review; only the recovery store is stubbed.
+        review = SimpleNamespace(
+            endpoint="https://api.openai.com/v1",
+            auth_source="config",
+            config_selector="api_settings.openai",
+            generations=("generation-1",),
         )
-        await screen._record_openai_reconnect_review(object())
-        await pilot.pause()
+        recorded: list[object] = []
+        monkeypatch.setattr(recovery_review, "prepare_openai_reconnect", lambda: review)
+        monkeypatch.setattr(
+            recovery_review, "confirm_openai_reconnect", recorded.append
+        )
+        await pilot.press("enter")
+        await _until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        assert isinstance(host.screen, ConfirmationDialog), [
+            str(note.message) for note in host._notifications
+        ]
+        await pilot.click("#confirm-button")
+        await _until(pilot, lambda: host.screen is screen and not row.display)
+        assert recorded == [review]
         assert not row.display
