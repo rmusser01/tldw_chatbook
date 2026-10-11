@@ -1356,6 +1356,29 @@ def _painted_before_status(screen, label, status) -> str:
     )
 
 
+async def _wait_until_the_name_line_can_be_read(
+    pilot, screen, label, status, why, status_width=None
+):
+    """Wait for the row's layout and for its scroll into view to land.
+
+    ``_painted_before_status`` reads the line at the name's row. The lower
+    rows start outside the scroll clip, and until ``scroll_visible`` lands
+    their label still has a region there: the line read at it is another
+    widget's (a rule, or blank). A fixed pause does not bound that on a
+    loaded machine. ``status_width`` also waits for a status text just
+    written.
+    """
+    deadline = time.monotonic() + 5.0
+    while not (
+        label.region.width
+        and status.region.width
+        and status_width in (None, status.region.width)
+        and screen.find_widget(label).clip.contains_region(label.region)
+    ):
+        assert time.monotonic() < deadline, why
+        await pilot.pause(0.02)
+
+
 @pytest.mark.parametrize(
     "size", [(120, 45), (149, 45), (150, 45), (211, 44), (235, 52)]
 )
@@ -1383,18 +1406,21 @@ async def test_backend_rows_paint_each_name_whole_before_one_status_column(size,
             status = row.query_one(".settings-imagegen-badge", Static)
             row.scroll_visible(animate=False)
             await pilot.pause(0.1)
-            # A fixed pause is not enough on a loaded machine: the first row
-            # was once read before its layout pass, with a zero-width label.
-            laid_out_by = time.monotonic() + 5.0
-            while not (label.region.width and status.region.width):
-                assert time.monotonic() < laid_out_by, f"{backend_id} never laid out"
-                await pilot.pause(0.02)
+            await _wait_until_the_name_line_can_be_read(
+                pilot, screen, label, status, f"{backend_id} @ {size} never laid out"
+            )
             painted = _painted_before_status(screen, label, status)
             name = labels[backend_id]
             if size[0] < host.WIDE_VIEWPORT_COLUMNS:
                 assert label.region.width == 12, (
                     f"{backend_id} @ {size}: the name column is "
                     f"{label.region.width} cells below the wide tier, not 12"
+                )
+                # The column cuts the name, so only its start can be asked
+                # for; that still tells the name's line from any other line.
+                assert painted.strip() and name.startswith(painted.rstrip()), (
+                    f"{backend_id} @ {size}: {painted!r} is painted before the "
+                    f"status, not the start of the name {name!r}"
                 )
             else:
                 assert painted.startswith(f"{name} "), (
@@ -1451,16 +1477,14 @@ async def test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row(s
                     backend_id, badge, screen._image_gen_probe_session
                 )
                 row.scroll_visible(animate=False)
-                # The painted line is read at the name's row, so the scroll
-                # has to have landed as well as the new status width.
-                laid_out_by = time.monotonic() + 5.0
-                while status.region.width != len(badge) or not screen.find_widget(
-                    label
-                ).clip.contains_region(label.region):
-                    assert time.monotonic() < laid_out_by, (
-                        f"{backend_id} @ {size}: {badge!r} never laid out"
-                    )
-                    await pilot.pause(0.02)
+                await _wait_until_the_name_line_can_be_read(
+                    pilot,
+                    screen,
+                    label,
+                    status,
+                    f"{backend_id} @ {size}: {badge!r} never laid out",
+                    status_width=len(badge),
+                )
                 default_rows += bool(marker.region.width)
                 assert test_btn.region.right <= row.region.right, (
                     f"{backend_id} @ {size} with {badge!r}: Test ends at "
