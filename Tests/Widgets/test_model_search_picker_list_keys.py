@@ -12,7 +12,9 @@ from Tests.Widgets.test_model_search_picker import (
     PickerTestApp,
     _entries,
     _provenance_option,
+    _result_prompts,
     _results,
+    _status_text,
     _wait_for_catalog,
 )
 from tldw_chatbook.UI.Screens.provider_model_resolution import ConsoleModelProvenance
@@ -90,3 +92,51 @@ async def test_down_from_the_committed_row_reaches_the_row_below_it():
         await pilot.press("down")
         await pilot.pause()
         assert _highlighted_row(results) == "c/three"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("grouped", [False, True], ids=["flat", "grouped"])
+async def test_enter_picks_an_id_typed_in_full_that_is_past_the_result_cap(grouped):
+    """R3 #2: 26 ids hold "gpt-4" and the one that IS "gpt-4" is the 26th.
+
+    Only the first 20 matches were searched for the exact id, so Enter picked
+    the first row ("gpt-4-00"). The id typed in full keeps a row, is the one
+    highlighted, and is the one Enter picks.
+    """
+    app = PickerTestApp({"OpenRouter": []}, _entries("OpenRouter", _PAST_CAP))
+    async with app.run_test() as pilot:
+        picker, _field, results = await _mounted(pilot, _PAST_CAP, grouped=grouped)
+
+        await pilot.press(*"gpt-4")
+        await pilot.pause()
+        assert len(picker._matches) == ModelSearchPicker.MAX_RESULTS
+        assert _highlighted_row(results) == "gpt-4"
+        assert _status_text(app) == (
+            "Showing 20 of 26 matching models. Type to narrow the list."
+        )
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.selected_models == ["gpt-4"]
+
+
+@pytest.mark.asyncio
+async def test_the_committed_model_and_a_typed_id_both_keep_a_row_past_the_cap():
+    """R3 #2: the committed model's rescue (C7(b)) and the typed id's do not
+    take each other's slot."""
+    model_ids = _PAST_CAP + ["gpt-4-committed"]
+    app = PickerTestApp(
+        {"OpenRouter": []},
+        _entries("OpenRouter", model_ids),
+        current_model="gpt-4-committed",
+    )
+    async with app.run_test() as pilot:
+        _picker, _field, results = await _mounted(pilot, model_ids, grouped=False)
+
+        await pilot.press(*"gpt-4")
+        await pilot.pause()
+        rows = _result_prompts(results)
+        assert len(rows) == ModelSearchPicker.MAX_RESULTS
+        assert "gpt-4" in rows
+        assert f"gpt-4-committed  {CURRENT_MARK}" in rows
+        assert _highlighted_row(results) == "gpt-4"

@@ -7,6 +7,7 @@ id typed in full is the one Enter picks when over 20 ids match it.
 
 from __future__ import annotations
 
+import re
 
 import pytest
 from textual.widgets import Static
@@ -21,7 +22,7 @@ from Tests.UI.test_settings_default_model_picker import (
     _settle,
     _widgets,
 )
-from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
+from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 
 
 def _highlighted(results) -> str:
@@ -64,4 +65,38 @@ async def test_down_twice_then_enter_stages_the_second_match(request):
         await pilot.pause()
         assert adapter.value == field.value == picker.value == "gpt-4.1"
         assert screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+        assert _source_word(screen) == "edited *"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_id_typed_in_full_past_the_20_row_cap_is_the_one_enter_stages(
+    request,
+):
+    """R3 #2: 26 catalog ids hold ``gpt-4`` and the 26th IS ``gpt-4``.
+
+    The exact id was looked for in the 20 rows shown, so Enter staged the
+    first row. The id typed keeps a row, is highlighted and painted, and is
+    the model staged.
+    """
+    catalog = ("o3", *(f"gpt-4-{index:02d}" for index in range(25)), "gpt-4")
+    app = _app("openai", "o3", catalog=catalog)
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        picker, field, results, adapter = _widgets(screen)
+
+        field.focus()
+        await pilot.pause()
+        await pilot.press(*"gpt-4")
+        await pilot.pause()
+        assert _highlighted(results) == "gpt-4"
+        painted = "\n".join(_region_rows(screen, results))
+        assert re.search(r"gpt-4(?![-\w])", painted), painted  # the row is on screen
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert adapter.value == field.value == picker.value == "gpt-4"
         assert _source_word(screen) == "edited *"

@@ -786,7 +786,7 @@ class ModelSearchPicker(Widget):
         elif not show_empty_query:
             self._hide_results()
             return
-        self._matches = self._capped(model_ids, str)
+        self._matches = self._capped(model_ids, str, normalized_query)
         self._result_model_ids_by_option_id = {}
         self._committed_index = None
         results.clear_options()
@@ -891,7 +891,9 @@ class ModelSearchPicker(Widget):
             for option in options
             if self._display_provenance(option) == provenance
         ]
-        self._matches = self._capped(ordered_options, lambda option: option.model_id)
+        self._matches = self._capped(
+            ordered_options, lambda option: option.model_id, normalized_query
+        )
         self._result_model_ids_by_option_id = {}
         self._committed_index = None
         results.clear_options()
@@ -917,22 +919,20 @@ class ModelSearchPicker(Widget):
         results.display = bool(self._matches)
         self._show_typed_filter(results, normalized_query, len(ordered_options))
 
-    def _capped(self, entries: list, model_id_of) -> list:
-        """The first MAX_RESULTS entries; a committed model past the cap takes
-        the last slot, so large catalogs keep its mark and Down (C7(b))."""
+    def _capped(self, entries: list, model_id_of, normalized_query: str) -> list:
+        """The first MAX_RESULTS entries, with the last slots given to rows
+        past the cap that must stay reachable: the committed model, so large
+        catalogs keep its mark and Down (C7(b)), and an id typed in full, so
+        the row Enter picks is the one typed and is on the list."""
         shown = entries[: self.MAX_RESULTS]
-        committed = next(
-            (
-                entry
-                for entry in entries[self.MAX_RESULTS :]
-                if model_id_of(entry) == self._selected_model
-            ),
-            None,
-        )
-        if committed is not None and self._selected_model not in map(
-            model_id_of, shown
-        ):
-            shown[-1] = committed
+        kept = [
+            entry
+            for entry in entries[self.MAX_RESULTS :]
+            if model_id_of(entry) == self._selected_model
+            or model_id_of(entry).lower() == normalized_query
+        ]
+        if kept:
+            shown[-len(kept) :] = kept
         return shown
 
     def _add_result(
