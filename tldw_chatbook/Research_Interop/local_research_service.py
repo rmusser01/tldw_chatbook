@@ -583,27 +583,37 @@ class LocalResearchService:
             severity = "error"
         elif status == "cancelled":
             severity = "warning"
-        dispatch(
-            app=self.notification_app,
-            category="research",
-            title=f"Local research session {event}",
-            message=str(
-                run.get("query")
-                or run.get("progress_message")
-                or run.get("id")
-                or "Research session updated"
-            ),
-            severity=severity,
-            source_backend="local",
-            source_entity_kind="research_run",
-            source_entity_id=str(run.get("id")),
-            payload={
-                "run_id": run.get("id"),
-                "status": run.get("status"),
-                "control_state": run.get("control_state"),
-                "query": run.get("query"),
-            },
-        )
+        # TASK-21238: a failing/unopenable notifications store must not fail
+        # the research session this notification reports on (the store went
+        # lazy in TASK-21105, so store failures surface at dispatch time).
+        # Same shape as the study/quiz/evals trio: skip the notification,
+        # complete the flow.
+        try:
+            dispatch(
+                app=self.notification_app,
+                category="research",
+                title=f"Local research session {event}",
+                message=str(
+                    run.get("query")
+                    or run.get("progress_message")
+                    or run.get("id")
+                    or "Research session updated"
+                ),
+                severity=severity,
+                source_backend="local",
+                source_entity_kind="research_run",
+                source_entity_id=str(run.get("id")),
+                payload={
+                    "run_id": run.get("id"),
+                    "status": run.get("status"),
+                    "control_state": run.get("control_state"),
+                    "query": run.get("query"),
+                },
+            )
+        except Exception:  # noqa: BLE001 - notification must never fail the run
+            logger.opt(exception=True).debug(
+                "Skipping research session notification: dispatch failed."
+            )
 
     @staticmethod
     def _check_version(row: dict[str, Any], expected_version: int | None) -> None:
@@ -1928,28 +1938,36 @@ class LocalResearchService:
             severity = "error"
         elif status == "cancelled":
             severity = "warning"
-        dispatch(
-            app=self.notification_app,
-            category="research",
-            title=f"Research run {status}",
-            message=str(
-                run.get("query")
-                or run.get("progress_message")
-                or run.get("id")
-                or "Research run updated"
-            ),
-            severity=severity,
-            source_backend="local",
-            source_entity_kind="research_run",
-            source_entity_id=str(run.get("id")),
-            payload={
-                "run_id": run.get("id"),
-                "session_id": run.get("session_id"),
-                "status": run.get("status"),
-                "control_state": run.get("control_state"),
-                "query": run.get("query"),
-            },
-        )
+        # TASK-21238: same guard as `_dispatch_external_run_notification` --
+        # a notifications-store failure must skip the notification, not fail
+        # the run whose terminal state this reports.
+        try:
+            dispatch(
+                app=self.notification_app,
+                category="research",
+                title=f"Research run {status}",
+                message=str(
+                    run.get("query")
+                    or run.get("progress_message")
+                    or run.get("id")
+                    or "Research run updated"
+                ),
+                severity=severity,
+                source_backend="local",
+                source_entity_kind="research_run",
+                source_entity_id=str(run.get("id")),
+                payload={
+                    "run_id": run.get("id"),
+                    "session_id": run.get("session_id"),
+                    "status": run.get("status"),
+                    "control_state": run.get("control_state"),
+                    "query": run.get("query"),
+                },
+            )
+        except Exception:  # noqa: BLE001 - notification must never fail the run
+            logger.opt(exception=True).debug(
+                "Skipping research run notification: dispatch failed."
+            )
 
     def save_artifact(
         self,

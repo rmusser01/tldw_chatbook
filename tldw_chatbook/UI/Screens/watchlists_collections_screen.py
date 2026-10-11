@@ -8114,10 +8114,15 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self, event: MarkNotificationReadRequested
     ) -> None:
         event.stop()
+        # TASK-21238: `exit_on_error=False` -- a corrupt/unopenable
+        # notifications DB raising out of `mark_read` must degrade to a
+        # skipped mark, not take the whole application down (the default
+        # `exit_on_error=True` does exactly that).
         self.run_worker(
             self._mark_notification_read(event.notification_id),
             exclusive=True,
             group="wc_mark_notification_read",
+            exit_on_error=False,
         )
 
     async def _mark_notification_read(self, notification_id: int) -> None:
@@ -8132,10 +8137,12 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self, event: DismissNotificationRequested
     ) -> None:
         event.stop()
+        # TASK-21238: same guard as the mark-read worker above.
         self.run_worker(
             self._dismiss_notification(event.notification_id),
             exclusive=True,
             group="wc_dismiss_notification",
+            exit_on_error=False,
         )
 
     async def _dismiss_notification(self, notification_id: int) -> None:

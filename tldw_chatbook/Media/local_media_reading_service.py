@@ -6786,33 +6786,42 @@ class LocalMediaReadingService:
             severity = "error"
         elif status == "cancelled":
             severity = "warning"
-        dispatch(
-            app=self.notification_app,
-            category="media_ingestion",
-            title=f"Media ingestion job {status}",
-            message=str(
-                job.get("progress_message")
-                or job.get("error_message")
-                or job.get("source")
-                or job.get("id")
-                or "Media ingestion job updated"
-            ),
-            severity=severity,
-            source_backend="local",
-            source_entity_kind="media_ingest_job",
-            source_entity_id=str(job.get("id")),
-            payload={
-                "job_id": job.get("id"),
-                "batch_id": job.get("batch_id"),
-                "source_id": job.get("source_id"),
-                "job_type": job.get("job_type"),
-                "media_type": job.get("media_type"),
-                "source_kind": job.get("source_kind"),
-                "status": job.get("status"),
-                "result": job.get("result"),
-                "error_message": job.get("error_message"),
-            },
-        )
+        # TASK-21238: a failing/unopenable notifications store must not fail
+        # the ingest job this notification reports on -- the store went lazy
+        # (TASK-21105), so its failures surface HERE at dispatch time, after
+        # the job's own DB write already succeeded. Same shape as the
+        # study/quiz/evals trio (``Study_Interop/local_quiz_service.py``):
+        # skip the notification, complete the flow.
+        try:
+            dispatch(
+                app=self.notification_app,
+                category="media_ingestion",
+                title=f"Media ingestion job {status}",
+                message=str(
+                    job.get("progress_message")
+                    or job.get("error_message")
+                    or job.get("source")
+                    or job.get("id")
+                    or "Media ingestion job updated"
+                ),
+                severity=severity,
+                source_backend="local",
+                source_entity_kind="media_ingest_job",
+                source_entity_id=str(job.get("id")),
+                payload={
+                    "job_id": job.get("id"),
+                    "batch_id": job.get("batch_id"),
+                    "source_id": job.get("source_id"),
+                    "job_type": job.get("job_type"),
+                    "media_type": job.get("media_type"),
+                    "source_kind": job.get("source_kind"),
+                    "status": job.get("status"),
+                    "result": job.get("result"),
+                    "error_message": job.get("error_message"),
+                },
+            )
+        except Exception:  # noqa: BLE001 - notification must never fail the job
+            return
 
     def _mark_ingest_job_started(
         self, job_id: Any, *, progress_message: str
