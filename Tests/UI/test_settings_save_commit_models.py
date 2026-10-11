@@ -40,7 +40,8 @@ INSTANT_SAVE_ROW = f"Save: {INSTANT_APPLY_LABEL}"
 
 
 @pytest.mark.asyncio
-async def test_model_catalog_controls_are_labeled_and_visually_separated():
+@private_profile_test
+async def test_model_catalog_controls_are_labeled_and_visually_separated(request):
     """Providers pane: the auto-refresh block carries the inline instant-apply
     label and lives in its own instant-apply group, distinct from staged
     fields (TASK-33007.6: the group keeps its class, not its border)."""
@@ -65,7 +66,8 @@ async def test_model_catalog_controls_are_labeled_and_visually_separated():
 
 
 @pytest.mark.asyncio
-async def test_staged_fields_document_staged_save_in_the_inspector():
+@private_profile_test
+async def test_staged_fields_document_staged_save_in_the_inspector(request):
     """AC3: every staged field's inspector rows name the staged model."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -117,7 +119,8 @@ async def test_console_display_name_documents_staged_save_in_the_inspector():
 
 
 @pytest.mark.asyncio
-async def test_model_catalog_fields_document_instant_apply_in_the_inspector():
+@private_profile_test
+async def test_model_catalog_fields_document_instant_apply_in_the_inspector(request):
     """AC3: focusing an auto-refresh toggle says it applies immediately."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")

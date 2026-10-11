@@ -1664,7 +1664,9 @@ def test_provider_endpoint_url_validator_flags_malformed_only():
     assert not validator.validate("ttp://127.0.0.1:9099/v1").is_valid
 
 
-def test_model_to_activate_after_save_prefers_first_saved_when_field_empty():
+@pytest.mark.asyncio
+@private_profile_test
+def test_model_to_activate_after_save_prefers_first_saved_when_field_empty(request):
     """TASK-369: after saving discovered models, an empty Model field is filled
     with the first saved model (recognition over recall); a field the user
     already set is left untouched."""

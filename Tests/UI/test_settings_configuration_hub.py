@@ -3690,7 +3690,8 @@ async def test_settings_provider_inspector_excludes_console_sampling_ownership(r
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_category_lists_console_supported_catalog():
+@private_profile_test
+async def test_settings_provider_category_lists_console_supported_catalog(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     host = DestinationHarness(app, "settings")
@@ -3698,7 +3699,6 @@ async def test_settings_provider_category_lists_console_supported_catalog():
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        text = _visible_text(screen)
 
         # TASK-33007.4 (AC#6), rewritten on purpose: the catalog and the
         # manual-entry line left the card for the Inspector's closed
@@ -4487,7 +4487,8 @@ async def test_settings_provider_api_key_focus_style_has_no_underline():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_model_defaults_appear_before_reference_copy():
+@private_profile_test
+async def test_settings_provider_model_defaults_appear_before_reference_copy(request):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     host = DestinationHarness(app, "settings")
@@ -4718,7 +4719,9 @@ def test_settings_generation_summary_names_every_hidden_row():
     )
 
 
-def test_settings_model_default_save_leaves_values_for_hidden_rows_untouched():
+@pytest.mark.asyncio
+@private_profile_test
+def test_settings_model_default_save_leaves_values_for_hidden_rows_untouched(request):
     """TASK-33001.2 AC#9: a saved value for a now-hidden field stays in config.
 
     The Settings writer used to pop every unsupported field from the saved

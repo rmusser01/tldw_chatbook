@@ -5114,7 +5114,8 @@ _VALUE_TYPE_CHATS = {
 
 @pytest.mark.parametrize("chat", sorted(_VALUE_TYPE_CHATS))
 @pytest.mark.asyncio
-async def test_console_settings_fields_are_sized_by_value_type(chat) -> None:
+@private_profile_test
+async def test_console_settings_fields_are_sized_by_value_type(request, chat) -> None:
     """TASK-33003.3: a field is as wide as its value type, not the viewport.
 
     Under the production stylesheets, with every section expanded: numeric
