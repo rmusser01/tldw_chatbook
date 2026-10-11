@@ -889,10 +889,9 @@ def all_tool_gates() -> list[ToolGate]:
     then the local group (group ``"local"``) -- its master switch
     (``[console] local_tools_enabled``) listed FIRST, since it masters the
     gate listed right after it, then ``web_deep_search``'s own gate.
-    ``Tools_Settings_Window``'s separate hand-wiring is untouched and NOT
-    extended from here -- that surface stays deprecated (see its module
-    docstring); this enumerator is a new, independent consumer of the same
-    underlying config keys.
+    The legacy settings window used to hand-wire its own copy of these
+    switches; it was removed (TASK-33244), so this enumerator is the only
+    gate surface over these config keys.
 
     A builtin row's ``title``/``description`` come from its
     ``_GATEABLE_BUILTINS`` row (task-32284), not from a constructed Tool
