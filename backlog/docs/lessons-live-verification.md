@@ -57,6 +57,50 @@ fast. Before calling a field's value wrong from a text capture, check whether
 the shown text equals the Input's placeholder. Use an `-e` (ANSI) capture to
 see its dim placeholder style, or change one character and re-capture.
 
+**TASK-33003.18, 2026-10-10: the keys are reordered, not dropped.** The same
+burst had been filed as a possible app defect. In Chat settings, eight
+Backspaces followed at once by `0.9` left Temperature as `0.`, `0` or empty,
+and Pilot typing never did. One command settles it:
+`tmux send-keys BSpace BSpace 1 2 3` on a field holding `0.7` gave `0.71` in
+27 of 27 live runs. In order it would read `0123`. All five keys arrived; the
+three characters went in first ("0.7123") and the two Backspaces ran after
+them. The cause is Textual's key dispatch (8.2.8), not tmux and not the
+modal. `Input._on_key` inserts a printable key at once. A bound key such as
+Backspace runs only when its Key event has bubbled through every ancestor's
+queue back to `App._on_key`, which checks the bindings; a later key already
+waiting in the app's queue is forwarded first. A bare `App` with one `Input`
+and no project code gives `''` for the same eleven keys posted without
+yielding.
+
+Measured live at 211x44, with a load average between 17 and 67:
+
+| How the eleven keys were sent | Reordered |
+|---|---|
+| One `send-keys` command | 32 of 32 |
+| One command per key, no sleep (7 to 9 ms apart) | 13 of 27 |
+| One command per key, 5 ms or more of sleep | 0 of 102 |
+| The Backspaces in one command, the text in the next | 0 of 35 |
+| The Backspaces, a wait for the empty field, then the text | 0 of 11 |
+
+The task's first report also saw `.9` with keys "paced 100 ms apart". That is
+the same reorder with only the `0` ahead of the last Backspaces, and at this
+head that pacing kept every key in 27 of 27 runs.
+
+A keyboard does not send keys that close together (key repeat is about 30 ms
+a key at its fastest), so on a responsive app this is a rule for the driver.
+It is not only the driver's, though. The reorder needs two keys in the app's
+queue at once, and a UI loop that is blocked while a person types gives it
+that: in the bare app, the five keys posted 100 ms apart gave `0123` in 5 of
+5 runs with the loop free and `0.71` in 5 of 5 with it blocked for 0.7 s. A
+field that "ate" a Backspace during a freeze is this; chase the freeze.
+
+**What to do.** Never put an editing key (Backspace, Delete, End, Home, an
+arrow, Ctrl+U) and the text that follows it in one `send-keys` command.
+Send the editing keys, wait until a capture shows their result, then send
+the text. To tell a reorder from a lost key, send `BSpace BSpace 1 2 3` in
+one command to a field whose value you know: a reorder keeps all three
+characters and deletes the wrong ones.
+
 ## A held SQLite lock must be released inside the app's 15 s busy timeout (TASK-33628.5, 2026-10-04)
 
 **Incident.** To see a large Delete's "Deleting N messages…" state live, the
