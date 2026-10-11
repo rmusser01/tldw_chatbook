@@ -13,7 +13,7 @@ updated_date: 2026-10-11 17:18
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-Model discovery marks a listed model as inferred when its listing says it takes images, which removes the capability unknown label and warning. The on-disk model catalog keeps only model ids and fetch times, so after a restart inside the 24 hour freshness window the models come back without listing metadata and are labelled capability unknown again until the next fetch. Found in the review of TASK-34402: a Vercel record with image input was inferred in the session that fetched it and unknown after a save and reload of the disk store, with no refetch because the entry was still fresh.
+Model discovery marks a listed model as inferred when its listing says it takes images, which removes the capability unknown label and warning. The on-disk model catalog keeps only model ids and fetch times, so after a restart inside the cache's freshness window (24 hours by default) the models come back without listing metadata and are labelled capability unknown again until the next fetch. Found in the review of TASK-34402: a Vercel record with image input was inferred in the session that fetched it and unknown after a save and reload of the disk store, with no refetch because the entry was still fresh.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

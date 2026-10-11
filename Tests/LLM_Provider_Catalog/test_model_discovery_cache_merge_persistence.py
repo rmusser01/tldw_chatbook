@@ -8,7 +8,10 @@ from threading import Barrier
 import pytest
 
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_cache import ModelDiscoveryCache
-from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import DiscoveredModel
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+    CAPABILITY_HINT_KEYS,
+    DiscoveredModel,
+)
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_merge import (
     merge_saved_and_discovered_models,
     resolve_discovered_model_capability_status,
@@ -403,6 +406,12 @@ def test_anthropic_capabilities_image_input_is_read():
     assert _status({"capabilities": {"image_input": {"supported": False}}}) == "unknown"
     assert _status({"capabilities": {"image_input": True}}) == "unknown"
     assert _status({"capabilities": {"image_input": {}}}) == "unknown"
+    # Only that leaf, and only inside the block.
+    assert (
+        _status({"capabilities": {"image_input": {"supported": False, "beta": True}}})
+        == "unknown"
+    )
+    assert _status({"image_input": {"supported": True}}) == "unknown"
 
 
 @pytest.mark.parametrize(
@@ -421,6 +430,23 @@ def test_anthropic_capabilities_image_input_is_read():
 def test_a_flag_counts_only_when_it_is_exactly_true(metadata: dict):
     """A string or a number is not a yes: ``"false"`` is truthy."""
     assert _status(metadata) == "unknown"
+
+
+def test_the_inference_reads_exactly_the_declared_hint_keys():
+    """``CAPABILITY_HINT_KEYS`` is what the normaliser protects when it trims a listing.
+
+    A key read here but missing there could be trimmed away; a key listed there
+    but never read would be protected for nothing.
+    """
+    read: set[str] = set()
+
+    class _Spy(dict):
+        def get(self, key, default=None):
+            read.add(key)
+            return default
+
+    assert _status(_Spy()) == "unknown"
+    assert read == CAPABILITY_HINT_KEYS
 
 
 def test_flat_list_hints_still_infer_vision():

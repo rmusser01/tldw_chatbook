@@ -1283,6 +1283,34 @@ def test_shrinking_a_listing_drops_the_capability_hint_last():
     )
 
 
+def test_hint_fields_that_overflow_by_themselves_lose_the_largest_first():
+    """Two hint fields that each fit, but not together: the bound still holds."""
+    model = {
+        "id": "vendor/two-large-hints",
+        "architecture": {f"detail_{n:03d}": n for n in range(200)},
+        "capabilities": {
+            "vision": True,
+            **{f"flag_{n:03d}": False for n in range(100)},
+        },
+    }
+    (discovered,) = normalize_models_response(
+        {"data": [model]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    kept = discovered.metadata_raw_safe
+    assert "capabilities" in kept and "architecture" not in kept
+    assert (
+        resolve_discovered_model_capability_status(
+            "Custom", discovered.model_id, kept
+        )
+        == "inferred"
+    )
+
+
 def test_normalize_models_drops_an_oversized_field_but_keeps_the_model():
     """TASK-34361: Together's 16 KB chat templates rejected the whole listing."""
     models = normalize_models_response(

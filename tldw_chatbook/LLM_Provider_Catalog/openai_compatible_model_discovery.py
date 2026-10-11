@@ -29,13 +29,11 @@ from tldw_chatbook.LLM_Calls.qwencloud_url import (
     normalize_qwencloud_base_url,
 )
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+    CAPABILITY_HINT_KEYS,
     DiscoveredModel,
     DiscoveryErrorKind,
     ModelDiscoveryError,
     ModelDiscoveryResult,
-)
-from tldw_chatbook.LLM_Provider_Catalog.model_discovery_merge import (
-    CAPABILITY_HINT_KEYS,
 )
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
@@ -1011,7 +1009,11 @@ async def discover_openai_compatible_models(
         datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
     try:
-        models = normalize_models_response(
+        # Off the event loop, like the JSON decode above: bounding a listing's
+        # metadata is CPU work that grows with the response (a record whose
+        # fields only overflow together is re-measured once per dropped field).
+        models = await asyncio.to_thread(
+            normalize_models_response,
             {"data": combined_data},
             provider=provider,
             provider_list_key=provider_list_key,

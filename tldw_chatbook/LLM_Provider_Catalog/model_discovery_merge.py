@@ -45,20 +45,6 @@ def _capabilities_from_resolver(
 
 _IMAGE_MODALITIES = frozenset({"image", "images", "vision", "visual"})
 
-#: The top-level listing fields :func:`_metadata_has_positive_capability`
-#: reads. The listing normaliser drops these last when a model's metadata has
-#: to shrink to fit its bounds, so an oversized listing keeps its hint.
-CAPABILITY_HINT_KEYS = frozenset(
-    {
-        "vision",
-        "supports_image_input",
-        "capabilities",
-        "modalities",
-        "input_modalities",
-        "architecture",
-    }
-)
-
 
 def _lists_image(modalities: object) -> bool:
     """Return whether a listing's modality list names images."""
@@ -102,6 +88,9 @@ def _metadata_has_positive_capability(metadata: Mapping[str, Any]) -> bool:
     it is read as input, as it always was. Wherever a listing does tell the
     two apart, a model that outputs images but takes text is not
     vision-capable. Flags count only when they are exactly ``True``.
+
+    The top-level fields read here are the contracts module's
+    ``CAPABILITY_HINT_KEYS``; a test keeps the two in step.
     """
     if metadata.get("vision") is True or metadata.get("supports_image_input") is True:
         return True
