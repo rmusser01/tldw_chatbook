@@ -1,7 +1,7 @@
 ---
 id: TASK-18941
 title: 'XML_Ingestion dead module: second broken import (add_media_to_database) — fix, rewire, or delete'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-19 20:30'
 updated_date: '2026-08-19 20:30'
@@ -24,7 +24,16 @@ The characterization test `Tests/Chunking/test_callsite_characterization.py::tes
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A decision is recorded (fix / rewire / delete) with rationale in this task's Implementation Notes
+- [x] #1 A decision is recorded (fix / rewire / delete) with rationale in this task's Implementation Notes
 - [ ] #2 If fix/rewire: `import tldw_chatbook.Local_Ingestion.XML_Ingestion` succeeds and `test_xml_ingestion_import` XPASSes (mark then removed)
-- [ ] #3 If delete: the module, its test xfail (converted to assert-not-importable or removed), and any references are removed together
+- [x] #3 If delete: the module, its test xfail (converted to assert-not-importable or removed), and any references are removed together
 <!-- AC:END -->
+
+## Closeout audit 2026-10-11
+
+Board-prune audit (branch chore/board-prune-c, base a3c47c6c72): completed-but-unmarked. Evidence gathered 2026-10-11 against origin/dev:
+
+AC dispositions:
+- AC#1: met - Decision: DELETE (dead module, zero importers) - executed by commit dce252f841 'chore(local-ingestion): delete XML_Ingestion and API_Endpoint_Sample (TASK-32899)'.
+- AC#3: met - Module and its xfail characterization test removed together (no test_xml_ingestion_import remains under Tests/Chunking/); Chunking/auto_selection.py:135 keeps only an explanatory 'retired' comment.
+- Commit dce252f841 (TASK-32899 follow-up) deleted the module; the repo-wide grep for XML_Ingestion finds only the retirement comment.

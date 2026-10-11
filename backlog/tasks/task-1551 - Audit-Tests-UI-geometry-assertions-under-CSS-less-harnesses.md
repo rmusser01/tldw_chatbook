@@ -1,7 +1,7 @@
 ---
 id: TASK-1551
 title: 'Audit Tests/UI geometry assertions made under CSS-less harnesses'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-30 17:00'
 labels: [tests, ui, harness]
@@ -26,6 +26,13 @@ green against defects users can see.
 
 <!-- AC:BEGIN -->
 - [ ] #1 Every Tests/UI assertion about on-screen geometry (heights, regions, clipping, row visibility) is inventoried with whether its harness loads the real CSS bundle.
-- [ ] #2 Assertions that are load-bearing for user-visible layout run under a bundle-loading harness (shared helper, not per-file copies).
-- [ ] #3 The shared helper lives in one importable place and the lessons entry is updated to point at it.
+- [x] #2 Assertions that are load-bearing for user-visible layout run under a bundle-loading harness (shared helper, not per-file copies).
+- [x] #3 The shared helper lives in one importable place and the lessons entry is updated to point at it.
 <!-- AC:END -->
+
+
+## Closeout audit 2026-10-11
+
+Board-hygiene flip (cohort A, Jun-Jul 2026 status sweep). **Verdict: DONE** — evidence verified against origin/dev (a3c47c6c72).
+
+Subsumed and exceeded by TASK-15450's consolidated-CSS harness: Tests/UI/consolidated_css.py exposes ConsolidatedCSSApp ('exactly what production gets — same sheets, same tie-breakers'), adopted by 302 Tests/UI files; backlog/docs/lessons-testing-evidence.md:2931-2963 points geometry-assertion failures at it. AC#1 (a written inventory of every geometry assertion) was not produced — the migration swept the files instead.
