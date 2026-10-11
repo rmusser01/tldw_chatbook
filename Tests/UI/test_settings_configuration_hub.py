@@ -3681,7 +3681,10 @@ async def test_settings_provider_inspector_excludes_console_sampling_ownership(r
             in text
         )
         # TASK-33002.6: the route names the rail's category, on purpose.
-        assert "Sampling and transport defaults are routed to Console Behavior" in text
+        # Review of PR #3057 (R1 #27), rewritten on purpose: the line named
+        # "sampling and transport defaults"; the section it points at is
+        # Console Behavior's global fallbacks.
+        assert "Global fallbacks are in Console Behavior." in text
         assert "Console Defaults" not in text
         assert "streaming, and temperature" not in text
 

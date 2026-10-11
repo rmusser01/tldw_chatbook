@@ -179,7 +179,9 @@ async def test_a_row_too_long_for_one_line_breaks_before_the_pair(request, size)
         pytest.param(
             1,
             False,
-            "has no settings of its own and does not take this default.",
+            # Review of PR #3057 (R1 #28), rewritten on purpose: the row
+            # said two things the chat lacks and not what it will use.
+            "does not take this default, so it has no model.",
             id="before-make-default",
         ),
         pytest.param(

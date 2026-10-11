@@ -193,7 +193,7 @@ MANUAL_ENTRY_POLICY_COPY = (
     "Choose a catalog provider (type in the open list to jump to one), "
     "or use Manual / custom provider for other keys."
 )
-SAMPLING_ROUTE_COPY = "Sampling and transport defaults are routed to Console Behavior."
+SAMPLING_ROUTE_COPY = "Global fallbacks are in Console Behavior."
 #: TASK-33007.6: Advanced follows Model defaults as closed one-row
 #: disclosures (spec mock (c)); each title says its state.
 ADVANCED_DISCLOSURE_CLASS = "settings-advanced-disclosure"
@@ -1026,10 +1026,8 @@ def applies_to_copy(
         store, session, generation if type(generation) is int else 0
     ):
         if own is None:  # made before the Console's last Make default
-            return (
-                f"{chat} has no settings of its own and does not take this default.",
-                "",
-            )
+            # The Console gives such a chat nothing either, so it has no model.
+            return f"{chat} does not take this default, so it has no model.", ""
         own_pair = provider_model_pair(screen, own.provider, own.model)
         return f"{chat} keeps {own_pair}.", own_pair
     pair = provider_model_pair(screen, provider, model)
@@ -2203,7 +2201,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             yield Static(
                 screen._SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY
                 if screen._snapshot_preferences_unavailable
-                else "Draft — use category Save / Revert. Enable/disable applies on next launch.",
+                else "Draft — use category Save / Revert.",
                 id="settings-snapshot-result",
                 classes="settings-help-copy",
             )
