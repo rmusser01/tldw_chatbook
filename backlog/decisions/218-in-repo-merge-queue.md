@@ -47,6 +47,10 @@ GitHub's native merge queue needs an organization-owned repository, and this one
   the warning. A transient error (5xx,
   429, rate limit, network) never evicts. A PR whose conversation is locked leaves the line without a comment, because
   the queue keeps its counts in comments.
+- Amendment 2026-10-11 (found on the first day of real traffic): a PR whose own commits change a workflow file cannot
+  be rebased by the built-in token; the queue evicts it at once (`evict-workflow-file`) and the author rebases by hand.
+  The loser of the two queue runs a merge wakes stands down instead of failing, and a comment both posted is reduced
+  to one.
 - The dispatch-safe rule above no longer serves the queue. It still keeps manual dispatches safe.
 - The bot and fork rule is unchanged: approving a bot PR's held runs would skip the same actor-based gates. Only held runs
   triggered by the queue's own actor, on the front PR, from this repository, are approved.

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass, replace
@@ -81,6 +82,10 @@ RUN_BUDGET = timedelta(minutes=4)
 # only once the warning is at least this old, so one GitHub slowdown failing two attempts a minute
 # apart cannot disarm the PR (spec section 8).
 STRIKE_GAP = timedelta(minutes=10)
+# GitHub's answer when the queue's token tries to rebase a PR whose own commits change a file under
+# .github/workflows: the built-in token can never hold the `workflows` permission, so no retry
+# helps (seen live on #3058, 2026-10-10).
+WORKFLOW_REFUSAL = "without `workflows` permission"
 
 
 @dataclass(frozen=True)
@@ -319,7 +324,7 @@ PR_QUERY = (
 )
 COMMENTS_QUERY = (
     "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {"
-    " pullRequest(number: $number) { comments(last: 100) { nodes { body createdAt } } } } }"
+    " pullRequest(number: $number) { comments(last: 100) { nodes { databaseId body createdAt } } } } }"
 )
 REBASE_MUTATION = (
     "mutation($id: ID!, $oid: GitObjectID!) { updatePullRequestBranch(input: "
@@ -595,7 +600,8 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool
         body: The visible text.
 
     Returns:
-        True if it posted, False if the marker was already there.
+        True if it posted, False if the marker was already there (or a racing queue run posted
+        the same comment first, in which case this run's copy is removed).
 
     Raises:
         CommentRefused: The PR's conversation is locked.
@@ -608,11 +614,22 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool
     if any(marker in b for b in bodies):
         return False
     try:
-        gh.rest("POST", f"repos/{REPO}/issues/{number}/comments", {"body": f"{marker}\n{body}"})
+        posted = gh.rest("POST", f"repos/{REPO}/issues/{number}/comments", {"body": f"{marker}\n{body}"})
     except GhError as exc:
         if "is locked" in str(exc).lower() and not _transient(exc):
             raise CommentRefused(str(exc)) from exc
         raise
+    # Two racing queue runs can both pass the check above and both post. Each then looks again and
+    # the later one removes its own copy, so one comment remains.
+    own_id = posted.get("id") if isinstance(posted, dict) else None
+    if own_id is not None:
+        again = gh.graphql(COMMENTS_QUERY, owner=owner, name=name, number=number)
+        ids = [n["databaseId"] for n in again["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+               if marker in (n.get("body") or "") and n.get("databaseId") is not None]
+        if ids and min(ids) < own_id:
+            _best_effort(lambda _line: None, "remove a duplicate comment",
+                         lambda: gh.rest("DELETE", f"repos/{REPO}/issues/comments/{own_id}"))
+            return False
     return True
 
 
@@ -977,10 +994,13 @@ def _strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Action, w
     return _evict(gh, pr, eviction, log)
 
 
-def _wake_if_moved(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None]) -> None:
+def _wake_if_moved(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None]) -> bool:
+    """Wake a tick if the PR's head moved; return whether it did."""
     sleep(REBASE_POLL_S)  # an accepted rebase moves the branch about 1 s after the mutation returns
-    if read_pr(gh, pr.number).head_sha != pr.head_sha:
-        _wake_best_effort(gh, log)
+    if read_pr(gh, pr.number).head_sha == pr.head_sha:
+        return False
+    _wake_best_effort(gh, log)
+    return True
 
 
 def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None],
@@ -989,10 +1009,19 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
         gh.graphql(REBASE_MUTATION, id=pr.node_id, oid=pr.head_sha)
     except GhError as exc:
         if _transient(exc):
-            # A lost response can hide a rebase that went through, leaving its head's runs held with
-            # nothing to approve them: wake a tick if the head moved. Then fail the run; the next
-            # event retries, and the error never counts (spec section 8).
-            _best_effort(log, "re-read after a failed rebase", lambda: _wake_if_moved(gh, pr, log, sleep))
+            # Each merge wakes two queue runs, and the one that loses the rebase race is answered
+            # with a generic error; a lost response looks the same. Either way the head has moved,
+            # nothing failed, and a woken tick approves that head's held runs: stand down. With the
+            # head unmoved it is GitHub's error: fail the run so the next event retries; it never
+            # counts toward an eviction (spec section 8).
+            try:
+                moved = _wake_if_moved(gh, pr, log, sleep)
+            except GhError as read_exc:
+                log(f"  best-effort re-read after a failed rebase failed: {read_exc}")
+                moved = False
+            if moved:
+                log(f"  rebase of #{pr.number} was answered with an error, but its head moved; standing down")
+                return False
             raise
         fresh = read_pr(gh, pr.number)
         if fresh.head_sha == pr.head_sha and fresh.merge_state != "DIRTY":
@@ -1007,6 +1036,16 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
             return False
         if fresh.merge_state == "DIRTY":
             return _evict(gh, fresh, Action("evict", "conflicts with dev (rebase refused)", slug="conflict"), log)
+        if WORKFLOW_REFUSAL in str(exc):
+            named = re.search(r"workflow `([^`]+)`", str(exc))
+            which = f" (`{named.group(1)}`)" if named else ""
+            return _evict(gh, fresh, Action(
+                "evict",
+                f"it changes a workflow file{which}, and GitHub does not let the merge queue's token rebase "
+                "such a PR. Rebase it onto dev yourself (`git pull --rebase origin dev`, then push with "
+                "`--force-with-lease`) and re-arm; while it is up to date with dev the queue lets it land "
+                "without a rebase",
+                slug="workflow-file"), log)
         error = str(exc)[:200]
         log(f"  rebase failed: {exc}")
         return _strike(

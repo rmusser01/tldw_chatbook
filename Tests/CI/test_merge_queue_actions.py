@@ -282,9 +282,11 @@ def test_rebase_failure_with_moved_head_never_evicts():
 
 @pytest.mark.parametrize("moved", [True, False], ids=["head-moved", "head-same"])
 def test_a_rebase_lost_to_an_outage_wakes_a_tick_only_if_the_head_moved(moved):
-    """Review rounds 6-7 of #3039: a lost response shows up as a transient error, and can hide a rebase
-    that went through, whose head's runs are then held with nothing to approve them. The run still
-    fails (an outage never counts); it wakes a tick first only if the head actually moved.
+    """A lost response shows up as a transient error, and can hide a rebase that went through, whose
+    head's runs are then held with nothing to approve them; the loser of the two queue runs each
+    merge wakes is answered the same way (TASK-34790: four failed Merge Queue runs in one day, with
+    nothing wrong). With the head moved the run wakes a tick and stands down without failing; with
+    it unmoved it is GitHub's error, and the run fails without counting anything.
 
     Args:
         moved: Whether a re-read after the error shows a new head.
@@ -292,10 +294,15 @@ def test_a_rebase_lost_to_an_outage_wakes_a_tick_only_if_the_head_moved(moved):
     gh = FakeGh([_node(1)], rebase_error='gh api graphql -f failed: Post "https://api.github.com/graphql": EOF',
                 reread={1: _node(1, head=NEW if moved else OLD, state="BLOCKED" if moved else "BEHIND")})
     sleeps = []
-    with pytest.raises(mq.GhError, match="EOF"):
-        mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
+    if moved:
+        decisions = mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
+        assert [a.kind for _, a in decisions] == ["rebase"]
+    else:
+        with pytest.raises(mq.GhError, match="EOF"):
+            mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
     expected = [("rebase", "PR_1", OLD)] + ([("dispatch", "derived-artifacts.yml", {"ref": "dev"})] if moved else [])
     assert gh.calls == expected
+    assert not any(c[0] in ("disarm", "comment") for c in gh.calls)
     assert sleeps == [mq.REBASE_POLL_S], "the re-read waits for an accepted rebase's ref to land (review round 8)"
 
 
@@ -878,7 +885,7 @@ def test_main_drives_the_real_gh_argv_end_to_end(monkeypatch, tmp_path):
     held_old = f"{repo}/actions/runs?head_sha={OLD}&status=action_required&per_page=100&page=1"
     held_new = f"{repo}/actions/runs?head_sha={NEW}&status=action_required&per_page=100&page=1"
     who = ["-f", f"owner={owner}", "-f", f"name={name}"]
-    assert seen[:-1] == [
+    assert seen[:-2] == [
         ["gh", "api", "graphql", "-f", f"query={mq.LINE_QUERY}", *who],
         ["gh", "api", "-X", "GET", f"{repo}/commits/{OLD}/check-runs"
          "?check_name=Derived%20artifacts%20reproduce%20from%20their%20sources&filter=all&per_page=100&page=1"],
@@ -891,8 +898,10 @@ def test_main_drives_the_real_gh_argv_end_to_end(monkeypatch, tmp_path):
         ["gh", "api", "graphql", "-f", f"query={mq.COMMENTS_QUERY}", *who, "-F", "number=7"],
     ]
     assert held_old not in [argv[-1] for argv in seen], "a BEHIND front is not pre-approved"
-    assert seen[-1][:6] == ["gh", "api", "-X", "POST", f"{repo}/issues/7/comments", "-f"]
-    assert seen[-1][6].startswith(f"body=<!-- merge-queue:rebased:{NEW} -->\nMerge queue: this PR is next.")
+    assert seen[-2][:6] == ["gh", "api", "-X", "POST", f"{repo}/issues/7/comments", "-f"]
+    assert seen[-2][6].startswith(f"body=<!-- merge-queue:rebased:{NEW} -->\nMerge queue: this PR is next.")
+    # TASK-34790: after posting, the queue looks again for a racing run's copy of the same comment.
+    assert seen[-1] == ["gh", "api", "graphql", "-f", f"query={mq.COMMENTS_QUERY}", *who, "-F", "number=7"]
     assert "| #7 | rebase | behind dev |" in summary.read_text(encoding="utf-8")
 
 
@@ -1644,3 +1653,66 @@ def test_a_retry_whose_approval_strike_evicts_moves_the_line_on():
     action = mq.Action("retry", "required check failed once; retrying", ("https://run/70",), suite_id=700)
     assert mq._retry(gh, pr, action, lambda m: None, lambda s: None, lambda: NOW) is True
     assert ("disarm", "PR_1") in gh.calls
+
+
+WORKFLOW_REFUSAL = ("gh api graphql -f failed: gh: refusing to allow a GitHub App to create or update workflow "
+                    "`.github/workflows/derived-artifacts.yml` without `workflows` permission")
+
+
+def test_a_pr_that_changes_a_workflow_file_is_told_why_and_leaves_at_once():
+    """TASK-34788, seen live on #3058: GitHub never lets the queue's token rebase a PR whose commits
+    change a workflow file. That used to be a rebase strike: a generic warning, then an eviction ten
+    minutes later with no hint. Now one comment names the file and the fix, with no waiting, and the
+    line moves on in the same run."""
+    gh = FakeGh([_node(1), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")], rebase_error=WORKFLOW_REFUSAL,
+                reread={1: _node(1, state="BEHIND")})
+    decisions = _run(gh)
+    assert [(n, a.kind) for n, a in decisions] == [(1, "rebase"), (2, "evict")]
+    comments = [c[2] for c in gh.calls if c[0] == "comment" and c[1] == 1]
+    assert len(comments) == 1, "no rebase-failed warning first"
+    assert f"<!-- merge-queue:evict-workflow-file:{OLD} -->" in comments[0]
+    assert "`.github/workflows/derived-artifacts.yml`" in comments[0]
+    assert "git pull --rebase origin dev" in comments[0] and "re-arm" in comments[0]
+    assert ("disarm", "PR_1") in gh.calls
+
+
+def test_an_up_to_date_workflow_pr_lands_without_a_rebase():
+    """TASK-34788: hand-rebased and green, a workflow-changing PR needs nothing from the queue's
+    token; the queue waits for auto-merge like any other up-to-date PR."""
+    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check()]}, rebase_error=WORKFLOW_REFUSAL)
+    decisions = _run(gh)
+    assert decisions[0][1].kind == "wait" and gh.calls == []
+
+
+class _CommentRace:
+    """A gh whose comment list gains a racing queue run's copy between this run's check and its post."""
+
+    def __init__(self, racer_id, own_id):
+        self.racer_id, self.own_id, self.reads, self.calls = racer_id, own_id, 0, []
+
+    def graphql(self, query, **variables):
+        self.reads += 1
+        marker = f"<!-- merge-queue:rebased:{NEW} -->"
+        nodes = [] if self.reads == 1 else [{"databaseId": i, "body": marker} for i in (self.racer_id, self.own_id)
+                                            if i is not None]
+        return {"data": {"repository": {"pullRequest": {"comments": {"nodes": nodes}}}}}
+
+    def rest(self, method, path, fields=None):
+        self.calls.append((method, path))
+        return {"id": self.own_id} if method == "POST" else None
+
+
+@pytest.mark.parametrize(("racer_id", "kept"), [(90, False), (110, True), (None, True)],
+                         ids=["racer-first", "racer-later", "no-racer"])
+def test_two_racing_runs_leave_one_copy_of_a_comment(racer_id, kept):
+    """TASK-34790: two queue runs both passed the 'already posted?' check and both posted (seen on
+    #3058). Each looks again after posting; the later one removes its own copy.
+
+    Args:
+        racer_id: The racing run's comment id (ours is 100), or None when there is no racer.
+        kept: Whether this run's copy stays.
+    """
+    gh = _CommentRace(racer_id, 100)
+    assert mq.comment_once(gh, 7, "rebased", NEW, "this PR is next") is kept
+    deletes = [c for c in gh.calls if c[0] == "DELETE"]
+    assert deletes == ([] if kept else [("DELETE", f"repos/{mq.REPO}/issues/comments/100")])
