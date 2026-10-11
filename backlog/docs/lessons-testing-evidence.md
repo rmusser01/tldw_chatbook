@@ -19802,6 +19802,20 @@ and the matching lessons file so the next task starts from the full list —
 a half-removed pattern reads as "handled" to every future grep that only
 checks the seam the task named.
 
+**Recurrence inside one class — TASK-33008.2 fix rounds 2 and 3, 2026-10-10.**
+Fix round 2 gave Switch model's Enter its own line for the moment before
+providers are listed ("Still checking providers…") by editing the
+`_set_error` call in `ConsoleModelPopover._activate`. The sentence it
+replaced there, "Choose a model: type to search, then Enter.", was written a
+second time further down the class in `_validated_draft`, which Ctrl+O and
+the Chat settings… button reach without passing through `_activate`. That
+copy kept printing the old line, and the new clear, which matches the new
+line only, left it on screen. The next review found it by reading the code,
+and it cost a fix round. `grep -n "Choose a model"` on the file prints both sites. The
+sibling need not be another class: before changing when a user-facing
+sentence is shown, grep the SENTENCE, and let one method choose it for every
+site (here `_refuse_no_pair`).
+
 
 ## Malformed-response tests can stop at the wrong guard (PR #3052, TASK-34434)
 

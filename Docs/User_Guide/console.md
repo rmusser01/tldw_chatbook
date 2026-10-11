@@ -890,9 +890,9 @@ model. In Switch model a chat with no model has no **● CURRENT** row, and
 **Enter** with nothing to apply answers "Choose a model: type to search,
 then Enter." In the first moment after the list opens, while it is still
 empty or reads "checking providers…", there is nothing to choose yet, so
-**Enter** with no row highlighted answers "Still checking providers: press
-Enter again when the list fills." instead, and that line goes as soon as
-the providers are listed.
+**Enter** with no row highlighted, or **Ctrl+O** on a chat with no model,
+answers "Still checking providers: press Enter again when the list fills."
+instead, and that line goes as soon as the providers are listed.
 
 Focusing the **Provider** or **Model** field, by Tab or by a click, keeps
 its current value on screen, selected, and opens the full list below it;

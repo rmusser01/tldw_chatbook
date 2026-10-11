@@ -939,6 +939,40 @@ async def test_first_readiness_clears_no_error_but_the_one_about_the_wait() -> N
     assert recorder.submissions == []
 
 
+async def test_ctrl_o_with_no_model_before_first_readiness_names_the_wait() -> None:
+    """TASK-33008.2: Ctrl+O and Chat settings… validate the draft without
+    passing through Enter's path. On a chat with no model nothing is
+    highlighted while providers are checked, so the draft has no pair to
+    carry. Ctrl+O gets the line Enter gets in that window, not "Choose a
+    model: type to search", and the first readiness clears it."""
+    recorder, release = _held_recorder()
+    app = SwitcherHarness()
+    try:
+        async with app.run_test(size=(211, 44)) as pilot:
+            switcher = build_switcher(recorder, draft=_draft("openai", None))
+            app.push_screen(switcher, callback=lambda result: None)
+            await pilot.pause()
+            await pilot.pause()
+            assert not switcher._first_readiness_done
+            assert switcher.highlighted_row() is None
+            await pilot.press("ctrl+o")
+            await pilot.pause()
+            assert app.screen is switcher  # nothing to carry, nothing opened
+            error = switcher.query_one("#console-popover-error")
+            assert error.display and str(error.render()) == (
+                "Still checking providers: press Enter again when the list fills."
+            )
+
+            release.set()
+            await _settle(app, pilot)
+            assert switcher._first_readiness_done
+            assert not error.display and str(error.render()) == ""
+    finally:
+        release.set()
+
+    assert recorder.submissions == []
+
+
 async def test_a_highlight_pair_past_the_match_cap_stays_listed() -> None:
     """TASK-33008.2: "OpenAI " in Find also matches every aggregator id that
     starts with it, and those rank above OpenAI's own models, which match by

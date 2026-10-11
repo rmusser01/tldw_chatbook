@@ -103,7 +103,7 @@ _VALUE_ERRORS = {
     "temperature": "Temperature must be a finite number from {low:g} to {high:g}.",
     "max_tokens": "Max tokens must be a whole number of at least 1 (blank: no cap).",
 }
-#: Enter with no row while providers are checked: nothing to type or choose yet.
+#: No pair to act on while providers are checked: nothing to type or choose yet.
 _CHECKING_ERROR = "Still checking providers: press Enter again when the list fills."
 
 #: Spec §2 / mockup (a): READY PROVIDERS shows this many models per provider.
@@ -1590,13 +1590,7 @@ class ConsoleModelPopover(
     ) -> None:
         """Enter: apply the highlighted pair, open its fix, or expand a provider."""
         if row is None:
-            # Spec rule 1: with no row highlighted there is no pair to act on.
-            self._set_error(
-                "Choose a model: type to search, then Enter."
-                if self._first_readiness_done
-                else _CHECKING_ERROR,
-                focus=self.query_one("#console-popover-find", Input),
-            )
+            self._refuse_no_pair()
             return
         if row.kind == "more":
             find = self.query_one("#console-popover-find", Input)
@@ -1640,6 +1634,15 @@ class ConsoleModelPopover(
             self._setup_opener(provider, model)
 
     # -- draft editing --------------------------------------------------
+
+    def _refuse_no_pair(self) -> None:
+        """Spec rule 1, worded in one place: with no pair, nothing applies or opens."""
+        self._set_error(
+            "Choose a model: type to search, then Enter."
+            if self._first_readiness_done
+            else _CHECKING_ERROR,
+            focus=self.query_one("#console-popover-find", Input),
+        )
 
     def _set_error(self, message: str, *, focus: Widget | None = None) -> None:
         self._error = message
@@ -1861,11 +1864,7 @@ class ConsoleModelPopover(
     def _validated_draft(self) -> ConsoleSettingsDraftState | None:
         settings = self._draft.settings
         if not str(settings.provider or "").strip() or not settings.model:
-            # Spec rule 1: nothing applies a provider without a model.
-            self._set_error(
-                "Choose a model: type to search, then Enter.",
-                focus=self.query_one("#console-popover-find", Input),
-            )
+            self._refuse_no_pair()  # Ctrl+O and Chat settings… arrive here
             return None
         values: dict[str, object] = {}
         for name in ("temperature", "max_tokens"):
