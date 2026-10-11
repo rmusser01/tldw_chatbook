@@ -4386,6 +4386,13 @@ openai_cache_key = false
 # every completion (toast, badge, durable mark); the wake turn just never
 # fires.
 # autowake_enabled = true
+# Goal policy cannot replenish an existing immutable launch allowance.
+# goal_runs_enabled = false
+# max_goal_generations = 3
+# max_goal_model_calls = 32
+# max_goal_budget_tokens = 500000
+# max_goal_output_tokens = 8192
+# max_goal_wall_seconds = 900
 #
 # --- Sub-agent routing (ADR-147) ---
 # Default provider/model for spawned sub-agents when neither the spawn call

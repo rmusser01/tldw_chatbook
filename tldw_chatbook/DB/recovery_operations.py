@@ -263,6 +263,10 @@ _AGENT_RUNS_MIGRATION_18_21 = (
 
 
 class _AgentRunsAdapter(_SQLiteDeclaration):
+    def _validate_connection(self, connection):
+        from .recovery_goal_schema import validate_goal_rows
+        return validate_goal_rows(connection)
+
     def schema_policy(self) -> SchemaPolicy:
         return SchemaPolicy(
             self.owner_id,
@@ -272,6 +276,7 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
                 (18, 21, _AGENT_RUNS_MIGRATION_18_21),
                 (21, 22, _AGENT_RUNS_MIGRATION_21_22),
                 (22, 23, _AGENT_RUNS_MIGRATION_22_23),
+                (23, 24, GOAL_MIGRATION),
             ),
         )
 
@@ -1301,7 +1306,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18, 21, 22, 23),
+            (18, 21, 22, 23, 24),
             _AGENT_RUNS_SCHEMA,
             ("db.chachanotes.primary",),
             optional_default=True,
@@ -1558,4 +1563,13 @@ _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS = tuple(
 )
 _SUBSCRIPTIONS_SCHEMA += tuple(
     (2, schema) for schema in _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS
+)
+
+
+from .recovery_goal_schema import GOAL_MIGRATION, goal_catalog
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (24, goal_catalog(catalog))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 23
 )
