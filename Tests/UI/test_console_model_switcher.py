@@ -941,10 +941,13 @@ async def test_first_readiness_clears_no_error_but_the_one_about_the_wait() -> N
 
 async def test_ctrl_o_with_no_model_before_first_readiness_names_the_wait() -> None:
     """TASK-33008.2: Ctrl+O and Chat settings… validate the draft without
-    passing through Enter's path. On a chat with no model nothing is
-    highlighted while providers are checked, so the draft has no pair to
-    carry. Ctrl+O gets the line Enter gets in that window, not "Choose a
-    model: type to search", and the first readiness clears it."""
+    passing through Enter's path. On a chat with no model, nothing is
+    highlighted while providers are checked when no PREVIOUS or RECENT row
+    is listed yet (here) or the list reopened on a NEEDS SETUP pair, and
+    with no row the draft has no pair to carry. Ctrl+O then gets the line
+    Enter gets, not "Choose a model: type to search", and the first
+    readiness clears it. A highlighted row gives the draft its pair, so
+    Ctrl+O is not refused (the next test)."""
     recorder, release = _held_recorder()
     app = SwitcherHarness()
     try:
@@ -971,6 +974,43 @@ async def test_ctrl_o_with_no_model_before_first_readiness_names_the_wait() -> N
         release.set()
 
     assert recorder.submissions == []
+
+
+async def test_ctrl_o_with_a_row_highlighted_before_first_readiness_carries_it() -> None:
+    """TASK-33008.2: the guide's "with no row highlighted" decides Ctrl+O
+    too. On a chat with no model, RECENT's load lists PREVIOUS and highlights
+    it while providers are still checked. The draft has that row's pair, so
+    Ctrl+O opens Chat settings on it and names no wait."""
+    recorder, release = _held_recorder()
+    app = SwitcherHarness()
+    previous = ("anthropic", "claude-sonnet-4-5")
+    try:
+        async with app.run_test(size=(211, 44)) as pilot:
+            switcher = build_switcher(
+                recorder,
+                draft=_draft("openai", None),
+                recent=(),
+                remembered_previous=_Use(*previous, timedelta(hours=2)),
+            )
+            await app.push_screen(
+                switcher, callback=lambda result: setattr(app, "result", result)
+            )
+            await pilot.pause()
+            await pilot.pause()
+            assert not switcher._first_readiness_done
+            assert any("checking providers" in row.text for row in switcher._rows)
+            row = switcher.highlighted_row()
+            assert row is not None and (row.provider, row.model) == previous
+            await pilot.press("ctrl+o")
+            await pilot.pause()
+            assert app.screen is not switcher
+    finally:
+        release.set()
+
+    assert recorder.submissions == []
+    assert isinstance(app.result, ConsoleSettingsTransfer)
+    settings = app.result.draft.settings
+    assert (settings.provider, settings.model) == previous
 
 
 async def test_a_highlight_pair_past_the_match_cap_stays_listed() -> None:

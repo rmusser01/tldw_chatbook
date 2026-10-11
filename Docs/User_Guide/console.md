@@ -889,8 +889,8 @@ and Console asks you to choose one. It never borrows another provider's
 model. In Switch model a chat with no model has no **● CURRENT** row, and
 **Enter** with nothing to apply answers "Choose a model: type to search,
 then Enter." In the first moment after the list opens, while it is still
-empty or reads "checking providers…", there is nothing to choose yet, so
-**Enter** with no row highlighted, or **Ctrl+O** on a chat with no model,
+empty or reads "checking providers…", a row may not be highlighted yet, so
+with no row highlighted, **Enter**, or **Ctrl+O** on a chat with no model,
 answers "Still checking providers: press Enter again when the list fills."
 instead, and that line goes as soon as the providers are listed.
 
