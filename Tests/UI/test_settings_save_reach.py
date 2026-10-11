@@ -23,6 +23,7 @@ from Tests.UI.test_settings_category_sweep import (
     _click_settings_category,
     _settle_settings,
 )
+from Tests.UI.test_settings_connect_rows import _pick_model
 from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 from tldw_chatbook.Chat.console_session_settings import blank_console_session_settings
 from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
@@ -221,9 +222,8 @@ async def test_an_open_chat_with_no_settings_of_its_own_is_described_not_crashed
             pair="OpenAI · gpt-4o"
         )
 
-        # A keystroke re-says the row (``_update_provider_dynamic_widgets``).
-        screen.query_one("#settings-model-value", Input).value = "gpt-4.1"
-        await pilot.pause()
+        # Choosing another model re-says the row.
+        await _pick_model(pilot, screen, "gpt-4.1")
         assert _text(screen, "#settings-model-applies-to") == chat + says.format(
             pair="OpenAI · gpt-4.1"
         )
@@ -271,8 +271,7 @@ async def test_inspector_leads_with_reach_then_the_next_new_chat_then_the_field(
         note = screen.query_one("#settings-provider-next-chat-note", Static)
         assert note.display is False
 
-        screen.query_one("#settings-model-value", Input).value = "gpt-4.1"
-        await pilot.pause()
+        await _pick_model(pilot, screen, "gpt-4.1")
 
         assert screen._category_has_unsaved_changes(PROVIDERS_MODELS)
         assert note.display is True

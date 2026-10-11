@@ -23,6 +23,7 @@ from Tests.UI.test_settings_category_sweep import (
     _click_settings_category,
     _settle_settings,
 )
+from Tests.UI.test_settings_connect_rows import _pick_model
 from Tests.UI.test_settings_console_fallback_rows import _revert, _wait_until
 from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 from tldw_chatbook.Chat.console_provider_support import (
@@ -110,9 +111,9 @@ async def test_model_defaults_follow_default_model_open_and_name_the_pair(reques
     """AC#1: directly after Default model, open, titled with the pair; a model
     change re-titles it and shows that model's values."""
     profiles = {"claude-a": {"temperature": 0.3}, "claude-b": {"temperature": 0.9}}
-    host = _SettingsCssHarness(
-        _app("anthropic", "claude-a", profiles=profiles), "settings"
-    )
+    app = _app("anthropic", "claude-a", profiles=profiles)
+    app.providers_models = {"Anthropic": ["claude-a", "claude-b"]}
+    host = _SettingsCssHarness(app, "settings")
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open(host, pilot)
@@ -132,9 +133,10 @@ async def test_model_defaults_follow_default_model_open_and_name_the_pair(reques
         temperature = screen.query_one(f"#{_cid('temperature')}", Input)
         assert temperature.value == "0.3"
 
-        screen._set_model_field_value("claude-b", quiet=False)
-        await pilot.pause()
-        await pilot.pause()
+        await _pick_model(pilot, screen, "claude-b")
+        await _wait_until(
+            pilot, lambda: temperature.value == "0.9", "claude-b's own values"
+        )
 
         assert str(defaults.title) == "Model defaults · Anthropic · claude-b"
         assert temperature.value == "0.9"
@@ -397,6 +399,46 @@ async def test_sampling_is_one_closed_row_naming_what_anthropic_does_not_accept(
         assert hidden_list.region.height >= 1
         for name in ("top_p", "top_k"):
             assert screen.query_one(f"#{_cid(name)}-row").region.height == 1, name
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    ("size", "hidden_part"),
+    [
+        pytest.param(
+            (211, 44),
+            "llama.cpp does not accept 3 fields (open to list them)",
+            id="211x44-counted",
+        ),
+        pytest.param(
+            (235, 52),
+            "hidden for llama.cpp: Reasoning summary, Verbosity, Thinking "
+            "(this provider does not accept them)",
+            id="235x52-named",
+        ),
+    ],
+)
+async def test_the_sampling_title_names_the_hidden_fields_where_they_fit(
+    request, size, hidden_part
+):
+    """AC#6, the other half of the owner ruling of 2026-10-02: the fields the
+    provider does not accept are named in the Sampling title when they fit
+    its one row. llama.cpp hides three: the 122-cell title that names them
+    fits the 127 cells of 235x52 and not the 113 of 211x44, where they are
+    counted and listed inside. (Anthropic's seven fit at neither size.)"""
+    host = _SettingsCssHarness(_app("llama_cpp", "qwen"), "settings")
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open(host, pilot)
+        sampling = screen.query_one("#settings-model-sampling", Collapsible)
+
+        assert sampling.collapsed is True
+        assert sampling.region.height == 1
+        assert sampling.query_one(CollapsibleTitle).region.height == 1
+        assert str(sampling.title) == f"Sampling · all inherit · {hidden_part}"
+        painted = _region_rows(screen, sampling.query_one(CollapsibleTitle))[0]
+        assert hidden_part in painted, painted
 
 
 #: A value for every Model defaults field, so each shown row reads its help.
