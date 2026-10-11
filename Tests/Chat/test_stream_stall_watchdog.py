@@ -254,6 +254,67 @@ def test_stop_landing_as_the_window_expires_is_a_stop_and_raises_nothing_in_the_
     assert loop_errors == []
 
 
+def test_stop_ends_a_stream_that_went_silent_after_content(fast_stop_poll):
+    """The poll also runs on the shorter between-items window: what arrived
+    before the silence is delivered, and the stop is still not a stall."""
+
+    class Source(_SilentSource):
+        sent = 0
+
+        async def __anext__(self):
+            if self.sent < 2:
+                self.sent += 1
+                return f"item {self.sent}"
+            return await super().__anext__()
+
+    source = Source()
+    polls = iter([False, False, False])
+
+    async def drive():
+        return await asyncio.wait_for(
+            _collect(
+                source,
+                30.0,
+                first_item_timeout_seconds=300.0,
+                should_stop=lambda: next(polls, True),
+            ),
+            5.0,
+        )
+
+    assert _run(drive()) == ["item 1", "item 2"]
+    assert source.cancelled == 1 and source.closed >= 1
+
+
+def test_the_stop_poll_leaves_nothing_for_the_cyclic_collector():
+    """The poll reschedules itself by name, so it sits in its own closure
+    cell. Left alone that is one reference cycle per item, on the per-token
+    path of every Console reply; the plain ``wait_for`` path leaves none."""
+    import gc
+
+    items = 200
+
+    async def source():
+        for i in range(items):
+            yield i
+
+    async def drive():
+        gc.collect()
+        was_enabled = gc.isenabled()
+        gc.disable()
+        try:
+            async for _ in watch_content_stalls(
+                source(), 5.0, should_stop=lambda: False
+            ):
+                pass
+            return gc.collect()
+        finally:
+            if was_enabled:
+                gc.enable()
+
+    # Fewer unreachable objects than items: no cycle is left per item.
+    assert _run(drive()) < items
+
+
 # --- AC#4: repeated-stall tracking ---
 
 def test_stall_tracker_warns_at_threshold():

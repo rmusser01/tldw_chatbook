@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-02 19:30'
-updated_date: '2026-10-11 15:48'
+updated_date: '2026-10-11 17:27'
 labels:
   - console
   - lifecycle
@@ -77,6 +77,11 @@ TASK-33628.5's exit wait is not it. That wait (`console_durable_writes.end_store
 **Tests.** `Tests/Chat/test_console_stop_silent_provider.py::test_stop_during_a_silent_provider_releases_the_run_thread` reproduces the hang at the bridge (AC#3): a gateway that accepts the request and never streams, a 120 s stall window and a 300 s first-token window, and the run thread must be back within 15 s of the cancel flag, with the run and the reply settled as cancelled and stopped and the provider request closed. Before the fix it fails with "run_reply stayed blocked on a silent provider after the cancel flag was set". `Tests/Chat/test_stream_stall_watchdog.py` gains seven nodes for the stop path: a stop ends a silent stream with the watchdog on, off (`None`) and disabled (`0`); items several polls apart are neither dropped nor reordered; the stall still trips between polls; a task cancel still propagates and closes the source; and a stop that lands on the tick the window expires ends as a stop and raises nothing into the loop.
 
 `Tests/Chat/test_stream_stall_watchdog.py::test_non_finite_config_falls_back_to_default` fails on 10fead87cb and on the fix alike (RecoveryRequired, raw_source_selection_changed): it reads config with no profile marker.
+
+**Fix round 1 (review of c6af8a5792).** Three points in the stop path, none of which changes the bound.
+- The stop poll left a reference cycle for every item. `poll` reschedules itself by name, so the function sat in its own closure cell, and each awaited item left that cycle to the cyclic collector, on the per-token path of every Console reply. The `finally` that cancels the handle now empties the cell with `del poll`. The review proposed `poll = None`; `del` empties the same cell, and mypy rejects assigning `None` to a `def`. Measured in a throwaway test node, Python 3.12.11, collector off, 5,000 items: 0 unreachable objects on the polled path and 0 on the `asyncio.wait_for` path. `test_the_stop_poll_leaves_nothing_for_the_cyclic_collector` keeps it: 200 items, fewer than 200 unreachable objects. Before the change it found 1,810.
+- A Stop on a silent provider no longer clears the session's stall streak. A stream ended by the stop poll returns normally, so it reached `reset_session_stalls` under the comment "A productive turn", although nothing had arrived; before this rider the same Stop ran out the window and was recorded as a stall. `_chat_call_impl` now resets only when the turn received at least one item. The streak feeds one thing, the `repeated_this_session` field of the stall warning. `test_stop_during_a_silent_provider_releases_the_run_thread` records a stall before the run and asserts it is still counted after; before the change that assert failed with `0 == 1`. `test_a_reply_that_streamed_clears_the_stall_streak` holds the other arm.
+- No test stopped a stream that had produced content and then gone silent, where the poll runs on the shorter between-items window. `test_stop_ends_a_stream_that_went_silent_after_content`: the source yields two items and then waits, and the stop predicate turns true after three polls. The result is exactly those two items with no `StreamStallError`, and the source is cancelled once and closed. It passes before and after this round; it closes a gap in the tests, not a defect.
 
 Files: `tldw_chatbook/Chat/stream_stall_watchdog.py`, `tldw_chatbook/Chat/console_agent_bridge.py`, `Tests/Chat/test_stream_stall_watchdog.py`, `Tests/Chat/test_console_stop_silent_provider.py`, `backlog/docs/lessons-live-verification.md`, `Docs/User_Guide/console.md`, and TASK-30015's notes.
 <!-- SECTION:NOTES:END -->

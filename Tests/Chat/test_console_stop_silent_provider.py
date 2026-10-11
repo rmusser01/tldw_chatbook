@@ -17,7 +17,12 @@ import threading
 import pytest
 
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
-from Tests.Chat.test_console_agent_bridge import _bridge_with_gateway, _run
+import tldw_chatbook.Chat.stream_stall_watchdog as watchdog
+from Tests.Chat.test_console_agent_bridge import (
+    _bridge_with_gateway,
+    _run,
+    _test_resolution,
+)
 
 #: Far above the stop poll and the model-loop join, far below the stall and
 #: first-token windows: a pass means the cancel ended the wait, not a timeout.
@@ -42,6 +47,19 @@ class _SilentGateway:
         yield "too late"
 
 
+class _AnsweringGateway:
+    """Streams one chunk and ends."""
+
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        yield "hello"
+
+
+def _stall_streak(session_id: str) -> int:
+    """Stalls on record for the test provider in ``session_id``."""
+    tracker = watchdog._SESSION_TRACKERS.get(session_id)
+    return 0 if tracker is None else tracker.count(_test_resolution().provider)
+
+
 # The run builds its tool catalog from real config; keep the collection-time
 # profile, as the other config-reading bridge tests do.
 @pytest.mark.bootstrap_profile
@@ -56,6 +74,9 @@ def test_stop_during_a_silent_provider_releases_the_run_thread(
     bridge, db, store, session, assistant_id = _bridge_with_gateway(
         tmp_path / "silent", gateway
     )
+    # A stall from an earlier turn of this session.
+    monkeypatch.setattr(watchdog, "_SESSION_TRACKERS", {})
+    watchdog.record_session_stall(session.id, _test_resolution().provider)
     cancel = threading.Event()
     result: dict[str, object] = {}
 
@@ -93,3 +114,22 @@ def test_stop_during_a_silent_provider_releases_the_run_thread(
     stored = store.get_message(assistant_id)
     assert stored.status == "stopped"
     assert stored.content == ""
+    # Nothing arrived, so this was not a productive turn: the earlier stall is
+    # still counted. (Before the stop poll the same Stop ran out the window
+    # and was itself recorded as a stall.)
+    assert _stall_streak(session.id) == 1
+
+
+@pytest.mark.bootstrap_profile
+def test_a_reply_that_streamed_clears_the_stall_streak(tmp_path, monkeypatch) -> None:
+    """The other arm: a turn that received content is a productive one."""
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path / "answering", _AnsweringGateway()
+    )
+    monkeypatch.setattr(watchdog, "_SESSION_TRACKERS", {})
+    watchdog.record_session_stall(session.id, _test_resolution().provider)
+
+    outcome = _run(bridge, store, session, assistant_id)
+
+    assert outcome.status == "done", outcome
+    assert _stall_streak(session.id) == 0

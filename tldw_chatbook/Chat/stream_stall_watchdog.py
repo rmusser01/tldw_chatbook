@@ -220,6 +220,9 @@ async def _next_item_unless_stopped(
                 return await it.__anext__()
             finally:
                 poll_handle.cancel()
+                # `poll` names itself, so it sits in its own closure cell:
+                # empty it, or every item leaves a cycle for the collector.
+                del poll
     except asyncio.TimeoutError:
         if stopped:
             raise _Stopped from None
