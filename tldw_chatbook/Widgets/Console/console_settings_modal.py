@@ -1574,40 +1574,18 @@ class ConsoleSettingsModal(
                 markup=False,
             )
             with Horizontal(id="console-settings-view-tabs"):
-                model_view = Button(
-                    _view_tab_label(
-                        "Model and generation", self._active_view == "model"
-                    ),
+                # on_mount's view switch marks the open view's tab (its
+                # label, class and tooltip) before the first paint.
+                yield Button(
+                    "Model and generation",
                     id="console-settings-view-model",
-                    classes=(
-                        "console-settings-view-tab console-settings-view-active"
-                        if self._active_view == "model"
-                        else "console-settings-view-tab"
-                    ),
+                    classes="console-settings-view-tab",
                 )
-                model_view.tooltip = (
-                    "Selected view: Model and generation"
-                    if self._active_view == "model"
-                    else "Show Model and generation"
-                )
-                yield model_view
-                context_view = Button(
-                    _view_tab_label(
-                        "Context and memory", self._active_view == "context"
-                    ),
+                yield Button(
+                    "Context and memory",
                     id="console-settings-view-context",
-                    classes=(
-                        "console-settings-view-tab console-settings-view-active"
-                        if self._active_view == "context"
-                        else "console-settings-view-tab"
-                    ),
+                    classes="console-settings-view-tab",
                 )
-                context_view.tooltip = (
-                    "Selected view: Context and memory"
-                    if self._active_view == "context"
-                    else "Show Context and memory"
-                )
-                yield context_view
             yield Static(
                 self._scope_copy(),
                 id="console-settings-scope",

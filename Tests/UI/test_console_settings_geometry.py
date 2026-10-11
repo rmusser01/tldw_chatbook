@@ -124,9 +124,20 @@ async def test_view_tabs_paint_their_whole_labels_after_each_view_switch(
     whole labels before the fix too. Alt+M from the Context view, which shows
     the Model view with no tab pressed, painted the Model tab without its mark.
 
+    Compose yields both tabs unmarked; the view switch on_mount runs marks
+    the open view's tab before the first paint, whichever view that is.
+
     Args:
         size: Terminal size (columns, rows) the harness app runs at.
     """
+    app = GeometryHarness()
+    modal = build_geometry_modal(app, ready=True, focus_context=True)
+
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(modal)
+        await settle(pilot, app)
+        assert CONTEXT_VIEW_TAB_ROW in painted_tab_row(app, modal)
+
     app = GeometryHarness()
     modal = build_geometry_modal(
         app, ready=True, model_picker=pick_mode_opener(app, app.app_config)
