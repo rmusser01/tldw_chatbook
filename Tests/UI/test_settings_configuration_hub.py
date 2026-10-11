@@ -11255,11 +11255,13 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
             screen.query_one("#settings-provider-endpoint-value", Input).value
             == "http://localhost:11434/v1/chat/completions"
         )
+        # Review of PR #3057 (ruling C3), rewritten on purpose: a value read
+        # from config reads "saved in config" on every row, as API key's does.
         assert (
             str(
                 screen.query_one("#settings-provider-endpoint-source", Static).renderable
             )
-            == "config"
+            == "saved in config"
         )
         assert (
             "Endpoint: api_settings.ollama.api_url=http://localhost:11434" not in text
@@ -12772,23 +12774,29 @@ async def test_settings_mount_triggers_at_most_one_post_mount_recompose():
 
 
 def test_settings_source_labels_cover_every_resolvable_source():
-    """Pin the source-label map to exactly the resolvable source keys.
+    """Pin the source-label map to exactly the source keys Settings shows.
 
-    TASK-1310 review follow-up: the map must cover exactly the source keys
-    `resolve_effective_provider_model` can return, so the Providers category
-    never renders a raw `key.replace("_", " ")` fallback (the stale
+    TASK-1310 review follow-up: the Providers category must never render a
+    raw `key.replace("_", " ")` fallback (the stale
     `console_control`/`app_reactive` keys did exactly that for
     `console_session` after task-648's rename).
 
     TASK-33007.2, rewritten on purpose: the readiness block's source labels
     became the Provider and Model rows' Source words.
+
+    Review of PR #3057 (R1 #18), rewritten on purpose: Settings resolves
+    with no Console arguments and `_resolve_provider_model_for_settings`
+    hands the rows "settings_draft" or "chat_defaults" only, so "this chat"
+    and "built-in" were words nothing could show ("default" is a key the
+    resolver never returns); an unknown key reads as the saved default.
     """
     from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
         SELECTION_SOURCE_WORDS,
+        selection_source_word,
     )
 
-    resolvable = {"settings_draft", "console_session", "chat_defaults", "default"}
-    assert set(SELECTION_SOURCE_WORDS) == resolvable
+    assert set(SELECTION_SOURCE_WORDS) == {"settings_draft", "chat_defaults"}
+    assert selection_source_word("console_session", "openai") == "new-chat default"
 
 
 # ---- [chat.images] render_remote_images toggle (task-1537 settings UI) ----

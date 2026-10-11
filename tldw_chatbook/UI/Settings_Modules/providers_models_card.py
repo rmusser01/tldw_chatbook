@@ -91,7 +91,12 @@ from ..Screens.settings_screen import (
     _ProviderTestResult,
     _session_summary_section_values,
 )
-from .settings_field_rows import compose_model_defaults, format_value
+from .settings_field_rows import (
+    BUILT_IN,
+    EDITED,
+    compose_model_defaults,
+    format_value,
+)
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
@@ -99,16 +104,18 @@ if TYPE_CHECKING:
     from ..Screens.settings_screen import SettingsScreen
 
 
-#: TASK-33007.2: the Source word for where the shown provider or model comes
-#: from (spec §6 row grammar). Keys are exactly the sources
-#: ``resolve_effective_provider_model`` returns (TASK-1310: a stale key once
-#: rendered a raw fallback label here).
+#: TASK-33007.2: the Provider and Model rows' Source words (spec §6 row
+#: grammar). Settings hands the rows two sources: "settings_draft" for a
+#: field the draft changed and "chat_defaults" for everything else
+#: (``_resolve_provider_model_for_settings``).
 SELECTION_SOURCE_WORDS = {
-    "settings_draft": "edited *",
+    "settings_draft": EDITED,
     "chat_defaults": "new-chat default",
-    "console_session": "this chat",
-    "default": "built-in",
 }
+#: C3: a value read from config, on every row that shows one. It fits the
+#: Source column (16 cells at 211x44).
+SAVED_IN_CONFIG = "saved in config"
+NOT_SET = "not set"
 #: The Key check row's action, labelled with the key that runs it (AC#6).
 KEY_CHECK_ACTION_LABEL = "Test (t)"
 #: Owner ruling 2026-10-04: Clear is a key on the API key field, not a Tab
@@ -454,16 +461,22 @@ def sync_provider_control(screen: SettingsScreen) -> bool:
     return changed
 
 
-def selection_source_word(source: object) -> str:
-    """Return the Source word for a provider or model source.
+def selection_source_word(source: object, value: object) -> str:
+    """Return the Source word for the shown provider or model.
 
     Args:
-        source: An ``EffectiveProviderModel`` source key.
+        source: The value's ``EffectiveProviderModel`` source key.
+        value: The provider or model shown.
 
     Returns:
-        E.g. "new-chat default" or "edited *".
+        "edited *" for a staged change; otherwise "new-chat default", or
+        "not set" when config holds none.
     """
-    return SELECTION_SOURCE_WORDS.get(str(source or ""), "built-in")
+    if source != "settings_draft" and not str(value or "").strip():
+        return NOT_SET
+    return SELECTION_SOURCE_WORDS.get(
+        str(source), SELECTION_SOURCE_WORDS["chat_defaults"]
+    )
 
 
 def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
@@ -494,10 +507,10 @@ def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
     draft = screen._provider_draft()
     if draft is not None and "api_key" in draft.dirty_keys:
         if str(draft.values.get("api_key") or "").strip():
-            return "edited *", "masked · s saves it to config"
+            return EDITED, "masked · s saves it to config"
         return "cleared *", "s removes the saved key"
     if screen._provider_saved_api_key_present(provider):
-        return "saved in config", f"masked · {API_KEY_KEYS_HINT}"
+        return SAVED_IN_CONFIG, f"masked · {API_KEY_KEYS_HINT}"
     # The table, not readiness, says where the key is: readiness drops the
     # source while a base URL is still to set (Azure, Cloudflare, Databricks).
     source = provider_credential_source(
@@ -526,11 +539,11 @@ def auth_source_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, st
     if draft is not None and (
         screen._provider_auth_source_draft_key(provider) in draft.dirty_keys
     ):
-        word = "edited *"
+        word = EDITED
     elif "auth_source" in screen._provider_config(provider):
-        word = "config"
+        word = SAVED_IN_CONFIG
     else:
-        word = "built-in"
+        word = BUILT_IN
     subscription = (
         screen._provider_auth_source_value(provider) == _anthropic_auth_sources()[1]
     )
@@ -667,11 +680,11 @@ def env_var_source_word(screen: SettingsScreen, provider: str, env_var: str) -> 
         return "this endpoint"
     draft = screen._provider_draft()
     if draft is not None and "credential_env_var" in draft.dirty_keys:
-        return "edited *"
+        return EDITED
     name = env_var.strip() or default_api_key_env_var(provider_config_key(provider))
     if not name:
         return "not used"
-    return "set in shell" if os.environ.get(name, "").strip() else "not set"
+    return "set in shell" if os.environ.get(name, "").strip() else NOT_SET
 
 
 def endpoint_requirement(provider: str) -> str | None:
@@ -742,16 +755,25 @@ def endpoint_row_copy(
     required = endpoint_requirement(provider)
     draft = screen._provider_draft()
     if draft is not None and "endpoint" in draft.dirty_keys:
-        word = "edited *"
+        word = EDITED
     elif endpoint.strip():
-        word = "config"
+        word = SAVED_IN_CONFIG
     elif required:
-        word = "not set"
+        word = NOT_SET
     else:
-        word = "built-in"
+        word = BUILT_IN
     if required:
         return word, f"required: {required}"
     return word, "blank uses the provider default"
+
+
+def _shown_model(screen: SettingsScreen) -> str:
+    """Return the model the form holds: the adapter's, else the staged one."""
+    try:
+        return screen.query_one("#settings-model-value", Input).value.strip()
+    except QueryError:
+        values = screen._provider_setting_values_mapping()
+        return str(values.get("model") or "").strip()
 
 
 def key_check_verdict(screen: SettingsScreen) -> str:
@@ -770,10 +792,7 @@ def key_check_verdict(screen: SettingsScreen) -> str:
     if label == "Readiness" and word.strip():
         return word.strip()
     provider = screen._provider_widget_value()
-    try:
-        model = screen.query_one("#settings-model-value", Input).value.strip()
-    except QueryError:
-        model = str(screen._provider_setting_values_mapping().get("model") or "")
+    model = _shown_model(screen)
     try:
         staged = screen._provider_test_staged_config(provider)
         readiness = get_provider_readiness(
@@ -794,7 +813,7 @@ def key_check_verdict(screen: SettingsScreen) -> str:
         else None
     )
     rows = screen._provider_test_rows(
-        readiness, display_name="", model=model.strip(), endpoint="", evidence=evidence
+        readiness, display_name="", model=model, endpoint="", evidence=evidence
     )
     return rows[0][1]
 
@@ -810,10 +829,12 @@ def refresh_connect_rows(screen: SettingsScreen, provider: str, endpoint: str) -
     resolved = screen._resolve_provider_model_for_settings()
     sync_provider_control(screen)
     screen._set_static_text(
-        "#settings-provider-source", selection_source_word(resolved.provider_source)
+        "#settings-provider-source",
+        selection_source_word(resolved.provider_source, provider),
     )
     screen._set_static_text(
-        "#settings-model-source", selection_source_word(resolved.model_source)
+        "#settings-model-source",
+        selection_source_word(resolved.model_source, _shown_model(screen)),
     )
     try:
         env_var = screen.query_one("#settings-provider-credential-env-var", Input).value
@@ -1434,7 +1455,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 select_on_focus=False,
             )
             yield Static(
-                selection_source_word(resolved.provider_source),
+                selection_source_word(resolved.provider_source, provider),
                 id="settings-provider-source",
                 classes="settings-source-word",
                 markup=False,
@@ -1790,7 +1811,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             model_picker.disabled = registry_locked
             yield model_picker
             yield Static(
-                selection_source_word(resolved.model_source),
+                selection_source_word(resolved.model_source, model),
                 id="settings-model-source",
                 classes="settings-source-word",
                 markup=False,

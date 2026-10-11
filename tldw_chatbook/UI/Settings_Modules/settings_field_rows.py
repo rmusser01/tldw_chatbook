@@ -88,11 +88,11 @@ _INTEGER_FIELDS = frozenset({"top_k", "max_tokens", "seed", "thinking_budget_tok
 #: A leading minus is typeable so a shown hand-edited ``seed = -1`` can be
 #: backspaced away; Save refuses it with the field's message.
 _INTEGER_RESTRICT = r"^-?[0-9]*$"
-_EDITED = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.EDITED_DRAFT]
+EDITED = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.EDITED_DRAFT]
 _MODEL_DEFAULT = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.MODEL_DEFAULT]
 _PROVIDER = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
 _CONSOLE_BEHAVIOR = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.CHAT_DEFAULTS]
-_BUILT_IN = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.BUILT_IN]
+BUILT_IN = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.BUILT_IN]
 #: Console Behavior's global fallbacks (TASK-33007.7): their rows' container
 #: and their closed Sampling disclosure.
 CONSOLE_FALLBACKS_ID = "settings-console-fallbacks"
@@ -233,14 +233,14 @@ def row_copy(
         "blank = provider default".
     """
     if shown:
-        return (_EDITED if edited else saved_word), MODEL_CONFIG_FIELDS[name].help
+        return (EDITED if edited else saved_word), MODEL_CONFIG_FIELDS[name].help
     value, word = inherited
     help_line = (
         BLANK_FIELD_HELP
         if value is None
         else f"inherits {format_value(value)}"
     )
-    return (_EDITED if edited else word), help_line
+    return (EDITED if edited else word), help_line
 
 
 def control_text(control: Widget) -> str:
@@ -706,7 +706,7 @@ def refresh_console_fallbacks(screen: SettingsScreen) -> None:
             text,
             name in dirty,
             (None, _PROVIDER),
-            saved_word=_CONSOLE_BEHAVIOR if name in held else _BUILT_IN,
+            saved_word=_CONSOLE_BEHAVIOR if name in held else BUILT_IN,
         )
         if not text and name in held and name not in dirty:
             word = _CONSOLE_BEHAVIOR
@@ -716,7 +716,7 @@ def refresh_console_fallbacks(screen: SettingsScreen) -> None:
         elif not text and name in REQUIRED_FIELDS:
             # Chat settings' copy for the same state, with the table's range.
             help_text = f"Required: {MODEL_CONFIG_FIELDS[name].valid_range}."
-        elif word == _BUILT_IN:
+        elif word == BUILT_IN:
             help_text = UNSET_FALLBACK_HELP
         source.update(word)
         help_line.update(help_text)
