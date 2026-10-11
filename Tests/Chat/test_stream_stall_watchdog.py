@@ -286,9 +286,9 @@ def test_stop_ends_a_stream_that_went_silent_after_content(fast_stop_poll):
 
 
 def test_the_stop_poll_leaves_nothing_for_the_cyclic_collector():
-    """The poll reschedules itself by name, so it sits in its own closure
-    cell. Left alone that is one reference cycle per item, on the per-token
-    path of every Console reply; the plain ``wait_for`` path leaves none."""
+    """A poll that reschedules itself by name sits in its own closure cell:
+    one reference cycle per item, on the per-token path of every Console
+    reply. The plain ``wait_for`` path leaves none, and neither may this."""
     import gc
 
     items = 200

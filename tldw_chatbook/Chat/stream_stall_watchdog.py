@@ -203,8 +203,13 @@ async def _next_item_unless_stopped(
     stopped = False
     try:
         async with asyncio.timeout(window) as wait:
+            poll_handle: asyncio.TimerHandle
 
-            def poll() -> None:
+            # `poll` is handed itself as `again` rather than naming itself: a
+            # function that names itself sits in its own closure cell, a cycle
+            # left for the collector on every item. The loop that remains,
+            # poll -> its handle -> poll, is broken by the cancel below.
+            def poll(again: Callable[..., None]) -> None:
                 nonlocal stopped, poll_handle
                 if should_stop():
                     stopped = True
@@ -213,16 +218,13 @@ async def _next_item_unless_stopped(
                     if not wait.expired():
                         wait.reschedule(loop.time())
                 else:
-                    poll_handle = loop.call_later(STOP_POLL_SECONDS, poll)
+                    poll_handle = loop.call_later(STOP_POLL_SECONDS, again, again)
 
-            poll_handle = loop.call_later(STOP_POLL_SECONDS, poll)
+            poll_handle = loop.call_later(STOP_POLL_SECONDS, poll, poll)
             try:
                 return await it.__anext__()
             finally:
                 poll_handle.cancel()
-                # `poll` names itself, so it sits in its own closure cell:
-                # empty it, or every item leaves a cycle for the collector.
-                del poll
     except asyncio.TimeoutError:
         if stopped:
             raise _Stopped from None
