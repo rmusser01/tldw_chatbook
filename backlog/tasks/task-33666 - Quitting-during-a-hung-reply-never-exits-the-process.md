@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-02 19:30'
-updated_date: '2026-10-11 07:00'
+updated_date: '2026-10-11 15:48'
 labels:
   - console
   - lifecycle
@@ -67,6 +67,8 @@ TASK-33628.5's exit wait is not it. That wait (`console_durable_writes.end_store
 - Ruling: the adapter passes its plain cancel predicate, not `stream_cut` — a redirect (TASK-28227) is not a cancel, and this rider is about Stop and quit — cost if wrong: a redirect sent during a silent first-token wait still takes effect at the first chunk, as it did before.
 - Ruling: the threaded transport's blocked read is left to TASK-30015 — ending it needs the bridge to hold the response's socket and close it (that task's AC#2), which changes how the gateway owns its provider worker — cost if wrong: quitting during a silent non-llama.cpp provider still holds the terminal for up to 120 s and ends with status 1.
 - Ruling: the User Guide states the limit instead of staying silent — console.md, "Quirks & troubleshooting", gains "Quitting while a reply waits can hold the terminal": a few seconds with llama.cpp; with any other provider, the connection's timeout or 120 s, then the watchdog's message and status 1 — a two-minute hold that ends in an error line reads as a crash unless the guide names it — cost if wrong: one bullet to delete. TASK-30015's notes say to update it when that task lands.
+
+**Controller ruling, 2026-10-11 (Phase 9 ledger, R12): this rider closes with both bounds.** AC#1 asks for a bounded time and for the bound to be stated. Both are stated, here and in the User Guide: about 2 s with llama.cpp, the path this rider reproduced, and the provider's read timeout or the watchdog's 120 s (exit status 1) on the threaded transport. The tick stands. The gateway is not changed in this task; aborting that read stays with TASK-30015 (To Do, outside this program), whose AC#1 and AC#2 are that abort. The 120 s hold is Phase 9's known residual, and the controller reports it to the owner.
 
 **Checked again at the commit (2026-10-11, at 2748183de7).**
 - Failing first: this rider's two test files and TASK-33667's, run against 10fead87cb's source, give 3 failed, 23 passed, 7 errors. `test_stop_during_a_silent_provider_releases_the_run_thread` fails after 15.5 s with "run_reply stayed blocked on a silent provider after the cancel flag was set", and the seven new watchdog nodes error at setup because `STOP_POLL_SECONDS` does not exist. The other two failures are TASK-33667's new test and `test_non_finite_config_falls_back_to_default`, named below.
