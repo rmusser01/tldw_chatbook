@@ -1572,6 +1572,14 @@ Button.settings-category-group-toggle:focus {
     width: $ds-size-32;
 }
 
+/* The column is for values off a short list. A model id and a prompt
+   template are free text, cut at 27 cells by it (the built-in template shown
+   as the placeholder is 39): these two take the rest of their row. */
+#settings-console-behavior-card #settings-console-sidechat-model,
+#settings-console-behavior-card #settings-console-sidechat-prompt-template {
+    width: $ds-width-fill;
+}
+
 /* Textual checkboxes measure one row. Compact borders and concise labels
    keep both the checkbox glyph and complete label inside the pane. */
 #settings-console-behavior-card Checkbox {

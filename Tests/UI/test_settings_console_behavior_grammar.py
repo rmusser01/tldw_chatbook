@@ -68,10 +68,14 @@ async def test_console_behavior_draws_one_frame_and_no_boxes(request):
 async def test_every_console_behavior_control_shares_one_width_and_shows_whole_labels(
     request,
 ):
-    """Review note 9: every one-row Input and Select sits in one control
-    column -- none spans the card -- and that column is wide enough for the
-    longest option of every Select; every row label is painted whole
-    ("Default chat display name" was cut to "Default chat display")."""
+    """Review note 9: every one-row Select and number Input sits in one
+    control column -- none spans the card -- and that column is wide enough
+    for the longest option of every Select; every row label is painted whole
+    ("Default chat display name" was cut to "Default chat display").
+
+    Rewritten on purpose (#3057 review R3 #10): the two free-text Side chat
+    fields leave the column (test_settings_console_side_chat_field_width.py).
+    """
     host = _SettingsCssHarness(_app(), "settings")
 
     async with host.run_test(size=_SIZE) as pilot:
@@ -82,7 +86,16 @@ async def test_every_console_behavior_control_shares_one_width_and_shows_whole_l
             if _shown(control) and control.parent.has_class("settings-input-row")
         ]
         assert len(controls) >= 30, len(controls)
-        widths = {control.id: control.region.width for control in controls}
+        free_text = {
+            "settings-console-sidechat-model",
+            "settings-console-sidechat-prompt-template",
+        }
+        assert free_text <= {control.id for control in controls}
+        widths = {
+            control.id: control.region.width
+            for control in controls
+            if control.id not in free_text
+        }
         assert len(set(widths.values())) == 1, widths
         for select in (c for c in controls if isinstance(c, Select)):
             longest = max(cell_len(str(prompt)) for prompt, _value in select._options)
