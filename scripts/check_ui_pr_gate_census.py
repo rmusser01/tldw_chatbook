@@ -262,6 +262,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # entries (node ids among them) that order replays at 12.3 min at most with
 # seven shards, so the lane went to seven. An entry added above the tail
 # shifts its shards: re-run the replay then.
+# ordered by a search over the tail for the flattest split. Per-file seconds
+# move about 40% between runs on the hosted runners (the same file took 204 s
+# in one run of #3057 and 295 s in the next), so the search scores each file
+# at the worst of the runs measured. Over dev's 179 entries (node ids among
+# them) seven shards replay at 14.3 min at most -- one ran 16.7 of 20 with
+# setup -- and eight at 11.7, so the lane went to eight. An entry added above
+# the tail shifts its shards: re-run the replay then.
 # Phase 7's counts above were taken on its own base; over dev's 179 its eleven
 # files make the floor 190.
 MINIMUM_FILES = 201
