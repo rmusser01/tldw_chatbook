@@ -1,7 +1,7 @@
 ---
 id: TASK-32893
 title: "Work stream: data loss and silent truncation"
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-21 23:05'
 labels:
@@ -86,3 +86,15 @@ Two notes for elsewhere:
   stacked `@abstractmethod` decorators on `export_profile`, orphaned by `3dc3727629`. Harmless and
   idempotent, but it belongs to a dev-side commit, not inside this merge.
 <!-- SECTION:NOTES:END -->
+
+## Closeout audit 2026-10-11
+
+Board audit (branch `chore/board-prune-prune-d`, dev at a3c47c6c72): this task's work is
+landed on `origin/dev` but the status field was never flipped. Verdict: **Done**.
+
+Implemented on `fix/tier2-dataloss` (90c45d67b2, reworked as 4eb7213492) and merged via
+PR #2801 (2026-09-24): "fix(dataloss): refuse six operations that destroyed data and reported
+success (TASK-32893)". Implementation Notes in the task file record all six findings real and
+fixed, including the rework onto the shared voice-manager base.
+
+AC checkboxes are left as found; this section is the audit's evidence record.
