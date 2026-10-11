@@ -11,7 +11,7 @@ Phase 9 is the last phase of the model-configuration redesign, added by owner de
 Scope: every rider that is not Done and is a subtask of TASK-33001 through TASK-33007 or of TASK-33641, plus TASK-33666 and TASK-33667. Phase 8's own tasks (TASK-33008.x) are in flight on the branch below this one and are out of scope.
 
 This plan triaged 59 riders against this branch's HEAD (8b4a1ad23e, stacked on Phase 8's in-progress branch, which is stacked on Phase 7):
-- 52 VALID (TASK-33003.13 joined them once the owner ruled), plus TASK-33641.7 (filed from the wave 1 integration) TASK-33641.8 (filed from a wave 2 incident) and TASK-33641.9 (filed from Phase 8's Task 2 review): grouped into the 16 plan tasks below.
+- 52 VALID (TASK-33003.13 joined them once the owner ruled), plus TASK-33641.7 (filed from the wave 1 integration) TASK-33641.8 (filed from a wave 2 incident) and TASK-33641.9 (filed from Phase 8's Task 2 review): grouped into the plan tasks below (Task 17 holds TASK-33641.10 and .11, filed from Task 9's review).
 - 7 ALREADY FIXED and 0 OBSOLETE: listed under "Closed without code" with their evidence. They get no plan task; each is closed with that rationale in its own task file.
 - 0 NEEDS OWNER: TASK-33003.13 was ruled on 2026-10-09 and is in Task 15.
 
@@ -54,7 +54,7 @@ Size facts at HEAD (Tests/Architecture/test_module_size_ratchet.py and test_scre
 - Tests always run in parallel (xdist, `-n 6 --dist loadfile`); serial only for Tests/Architecture.
 - Per task, run the test files that cover what you changed, once, at HEAD. The phase runs ONE base-vs-head comparison at its end, both trees at once.
 - Evidence is the test names plus the command and its summary line in the report. Commit no per-task captures or evidence files; the Capture phase captures every changed surface once.
-- Execution order: six waves, run in order: Wave 1 = Tasks 1, 3, 4, 5; Wave 2 = Tasks 9, 10, 11, 13; then the rebase onto Phase 8's final head; Wave 3 = Task 2 alone; Wave 4 = Tasks 6, 7, 8; Wave 5 = Tasks 12, 14; Wave 6 = Tasks 15, 16. Waves 1 and 2 hold only files Phase 8 does not edit. console_settings_modal.py goes 11, then 6, then 15; settings_screen.py goes 2, then 7, then 12; chat_screen.py goes 2, then 8. Inside a wave, the tasks run in parallel git worktrees and are cherry-picked together, so their files are disjoint (each task's References list what it touches, and a 'Must not edit' line names the shared files it leaves alone). Each wave holds at most one task on each of settings_screen.py, chat_screen.py and console_settings_modal.py. Before Wave 3, rebase this branch onto Phase 8's final head; it is stacked on Phase 8's in-progress branch, which is stacked on Phase 7 (PR #3057). At each wave's cherry-pick, resolve conflicts in the generated CSS bundle by re-running tldw_chatbook/css/build_css.py, never by hand.
+- Execution order: six waves, run in order: Wave 1 = Tasks 1, 3, 4, 5; Wave 2 = Tasks 9, 10, 11, 13; then the rebase onto Phase 8's final head; Wave 3 = Task 2 alone; Wave 4 = Tasks 6, 7, 8; Wave 5 = Tasks 12, 14, 17; Wave 6 = Tasks 15, 16. Waves 1 and 2 hold only files Phase 8 does not edit. console_settings_modal.py goes 11, then 6, then 15; settings_screen.py goes 2, then 7, then 12; chat_screen.py goes 2, then 8. Inside a wave, the tasks run in parallel git worktrees and are cherry-picked together, so their files are disjoint (each task's References list what it touches, and a 'Must not edit' line names the shared files it leaves alone). Each wave holds at most one task on each of settings_screen.py, chat_screen.py and console_settings_modal.py. Before Wave 3, rebase this branch onto Phase 8's final head; it is stacked on Phase 8's in-progress branch, which is stacked on Phase 7 (PR #3057). At each wave's cherry-pick, resolve conflicts in the generated CSS bundle by re-running tldw_chatbook/css/build_css.py, never by hand.
 
 ## Task 1: Repair the red modal-inventory, endpoint-creation and anchor-geometry tests (TASK-33003.19, TASK-33006.17, TASK-33006.24)
 
@@ -628,6 +628,8 @@ Depends on: Task 4 (raw-scope change) and Task 7 (it edits Tests/UI/test_setting
 - TASK-33641.8 (A pytest run from the repo root does not import the test-named files under Docs): filed by the controller on 2026-10-11 from Task 10's incident (ledger R13). pyproject.toml's pytest addopts has `--ignore=STests` and nothing that excludes Docs, so an empty argument or `pytest .` imports three test-named files under Docs/ outside every conftest: one calls a paid provider with the configured key, one rewrites a tracked test file. Add `--ignore=Docs` beside `--ignore=STests`; an explicit path under Docs/ must keep working.
 - R11 also gives this task Task 10's three unlisted gate files (Tests/UI/test_settings_image_gen_panel.py, test_llm_gguf_source_modes.py, test_library_skills_builtin_rows.py) and the question of which job runs Tests/Backup_Recovery/test_skills_recovery_controls.py.
 
+- From Task 9's review (ledger R18): Tests/UI/test_settings_configuration_hub.py has no row in the UI census, so TASK-33001.15's only real-writer test runs in no PR lane. Add the node test_settings_model_save_writes_a_legacy_api_section_key_into_the_provider_table (it carries @private_profile_test) under R11's terms.
+
 ### Acceptance criteria
 
 - [ ] TASK-33001.11 #1 Every test in Tests/ProductionApp/test_provider_selection_ownership.py runs its assertions in the Core Tests job's collection order and passes there, and one negative control makes a test fail on its own assertion rather than in setup
@@ -756,16 +758,47 @@ Must not edit: providers_models_card.py (read only). Fix the picker in model_sea
 - Tests/UI/test_settings_default_model_picker.py
 - qa/model-config-33005-captures/README.md
 
+## Task 17: Legacy summarizers get their arguments and their credentials right (TASK-33641.10, TASK-33641.11)
+
+Task files:
+- backlog/tasks/task-33641.10 - The-summarization-dispatcher-passes-KoboldCpp-and-Ollama-their-arguments-by-name.md
+- backlog/tasks/task-33641.11 - A-legacy-API-key-is-not-used-once-the-provider-s-credential-source-says-none-or-environment.md
+Wave: 5
+Depends on: Task 9 (integrated)
+Must not edit: tldw_chatbook/UI/Screens/settings_screen.py (Task 12 owns it in this wave).
+
+### Why
+
+- TASK-33641.10 (The summarization dispatcher passes KoboldCpp and Ollama their arguments by name): filed by the controller on 2026-10-11 from Task 9's review. Summarization_General_Lib.py::_dispatch_to_api calls each summarizer positionally; listed with ast, KoboldCpp gets system_message<=temp, temp<=system_message and kobold_api_ip<=streaming, and Ollama gets model<=streaming; the other 17 calls pair name to name. summarize_chunk (FIXME, no caller) passes its text as api_name. Read from the code by Task 9, not run: prove each binding through analyze() before fixing.
+- TASK-33641.11 (A legacy [API] key is not used once the provider's credential source says none or environment): filed the same way. config.py::_normalize_legacy_provider_api_key never reads credential_source (0 matches for the word in config.py), so after a Clear in Settings (credential_source none) or with an unset variable (environment), a key still under [API] is copied into the provider's table and its legacy dict: readiness resolves no key while summarize_with_openai and the like send it. Task 9 made the summarizers resolve a key as readiness does (TASK-33001.14); this is the loader's half. ADR-012: a credential the user removed is not used.
+
+### Acceptance criteria
+
+- [ ] TASK-33641.10 #1 KoboldCpp and Ollama summarization receive each argument under the parameter it is meant for, proved through analyze() with a test per provider that fails first
+- [ ] TASK-33641.10 #2 Every call in _dispatch_to_api passes its arguments by keyword, and a test fails if a call binds an argument to a parameter of another name
+- [ ] TASK-33641.10 #3 summarize_chunk either passes its text as text or is removed with its FIXME, with the choice recorded in this task's notes
+- [ ] TASK-33641.11 #1 With credential_source none or environment recorded for a provider, the loader does not copy a legacy [API] key into the provider's table or its legacy dict, proved by a real-loader test on a scratch config for at least two of the nine providers
+- [ ] TASK-33641.11 #2 A provider with no credential_source recorded keeps today's legacy fallback, pinned by the existing normalisation tests
+- [ ] TASK-33641.11 #3 Readiness and the legacy readers agree for every combination of credential_source and key location the tests cover, and the combinations are listed in this task's notes
+
+### References
+
+- tldw_chatbook/LLM_Calls/Summarization_General_Lib.py
+- tldw_chatbook/config.py (_normalize_legacy_provider_api_key only)
+- tldw_chatbook/Chat/provider_readiness.py (read only)
+- Tests/LLM_Calls/ (the summarizer tests Task 9 touched)
+- backlog/decisions/012-provider-credential-settings-boundary.md
+
 ## Execution order
 
-[[1, 3, 4, 5], [9, 10, 11, 13], [2], [6, 7, 8], [12, 14], [15, 16]]
+[[1, 3, 4, 5], [9, 10, 11, 13], [2], [6, 7, 8], [12, 14, 17], [15, 16]]
 
-- Wave 1: Tasks 1, 3, 4, 5 (done 2026-10-10, before the rebase onto Phase 8's final head).
-- Wave 2: Tasks 9, 10, 11, 13 (also before that rebase: none of their files is one Phase 8 edits).
+- Wave 1: Tasks 1, 3, 4, 5 (done 2026-10-10).
+- Wave 2: Tasks 9, 10, 11, 13 (done and integrated 2026-10-11).
 - Rebase this branch onto Phase 8's final head.
 - Wave 3: Task 2 alone (settings_screen.py, chat_screen.py and console_model_popover.py together).
 - Wave 4: Tasks 6, 7, 8.
-- Wave 5: Tasks 12, 14.
+- Wave 5: Tasks 12, 14, 17.
 - Wave 6: Tasks 15, 16.
 
 ## Closed without code
