@@ -4036,3 +4036,19 @@ loop with the command that turns the switch back (or set a `trap ... EXIT`),
 and give the loop a hard deadline. The same goes for anything disarmed,
 disabled or paused "temporarily". A restore that depends on the agent coming
 back is not a restore. Tell the owner the deadline before flipping the switch.
+
+### Structured document child launch under the actual app (TASK34655,2026-10-11)
+
+E4's actual `python -m tldw_chatbook.app` mounted Textual probe rejected the first
+multiprocessing spawn at stderr.fileno=-1. A test-only fd-backed stderr control
+then inherited a synthetic environment secret and reimported app.py/config
+(1782modules), exposing a privacy problem that a pytest-only launch missed.
+The accepted fixed `python -I <package>/Document_Editing/worker_process.py`
+bootstrap uses an empty child environment, package-owned cwd, close_fds and bounded
+JSON frames, importing only the pure subpackage. Mounted and installed-wheel
+positive controls passed without redirecting production stderr. This separates
+application authority; it is not an OS sandbox. Repeated retirement and pending-
+launch closure must await one shielded cleanup; the real SIGTERM-ignoring control
+caught cancellation interrupting reap before retirement became idempotent.
+See ADR194 and the E4 qualification report; keep Python reap/pipe closure before
+replacement distinct from browser native asynchronous termination.

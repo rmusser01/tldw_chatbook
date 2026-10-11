@@ -134,3 +134,20 @@ The pure engine enforces source/depth/diagnostic bounds and cooperative deadline
 checks only; it has no heap ceiling or hard interruption. The existing planned
 worker boundary still owns process termination and lifecycle. No UI, persistence,
 network, filesystem authority, or new store is introduced by this dependency.
+
+### Isolated worker launch (E4 / TASK-34655, Ruling39)
+
+Use a fixed package-owned Python script under `sys.executable -I`, with an
+explicit empty environment, neutral cwd and closed inherited descriptors. The
+bootstrap imports the pure `Document_Editing` package from its installed parent,
+without importing the application/package initializer. Exchange bounded JSON
+frames for one snapshot per child; terminate, reap and close before replacement.
+No document path, credentials, arbitrary launcher option or parent-environment
+mutation is admitted. This separates application authority, not OS user privileges.
+
+Actual module-entry mounted TldwCli qualification failed spawn at captured stderr
+fileno=-1. A test-only fd-backed control inherited a synthetic secret and replayed
+app.py/config as __mp_main__ (1782 modules,1.949s). Therefore multiprocessing spawn
+cannot satisfy this boundary. No production stderr workaround or worker pool is
+adopted. Installed package paths, copy/startup costs, cancellation and actual
+termination remain required E4 qualification, separately from editor adoption.
