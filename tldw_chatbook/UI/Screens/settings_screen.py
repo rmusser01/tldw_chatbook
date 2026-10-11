@@ -34103,29 +34103,8 @@ class SettingsScreen(BaseAppScreen):
                 credential_input.placeholder = self._provider_credential_placeholder(
                     provider
                 )
-                for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS:
-                    profile_value = values[draft_key]
-                    selector = f"#settings-{draft_key.replace('_', '-')}"
-                    if draft_key in MODEL_PROFILE_SELECT_FIELD_KEYS:
-                        select = self.query_one(selector, Select)
-                        if draft_key == "model_profile_streaming":
-                            select.value = self._streaming_select_value(profile_value)
-                        else:
-                            options = self._model_profile_enum_options(
-                                provider, values["model"], draft_key, profile_value
-                            )
-                            if draft_key == "model_profile_reasoning_effort":
-                                select.set_options(options)
-                            select.value = self._select_option_value(
-                                profile_value,
-                                tuple(option for _label, option in options),
-                            )
-                    else:
-                        self.query_one(
-                            selector,
-                            Input,
-                        ).value = self._profile_input_value(profile_value)
-                self._sync_provider_context_window_widget(
+                # Values, and which rows this provider shows (and the window).
+                self._sync_provider_model_profile_widgets(
                     provider, str(values["model"])
                 )
             except QueryError:
