@@ -22,6 +22,8 @@ from uuid import uuid4
 from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
 from tldw_chatbook.Agents.automatic_work_budget import (
     AutomaticChatStartAttempt,
+    GoalAttempt,
+    RuntimeRecoveryResult,
     AutomaticWakeAttempt,
     AutomaticWorkLimits,
     AutomaticWorkRefused,
@@ -203,6 +205,14 @@ class AutomaticWorkLedger:
         if refusal is not None:
             raise refusal
 
+    def policy_kind(self, chain_id: str) -> str:
+        """Read immutable goal origin from the canonical allowance root."""
+        with self._db.connection() as conn:
+            root = self._allowance_chain(conn, chain_id)["id"]
+            return "goal_iteration" if conn.execute(
+                "SELECT 1 FROM goal_runs WHERE chain_id=?", (root,)
+            ).fetchone() else "fleet_wake"
+
     def _check_admission(
         self,
         conn: sqlite3.Connection,
@@ -308,30 +318,12 @@ class AutomaticWorkLedger:
         if not isinstance(limits, AutomaticWorkLimits):
             raise TypeError("limits must be AutomaticWorkLimits")
         with self.transaction() as conn:
-            existing = conn.execute(
-                "SELECT id, conversation_id FROM automatic_work_chains WHERE root_submission_id=?",
-                (root_submission_id,),
-            ).fetchone()
-            if existing:
-                if existing["conversation_id"] != conversation_id:
-                    raise ValueError("submission scope conflict")
-                return str(existing["id"])
-            chain_id = uuid4().hex
-            now = self._wall_clock()
-            conn.execute(
-                "INSERT INTO automatic_work_chains "
-                "(id, conversation_id, root_submission_id, limits_json, created_at, last_observed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    chain_id,
-                    conversation_id,
-                    root_submission_id,
-                    json.dumps(asdict(limits)),
-                    now,
-                    now,
-                ),
+            return self._create_chain(
+                conn,
+                conversation_id,
+                root_submission_id=root_submission_id,
+                limits=limits,
             )
-        return chain_id
 
     @staticmethod
     def _check_runtime_owner(conn: sqlite3.Connection, owner_id: str) -> None:
@@ -1020,7 +1012,10 @@ class AutomaticWorkLedger:
 
     @staticmethod
     def _attempt(
-        conn: sqlite3.Connection, attempt_id: str, owner_id: str
+        conn: sqlite3.Connection,
+        attempt_id: str,
+        owner_id: str,
+        kind: str = "fleet_wake",
     ) -> sqlite3.Row:
         row = conn.execute(
             "SELECT * FROM automatic_wake_attempts WHERE id=?", (attempt_id,)
@@ -1029,8 +1024,23 @@ class AutomaticWorkLedger:
             raise ValueError("unknown wake attempt")
         if row["owner_id"] != owner_id:
             raise ValueError("attempt owner mismatch")
-        return row
+        if row["attempt_kind"] != kind:
+            raise ValueError("attempt kind mismatch")
+        if kind == "goal_iteration":
+            link = conn.execute(
+                "SELECT g.chain_id, g.conversation_id FROM goal_iterations i JOIN goal_runs g ON g.id=i.goal_id WHERE i.attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            if (
+                link is None
+                or link["chain_id"] != row["chain_id"]
+                or link["conversation_id"] != row["conversation_id"]
+                or row["session_id"] != row["conversation_id"]
+                or json.loads(row["run_ids_json"]) != []
+            ):
+                raise ValueError("goal attempt link mismatch")
 
+        return row
     def _attempt_view(self, row: sqlite3.Row) -> AutomaticWakeAttempt:
         return AutomaticWakeAttempt(
             row["id"],
@@ -1100,6 +1110,8 @@ class AutomaticWorkLedger:
                     "SELECT * FROM automatic_wake_attempts WHERE id=?", (attempt_id,)
                 ).fetchone()
                 if existing:
+                    if existing["attempt_kind"] != "fleet_wake":
+                        raise ValueError("attempt kind conflict")
                     if (
                         existing["chain_id"],
                         existing["owner_id"],
@@ -1273,36 +1285,20 @@ class AutomaticWorkLedger:
         owner_id: str,
         limits: AutomaticWorkLimits | None = None,
     ) -> bool:
-        """Durably consume a prepared attempt; only the first True may dispatch."""
-        with self._db.connection() as conn:
-            chain_id = self._attempt(conn, attempt_id, owner_id)["chain_id"]
-        with self._admission_transaction(chain_id) as conn:
-            self._check_runtime_owner(conn, owner_id)
-            attempt = self._attempt(conn, attempt_id, owner_id)
-            if attempt["state"] != "prepared":
-                return False
-            self._check_admission(conn, chain_id, kind="generation", limits=limits)
-            reservation = self._reservation(
-                conn, attempt["generation_reservation_id"], owner_id
-            )
-            if reservation["state"] != "reserved":
-                raise ValueError("attempt generation is not reserved")
-            now = self._wall_clock()
-            conn.execute(
-                "UPDATE automatic_work_reservations SET state='committed', updated_at=? WHERE id=?",
-                (now, reservation["id"]),
-            )
-            conn.execute(
-                "UPDATE automatic_wake_attempts SET state='accepted', accepted_at=? WHERE id=?",
-                (now, attempt_id),
-            )
-            self._start_automatic(conn, chain_id)
-        return True
+        """Durably consume a prepared fleet attempt."""
+        return self._accept_attempt(
+            attempt_id, owner_id=owner_id, limits=limits, kind="fleet_wake"
+        )
 
     def abort_wake(self, attempt_id: str, *, owner_id: str) -> bool:
         """Release a proven pre-acceptance refusal; accepted work never refunds."""
+        return self._abort_attempt(attempt_id, owner_id=owner_id, kind="fleet_wake")
+
+
+    def _abort_attempt(self, attempt_id: str, *, owner_id: str, kind: str) -> bool:
+        """Release a proven pre-acceptance refusal; accepted work never refunds."""
         with self.transaction() as conn:
-            attempt = self._attempt(conn, attempt_id, owner_id)
+            attempt = self._attempt(conn, attempt_id, owner_id, kind)
             if attempt["state"] != "prepared":
                 return False
             conn.execute(
@@ -1320,6 +1316,9 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_wake_attempts SET state='aborted', completed_at=? WHERE id=?",
                 (self._wall_clock(), attempt_id),
             )
+            if kind == "goal_iteration":
+                conn.execute("DELETE FROM goal_payload_reservations WHERE attempt_id=?", (attempt_id,))
+                conn.execute("UPDATE goal_iterations SET status='aborted', revision=revision+1 WHERE attempt_id=?", (attempt_id,))
         with self._progress_claim_lock:
             for message_id, _ in self._temporary_progress_attempts.get(attempt_id, ()):
                 self._temporary_progress_claims.pop(message_id, None)
@@ -1401,6 +1400,15 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_work_chains SET status='review_required', pause_reason='interrupted_work' WHERE id=?",
                 [(chain_id,) for chain_id in chains],
             )
+            goals = tuple(
+                (row["id"], row["revision"],
+                 "recovery_required" if row["chain_id"] in chains or row["status"] == "recovery_required" else "paused")
+                for row in conn.execute(
+                    "SELECT g.* FROM goal_runs g WHERE g.status NOT IN ('completed','removed','closed','stopped','awaiting_result_review') "
+                    "AND EXISTS (SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=g.id AND a.state!='aborted')"
+                )
+            )
+            audit = RuntimeRecoveryResult(current_owner_id, tuple(sorted(chains)), goals)
             # Snapshot only the entries covered while this transaction owns
             # recovery. Later recoveries/setters may run before our return.
             with _UNCONFIRMED_STARTS_LOCK:
@@ -1414,4 +1422,223 @@ class AutomaticWorkLedger:
                 # A fresh write to even the same key is new uncertainty.
                 if _UNCONFIRMED_STARTS.get(key) is entry:
                     _UNCONFIRMED_STARTS.pop(key)
+        self.recovery_result = audit
         return len(chains)
+
+
+    def _create_chain(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        *,
+        root_submission_id: str,
+        limits: AutomaticWorkLimits,
+    ) -> str:
+        """Allocate inside the caller's transaction; never commit independently."""
+        existing = conn.execute(
+            "SELECT id, conversation_id FROM automatic_work_chains WHERE root_submission_id=?",
+            (root_submission_id,),
+        ).fetchone()
+        if existing:
+            if existing["conversation_id"] != conversation_id:
+                raise ValueError("submission scope conflict")
+            return str(existing["id"])
+        chain_id = uuid4().hex
+        now = self._wall_clock()
+        conn.execute(
+            "INSERT INTO automatic_work_chains "
+            "(id, conversation_id, root_submission_id, limits_json, created_at, last_observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                chain_id,
+                conversation_id,
+                root_submission_id,
+                json.dumps(asdict(limits)),
+                now,
+                now,
+            ),
+        )
+        return chain_id
+
+
+
+    def read_goal_attempt(self, attempt_id: str, *, owner_id: str) -> GoalAttempt:
+        """Read goal authority only when its immutable iteration link agrees."""
+        with self._db.connection() as conn:
+            row = self._attempt(conn, attempt_id, owner_id, "goal_iteration")
+            link = conn.execute(
+                "SELECT goal_id, ordinal FROM goal_iterations WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            return GoalAttempt(
+                row["id"],
+                link["goal_id"],
+                link["ordinal"],
+                row["chain_id"],
+                row["conversation_id"],
+                row["session_id"],
+                row["owner_id"],
+                row["state"],
+            )
+
+
+
+    def prepare_goal_iteration(self, goal_id: str, *, owner_id: str) -> GoalAttempt:
+        """Reserve one generation and link it to real goal intent in FULL commit."""
+        _identity(goal_id)
+        goal = self._db.goal_runs.get(goal_id)
+        with self._admission_transaction(goal.chain_id) as conn:
+            self._check_runtime_owner(conn, owner_id)
+            row = conn.execute(
+                "SELECT * FROM goal_runs WHERE id=?", (goal_id,)
+            ).fetchone()
+            if row["status"] != "ready":
+                raise AutomaticWorkRefused("goal_not_ready")
+            try:
+                goal.request.validate_verifier_invocations()
+            except ValueError:
+                raise AutomaticWorkRefused("ambiguous_verifier_invocation") from None
+            existing = conn.execute(
+                "SELECT a.id, a.owner_id FROM automatic_wake_attempts a JOIN goal_iterations i ON i.attempt_id=a.id WHERE i.goal_id=? AND a.state IN ('prepared','accepted')",
+                (goal_id,),
+            ).fetchone()
+            if existing:
+                self._attempt(conn, existing["id"], owner_id, "goal_iteration")
+                attempt_id = existing["id"]
+                if not conn.execute(
+                    "SELECT 1 FROM goal_payload_reservations WHERE attempt_id=?",
+                    (attempt_id,),
+                ).fetchone():
+                    self._db.goal_runs.reserve_result(conn, goal, attempt_id)
+            else:
+                self._check_admission(
+                    conn,
+                    goal.chain_id,
+                    kind="generation",
+                    amount=1,
+                    limits=AutomaticWorkLimits.from_settings("goal_iteration"),
+                )
+                if self._target_active(conn, goal.conversation_id):
+                    raise AutomaticWorkRefused("conversation_wake_active")
+                ordinal = conn.execute(
+                    "SELECT COALESCE(MAX(ordinal),0)+1 FROM goal_iterations WHERE goal_id=?",
+                    (goal_id,),
+                ).fetchone()[0]
+                attempt_id, reservation_id = uuid4().hex, uuid4().hex
+                now = self._wall_clock()
+                conn.execute(
+                    "INSERT INTO automatic_work_reservations (id,chain_id,owner_id,kind,amount,state,created_at,updated_at) VALUES (?,?,?,'generation',1,'reserved',?,?)",
+                    (reservation_id, goal.chain_id, owner_id, now, now),
+                )
+                conn.execute(
+                    "INSERT INTO automatic_wake_attempts (id,chain_id,conversation_id,session_id,owner_id,generation_reservation_id,run_ids_json,state,created_at,attempt_kind) VALUES (?,?,?,?,?,?,'[]','prepared',?,'goal_iteration')",
+                    (
+                        attempt_id,
+                        goal.chain_id,
+                        goal.conversation_id,
+                        goal.conversation_id,
+                        owner_id,
+                        reservation_id,
+                        now,
+                    ),
+                )
+                conn.execute(
+                    "INSERT INTO goal_iterations (id,goal_id,ordinal,launch_id,attempt_id,status) VALUES (?,?,?,?,?,'prepared')",
+                    (uuid4().hex, goal_id, ordinal, uuid4().hex, attempt_id),
+                )
+                self._db.goal_runs.reserve_result(conn, goal, attempt_id)
+        return self.read_goal_attempt(attempt_id, owner_id=owner_id)
+
+
+
+    def accept_goal_iteration(
+        self,
+        attempt_id: str,
+        *,
+        owner_id: str,
+        admission_guard: Callable[[], None] | None = None,
+    ) -> bool:
+        """Accept once; an optional runtime guard may only refuse admission.
+
+        The guard runs synchronously inside the existing acceptance transaction;
+        it must not access the database or perform asynchronous work.
+        """
+        return self._accept_attempt(
+            attempt_id,
+            owner_id=owner_id,
+            limits=AutomaticWorkLimits.from_settings("goal_iteration"),
+            kind="goal_iteration",
+            admission_guard=admission_guard,
+        )
+
+
+
+    def abort_goal_iteration(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Refund only an unaccepted goal generation reservation."""
+        return self._abort_attempt(attempt_id, owner_id=owner_id, kind="goal_iteration")
+
+
+
+    def _accept_attempt(
+        self,
+        attempt_id: str,
+        *,
+        owner_id: str,
+        limits: AutomaticWorkLimits | None,
+        kind: str,
+        admission_guard: Callable[[], None] | None = None,
+    ) -> bool:
+        with self._db.connection() as conn:
+            chain_id = self._attempt(conn, attempt_id, owner_id, kind)["chain_id"]
+        with self._admission_transaction(chain_id) as conn:
+            self._check_runtime_owner(conn, owner_id)
+            attempt = self._attempt(conn, attempt_id, owner_id, kind)
+            if attempt["state"] != "prepared":
+                return False
+            if kind == "goal_iteration":
+                goal = conn.execute(
+                    "SELECT g.status, g.request_json FROM goal_runs g JOIN goal_iterations i ON i.goal_id=g.id WHERE i.attempt_id=?",
+                    (attempt_id,),
+                ).fetchone()
+                if goal is None or goal["status"] != "ready":
+                    raise AutomaticWorkRefused("goal_not_ready")
+                from tldw_chatbook.Agents.goal_models import GoalRequest
+
+                request = GoalRequest.model_validate_json(goal["request_json"])
+                try:
+                    request.validate_verifier_invocations()
+                except ValueError:
+                    raise AutomaticWorkRefused(
+                        "ambiguous_verifier_invocation"
+                    ) from None
+                from tldw_chatbook.Agents.run_log import _setting
+                from tldw_chatbook.config import coerce_bool_setting
+
+                # Resolution/recovery may have awaited since the early gate.
+                # Refuse inside the durable fence before consuming a generation.
+                if not coerce_bool_setting(_setting("goal_runs_enabled", False), False):
+                    raise AutomaticWorkRefused("goal_runs_disabled")
+            self._check_admission(conn, chain_id, kind="generation", limits=limits)
+            reservation = self._reservation(
+                conn, attempt["generation_reservation_id"], owner_id
+            )
+            if reservation["state"] != "reserved":
+                raise ValueError("attempt generation is not reserved")
+            if admission_guard is not None:
+                admission_guard()
+            now = self._wall_clock()
+            conn.execute(
+                "UPDATE automatic_work_reservations SET state='committed', updated_at=? WHERE id=?",
+                (now, reservation["id"]),
+            )
+            conn.execute(
+                "UPDATE automatic_wake_attempts SET state='accepted', accepted_at=? WHERE id=?",
+                (now, attempt_id),
+            )
+            if kind == "goal_iteration":
+                conn.execute(
+                    "UPDATE goal_iterations SET status='accepted', revision=revision+1 WHERE attempt_id=?",
+                    (attempt_id,),
+                )
+            self._start_automatic(conn, chain_id)
+        return True

@@ -603,6 +603,24 @@ def check_host_context(messages: list[dict], *, strip: bool = True) -> list[dict
     return result
 
 
+class RunTerminationReason(str, Enum):
+    DONE = "done"
+    CANCELLED = "cancelled"
+    STUCK = "stuck"
+    STEP_LIMIT = "step_limit"
+    MODEL_TURN_LIMIT = "model_turn_limit"
+    WALL_LIMIT = "wall_limit"
+    TOKEN_LIMIT = "token_limit"
+    AUTOMATIC_LIMIT = "automatic_limit"
+    PERMISSION_REFUSED = "permission_refused"
+    AUTHORITY_CHANGED = "authority_changed"
+    UNKNOWN_EFFECT = "unknown_effect"
+    PRE_EFFECT_RATE_LIMIT = "pre_effect_rate_limit"
+    PRE_EFFECT_PERMANENT = "pre_effect_permanent"
+    PREFLIGHT_REFUSED = "preflight_refused"
+
+
+
 @dataclass(frozen=True)
 class ToolResult:
     ok: bool
@@ -614,6 +632,7 @@ class ToolResult:
     # Host dispatch ownership, never inferred from a remote result body.
     dispatch_state: Literal["not_started", "settled", "uncertain"] | None = None
     approval_decision: ApprovalDecision | None = field(default=None, kw_only=True)
+    termination_reason: RunTerminationReason | None = None
 
     @classmethod
     def blocked(
@@ -1240,6 +1259,7 @@ class RunOutcome:
     # coordinator's retention store reads it off the outcome;
     # ``AgentService._persist`` never writes it to the database.
     final_messages: list[dict] | None = None
+    termination_reason: RunTerminationReason | None = None
     denial_count: int = 0
     # ADR-211: current gateway-sanitized UI copy, never diagnostic persistence.
     console_copy: str | None = field(
