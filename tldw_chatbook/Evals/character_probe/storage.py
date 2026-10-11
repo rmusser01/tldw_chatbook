@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any, Optional
 
 from ...DB.Evals_DB import EvalsDB
@@ -31,6 +31,25 @@ from .targets import ResolvedTarget, resolve_targets
 
 #: Marks a dataset row as holding probes rather than snippets.
 PROBE_DATASET_TYPE = "character_probe"
+
+
+def _unique_name(base: str) -> str:
+    """Append a short random suffix so a generated name never collides on
+    ``eval_tasks.name``'s ``UNIQUE`` constraint (which carries no
+    ``deleted_at`` exemption -- see ``word_bench.storage._unique_name``'s
+    own docstring for the full account).
+
+    A deliberate LOCAL twin of that function, not an import of it:
+    ``word_bench.storage`` imports ``capture_client`` (and transitively
+    ``httpx``), and this package must never acquire distribution
+    vocabulary in its import graph -- the same constraint that keeps
+    ``character_probe.targets`` reading steering through ``..steering``
+    instead (see ``Evals/steering.py``'s module docstring). The two
+    functions are one line each; the import would cost more than the
+    duplication. ``duplicate_character_bench`` below is this module's own
+    user, naming a copy ``f"{source.name} copy"`` through this.
+    """
+    return f"{base} {uuid.uuid4().hex[:8]}"
 
 
 def is_probe_set(dataset_row: Mapping[str, Any]) -> bool:
@@ -510,6 +529,48 @@ def load_character_bench(db: EvalsDB, task_id: str) -> CharacterProbeConfig:
         extra_tags=_tags_from_json(data.get("extra_tags"), task_id),
         strict=False,
     )
+
+
+def duplicate_character_bench(db: EvalsDB, task_id: str) -> str:
+    """Copy a character-probe bench under a fresh, collision-proof name.
+
+    The character-probe mirror of ``word_bench.storage.duplicate_bench``
+    (task-1912): that function loads/rebuilds through ``BenchConfig``/
+    ``save_bench``, which reject this bench type's stored shape outright
+    -- a widened gate there would couple the word-bench write path to a
+    config class it otherwise never names, so the counterpart lives here
+    beside its own loader/saver instead.
+
+    Every config field is carried to the copy: the probe-set binding,
+    the full character selection, the targets, the sampler
+    (``concurrency``/``samples_per_cell``/``seed``/``temperature``/
+    ``max_tokens``), ``extra_tags``, and ``description``. Only ``name``
+    changes (via ``_unique_name``, the same convention the word-bench
+    duplicate uses), and only run history is left behind: no
+    ``eval_runs``/``eval_results`` rows are copied, so the copy starts
+    with an empty grid. The probe set and the ``eval_models`` target rows
+    are REFERENCED, not copied -- exactly as the source references them.
+
+    Args:
+        db: The evals database handle.
+        task_id: The source bench's ``eval_tasks`` row id.
+
+    Returns:
+        str: The new bench's ``eval_tasks`` id.
+
+    Raises:
+        ValueError: If ``task_id`` does not name an existing, non-deleted
+            character-probe bench (``load_character_bench``'s own named
+            error, re-raised with the duplicate context) -- matching
+            ``duplicate_bench``'s ``RuntimeError`` contract in spirit:
+            naming the id rather than raising an opaque ``TypeError``.
+    """
+    if db.get_task(task_id) is None:
+        raise ValueError(f"cannot duplicate character bench {task_id!r}: not found")
+
+    source = load_character_bench(db, task_id)
+    copy = replace(source, name=_unique_name(f"{source.name} copy"))
+    return save_character_bench(db, copy)
 
 
 #: get_run_results is a paginated API (default limit=1000), same reason

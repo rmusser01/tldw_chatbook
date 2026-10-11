@@ -484,9 +484,17 @@ class CharacterBenchEditor(Vertical):
         requested``, which this fix round also stopped from resolving a
         steered row in the first place) gave no visible clue why it either
         could never run (a ``prefix``) or was quietly producing
-        contaminated conversations (a ``system_prompt``). Reading a
-        corrupt row's steering (``model_steering`` raising) degrades to
-        the unsuffixed label rather than crashing this render.
+        contaminated conversations (a ``system_prompt``).
+
+        task-1913 AC5: a row whose steering is CORRUPT (``model_steering``
+        raising -- e.g. hand-edited JSON with BOTH ``prefix`` and
+        ``system_prompt`` set, a non-mapping ``config``, or a non-string
+        field value) is flagged as corrupt here rather than silently
+        degrading to the unsuffixed label: ``resolve_target`` raises on
+        such a row for every run attempt, so an unlabelled row would read
+        as a healthy target that inexplicably fails to run. The label
+        still never crashes the render -- the suffix names the condition,
+        it does not propagate the exception.
 
         Returns:
             list[Any]: Widgets to yield, in order.
@@ -506,11 +514,27 @@ class CharacterBenchEditor(Vertical):
                 label: Any = f"(deleted target {target_id}) — unresolvable"
             else:
                 base = f"{model['name']} ({model['provider']})"
+                # task-1913 AC5: corrupt steering is FLAGGED, never
+                # silently degraded to the bare label (see this method's
+                # docstring) -- `model_steering` raises for a row carrying
+                # BOTH `prefix` and `system_prompt`, a non-mapping config,
+                # or a non-string field value, and such a row can never
+                # run (`resolve_target` raises on it for every attempt).
+                # A flag, not an extra branch off the except: the except
+                # body cannot carry the `if prefix/elif` chain itself, and
+                # swallowing into a flag keeps one linear label chain.
+                corrupt_reason: Optional[str] = None
                 try:
                     prefix, system_prompt = model_steering(model)
-                except ValueError:
-                    prefix, system_prompt = None, None
-                if prefix:
+                except ValueError as exc:
+                    corrupt_reason = str(exc)
+                    prefix = system_prompt = None
+                if corrupt_reason is not None:
+                    label = (
+                        f"{base} · corrupt steering config — unusable "
+                        f"until its eval_models row is fixed ({corrupt_reason})"
+                    )
+                elif prefix:
                     # A raw-completion prefix has no slot in a probe's
                     # chat-shaped turns -- `targets.resolve_target` raises
                     # on this target for every run attempt, so this is

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
 from ...DB.Evals_DB import EvalsDB
+from ...Evals.character_probe.storage import is_character_bench, is_probe_set
 from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.storage import BENCH_TYPE, load_run_preflight
 
@@ -116,8 +117,6 @@ class EvalsViewModel:
             order, or an empty list when the evaluation service is
             unavailable.
         """
-        from ...Evals.character_probe.storage import is_character_bench
-
         return [task for task in self._all_tasks() if is_character_bench(task)]
 
     def skill_eval_benches(self) -> list[dict[str, Any]]:
@@ -179,8 +178,6 @@ class EvalsViewModel:
             own order, or an empty list when the evaluation service is
             unavailable.
         """
-        from ...Evals.character_probe.storage import is_probe_set
-
         return [row for row in self.datasets() if is_probe_set(row)]
 
     def word_bench_datasets(self) -> list[dict[str, Any]]:
@@ -207,8 +204,6 @@ class EvalsViewModel:
             own order, or an empty list when the evaluation service is
             unavailable.
         """
-        from ...Evals.character_probe.storage import is_probe_set
-
         return [row for row in self.datasets() if not is_probe_set(row)]
 
     def character_cards(self, chacha_db: Any) -> list[dict[str, Any]]:

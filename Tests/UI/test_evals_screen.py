@@ -2920,12 +2920,14 @@ async def test_a_real_rail_click_on_a_character_bench_row_routes_to_its_editor(
     """Real widget interaction, not a direct `select()` call -- per this
     phase's own 'real widgets, not `.value=`' rule for behavioural UI
     coverage: a `pilot.click` on the actual rail row is what proves
-    `library_rail.py`'s own marker-to-kind routing (`_benches_section_
-    body`'s `"character_bench" if is_character_bench(row) else "classic"`)
-    actually fires, not merely that `select()` accepts the new kind."""
+    `library_rail.py`'s own subgroup routing (`_benches_section_body`
+    renders a character-probe bench under its OWN `─ character ─` subgroup
+    with `kind="character_bench"` -- task-1910; the row prefix is the
+    character subgroup's own, never the classic one) actually fires, not
+    merely that `select()` accepts the new kind."""
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
-        await pilot.click("#evals-rail-row-benches-classic-0")
+        await pilot.click("#evals-rail-row-benches-character-0")
         await pilot.pause()
         screen = pilot.app.screen
         assert screen._selection.kind == "character_bench"
@@ -3540,8 +3542,9 @@ async def test_a_character_bench_with_no_resolvable_target_can_be_deleted_throug
         assert screen._view_model.character_bench_by_id(bench_id) is None
         remaining = [t for t in evals_db.list_tasks() if is_character_bench(t)]
         assert remaining == []
-        # ...and gone from the rail.
-        assert not screen.query("#evals-rail-row-benches-classic-0")
+        # ...and gone from the rail (task-1910: character-probe rows live
+        # under their OWN subgroup prefix, never the classic one).
+        assert not screen.query("#evals-rail-row-benches-character-0")
 
         message, severity = screen.app_instance.notifications[-1]
         assert severity == "information"
@@ -3549,19 +3552,213 @@ async def test_a_character_bench_with_no_resolvable_target_can_be_deleted_throug
 
 
 @pytest.mark.asyncio
-async def test_a_character_bench_with_no_duplicate_button_still_offers_delete(
+async def test_a_character_bench_offers_duplicate_and_delete(
     evals_app, character_bench_id
 ):
-    """Fix round: Duplicate stays word-bench-only this round (see
-    `_compose_inspector_pane`'s own comment on why -- `duplicate_bench`
-    engine call is word-bench-specific), but Delete must be there
-    regardless -- pinned as its own assertion so a future change can't
-    silently drop Delete while "fixing" Duplicate without a test
+    """task-1912 AC1: a character-probe bench is duplicated from the SAME
+    ``#evals-duplicate-bench`` affordance a word bench uses (the handler
+    dispatches to ``character_probe.storage.duplicate_character_bench`` for
+    this kind -- the engine counterpart that test lives beside in
+    ``Tests/Evals/character_probe/test_bench_storage.py``). Delete remains
+    beside it, pinned as its own assertion so a future change can't
+    silently drop either while "fixing" the other without a test
     noticing."""
     async with evals_app.run_test(size=(160, 45)) as pilot:
         screen: EvalsScreen = pilot.app.screen
         screen.select(kind="character_bench", id=character_bench_id)
         await pilot.pause()
-        assert not screen.query("#evals-duplicate-bench")
+        duplicate_button = screen.query_one("#evals-duplicate-bench", Button)
+        assert not duplicate_button.disabled
         delete_button = screen.query_one("#evals-delete-bench", Button)
         assert not delete_button.disabled
+
+
+@pytest.mark.asyncio
+async def test_pressing_duplicate_on_a_character_bench_copies_it_and_selects_the_copy(
+    evals_app, character_bench_id
+):
+    """task-1912 AC2/AC3 end to end through the real button: the copy is a
+    new character bench carrying the source's configuration under a unique
+    name, the ORIGINAL is undisturbed, and the screen lands on the copy
+    (its own editor mounted) with a toast naming the new bench."""
+    from tldw_chatbook.Evals.character_probe.storage import (
+        is_character_bench,
+        load_character_bench,
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        screen: EvalsScreen = pilot.app.screen
+        screen.select(kind="character_bench", id=character_bench_id)
+        await pilot.pause()
+        source_before = load_character_bench(
+            screen._view_model.db, character_bench_id
+        )
+
+        await pilot.click("#evals-duplicate-bench")
+        await pilot.pause()
+
+        assert screen._selection.kind == "character_bench"
+        new_id = screen._selection.id
+        assert new_id != character_bench_id
+        assert screen.query("#evals-character-bench-editor")
+
+        copy = load_character_bench(screen._view_model.db, new_id)
+        assert copy.name != source_before.name
+        assert copy.probe_set_id == source_before.probe_set_id
+        assert copy.character_ids == source_before.character_ids
+        assert copy.target_ids == source_before.target_ids
+        # The original is undisturbed.
+        assert load_character_bench(screen._view_model.db, character_bench_id) == (
+            source_before
+        )
+        # Two live character benches now exist in the DB.
+        rows = [t for t in screen._view_model.db.list_tasks() if is_character_bench(t)]
+        assert len(rows) == 2
+
+        message, severity = screen.app_instance.notifications[-1]
+        assert severity == "information"
+        assert message == f"Duplicated as {copy.name}."
+
+
+# ---------------------------------------------------------------------------
+# task-1910: character-probe benches render under their OWN rail subgroup
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_character_bench_renders_under_its_own_subgroup_not_classic(
+    evals_app, evals_db, seeded_bench, character_bench_id
+):
+    """task-1910 AC1: a character-probe bench row renders under a `─
+    character ─` labelled subgroup with its OWN row prefix -- never under
+    `─ classic ─`, which is defined app-wide as read-only pre-word-bench
+    rows."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        rail = screen.query_one("#evals-library-pane")
+
+        separators = [
+            str(s.renderable) for s in rail.query(".evals-rail-classic-separator")
+        ]
+        assert "─ character ─" in separators, separators
+
+        character_row = rail.query_one(
+            "#evals-rail-row-benches-character-0", Button
+        )
+        assert "villain bench" in str(character_row.label)
+        # The diamond marker stays on the row (belt to the label's braces).
+        assert str(character_row.label).startswith("◆ ")
+
+
+@pytest.mark.asyncio
+async def test_word_benches_and_true_classic_tasks_keep_their_existing_grouping(
+    evals_app, evals_db, seeded_bench, character_bench_id
+):
+    """task-1910 AC2: a word bench still renders directly under the Benches
+    header, and a genuinely classic task still renders under `─ classic ─`
+    with the classic row prefix -- the new character subgroup changes
+    neither."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        evals_db.create_task(
+            name="legacy task",
+            description="",
+            task_type="logprob",
+            config_format="custom",
+            config_data={},
+        )
+        screen.select(kind="none")
+        await pilot.pause()
+        rail = screen.query_one("#evals-library-pane")
+
+        # Word bench: directly under the Benches header, unmarked.
+        word_row = rail.query_one("#evals-rail-row-benches-0", Button)
+        assert "loaded-nouns v1" in str(word_row.label)
+
+        # Classic task: under the classic label, classic prefix.
+        classic_row = rail.query_one("#evals-rail-row-benches-classic-0", Button)
+        assert "legacy task" in str(classic_row.label)
+        assert not str(classic_row.label).startswith("◆ ")
+
+
+# ---------------------------------------------------------------------------
+# task-1911: the character-probe estimate uses a generation-based rate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_character_bench_estimate_uses_a_generation_based_rate(
+    evals_app, character_bench_id
+):
+    """task-1911 AC1/AC3: the character bench's projected duration is
+    computed from a per-TOKEN generation rate scaled by the bench's
+    ``max_tokens`` -- NOT the word bench's single-token logprob-probe
+    constant. The fixture bench is exactly one call (1 probe x 1 turn x 1
+    card x 1 target x 1 sample), so the rendered duration isolates the
+    rate: at the default ``max_tokens=512`` the logprob rate would project
+    well under a second ("~00:00"), while the generation rate projects
+    ~26 seconds."""
+    from tldw_chatbook.UI.Evals.inspector import (
+        _ASSUMED_SECONDS_PER_CALL,
+        _CHARACTER_ASSUMED_SECONDS_PER_TOKEN,
+        _format_estimate_duration,
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        screen: EvalsScreen = pilot.app.screen
+        screen.select(kind="character_bench", id=character_bench_id)
+        await pilot.pause()
+
+        estimate = screen.query_one("#evals-inspector-estimate-calls")
+        text = str(estimate.renderable)
+        assert text.startswith("1 calls · "), text
+
+        expected = _format_estimate_duration(
+            1 * 512 * _CHARACTER_ASSUMED_SECONDS_PER_TOKEN
+        )
+        logprob_rate = _format_estimate_duration(1 * _ASSUMED_SECONDS_PER_CALL)
+        assert expected != logprob_rate, (
+            "the character rate must not reproduce the logprob-probe rate's "
+            f"duration ({expected})"
+        )
+        assert text == f"1 calls · {expected}", text
+
+
+# ---------------------------------------------------------------------------
+# task-1913 AC1: one honesty rule across both zero-count estimate states
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_zero_call_character_bench_refuses_to_print_an_estimate(
+    evals_app, evals_db, probe_set_id
+):
+    """task-1913 AC1: a draft with no characters picked (the state every
+    "+ New character bench" draft starts in) must refuse to print an
+    estimate -- the SAME honesty rule the missing-probe-set branch already
+    applies -- rather than rendering "0 calls · ~00:00" as if that were a
+    real estimate of a runnable bench."""
+    from tldw_chatbook.Evals.character_probe.models import CharacterProbeConfig
+    from tldw_chatbook.Evals.character_probe.storage import save_character_bench
+
+    draft_id = save_character_bench(
+        evals_db,
+        CharacterProbeConfig(
+            name="draft character bench",
+            probe_set_id=probe_set_id,
+            character_ids=(),
+            target_ids=(),
+            strict=False,
+        ),
+    )
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        screen: EvalsScreen = pilot.app.screen
+        screen.select(kind="character_bench", id=draft_id)
+        await pilot.pause()
+
+        assert not screen.query("#evals-inspector-estimate-calls")
+        empty_state = screen.query_one("#evals-inspector-readiness-empty")
+        state_text = str(empty_state.renderable)
+        assert "Nothing to estimate yet" in state_text, state_text

@@ -55,6 +55,7 @@ from ...Evals.character_probe.runner import (
 )
 from ...Evals.character_probe.storage import (
     create_probe_run_group,
+    duplicate_character_bench,
     is_probe_set,
     load_character_bench,
     load_probe_set,
@@ -2863,27 +2864,33 @@ class EvalsScreen(LabScreen):
 
     @on(Button.Pressed, "#evals-duplicate-bench")
     def _on_duplicate_bench_pressed(self, event: Button.Pressed) -> None:
-        """Duplicates the selected bench via ``storage.duplicate_bench``
-        (Task 3) -- a plain ``eval_tasks`` insert, never a network call, so
-        this runs in-widget with no worker, mirroring ``library_rail.py``'s
-        ``_create_new_bench``/``_create_new_dataset`` (the same "no worker
-        for a bare DB write" convention).
+        """Duplicates the selected bench -- a WORD bench via
+        ``storage.duplicate_bench`` (Task 3), or (task-1912) a CHARACTER
+        bench via ``character_probe.storage.duplicate_character_bench``,
+        through the SAME ``#evals-duplicate-bench`` affordance both bench
+        types now share. A plain ``eval_tasks`` insert either way, never a
+        network call, so this runs in-widget with no worker, mirroring
+        ``library_rail.py``'s ``_create_new_bench``/``_create_new_dataset``
+        (the same "no worker for a bare DB write" convention).
 
-        Catches broad ``Exception``, not ``duplicate_bench``'s own
-        narrower ``RuntimeError`` (which it raises only for a missing/
-        soft-deleted source) -- controller ruling from Task 3's review: a
-        CORRUPT legacy bench (task-1132's lenient ``load_bench`` still
-        loads it, but ``BenchConfig``/``save_bench`` downstream can raise
-        their own native diagnostic exception for a shape ``load_bench``
-        never normalised) must still toast here rather than crash this
-        screen, matching every other DB-write handler in this file (see
-        ``_run_bench_worker``'s own broad catch above).
+        Catches broad ``Exception``, not the engines' own narrower
+        missing-source errors (``duplicate_bench``'s ``RuntimeError``,
+        ``duplicate_character_bench``'s ``ValueError``) -- controller
+        ruling from Task 3's review: a CORRUPT legacy bench (task-1132's
+        lenient ``load_bench`` still loads it, but ``BenchConfig``/
+        ``save_bench`` downstream can raise their own native diagnostic
+        exception for a shape ``load_bench`` never normalised) must still
+        toast here rather than crash this screen, matching every other
+        DB-write handler in this file (see ``_run_bench_worker``'s own
+        broad catch above). The same holds on the character side for a
+        corrupt stored field (``_stored_int_field``/``_stored_seed``/
+        ``_stored_temperature``'s named ``ValueError``s).
         """
         event.stop()
         selection = self._selection
-        if selection.kind != "bench" or not selection.id:
+        if selection.kind not in ("bench", "character_bench") or not selection.id:
             # Defensive only: this button is composed only inside the
-            # resolved-bench branch of `_compose_inspector_pane`.
+            # resolved-bench branches of `_compose_inspector_pane`.
             return
         db = self._view_model.db
         if db is None:
@@ -2891,8 +2898,13 @@ class EvalsScreen(LabScreen):
                 "The evaluation service is unavailable.", severity="error"
             )
             return
+        duplicate = (
+            duplicate_character_bench
+            if selection.kind == "character_bench"
+            else duplicate_bench
+        )
         try:
-            new_id = duplicate_bench(db, selection.id)
+            new_id = duplicate(db, selection.id)
         except Exception as exc:
             logger.opt(exception=True).warning("Could not duplicate bench.")
             # markup=False: `exc` can carry the source bench's own
@@ -2904,9 +2916,18 @@ class EvalsScreen(LabScreen):
                 markup=False,
             )
             return
-        new_bench = self._view_model.bench_by_id(new_id)
+        # task-1912: the post-duplicate lookup and the re-selection are
+        # kind-aware -- `bench_by_id` only ever resolves WORD benches (see
+        # its own docstring), so a character duplicate must resolve through
+        # `character_bench_by_id` and re-select with its own kind, or the
+        # toast would name "the new bench" and the screen would land on
+        # "could not be found".
+        if selection.kind == "character_bench":
+            new_bench = self._view_model.character_bench_by_id(new_id)
+        else:
+            new_bench = self._view_model.bench_by_id(new_id)
         new_name = str(new_bench.get("name")) if new_bench else "the new bench"
-        self.select(kind="bench", id=new_id)
+        self.select(kind=selection.kind, id=new_id)
         self.app_instance.notify(
             f"Duplicated as {new_name}.", severity="information", markup=False
         )
@@ -3590,23 +3611,24 @@ class EvalsScreen(LabScreen):
             # (`_on_new_character_bench_requested`'s own docstring), a
             # bench created that way could never be deleted, fixed, or
             # hidden through the UI: permanent rail clutter with no
-            # recovery path. Delete-only, deliberately: `duplicate_bench`
-            # (`word_bench.storage`) loads/rebuilds through `BenchConfig`/
-            # `save_bench`, which reject `CharacterProbeConfig`'s stored
-            # shape outright -- a character-bench equivalent does not
-            # exist yet, and inventing one is a bigger, separate change
-            # than closing "can never be deleted" needs. `#evals-delete-
-            # bench` is the SAME id/handler word benches use
-            # (`_on_delete_bench_pressed` now accepts both kinds; see its
-            # own updated comment) -- `EvalsDB.delete_task` is a plain
-            # soft-delete by id and does not care about `bench_type`.
-            # Reuses `character_bench_row`, resolved once already by the
+            # recovery path. Delete closed that round; task-1912 closes
+            # Duplicate the same way: `duplicate_character_bench`
+            # (`character_probe.storage`) is now the engine counterpart
+            # `#evals-duplicate-bench` dispatches to for this kind (see
+            # `_on_duplicate_bench_pressed`), so the SAME id/handler word
+            # benches use serves both. `#evals-delete-bench` likewise (see
+            # `_on_delete_bench_pressed`'s own updated comment) --
+            # `EvalsDB.delete_task` is a plain soft-delete by id and does
+            # not care what `bench_type` the row carries. Reuses
+            # `character_bench_row`, resolved once already by the
             # `character_bench` branch above this function's `bench`/
             # `EvalsInspector` block -- both branches share ONE function
             # scope (this is a single generator, not two), so a second
             # `character_bench_by_id` read here would just repeat that
-            # exact lookup.
+            # exact lookup. Gated on a RESOLVED bench, matching the
+            # word-bench branch beside it (task-1913 AC2).
             if character_bench_row is not None:
+                yield Button("Duplicate", id="evals-duplicate-bench")
                 yield from self._compose_delete_bench_button(selection.id)
 
     def _compose_delete_bench_button(self, bench_id: str) -> ComposeResult:

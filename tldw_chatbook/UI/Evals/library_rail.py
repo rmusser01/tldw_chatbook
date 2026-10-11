@@ -165,6 +165,19 @@ CLASSIC_SUBGROUP_LABEL = "─ classic ─"
 
 EVALS_RAIL_CLASSIC_ROW_PREFIX = "evals-rail-row-benches-classic-"
 
+#: task-1910: character-probe benches' OWN subgroup label -- they used to
+#: render under ``CLASSIC_SUBGROUP_LABEL`` (``classic_tasks()`` is
+#: "everything that is not a word bench", and a character bench is not),
+#: which mislabelled a bench the user just created via "+ New character
+#: bench" as a legacy read-only classic task. Same inert-Static shape as
+#: the classic separator, same "not a Button" rule.
+CHARACTER_SUBGROUP_LABEL = "─ character ─"
+
+#: Character-probe bench rows' own prefix, so tests (and callers) can
+#: address the subgroup's rows without guessing indices into the shared
+#: classic prefix -- mirrors ``EVALS_RAIL_CLASSIC_ROW_PREFIX``.
+EVALS_RAIL_CHARACTER_ROW_PREFIX = "evals-rail-row-benches-character-"
+
 #: Prefixes a rail row whose bench or dataset belongs to the character-probe
 #: eval, so the two kinds sharing one section are distinguishable at a
 #: glance -- a probe set and a snippet dataset otherwise look identical, and
@@ -941,10 +954,43 @@ class LibraryRail(NotifyMixin, Vertical):
             # `_new_bench_actions`'s own docstring.
             children.extend(self._new_bench_actions())
 
-        if classic_tasks:
+        # task-1910: split the non-word-bench rows into character-probe
+        # benches (their OWN labelled subgroup) and everything else (the
+        # classic subgroup: true pre-word-bench tasks plus skill-eval
+        # benches, which keep their existing plain-name classic placement
+        # per the task-32888 brief). Before this, every character bench
+        # rendered under CLASSIC_SUBGROUP_LABEL -- defined app-wide as
+        # read-only pre-word-bench rows -- so a bench the user just
+        # created via "+ New character bench" was labelled as legacy
+        # read-only content. The diamond marker stays on both the bench
+        # rows and probe-set dataset rows (see CHARACTER_PROBE_MARKER),
+        # belt to the label's braces.
+        character_rows = [row for row in classic_tasks if is_character_bench(row)]
+        classic_rows = [row for row in classic_tasks if not is_character_bench(row)]
+
+        if character_rows:
             # Inert -- never registered in `_row_targets`, so a press on
             # this row (it is a Static, not a Button, so it cannot receive
             # one anyway) never posts a selection.
+            children.append(
+                Static(
+                    CHARACTER_SUBGROUP_LABEL,
+                    classes="evals-rail-classic-separator",
+                    markup=False,
+                )
+            )
+            for index, row in enumerate(character_rows):
+                button_id = f"{EVALS_RAIL_CHARACTER_ROW_PREFIX}{index}"
+                children.append(
+                    self._row_button(
+                        button_id=button_id,
+                        kind="character_bench",
+                        row_id=row.get("id"),
+                        label=_classic_row_label(row),
+                    )
+                )
+
+        if classic_rows:
             children.append(
                 Static(
                     CLASSIC_SUBGROUP_LABEL,
@@ -952,31 +998,22 @@ class LibraryRail(NotifyMixin, Vertical):
                     markup=False,
                 )
             )
-            for index, row in enumerate(classic_tasks):
+            for index, row in enumerate(classic_rows):
                 button_id = f"{EVALS_RAIL_CLASSIC_ROW_PREFIX}{index}"
                 children.append(
                     self._row_button(
                         button_id=button_id,
-                        # A character-probe bench renders in this same
-                        # subgroup (marked with CHARACTER_PROBE_MARKER --
-                        # see _classic_row_label), but selecting one must
-                        # route to its OWN detail surface, never
-                        # ClassicTaskDetail's read-only one -- see
-                        # EvalsScreen._compose_detail_pane's
-                        # "character_bench" branch (task-1691 phase 2,
-                        # Task 5). A genuinely classic (pre-word-bench)
-                        # task keeps kind="classic". A skill-eval bench
-                        # renders here too (plain name -- no marker; the
-                        # brief's ruling) and routes to its own
-                        # "skill_eval_bench" kind the same way.
+                        # A genuinely classic (pre-word-bench) task keeps
+                        # kind="classic". A skill-eval bench renders here
+                        # too (plain name -- no marker; the brief's
+                        # ruling) and routes to its own
+                        # "skill_eval_bench" kind. A character-probe bench
+                        # never reaches this loop anymore (task-1910) --
+                        # it has its own subgroup above.
                         kind=(
                             "skill_eval_bench"
                             if is_skill_eval_bench(row)
-                            else (
-                                "character_bench"
-                                if is_character_bench(row)
-                                else "classic"
-                            )
+                            else "classic"
                         ),
                         row_id=row.get("id"),
                         label=_classic_row_label(row),
