@@ -13529,11 +13529,10 @@ class SettingsScreen(BaseAppScreen):
         if self._provider_draft() is not None or not self._navigation_provider:
             return values
         provider = self._navigation_provider
-        model = (
-            str(self._navigation_model or "").strip()
-            if self._navigation_model_is_explicit
-            else str(values.get("model") or "").strip()
-        )
+        # The model _apply_navigation_provider_context puts in the field.
+        model = str(self._navigation_model or "").strip()
+        if not model and not self._navigation_model_is_explicit:
+            model = str(values.get("model") or "").strip()
         display_values = dict(values)
         display_values.update(
             {
@@ -14335,7 +14334,7 @@ class SettingsScreen(BaseAppScreen):
     def _stage_provider_value(self, key: str, value: object) -> None:
         self._discard_openai_reconnect_review()
         category = SettingsCategoryId.PROVIDERS_MODELS
-        current = self._provider_setting_values_mapping()
+        current = self._provider_display_setting_values()  # the routed provider's
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
         )
@@ -30321,7 +30320,7 @@ class SettingsScreen(BaseAppScreen):
             self._provider_loaded_setting_values().get("provider") or ""
         )
         previous_provider = str(
-            self._provider_setting_values_mapping().get("provider") or ""
+            self._provider_display_setting_values().get("provider") or ""
         )
         if provider and provider_config_key(provider) == provider_config_key(
             previous_provider
@@ -30437,12 +30436,13 @@ class SettingsScreen(BaseAppScreen):
         if provider_id is None:
             return
         current_provider = str(
-            self._provider_setting_values_mapping().get("provider") or ""
+            self._provider_display_setting_values().get("provider") or ""
         )
         if provider_config_key(provider_id) == provider_config_key(current_provider):
             return
         select_value = self._provider_select_value_for_provider(provider_id)
-        if select_value == PROVIDER_MANUAL_SELECT_VALUE:
+        # A deep link's Select handler reads the saved default as "no change".
+        if select_value == PROVIDER_MANUAL_SELECT_VALUE or self._navigation_provider:
             self._apply_provider_value_change(provider_id)
             return
         # TASK-32533: the picker rows are rebuilt from a live catalog read on
@@ -30529,14 +30529,19 @@ class SettingsScreen(BaseAppScreen):
         if self._syncing_provider_model_value:
             return
         model_value = event.value.strip()
-        if self._navigation_model is not None and model_value == self._navigation_model:
+        if (
+            self._navigation_model is not None
+            and model_value == self._navigation_model
+            # The mount echo of a link; with a draft it is the user's choice.
+            and self._provider_draft() is None
+        ):
             return
         current_model = str(
             self._provider_setting_values_mapping().get("model") or ""
         ).strip()
         if model_value == current_model:
             return
-        self._clear_navigation_provider_context()
+        # The link stays: it names the form's provider when the draft empties.
         self._stage_provider_value("model", model_value or None)
         provider = str(self._provider_setting_values_mapping().get("provider") or "")
         self._sync_provider_model_profile_widgets(provider, model_value)
@@ -33521,6 +33526,10 @@ class SettingsScreen(BaseAppScreen):
                 )
                 if not evidence_preserved:
                     self._mark_provider_test_result_stale()
+                if self._navigation_provider:
+                    # A deep link's form now holds the model that was saved.
+                    self._navigation_model = model
+                    self._navigation_model_is_explicit = True
                 self._sync_provider_credential_widget(provider)
                 self._sync_provider_context_window_widget(provider, model)
                 self._update_provider_dynamic_widgets()
@@ -34049,7 +34058,8 @@ class SettingsScreen(BaseAppScreen):
                 exclusive=True,
                 exit_on_error=False,
             )
-            values = self._provider_setting_values()
+            # A deep link's form goes back to the linked provider, not the default.
+            values = self._provider_display_setting_values()
             try:
                 provider = str(values["provider"])
                 self._syncing_provider_selection = True
