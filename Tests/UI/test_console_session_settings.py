@@ -14611,11 +14611,15 @@ async def test_console_settings_modal_active_run_reason_precedes_endpoint_recove
 async def test_console_settings_mount_builds_default_readiness_once(
     opened: str,
 ) -> None:
-    """TASK-33006.21: opening Chat settings builds default readiness once.
+    """TASK-33006.21: on_mount builds default readiness once.
 
-    on_mount built it four times: twice through the view switch (its own call
-    and the recovery-region sync's), once directly and once through the
-    completion sync. Restoring a suspended draft added a fifth.
+    It built it four times: twice through the view switch (its own call and
+    the recovery-region sync's), once directly and once through the completion
+    sync. Restoring a suspended draft added a fifth.
+
+    The open as a whole builds more, after on_mount and outside this count:
+    two for each number field whose compose-time Input.Changed arrives (four
+    in all, six with a restored draft) and one on the first subscription poll.
 
     Args:
         opened: How the modal opens: on a view, or with a suspended draft.
@@ -14652,11 +14656,48 @@ async def test_console_settings_mount_builds_default_readiness_once(
         await pilot.pause()
 
         assert built_while_mounting.count(True) == 1
-        # The one build is the last word: the footer reads the settled draft.
+        # The number fields' echoes have rebuilt the footer by now, so these
+        # read the settled open, not on_mount's build alone.
         assert modal.query_one("#console-settings-save", Button).disabled is False
         if opened == "suspended":
             assert modal.query_one("#console-settings-temperature", Input).value == "0.4"
             assert modal.query_one("#console-settings-save-default", Button).display
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_console_settings_subscription_change_builds_default_readiness_once() -> None:
+    """TASK-33006.21: a changed subscription snapshot builds default readiness once.
+
+    The poll synced the readiness display, which ends in the completion sync,
+    and then called the default-readiness sync a second time.
+    """
+    app = ModalHarness()
+    builds: list[str] = []
+
+    def resolver(provider: str, model: str | None) -> ConsoleSettingsReadiness:
+        builds.append(provider)
+        return build_console_settings_readiness(
+            ConsoleSessionSettings(provider=provider, model=model),
+            app_config=app.app_config,
+            environ={},
+        )
+
+    modal = _basic_modal(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app,
+        default_readiness_resolver=resolver,
+    )
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        before = len(builds)
+
+        modal._subscription_readiness_snapshot = None  # any change reads as this
+        modal._poll_subscription_readiness()
+
+        assert len(builds) == before + 1
 
 
 @pytest.mark.asyncio

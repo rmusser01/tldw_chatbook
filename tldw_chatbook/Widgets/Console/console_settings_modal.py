@@ -1301,7 +1301,7 @@ class ConsoleSettingsModal(
         # refresh, once every mounted control reflects the transferred state.
         self._updating_controls = True
         self._initial_feedback_sync = True
-        self._defer_default_readiness = True  # until on_mount's last step
+        self._defer_default_readiness = True  # until on_mount's closing sync
         self._edited_generation_fields: set[str] = set()
         self._submit_pending = False
         self._rebase_event_guard = False
@@ -2279,8 +2279,8 @@ class ConsoleSettingsModal(
                 self.call_after_refresh(self._focus_context_control)
         self._sync_generation_control_support()
         self._sync_generation_test_controls()
-        # The steps above each reach the default-readiness sync; it waited for
-        # this one build of the settled draft (TASK-33006.21).
+        # The view switch, the recovery-region sync and a suspended draft's restore
+        # can reach the default-readiness sync, held for this one build (TASK-33006.21).
         self._defer_default_readiness = False
         self._sync_completion_actions()
         self._apply_accessible_control_metadata()
@@ -5429,7 +5429,6 @@ class ConsoleSettingsModal(
             return
         self._subscription_readiness_snapshot = snapshot
         self._sync_readiness_display()
-        self._sync_default_readiness()
 
     def _sync_readiness_display(self) -> None:
         draft = self._build_draft()
