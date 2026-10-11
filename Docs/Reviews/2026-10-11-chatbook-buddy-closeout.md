@@ -10,7 +10,7 @@ Local Persona views now always contain policy_rules under ADR-079. Actor Pack pr
 
 ## Verification
 
-On base a3c47c6c72d885db2af0971515ddcdcb6cee78fa, the three activation/conversion/policy modules passed 104 cases. The final setter/startup/import-closure/management/attribution/lineage gate passed 26 cases. Across both runs, 129 unique test identities passed, with no failures, errors or skips. The setter RED, disabled-management mutation, policy RED and conversion source-guard mutation all failed at their intended assertions. Independent review found no actionable issues.
+On the repaired working tree based on a3c47c6c72d885db2af0971515ddcdcb6cee78fa, the three activation/conversion/policy modules passed 104 cases. The final setter/startup/import-closure/management/attribution/lineage gate passed 26 cases. Across both runs, 129 unique test identities passed, with no failures, errors or skips. The setter RED, disabled-management mutation, policy RED and conversion source-guard mutation all failed at their intended assertions. Independent review found no actionable issues.
 
 The [retained receipt](artifacts/buddy-closeout-20261011/verification.json) includes commands, Python/runtime identity, exact case identities, source and raw-result hashes, failure excerpts and static results. Ruff introduced zero diagnostics compared with exact HEAD; ten touched files pass formatting. Existing app_service_wiring formatting debt remains unchanged. Compilation and whitespace checks pass. Production Bandit has the same two baseline findings and no errors or introduced findings. Black is absent; existing Ruff formatting was used.
 
