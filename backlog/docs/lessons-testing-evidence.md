@@ -19796,8 +19796,28 @@ required: recovery_scope_uncertain`, an xdist INTERNALERROR and "no tests ran
 in 1.27s". `startup_permission` is written to read only, and no file under
 `~/.config/tldw_cli` or `~/.local/share/tldw_cli` had been modified
 (`find -mmin -20`: 0 files). Do not count on a collection outside `Tests/`
-being that harmless. Brace the variable (`"${T}[imagegen-size0]"`) and `echo`
-one built id before the run.
+being that harmless: only that refusal stopped this one. Read afterwards, not
+run: on a profile the admission accepts, the import goes on to
+`acquire_storage()`, and the file's `test_openai_logprobs` calls
+`load_settings()` and then `chat(...)` against OpenAI with the configured key.
+A second file,
+`Docs/superpowers/qa/2026-10-03-console-chat-starts-dev-integration/latest_predispatch_test.py`,
+matches `*_test.py` and is a patch script: imported with the repo root as the
+working directory, it rewrites `Tests/UI/test_console_cost_chip_screen.py`
+when the text it replaces is there (at 60cba504ea the test it renames already
+has the new name, so it would stop at its first `assert`).
+
+Brace the variable (`"${T}[imagegen-size0]"`) and `echo` one built id before
+the run. That prevents this one spelling and leaves the path open: any empty
+argument, or `pytest .`, collects from the root, and at 60cba504ea
+`pyproject.toml` keeps pytest out of `STests` only. Measured on a toy tree with
+the same `testpaths` and `addopts` (pytest 8.4.2): no argument imports nothing
+under `Docs/`; two empty arguments, or `.`, import every test-named file there.
+With `--ignore=Docs` added to the toy tree's `addopts` they import none, but
+only in a run started at the root: started in `Tests/` as `pytest ..`, the same
+option excluded nothing and both files were imported again. So start pytest at
+the root of the tree, and check that the argument list is not empty before the
+run.
 
 ## A test-added ownership wrapper can mask the real retry leak
 
