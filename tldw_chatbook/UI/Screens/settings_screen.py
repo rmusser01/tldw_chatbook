@@ -13653,7 +13653,7 @@ class SettingsScreen(BaseAppScreen):
             "model": "Model",
             "endpoint": MODEL_FIELD_LABELS["endpoint"],
             "api_key": "API key",
-            "credential_env_var": "Credential environment variable",
+            "credential_env_var": "Env var",
             "model_context_window": "Model context window",
             "model_context_window_reset": "Model context window",
             **{
@@ -16278,7 +16278,7 @@ class SettingsScreen(BaseAppScreen):
             or PROVIDER_CREDENTIAL_ENV_VAR_PATTERN.fullmatch(env_var) is None
         ):
             return (
-                "Credential env var must use environment variable syntax: "
+                "Env var must be a variable's name: "
                 "letters, numbers, and underscores; start with a letter or underscore."
             )
         return None
@@ -18221,7 +18221,7 @@ class SettingsScreen(BaseAppScreen):
             )
         if field_id == "settings-provider-credential-env-var":
             return (
-                ("Focused setting", "Credential env"),
+                ("Focused setting", "Env var"),
                 (
                     "Purpose",
                     "Stores the environment variable name containing the API key.",

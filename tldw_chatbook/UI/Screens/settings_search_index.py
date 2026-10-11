@@ -534,7 +534,7 @@ def build_field_search_index() -> None:
                 ("model-search-picker-input", "Model"),
                 ("settings-provider-endpoint-value", "Endpoint"),
                 ("settings-provider-api-key", "API key"),
-                ("settings-provider-credential-env-var", "Credential env var"),
+                ("settings-provider-credential-env-var", "Env var"),
                 ("settings-model-context-window", "Model context window tokens"),
                 # TASK-23109 completion sweep: model-catalog refresh controls.
                 (

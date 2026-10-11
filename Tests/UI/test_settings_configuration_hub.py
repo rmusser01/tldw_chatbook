@@ -10370,7 +10370,8 @@ async def test_settings_provider_category_rejects_invalid_credential_env_var(
         await pilot.click("#settings-save-category")
         text = _visible_text(screen)
 
-        assert "Credential env var must use environment variable syntax" in text
+        # Rewritten on purpose (review of #3057, ruling C4): the field is "Env var".
+        assert "Env var must be a variable's name" in text
 
     assert mutations == []
     assert (
