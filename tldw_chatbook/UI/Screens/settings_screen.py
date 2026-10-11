@@ -15447,8 +15447,11 @@ class SettingsScreen(BaseAppScreen):
     def _apply_provider_picker_highlight(
         self, picker: OptionList, query: str = ""
     ) -> None:
-        """Highlight the option named exactly by ``query``, else the current
-        provider's, else the first selectable.
+        """Highlight the row the typed text most likely means.
+
+        In order: a display name or id typed exactly; the held provider when
+        its name or id starts with the text; the first row that starts with
+        it; the held provider; the first selectable row.
 
         task-16480: factored out of ``_refresh_provider_picker`` so the
         COMPOSE-time picker can carry the right highlight too -- the
@@ -15459,9 +15462,11 @@ class SettingsScreen(BaseAppScreen):
 
         TASK-33007.9: a display name or id typed exactly wins, so "OpenAI"
         then Enter chooses OpenAI, not "Azure OpenAI" listed above it. A
-        legacy alias row is highlighted first only by its display name:
-        "mistral" is its id, but typing it means Mistral AI, not the alias
-        listed last, even while the alias is the held provider.
+        legacy alias row's id typed in full is neither an exact match nor
+        the held provider: the row is highlighted only as a row that starts
+        with the text, after any listed before it that also does ("mistral"
+        means Mistral AI, not the alias listed last, even while the alias
+        is the held provider). Its display name still matches exactly.
 
         Args:
             picker: The provider list, already filled.
