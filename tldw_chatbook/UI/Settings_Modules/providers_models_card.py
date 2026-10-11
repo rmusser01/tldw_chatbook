@@ -595,8 +595,8 @@ def read_openai_reconnect_once(screen: SettingsScreen, provider: str) -> None:
     """Start the pending read when the card holds OpenAI and has no answer.
 
     Hidden until the read says otherwise. A read that could not tell leaves
-    no answer, so the next compose asks again; other reads come from a
-    switch to OpenAI, a saved OpenAI connection or a recorded review.
+    no answer, so the next compose or paint asks again; other reads come
+    from a switch to OpenAI, a saved OpenAI connection or a recorded review.
 
     Args:
         screen: The Settings screen that owns the card.
@@ -615,7 +615,7 @@ def refresh_openai_reconnect_pending(screen: SettingsScreen) -> None:
 
     Capture fix 3: read the first time the card holds OpenAI, on a switch
     to OpenAI and after its connection is saved, and cached on the screen,
-    so no paint touches storage.
+    so a paint reads the cache and starts a read only while it has no answer.
 
     Args:
         screen: The Settings screen that owns the card.
@@ -627,9 +627,11 @@ def refresh_openai_reconnect_pending(screen: SettingsScreen) -> None:
         screen.app.call_from_thread(show, openai_reconnect_pending())
 
     def show(pending: bool | None) -> None:
-        # None (the read could not tell) is kept as "no answer", never False.
+        # None (the read could not tell) is kept as "no answer", never False,
+        # and is not synced: the sync starts a read when there is no answer,
+        # so it would ask again at once, without end. The next paint asks.
         screen._openai_reconnect_pending = pending
-        if screen.is_mounted:
+        if screen.is_mounted and pending is not None:
             sync_openai_reconnect_row(screen, screen._provider_widget_value())
 
     screen.run_worker(

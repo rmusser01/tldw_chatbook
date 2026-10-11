@@ -104,3 +104,44 @@ async def test_saving_a_changed_openai_connection_reads_the_review_state_again(
 
         assert not screen._settings_drafts
         assert row.display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_read_that_cannot_tell_is_asked_again_by_a_paint_not_by_itself(
+    request, monkeypatch
+):
+    """On a mounted card the answer None is not kept, and showing it must not
+    ask again by itself: the row's sync starts the read when there is no
+    answer, so an answer of None that re-ran the sync read storage without
+    end while the history stayed unreadable."""
+    reads: list[int] = []
+    monkeypatch.setattr(
+        recovery_review, "openai_reconnect_pending", lambda: reads.append(1)
+    )
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": {"api_key": _FAKE_KEY}}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        await _settle(host, pilot)
+        row = screen.query_one("#settings-openai-reconnect-row")
+        asked = len(reads)
+        assert asked >= 1
+
+        for _ in range(6):  # nothing paints: nothing asks
+            await _settle(host, pilot)
+        assert len(reads) == asked
+        assert screen._openai_reconnect_pending is None
+        assert not row.display
+
+        # The next paint asks again, and the row shows once the read can tell.
+        monkeypatch.setattr(recovery_review, "openai_reconnect_pending", lambda: True)
+        screen._update_provider_dynamic_widgets()
+        await _settle(host, pilot)
+        await _settle(host, pilot)
+        assert row.display
