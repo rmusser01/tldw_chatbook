@@ -43,19 +43,43 @@ def _capabilities_from_resolver(
     return None
 
 
+_IMAGE_MODALITIES = frozenset({"image", "images", "vision", "visual"})
+
+
+def _lists_image(modalities: object) -> bool:
+    """Return whether a listing's modality list names images."""
+    if isinstance(modalities, str) or not isinstance(modalities, Sequence):
+        return False
+    return bool(
+        {str(modality).strip().lower() for modality in modalities} & _IMAGE_MODALITIES
+    )
+
+
 def _metadata_has_positive_capability(metadata: Mapping[str, Any]) -> bool:
-    """Return whether safe discovery metadata suggests positive capabilities."""
+    """Return whether safe discovery metadata suggests positive capabilities.
+
+    Listings spell the image-input hint several ways (TASK-34402): a flat
+    ``modalities`` or ``input_modalities`` list, Vercel's
+    ``modalities: {"input": [...], "output": [...]}`` mapping, and
+    OpenRouter's ``architecture.input_modalities``. Of a mapping only the
+    input side counts: a model that outputs images but takes text is not
+    vision-capable.
+    """
     if metadata.get("vision") is True:
         return True
     modalities = metadata.get("modalities")
-    if isinstance(modalities, Sequence) and not isinstance(modalities, str):
-        normalized = {str(modality).strip().lower() for modality in modalities}
-        return bool(normalized & {"image", "images", "vision", "visual"})
-    input_modalities = metadata.get("input_modalities")
-    if isinstance(input_modalities, Sequence) and not isinstance(input_modalities, str):
-        normalized = {str(modality).strip().lower() for modality in input_modalities}
-        return bool(normalized & {"image", "images", "vision", "visual"})
-    return False
+    if isinstance(modalities, Mapping):
+        modalities = modalities.get("input")
+    architecture = metadata.get("architecture")
+    nested = (
+        architecture.get("input_modalities")
+        if isinstance(architecture, Mapping)
+        else None
+    )
+    return any(
+        _lists_image(hint)
+        for hint in (modalities, metadata.get("input_modalities"), nested)
+    )
 
 
 def resolve_discovered_model_capability_status(

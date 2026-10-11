@@ -303,6 +303,76 @@ def test_positive_discovered_capability_metadata_is_inferred():
     )
 
 
+def _status(metadata: dict) -> str:
+    return resolve_discovered_model_capability_status(
+        "Custom", "vendor/new-model-34402", metadata
+    )
+
+
+def test_modalities_given_as_a_mapping_is_read_from_its_input_side():
+    """TASK-34402: Vercel lists ``modalities`` as ``{"input": [...], "output": [...]}``."""
+    assert (
+        _status({"modalities": {"input": ["text", "image"], "output": ["text"]}})
+        == "inferred"
+    )
+    # A model that only OUTPUTS images takes no image input: not vision.
+    assert (
+        _status({"modalities": {"input": ["text"], "output": ["image"]}}) == "unknown"
+    )
+    assert _status({"modalities": {"output": ["image"]}}) == "unknown"
+    assert _status({"modalities": {"input": "image"}}) == "unknown"
+
+
+def test_openrouter_architecture_input_modalities_is_read():
+    """TASK-34402: OpenRouter nests the hint under ``architecture``."""
+    architecture = {"modality": "text+image->text", "output_modalities": ["text"]}
+    assert (
+        _status(
+            {"architecture": {**architecture, "input_modalities": ["text", "image"]}}
+        )
+        == "inferred"
+    )
+    assert (
+        _status({"architecture": {**architecture, "input_modalities": ["text"]}})
+        == "unknown"
+    )
+    assert _status({"architecture": "transformer"}) == "unknown"
+
+
+def test_flat_list_hints_still_infer_vision():
+    assert _status({"modalities": ["text", "Image "]}) == "inferred"
+    assert _status({"input_modalities": ["text", "vision"]}) == "inferred"
+    assert _status({"modalities": ["text"]}) == "unknown"
+    assert _status({"input_modalities": "image"}) == "unknown"
+    assert _status({}) == "unknown"
+
+
+def test_a_listed_model_with_a_modalities_mapping_is_inferred_through_real_discovery():
+    """The hint must survive the listing normaliser's bounded, frozen metadata."""
+    from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+        normalize_models_response,
+    )
+
+    listed = {
+        "id": "vendor/new-model-34402",
+        "modalities": {"input": ["text", "image", "file"], "output": ["text"]},
+    }
+    (discovered,) = normalize_models_response(
+        {"data": [listed]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-10-11T00:00:00Z",
+    )
+
+    assert (
+        resolve_discovered_model_capability_status(
+            "Custom", discovered.model_id, discovered.metadata_raw_safe
+        )
+        == "inferred"
+    )
+
+
 def test_capability_resolver_can_mark_model_known():
     status = resolve_discovered_model_capability_status(
         "OpenAI",
