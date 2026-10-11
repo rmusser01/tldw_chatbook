@@ -1410,7 +1410,9 @@ async def test_model_source_label_and_value_paint_on_one_row(
         label = mode.parent.query_one(".gguf-source-label")
         mode.scroll_visible(animate=False)
         await pilot.pause()
-        value = next(str(text) for text, option in mode._options if option == mode.value)
+        value = next(
+            str(text) for text, option in mode._options if option == mode.value
+        )
         strips = app.screen._compositor.render_strips()
 
         def painted_rows(widget: Any, text: str) -> list[int]:
