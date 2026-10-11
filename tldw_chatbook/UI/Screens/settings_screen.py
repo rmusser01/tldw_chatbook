@@ -16374,6 +16374,20 @@ class SettingsScreen(BaseAppScreen):
                 else None
             ),
         )
+        # The credential source Save would write, where the edited fields
+        # decide it (_provider_current_credential_source's first rules), so
+        # the verdict reads the credential Save keeps: not a stored key it
+        # deletes, not a variable it drops, and a typed key always.
+        saved_source = None
+        if "api_key" in dirty:
+            saved_source = "stored" if api_key else "environment" if env_var else "none"
+        elif "credential_env_var" in dirty and env_var:
+            saved_source = "environment"
+        if saved_source is not None:
+            section = staged_config["api_settings"][provider_save_key]
+            section["credential_source"] = saved_source
+            if saved_source != "stored":
+                section.pop("api_key", None)
         if draft_api_mode is not None and provider_key == "qwencloud":
             staged_api_settings = staged_config.setdefault("api_settings", {})
             canonical_settings = staged_api_settings.setdefault("qwencloud", {})
