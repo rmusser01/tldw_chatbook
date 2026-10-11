@@ -1052,11 +1052,14 @@ def next_new_chat_lines(screen: SettingsScreen) -> tuple[str, str]:
     from ...Chat.console_session_settings import blank_console_session_settings
 
     settings = blank_console_session_settings(screen._app_config_mapping())
-    max_tokens = "not set" if settings.max_tokens is None else str(settings.max_tokens)
-    streaming = "On" if settings.streaming else "Off"
+    # C6: spelled as the rows spell them ("T 1.0" beside "inherits 1.0").
+    temperature, max_tokens, streaming = (
+        NOT_SET if value is None else format_value(value)
+        for value in (settings.temperature, settings.max_tokens, settings.streaming)
+    )
     return (
         provider_model_pair(screen, settings.provider, settings.model),
-        f"T {settings.temperature:g} · max {max_tokens} · stream {streaming}",
+        f"T {temperature} · max {max_tokens} · stream {streaming}",
     )
 
 
