@@ -59,6 +59,18 @@ def _seed_failed_cycle_db(tmp_path) -> DreamsDB:
     return db
 
 
+def _seed_tracked_item_db(tmp_path) -> DreamsDB:
+    """One story plus one active tracked question whose latest run changed."""
+    db = _seed_story_db(tmp_path)
+    item_id = db.create_tracked_item(
+        mechanism="question", intent="deal",
+        query_template="cheap flights japan", event_date="2026-10-01",
+        cadence_seconds=3600)
+    db.insert_track_run(item_id, status="changed", digest_hash="digest")
+    db.touch_tracked_checked(item_id, "2026-09-22T00:00:00+00:00")
+    return db
+
+
 async def _settle_artifacts_refreshes(screen, pilot, *, timeout: float = 10.0) -> None:
     """Wait out the Artifacts screen's mount/resume refresh workers.
 
@@ -119,6 +131,14 @@ def _dream_row_widgets(screen):
         widget
         for widget in screen.query(Static)
         if (widget.id or "").startswith("artifacts-dream-row-")
+    ]
+
+
+def _tracked_row_widgets(screen):
+    return [
+        widget
+        for widget in screen.query(Static)
+        if (widget.id or "").startswith("artifacts-dream-track-row-")
     ]
 
 
@@ -250,3 +270,55 @@ async def test_unmount_invalidates_late_dreams_apply(tmp_path, monkeypatch):
         assert screen._dreams_generation != stale_generation
         screen._apply_dreams(stale_generation, [])
         assert screen._dreams, "stale apply must not clear the landed rows"
+
+
+# --- Tracked group (Phase 2 Task 5) ---------------------------------------------
+#
+# The Tracked group composes BEFORE the Dreams rows inside the list pane, so
+# a tracked update outranks the story stream it came from.
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_tracked_rows_render_before_dream_rows(tmp_path, monkeypatch):
+    _enable_dreams(monkeypatch)
+    app = _build_test_app(configured_default="artifacts")
+    app.dreams_db = _seed_tracked_item_db(tmp_path)
+    host = DestinationHarness(app, "artifacts")
+    async with host.run_test(size=(160, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+        assert isinstance(screen, ArtifactsScreen)
+
+        await _wait_for_dreams(screen, pilot, "#artifacts-dream-track-row-1")
+        tracked_rows = _tracked_row_widgets(screen)
+        dream_rows = _dream_row_widgets(screen)
+        assert tracked_rows and dream_rows
+        widgets = list(screen.query(Static))
+        assert widgets.index(tracked_rows[0]) < widgets.index(dream_rows[0]), (
+            "the Tracked group composes BEFORE the Dreams rows group"
+        )
+        text = str(tracked_rows[0].renderable)
+        assert "Tracking: cheap flights japan" in text
+        assert "changed" in text, "the surfaced run status rides the row"
+        assert tracked_rows[0].can_focus, "tracked rows are focusable Statics"
+        assert not screen.query("#artifacts-list-dreams-tracked"), (
+            "tracked rows on screen mean the empty state must be gone"
+        )
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_tracked_empty_state_renders_none(tmp_path, monkeypatch):
+    _enable_dreams(monkeypatch)
+    app = _build_test_app(configured_default="artifacts")
+    app.dreams_db = _seed_story_db(tmp_path)  # stories, nothing tracked
+    host = DestinationHarness(app, "artifacts")
+    async with host.run_test(size=(160, 50)) as pilot:
+        await pilot.pause(0.1)
+        screen = host.screen_stack[-1]
+
+        await _wait_for_dreams(screen, pilot, "#artifacts-dream-row-1")
+        empty = screen.query_one("#artifacts-list-dreams-tracked", Static)
+        assert str(empty.renderable) == "> Tracked: none"
+        assert not _tracked_row_widgets(screen)

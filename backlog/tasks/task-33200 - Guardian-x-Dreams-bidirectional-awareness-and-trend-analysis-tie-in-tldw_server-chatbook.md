@@ -1,9 +1,5 @@
 ---
-<<<<<<<< HEAD:backlog/tasks/task-33200 - Guardian-x-Dreams-bidirectional-awareness-and-trend-analysis-tie-in-tldw_server-chatbook.md
 id: TASK-33200
-========
-id: TASK-33200
->>>>>>>> 167d500b0e (feat: land the llama.cpp management milestone (tasks-32721..32745)):backlog/tasks/task-33200 - Guardian-x-Dreams-bidirectional-awareness-and-trend-analysis-tie-in-tldw_server-chatbook.md
 title: >-
   Guardian x Dreams - bidirectional awareness and trend-analysis tie-in
   (tldw_server <-> chatbook)
