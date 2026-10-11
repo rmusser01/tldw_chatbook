@@ -40,6 +40,7 @@ from Tests.UI.library_quit_guard_support import (
 from Tests.UI.test_library_shell import _seed_conversations, _wait_for_selector
 from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     DELETE_CONFIRM_COPY_SYNCED,
+    NOTE_LOCATION_SYNCED_PREFIX,
 )
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
@@ -221,6 +222,17 @@ async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(
                 )
                 _note_row(screen, "quotes").press()
                 await _armed_editor(screen, pilot, "note-1")
+                # TASK-34789: the prompt below words itself from the note's
+                # LIVE location, which its own worker resolves after the
+                # editor arms. Until it lands the editor (and the prompt)
+                # treat the note as unsynced, so wait for the row to say so.
+                await _until(
+                    pilot,
+                    lambda: _text_or_empty(screen, "#library-note-location").startswith(
+                        NOTE_LOCATION_SYNCED_PREFIX
+                    ),
+                    "the editor to name the note's synced file",
+                )
 
                 # Phase 1: Info ▸ Delete ▸ confirm, through the real buttons.
                 screen.query_one("#library-note-context", Button).press()
