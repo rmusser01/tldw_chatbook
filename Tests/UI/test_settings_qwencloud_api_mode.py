@@ -507,6 +507,13 @@ async def test_provider_switch_clear_is_suppressed_but_user_key_clear_is_staged(
         await pilot.press("backspace")
         await pilot.pause()
 
+        # TASK-33007.2, rewritten on purpose (owner ruling 2026-10-04): an
+        # emptied field keeps the saved key; the user's clear is Clear's key.
+        draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
+        assert "api_key" not in draft.values
+        await pilot.press("ctrl+l")
+        await pilot.pause()
+
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
         assert draft.values["api_key"] == ""
 
