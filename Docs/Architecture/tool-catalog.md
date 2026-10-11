@@ -9,6 +9,7 @@ This document describes how tools become visible to agents and get dispatched: t
 | `Agents/tool_catalog.py` | `ToolProvider` Protocol, `ToolCatalogRegistry`, `BuiltinToolProvider`, `SkillToolProvider`, `ToolExecutionPolicy`, all runtime-tool schemas |
 | `Agents/local_tool_provider.py` | `LocalToolProvider`, `LocalToolSpec`, admitted workspace roots model |
 | `Agents/mcp_tool_provider.py` | `MCPToolProvider`, `MCPPendingCall` |
+| `Chat/console_run_start_tools.py` | Console run-start MCP composition and conditional cross-run reuse |
 | `Agents/library_tool_provider.py`, `library_rag_tool_provider.py`, `profile_tool_provider.py`, `canvas_tool_provider.py`, `raw_shell_tool_provider.py`, `virtual_cli_provider.py` | The remaining provider families |
 | `Tools/tool_executor.py` | `Tool` ABC plus the two always-on builtins: `DateTimeTool` (`get_current_datetime`) and `CalculatorTool` (`calculator`, AST-whitelisted eval) |
 | `Tools/local_tool_impls.py`, `git_tool_impls.py`, `patch_tool_impls.py`, `web_tool_impls.py`, `virtual_cli_impls.py` | Synchronous tool implementations |
@@ -67,7 +68,9 @@ The loop owns several tools itself (ids `runtime:<name>`, schemas in `tool_catal
 
 ## MCP tools
 
-`MCPToolProvider.compose_catalog()` builds the agent-visible MCP tools once per registration: kill switch → empty catalog; otherwise local external records plus the builtin inventory, one batched `effective_tool_states` resolution, `deny` states dropped, persona maximums enforced, names deduplicated. Invocation serializes on a per-provider lock (the stdio session is not proven multiplex-safe), peeks per-run approval stamps, applies the persona floor, and routes execution onto the main loop bounded by the configured tool timeout. The full permission decision lifecycle is in [mcp-hub.md](./mcp-hub.md).
+`MCPToolProvider.compose_catalog()` builds the agent-visible MCP tools: kill switch → empty catalog; otherwise local external records plus the builtin inventory, one batched `effective_tool_states` resolution, `deny` states dropped, persona maximums enforced, names deduplicated. Invocation serializes on a per-provider lock (the stdio session is not proven multiplex-safe), peeks per-run approval stamps, applies the persona floor, and routes execution onto the main loop bounded by the configured tool timeout. The full permission decision lifecycle is in [mcp-hub.md](./mcp-hub.md).
+
+The Console run-start helper may install a kept MCP composition into a fresh provider when the service, catalog fingerprint identity, connection states and provider composition key still match. Only a plain `MCPToolProvider` is eligible for this reuse. Incomplete inventory composition is not kept; a valid empty inventory can be reused. `install_composition()` clears approval stamps. This cache belongs to the run-start helper; the full registry and persona call caps remain run scoped.
 
 ## Config keys
 
