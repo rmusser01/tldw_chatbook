@@ -70,6 +70,24 @@ def _note_row(screen, title: str) -> Button:
     )
 
 
+def _manage_rows_mounted(screen) -> bool:
+    """Whether Manage sync folders shows its rows on a pane that is not recomposing.
+
+    TASK-34789: every Notes worker that lands re-syncs the canvas (Undo's own
+    tree reload and final sync, the trash reload, a sync publication) and the
+    work pane answers each one by recomposing, so for the frames between the
+    removal and the remount the rows are not in the DOM. The UI Fast Lane
+    read the row in exactly that gap -- a fixed 0.1 s after first seeing it,
+    with Undo's final sync landing in between -- and raised ``NoMatches``.
+    """
+    panes = screen.query("#library-note-work-pane")
+    return (
+        bool(panes)
+        and panes.first()._children_ready
+        and bool(screen.query(ROOT_STATUS))
+    )
+
+
 async def _open_manage_sync_folders(screen, pilot) -> str:
     # Fix round 1 (review Important 1): Undo's own recompose can leave the
     # toolbar briefly unmounted; wait for the button and press the node the
@@ -80,6 +98,13 @@ async def _open_manage_sync_folders(screen, pilot) -> str:
     button.press()
     await _wait_for_selector(screen, pilot, ROOT_STATUS)
     await pilot.pause(0.1)
+    # Read the row from a settled pane, not from whatever frame the pause
+    # ended on; the caller's next press (‹ Back) is then on a mounted control.
+    await _until(
+        pilot,
+        lambda: _manage_rows_mounted(screen),
+        "Manage sync folders to finish recomposing",
+    )
     return _text(screen, ROOT_STATUS)
 
 
