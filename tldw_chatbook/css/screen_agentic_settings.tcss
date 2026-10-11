@@ -500,7 +500,11 @@ $ds-conversation-menu-width: 30;
    the Model picker's open rows push it past the fold. Without a reserved
    gutter, focusing or leaving the picker added or removed the scrollbar,
    changed the content width and re-laid out the whole card: the blur
-   restore ran ~150 ms late, measured. The gutter keeps the width fixed. */
+   restore ran ~150 ms late, measured. The gutter keeps the width fixed.
+   Pane-wide on purpose: any category that fits within a row of the pane
+   flips the same way when a control grows. It costs a category that fits
+   one column; measured on all 31 at 211x44 and 235x52 (2026-10-11), none
+   gains a row or a cut line from it. */
 #settings-detail-pane-body {
     scrollbar-gutter: stable;
 }
@@ -1011,9 +1015,11 @@ Button.settings-category-group-toggle:focus {
    one row, select rows three. On Providers & Models and Console Behavior a
    Select row is one row too: the compact Select keeps the compact input's
    left-edge convention (thin at rest, thick on focus) instead of a full
-   border, which spent a row above and below on chrome. The row's label is
-   named by type: the label class is pinned to the boot bundle, and these
-   rules belong in the lazy Settings sheet (ADR-097). */
+   border, which spent a row above and below on chrome. `> Static` is every
+   Static in the row -- its label, and its Source word and help where it has
+   them -- and each is one row. The label is not named by its class: that
+   class is pinned to the boot bundle, and these rules belong in the lazy
+   Settings sheet (ADR-097). */
 #settings-providers-models-card .settings-select-row,
 #settings-providers-models-card .settings-select-row > Static,
 #settings-console-behavior-card .settings-select-row,
