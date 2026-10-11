@@ -6486,7 +6486,7 @@ class ConsoleWorkspaceController:
         *,
         target_scope_type: str | None = None,
         target_workspace_id: str | None = None,
-        reuse_existing: bool = False,
+        reuse_existing: bool = True,
         preserve_persisted_scope: bool = False,
         resume_if: Callable[[], bool] | None = None,
     ) -> bool | None:
@@ -6496,8 +6496,12 @@ class ConsoleWorkspaceController:
             conversation_id: Exact persisted conversation identity.
             target_scope_type: Optional fallback scope for cold hydration.
             target_workspace_id: Optional fallback workspace for cold hydration.
-            reuse_existing: Prefer an open runtime after validating the saved
-                record. History opts in; explicit fresh-session callers do not.
+            reuse_existing: Activate the session already open on this
+                conversation, after validating the saved record, instead of
+                opening it a second time. The default since TASK-33667: a
+                dispatch recovery's owner rows keep their ids in the first
+                session only (TASK-33662), so a second one's card could never
+                settle and its pending recovery blocked sends there.
             preserve_persisted_scope: Restore the saved workspace or global scope.
             resume_if: Optional ownership predicate carried through activation.
 
