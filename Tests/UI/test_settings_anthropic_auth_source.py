@@ -265,7 +265,7 @@ async def test_switching_a_saved_subscription_back_to_api_key_shows_the_stored_k
         # row: its Source word and help line say where the key comes from.
         source = str(screen.query_one("#settings-provider-key-status", Static).content)
         help_line = str(screen.query_one("#settings-provider-api-key-help", Static).content)
-        assert "Claude subscription" not in help_line
+        assert "Claude Code" not in help_line
         assert source == "saved in config"
 
 
@@ -283,4 +283,5 @@ async def test_an_unsaved_subscription_choice_shows_in_the_credential_status():
         source = str(screen.query_one("#settings-provider-key-status", Static).content)
         help_line = str(screen.query_one("#settings-provider-api-key-help", Static).content)
         assert source == "subscription"
-        assert "Claude subscription" in help_line
+        # R1 #11: the Source word names the subscription; the help says how.
+        assert "Claude Code" in help_line
