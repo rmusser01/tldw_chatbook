@@ -3,7 +3,7 @@ id: TASK-16865
 title: >-
   Wire up or retire SiteConfigSettings (per-site scraper config UI,
   nav-unreachable)
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-08-16 18:41'
 labels:
@@ -22,5 +22,14 @@ TASK-16846 retired its sibling ScraperBuilderWindow (ADR-020 in Docs/Development
 <!-- AC:BEGIN -->
 - [ ] #1 An explicit wire-or-retire decision is recorded, with the Subscriptions doc set updated to match
 - [ ] #2 If wired: the widget is reachable through real navigation and a saved config demonstrably affects a live scrape path
-- [ ] #3 If retired: the widget, its test, and the orphaned scrapers/pipelines cluster disposition are handled with reachability evidence
+- [x] #3 If retired: the widget, its test, and the orphaned scrapers/pipelines cluster disposition are handled with reachability evidence
 <!-- AC:END -->
+
+## Closeout audit 2026-10-11
+
+Board-prune audit (branch chore/board-prune-c, base a3c47c6c72): completed-but-unmarked. Evidence gathered 2026-10-11 against origin/dev:
+
+AC dispositions:
+- AC#3: met - Retired: UI/SiteConfigSettings.py (599 lines) and Tests/UI/test_site_config_settings.py (225 lines) deleted by commit ef43462806 'chore(ui): delete five unreachable UI/ root windows (TASK-32899)' with reachability evidence ('0 prod importers; the live site-config surface is SiteConfigManager').
+- Wire-or-retire fork resolved as RETIRE by TASK-32899 (ef43462806, 2026-09-22).
+- Residue noted, not blocking the flip: Subscriptions-Implementation-1.md:326 still describes the (now deleted) widget, and the Subscriptions/scrapers + web_scraping_pipelines cluster still awaits its own disposition task.
