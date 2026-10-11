@@ -15803,6 +15803,12 @@ ImportProgressStep .completion-message.outcome-failed {
     border: round $error;
 }
 
+
+ImportProgressStep .completion-message.outcome-unknown {
+    background: $warning 20%;
+    border: round $warning;
+}
+
 ImportProgressStep .completion-stats {
     margin-top: $ds-space-2;
     padding: $ds-space-1 $ds-space-2;
