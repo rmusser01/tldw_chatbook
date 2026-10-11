@@ -22,7 +22,7 @@ Supporting modules: `console_chat_fork.py` (fork/branch), `console_prompt_queue_
 
 Top-to-bottom inside `#console-shell`: a `DestinationHeader` with speech controls; hidden legacy compat statics kept for contract tests; a dispatch-recovery callout; the dense `ConsoleControlBar`; then the main grid — left `ConsoleRailHandle` → `ConsoleLeftRail` (3fr) → center column (13fr, hosting either the transcript region or the embedded terminal workspace) → `ConsoleInspectorRail` (4fr) → right handle. Below the grid: status chips (position from `[console] status_chips_position`), staged evidence strip, dispatch-recovery region, prompt-queue region, the `ConsoleComposerBar`, command popup, and setup modal.
 
-Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session surface's tab strip. Sessions bind to workspaces via `session.workspace_id` (default the global workspace). The screen refreshes through a `set_interval(0.2 s)` poll (`_sync_native_console_chat_ui`) — UI updates are **poll-based, not event-based** — and the timer deliberately does not stop while any session still has an in-flight run.
+Multiple chats are store-level `ConsoleChatSession`s, one per tab on the session surface's tab strip. Sessions bind to workspaces via `session.workspace_id` (default the global workspace). Streamed transcript and background-run activity are projected by `_sync_native_console_chat_ui`, including its `set_interval(0.2 s)` poll; the timer deliberately does not stop while any session still has an in-flight run. Session switches call `UI/Console_Modules/session.py::_bind_composer_to_active_session()` before the first await: they save the outgoing draft, load the selected chat's draft, and update the active-tab highlight and title immediately. The shared tab/switcher activation path also focuses the composer before awaiting; background switches preserve keyboard focus.
 
 ## Send lifecycle (dataflow)
 
@@ -91,7 +91,7 @@ ADR-052 (memory and compaction policy), ADR-067 (indefinite approval waits), ADR
 
 ## Verified gotchas
 
-1. UI updates are poll-based (0.2 s `set_interval`), not message-driven — there is no streaming event class to subscribe to.
+1. Streaming deltas reach the transcript through `_sync_native_console_chat_ui` (the 0.2 s timer plus explicit sync calls); there is no streaming event class to subscribe to. Session-switch composer binding is synchronous.
 2. `asyncio.to_thread` survives task cancellation, so Stop is cooperative (cancel events), not a thread kill.
 3. Session-only TOOL-marker fields (`tool_output_full`, `tool_diff`, `raw_cli_presentation`, …) are never persisted or sent to providers.
 4. `request_mcp_approvals` is owner-agnostic — builtin tools ride the same approval card path as MCP tools.
