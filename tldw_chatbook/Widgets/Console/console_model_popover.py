@@ -1640,6 +1640,9 @@ class ConsoleModelPopover(
             find = self.query_one("#console-popover-find", Input)
             find.value = f"{self._display(row.provider)} "
             find.cursor_position = len(find.value)
+            # Typed after, as a query the list opens with: reached from the
+            # values or by a click, this focus would select the name.
+            find.select_on_focus = False
             find.focus()
             return
         if self._pick_only:

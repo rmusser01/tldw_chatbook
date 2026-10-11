@@ -1400,6 +1400,80 @@ async def test_a_query_the_list_opened_with_is_typed_after_not_over() -> None:
     assert (settings.provider, settings.model) == ("openai", "gpt-new")
 
 
+async def test_a_typed_id_another_provider_lists_under_the_name_is_one_down_away() -> (
+    None
+):
+    """TASK-33008.2: what console.md says of the id typed after the returned
+    provider's name. Once Find changes the highlight is Find's best match, and
+    a listed id outranks the TYPED MODEL ID row: an aggregator's
+    "openai/gpt-y" holds both words of "OpenAI gpt-y", so it is highlighted
+    first. The typed row is the list's last, so Down reaches it and Enter
+    there applies the returned provider's pair.
+
+    It pins the guide's sentence, not a fix: whether the reopened list should
+    rank only the returned provider's rows here is with the controller."""
+    recorder = Recorder(ready=frozenset({"openrouter", "openai"}))
+    app = SwitcherHarness()
+
+    def highlight(switcher) -> tuple[str, str, str | None]:
+        row = switcher.highlighted_row()
+        return (row.kind, row.provider, row.model)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                providers_models={"OpenAI": [], "OpenRouter": ["openai/gpt-y"]},
+                query="OpenAI ",
+                reopened_provider="openai",
+            ),
+        )
+        assert switcher.highlighted_row() is None
+        await pilot.press(*"gpt-y")
+        await pilot.pause()
+        assert highlight(switcher) == ("pair", *_AGGREGATOR_ROW)
+        assert switcher._rows[-1].kind == "typed"
+        await pilot.press("down")
+        await pilot.pause()
+        assert highlight(switcher) == ("typed", "openai", "gpt-y")
+        await pilot.press("enter")
+        await pilot.pause()
+
+    settings = recorder.submissions[0].draft.settings
+    assert (settings.provider, settings.model) == ("openai", "gpt-y")
+
+
+async def test_a_more_rows_provider_name_is_typed_after_from_the_values_too() -> None:
+    """TASK-33008.2: Enter on an "… N more" row puts the provider's name in
+    Find and focuses it. With focus in Temperature (Down moves the highlight
+    from the values) that focus selected the whole name, because a list
+    opened with an empty Find selects on focus: the first key replaced the
+    name and the search was no longer that provider's."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(app, pilot, build_switcher(recorder))
+        find = switcher.query_one("#console-popover-find", Input)
+        await pilot.press("tab")
+        await pilot.pause()
+        assert app.focused is switcher.query_one("#console-popover-temperature", Input)
+        for _ in switcher._rows:
+            if switcher.highlighted_row().kind == "more":
+                break
+            await pilot.press("down")
+            await pilot.pause()
+        assert "more Anthropic models" in switcher.highlighted_row().text
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.focused is find and find.value == "Anthropic "
+        await pilot.press(*"son")
+        await pilot.pause()
+        assert find.value == "Anthropic son"
+        assert switcher.highlighted_row().model == "claude-sonnet-4-5"
+
+
 async def test_custom_endpoints_show_display_names_and_builtin_slots_stay() -> None:
     """AC#13 (ADR-146): registry entries by display name; custom/custom_2 listable."""
     recorder = Recorder()

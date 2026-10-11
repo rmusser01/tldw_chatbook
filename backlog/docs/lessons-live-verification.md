@@ -3681,6 +3681,11 @@ with an empty Find), so it was found on a live look at the guide's new
 sentence. A
 field that opens with text the user is told to type after needs one test
 that presses the keys (`pilot.press(*"gpt-new")`) and asserts the whole value.
+That fix changed the constructor only. The list's own refocus was left: Enter
+on an "… N more" row puts "<provider> " in Find and focuses it, and reached
+from Temperature that focus still selected the name (the next review read it
+from the code). Grep every `.focus()` on the field, and press the keys from a
+state where the field does not already hold focus.
 
 
 ## A CSS route tour can leave a native compiler alive (TASK-32818, 2026-09-18)

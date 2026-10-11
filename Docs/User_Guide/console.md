@@ -759,7 +759,7 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   pair and when each was last used.
 - **READY PROVIDERS**, the first three models of each provider with no known
   blocker, then an "… N more" row (Enter on it puts the provider's name in
-  Find).
+  Find, and what you type next is added after it).
 - **NEEDS SETUP**, providers with a blocker such as a missing key. **Enter**
   on one never applies it: it closes the list and opens **Settings ▸
   Providers & Models** at that provider, with its key or endpoint field in
@@ -784,10 +784,16 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   none: READY PROVIDERS then opens with that provider's own line, "<name> ·
   no models reported · type its name and an id". Its name is already in
   **Find**, so type the model id after it (as in "Ollama qwen3:32b"): the
-  pair appears under **TYPED MODEL ID**, and **Enter** on that row applies
-  it. Until you change **Find** or move the highlight yourself, the
-  highlight never lands on another provider's match for the name, so
-  **Enter** cannot apply one by accident.
+  pair appears under **TYPED MODEL ID**, the last row of the list, and
+  **Enter** on that row applies it. A listed row that holds every word in
+  **Find**, in its model id or its provider's name, is highlighted ahead of
+  that row, and it can be another provider's: an aggregator's
+  "openai/gpt-y" holds both words of "OpenAI gpt-y". So read the
+  highlighted row's provider before **Enter**, and press **Down** until the
+  TYPED MODEL ID row is highlighted. Until you
+  change **Find** or move the highlight yourself, the highlight never lands
+  on another provider's match for the name, so **Enter** cannot apply one
+  by accident; once you type, it is Find's best match again.
   Opened from the Get started card, the
   list comes back over the card while setup is unfinished, and **Esc**
   returns to the card. **Stay in Settings**, or walking back to the Console
@@ -829,7 +835,10 @@ Typing filters every provider's saved and cached models in memory and
 highlights the best match; it never starts a model listing or a network
 call. A model id that no list has appears under **TYPED MODEL ID**
 for this chat's provider; type a provider's name first ("Ollama qwen3:32b")
-to pair the id with that provider. A provider whose list is still loading,
+to pair the id with that provider. That row is the last in the list, and
+any listed row that holds every word you typed, in its model id or its
+provider's name, is highlighted ahead of it, so **Down** may be needed to
+reach it. A provider whose list is still loading,
 empty or unavailable says so in its own row. Legacy alias providers (such
 as "llama.cpp (legacy alias)") only appear when a chat uses them.
 
