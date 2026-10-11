@@ -11,7 +11,7 @@ Phase 9 is the last phase of the model-configuration redesign, added by owner de
 Scope: every rider that is not Done and is a subtask of TASK-33001 through TASK-33007 or of TASK-33641, plus TASK-33666 and TASK-33667. Phase 8's own tasks (TASK-33008.x) are in flight on the branch below this one and are out of scope.
 
 This plan triaged 59 riders against this branch's HEAD (8b4a1ad23e, stacked on Phase 8's in-progress branch, which is stacked on Phase 7):
-- 52 VALID (TASK-33003.13 joined them once the owner ruled), plus TASK-33641.7 filed from the wave 1 integration: grouped into the 16 plan tasks below.
+- 52 VALID (TASK-33003.13 joined them once the owner ruled), plus TASK-33641.7 (filed from the wave 1 integration) and TASK-33641.8 (filed from a wave 2 incident): grouped into the 16 plan tasks below.
 - 7 ALREADY FIXED and 0 OBSOLETE: listed under "Closed without code" with their evidence. They get no plan task; each is closed with that rationale in its own task file.
 - 0 NEEDS OWNER: TASK-33003.13 was ruled on 2026-10-09 and is in Task 15.
 
@@ -606,12 +606,13 @@ Depends on: —
 - tldw_chatbook/UI/Screens/chat_screen.py (this wave's Console slot; only if the cause lives there)
 - qa/task-33662-recovery-relaunch/README.md
 
-## Task 14: Every model-config test file runs its assertions in a PR lane (TASK-33001.11, TASK-33002.17, TASK-33641.5)
+## Task 14: Every model-config test file runs its assertions in a PR lane (TASK-33001.11, TASK-33002.17, TASK-33641.5, TASK-33641.8)
 
 Task files:
 - backlog/tasks/task-33001.11 - ProductionApp-provider-selection-tests-never-run-their-assertions-in-CI.md
 - backlog/tasks/task-33002.17 - Phase-2-Settings-tests-join-the-UI-PR-gate-census.md
 - backlog/tasks/task-33641.5 - A-PR-lane-runs-the-model-default-writer-tests-in-test_console_settings_defaults.md
+- backlog/tasks/task-33641.8 - A-pytest-run-from-the-repo-root-does-not-import-the-test-named-files-under-Docs.md
 Wave: 5
 Depends on: Task 4 (raw-scope change) and Task 7 (it edits Tests/UI/test_settings_state_line_unsaved_count.py), both in earlier waves.
 
@@ -624,6 +625,9 @@ Depends on: Task 4 (raw-scope change) and Task 7 (it edits Tests/UI/test_setting
   - test_newer_generation_cannot_reserve_between_precondition_and_replacement passed in that run; check whether it is flaky.
   No workflow names the file. The PR file lists live in .github/workflows/derived-artifacts.yml, which has a sandboxed invocation and an 'admission-sensitive suites' invocation. Adding the file to an existing lane is implementer scope: it is not a new lane, a merge train or a PAT. Re-run the file after Task 4's raw-scope change.
 
+- TASK-33641.8 (A pytest run from the repo root does not import the test-named files under Docs): filed by the controller on 2026-10-11 from Task 10's incident (ledger R13). pyproject.toml's pytest addopts has `--ignore=STests` and nothing that excludes Docs, so an empty argument or `pytest .` imports three test-named files under Docs/ outside every conftest: one calls a paid provider with the configured key, one rewrites a tracked test file. Add `--ignore=Docs` beside `--ignore=STests`; an explicit path under Docs/ must keep working.
+- R11 also gives this task Task 10's three unlisted gate files (Tests/UI/test_settings_image_gen_panel.py, test_llm_gguf_source_modes.py, test_library_skills_builtin_rows.py) and the question of which job runs Tests/Backup_Recovery/test_skills_recovery_controls.py.
+
 ### Acceptance criteria
 
 - [ ] TASK-33001.11 #1 Every test in Tests/ProductionApp/test_provider_selection_ownership.py runs its assertions in the Core Tests job's collection order and passes there, and one negative control makes a test fail on its own assertion rather than in setup
@@ -633,6 +637,10 @@ Depends on: Task 4 (raw-scope change) and Task 7 (it edits Tests/UI/test_setting
 - [ ] TASK-33641.5 #1 The two generation tests pass locally without bypassing the ADR-126 admission (no `bootstrap_profile` opt-out for writer tests).
 - [ ] TASK-33641.5 #2 A required pull-request lane collects `Tests/Chat/test_console_settings_defaults.py` and stays within its job time cap (measure the added time).
 - [ ] TASK-33641.5 #3 A deliberately broken quick-mask write (for example, writing the fallback Max tokens instead of deleting it) fails that lane.
+
+- [ ] TASK-33641.8 #1 A pytest run started at the repository root with an empty argument or '.' imports no file under Docs/, shown by a test or a recorded measurement on the real tree
+- [ ] TASK-33641.8 #2 An explicit path to a file under Docs/ still runs
+- [ ] TASK-33641.8 #3 The lesson in backlog/docs/lessons-testing-evidence.md names the guard
 
 ### References
 
@@ -645,6 +653,7 @@ Depends on: Task 4 (raw-scope change) and Task 7 (it edits Tests/UI/test_setting
 - .github/workflows/derived-artifacts.yml
 - Tests/Chat/test_console_settings_defaults.py
 - tldw_chatbook/Chat/console_settings_defaults.py (only if the red is a product defect)
+- pyproject.toml (pytest addopts only)
 
 ## Task 15: Chat settings offers only what the request sends and counts only the user's edits (TASK-33002.7, TASK-33003.13, TASK-33006.11, TASK-33006.12, TASK-33006.16)
 
