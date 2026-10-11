@@ -59,7 +59,7 @@ Auto-speak is fail-closed: unknown session, hands-free active, or a missing/diff
 ## Dictation (dataflow)
 
 1. The Console mic button starts a streaming dictation session (16 kHz mono PCM, bounded 60 s / 1.92 MiB).
-2. Provider resolution is **fail-closed**: the configured local provider must be installed (`[transcription] default_provider`, legacy `[STT_settings]` fallback); the `[dictation] model` override wins; non-faster-whisper providers get `model=None` so they never inherit a cross-provider model name (a real past 404 failure).
+2. Provider resolution (`Chat/console_voice_input.py::resolve()`) returns unavailable only when no local provider is installed. It uses the configured provider (`[transcription] default_provider`, legacy `[STT_settings]` fallback) when installed; otherwise it selects the first installed provider in `LOCAL_PROVIDER_MODULES` declaration order. Replacing a configured provider emits `VoiceProviderOverridden`, which the Console reports once per app run with a warning toast naming both providers. At startup, `app.py` also records a WARNING `speech_stack_available` diagnostic naming both providers: status `fallback` when VAD is available, or `degraded-fallback` when VAD is missing. The `[dictation] model` override wins; non-faster-whisper providers get `model=None` so they never inherit a cross-provider model name (a real past 404 failure).
 3. Partials stream into the composer (`set_voice_partial`); spoken commands with the `[dictation] command_prefix` (default "computer") can send, insert new-lines, or stop.
 4. Stop (button, command, or limit) → `stop_and_transcribe()` blocks for the final transcript; failure offers a faster-whisper retry.
 5. Insertion is caret-aware and trims only spaces/tabs (a full `.strip()` used to eat spoken `new-line` commands); for non-live sessions the draft is appended to the store and banked undo history is deliberately dropped.
@@ -82,7 +82,7 @@ Engine fork at entry: realtime (opt-in `[realtime] enabled`) or the pipeline FSM
 | Sink failure mid-stream (WAV) | Silent fallback to the already-written file (PCM responses surface the error instead) |
 | Provider reconfiguration during playback | Transition waits for the lease (bounded by one utterance's playback) |
 | Stale speech snapshot | Bounded rejection code; no content leaks into the rejection |
-| Dictation provider uninstalled | Resolution returns unavailable with reason/remedy; never falls back silently |
+| Configured dictation provider uninstalled | Uses the first installed local provider in declaration order, with the substitution toast and startup warning naming both providers; no installed local provider means unavailable with reason/remedy |
 | Profile store integrity failure | Coded repository errors; migrations back up first; capability gate fails closed |
 | httpx logging | Hard-filtered in network adapters to keep URLs/keys out of logs |
 
