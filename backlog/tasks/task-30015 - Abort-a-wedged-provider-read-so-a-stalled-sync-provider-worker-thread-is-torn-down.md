@@ -57,4 +57,23 @@ server's "cancel task, id_task = 111" at 12.51.30 (+330 s). Task 1045 shows the
 same. The User Guide (console.md, "The first reply from a large local model
 takes minutes") now says the server may keep working for up to 30 s. Closing
 the held response on `StreamStallError` (AC#2 here) would end that too.
+
+**Live evidence from TASK-33666 (2026-10-10): the same read decides how long a
+quit takes.** TASK-33666 made a Stop release the reply's run thread while the
+provider is silent. On this transport the provider's worker is still left in
+its read. With vLLM against a stub that accepts the POST and never answers,
+Ctrl+Q → Quit settled the reply as stopped, and the process then waited
+120.4 s until the exit watchdog ended it with status 1 ("Threads still alive:
+['asyncio_0(daemon)', …]"). `llama_cpp`, on the async transport, exited in
+about 2 s. A dump 30 s after Quit shows the main thread in
+`threading._shutdown` → `concurrent.futures.thread._python_exit` → `join`. The
+one thread it joins is the worker (`consume_provider` ← `worker`): with no
+response headers it is in `requests`' `getresponse` under
+`_chat_with_openai_compatible_local_server`; with headers followed by silence
+it is in `iter_lines` under that handler's `stream_generator`. No second thread
+was blocked in either run. The worker is a daemon thread (it inherits that from
+the model loop's thread) and is joined all the same, because it is a
+`ThreadPoolExecutor` worker. So AC#1's "on a stall/stop" also sets how long a
+quit takes for every provider on this transport: the provider's HTTP read
+timeout or the watchdog's 120 s, whichever comes first.
 <!-- SECTION:NOTES:END -->

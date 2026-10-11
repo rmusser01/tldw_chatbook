@@ -3140,6 +3140,9 @@ class _StreamingModelAdapter:
     chunk is always accounted for, while still stopping the stream promptly
     (no more chunks are pulled once cancellation is observed) and letting the
     loop's own boundary check catch the cancellation on the next poll.
+    While NO chunk arrives it is also polled on a timer (TASK-33666; see
+    ``watch_content_stalls``), so a Stop ends the wait on a silent provider.
+    That poll runs only between chunks, so it never drops a received one.
 
     ``chat_call`` bridges into async gateway code via the single event
     ``loop`` passed in at construction — created once by
@@ -3801,6 +3804,13 @@ class _StreamingModelAdapter:
                 first_item_timeout_seconds=first_token_timeout_seconds(
                     effective_resolution.provider, stall_timeout=stall_timeout
                 ),
+                # TASK-33666: the cuts below are only reached when a chunk
+                # arrives. A provider that accepted the request and sends
+                # nothing would hold this run's thread for the whole window
+                # after a Stop, and the app's exit joins that thread. The
+                # plain cancel, not stream_cut: a redirect is not a cancel
+                # and still waits for the next chunk (TASK-28227).
+                should_stop=self._should_cancel,
             ):
                 synthetic = emission_synthetic is True
                 emission_synthetic = None

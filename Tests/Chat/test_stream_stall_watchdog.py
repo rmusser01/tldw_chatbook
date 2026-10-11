@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -130,6 +131,127 @@ def test_source_is_closed_on_stall():
     with pytest.raises(StreamStallError):
         _run(_collect(Source(), 0.1))
     assert closed["n"] >= 1
+
+
+# --- TASK-33666: a Stop is honoured while the provider sends nothing ---
+
+class _SilentSource:
+    """Accepts the request and never streams; records how it was torn down."""
+
+    def __init__(self):
+        self.closed = 0
+        self.cancelled = 0
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            self.cancelled += 1
+            raise
+        raise StopAsyncIteration
+
+    async def aclose(self):
+        self.closed += 1
+
+
+@pytest.fixture
+def fast_stop_poll(monkeypatch):
+    import tldw_chatbook.Chat.stream_stall_watchdog as w
+
+    monkeypatch.setattr(w, "STOP_POLL_SECONDS", 0.02)
+
+
+@pytest.mark.parametrize("timeout", [30.0, None, 0])
+def test_stop_ends_a_silent_stream_without_reporting_a_stall(fast_stop_poll, timeout):
+    """The stop predicate is polled while NO item arrives -- with the stall
+    watchdog on (a 30 s window that must not be what ends the wait) and with
+    it disabled -- and a stop is an ordinary end of stream, never a stall."""
+    source = _SilentSource()
+    polls = iter([False, False, False])
+
+    async def drive():
+        return await asyncio.wait_for(
+            _collect(source, timeout, should_stop=lambda: next(polls, True)), 5.0
+        )
+
+    assert _run(drive()) == []
+    # The in-flight read is aborted BEFORE the source is closed: aclose() on a
+    # generator that is still running raises instead of closing it.
+    assert source.cancelled == 1
+    assert source.closed >= 1
+
+
+def test_stop_predicate_never_drops_or_reorders_items(fast_stop_poll):
+    """Items that arrive several polls apart all reach the consumer."""
+    async def source():
+        for i in range(4):
+            await asyncio.sleep(0.07)  # > 3 polls each
+            yield i
+
+    assert _run(_collect(source(), 5.0, should_stop=lambda: False)) == [0, 1, 2, 3]
+
+
+def test_stall_still_trips_between_stop_polls(fast_stop_poll):
+    """A predicate that never fires leaves the stall window in charge."""
+    source = _SilentSource()
+
+    with pytest.raises(StreamStallError) as exc:
+        _run(
+            _collect(
+                source,
+                0.3,
+                provider="acme",
+                first_item_timeout_seconds=0.1,
+                should_stop=lambda: False,
+            )
+        )
+    assert exc.value.first_token is True
+    assert exc.value.timeout_seconds == 0.1
+    assert source.cancelled == 1 and source.closed >= 1
+
+
+def test_cancel_with_a_stop_predicate_still_propagates_and_closes(fast_stop_poll):
+    """AC#3 of TASK-26003 holds on the polled path: a task cancel is a cancel."""
+    source = _SilentSource()
+
+    async def drive():
+        async def consume():
+            async for _ in watch_content_stalls(
+                source, 5.0, should_stop=lambda: False
+            ):
+                pass
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    _run(drive())
+    assert source.cancelled == 1 and source.closed >= 1
+
+
+def test_stop_landing_as_the_window_expires_is_a_stop_and_raises_nothing_in_the_loop(
+    fast_stop_poll,
+):
+    """The window and a stop poll fall due on one loop tick, window first. The
+    poll must not reschedule a timeout that is already expiring: asyncio raises
+    there, into the loop's exception handler. The user's Stop still wins."""
+    source = _SilentSource()
+    loop_errors = []
+
+    async def drive():
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(lambda _loop, context: loop_errors.append(context))
+        # Hold the loop past both deadlines so one tick processes them together.
+        loop.call_later(0.005, time.sleep, 0.1)
+        return await _collect(source, 0.02, should_stop=lambda: True)
+
+    assert _run(drive()) == []
+    assert loop_errors == []
 
 
 # --- AC#4: repeated-stall tracking ---

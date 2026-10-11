@@ -38,6 +38,33 @@ anything, and sample other threads only when you need them. If the app logs a
 database error that no other run of the build shows, suspect the sampler
 before the code under test.
 
+## A quit that "never exits" is a join: dump threads after Quit and read the main thread first (TASK-33666, 2026-10-10)
+
+**Incident.** TASK-33666 was filed as "the process never exits" after Quit
+during a hung reply. A scratch `sitecustomize` registered
+`faulthandler.register(SIGUSR1, all_threads=True)` (it holds no frames, unlike
+the sampler above), and the app was dumped 8 s and 30 s after confirming Quit.
+The main thread was in `asyncio/runners.py close` → `shutdown_default_executor`;
+a helper thread, `_do_shutdown`, was in `ThreadPoolExecutor.shutdown` → `join`;
+and the joined worker was the reply's run thread, waiting on a provider turn
+whose cancel flag was read only between chunks. The process ended at 120.3 s
+with status 1: the exit watchdog, not the reply.
+
+With vLLM the run thread came back and the process still waited 120.4 s. The
+last line named `asyncio_0(daemon)`, the provider's worker inside `requests`'
+socket read. The model loop's thread is a daemon, so the workers of its
+executor inherit the flag, and `concurrent.futures.thread._python_exit` joins
+them at interpreter exit anyway.
+
+**What to do.** Dump after Quit, not before. The main thread's frame names the
+join: `Runner.close` → `shutdown_default_executor` is a worker of the app
+loop's default executor (`run_worker(thread=True)`, `asyncio.to_thread`);
+`threading._shutdown` → `_python_exit` is a worker of any other executor.
+`daemon=True` does not exempt a `ThreadPoolExecutor` worker from that join;
+only a thread that is not one is skipped. A hang that lasts exactly
+`[general] shutdown_grace_seconds` and ends with status 1 is the watchdog, and
+the pane's last line lists the threads that were still alive.
+
 ## A tmux key burst loses typed text, and an empty Input shows its placeholder
 
 **TASK-34100.8, 2026-10-04.** Live-editing the Voice step's Endpoint with
