@@ -13198,7 +13198,7 @@ class SettingsScreen(BaseAppScreen):
         model = str(resolved.model or "not selected").strip()
         if provider and provider != "not selected":
             return (
-                f"Provider readiness: {self._provider_display_name(provider)} / {model}"
+                f"Provider readiness: {self._provider_display_label(provider)} / {model}"
             )
         return "Provider readiness: needs provider and model"
 
@@ -16387,8 +16387,8 @@ class SettingsScreen(BaseAppScreen):
             provider_settings["api_key_env_var"] = credential_env_var
         return {"api_settings": {provider_save_key: provider_settings}}
 
-    def _model_discovery_selection_options(self) -> list[tuple[str, str, bool]]:
-        options: list[tuple[str, str, bool]] = []
+    def _model_discovery_selection_options(self) -> list[tuple[Text, str, bool]]:
+        options: list[tuple[Text, str, bool]] = []
         saved_ids = set(self._provider_saved_model_ids(self._provider_widget_value()))
         for model in self._model_discovery_models:
             model_id = str(getattr(model, "model_id", "") or "").strip()
@@ -16425,7 +16425,7 @@ class SettingsScreen(BaseAppScreen):
                 f"{'selected' if selected else 'not selected'} · {model_id} · "
                 f"{saved_label} · {source_label} · {capability_label}"
             )
-            options.append((label, model_id, selected))
+            options.append((Text(label), model_id, selected))
         return options
 
     def _reset_provider_model_discovery_state(

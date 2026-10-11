@@ -452,8 +452,9 @@ async def test_rolling_back_to_a_bracketed_model_id_names_it_literally(request):
 
         assert not picker.custom_mode
         assert adapter.value == picker.value == model
-        toasts = [str(note.message) for note in host._notifications]
-        assert f"Invalid model ID not kept; the model is still {model}." in toasts
+        kept = f"Invalid model ID not kept; the model is still {model}."
+        toast = next(n for n in host._notifications if str(n.message) == kept)
+        assert not toast.markup  # the message is the same with markup on
 
 
 @pytest.mark.asyncio

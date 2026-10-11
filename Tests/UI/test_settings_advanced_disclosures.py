@@ -210,6 +210,35 @@ async def test_saved_model_list_counts_and_each_row_says_selected_and_saved(requ
 
 
 @pytest.mark.asyncio
+@private_profile_test
+async def test_a_discovered_model_id_with_brackets_is_listed_literally(request):
+    """A served model id may hold "[" and "]". The discovered list builds a
+    row from each id, and a SelectionList parses a ``str`` prompt as markup:
+    "local[/]q4" raised MarkupError and "name[q4].gguf" lost its "[q4]"."""
+    ids = ("local[/]q4", "name[q4].gguf")
+    app = _app(discovered=ids)
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        disclosure_id = "settings-advanced-saved-models"
+        screen.query_one(f"#{disclosure_id}", Collapsible).collapsed = False
+        await pilot.pause()
+        screen.query_one("#settings-discover-provider-models", Button).press()
+
+        def listed() -> list[str]:
+            selection = screen.query_one(
+                "#settings-discovered-models-list", SelectionList
+            )
+            return [prompt.split(" · ")[1] for prompt in _prompts(selection)]
+
+        await _until(pilot, lambda: len(listed()) == len(ids))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert listed() == list(ids)
+
+
+@pytest.mark.asyncio
 # The app is built in-process and both config calls are patched, so the node
 # keeps the collection-time profile: under the per-test sandbox the app's
 # config read raises RecoveryRequired, here and in the UI Fast Lane.

@@ -1737,6 +1737,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             screen._provider_save_result,
             id="settings-provider-save-result",
             classes="settings-status-row",
+            markup=False,  # it can quote an endpoint or an error's text
         )
         existing_changes = Static(
             screen._provider_existing_changes_copy(),
@@ -1915,6 +1916,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 screen._model_discovery_status,
                 id="settings-model-discovery-status",
                 classes="settings-status-row",
+                markup=False,  # it can name a provider key or quote the server
             )
             empty_state = Static(
                 MODEL_DISCOVERY_EMPTY_COPY,

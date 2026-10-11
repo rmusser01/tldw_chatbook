@@ -155,8 +155,10 @@ _BUDGETS: dict[str, int] = {
     # the test written for the first found a third: a model id holding "[/]"
     # raised MarkupError from the Custom ID roll-back toast and from the Key
     # block's readiness row (which crashed the card at mount, on dev too);
-    # one tooltip interpolated bare. Three guards, +3.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2303,
+    # one tooltip interpolated bare. Three guards, +3. The review of #3057
+    # found two more rows that print an endpoint or an error's text through
+    # markup (the save result, the discovery status): +2.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2305,
     "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 729,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
