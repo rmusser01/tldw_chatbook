@@ -13694,7 +13694,8 @@ class SettingsScreen(BaseAppScreen):
         target = self._provider_navigation_conflict_target
         if target is None:
             return "No provider navigation conflict."
-        provider = self._provider_display_name(target.provider) or target.provider
+        # The summary is a literal Static: the plain name, never the escaped one.
+        provider = self._provider_display_label(target.provider) or target.provider
         fields = self._provider_return_dirty_field_names()
         dirty_copy = ", ".join(fields) if fields else "provider settings"
         return (
@@ -14152,7 +14153,8 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _unsupported_model_profile_placeholder(self, provider: object) -> str:
-        provider_label = self._provider_display_name(str(provider or "").strip())
+        # A literal guide row: the plain name.
+        provider_label = self._provider_display_label(str(provider or "").strip())
         if not provider_label:
             provider_label = "this provider"
         return f"Unavailable for {provider_label}"
@@ -15867,10 +15869,11 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_catalog_summary(self) -> str:
         # task-180: show grouped display names, never a raw config-key dump.
+        # Plain names: the Inspector row that prints this is literal.
         grouped: dict[str, list[str]] = {}
         for entry in self._grouped_provider_catalog_entries():
             grouped.setdefault(self._provider_catalog_group(entry), []).append(
-                self._provider_display_name(entry.readiness_key)
+                self._provider_display_label(entry.readiness_key)
             )
         parts = [
             f"{group}: {', '.join(grouped[group])}"
