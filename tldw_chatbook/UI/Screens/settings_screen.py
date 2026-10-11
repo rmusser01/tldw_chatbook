@@ -14537,6 +14537,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_provider_test_result()
         self._refresh_model_discovery_widgets()
+        self._refresh_model_picker_discovered()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
         for widget_id, disabled in snapshot.buttons:
             try:
@@ -16611,8 +16612,9 @@ class SettingsScreen(BaseAppScreen):
         TASK-33007.3 (recognition over recall, TASK-369): the listing shows
         as visible "Served now" rows, not a ghost completion only a hidden
         key accepts. Discovery is dropped whenever the provider or its
-        endpoint changes, so the overlay is always this endpoint's own; an
-        earlier provider's overlay is cleared, never left for a return trip.
+        endpoint changes (an edit, Revert, a deep link), so the overlay is
+        always this endpoint's own; an earlier provider's overlay is
+        cleared, never left for a return trip.
         """
         try:
             picker = self.query_one("#settings-model-picker")
@@ -24430,6 +24432,12 @@ class SettingsScreen(BaseAppScreen):
         finally:
             self._syncing_provider_model_value = False
         self._sync_provider_model_profile_widgets(provider_value, model_value)
+        listed_for = self._model_picker_overlay_provider
+        if listed_for and provider_config_key(listed_for) != provider_config_key(
+            provider_value
+        ):
+            # The discovery listing is the provider's the form just left.
+            self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
         self._focus_navigation_provider_field(field or self._navigation_field or "")
@@ -34128,6 +34136,8 @@ class SettingsScreen(BaseAppScreen):
             if discarded is not None and discarded.dirty_keys & tested:
                 self._provider_evidence_store().invalidate()
                 self._mark_provider_test_result_stale()
+                # A listing discovered from the discarded draft goes with it.
+                self._reset_provider_model_discovery_state()
             self._update_provider_dynamic_widgets()
             self._update_draft_status_widgets(category)
         else:
