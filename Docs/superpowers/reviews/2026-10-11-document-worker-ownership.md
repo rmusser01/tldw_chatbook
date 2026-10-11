@@ -37,3 +37,14 @@ Ruff, Black, Bandit and mypy pass. No full suite. Wheel SHA256:
 Browser companion limits and corrections are recorded in ADR065 and the full report:
 trusted host factory, default Turbopack self-CSP failure, supported webpack qualification,
 and native asynchronous termination. Those browser findings do not weaken Python reap.
+
+## Coordinated review fix1
+
+I1 fixed in the existing scheduler: enqueue wakes pending debounce without retaining
+the replaced snapshot; immediate Check/Format dispatch and weakref release now pass.
+Completed request locals are released before subsequent waits.23targeted scheduler/
+worker tests plus scoped Ruff/Black/Bandit/mypy pass. Exact amended-source commands,
+outputs and exits are separately retained in task10 evidence/fix1. Earlier silent
+Bandit/typecheck exits remain Cannot Verify; this is not historical reconstruction.
+ADR194/R39 and all downstream owner/platform gates remain unchanged. Task In Progress
+for fresh scoped review.

@@ -1,6 +1,8 @@
 """Bounded active-editor leases and permanent result retirement."""
 
 import asyncio
+import gc
+import weakref
 
 import pytest
 
@@ -125,3 +127,42 @@ async def test_overlapping_navigation_cannot_revive_older_lease(monkeypatch):
     second, third = await asyncio.gather(second_call, third_call)
     assert second._retired and not third._retired
     await owner.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["check", "format"])
+async def test_immediate_work_replaces_sleeping_debounce_and_releases_source(
+    request_for, operation
+):
+    from tldw_chatbook.Document_Editing.scheduler import DocumentCheckScheduler
+
+    worker = ControlledWorker()
+    scheduler = DocumentCheckScheduler(worker, lambda result: None)
+    obsolete = request_for("obsolete source", draft_revision=1)
+    old_reference = weakref.ref(obsolete)
+    scheduler.submit(obsolete)
+    del obsolete
+    await asyncio.sleep(0)  # Let the real debounce wait begin.
+    latest = request_for("{}", draft_revision=2)
+    formatting = None
+    began = asyncio.get_running_loop().time()
+    try:
+        if operation == "format":
+            formatting = asyncio.create_task(scheduler.format(latest))
+            await asyncio.sleep(0)  # Enqueue Format through its public async API.
+        else:
+            scheduler.submit(latest, immediate=True)
+        gc.collect()
+        retained = old_reference() is not None
+        await asyncio.wait_for(worker.first_started.wait(), 1)
+        elapsed = asyncio.get_running_loop().time() - began
+        assert (retained, elapsed < 0.2) == (False, True), (retained, elapsed)
+        assert worker.requests == [latest]
+        worker.release.set()
+        if formatting is not None:
+            assert (await formatting).key == latest.key
+    finally:
+        worker.release.set()
+        await scheduler.close()
+        if formatting is not None:
+            await asyncio.gather(formatting, return_exceptions=True)

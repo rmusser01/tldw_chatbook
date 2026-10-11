@@ -31,6 +31,7 @@ class DocumentCheckScheduler:
             | None
         ) = None
         self._runner: asyncio.Task[None] | None = None
+        self._changed = asyncio.Event()
         self._generation = 0
         self._retired = False
         self._active_future: asyncio.Future[FormatResult | None] | None = None
@@ -66,6 +67,7 @@ class DocumentCheckScheduler:
             future,
             asyncio.get_running_loop().time() + delay,
         )
+        self._changed.set()
         if self._runner is None or self._runner.done():
             self._runner = asyncio.create_task(self._drain())
 
@@ -77,13 +79,17 @@ class DocumentCheckScheduler:
     async def _drain(self):
         try:
             while self._pending is not None and not self._retired:
-                pending = self._pending
-                await asyncio.sleep(
-                    max(0, pending[4] - asyncio.get_running_loop().time())
-                )
-                if pending is not self._pending:
+                self._changed.clear()
+                delay = self._pending[4] - asyncio.get_running_loop().time()
+                if delay > 0:
+                    # Wait without retaining the replaceable source snapshot.
+                    try:
+                        async with asyncio.timeout(delay):
+                            await self._changed.wait()
+                    except TimeoutError:
+                        pass
                     continue
-                request, operation, generation, future, _ = pending
+                request, operation, generation, future, _ = self._pending
                 self._pending = None
                 self._active_future = future
                 result = await getattr(self._worker, operation)(request)
@@ -98,6 +104,7 @@ class DocumentCheckScheduler:
                         self._settle(future, result)
                 self._settle(future)
                 self._active_future = None
+                del request, result, future
         finally:
             self._settle(self._active_future)
             self._active_future = None
