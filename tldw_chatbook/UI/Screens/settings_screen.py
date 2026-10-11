@@ -13591,7 +13591,11 @@ class SettingsScreen(BaseAppScreen):
             tokens = int(str(window).strip())
         except (TypeError, ValueError):
             tokens = 0
-        edited = tokens != (state.effective_tokens or 0)
+        # A staged Reset is an edit even when the override equals the
+        # detected size and the number shown does not change.
+        edited = tokens != (state.effective_tokens or 0) or bool(
+            self._provider_draft_value("model_context_window_reset")
+        )
         if tokens <= 0 and not edited and state.assumed_tokens:
             # Finding 12: the Console's fallback, in the title's words.
             assumed = f"unknown, {state.assumed_tokens:,} assumed"
@@ -30629,7 +30633,7 @@ class SettingsScreen(BaseAppScreen):
         finally:
             self._syncing_provider_context_window = False
         event.button.disabled = True
-        # The staged detected value reads "edited *" beside "detected N".
+        # The staged Reset reads "edited *" beside "detected N".
         self._show_context_window_row(provider, model, detected)
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 

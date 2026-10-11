@@ -1003,7 +1003,9 @@ def context_window_summary(screen: SettingsScreen) -> str:
     if tokens <= 0:
         assumed = f", {state.assumed_tokens:,} assumed" if state.assumed_tokens else ""
         return f"unknown{assumed} · enter the model's documented limit"
-    if tokens != state.effective_tokens:
+    if tokens != state.effective_tokens or screen._provider_draft_value(
+        "model_context_window_reset"
+    ):  # a staged Reset is an edit even when the number does not change
         return f"{tokens:,} tokens · {SELECTION_SOURCE_WORDS['settings_draft']}"
     if state.has_configured_override:
         return f"{tokens:,} tokens · override set"
