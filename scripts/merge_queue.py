@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass, replace
@@ -81,6 +82,12 @@ RUN_BUDGET = timedelta(minutes=4)
 # only once the warning is at least this old, so one GitHub slowdown failing two attempts a minute
 # apart cannot disarm the PR (spec section 8).
 STRIKE_GAP = timedelta(minutes=10)
+# GitHub's answer when the queue's rebase would have its token rewrite a file under
+# .github/workflows; the built-in token can never hold the `workflows` permission, so no retry
+# helps. Seen live when the PR and dev had BOTH changed the same workflow file since the PR's base
+# (#3058, 2026-10-10). A PR that changes a workflow file dev has left alone rebases fine (#3062),
+# and so does any PR across workflow files only dev changed (#2892).
+WORKFLOW_REFUSAL = "without `workflows` permission"
 
 
 @dataclass(frozen=True)
@@ -319,7 +326,7 @@ PR_QUERY = (
 )
 COMMENTS_QUERY = (
     "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {"
-    " pullRequest(number: $number) { comments(last: 100) { nodes { body createdAt } } } } }"
+    " pullRequest(number: $number) { comments(last: 100) { nodes { databaseId body createdAt } } } } }"
 )
 REBASE_MUTATION = (
     "mutation($id: ID!, $oid: GitObjectID!) { updatePullRequestBranch(input: "
@@ -584,7 +591,8 @@ def marker_age(gh: GhApi, number: int, kind: str, sha: str, now: datetime) -> ti
     return None
 
 
-def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool:
+def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str,
+                 log: Callable[[str], None] = print) -> bool:
     """Post a comment unless one of this kind already exists for this head.
 
     Args:
@@ -593,9 +601,11 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool
         kind: The comment's kind, part of its hidden marker.
         sha: The head the comment is about, part of its hidden marker.
         body: The visible text.
+        log: Receives a line if the tidy-up after posting fails.
 
     Returns:
-        True if it posted, False if the marker was already there.
+        True if it posted, False if the marker was already there (or a racing queue run posted
+        the same comment first, in which case this run's copy is removed).
 
     Raises:
         CommentRefused: The PR's conversation is locked.
@@ -608,11 +618,27 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool
     if any(marker in b for b in bodies):
         return False
     try:
-        gh.rest("POST", f"repos/{REPO}/issues/{number}/comments", {"body": f"{marker}\n{body}"})
+        posted = gh.rest("POST", f"repos/{REPO}/issues/{number}/comments", {"body": f"{marker}\n{body}"})
     except GhError as exc:
         if "is locked" in str(exc).lower() and not _transient(exc):
             raise CommentRefused(str(exc)) from exc
         raise
+    # Two racing queue runs can both pass the check above and both post. Each then looks again and
+    # the later one removes its own copy, so one comment remains.
+    own_id = posted.get("id") if isinstance(posted, dict) else None
+    if own_id is None:
+        return True
+    try:
+        again = gh.graphql(COMMENTS_QUERY, owner=owner, name=name, number=number)
+        ids = [n["databaseId"] for n in again["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+               if marker in (n.get("body") or "") and n.get("databaseId") is not None]
+        if ids and min(ids) < own_id:
+            gh.rest("DELETE", f"repos/{REPO}/issues/comments/{own_id}")
+            return False
+    except GhError as exc:
+        # The comment is posted; tidying up must never stop what the caller does next (a disarm, a
+        # wake). At worst two copies stay.
+        log(f"  best-effort comment de-duplication on #{number} failed: {exc}")
     return True
 
 
@@ -882,6 +908,7 @@ def _rerun(gh: GhApi, pr: PrState, run: dict, failed_only: bool, log: Callable[[
                     gh, pr.number, "rerun-error", pr.head_sha,
                     f"Merge queue: re-running the required check failed ({str(exc)[:200]}); will try again, and "
                     "remove it from the line if it still fails 10 minutes from now.",
+                    log,
                 )
                 raise
             if age < STRIKE_GAP:
@@ -916,6 +943,7 @@ def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -
         gh, pr.number, f"evict-{action.slug}", pr.head_sha,
         f"Merge queue: removed from the line ({action.reason}). Auto-merge is now off. Fix the cause, then "
         f"re-arm with `gh pr merge {pr.number} --auto --merge` to rejoin at the back.{links}",
+        log,
     )
     _disarm(gh, pr, log)
     log(f"  evicted #{pr.number}: {action.reason}")
@@ -924,7 +952,7 @@ def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -
 
 def _comment_if_allowed(gh: GhApi, number: int, kind: str, sha: str, log: Callable[[str], None], body: str) -> None:
     try:
-        comment_once(gh, number, kind, sha, body)
+        comment_once(gh, number, kind, sha, body, log)
     except CommentRefused as exc:
         log(f"  cannot comment on #{number} ({exc}); skipped")
 
@@ -967,7 +995,7 @@ def _strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Action, w
     """
     age = marker_age(gh, pr.number, kind, pr.head_sha, now())
     if age is None:
-        comment_once(gh, pr.number, kind, pr.head_sha, warning)
+        comment_once(gh, pr.number, kind, pr.head_sha, warning, log)
         if wake_first:
             _wake_best_effort(gh, log)
         return False
@@ -977,10 +1005,18 @@ def _strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Action, w
     return _evict(gh, pr, eviction, log)
 
 
-def _wake_if_moved(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None]) -> None:
+def _wake_if_moved(gh: GhApi, pr: PrState, sleep: Callable[[float], None]) -> bool:
+    """Wake a tick if the PR's head moved; return whether it did.
+
+    Raises:
+        GhError: The re-read or the wake failed. The caller then treats the head as unmoved, so a
+            wake that never went out is not mistaken for a stand-down.
+    """
     sleep(REBASE_POLL_S)  # an accepted rebase moves the branch about 1 s after the mutation returns
-    if read_pr(gh, pr.number).head_sha != pr.head_sha:
-        _wake_best_effort(gh, log)
+    if read_pr(gh, pr.number).head_sha == pr.head_sha:
+        return False
+    wake(gh)
+    return True
 
 
 def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None],
@@ -989,10 +1025,19 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
         gh.graphql(REBASE_MUTATION, id=pr.node_id, oid=pr.head_sha)
     except GhError as exc:
         if _transient(exc):
-            # A lost response can hide a rebase that went through, leaving its head's runs held with
-            # nothing to approve them: wake a tick if the head moved. Then fail the run; the next
-            # event retries, and the error never counts (spec section 8).
-            _best_effort(log, "re-read after a failed rebase", lambda: _wake_if_moved(gh, pr, log, sleep))
+            # Each merge wakes two queue runs, and the one that loses the rebase race is answered
+            # with a generic error; a lost response looks the same. Either way the head has moved,
+            # nothing failed, and a woken tick approves that head's held runs: stand down. With the
+            # head unmoved it is GitHub's error: fail the run so the next event retries; it never
+            # counts toward an eviction (spec section 8).
+            try:
+                moved = _wake_if_moved(gh, pr, sleep)
+            except GhError as read_exc:
+                log(f"  re-read or wake after a failed rebase failed: {read_exc}")
+                moved = False
+            if moved:
+                log(f"  rebase of #{pr.number} was answered with an error, but its head moved; standing down")
+                return False
             raise
         fresh = read_pr(gh, pr.number)
         if fresh.head_sha == pr.head_sha and fresh.merge_state != "DIRTY":
@@ -1007,6 +1052,16 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
             return False
         if fresh.merge_state == "DIRTY":
             return _evict(gh, fresh, Action("evict", "conflicts with dev (rebase refused)", slug="conflict"), log)
+        if WORKFLOW_REFUSAL in str(exc):
+            named = re.search(r"workflow `([^`]+)`", str(exc))
+            which = f" (`{named.group(1)}`)" if named else ""
+            return _evict(gh, fresh, Action(
+                "evict",
+                f"GitHub refused the queue's rebase because it would rewrite a workflow file{which}; this "
+                "has been seen when a PR and dev have both changed that file. Rebase it onto dev yourself "
+                "(`git pull --rebase origin dev`, then push with `--force-with-lease`) and re-arm; after that "
+                "the queue can rebase it again unless dev changes that file once more",
+                slug="workflow-file"), log)
         error = str(exc)[:200]
         log(f"  rebase failed: {exc}")
         return _strike(
@@ -1175,6 +1230,7 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
         gh, pr.number, "retry", pr.head_sha,
         f"Merge queue: the required check failed once on `{pr.head_sha[:10]}`; re-running it. "
         f"Failed run: {action.links[0]}",
+        log,
     )
     if outcome == "pending":
         _wake_best_effort(gh, log)
@@ -1253,7 +1309,7 @@ def comment_unqueued(gh: GhApi, prs: list[PrState], mode: str, log: Callable[[st
         if mode == "on":
             _best_effort(
                 log, f"comment on {kind} PR #{pr.number}",
-                lambda p=pr, k=kind: comment_once(gh, p.number, k, p.head_sha, UNQUEUED_NOTES[k]),
+                lambda p=pr, k=kind: comment_once(gh, p.number, k, p.head_sha, UNQUEUED_NOTES[k], log),
             )
 
 

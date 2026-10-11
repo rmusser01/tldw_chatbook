@@ -176,6 +176,12 @@ variable is unset, which means off.
   required check by hand to unblock a PR: a `workflow_dispatch` run's check is not in the PR's status rollup, so the PR
   stays BLOCKED (verified 2026-10-06; spec V4).
 - An evicted PR has auto-merge off and a comment saying why. Fix the cause and re-arm; it rejoins at the back.
+- When a PR and `dev` have both changed the same file under `.github/workflows/` since the PR's base, GitHub refuses
+  the queue's rebase (the built-in token may not rewrite workflow files), and the queue evicts the PR at once
+  (`evict-workflow-file`). Rebase it onto `dev` yourself (`git pull --rebase origin dev`, push with
+  `--force-with-lease`) and re-arm; after that the queue can rebase it again unless `dev` changes that file once more.
+  A PR that changes a workflow file `dev` has left alone is rebased normally (verified on #3062, 2026-10-10).
+  This rule is inferred from the cases seen so far (#3058 refused; #3062 and #2892 rebased); GitHub does not document it.
 
 **Queue `off` or `dry`:**
 - Re-sync a PR that is behind by **rebasing** it: `gh pr update-branch --rebase <n>`, or a local `git rebase origin/dev`
