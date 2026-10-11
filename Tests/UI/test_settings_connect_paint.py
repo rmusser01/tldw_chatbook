@@ -20,6 +20,7 @@ from Tests.UI.test_settings_connect_rows import (
     _SIZE,
     _anthropic_host,
     _held,
+    _no_provider_key_env,
     _open_providers,
     _squeezed,
     _text,
@@ -55,6 +56,7 @@ async def _expect_the_head(pilot, screen, control, name: str) -> None:
 async def _tab_away(pilot, control) -> None:
     await pilot.press("tab")
     await _until(pilot, lambda: not control.has_focus)
+    assert not control.has_focus, "Tab did not leave the control"
     await pilot.pause(0.2)  # the control's blur timer
 
 
@@ -63,9 +65,11 @@ async def _window_away_and_back(pilot, host, control) -> None:
     timer, then regains it."""
     host.post_message(events.AppBlur())
     await _until(pilot, lambda: not control.has_focus)
+    assert not control.has_focus, "the window's blur did not reach the control"
     await pilot.pause(0.2)  # the control's blur timer
     host.post_message(events.AppFocus())
     await _until(pilot, lambda: control.has_focus)
+    assert control.has_focus, "the window's focus did not return to the control"
     await pilot.pause()
 
 
@@ -241,10 +245,13 @@ _SIZES = pytest.mark.parametrize("size", [_SIZE, (235, 52)], ids=["211x44", "235
 @pytest.mark.asyncio
 @private_profile_test
 @_SIZES
-async def test_provider_help_counts_configured_providers_whole(request, size):
+async def test_provider_help_counts_configured_providers_whole(
+    request, monkeypatch, size
+):
     """Captures 01 and 03 (fix 5): "configured: Anthropic, Azure OpenAI +1 ·…"
     was cut at 211, and its whole form at 235, "+1 · 57 more", read as one
     more configured provider and then 57 more providers."""
+    _no_provider_key_env(monkeypatch)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "m-1"}
     app.app_config["api_settings"] = {

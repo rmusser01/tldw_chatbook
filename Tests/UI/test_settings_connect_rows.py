@@ -49,6 +49,24 @@ def _text(screen, selector: str) -> str:
     return str(screen.query_one(selector, Static).renderable)
 
 
+def _no_provider_key_env(monkeypatch) -> None:
+    """Remove every provider's key variable from the environment.
+
+    A key in the shell configures its provider, so a test that counts the
+    configured providers, or reads a key's source, must start with none set.
+
+    Args:
+        monkeypatch: The test's monkeypatch fixture.
+    """
+    from tldw_chatbook.Chat.provider_readiness import (
+        PROVIDERS_REQUIRING_API_KEY_KEYS,
+        default_api_key_env_var,
+    )
+
+    for provider in PROVIDERS_REQUIRING_API_KEY_KEYS:
+        monkeypatch.delenv(default_api_key_env_var(provider), raising=False)
+
+
 def _resting_help_counts(help_text: str, configured: int) -> bool:
     """Whether the Provider row's resting help counts ``configured`` providers.
 
@@ -67,9 +85,12 @@ def _resting_help_counts(help_text: str, configured: int) -> bool:
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id(request):
+async def test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id(
+    request, monkeypatch
+):
     """AC#1, AC#3: one row, one Tab stop; typing filters by name or id; the
     list's rows paint whole; Enter chooses and the control names the choice."""
+    _no_provider_key_env(monkeypatch)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "anthropic", "model": "claude-x"}
     app.app_config["api_settings"] = {"anthropic": {"api_key": _FAKE_KEY}}
@@ -102,9 +123,11 @@ async def test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id(reques
         # The open list is still not a Tab stop, and an unfinished filter is
         # dropped rather than kept as the provider's name. For Anthropic the
         # next stop is TASK-34201's Sign in with row, just above the API key.
+        auth_source = screen.query_one("#settings-provider-auth-source")
         await pilot.press("tab")
-        await pilot.pause(0.2)
-        assert host.focused is screen.query_one("#settings-provider-auth-source")
+        # The list closes on the control's blur timer, after focus has moved.
+        await _until(pilot, lambda: host.focused is auth_source and not picker.display)
+        assert host.focused is auth_source
         assert not picker.display
         assert control.value == "Anthropic"
 
@@ -134,10 +157,10 @@ async def test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id(reques
         control.focus()
         await pilot.pause()
         await pilot.press(*"llamaf", "enter")
-        await pilot.pause(0.2)
-        assert screen._provider_setting_values_mapping()["provider"] == (
-            "local_llamafile"
+        await _until(
+            pilot, lambda: _held(screen) == "local_llamafile" and not picker.display
         )
+        assert _held(screen) == "local_llamafile"
         assert control.value == "Llamafile"
         assert not picker.display
         assert _text(screen, "#settings-provider-source") == "edited *"
@@ -196,7 +219,7 @@ _SAVED_KEY = {"api_key": _FAKE_KEY}
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_provider_help_names_a_provider_once_its_save_configures_it(
+async def test_provider_help_counts_a_provider_once_its_save_configures_it(
     request, monkeypatch
 ):
     """Review finding 7: the configured count in the help is rebuilt after a
@@ -205,6 +228,7 @@ async def test_provider_help_names_a_provider_once_its_save_configures_it(
         _capture_provider_settings_mutations,
     )
 
+    _no_provider_key_env(monkeypatch)
     mutations = _capture_provider_settings_mutations(monkeypatch)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
@@ -221,7 +245,7 @@ async def test_provider_help_names_a_provider_once_its_save_configures_it(
         endpoint.focus()
         await pilot.pause()
         await pilot.press(*"http://127.0.0.1:9098", "escape", "s")
-        await pilot.pause(0.2)
+        await _until(pilot, lambda: len(mutations) == 1)
 
         assert len(mutations) == 1
         assert _resting_help_counts(
@@ -265,13 +289,31 @@ async def _type_filter(pilot, screen, typed: str) -> None:
     await pilot.pause()
 
 
+async def _pick_model(pilot, screen, model_id: str) -> None:
+    """Choose ``model_id`` in the Default model picker with the keyboard:
+    focus the field, type the id, Enter. The picker must list the id."""
+    field = screen.query_one("#model-search-picker-input", Input)
+    adapter = screen.query_one("#settings-model-value", Input)
+    field.focus()
+    await pilot.pause()
+    await pilot.press(*model_id)
+    await _until(pilot, lambda: field.value == model_id)
+    await pilot.press("enter")
+    await _until(pilot, lambda: adapter.value == model_id)
+    assert adapter.value == model_id, (adapter.value, field.value)
+    await pilot.pause()
+
+
 @pytest.mark.asyncio
 @private_profile_test
-async def test_provider_control_names_the_choice_never_the_typed_filter(request):
+async def test_provider_control_names_the_choice_never_the_typed_filter(
+    request, monkeypatch
+):
     """TASK-33007.9 AC#1: whatever was typed to find it, the control then
     shows the chosen provider's display name -- for a legacy alias, for the
     provider it already holds (nothing is staged, so only closing the list
     can put the name back) and for "Enter provider ID"."""
+    _no_provider_key_env(monkeypatch)
     host = _anthropic_host()
 
     async with host.run_test(size=_SIZE) as pilot:
@@ -380,13 +422,14 @@ async def test_typing_a_legacy_alias_id_chooses_the_canonical_provider(request, 
 @private_profile_test
 @pytest.mark.parametrize("revert_with", ["r", "button"])
 async def test_discard_changes_shows_the_saved_provider_and_no_filtered_list(
-    request, revert_with
+    request, monkeypatch, revert_with
 ):
     """TASK-33007.9 AC#2: r, Discard changes puts the saved provider's name
     back and leaves no filtered list open -- also when the Inspector's
     Revert (r) is clicked while the list is still open on a filter."""
     from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
+    _no_provider_key_env(monkeypatch)
     host = _anthropic_host()
 
     async with host.run_test(size=_SIZE) as pilot:
@@ -458,6 +501,7 @@ async def test_provider_and_model_read_edited_only_when_their_own_value_is(reque
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": dict(_SAVED_KEY)}
+    app.providers_models = {"OpenAI": ["gpt-4.1", "gpt-4o"]}
     host = _SettingsCssHarness(app, "settings")
 
     async with host.run_test(size=_SIZE) as pilot:
@@ -473,8 +517,7 @@ async def test_provider_and_model_read_edited_only_when_their_own_value_is(reque
         assert _text(screen, "#settings-provider-source") == "new-chat default"
         assert _text(screen, "#settings-model-source") == "new-chat default"
 
-        screen.query_one("#settings-model-value", Input).value = "gpt-4o"
-        await pilot.pause()
+        await _pick_model(pilot, screen, "gpt-4o")
 
         assert _text(screen, "#settings-provider-source") == "new-chat default"
         assert _text(screen, "#settings-model-source") == "edited *"
