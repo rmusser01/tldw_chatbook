@@ -158,6 +158,7 @@ $ds-size-90: 90;
 $ds-size-92: 92;
 $ds-size-94: 94;
 $ds-size-96: 96;
+$ds-size-100: 100;
 $ds-splash-progress-cap: 100;
 $ds-size-104: 104;
 $ds-size-110: 110;
@@ -195,6 +196,9 @@ $ds-watchlists-artifacts-detail-share: 8fr;
 $ds-agentic-mcp-table-cap: 70%;
 $ds-agentic-prompt-vars-pane: 27;
 $ds-agentic-mcp-compact-canvas-share: 7fr;
+$ds-wizards-voice-long-share: 21fr;
+$ds-wizards-voice-mid-share: 14fr;
+$ds-wizards-voice-short-share: 11fr;
 $ds-research-chat-pane-floor: 58;
 $ds-new-ingest-media-panel-share: 65%;
 $ds-new-ingest-activity-panel-share: 35%;
@@ -382,15 +386,15 @@ WorkflowEditor .workflow-collapse-title {
 }
 .workflow-step-chooser > Vertical { padding: $ds-space-0 $ds-space-inset; }
 .workflow-step-chooser #workflow-type-detail { max-height: $ds-control-height; }
-WorkflowRunPanel.workflow-session-expanded { height: 45%; min-height: 8; }
-WorkflowRunPanel #workflow-session-content { height: 1fr; min-height: $ds-control-height; }
+WorkflowRunPanel.workflow-session-expanded { height: $ds-percent-45; min-height: $ds-size-8; }
+WorkflowRunPanel #workflow-session-content { height: $ds-height-fill; min-height: $ds-control-height; }
 WorkflowRunPanel Static.workflow-run-copy { height: auto; }
 WorkflowRunPanel #workflow-session-status { height: $ds-control-height-compact; color: $ds-status-info; }
 .workflow-run-actions { height: $ds-control-height-compact; margin: $ds-space-0; }
-.workflow-run-dialog { width: 90%; max-width: 100; height: 90%; border: solid $ds-action-focus; background: $ds-surface-panel; padding: $ds-space-inset; }
-.workflow-run-dialog VerticalScroll.workflow-run-scroll { height: 1fr; min-height: $ds-control-height; }
+.workflow-run-dialog { width: $ds-percent-90; max-width: $ds-size-100; height: $ds-percent-90; border: solid $ds-action-focus; background: $ds-surface-panel; padding: $ds-space-inset; }
+.workflow-run-dialog VerticalScroll.workflow-run-scroll { height: $ds-height-fill; min-height: $ds-control-height; }
 .workflow-run-dialog Static.workflow-run-copy { height: auto; }
 .workflow-run-heading { color: $ds-action-focus; text-style: $ds-text-strong; }
 .workflow-run-dialog Input.workflow-run-field, .workflow-run-dialog Select.workflow-run-field { height: $ds-control-height; margin: $ds-space-0; }
-.workflow-run-dialog TextArea { height: 6; padding: $ds-space-0 $ds-space-inset; }
+.workflow-run-dialog TextArea { height: $ds-size-6; padding: $ds-space-0 $ds-space-inset; }
 #workflow-setup-error { color: $ds-status-error-readable; }
