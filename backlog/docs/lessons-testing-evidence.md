@@ -14696,6 +14696,25 @@ flag alone does not suppress a message delivered later. Prove the boundary with
 a mounted test that applies state, performs one user edit, and asserts exactly one
 semantic generation advance.
 
+**TASK-33006.21, 2026-10-11 (the same delivery order, in a call count).** The
+rider asked that opening Chat settings build default readiness once. The fix
+held the sync back with a flag that `on_mount` clears, and its test counted the
+resolver's calls made while `modal.is_mounted` was false: 4 before, 1 after.
+The notes, the test's docstring and a comment then said the *open* builds once.
+A print-only probe that logged every call of the sync with its callers showed
+seven builds per open: one in `on_mount`, four from the number fields'
+compose-time `Input.Changed` echoes (two per field, 0.06 to 0.15 s after
+`on_mount`'s build, all with `_updating_controls` still set) and two on the
+first 0.25 s poll tick. The count was right and the sentence was wrong: a count
+taken inside `on_mount` ends before the messages that `compose` queued are
+delivered. It cost a review round.
+
+**What to do.** Name the window in the claim ("`on_mount` builds once"), or
+count over the window the claim names: log every call with its caller chain
+until the screen is idle past its first timer tick, and read the callers, not
+only the total. `traceback.extract_stack()` filtered to the widget's own files
+names the echo handler in one run.
+
 ## Closing a thread-local database on the fixture thread does not close worker-owned handles
 
 **TASK-31392 Task 6 Fix Round 2, 2026-09-04.** The qualified vLLM primary
