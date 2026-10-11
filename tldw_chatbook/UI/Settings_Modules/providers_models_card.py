@@ -149,8 +149,9 @@ SUBSCRIPTION_KEY_HELP = {
 }
 API_KEY_INVALID_HELP = "repair it in Advanced Config"
 ENDPOINT_NOT_FOUND_HELP = "not found · choose another provider"
-#: ADR-012:29: the env var is the safer path, and the field holds a name.
-ENV_VAR_HELP_COPY = "safer: keeps keys out of config.toml"
+#: ADR-012:29: the env var is the safer path. C4: the row says the field
+#: holds a name ("a", not the ruling's "the", to fit 39 cells with "safer").
+ENV_VAR_HELP_COPY = "safer: a variable's name, never the key"
 #: Capture fix 7: Sign in with's one-line help per choice; the Inspector's
 #: guide for the field holds the long copy (ANTHROPIC_*_GUIDANCE_COPY).
 AUTH_SOURCE_API_KEY_HELP = "bills API credits through your key"
@@ -2274,9 +2275,8 @@ def compose_custom_endpoints_children(screen: SettingsScreen) -> ComposeResult:
                 "Edit",
                 id=f"settings-cep-edit-{slug}",
                 tooltip=(
-                    "Edit the endpoint URL, credential variable, or "
-                    "model list. Existing conversations re-resolve "
-                    "on their next send."
+                    "Edit the endpoint URL, Env var, or model list. "
+                    "Existing conversations re-resolve on their next send."
                 ),
             )
             yield Button(
@@ -2334,9 +2334,7 @@ def compose_custom_endpoints_children(screen: SettingsScreen) -> ComposeResult:
                     placeholder="http://127.0.0.1:8080",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    "Credential env var (name)", classes="settings-input-label"
-                )
+                yield Static("Env var (name)", classes="settings-input-label")
                 yield Input(
                     value=entry.api_key_env or "",
                     id="settings-cep-edit-key-env",

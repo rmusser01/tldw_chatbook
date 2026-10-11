@@ -76,6 +76,12 @@ def test_a_custom_endpoint_s_key_line_fits_the_row(monkeypatch, screen_text, hel
     assert cell_len(help_line) <= _HELP_CELLS
 
 
+def test_the_env_var_help_says_the_field_holds_a_name():
+    """C4: the field is not masked, so its help says a key never goes there;
+    ADR-012 still calls the env var the safer path."""
+    assert card.ENV_VAR_HELP_COPY == "safer: a variable's name, never the key"
+
+
 def test_the_rows_other_fixed_sentences_fit_too():
     for help_line in (
         card.API_KEY_SAVED_HELP,
