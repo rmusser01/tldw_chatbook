@@ -59,6 +59,7 @@ from ...config import get_cli_setting, provider_settings_for_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
+from ...MCP.redaction import looks_like_secret_value
 from ...Widgets.model_search_picker import ModelSearchPicker, PickerSearchInput
 from ..Screens.settings_context_memory import model_context_window_state
 from ..Screens.settings_provider_view_model import (
@@ -115,6 +116,9 @@ SELECTION_SOURCE_WORDS = {
 #: Source column (16 cells at 211x44).
 SAVED_IN_CONFIG = "saved in config"
 NOT_SET = "not set"
+#: The API key row while Save would delete the stored key.
+CLEARED = "cleared *"
+API_KEY_CLEARED_HELP = "s removes the saved key"
 #: The Key check row's action, labelled with the key that runs it (AC#6).
 KEY_CHECK_ACTION_LABEL = "Test (t)"
 #: Owner ruling 2026-10-04: Clear is a key on the API key field, not a Tab
@@ -484,8 +488,31 @@ def selection_source_word(source: object, value: object) -> str:
     )
 
 
+def env_var_echo(name: str) -> str:
+    """Name an env var in another row's help, unless it looks like a key (C4).
+
+    The Env var field is not masked, so a key pasted there by mistake must
+    not be repeated beside API key. No provider publishes a key pattern
+    here; the shared secret shapes stand in for one.
+
+    Args:
+        name: The Env var field's value, saved or being typed.
+
+    Returns:
+        The name, or "that variable" for a secret-shaped value or one over
+        40 characters with no underscore.
+    """
+    looks_like_key = looks_like_secret_value(name) or (
+        len(name) > 40 and "_" not in name
+    )
+    return "that variable" if looks_like_key else name
+
+
 def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
     """Say where the provider's key comes from, in words (ADR-012:29).
+
+    An unsaved Env var edit is followed, because Save follows it: a name
+    typed over a stored key makes Save delete that key.
 
     Args:
         screen: The Settings screen holding the draft.
@@ -510,23 +537,34 @@ def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
     if readiness.reason == "Invalid provider settings":
         return "invalid", "repair in Advanced Config or config.toml"
     draft = screen._provider_draft()
-    if draft is not None and "api_key" in draft.dirty_keys:
+    dirty = draft.dirty_keys if draft is not None else frozenset()
+    if "api_key" in dirty:
         if str(draft.values.get("api_key") or "").strip():
             return EDITED, "masked · s saves it to config"
-        return "cleared *", "s removes the saved key"
+        return CLEARED, API_KEY_CLEARED_HELP
+    env_edit = "credential_env_var" in dirty
     if screen._provider_saved_api_key_present(provider):
+        if env_edit and (
+            screen._provider_current_credential_source(provider) == "environment"
+        ):
+            return CLEARED, f"{API_KEY_CLEARED_HELP} · Env var used"
         return SAVED_IN_CONFIG, API_KEY_SAVED_HELP
     # The table, not readiness, says where the key is: readiness drops the
     # source while a base URL is still to set (Azure, Cloudflare, Databricks).
-    source = provider_credential_source(
-        provider, screen._provider_readiness_app_config()
-    )
+    env_var = readiness.env_var
+    config = screen._provider_readiness_app_config()
+    if env_edit:
+        env_var = str(draft.values.get("credential_env_var") or "").strip() or (
+            default_api_key_env_var(provider_config_key(provider))
+        )
+        config = screen._provider_test_staged_config(provider)
+    source = provider_credential_source(provider, config)
     if (source or "").startswith("env:"):
-        return "from env var", f"{source.removeprefix('env:')} in your shell"
+        return "from env var", f"{env_var_echo(source[4:])} in your shell"
     if not readiness.requires_api_key:
         return "not required", "this provider needs no key"
-    if readiness.env_var:
-        return "missing", f"paste one, or set {readiness.env_var}"
+    if env_var:
+        return "missing", f"paste one, or set {env_var_echo(env_var)}"
     return "missing", "paste one to save it in config"
 
 
