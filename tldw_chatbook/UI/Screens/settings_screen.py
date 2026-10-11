@@ -16707,7 +16707,13 @@ class SettingsScreen(BaseAppScreen):
             picker.refresh_provider(
                 provider, current_model=adapter.value, force=reload
             )
-        elif picker.value != normalize_model_id(adapter.value):
+        elif picker.value != normalize_model_id(adapter.value) and not (
+            # A Custom ID being typed is ahead of the adapter by the keys the
+            # screen has not heard of yet: the field is the source, and
+            # pushing the older text back would end Custom ID mode.
+            picker.custom_mode
+            and picker.query_one("#model-search-picker-input").has_focus
+        ):
             picker.set_model_value(adapter.value)
 
     @staticmethod
