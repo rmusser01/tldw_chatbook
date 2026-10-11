@@ -161,7 +161,11 @@ class ModelPickerInput(PickerSearchInput):
 
 
 class ModelSearchPicker(Widget):
-    """One keyboard-first model control shared by Console settings surfaces.
+    """The keyboard-first searchable model control.
+
+    Hosted by Settings ▸ Providers & Models (``DefaultModelPicker``); the
+    Console's Switch model shares ``normalize_model_id`` and ``CURRENT_MARK``,
+    not the widget.
 
     The uncapped provider catalog is loaded once per provider and retained for
     the lifetime of the widget. Input changes only filter that in-memory list;
@@ -243,10 +247,12 @@ class ModelSearchPicker(Widget):
             providers_models: Optional catalog mapping supplied by the surface.
                 The app catalog remains the fallback and the discovery scope is
                 still used to obtain the full uncapped endpoint snapshot.
-            show_custom_button: Whether this widget renders its own custom-ID
-                action. Full settings reuses its existing adjacent action.
-            show_provenance: Whether to group resolved options by their typed
-                model provenance. Existing callers retain flat results.
+            show_custom_button: Whether the Custom ID button is displayed.
+                Settings keeps it; its stylesheet shows it while the picker
+                holds focus.
+            show_provenance: Whether the catalog load groups its options by
+                where each id came from (Settings does). The list is flat
+                without it.
             catalog_scope_service: The catalog service a surface owns; the
                 app's ``llm_provider_catalog_scope_service`` is the fallback.
         """
@@ -466,15 +472,15 @@ class ModelSearchPicker(Widget):
     ) -> None:
         """Merge models returned by an explicit endpoint probe into the picker.
 
-        Manual discovery in Console settings probes the user's unsaved base URL,
-        so those results are not yet present in the application catalog service.
-        Keep them as a provider-scoped overlay without reloading the endpoint.
+        Discover in Settings probes the endpoint the form holds, saved or not,
+        so its results are not in the application catalog service. They are
+        kept as a provider-scoped overlay; the endpoint is not read again.
 
         Args:
             provider: Provider whose overlay is changing.
             model_ids: Discovered model identifiers.
-            notify: Post a parent-facing provenance refresh message. The modal
-                disables this only for its own derived overlay updates.
+            notify: Post ``ProvenanceOptionsChanged`` to the host. Settings
+                passes False: the overlay is its own, so it has nothing to hear.
             served_now: The listing is the current endpoint's own, dropped by
                 its host whenever that endpoint changes (Settings), so its
                 new ids group as "Served now" instead of custom.
@@ -541,16 +547,17 @@ class ModelSearchPicker(Widget):
     ) -> None:
         """Replace one provider's results with source-aware model choices.
 
-        This opt-in path leaves existing catalog-loading callers on their
-        original flat result list. Model IDs are normalized and deduplicated,
-        while the complete typed option remains available for grouping and
-        selection provenance.
+        The grouped list: the catalog load takes this path when the picker
+        was built with ``show_provenance``, and a host may hand in options it
+        resolved itself. Model IDs are normalized and deduplicated, while the
+        complete typed option remains available for grouping and selection
+        provenance.
 
         Args:
             provider: Provider whose source-aware options are changing.
             options: Complete typed model projection.
-            notify: Post a parent-facing refresh message. The modal disables
-                this only while applying its own derived provenance overlay.
+            notify: Post ``ProvenanceOptionsChanged`` to the host; False for
+                a host that is applying options it derived itself.
         """
         cache_key = provider_config_key(provider)
         normalized_options: list[ResolvedProviderModelOption] = []

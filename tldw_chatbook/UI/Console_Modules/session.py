@@ -434,10 +434,12 @@ def follows_saved_defaults(
 ) -> bool:
     """Return whether an open chat converges on newly saved defaults (D1).
 
-    ADR-095 as amended 2026-09-26: a chat with no messages, no user work and
-    settings still equal to its creation baseline holds whatever a blank chat
-    created now would. One predicate serves the Console's convergence and
-    the Settings copy that says who a save reaches (TASK-33007.4).
+    ADR-095 as amended 2026-09-26: a chat with no settings of its own takes
+    the saved defaults, work or not; one with settings does only while it has
+    no messages, no user work and settings still equal to its creation
+    baseline. A chat created before the Console's last "Make default" does
+    neither. One predicate serves the Console's convergence and the Settings
+    copy that says who a save reaches (TASK-33007.4).
 
     Args:
         store: The store that owns ``session``'s messages.
