@@ -59,7 +59,8 @@ from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Static
+from textual.message import Message
+from textual.widgets import Button, Input, Static
 
 from ...DB.Evals_DB import EvalsDB
 from ...Evaluations_Interop.evaluation_normalizers import (
@@ -510,6 +511,95 @@ def read_bounded_import_text(file_path: Path) -> str:
     return payload.decode("utf-8")
 
 
+class DatasetRenamed(Message, namespace="snippet_editor"):
+    """task-1484: posted after a dataset rename succeeds. Handled by
+    ``EvalsScreen._on_dataset_renamed``, which re-selects the dataset with
+    ``rail_dirty=True`` -- the rail row (and this editor's own heading)
+    re-render from what ``EvalsDB.update_dataset`` actually persisted, the
+    same reload-on-save contract ``BenchEditor.Saved`` already carries.
+
+    Carries the dataset id (not the name): the name the DB persisted can
+    differ from what was typed (``update_dataset`` strips it), and the
+    handler's job is only to trigger the reload.
+    """
+
+    def __init__(self, dataset_id: str) -> None:
+        self.dataset_id = dataset_id
+        super().__init__()
+
+
+class DatasetRenameRow(NotifyMixin, Vertical):
+    """task-1484: one dataset's rename affordance -- an Input prefilled
+    with the current name plus a Rename button, shared verbatim by
+    ``SnippetEditor`` (snippet datasets) and ``ProbeSetDetail`` (probe
+    sets -- a probe set IS a dataset row; the read-only probe LISTING
+    stays read-only, the NAME is metadata about the row, not probe data).
+
+    Stacked in a ``Vertical``, deliberately NOT an ``Input``+``Button``
+    ``Horizontal``: an unstyled ``Input`` in a one-line row measures 100%
+    of the container and pushes the button past the pane's edge (confirmed
+    live -- the button's region landed under the neighbouring inspector
+    column and a click resolved there), and the styling that would fix it
+    is screen-owned CSS some harnesses do not load. One child per line
+    needs no styling anywhere.
+
+    A plain DB write (``EvalsDB.update_dataset``), no worker -- the same
+    "no worker for a bare DB write" convention ``library_rail.py``'s own
+    creation handlers follow. Empty/whitespace names and name collisions
+    (``eval_datasets.name`` is UNIQUE with no ``deleted_at`` exemption)
+    surface as toasts, never silent no-ops.
+    """
+
+    def __init__(
+        self,
+        view_model: EvalsViewModel,
+        dataset_id: str,
+        current_name: str,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._view_model = view_model
+        self._dataset_id = dataset_id
+        self._current_name = current_name
+
+    def compose(self) -> ComposeResult:
+        yield Input(
+            value=self._current_name,
+            id="evals-dataset-rename-input",
+            tooltip="Rename this dataset (its name, never its contents).",
+        )
+        yield Button("Rename", id="evals-dataset-rename", compact=True)
+
+    @on(Button.Pressed, "#evals-dataset-rename")
+    def _on_rename_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        name = self.query_one("#evals-dataset-rename-input", Input).value.strip()
+        if not name:
+            self._notify("Enter a name to rename this dataset to.", severity="warning")
+            return
+        db = self._view_model.db
+        if db is None:
+            self._notify("The evaluation service is unavailable.", severity="error")
+            return
+        try:
+            updated = db.update_dataset(self._dataset_id, name=name)
+        except Exception as exc:
+            # Broad, deliberately: InputError (empty after strip), a UNIQUE
+            # collision on the new name, and a locked database are all the
+            # same user-facing outcome -- a toast, never a crash. Free-text
+            # safe through NotifyMixin's markup=False.
+            self._notify(f"Could not rename the dataset: {exc}", severity="error")
+            return
+        if not updated:
+            self._notify(
+                "Could not rename the dataset: it may have been deleted.",
+                severity="error",
+            )
+            return
+        self._notify(f"Renamed to {name}.")
+        self.post_message(DatasetRenamed(self._dataset_id))
+
+
 class SnippetEditor(NotifyMixin, Vertical):
     """Detail-pane content for a selected dataset: a read-only snippet
     table (character count, whitespace flag, exact-duplicate flag) and an
@@ -558,6 +648,14 @@ class SnippetEditor(NotifyMixin, Vertical):
             id="evals-detail-dataset-name",
             classes="evals-pane-heading",
             markup=False,
+        )
+        # task-1484: the rename affordance sits directly under the name it
+        # renames -- see DatasetRenameRow's own docstring.
+        yield DatasetRenameRow(
+            self._view_model,
+            self._dataset_id,
+            str(dataset.get("name") or "Untitled dataset"),
+            id="evals-dataset-rename-row",
         )
         yield Static(
             f"inline · {len(snippets)} {snippet_word} · {len(groups)} {group_word}",

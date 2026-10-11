@@ -106,7 +106,7 @@ from ..Evals.skill_eval_launch import (
     store_skill_names,
 )
 from ..Evals.skill_eval_panel import SkillEvalPanel
-from ..Evals.snippet_editor import SnippetEditor
+from ..Evals.snippet_editor import DatasetRenamed, SnippetEditor
 from ..Workbench.workbench_state import WorkbenchHeaderState
 from ..Lab_Modules.lab_rail_layout import LabRailLayout
 from .lab_frame import LabScreen
@@ -1250,6 +1250,19 @@ class EvalsScreen(LabScreen):
             # a button the mounted BenchEditor itself composed.
             return
         await editor.stage_target(model_row)
+
+    @on(DatasetRenamed)
+    def _on_dataset_renamed(self, event: DatasetRenamed) -> None:
+        """task-1484: a successful dataset rename re-selects the same
+        dataset -- ``select()``'s rail-dirty recompose re-renders the rail
+        row from what ``EvalsDB.update_dataset`` actually persisted (and
+        the detail pane's own heading with it), the same reload-on-save
+        contract ``BenchEditor.Saved``/``CharacterBenchEditor.Saved``
+        already carry. The rename row itself posts this from BOTH detail
+        surfaces that mount it (``SnippetEditor`` and ``ProbeSetDetail`` --
+        a probe set IS a dataset row)."""
+        event.stop()
+        self.select(kind="dataset", id=event.dataset_id)
 
     @on(LibraryRail.SampleBenchRequested)
     def _on_sample_bench_requested(

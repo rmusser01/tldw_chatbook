@@ -84,7 +84,7 @@ from ...Evals.character_probe.storage import (
 from ...Evals.steering import model_steering
 from .card_picker import CardPicker
 from .evals_state import EvalsViewModel
-from .snippet_editor import guard_single_line, render_snippet_cell
+from .snippet_editor import DatasetRenameRow, guard_single_line, render_snippet_cell
 
 #: Verbatim. The pinned error for an unparseable or sub-1 samples-per-cell
 #: value -- asserted exactly by
@@ -745,6 +745,16 @@ class ProbeSetDetail(Vertical):
             id="evals-probeset-detail-name",
             classes="evals-pane-heading",
             markup=False,
+        )
+        # task-1484: a probe set IS a dataset row, so it gets the SAME
+        # rename affordance a snippet dataset gets -- the probe LISTING
+        # below stays read-only (renaming touches the row's NAME, never
+        # its stored probes).
+        yield DatasetRenameRow(
+            self._view_model,
+            str(dataset.get("id") or ""),
+            str(dataset.get("name") or "Untitled probe set"),
+            id="evals-dataset-rename-row",
         )
 
         db = self._view_model.db
