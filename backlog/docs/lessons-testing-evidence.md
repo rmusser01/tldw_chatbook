@@ -19590,3 +19590,39 @@ and borrowed real CLI/mounted paths, in-memory/foreign controls, cancellation
 until physical completion, and actual maintenance drain establish ownership;
 an aggregate warning disappearing alone does not. Preserve the old failed
 receipt and write baseline/fixed probes to different filenames.
+## A failure that only happens on CI can be the filesystem, not the speed (TASK-34789, PR #3077)
+
+**Incident, 2026-10-08 to 2026-10-11.** `Tests/Notes/test_notes_sync_source_moved_settle.py::test_a_save_in_one_folder_never_waits_for_another_folders_pass`
+failed the required check 14 times, always with `[('update_file', 'needs_attention', 'executor_failed')]`, and never once
+on a Mac. It was filed as a flaky test and read as a timing problem on slow runners. It was a product race: a guarded
+replace unlinks the file it displaced, ext4 hands that inode number to the next new file at once, and the replaced
+file's binding still records the number until its own commit. A second folder's write that landed in that window
+carried the number, and its commit broke the store's one-identity-per-active-binding index. APFS never reuses an inode
+number, so no amount of looping on macOS could reproduce it.
+
+**Why it took a model to find.** The CI logs held nothing but `executor_failed`: every untyped exception in the
+executor is recorded under that one reason with no trace (TASK-34795). The cause was first shown by modelling ext4's
+numbering (lowest free number first) over APFS, where the unfixed code then failed 16 of 120 runs at natural timing,
+close to the CI rate.
+
+**What made it evidence.** A model is not an observation. The PR added a test that uses real inode numbers and decides
+its expectation from what the filesystem did in that run: when the second folder's file is handed the number the first
+folder's binding still records, the unfixed path must end in the CI row and the fixed path must refuse that number;
+when the filesystem hands out a different number the test asserts the healthy outcome and then skips. On macOS both
+arms skipped 50 of 50. On the Linux runner (run 38161635121, PR Fast Lane, image ubuntu-24.04) all 17 tests of the
+file passed with no skip, which is the first time the collision was observed on a filesystem it happens on.
+
+**What that pass does and does not show.** The test holds the first folder before its commit, so the order of events
+is forced. The pass proves two links: the freed number is handed to the next new file, and the unfixed commit is then
+refused by the index (the control arm asserts the `IntegrityError` itself). It does not prove that the original test
+reaches that order unforced. That link rests on two independent models of the numbering (the author's: 16 failures in
+120 runs of the unfixed code; the reviewer's: 12 in 220) until the original test accumulates clean CI runs. Say which
+links an experiment closed; "confirmed on Linux" on its own claims more than this one did.
+
+**What to do.**
+- When a test fails only on CI and never locally, list what differs besides speed before adding waits: filesystem
+  semantics (inode reuse, case sensitivity, timestamp granularity, rename atomicity), the kernel, locale, core count.
+- If the local machine cannot produce the condition, do not stop at a model of it. Write the test so the real
+  condition decides the expectation and the other branch skips, and read the CI log to see which branch ran. A test
+  that passes on the laptop only because the condition never occurs has proven nothing about the fix.
+- Record which branch ran, and where, in the task notes. "Green on CI" does not say it.
