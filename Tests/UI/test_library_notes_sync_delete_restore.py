@@ -71,21 +71,36 @@ def _note_row(screen, title: str) -> Button:
     )
 
 
+def _settled_canvas(screen, selector: str):
+    """The Notes canvas at ``selector`` when it is not rebuilding, else None.
+
+    TASK-34789: a Notes canvas answers every sync that lands (a tree slice,
+    the trash reload, Undo's own reload, a sync publication) by recomposing.
+    While that runs, or is queued, its previous children are still in the
+    DOM but already pruning: Textual reports them as not displayed,
+    ``Button.press()`` on one does nothing, and a read can land between the
+    removal and the remount. Each read and press below starts from a canvas
+    that is doing neither.
+    """
+    canvases = screen.query(selector)
+    if not canvases:
+        return None
+    canvas = canvases.first()
+    if not canvas._children_ready or canvas._recompose_required:
+        return None
+    return canvas
+
+
 def _manage_rows_mounted(screen) -> bool:
     """Whether Manage sync folders shows its rows on a pane that is not recomposing.
 
-    TASK-34789: every Notes worker that lands re-syncs the canvas (Undo's own
-    tree reload and final sync, the trash reload, a sync publication) and the
-    work pane answers each one by recomposing, so for the frames between the
-    removal and the remount the rows are not in the DOM. The UI Fast Lane
-    read the row in exactly that gap -- a fixed 0.1 s after first seeing it,
-    with Undo's final sync landing in between -- and raised ``NoMatches``.
+    TASK-34789: the UI Fast Lane read the row a fixed 0.1 s after first
+    seeing it, with Undo's final sync landing in between, and raised
+    ``NoMatches`` -- the row is not in the DOM between a recompose's removal
+    and its remount.
     """
-    panes = screen.query("#library-note-work-pane")
-    return (
-        bool(panes)
-        and panes.first()._children_ready
-        and bool(screen.query(ROOT_STATUS))
+    return _settled_canvas(screen, "#library-note-work-pane") is not None and bool(
+        screen.query(ROOT_STATUS)
     )
 
 
@@ -98,11 +113,9 @@ def _delete_prompt_shown(screen) -> bool:
     an admission precede the prompt); read before it finished, the copy is
     still the compose-time default -- the unsynced wording.
     """
-    panes = screen.query("#library-note-work-pane")
     prompts = screen.query("#library-note-delete-confirmation")
     return (
-        bool(panes)
-        and panes.first()._children_ready
+        _settled_canvas(screen, "#library-note-work-pane") is not None
         and bool(prompts)
         and bool(prompts.first().display)
     )
@@ -137,22 +150,33 @@ async def _back_to_notes_list(screen, pilot) -> None:
     )
 
 
+def _synced_folder_row(screen) -> Button | None:
+    """The live VSync row, or None while the Notes list is rebuilding.
+
+    TASK-34789: during the list's teardown the previous compose's VSync row
+    is still the first match in the DOM. Pressed there, the folder never
+    opened and the test waited 30 s for its note.
+    """
+    canvas = _settled_canvas(screen, "#library-notes-canvas")
+    if canvas is None:
+        return None
+    return next(
+        (
+            button
+            for button in canvas.query(".library-notes-folder-row").results(Button)
+            if getattr(button, "folder_id", "") == "folder-1" and button.display
+        ),
+        None,
+    )
+
+
 async def _open_synced_folder(screen, pilot) -> None:
     await _until(
         pilot,
-        lambda: any(
-            getattr(row, "folder_id", "") == "folder-1"
-            for row in screen.query(".library-notes-folder-row").results(Button)
-        ),
+        lambda: _synced_folder_row(screen) is not None,
         "the synced folder to load",
     )
-    # Settle pending recomposes before querying the current folder button.
-    await pilot.pause()
-    next(
-        button
-        for button in screen.query(".library-notes-folder-row").results(Button)
-        if getattr(button, "folder_id", "") == "folder-1"
-    ).press()
+    _synced_folder_row(screen).press()
 
 
 @pytest.mark.parametrize("delayed_root_folders", [False, True])
