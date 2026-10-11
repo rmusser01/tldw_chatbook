@@ -19784,6 +19784,21 @@ node ids that contain spaces (`[...-Q3 retro.md]`) split under `$(cat list)`.
 Both produced "no tests ran" on the base arm. Drive node lists through a tiny
 Python `subprocess.run([... *nodes])` runner instead.
 
+**The node-id trap in another form (TASK-33641.3, 2026-10-10).** The Bash tool
+runs zsh, and zsh reads `[...]` after a parameter as a subscript:
+`"$T[imagegen-size0]"`, meant as a parametrized node id, expanded to the empty
+string. pytest was handed five empty arguments. An empty argument is still an
+argument, so `testpaths = ["Tests"]` did not apply and collection started at
+the worktree root. It imported `Docs/Development/test_logits_openai.py`, whose
+module-level import of `tldw_chatbook.config` ran the startup admission against
+`default_bootstrap_root()`, under no test's isolation: `SystemExit: Recovery
+required: recovery_scope_uncertain`, an xdist INTERNALERROR and "no tests ran
+in 1.27s". `startup_permission` is written to read only, and no file under
+`~/.config/tldw_cli` or `~/.local/share/tldw_cli` had been modified
+(`find -mmin -20`: 0 files). Do not count on a collection outside `Tests/`
+being that harmless. Brace the variable (`"${T}[imagegen-size0]"`) and `echo`
+one built id before the run.
+
 ## A test-added ownership wrapper can mask the real retry leak
 
 TASK-31966, 2026-10-05: four workspace projection tests wrapped calls in

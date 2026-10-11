@@ -1357,7 +1357,7 @@ def _painted_before_status(screen, label, status) -> str:
 
 
 async def _wait_until_the_name_line_can_be_read(
-    pilot, screen, label, status, why, status_width=None
+    pilot, screen, label, status, subject, status_width=None
 ):
     """Wait for the row's layout and for its scroll into view to land.
 
@@ -1375,7 +1375,9 @@ async def _wait_until_the_name_line_can_be_read(
         and status_width in (None, status.region.width)
         and screen.find_widget(label).clip.contains_region(label.region)
     ):
-        assert time.monotonic() < deadline, why
+        assert time.monotonic() < deadline, (
+            f"{subject}: the name's line was never laid out and scrolled into view"
+        )
         await pilot.pause(0.02)
 
 
@@ -1405,9 +1407,8 @@ async def test_backend_rows_paint_each_name_whole_before_one_status_column(size,
             label = row.query_one(".settings-input-label", Static)
             status = row.query_one(".settings-imagegen-badge", Static)
             row.scroll_visible(animate=False)
-            await pilot.pause(0.1)
             await _wait_until_the_name_line_can_be_read(
-                pilot, screen, label, status, f"{backend_id} @ {size} never laid out"
+                pilot, screen, label, status, f"{backend_id} @ {size}"
             )
             painted = _painted_before_status(screen, label, status)
             name = labels[backend_id]
@@ -1482,7 +1483,7 @@ async def test_a_long_probe_result_shortens_the_name_and_keeps_test_in_the_row(s
                     screen,
                     label,
                     status,
-                    f"{backend_id} @ {size}: {badge!r} never laid out",
+                    f"{backend_id} @ {size} with {badge!r}",
                     status_width=len(badge),
                 )
                 default_rows += bool(marker.region.width)
