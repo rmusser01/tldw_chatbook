@@ -96,3 +96,12 @@ ADR-052 (memory and compaction policy), ADR-067 (indefinite approval waits), ADR
 3. Session-only TOOL-marker fields (`tool_output_full`, `tool_diff`, `raw_cli_presentation`, …) are never persisted or sent to providers.
 4. `request_mcp_approvals` is owner-agnostic — builtin tools ride the same approval card path as MCP tools.
 5. The review hook clears per-run decision stamps at entry so a raising approval round can never leak a prior turn's approval.
+
+
+### Learned response rules (ADR228)
+
+The app-owned `ConsoleRuntime.ensure_response_rules` lazily binds the shared rule repository, helper pool, queue and controller on first native generation or manager access. `set_chat_controller` installs the lazy factory even for non-screen assembly. `response_rules/generation.py` holds successful completion until required lifecycle settlement and assessment; app shutdown drains retained preparation, transport and finite SQLite callbacks before retiring their owners. `response_rules/chat_state.py` stores native source fences and body-free tool evidence through `ConsoleChatStore` facades. `console_tool_result_observation.py` composes the existing Watchlists receipt observer with definitive rule facts.
+
+`response_rules/goal_input.py` validates a real, accepted coordinator capability and the exact runtime custody handoff/parent version; ordinary SYSTEM content is not rule authority. A settled Goal's assessment is retained, but automatic repair is explicitly refused because ADR227 has no second-run continuation authority. Native/manual and genuine external-hook feedback otherwise share `ConsolePromptQueueCoordinator.admit_machine_followup` and one atomic receipt/checkpoint contribution.
+
+The same scoped manager is used by `/rules`, Chat settings and canonical F4 Settings. It loads before or after a Chat exists; source/Workspace/profile changes revoke current tests, and Save uses the exact tested revision and binding CAS. Source CSS is `_console_response_rules.tcss`, included by the existing CSS builder.

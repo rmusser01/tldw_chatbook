@@ -34,6 +34,8 @@ _SKILLS_ARG_MODE_PATTERN = re.compile(
 # `ConsoleCommand` carries no description field, so the built-ins get their
 # popup copy here; skill entries use the resolver snapshot descriptions.
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
+    "omfg": "Learn a local response rule from what was wrong with the last answer",
+    "rules": "Review, test and manage Chat, Workspace or profile response rules",
     "goal": "Review setup for a finite goal run",
     "prompt": "Insert a saved prompt into the composer",
     "system": "Apply a saved system prompt to this session",

@@ -33,6 +33,8 @@ COMMANDS = [
     "/generate-video",
     "/stream-video",
     "/steer",
+    "/omfg",
+    "/rules",
     "/redirect",
     "/stop",
     "/emergency-stop",

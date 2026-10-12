@@ -81,36 +81,37 @@ from tldw_chatbook.Chat.console_trace_repository import (
 )
 from tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.response_rules.store import ResponseRuleStore
     from tldw_chatbook.Chat.console_voice_promotion import (
         CompletedVoicePairCommit,
         ResolvedVoicePromotionDestination,
         VoicePromotionContext,
         VoicePromotionIdentitySet,
     )
-from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
-from tldw_chatbook.Chat.conversation_local_marks_service import (
-    ConversationLocalMarksService,
+from tldw_chatbook.Chat.console_project_instructions import (
+    encode_project_context_json,
 )
 from tldw_chatbook.Chat.console_roleplay_metadata import (
     ConsoleRoleplayContext,
     merge_console_roleplay_context,
     parse_console_roleplay_context,
 )
+from tldw_chatbook.Chat.console_session_endpoint_policy import (
+    ConsoleEndpointAdoptionReceipt,
+)
+from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_speech_preferences import (
     ConsoleSpeechPreferences,
     merge_console_speech_preferences,
     parse_console_speech_preferences,
 )
-from tldw_chatbook.Chat.console_session_endpoint_policy import (
-    ConsoleEndpointAdoptionReceipt,
+from tldw_chatbook.Chat.conversation_local_marks_service import (
+    ConversationLocalMarksService,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
-from tldw_chatbook.Chat.console_project_instructions import (
-    encode_project_context_json,
-)
-from tldw_chatbook.Chat.rag_scope import serialize_scope
+from tldw_chatbook.Chat.library_activity import LibraryActivityContribution
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.Chat.rag_scope import serialize_scope
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
@@ -180,6 +181,12 @@ _VOICE_PROMOTION_FORBIDDEN_MESSAGE_LOCATORS = frozenset(
         ("console_hook_continuation_receipts", "assistant_message_id"),
         ("console_hook_continuation_receipts", "parent_assistant_message_id"),
         ("fleet_progress_messages", "message_id"),
+        ("console_response_rule_assessments", "message_id"),
+        ("console_response_rule_drafts", "message_id"),
+        ("console_response_rule_fixtures", "message_id"),
+        ("console_response_rule_validations", "message_id"),
+        ("console_machine_followup_receipts", "assistant_message_id"),
+        ("console_machine_followup_receipts", "parent_assistant_message_id"),
         ("message_attachments", "message_id"),
         ("message_exchanges", "message_id"),
         ("message_generation_metadata", "message_id"),
@@ -297,6 +304,7 @@ class ChatPersistenceService:
         citation_repository: CitationTraceRepository | None = None,
     ):
         self.db = db
+        self.response_rule_store: ResponseRuleStore | None = None
         self.workspace_registry = workspace_registry
         self.citation_repository = citation_repository
         self.context_repository = ConsoleContextRepository(db)
@@ -1828,6 +1836,16 @@ class ChatPersistenceService:
                 acceptance,
             )
 
+    def bind_response_rule_store(self, rules: "ResponseRuleStore") -> None:
+        """Use the same local rule owner for adoption and source cleanup."""
+        from .response_rules.store import ResponseRuleStore
+
+        if not isinstance(rules, ResponseRuleStore) or rules.repository.db is not self.db:
+            raise ValueError("response_rules_persistence_owner_mismatch")
+        if self.response_rule_store is not None and self.response_rule_store is not rules:
+            raise ValueError("response_rules_owner_already_bound")
+        self.response_rule_store = rules
+
     def promote_console_conversation_bundle(
         self,
         *,
@@ -1842,6 +1860,7 @@ class ChatPersistenceService:
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
         contributions: Sequence[ConsolePromotionTransactionContribution] = (),
         trace_boundary: TraceForkBoundary | None = None,
+        rule_adoption_session_id: str | None = None,
     ) -> ConsoleLibraryPolicySnapshot:
         """Commit one temporary Console transcript and all Task-7 sidecars."""
         self.validate_workspace_target(**conversation_kwargs)
@@ -1903,6 +1922,13 @@ class ChatPersistenceService:
                 self.db.set_conversation_console_project_context(
                     conversation_id,
                     project_context_json,
+                )
+            if rule_adoption_session_id is not None:
+                if self.response_rule_store is None:
+                    raise RuntimeError("response_rules_owner_unbound")
+                self.response_rule_store.adopt_temporary(
+                    rule_adoption_session_id, conversation_id,
+                    native_message_ids, cursor,
                 )
             if contributions:
                 exact_native_message_ids = MappingProxyType(dict(native_message_ids))

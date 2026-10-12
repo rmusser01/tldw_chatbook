@@ -1401,3 +1401,51 @@ def test_voice_promotion_refuses_foreign_locator_ownership_without_mutation(
         )
         == owned_rows
     )
+
+
+@pytest.mark.parametrize("locator", ["assessments", "drafts", "fixtures", "validations", "receipt_assistant", "receipt_parent"])
+@pytest.mark.parametrize("message_role", ["user", "assistant"])
+@pytest.mark.parametrize("related", [True, False])
+def test_voice_promotion_response_rule_residue_refuses_without_mutation(
+    db_instance, locator, message_role, related
+):
+    conversation_id, root_id, destination, context = _voice_promotion_case(db_instance)
+    service = ChatPersistenceService(db_instance)
+    service.commit_completed_voice_pair(destination=destination, context=context)
+    identities = derive_voice_promotion_identities(context.promotion_id)
+    message_id = (identities.user_message_id if message_role == "user"
+                  else identities.assistant_message_id) if related else root_id
+    with db_instance.transaction() as cursor:
+        cursor.execute(
+            "INSERT INTO console_response_rule_revisions VALUES ('rule',1,'{}',1,'{}','2026-10-12')"
+        )
+        if locator == "assessments":
+            table = "console_response_rule_assessments"
+            cursor.execute("INSERT INTO console_response_rule_assessments VALUES ('assessment',?,?,'completed','{}')", (conversation_id, message_id))
+        elif locator == "drafts":
+            table = "console_response_rule_drafts"
+            cursor.execute("INSERT INTO console_response_rule_drafts VALUES ('draft','chat',?,'rule',1,'{}','{}','complaint',?,?)", (conversation_id, conversation_id, message_id))
+        elif locator == "fixtures":
+            table = "console_response_rule_fixtures"
+            cursor.execute("INSERT INTO console_response_rule_fixtures VALUES ('rule',1,'case','recorded_violation',?,?,1,NULL)", (conversation_id, message_id))
+        elif locator == "validations":
+            table = "console_response_rule_validations"
+            cursor.execute("INSERT INTO console_response_rule_validations VALUES ('rule',1,'{}',?,?,1)", (conversation_id, message_id))
+        else:
+            table = "console_machine_followup_receipts"
+            cursor.execute(
+                "INSERT INTO console_machine_followup_receipts VALUES ('operation','turn','settlement',?,?,?,'chain',1,1,'[\"native\"]')",
+                (conversation_id, message_id if locator == "receipt_parent" else root_id,
+                 message_id if locator == "receipt_assistant" else "machine-child"),
+            )
+    connection = db_instance.get_connection()
+    assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    rows = tuple(tuple(row) for row in connection.execute(f'SELECT * FROM "{table}"'))
+    before = _promotion_persistence_snapshot(db_instance, conversation_id=conversation_id, promotion_id=context.promotion_id)
+    if related:
+        with pytest.raises(RuntimeError, match="conflict"):
+            service.commit_completed_voice_pair(destination=destination, context=context)
+    else:
+        assert service.commit_completed_voice_pair(destination=destination, context=context).already_committed
+    assert _promotion_persistence_snapshot(db_instance, conversation_id=conversation_id, promotion_id=context.promotion_id) == before
+    assert tuple(tuple(row) for row in connection.execute(f'SELECT * FROM "{table}"')) == rows

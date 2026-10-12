@@ -58,3 +58,41 @@ Actualdev38654061ca4ea763e8847e5e77f6c4399a3488f1 added only two nonoverlapping 
 Privatelyrebasedportraite7c05cc286b2de846e1da01efca86bfee5c37c6e retains allfour previouslyreviewed payloadblobs. Threeoriginalrulegovernancecommits were carried ontoit asd70eb019; this plan-only carryforward precedes code. Allthree runtime/package/scriptgroups equal the independentlycleared6e4311bd read-onlypreflight; Tests/workflow matchcurrentreviewedparent. The static91path/currentowner/schema80-to81 preflight remains applicable, exact newSTART is inrootdispatch/externalbinding. No ruleproductcodeexistsyet. Earlierprivateheadfactsremainhistorical.
 
 The future criticalrule selection must fit actualupdatedexistinglane budgets using measured targetduration; Fast’s originals measuredabout30minutesof35, so no blind extra cohort append. Preserve every actualinheritedtarget/argv/order/cap/aggregate/profileprocess; placeboundedselection in an existingrequiredjob with measuredroom, document exactexecutablemembership andnegativecontrols. No capraise/newjob/dependency or hidden omission. Rootlaterreconciles onlyrule/governance onto actualpost2978/latestdev andqualifies changedboundaries beforepublication.
+
+## Released implementation phases (2026-10-12)
+
+ADR required: yes, existing ADR228 concrete amendment.
+ADR path: backlog/decisions/228-console-learned-response-rules.md.
+Reason: current storage, physical custody and shared native/hook admission preserve
+Goal/Personal Context/native connection boundaries.
+
+1. Preserve complete source91paths with symbol-level current-owner composition.
+2. Reproduce preparation red and append80-to81/four successors/all75–80 predecessors;
+   prove six voice residues, exact import/rollback/private/table/index/trigger owners.
+3. Hold physical preparation and transport independently, reject late dispatch and
+   account original usage once; qualify actual workers/ordinary auxiliary defaults.
+4. Compose lazy first-send completion holds and current Goal/native-hook budgets,
+   transaction/currentness, public send actions, adoption/deletion and source fences.
+5. Integrate one F4/Chat/composer manager with Test/CAS Save/promotion, preserved
+   draft/focus/Stop and all boot/style/size caps.
+6. Measure bounded critical selection inside existing required-lane capacity; pin
+   executable target/order/flags/processes/caps and membership negatives.
+7. Run frozen targeted current-owner/static/native checks with unique argv/JUnit/
+   hash receipts; preserve every failed/setup/partial attempt, no full sweep.
+8. Coordinate owned local model/genuine hook/native terminal with root when concrete;
+   self-review/commit/handoff, leaving actual-dev/reviews/hosted/publication to root.
+
+
+2026-10-12 current Goal ruling (ADR227/228): assess only the exact coordinator-issued, accepted Goal iteration handoff pinned through native parent identity and message version. A genuine live GoalIterationAuthorization is required; arbitrary SYSTEM rows, copied metadata and shape-compatible objects confer no rule authority. Recheck Goal/binding/source/Stop currentness. Completed Goal runs expose no existing same-native-run repair seam: preserve the assessment and explicitly refuse automatic repair rather than admitting an ordinary queued turn. No second native run, Goal attempt, machine receipt, allowance or repeated tool work; keep record_outcome identity guard and inherited absolute limits unchanged. Phase12 exposed the genuine source_changed assessment defect; qualify passing, violating and revoked/fake input cases. This enforces inherited ownership and leaves settled-Goal automatic repair unsupported, documented for independent review. ADR required: yes (existing amendment), backlog/decisions/228-console-learned-response-rules.md.
+
+
+2026-10-12 connected trace lifetime ruling: phase24 reproduced startup GC removing newly admitted user/assistant semantic revisions before provider call reservation, leaving an accepted repair retained for recovery. Apply existing ADR097 decision16 and ADR228: preserve the live provenance owned by current durable dispatch checkpoints through call reservation, without new storage, a retention owner, timing suppression or weaker GC authorization. Map: durable turn acceptance -> canonical user/assistant revisions -> captured request provenance -> ConsoleTraceBoundaryFactory reservation; TraceGarbageCollector mark/sweep must respect the current accepted owner during the gap. Prove actual ordinary-send and native-repair survival with real collector/admission/reservation, and orphan/revoked/current-version/epoch-change reclamation or refusal controls. Costs: a wrong missing root deletes live provenance; an overbroad root leaks orphan retention. Keep existing graph epochs, native handles, deletion grants, privacy/fork/purge and caps. ADR required: yes, existing ADR097/228 amendment; no new ADR ID.
+
+
+2026-10-12 automatic GC epoch qualification: phase29 real worker/collector reproduced a completed epoch4 result indefinitely reused at epoch6 after checkpoint settlement because physical compaction was threshold-deferred. Root approved invalidating pending_gc_result only when its marked_epoch differs from current_graph_epoch, returning through existing collection. Preserve unchanged-epoch reuse, actual compactor eligibility, unknown/incomplete result failure handling and all scheduling/thresholds. Goal deliberately freezes Capture Off under its genuine SYSTEM handoff; qualify real collection before actual coordinator-owned provider entry and rule assessment without introducing USER checkpoints or new retained roots. Cost if wrong: repeated collection during unchanged idle state or stale logical collection hiding orphan reclamation. Existing ADR097/228 apply; no new persistent declarations.
+
+
+2026-10-12 phase37 genuine native SQLite RED: learning activates its tested rule but silently ignores the existing maintenance gate refusing initial native repair, returning reason tested. Preserve the committed rule and all queue gates; propagate the False admission result through the existing initial_repair_unavailable projection. Existing ADR228 and current honest-refusal AC apply; no authority, allowance or queue contract change.
+
+
+2026-10-12 critical CI measurement and disposition: ConsoleP0 existing20min job measured13m3 before rules. Selected sandbox50cases40.13s and admission19cases45.46s fit in existing two processes (projection14m29; double added duration15m55). Exact inherited argv/order/processes/180s/300s timeouts and six lanes/aggregate remain unchanged; membership negatives cover removal/comments and filtering. Native launcher uses disposable supported config and an explicitly hand-authored deterministic fixture, not successful learning. Actual local model learning, semantic judging and retained-tool acceptance failed; native terminal paint remains unobserved after explicit tool denial. Tasks remain In Progress for independent review and actual-base/hosted qualification.

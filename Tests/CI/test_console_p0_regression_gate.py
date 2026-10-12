@@ -55,6 +55,21 @@ _KEEP = "Tests/UI/test_app_keep_alive_dead_screen.py::"
 
 #: P0 task -> the gated regression tests (a file, or one test's node id).
 P0_REGRESSION_TESTS: dict[str, tuple[str, ...]] = {
+    "TASK-34807": (
+        'Tests/Chat/test_response_rules_preparation_custody.py',
+        'Tests/DB/test_response_rules_migration.py::test_historical_migrates_using_installed_sql_without_losing_history[80]',
+        'Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics',
+        'Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_v81_variant',
+        'Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload',
+        'Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_response_rule_residue_refuses_without_mutation',
+        'Tests/DB/test_private_sqlite_inventory.py::test_response_rule_import_dispatch_is_exact_and_validated',
+        'Tests/Chat/test_response_rules_trace_admission.py',
+        'Tests/Chat/test_response_rules_goal_intersection.py',
+        'Tests/Chat/test_response_rules_runtime.py::test_first_send_checks_stored_global_rule_without_prior_manager_use',
+        'Tests/Chat/test_response_rules_runtime.py::test_cancelled_rule_db_call_keeps_real_handle_until_own_cleanup',
+        'Tests/Chat/test_response_rules_runtime.py::test_real_completed_tool_work_is_retained_during_native_repair',
+        'Tests/Chat/test_response_rules_external_hook.py',
+    ),
     # Default sends to OpenAI/Anthropic 400'd on built-in tool schemas.
     "TASK-33621.1": (
         "Tests/Agents/test_provider_tool_schema_conformance.py",

@@ -107,6 +107,15 @@ class IndexPin(NamedTuple):
 #: it only as part of a deliberate schema change, in the same commit as the
 #: migration that adds, drops, renames, or reshapes an index. Sorted by name.
 EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
+    "idx_machine_followup_receipts_conversation": IndexPin(
+        "console_machine_followup_receipts", False, ("conversation_id",)
+    ),
+    "idx_response_rule_assessments_source": IndexPin(
+        "console_response_rule_assessments", False, ("conversation_id", "message_id")
+    ),
+    "idx_response_rule_drafts_scope": IndexPin(
+        "console_response_rule_drafts", False, ("scope_kind", "scope_id")
+    ),
     "character_conversation_search_dirty_authority_revision": IndexPin(
         "character_conversation_search_dirty",
         False,

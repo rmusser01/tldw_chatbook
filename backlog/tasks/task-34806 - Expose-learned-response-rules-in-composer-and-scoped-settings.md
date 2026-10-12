@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 05:55'
-updated_date: '2026-10-12 03:43'
+updated_date: '2026-10-12 23:14'
 labels: []
 dependencies:
   - TASK-34805
@@ -34,12 +34,16 @@ Enable the approved Console response-rule behavior for plan task 8. Preserve exi
 ADR required: yes. ADR path: backlog/decisions/228-console-learned-response-rules.md. Reason: native commands and scoped local rule manager. Task 8 RED-GREEN: real composer command dispatch and draft preservation, shared Chat/Workspace/profile manager, public inactive Test then exact CAS Save, binding changes and promotion preview, Stop/status/focus, token-backed painted terminal layouts and targeted governance.
 
 Current-dev PR3010 integration: follow Docs/superpowers/plans/2026-10-11-pr3010-current-dev-integration.md on the actual post-prior-merge base. ADR required: yes. ADR path: backlog/decisions/228-console-learned-response-rules.md. Reason: preserve the approved local storage/recovery, helper custody and shared native/hook acceptance; source ADR219 remapped after the older claimant. Reproduce reviewed failures before fixes; qualify actual next schema, six voice residues, exact private/index/table catalogs, preparation-through-transport custody, lazy first-use, current Goal/Personal Context owners and separately labelled real-provider/native UI evidence. Historical source qualification above is retained; reopened acceptance awaits current integrated verification and independent review.
+
+2026-10-12 released Task1 on private START13b204cb638ca891175610f5e687a80def71c21e. ADR required: yes (existing). ADR path: backlog/decisions/228-console-learned-response-rules.md; preserves ADR227 Goal and current Personal Context/native ownership. Implement complete91path source workflow by current symbol. Qualify actual schema80-to81/four catalog variants/all predecessors, six voice residues, seven tables/three query/index pins/private import purpose, preparation-through-transport physical custody and original-owner usage, current Goal/hook/queue atomic receipts, lazy first-send/global-before-Chat, manager/draft/Stop/currentness and finite native worker retirement. Preserve all bounds and source history. Use targeted RED/GREEN; measure bounded critical cases for existing required job capacity, preserving inherited targets/order/caps/processes with executable membership negatives. Separate actual local-model/external-hook/native paint from scripted evidence. Root owns actual-base reconciliation, independent reviews, hosted proof and task closure; all AC remain open.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented native /omfg and /rules commands, shared Chat/Workspace/current-profile manager, exact tested CAS Save, private example inspection, promotion preview, exclusion and Stop/status/focus. Thin UI adapters retain app-owned runtime and token/component patterns; generated CSS rebuilt through its owner. Public targeted run: 55 passes plus the corrected active-run/Workspace witnesses (2 passes); real HTTP literal-send and saved-chat journeys pass. Static checks pass. Required full owner/governance and composer attempts retain independently verified baseline exclusions, documented in Docs/superpowers/reviews/2026-10-03-console-response-rules.md. ADR-228 governs storage, scope and admission; independent whole-branch review belongs to qualification task 34807.
+
+2026-10-12 current integration (historical source evidence above remains unchanged): Composer commands, scoped manager, Console settings and canonical F4 Settings share one runtime. Token-backed UI preserves edits, dirty-cancel confirmation, disabled/tested pins, promotion privacy and focus. All four mounted learn/repair/reopen/exclude journeys passed in phase42 after current public workspace switching and actual button readiness fixes. Pilot is wiring evidence; native terminal paint is still pending because Computer Use explicitly denied Terminal. Existing ADR228 governs, with ADR097 live-revision GC and ADR227 Goal constraints applied. Current report: E/pr3010-current-integration/task-1-report.md. All tasks stay In Progress and acceptance remains open pending independent review, actual-base/hosted qualification and unmet external/model checks.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

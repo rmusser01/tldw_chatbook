@@ -100,6 +100,7 @@ from .dictation import ConsoleDictationController
 from .fleet import ConsoleFleetLifecycleController
 from .hands_free import ConsoleHandsFreeController
 from .hooks import ConsoleHooksController
+from .response_rules import ConsoleResponseRulesUI
 from .image import ConsoleImageController
 from .library_activity import ConsoleLibraryActivityController
 from .library_policy import ConsoleLibraryPolicyController
@@ -2544,6 +2545,13 @@ def build_console_controllers(
             continuation, group="console-hook-send-review"
         ),
         session_label=lambda session_id: _console_chat_label(screen, session_id),
+    )
+    screen._response_rules_ui = ConsoleResponseRulesUI(
+        runtime_accessor=lambda: screen._console_runtime().ensure_response_rules(),
+        session_accessor=lambda: screen._ensure_console_chat_store().active_session_id,
+        composer_accessor=lambda: screen._console_composer_or_none(),
+        show_manager=lambda modal: screen.app.push_screen(modal),
+        notify=lambda text: screen.notify(text),
     )
     screen._review_selection = ConsoleReviewSelectionController(
         store_accessor=lambda: screen._ensure_console_chat_store(),

@@ -394,6 +394,7 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.response_rules.runtime import ResponseRuleRuntime
     from tldw_chatbook.Chat.console_goal_runs import GoalIterationAuthorization
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
     from tldw_chatbook.Chat.console_context_budget_copy import ContextOverflowCause
@@ -2770,46 +2771,10 @@ _WATCHLISTS_RECEIPT_ID_RE = re.compile(
 )
 
 
-def watchlists_operation_receipt_ids(
-    tool_name: str,
-    result: Any,
-) -> tuple[str, ...]:
-    """Extract canonical receipt identity from a structured local result."""
-    if (
-        tool_name
-        not in {
-            "watchlists_check_sources",
-            "watchlists_generate_briefing",
-        }
-        or getattr(result, "ok", False) is not True
-    ):
-        return ()
-    content = getattr(result, "content", None)
-    if not isinstance(content, str):
-        return ()
-    try:
-        payload = json.loads(content)
-    except (TypeError, ValueError):
-        return ()
-    if not isinstance(payload, Mapping) or payload.get("status") != "accepted":
-        return ()
-    if tool_name == "watchlists_generate_briefing":
-        candidates = (payload.get("operation_id"),)
-    else:
-        operations = payload.get("operations")
-        if not isinstance(operations, list):
-            return ()
-        candidates = tuple(
-            row.get("operation_id")
-            for row in operations[:50]
-            if isinstance(row, Mapping)
-        )
-    return tuple(
-        operation_id
-        for operation_id in candidates
-        if isinstance(operation_id, str)
-        and _WATCHLISTS_RECEIPT_ID_RE.fullmatch(operation_id)
-    )
+def watchlists_operation_receipt_ids(tool_name: str, result: Any) -> tuple[str, ...]:
+    """Extract canonical receipt identities through the tool observer."""
+    from .console_tool_result_observation import watchlists_operation_receipt_ids as extract
+    return extract(tool_name, result)
 
 
 def _request_fingerprint(messages: list[dict[str, Any]]) -> tuple[int, int]:
@@ -3390,6 +3355,7 @@ class _DurablePostcommitContinuation:
     terminal_citation_finalizer: TerminalCitationFinalizer | None = None
     hook_context: str = field(default="", repr=False)
     hook_continuation: bool = False
+    machine_followup: bool = False
     explicit_manual_retry: bool = False
 
 
@@ -3777,6 +3743,15 @@ def _captured_tool_profile_lease(
         yield
 
 
+def checked_generation(method: Callable[..., Any]):
+    """Load the rule boundary only when the native generation actually starts."""
+    @functools.wraps(method)
+    async def wrapped(self, *args, **kwargs):
+        from tldw_chatbook.Chat.response_rules.generation import checked_generation as check
+        return await check(method)(self, *args, **kwargs)
+    return wrapped
+
+
 def _lease_captured_tool_profile(method: Callable[..., Any]):
     """Apply the captured-profile lease to one whole Console run method."""
 
@@ -3969,15 +3944,20 @@ class ConsoleChatController:
         turn_context_provider: "Callable[[str], ConsoleTurnConfigurationSnapshot] | None" = None,
         queued_staged_rider_provider: "Callable[[str], bool] | None" = None,
         provider_config: "Callable[[], Mapping[str, Any]] | None" = None,
-        confirm_project_instruction_dispatch: Callable[
-            [ProjectInstructionDispatchNotice], Literal["proceed", "cancel", "disable"]
-        ]
-        | None = None,
-        select_project_instruction_binding: Callable[
-            [str, tuple[ProjectInstructionBindingSelection, ...], str],
-            Awaitable[tuple[Literal["select", "disable", "cancel"], str | None]],
-        ]
-        | None = None,
+        confirm_project_instruction_dispatch: (
+            Callable[
+                [ProjectInstructionDispatchNotice],
+                Literal["proceed", "cancel", "disable"],
+            ]
+            | None
+        ) = None,
+        select_project_instruction_binding: (
+            Callable[
+                [str, tuple[ProjectInstructionBindingSelection, ...], str],
+                Awaitable[tuple[Literal["select", "disable", "cancel"], str | None]],
+            ]
+            | None
+        ) = None,
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
         scratch_spaces: ConsoleScratchSpaceManager | None = None,
         activity_receipts: Any | None = None,
@@ -3990,9 +3970,13 @@ class ConsoleChatController:
         library_preparation_timeout: float = 5.0,
         ensure_run_hooks: "Callable[[], Any] | None" = None,
         hook_permissions_accessor: Callable[[], HookPermissions] | None = None,
+        response_rules_changed: Callable[[str], None] | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
+        self.response_rules: ResponseRuleRuntime | None = None
+        self.response_rules_factory: Callable[[], ResponseRuleRuntime | None] | None = None
+        self.response_rules_changed = response_rules_changed
         self._activity_receipts = activity_receipts
         self.provider = provider
         self.model = model
@@ -6484,12 +6468,15 @@ class ConsoleChatController:
             one_shot_prefill=one_shot_prefill,
             one_shot_prefill_revision=one_shot_prefill_revision,
         )
-        return self.prompt_queue_coordinator.admit(
+        result = self.prompt_queue_coordinator.admit(
             session_id,
             text=clean_text,
             expected_revision=expected_revision,
             custody_request=request,
         )
+        if result.applied and self.response_rules is not None:
+            self.response_rules.invalidate(session_id, "user_input")
+        return result
 
     def edit_queued_prompt(
         self,
@@ -12392,6 +12379,9 @@ class ConsoleChatController:
             continuation_receipt=self.prompt_queue_coordinator.continuation_receipt(
                 session.id, queue_entry_id
             ),
+            machine_followup_receipt=self.prompt_queue_coordinator.machine_followup_receipt(
+                session.id, queue_entry_id
+            ),
             agent_chat_start_attempt_id=(
                 chat_start_authorization.request.attempt_id
                 if chat_start_authorization
@@ -12550,6 +12540,7 @@ class ConsoleChatController:
             origin=origin,
             queue_entry_id=queue_entry_id,
             hook_continuation=acceptance.continuation_receipt is not None,
+            machine_followup=acceptance.machine_followup_receipt is not None,
             clean_draft=preparation.executed_draft,
             commit=commit,
             echoed_user_id=echoed_user.id,
@@ -12901,6 +12892,7 @@ class ConsoleChatController:
                 and history is not None
                 and continuation.clean_draft.strip()
                 and not continuation.hook_continuation
+                and not continuation.machine_followup
             ):
                 await history.append(continuation.clean_draft)
 
@@ -16619,49 +16611,37 @@ class ConsoleChatController:
             run_id, call_key, tool_name
         )
 
-    def observe_watchlists_operation_result(
-        self,
-        _run_id: str,
-        _call_key: str,
-        tool_name: str,
-        result: Any,
-    ) -> None:
-        """WORKER THREAD: retain only canonical local receipt identities."""
-        operation_ids = watchlists_operation_receipt_ids(tool_name, result)
-        if not operation_ids:
-            return
-        with self._watchlists_receipt_lock:
-            followed = list(self._followed_watchlists_operation_ids)
-            for operation_id in operation_ids:
-                if operation_id not in followed:
-                    followed.append(operation_id)
-            self._followed_watchlists_operation_ids = tuple(followed)
-        app = getattr(self, "app", None)
-        marshal = getattr(app, "call_from_thread", None)
-        if callable(marshal):
-            marshal(self.remount_watchlists_operation_receipts)
+    def observe_watchlists_operation_result(self, _run_id: str, _call_key: str, tool_name: str, result: Any) -> None:
+        """Delegate to the same store-owned console_tool_result_observation boundary."""
+        from tldw_chatbook.Chat.console_tool_result_observation import observe_watchlists_operation_result
+
+        return observe_watchlists_operation_result(self, _run_id, _call_key, tool_name, result)
+
+    def observe_response_rule_tool_result(self, session_id: str, message_id: str, run_id: str, call_key: str, tool_name: str, result: Any) -> None:
+        """Delegate to the same store-owned console_tool_result_observation boundary."""
+        from tldw_chatbook.Chat.console_tool_result_observation import (
+            observe_response_rule_tool_result,
+        )
+
+        return observe_response_rule_tool_result(self, session_id, message_id, run_id, call_key, tool_name, result)
 
     def remount_watchlists_operation_receipts(self) -> None:
-        """UI THREAD: publish the process-local canonical receipt snapshot."""
-        callback = self.follow_watchlists_operations
-        if callback is None:
+        """Delegate to the same store-owned console_tool_result_observation boundary."""
+        if self.follow_watchlists_operations is None:
             return
-        with self._watchlists_receipt_lock:
-            operation_ids = self._followed_watchlists_operation_ids
-        callback(operation_ids)
+        from tldw_chatbook.Chat.console_tool_result_observation import (
+            remount_watchlists_operation_receipts,
+        )
+
+        return remount_watchlists_operation_receipts(self)
 
     def unfollow_watchlists_operation(self, operation_id: str) -> bool:
-        """Forget one canonical receipt without touching its domain work."""
-        if not _WATCHLISTS_RECEIPT_ID_RE.fullmatch(operation_id):
-            return False
-        with self._watchlists_receipt_lock:
-            followed = self._followed_watchlists_operation_ids
-            if operation_id not in followed:
-                return False
-            self._followed_watchlists_operation_ids = tuple(
-                receipt_id for receipt_id in followed if receipt_id != operation_id
-            )
-        return True
+        """Delegate to the same store-owned console_tool_result_observation boundary."""
+        from tldw_chatbook.Chat.console_tool_result_observation import (
+            unfollow_watchlists_operation,
+        )
+
+        return unfollow_watchlists_operation(self, operation_id)
 
     def complete_definitive_run(self, run_id: str) -> None:
         """Forward to the documented InterruptRoundHost implementation."""
@@ -17002,8 +16982,9 @@ class ConsoleChatController:
             load_agents_routing_config,
             resolve_spawn_target,
         )
-        from .console_session_settings import build_default_console_session_settings
         from tldw_chatbook.config import load_settings
+
+        from .console_session_settings import build_default_console_session_settings
 
         definition = None
         if preset:
@@ -17593,7 +17574,11 @@ class ConsoleChatController:
             from tldw_chatbook.Agents.agent_models import definition_from_row
             from tldw_chatbook.Agents.agent_routing import (
                 RoutingError as _RoutingError,
+            )
+            from tldw_chatbook.Agents.agent_routing import (
                 load_agents_routing_config as _load_routing,
+            )
+            from tldw_chatbook.Agents.agent_routing import (
                 resolve_spawn_target as _resolve_target,
             )
             from tldw_chatbook.Chat.console_session_settings import (
@@ -17713,6 +17698,8 @@ class ConsoleChatController:
                 # not just the in-memory restore.
                 from tldw_chatbook.Chat.console_generation_settings_metadata import (
                     merge_console_generation_settings as _merge_gen,
+                )
+                from tldw_chatbook.Chat.console_generation_settings_metadata import (
                     snapshot_from_session_settings as _snap,
                 )
 
@@ -18087,9 +18074,17 @@ class ConsoleChatController:
     @property
     def is_stop_allowed(self) -> bool:
         """Project ordinary generation or exact pending Stop ownership for this tab."""
-        return self.run_state.is_stop_allowed or (
-            self.prompt_queue_coordinator.pending_continuation_stop_available(
-                self.store.active_session_id or ""
+        return (
+            (
+                self.response_rules is not None
+                and self.response_rules.state(self.store.active_session_id or "").phase
+                in {"drafting", "testing", "checking", "repairing"}
+            )
+            or self.run_state.is_stop_allowed
+            or (
+                self.prompt_queue_coordinator.pending_continuation_stop_available(
+                    self.store.active_session_id or ""
+                )
             )
         )
 
@@ -18115,6 +18110,14 @@ class ConsoleChatController:
             stopped; False (a no-op) when it did not.
         """
         session_id = self.store.active_session_id or ""
+        if self.response_rules is not None and self.response_rules.state(
+            session_id
+        ).phase in {"drafting", "testing", "checking"}:
+            self.response_rules.cancel(
+                session_id, "stopped" if record_user_stop else "shutdown"
+            )
+            self.prompt_queue_coordinator.pause_for_stop(session_id)
+            return True
         if self.prompt_queue_coordinator.stop_pending_continuation(session_id):
             self._signal_stop(session_id=session_id)
             return True
@@ -24417,6 +24420,7 @@ class ConsoleChatController:
             ask_bypassed=ask_bypassed,
         )
 
+    @checked_generation
     @_lease_captured_tool_profile
     async def _stream_assistant_response(
         self,
@@ -26451,6 +26455,7 @@ class ConsoleChatController:
             selected_body=selected.selected_body,
         )
 
+    @checked_generation
     @_close_remote_sessions_at_run_end
     @_retire_generation_before_agent_handoff
     async def _run_agent_reply(
@@ -27202,6 +27207,11 @@ class ConsoleChatController:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
             # completion (the load-bearing write for resume marker anchoring).
+            settled_budgets = []
+            accepted_chain = self.prompt_queue_coordinator._chains.get(session_id)
+            accepted_turn_id = getattr(
+                getattr(accepted_chain, "request", None), "turn_id", None
+            )
             provider_worker = self._run_maintenance_agent_call(
                 self._agent_bridge.run_reply,
                 work_origin=work_origin,
@@ -27211,6 +27221,13 @@ class ConsoleChatController:
                 expected_progress_owner_id=progress_owner_id,
                 resolution=resolution,
                 assistant_message_id=assistant_message_id,
+                accepted_turn_id=accepted_turn_id,
+                parent_budget_deadline=turn_context.tool_configuration.get(
+                    "native_parent_budget_deadline"
+                ),
+                on_primary_budget_settled=lambda budget: settled_budgets.append(
+                    (budget, time.monotonic())
+                ),
                 model=(
                     getattr(resolution, "model", None)
                     or turn_context.effective_model
@@ -27346,7 +27363,11 @@ class ConsoleChatController:
                 revoke_approvals=self.revoke_approval_rounds_for_run,
                 plugin_cancel_root=cancel_event.set,
                 on_tool_terminal=self.complete_definitive_tool,
-                on_tool_result_terminal=self.observe_watchlists_operation_result,
+                on_tool_result_terminal=functools.partial(
+                    self.observe_response_rule_tool_result,
+                    session_id,
+                    assistant_message_id,
+                ),
                 on_run_terminal=self.complete_definitive_run,
                 restore_provider_continuation=restore_provider_continuation,
                 restore_provider_target=restore_provider_target,
@@ -27374,6 +27395,10 @@ class ConsoleChatController:
             run_id, outcome = await self._chat_start.run_provider_worker(
                 session_id, provider_worker
             )
+            if self.response_rules is not None and len(settled_budgets) == 1:
+                self.response_rules.record_generation_budget(
+                    assistant_message_id, accepted_turn_id, *settled_budgets[0]
+                )
             from tldw_chatbook.Agents.automatic_work_runtime import (
                 current_automatic_work,
             )
@@ -28838,6 +28863,10 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
+        if self.response_rules is not None and self.response_rules.defer_terminal(
+            target, run_state
+        ):
+            return
         # Task 10 (background completion toasts): captured BEFORE the
         # overwrite below so the once-guard downstream can tell a genuine
         # transition INTO a terminal outcome (toast) apart from a

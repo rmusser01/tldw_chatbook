@@ -502,6 +502,34 @@ def _qualified_core_recovery_dispatch(source_path, symbol, call):
 
 def _qualified_fixed_validation_dispatch(source_path, production_module, symbol, call):
     """Admit the six reviewed restore sites only with their fixed declarations."""
+    if production_module == "tldw_chatbook/Chat/response_rules/recovery":
+        if symbol != "prepare_imported_candidate" or ast.unparse(call) != (
+            "open_recovery_validation(owner.owner_id, candidate, writable=True, "
+            "with_restrictions=True, cancel=cancel)"
+        ):
+            return False
+        tree = _parse_source(source_path)
+        function = next((node for node in tree.body if isinstance(node, ast.FunctionDef)
+                         and node.name == symbol), None)
+        if function is None:
+            return False
+        expected_owner = ast.parse(
+            'owner = next(a for a in core_adapters() if a.owner_id == "db.chachanotes.primary")'
+        ).body[0]
+        expected_validation = ast.parse(
+            'issues = validate_candidate(owner, candidate, cancel, migrate=False)'
+        ).body[0]
+        expected_guard = ast.parse("if issues:\n    raise ValueError(issues[0])").body[0]
+        statements = [node for node in function.body
+                      if not isinstance(node, (ast.Import, ast.ImportFrom))
+                      and not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant))]
+        return (len(statements) == 4
+                and ast.dump(statements[0]) == ast.dump(expected_owner)
+                and ast.dump(statements[1]) == ast.dump(expected_validation)
+                and ast.dump(statements[2]) == ast.dump(expected_guard)
+                and isinstance(statements[3], ast.With)
+                and len(statements[3].items) == 1
+                and ast.dump(statements[3].items[0].context_expr) == ast.dump(call))
     declarations = {
         "tldw_chatbook/DB/recovery_operations": ("_SubscriptionsAdapter", "db.subscriptions"),
         "tldw_chatbook/Backup_Recovery/recovered_media": ("_RecoveredAdapter", "recovered.media"),
@@ -1869,3 +1897,31 @@ def test_plugins_registry_is_private_readonly_and_memory_without_backup() -> Non
         "PluginRegistry.__init__",
         "PluginRegistry._reference_schema",
     }
+
+
+@pytest.mark.parametrize("damage", ["owner", "path", "namespace", "validation", "guard", "reassign", "order"])
+def test_response_rule_import_dispatch_is_exact_and_validated(tmp_path, damage):
+    path = PROJECT_ROOT / "tldw_chatbook/Chat/response_rules/recovery.py"
+    source = path.read_text()
+    module = "tldw_chatbook/Chat/response_rules/recovery"
+    _, clean = _private_sqlite_seam_violations(path, module)
+    assert clean == []
+    if damage == "owner":
+        source = source.replace('a.owner_id == "db.chachanotes.primary"', 'a.owner_id == "db.media.primary"')
+    elif damage == "path":
+        source = source.replace("owner.owner_id, candidate, writable=True", "owner.owner_id, alternate, writable=True")
+    elif damage == "namespace":
+        module += "_unreviewed"
+    elif damage == "validation":
+        source = source.replace("issues = validate_candidate(owner, candidate, cancel, migrate=False)", "issues = ()")
+    elif damage == "guard":
+        source = source.replace("raise ValueError(issues[0])", "pass")
+    elif damage == "reassign":
+        source = source.replace("    with open_recovery_validation(", '    owner = requested_owner\n    with open_recovery_validation(')
+    else:
+        line = '    issues = validate_candidate(owner, candidate, cancel, migrate=False)\n'
+        source = source.replace(line, "") + line
+    candidate = tmp_path / "recovery.py"
+    candidate.write_text(source)
+    _, violations = _private_sqlite_seam_violations(candidate, module)
+    assert any("unqualified recovery validation" in violation for violation in violations)

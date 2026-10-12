@@ -12,11 +12,11 @@ This is an example test, not a guarantee of future model behavior. An unavailabl
 
 ## Managing rules
 
-Open `/rules` or **Chat settings → Response rules**. Use `/rules workspace` for the Chat's named Workspace, or `/rules global` for the current local profile. The canonical **F9 Settings → Hooks → Response rules · this profile** opens the same manager.
+Open `/rules` or **Chat settings → Response rules**. Use `/rules workspace` for the Chat's named Workspace, or `/rules global` for the current local profile. The canonical **F4 Settings → Hooks → Response rules · this profile** opens the same manager.
 
 The manager shows local pins, inherited rules and inactive drafts. Review the title, applicability, detector, correction guidance and recorded examples. Literal checks support required text, forbidden text and headings, with explicit letter-case matching. Semantic applicability and semantic checks require a judge.
 
-Global rules can be managed from F9 before opening a Chat, or after the last Chat closes. Testing an edited rule requires an open Chat with a completed example. A change that would put a known Chat over 16 effective rules is refused before saving; disable or exclude a rule first.
+Global rules can be managed from F4 before opening a Chat, or after the last Chat closes. Testing an edited rule requires an open Chat with a completed example. A change that would put a known Chat over 16 effective rules is refused before saving; disable or exclude a rule first.
 
 **Test** creates an inactive revision. **Save** activates the exact tested definition only if its source and binding are still current. Changed criteria require testing; unchanged predicates and examples can reuse their recorded validation after explicit guidance review. If the original answer is unavailable, select a completed replacement example and Test again. Failed or cancelled testing retains the editor text and the existing pin.
 
@@ -49,3 +49,6 @@ Deleting a temporary example removes its private test material without preventin
 If activation succeeds but initial repair fails or is stopped, the rule remains active and the notice distinguishes that result. The original answer and completed work remain available.
 
 Architecture: [ADR-228](../decisions/228-console-learned-response-rules.md). Qualification: [implementation evidence](../../Docs/superpowers/reviews/2026-10-03-console-response-rules.md).
+
+
+Current Goal integration follows ADR227: the completed response is assessed using its exact admitted Goal handoff. A confirmed violation remains visible, but automatic repair is unavailable after that iteration has finished; the app does not start a second native run, reuse retired authority, or refill the Goal allowance.

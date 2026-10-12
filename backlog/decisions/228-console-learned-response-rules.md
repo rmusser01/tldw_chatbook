@@ -79,3 +79,40 @@ The publication branch integrates `origin/dev` at `1b12df2757`. Its installed v7
 Original source ADR-219 at 73823fde3a4e records the user-approved learned-rules design. The older ADR-219 Console chat destinations keeps its identity; this younger decision becomes ADR-228, preserving its dated approval and implementation history. Tasks34360-34362 become34805-34807 because their older current-dev claimants keep the original IDs.
 
 The historical v77 publication paragraph above describes that earlier source only. Current integration appends the next actual migration (initial reviewed basis v80 to v81), retains all shipped/native predecessor recovery variants and accepts installed SQL only. Helper custody begins before off-loop preparation and remains through actual preparation/transport settlement; cancelled preparation cannot dispatch a provider. Voice adoption classifies all six new message locators as forbidden residue. Heavy rule services load on first eligible use while stored active rules still govern the first send and global management remains available before any Chat. These amendments implement the existing approved boundaries; they add no provider, scheduler, permission owner or dependency.
+
+## Concrete current-owner implementation (2026-10-12)
+
+Verified private START13b204cb uses ChaChaNotes80. Response rules append installed
+`chachanotes_v80_to_v81_response_rules.sql`; all four v80 variants gain exact
+successors, retaining versions75–80 and shipped/native distinctions. Only validated
+selected-import candidates disable activation; exact rollback retains bytes. Six
+rule message locators join voice forbidden residues. Seven tables and three query
+/index pins join installed inventories. Qualify the exact private candidate
+transform call/purpose with arbitrary-owner/site/path negatives, no broad bypass.
+
+One helper reservation covers physical preparation and transport. Cancellation
+seals dispatch/results but retains capacity until both settle. Preparation without
+dispatch records no provider usage; dispatched unknown usage remains unknown and
+late usage is charged once to its original owner. Current endpoint normalization
+and ordinary auxiliary defaults remain.
+
+First eligible generation assembles heavy services before its completion hold;
+stored active rules govern that first send and global management works before a
+Chat. ADR227 Goal allowance-root/automatic context, actual provider-worker custody
+and Personal Context disclosure/currentness continue to narrow rule work. Finite
+store workers reuse the native connection retirement owner; shutdown retains
+unsettled work without closing borrowed handles.
+
+Measure critical safety cases inside existing required CI capacity and pin actual
+executable targets with missing/comment-only/suppression negatives. Preserve all
+inherited job caps/processes/commands/aggregation; nearly-full Fast is not a default
+destination. Actual model/external-hook/terminal evidence stays separately labelled.
+
+
+2026-10-12 current Goal ruling (ADR227/228): assess only the exact coordinator-issued, accepted Goal iteration handoff pinned through native parent identity and message version. A genuine live GoalIterationAuthorization is required; arbitrary SYSTEM rows, copied metadata and shape-compatible objects confer no rule authority. Recheck Goal/binding/source/Stop currentness. Completed Goal runs expose no existing same-native-run repair seam: preserve the assessment and explicitly refuse automatic repair rather than admitting an ordinary queued turn. No second native run, Goal attempt, machine receipt, allowance or repeated tool work; keep record_outcome identity guard and inherited absolute limits unchanged. Phase12 exposed the genuine source_changed assessment defect; qualify passing, violating and revoked/fake input cases. This enforces inherited ownership and leaves settled-Goal automatic repair unsupported, documented for independent review. ADR required: yes (existing amendment), backlog/decisions/228-console-learned-response-rules.md.
+
+
+2026-10-12 connected trace lifetime ruling: phase24 reproduced startup GC removing newly admitted user/assistant semantic revisions before provider call reservation, leaving an accepted repair retained for recovery. Apply existing ADR097 decision16 and ADR228: preserve the live provenance owned by current durable dispatch checkpoints through call reservation, without new storage, a retention owner, timing suppression or weaker GC authorization. Map: durable turn acceptance -> canonical user/assistant revisions -> captured request provenance -> ConsoleTraceBoundaryFactory reservation; TraceGarbageCollector mark/sweep must respect the current accepted owner during the gap. Prove actual ordinary-send and native-repair survival with real collector/admission/reservation, and orphan/revoked/current-version/epoch-change reclamation or refusal controls. Costs: a wrong missing root deletes live provenance; an overbroad root leaks orphan retention. Keep existing graph epochs, native handles, deletion grants, privacy/fork/purge and caps. ADR required: yes, existing ADR097/228 amendment; no new ADR ID.
+
+
+2026-10-12 automatic GC epoch qualification: phase29 real worker/collector reproduced a completed epoch4 result indefinitely reused at epoch6 after checkpoint settlement because physical compaction was threshold-deferred. Root approved invalidating pending_gc_result only when its marked_epoch differs from current_graph_epoch, returning through existing collection. Preserve unchanged-epoch reuse, actual compactor eligibility, unknown/incomplete result failure handling and all scheduling/thresholds. Goal deliberately freezes Capture Off under its genuine SYSTEM handoff; qualify real collection before actual coordinator-owned provider entry and rule assessment without introducing USER checkpoints or new retained roots. Cost if wrong: repeated collection during unchanged idle state or stale logical collection hiding orphan reclamation. Existing ADR097/228 apply; no new persistent declarations.

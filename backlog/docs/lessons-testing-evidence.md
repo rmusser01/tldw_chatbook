@@ -19685,3 +19685,10 @@ process performs the actual first URLMonitor check. Do not reset admission or
 participants, increase the timeout, or call the setup timeout a product privacy
 failure. Retained evidence: restored-first-fetch-1 four admission timeouts;
 restored-first-fetch-4 four passing native restored-fetch cases with Dreams off.
+
+
+## Qualify admitted trace lifetime before provider reservation
+
+**PR3010 current integration / TASK-34807, 2026-10-12.** The mounted learning journey intermittently retained a repair for recovery. Phase28 reproduced the cause using native SQLite, real durable admission, the real trace collector and actual call reservation: GC deleted the current semantic revisions between checkpoint acceptance and reservation. ADR097 already makes current host-owned work a root; current validated checkpoint ancestry now protects that interval and all five canonical checkpoint mutations advance the existing graph epoch. Positive ordinary/native-plus-hook reservation and negative revoked/orphan/invalid-owner reclamation controls are both necessary: merely preventing deletion can leak unreferenced history.
+
+Phase29 then proved a second lifetime error in the actual automatic collector loop: a completed epoch4 result remained cached at epoch6 after settlement because physical compaction was threshold-deferred. Explicit collect tests had passed. Qualify the automatic last-collected/pending-result path too, preserving reuse while the epoch is unchanged and recollecting after canonical ownership changes. Do not silence startup maintenance or widen retained roots to make a mounted test pass. Goal's automatic path intentionally uses Capture Off and must be qualified separately rather than assigned a fabricated USER checkpoint.

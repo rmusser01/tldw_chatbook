@@ -102,6 +102,8 @@ class _Restrictions:
         self.shipped_checkpoint_rename = False
         self.fleet_progress_migration = False
         self.browse_order_migration = False
+        self.response_rules_migration = False
+        self.preparing_response_rules = False
         self.sargable_migration = False
         self.canvas_schema = False
         self.changing_schema_trust = False
@@ -266,6 +268,8 @@ class _Restrictions:
             }
             if self.canvas_schema:
                 allowed.add("canvas_revision_payload_valid")
+            if self.preparing_response_rules or self.response_rules_migration:
+                allowed.add("json_valid")
             if self.migrating:
                 allowed |= {"printf", "sqlite_rename_test", "sqlite_rename_quotefix"}
                 if self.migration_owner == "db.prompts.primary":
@@ -337,6 +341,15 @@ class _Restrictions:
             # SQLite 3.37 compiles, then discards, this declaration UPDATE
             # while connecting an existing FTS5 table for table_xinfo.
             return sqlite3.SQLITE_OK
+        if (self.preparing_response_rules and database == "main" and source is None
+            and action == sqlite3.SQLITE_UPDATE and (
+                first == "console_response_rule_bindings" and second in {"state", "binding_revision"}
+                or first == "console_response_rule_assessments" and second in {"state", "assessment_json"}
+            )
+        ):
+            return sqlite3.SQLITE_OK
+        if self.preparing_response_rules and action == sqlite3.SQLITE_TRANSACTION:
+            return sqlite3.SQLITE_OK
         if self.migrating:
             if action == sqlite3.SQLITE_TRANSACTION:
                 return sqlite3.SQLITE_OK
@@ -348,6 +361,27 @@ class _Restrictions:
                     and database == "main"
                     and source is None
                 )
+                if self.response_rules_migration and database == "main" and source is None:
+                    tables = {
+                        "console_response_rule_revisions", "console_response_rule_bindings",
+                        "console_response_rule_validations", "console_response_rule_drafts",
+                        "console_response_rule_fixtures", "console_response_rule_assessments",
+                        "console_machine_followup_receipts",
+                    }
+                    indexes = {
+                        "idx_response_rule_drafts_scope": "console_response_rule_drafts",
+                        "idx_response_rule_assessments_source": "console_response_rule_assessments",
+                        "idx_machine_followup_receipts_conversation": "console_machine_followup_receipts",
+                        **{f"sqlite_autoindex_{table}_1": table for table in tables},
+                    }
+                    allowed |= (
+                        action == sqlite3.SQLITE_CREATE_TABLE and first in tables
+                        or action == sqlite3.SQLITE_CREATE_TRIGGER and first == "console_response_rules_conversation_cleanup" and second == "conversations"
+                        or action == sqlite3.SQLITE_CREATE_INDEX and indexes.get(first) == second
+                        or action == sqlite3.SQLITE_REINDEX and first in indexes
+                        or action == sqlite3.SQLITE_INSERT and first == "sqlite_master"
+                        or action == sqlite3.SQLITE_UPDATE and first == "sqlite_master" and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    )
                 allowed |= (
                     self.fleet_progress_migration
                     and database == "main"
@@ -735,6 +769,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V78_SCHEMAS,
         CHACHANOTES_V79_SCHEMAS,
         CHACHANOTES_V80_SCHEMAS,
+        CHACHANOTES_V81_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -756,6 +791,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V78_SCHEMAS,
         *CHACHANOTES_V79_SCHEMAS,
         *CHACHANOTES_V80_SCHEMAS,
+        *CHACHANOTES_V81_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -981,6 +1017,7 @@ def _validate_candidate(
                         CHACHANOTES_V77_SCHEMAS,
                         CHACHANOTES_V78_SCHEMAS,
                         CHACHANOTES_V79_SCHEMAS,
+                        CHACHANOTES_V80_SCHEMAS,
                     )
 
                     actual_sql = tuple(
@@ -994,6 +1031,7 @@ def _validate_candidate(
                         or version == 77 and actual_sql in CHACHANOTES_V77_SCHEMAS
                         or version == 78 and actual_sql in CHACHANOTES_V78_SCHEMAS
                         or version == 79 and actual_sql in CHACHANOTES_V79_SCHEMAS
+                        or version == 80 and actual_sql in CHACHANOTES_V80_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -1013,7 +1051,7 @@ def _validate_candidate(
                         if (
                             shipped_checkpoint and version == 76
                             or installed.owner_id == "db.chachanotes.primary"
-                            and version in (77, 78, 79)
+                            and version in (77, 78, 79, 80)
                         ):
                             migration = (
                                 Path(__file__).resolve().parents[1]
@@ -1026,6 +1064,8 @@ def _validate_candidate(
                                     if version == 78
                                     else "chachanotes_v79_to_v80_conversations_browse_order_index.sql"
                                     if version == 79
+                                    else "chachanotes_v80_to_v81_response_rules.sql"
+                                    if version == 80
                                     else "chachanotes_v76_to_v77_agent_chat_starts.sql"
                                 )
                             )
@@ -1033,6 +1073,7 @@ def _validate_candidate(
                             restrictions.fleet_progress_migration = version == 77
                             restrictions.sargable_migration = version == 78
                             restrictions.browse_order_migration = version == 79
+                            restrictions.response_rules_migration = version == 80
                             try:
                                 pending = ""
                                 for line in migration.read_text(
@@ -1065,6 +1106,7 @@ def _validate_candidate(
                                 restrictions.fleet_progress_migration = False
                                 restrictions.sargable_migration = False
                                 restrictions.browse_order_migration = False
+                                restrictions.response_rules_migration = False
                         for statement in statements:
                             if restrictions.expired():
                                 raise InterruptedError

@@ -765,7 +765,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 80  # ADR-224 sargable timestamp normalization, then browse-order index.
+    _CURRENT_SCHEMA_VERSION = 81  # ADR-228 device-local response rules after browse-order indexes.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8021,6 +8021,32 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v80_to_v81(self, conn: sqlite3.Connection) -> None:
+        """Install native local rules without adding sync or metadata payloads."""
+        self._require_migration_entry_version(conn, 80, "V80→V81")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v80_to_v81_response_rules.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V80→V81"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 81 WHERE schema_name = ? AND version = 80",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("V80→V81 version update failed")
+            if self._get_db_version(conn) != 81:
+                raise SchemaError("V80→V81 version check failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration V80→V81 failed: {type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v79_to_v80(self, conn: sqlite3.Connection) -> None:
         """Add the conversations browse-order index (perf review B, B7).
 
@@ -8375,6 +8401,7 @@ DELETE FROM keywords
                     77: self._migrate_from_v77_to_v78,
                     78: self._migrate_from_v78_to_v79,
                     79: self._migrate_from_v79_to_v80,
+                    80: self._migrate_from_v80_to_v81,
                 }
 
                 if current_db_version == 0:

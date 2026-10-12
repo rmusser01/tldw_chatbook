@@ -1696,6 +1696,18 @@ class TraceGarbageCollector:
                 WHERE mark.request_id = ? AND mark.entity_kind = 'console_trace_calls'""",
             (request_id,),
         )
+        # Durable admission owns current revisions before call reservation.
+        # Read under the same marked epoch; canonical checkpoint mutations fence
+        # sweep and automatic last_collected_epoch deduplication.
+        from tldw_chatbook.Chat.console_dispatch_repository import ConsoleDispatchRepository
+
+        admitted = ConsoleDispatchRepository(self.db).admitted_trace_revision_ids(cursor)
+        cursor.executemany(
+            "INSERT OR IGNORE INTO console_trace_gc_marks "
+            "(request_id, entity_kind, entity_id, marked_epoch) VALUES (?, ?, ?, ?)",
+            [(request_id, "console_trace_semantic_revisions", revision, epoch)
+             for revision in admitted],
+        )
         self._mark_sql(
             cursor,
             request_id,
@@ -1711,6 +1723,8 @@ class TraceGarbageCollector:
                    UNION SELECT link.semantic_revision_id FROM console_trace_response_links AS link
                     JOIN console_trace_gc_marks AS mark ON mark.entity_id = link.response_link_id
                    WHERE mark.request_id = ? AND mark.entity_kind = 'console_trace_response_links'
+                   UNION SELECT entity_id FROM console_trace_gc_marks
+                    WHERE request_id = ? AND entity_kind = 'console_trace_semantic_revisions'
                    UNION SELECT entity_id FROM console_trace_retention_roots
                     WHERE entity_kind = 'revision'
                       AND julianday(retain_until) > julianday('now')
@@ -1722,7 +1736,7 @@ class TraceGarbageCollector:
                      JOIN ancestry ON ancestry.revision_id = revision.revision_id
                     WHERE revision.predecessor_revision_id IS NOT NULL
                  ) SELECT revision_id AS entity_id FROM ancestry""",
-            (request_id, request_id, request_id),
+            (request_id, request_id, request_id, request_id),
         )
         self._mark_sql(
             cursor,

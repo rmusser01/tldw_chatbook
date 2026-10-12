@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 05:54'
-updated_date: '2026-10-12 03:44'
+updated_date: '2026-10-12 23:14'
 labels: []
 dependencies:
   - TASK-34355
@@ -35,10 +35,14 @@ Enable the approved Console response-rule behavior for plan task 3. Preserve exi
 ADR required: yes. ADR path: backlog/decisions/228-console-learned-response-rules.md. Reason: implements accepted runtime and provider boundary. Follow Task 3: watched failing physical-lease and provider tests, app-owned capacity and usage-once lifecycle, native-only gateway timeout/output/no-retry changes, targeted ordinary auxiliary regressions and static verification.
 
 Current-dev PR3010 integration: follow Docs/superpowers/plans/2026-10-11-pr3010-current-dev-integration.md on the actual post-prior-merge base. ADR required: yes. ADR path: backlog/decisions/228-console-learned-response-rules.md. Reason: preserve the approved local storage/recovery, helper custody and shared native/hook acceptance; source ADR219 remapped after the older claimant. Reproduce reviewed failures before fixes; qualify actual next schema, six voice residues, exact private/index/table catalogs, preparation-through-transport custody, lazy first-use, current Goal/Personal Context owners and separately labelled real-provider/native UI evidence. Historical source qualification above is retained; reopened acceptance awaits current integrated verification and independent review.
+
+2026-10-12 released Task1 on private START13b204cb638ca891175610f5e687a80def71c21e. ADR required: yes (existing). ADR path: backlog/decisions/228-console-learned-response-rules.md; preserves ADR227 Goal and current Personal Context/native ownership. Implement complete91path source workflow by current symbol. Qualify actual schema80-to81/four catalog variants/all predecessors, six voice residues, seven tables/three query/index pins/private import purpose, preparation-through-transport physical custody and original-owner usage, current Goal/hook/queue atomic receipts, lazy first-send/global-before-Chat, manager/draft/Stop/currentness and finite native worker retirement. Preserve all bounds and source history. Use targeted RED/GREEN; measure bounded critical cases for existing required job capacity, preserving inherited targets/order/caps/processes with executable membership negatives. Separate actual local-model/external-hook/native paint from scripted evidence. Root owns actual-base reconciliation, independent reviews, hosted proof and task closure; all AC remain open.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented ADR-228 helper custody through physical synchronous-worker finally or genuine async transport cleanup, retaining four app/one Chat reservations after cancelled awaiters. Native calls clamp output to 4096/current model cap, transport to remaining at most 30 seconds, and retries to zero; ordinary auxiliary defaults remain intact. Captured late usage is charged once to the original source; unknown usage remains unknown. App shutdown seals admission while reporting pending physical cleanup. Held-thread, retained-task cancellation, late async usage and slow usage persistence tests pass; Black/Ruff/mypy pass. Broad targeted gateway/runtime runs pass after excluding only 22 cases reproduced against unchanged owners; baseline limitations are recorded in the execution ledger.
+
+2026-10-12 current integration (historical source evidence above remains unchanged): Helper capacity now begins before off-loop preparation and stays owned through preparation, queued transport, active HTTP and cleanup. Revocation prevents queued adapters from starting; late actual usage charges the original owner once. Native SQL cancellation retains its physical handle until operation-owned cleanup. Inherited deadlines/caps remain unchanged. Existing ADR228 governs, with ADR097 live-revision GC and ADR227 Goal constraints applied. Current report: E/pr3010-current-integration/task-1-report.md. All tasks stay In Progress and acceptance remains open pending independent review, actual-base/hosted qualification and unmet external/model checks.
 <!-- SECTION:NOTES:END -->
