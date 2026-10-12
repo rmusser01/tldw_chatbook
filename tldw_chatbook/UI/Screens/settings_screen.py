@@ -15252,16 +15252,6 @@ class SettingsScreen(BaseAppScreen):
             return readiness.env_var
         return f"{provider_key.upper()}_API_KEY"
 
-    @staticmethod
-    def _subscription_credential_copy(status: str) -> str:
-        """Return fixed credential copy without implying API-key recovery."""
-        return {
-            "pending": "Checking Claude subscription credential…",
-            "ready": "Credential source: Claude subscription (not verified)",
-            "expired": "Claude subscription credential expired; log in with Claude Code",
-            "missing": "Claude subscription credential missing; log in with Claude Code",
-        }[status]
-
     def _provider_catalog_entries(self) -> tuple[ConsoleProviderCatalogEntry, ...]:
         return settings_provider_catalog()
 
