@@ -163,3 +163,20 @@ Ruling: gate bounded critical currentness/privacy/native/Canvas regressions in e
 Ruling: retain the sealed203 native observation entries as entries rather than claiming distinct owner cardinality — unique identities/path counts differ and overlapping populations cannot be summed — costs less impressive but accurate reporting; zero-survivor proof remains.
 
 Task2 verified producer erratum: the markup checker's AST reports the adjacent export Button f-string, while the deleted-record Text(f-string) is already inert. Preserve that deleted expression and correct the actual export label with Text.assemble plus mounted literal-content proof; no checker/census exemption. This supersedes the initial label attribution only.
+
+## Task 3: Parse executable CI membership consistently
+
+**Base:** clean independently reviewed ad7cc37fc54fe6eaa77f0e683e608ead37eb477d. Task2 scoped review resolves runtime/privacy/literal/documentation and actual coverage, with one P2 remaining: target helpers count comment-only test names. Current exact raw-argv sibling guard rejects that specific whole-workflow mutation; no complete protection bypass is claimed.
+
+ADR required: no new ADR.
+ADR path: N/A; existing required-regression policy applies.
+Reason: routine correction of test-contract shell tokenization, with no application, workflow, profile, custody, activation or permission change.
+
+**Files:** Tests/CI/test_personal_context_regression_gate.py, Tests/CI/test_ci_queue_pressure_contract.py; this plan and task25907.23 notes only.
+
+1. Preserve the actual external comment-only removal RED and add it as a meaningful repository regression alongside unchanged-current and missing-target negatives. Include quoted hash and line-continuation positives; retain existing exact ordered argv and suppression-flag negatives.
+2. Use stdlib shlex comment handling consistently for both required-target helpers and connected exact pytest invocation checks. No generic shell parser, altered expected targets, weakened order/caps, changed workflow/census or broad exemption.
+3. Run only the two affected CI modules and preserved independent copy-only probe under the existing private minimal declared-dependency environment; lint/format/diff and exact source snapshots. Application runtime bytes must remain identical to ad7. No repeat of unaffected826/13/46/native/boot populations absent a new failure.
+4. Normal-hook commit, separate Task3 report/bindings and assigned-task CLI notes InProgress. Preserve original97/74/independent seals and all earlier negative/errata records. Root obtains scoped independent spec+quality clearance, then actual post-Goal/Focus/current-dev transplant and invalidated boundary/required-hosted checks.
+
+Ruling: make target membership and exact invocation use the same real-comment semantics while retaining exact executable argv — a comment cannot substitute for a test, quoted hashes remain arguments — costs a small parser correction and meaningful regression; no runtime or lane cost beyond these few CI cases.
