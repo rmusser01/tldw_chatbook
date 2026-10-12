@@ -343,8 +343,13 @@ def _opens_the_next_phrase(text: str, closing: str, after: int) -> bool:
     In ``"[g1]"Wednesday 13" tour"`` the quote after the mark is not the
     closer of ``"[g1]`` -- it opens ``"Wednesday 13"`` (round 6, G-N7). A
     straight quote can do that: it is the same character either way. It
-    does it only when glued to the next word AND closed again later on
-    the line; ``"[g1]"cheap flights`` is a quoted mark. Every other
+    does it only when glued to the next word AND the line is itself
+    quoted -- it ends with that quote, the closer of the one in front of
+    the mark -- with the phrase's own partner before that end. Round 7
+    asked only for "the same quote again later", and a later quote of
+    ANOTHER phrase misfired: ``"[g1]"cheap "tokyo" flights`` kept a stray
+    quote (round 8, J1). ``"[g1]"cheap flights`` and that line are quoted
+    marks. Every other
     wrapper -- bold, italics, backticks, brackets, curly quotes -- has a
     closer that cannot open anything, and closes around the mark even
     glued to the next word (round 7, H1: G-N7 applied the rule to all of
@@ -355,7 +360,7 @@ def _opens_the_next_phrase(text: str, closing: str, after: int) -> bool:
     following = text[after]
     if following.isspace() or following in _CLOSES_A_WRAPPER:
         return False
-    return closing in text[after:]
+    return text.endswith(closing) and closing in text[after:-1]
 
 
 def _grown_over_wrapping(text: str, start: int, end: int) -> tuple[int, int]:

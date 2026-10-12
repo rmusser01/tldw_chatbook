@@ -1403,3 +1403,31 @@ async def test_the_colon_line_residue_is_what_the_docstring_says(
         chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
 
     assert [row["query"] for row in rows] == queries
+
+
+# === Review of #2921, round 8 ======================================================
+
+# --- J1: a quote after a glued mark opens a phrase only inside a quoted line -----
+#
+# H1's "the same quote again later" misfired when the later quote belongs to
+# another phrase. The glued quote opens the next phrase only when the line
+# itself is quoted -- it ends with that quote, the closer of the one in
+# front of the mark -- and the phrase has its own partner before that end.
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        ('"[g1]"cheap "tokyo" flights', 'cheap "tokyo" flights'),
+        ("'[g1]'cheap 'n' cheerful", "cheap 'n' cheerful"),
+        ('"[g1]"Wednesday 13" tour"', '"Wednesday 13" tour'),
+        ('"[g1]"Wednesday 13" tour dates 2026"', '"Wednesday 13" tour dates 2026'),
+        ('"[g1]"cheap flights', "cheap flights"),
+    ],
+)
+def test_a_glued_quote_opens_a_phrase_only_inside_a_quoted_line(line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}
+
