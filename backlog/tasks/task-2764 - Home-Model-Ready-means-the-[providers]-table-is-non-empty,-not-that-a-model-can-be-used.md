@@ -42,7 +42,7 @@ in Console.
 ## Implementation Notes
 
 - VERDICT: fixed upstream by TASK-31805 (Done, 2026-09-06; PR #2461 +
-  follow-up 78bb63cc99) — "Home 'Model: Ready' and Settings Overview
+  follow-up; see PR #2461 merge 11b3202b6c) — "Home 'Model: Ready' and Settings Overview
   overstate readiness with no credential present". Closed here as a
   duplicate with re-verification at origin/dev 9f8533686c; no code change
   needed in this task.
