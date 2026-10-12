@@ -512,7 +512,6 @@ class ConsoleLeftRail(Vertical):
             tuple[bool, int, tuple[ConsoleBoundedSection, ...]] | None
         ) = None
         self._outer_hint_exists = False
-        self._outer_hint_text = ""
         self._workspace_tree_reflow_check_scheduled = False
         self._workspace_tree_reflow_state: tuple[object, ...] | None = None
         self._section_focus_history: dict[str, tuple[Widget, tuple[Widget, ...]]] = {}
@@ -1930,10 +1929,35 @@ class ConsoleLeftRail(Vertical):
             if self._outer_hint_exists and hint.display and before_end
             else ""
         )
-        if text == self._outer_hint_text and str(hint.renderable) == text:
+        self._paint_outer_hint(hint, text)
+
+    @staticmethod
+    def _paint_outer_hint(hint: Static, text: str) -> None:
+        """Write the fold copy only when it actually changes, without layout.
+
+        TASK-21244: the left rail's copy of the TASK-21117 right-rail fix.
+        This is the rail's ONLY text writer for the hint slot, so the
+        unchanged check can read the live widget's own content rather than
+        a shadow copy held on the rail -- the shadow (``_outer_hint_text``)
+        this method replaces required its own invalidation at every writer,
+        and its dual check (shadow AND live renderable) was the shape
+        TASK-21117's AC3 forbade on the right rail. Here too the display
+        toggles travel through ``_apply_allocation_state``'s full
+        reconcile, never through this copy path.
+
+        ``layout=False`` because this slot's height is pinned to exactly
+        one row by INLINE styles at compose time (``min_height = 1`` /
+        ``max_height = 1``, which beat every stylesheet rule -- the
+        lessons-textual.md note that the pin may not live in a sheet), so
+        its copy can never resize it; the default ``Static.update`` would
+        schedule a view layout for a one-row repaint (the measured
+        two-extra-screen-layout-passes trap TASK-21117 recorded).
+        """
+
+        current = hint.content
+        if isinstance(current, str) and current == text:
             return
-        self._outer_hint_text = text
-        hint.update(text)
+        hint.update(text, layout=False)
 
     def _queue_pending_active_reveal(self) -> None:
         """Queue one deliberate reveal after complete geometry is committed."""
