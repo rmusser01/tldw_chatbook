@@ -230,6 +230,7 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchReconstructability,
     ConsoleDispatchResultStatus,
     ConsoleDispatchTransition,
+    ConsoleDispatchWriteResult,
     ConsoleDurableTurnAcceptance,
     ConsoleLibraryItemScopeSnapshot,
     ConsoleProviderIntent,
@@ -12956,6 +12957,59 @@ class ConsoleChatController:
                     ),
                 ),
             )
+            if result.status is ConsoleDispatchResultStatus.CONFLICT:
+                # TASK-22502: a cancellation that lands while the CAS await
+                # is in flight cancels the effect coroutine but NOT the
+                # ``to_thread`` worker -- the surviving thread commits
+                # DISPATCH_STARTED while the effect ledger records the
+                # transition as abandoned. A live-continuation retry then
+                # re-runs this effect with the ACCEPTED expectations above
+                # and CONFLICTS against the already-transitioned row on
+                # every attempt: an in-process wedge until restart (the
+                # restart path's ``reconcile_for_session`` classifies the
+                # same DB state correctly). Accept the already-committed
+                # owner when it is OURS -- same assistant message, same
+                # attempt id, DISPATCH_STARTED -- and let the effect
+                # complete so the ledger re-converges with the DB.
+                live = await self._run_durable_db_call(
+                    repository.read_for_session,
+                    current_commit.checkpoint.conversation_id,
+                )
+                expected_attempt_id = (
+                    dispatch_attempt_id or current_commit.checkpoint.attempt_id
+                )
+                if (
+                    live.checkpoint is not None
+                    and live.checkpoint.assistant_message_id
+                    == current_commit.assistant_message_id
+                    and live.checkpoint.state
+                    is ConsoleDispatchCheckpointState.DISPATCH_STARTED
+                ):
+                    # Identity is the ASSISTANT MESSAGE, not the attempt id:
+                    # the checkpoint row is keyed to it and only this
+                    # controller transitions it, so a DISPATCH_STARTED row
+                    # for our message is an earlier attempt of THIS turn
+                    # winning the race (a trace-admission attempt id on the
+                    # original send, a plain attempt id on the retry). The
+                    # stream that follows settles the checkpoint under its
+                    # own generation token either way.
+                    logger.debug(
+                        "Dispatch checkpoint CAS conflict accepted: the "
+                        "owner is already DISPATCH_STARTED for this turn "
+                        "(assistant_message_id={}, expected_attempt_id={}, "
+                        "live_attempt_id={}).",
+                        current_commit.assistant_message_id,
+                        expected_attempt_id,
+                        live.checkpoint.attempt_id,
+                    )
+                    result = ConsoleDispatchWriteResult(
+                        ConsoleDispatchResultStatus.COMMITTED,
+                        checkpoint=live.checkpoint,
+                        committed_message_version=(
+                            live.checkpoint.assistant_message_version
+                        ),
+                        committed_payload_hash=None,
+                    )
             if result.status is not ConsoleDispatchResultStatus.COMMITTED:
                 raise RuntimeError("Durable dispatch checkpoint transition failed.")
             if result.checkpoint is None:
