@@ -162,7 +162,6 @@ def test_real_v57_reopen_backfills_stable_unique_uuid4_ids(tmp_path: Path) -> No
         connection = migrated.get_connection()
         first = _resource_rows(connection)
         assert _schema_version(connection) == 58
-        assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 58
         assert {
             row[0]
             for row in connection.execute(
@@ -215,6 +214,10 @@ def test_real_v57_reopen_backfills_stable_unique_uuid4_ids(tmp_path: Path) -> No
             )
         ]
         assert first_memberships == original_memberships
+        # The historical bootstrap pins the class constant for the whole
+        # block; verified LAST so it cannot switch this body off when the
+        # live schema version advances (task-19866).
+        assert CharactersRAGDB._CURRENT_SCHEMA_VERSION == 58
     with chachanotes_db_at_version(path, 58, client_id="v58-reopen") as reopened:
         connection = reopened.get_connection()
         assert _resource_rows(connection) == first
