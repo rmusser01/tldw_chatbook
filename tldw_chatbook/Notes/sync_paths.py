@@ -880,7 +880,8 @@ class PinnedSyncRoot:
             The open descriptor and leaf name of the file to write. Every
             other descriptor is closed and every other name removed on any
             return or exception, unless removing a name itself fails (at
-            most one is then left). A hard kill can leave the spare and the
+            most one is then left) or the cleanup is itself interrupted by a
+            ``BaseException``. A hard kill can leave the spare and the
             candidate being examined: two empty files, against one before
             the check existed.
 
@@ -933,24 +934,26 @@ class PinnedSyncRoot:
                     return chosen
                 current = (descriptor, leaf)
                 if spare is not None:
-                    retired, spare = spare, None
+                    # ``spare`` stays set until the outcome is known, so
+                    # whatever the unlink raises, the cleanup still has it.
                     try:
-                        os.unlink(retired[1], dir_fd=parent_fd)
+                        os.unlink(spare[1], dir_fd=parent_fd)
                     except FileNotFoundError:
                         # Already gone, so nothing is stranded; its descriptor
                         # still holds the number.
-                        held.append(retired[0])
+                        pass
                     except OSError:
                         # Some filesystems will not unlink an open file: close
                         # it and try once more. Either way this candidate is
                         # used unasked: the number is free again once closed,
                         # and a name that will not go would otherwise be
                         # stranded once per refusal.
+                        retired, spare = spare, None
                         discard(retired)
                         current = None
                         return descriptor, leaf
-                    else:
-                        held.append(retired[0])
+                    held.append(spare[0])
+                    spare = None
                 if (
                     self._identity_claimed is None
                     or len(refused) == _MAX_CLAIMED_CANDIDATES

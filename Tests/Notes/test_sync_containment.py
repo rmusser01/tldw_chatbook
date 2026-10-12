@@ -448,6 +448,10 @@ class _Candidates:
         #: Report an error from the close of these descriptors (after closing).
         self.fail_close: set[int] = set()
         self.failed_closes: list[int] = []
+        #: Candidate descriptors closed again while nothing had the number
+        #: (the operating system answered EBADF).
+        self.double_closes: list[int] = []
+        closed: set[int] = set()
         real_open, real_close = os.open, os.close
 
         def tracked_open(path, flags, mode=0o777, *, dir_fd=None):
@@ -467,10 +471,17 @@ class _Candidates:
 
         def tracked_close(descriptor):
             tracked = self.open.pop(descriptor, None) is not None
-            real_close(descriptor)
-            if tracked and descriptor in self.fail_close:
-                self.failed_closes.append(descriptor)
-                raise OSError(errno.EIO, "close failed")
+            try:
+                real_close(descriptor)
+            except OSError as error:
+                if error.errno == errno.EBADF and descriptor in closed:
+                    self.double_closes.append(descriptor)
+                raise
+            if tracked:
+                closed.add(descriptor)
+                if descriptor in self.fail_close:
+                    self.failed_closes.append(descriptor)
+                    raise OSError(errno.EIO, "close failed")
 
         patch.setattr(sync_paths.os, "open", tracked_open)
         patch.setattr(sync_paths.os, "close", tracked_close)
@@ -524,6 +535,7 @@ def test_a_written_file_never_takes_a_claimed_inode_number(
     assert [names for _, _, names, _ in asked] == [1, 1, 1], "a refused name stayed"
     assert [open_ for _, _, _, open_ in asked] == [1, 2, 3], "a number was not held"
     assert held.open == {}
+    assert held.double_closes == []
     assert os.listdir(root_path) == ["note.md"]
 
 
@@ -560,6 +572,7 @@ def test_a_claim_check_that_raises_leaves_nothing_behind(
 
     assert held.peak == 3
     assert held.open == {}
+    assert held.double_closes == []
     assert target.read_bytes() == b"before"
     assert os.listdir(root_path) == ["note.md"]
 
@@ -593,6 +606,7 @@ def test_a_close_that_fails_does_not_skip_the_other_cleanups(
     assert len(held.failed_closes) == 1, "the held descriptor's close never failed"
     assert held.peak == 4
     assert held.open == {}
+    assert held.double_closes == []
     assert target.read_bytes() == b"after"
     assert os.listdir(root_path) == ["note.md"]
 
@@ -639,6 +653,7 @@ def test_asking_stops_at_the_bound_and_no_more_descriptors_are_held(
     assert set(names) == {1}
     assert (landed.st_dev, landed.st_ino) not in set(asked)
     assert held.open == {}
+    assert held.double_closes == []
     assert target.read_bytes() == b"after"
     assert os.listdir(root_path) == ["note.md"]
 
@@ -680,6 +695,7 @@ def test_when_the_next_candidate_cannot_be_created_the_spare_is_used(
                     )
 
     assert held.open == {}
+    assert held.double_closes == []
     assert os.listdir(root_path) == ["note.md"]
     if spare:
         landed = target.stat()
@@ -726,6 +742,7 @@ def test_a_candidate_that_cannot_be_examined_is_used_unasked(
     assert asked == []
     assert len(held.created) == 1
     assert held.open == {}
+    assert held.double_closes == []
     assert target.read_bytes() == b"after"
     assert os.listdir(root_path) == ["note.md"]
 
@@ -770,6 +787,7 @@ def test_a_refused_name_that_cannot_be_removed_ends_the_search(
     assert len(asked) == 1, "the search went on after a name it could not remove"
     assert len(held.created) == 2
     assert held.open == {}
+    assert held.double_closes == []
     assert target.read_bytes() == b"after"
     assert _candidate_names(root_path) == stuck
 
@@ -811,6 +829,7 @@ def test_a_name_that_only_goes_once_its_file_is_closed_is_not_stranded(
 
     assert len(refused_while_open) == 1 and len(asked) == 1
     assert held.open == {}
+    assert held.double_closes == []
     assert target.read_bytes() == b"after"
     assert _candidate_names(root_path) == []
 
@@ -847,6 +866,7 @@ def test_an_abandoned_candidate_is_closed_before_its_name_is_removed(
 
     assert len(held.created) == 1
     assert held.open == {}
+    assert held.double_closes == []
     assert target.read_bytes() == b"before"
     assert _candidate_names(root_path) == []
 
@@ -865,9 +885,11 @@ def test_a_refused_name_that_is_already_gone_does_not_end_the_search(
     asked: list[int] = []
     real_unlink = os.unlink
     vanished: list[str] = []
+    open_at_ask: list[int] = []
 
     def claimed(_device: int, inode: int) -> bool:
         asked.append(inode)
+        open_at_ask.append(len(held.open))
         return len(asked) < 3
 
     with PinnedSyncRoot(root_path, identity_claimed=claimed) as root:
@@ -886,8 +908,10 @@ def test_a_refused_name_that_is_already_gone_does_not_end_the_search(
             root.replace_bytes("note.md", b"after", expected=observed, mode=0o600)
 
     assert vanished and len(asked) == 3, asked
+    assert open_at_ask == [1, 2, 3], "the vanished candidate's descriptor was not held"
     assert len(set(asked)) == 3, "a refused number was handed out again"
     assert held.open == {}
+    assert held.double_closes == []
     assert target.read_bytes() == b"after"
     assert _candidate_names(root_path) == []
 
@@ -933,6 +957,7 @@ def test_a_filesystem_that_repeats_a_refused_number_is_not_searched(
     assert asked == [7]
     assert len(held.created) == 2
     assert held.open == {}
+    assert held.double_closes == []
     assert target.read_bytes() == b"after"
     assert os.listdir(root_path) == ["note.md"]
 

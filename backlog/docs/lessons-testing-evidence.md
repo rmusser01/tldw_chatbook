@@ -19590,6 +19590,7 @@ and borrowed real CLI/mounted paths, in-memory/foreign controls, cancellation
 until physical completion, and actual maintenance drain establish ownership;
 an aggregate warning disappearing alone does not. Preserve the old failed
 receipt and write baseline/fixed probes to different filenames.
+
 ## A failure that only happens on CI can be the filesystem, not the speed (TASK-34789, PR #3077)
 
 **Incident, 2026-10-08 to 2026-10-11.** `Tests/Notes/test_notes_sync_source_moved_settle.py::test_a_save_in_one_folder_never_waits_for_another_folders_pass`
@@ -19612,7 +19613,7 @@ folder's binding still records, the unfixed path must end in the CI row and the 
 when the filesystem hands out a different number the test asserts the healthy outcome and then skips. On macOS both
 arms skipped 50 of 50. On the Linux runner (run 38161635121, PR Fast Lane, image ubuntu-24.04) all 17 tests of the
 file passed with no skip, which is the first time the collision was observed on a filesystem it happens on. A later
-run of the final code (38182902782) passed them again with the control arm asserting the `IntegrityError` itself, and
+run (38182902782, of the redesigned search) passed them again with the control arm asserting the `IntegrityError` itself, and
 passed the sync root's own real-inode test (a recreated file is offered its deleted predecessor's number and refuses it).
 
 **What that pass does and does not show.** The test holds the first folder before its commit, so the order of events
