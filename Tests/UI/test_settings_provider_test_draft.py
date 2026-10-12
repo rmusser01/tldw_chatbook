@@ -1718,7 +1718,9 @@ async def test_model_picker_prefix_search_finds_a_discovered_id(request):
         assert screen.query_one("#settings-model-value", Input).value == gguf
 
 
-def test_discovery_row_labels_use_user_vocabulary_not_internal_jargon():
+@pytest.mark.asyncio
+@private_profile_test
+def test_discovery_row_labels_use_user_vocabulary_not_internal_jargon(request):
     """TASK-387: the model-discovery selection rows must read in plain language,
     not the internal ``runtime_discovered`` / ``capability=unknown`` enum dump."""
     screen = _bare_settings_screen({})
@@ -1742,7 +1744,10 @@ def test_discovery_row_labels_use_user_vocabulary_not_internal_jargon():
         ),
     )
 
-    labels = [label for label, _id, _sel in screen._model_discovery_selection_options()]
+    # The rows are Text since f3fa7bbfe4 (a model id with brackets stays literal).
+    labels = [
+        str(label) for label, _id, _sel in screen._model_discovery_selection_options()
+    ]
     joined = " ".join(labels)
 
     # Model ids are still shown for recognition.

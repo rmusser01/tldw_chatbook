@@ -289,7 +289,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # criterion and ran in no PR lane (the census names the criterion beside
 # each). They sit above the Phase 7 tail by that ruling, which moves the
 # tail's files four shards on (18 mod 7): the replay is re-run after them.
-MINIMUM_FILES = 224
+# Integrating that review added one more, 210: the Saved model list's row-words
+# test, red in no lane since its rows became Text (five shards on, 19 mod 7).
+MINIMUM_FILES = 225
 
 
 def read_census(path: Path) -> list[str]:

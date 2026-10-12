@@ -324,6 +324,10 @@ Tests/UI/test_settings_openai_reconnect.py::test_actual_settings_confirms_only_s
 # relocking Discover, Save selected and Clear (11-19 s each; the file is 3.4 min).
 Tests/UI/test_settings_custom_endpoint_default.py::test_settings_opens_on_a_dangling_registry_default_honestly
 Tests/UI/test_settings_custom_endpoint_default.py::test_revert_to_a_registry_default_relocks_model_discovery
+# A nineteenth, added when that review's branches were integrated: the Saved
+# model list's row words. Red since f3fa7bbfe4 made the rows Text, and seen by
+# no lane (8-11 s). With it the Phase 7 block moves five shards on (19 mod 7).
+Tests/UI/test_settings_provider_test_draft.py::test_discovery_row_labels_use_user_vocabulary_not_internal_jargon
 
 # Phase 7's Settings files: about half of the lane's pytest minutes on CI. They sit
 # at the end, in this order, so round-robin over seven shards spreads them and no
