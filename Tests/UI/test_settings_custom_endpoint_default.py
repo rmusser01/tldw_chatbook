@@ -542,7 +542,9 @@ def test_provider_widget_value_reads_the_saved_provider_before_the_select_mounts
     monkeypatch.setattr(screen, "query_one", query_one)
     monkeypatch.setattr(
         screen,
-        "_provider_setting_values_mapping",
+        # Fix round 1 (finding 6), rewritten on purpose: the fallback is the
+        # provider the form shows, which is a link's while no draft exists.
+        "_provider_display_setting_values",
         lambda: {"provider": "custom-ep:gpu-box"},
     )
     assert screen._provider_widget_value() == "custom-ep:gpu-box"

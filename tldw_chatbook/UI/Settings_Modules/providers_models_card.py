@@ -819,11 +819,11 @@ def endpoint_row_copy(
 
 
 def _shown_model(screen: SettingsScreen) -> str:
-    """Return the model the form holds: the adapter's, else the staged one."""
+    """Return the model the form holds: the adapter's, else the one it shows."""
     try:
         return screen.query_one("#settings-model-value", Input).value.strip()
     except QueryError:
-        values = screen._provider_setting_values_mapping()
+        values = screen._provider_display_setting_values()
         return str(values.get("model") or "").strip()
 
 

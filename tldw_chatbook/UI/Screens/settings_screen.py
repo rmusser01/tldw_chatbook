@@ -14975,7 +14975,7 @@ class SettingsScreen(BaseAppScreen):
             ).value.strip()
         except QueryError:
             env_var = str(
-                self._provider_setting_values_mapping().get("credential_env_var") or ""
+                self._provider_display_setting_values().get("credential_env_var") or ""
             ).strip()
         if api_key_dirty:
             return "environment" if env_var else "none"
@@ -15033,7 +15033,7 @@ class SettingsScreen(BaseAppScreen):
         try:
             return self._provider_form_values_from_widgets()
         except (QueryError, ValueError, AttributeError):
-            return self._provider_setting_values_mapping()
+            return self._provider_display_setting_values()
 
     def _provider_current_draft_credential(self) -> str | None:
         """Return the key the current draft sends: what 't' probes with.
@@ -15673,14 +15673,14 @@ class SettingsScreen(BaseAppScreen):
                 return selected_value
             # Textual applies a Select's value only on mount, and the 0.25s
             # subscription poll can tick in between: a composed Select reads
-            # NULL, so read the saved selection as if it were not there yet.
+            # NULL, so read the provider the form shows as if it were absent.
         except QueryError:
             try:
                 return self.query_one("#settings-provider-value", Input).value.strip()
             except QueryError:
                 pass
         return str(
-            self._provider_setting_values_mapping().get("provider") or ""
+            self._provider_display_setting_values().get("provider") or ""
         ).strip()
 
     def _sync_provider_manual_widget(self, provider: str) -> None:
@@ -16358,7 +16358,7 @@ class SettingsScreen(BaseAppScreen):
             ).value.strip()
             api_key = self.query_one("#settings-provider-api-key", Input).value.strip()
         except QueryError:
-            values = self._provider_setting_values_mapping()
+            values = self._provider_display_setting_values()
             endpoint = str(values.get("endpoint") or "").strip()
             env_var = str(values.get("credential_env_var") or "").strip()
             api_key = str(values.get("api_key") or "").strip()
@@ -16422,7 +16422,7 @@ class SettingsScreen(BaseAppScreen):
                 Input,
             ).value.strip()
         except QueryError:
-            values = self._provider_setting_values_mapping()
+            values = self._provider_display_setting_values()
             endpoint = str(values.get("endpoint") or "").strip()
             credential_env_var = str(values.get("credential_env_var") or "").strip()
         provider_settings: dict[str, object] = {}
@@ -17971,7 +17971,7 @@ class SettingsScreen(BaseAppScreen):
             provider = self._provider_widget_value()
         except QueryError:
             provider = str(
-                self._provider_setting_values_mapping().get("provider") or ""
+                self._provider_display_setting_values().get("provider") or ""
             )
         try:
             endpoint = self.query_one(
@@ -17983,7 +17983,7 @@ class SettingsScreen(BaseAppScreen):
             model = self.query_one("#settings-model-value", Input).value.strip()
         except QueryError:
             model = str(
-                self._provider_setting_values_mapping().get("model") or ""
+                self._provider_display_setting_values().get("model") or ""
             ).strip()
         # TASK-33007.2: each Connect row says its own source; the separate
         # readiness block is gone.

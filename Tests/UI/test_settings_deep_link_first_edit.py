@@ -423,3 +423,36 @@ async def test_the_linked_model_s_window_can_be_staged_for_a_model_chosen_after(
         await pilot.pause()
 
         assert screen._provider_draft_value("model_context_window") == 123_456
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_the_key_check_row_is_composed_for_the_linked_provider(
+    request, monkeypatch
+):
+    """Finding 6: recomposed (another category and back), the card built
+    every Connect row from the linked provider but asked the SAVED default
+    for the Key check verdict while the form's widgets were not there yet:
+    "Ready" for OpenAI's key beside Anthropic's "missing", until the
+    subscription poll's next tick re-said it."""
+    from tldw_chatbook.UI.Settings_Modules import providers_models_card as card
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _deep_link_to_anthropic_key(host, pilot)
+        said: list[str] = []
+        verdict = card.key_check_verdict
+        monkeypatch.setattr(
+            card, "key_check_verdict", lambda s: said.append(verdict(s)) or said[-1]
+        )
+
+        screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
+        await _settle(host, pilot)
+        screen._select_category(PROVIDERS_MODELS.value)
+        await _settle(host, pilot)
+        await pilot.pause()
+
+        assert _form_provider(screen) == _ANTHROPIC
+        assert said and all(word.startswith("Not ready") for word in said), said
