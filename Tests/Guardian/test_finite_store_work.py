@@ -173,3 +173,37 @@ async def test_projection_retires_only_its_worker_handle(tmp_path, monkeypatch):
         finally:
             await asyncio.to_thread(db.close)
             db.close()
+
+
+@pytest.mark.asyncio
+async def test_discovery_reader_retires_only_its_new_native_worker_handle(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Dreams.profile_sources import read_guardian_topics
+    from tldw_chatbook.Guardian import settings
+
+    monkeypatch.setattr(settings, "guardian_setting", lambda *args: True)
+    db = GuardianDB(tmp_path / "discovery.db")
+    main = db._held_connection()
+    handles = []
+    original = db.connection
+
+    @contextmanager
+    def capture_connection():
+        with original() as connection:
+            handles.append(connection)
+            yield connection
+
+    monkeypatch.setattr(db, "connection", capture_connection)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        asyncio.get_running_loop().set_default_executor(executor)
+        try:
+            assert await asyncio.to_thread(read_guardian_topics, db) == []
+            assert len(handles) == 1
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                await asyncio.to_thread(handles[0].execute, "SELECT 1")
+            assert main.execute("SELECT 1").fetchone()[0] == 1
+            assert await asyncio.to_thread(lambda: True)
+        finally:
+            await asyncio.to_thread(db.close)
+            db.close()

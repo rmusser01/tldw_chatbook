@@ -2922,7 +2922,9 @@ async def _dispatch_changed(
         getattr(dispatcher, "store", None), "is_memory_db", None) is False
     try:
         if file_backed:
-            await asyncio.to_thread(dispatcher.dispatch, **payload)
+            await asyncio.to_thread(
+                discovery.guard_invocation(dispatcher.dispatch, lambda: bool(dreams_setting("enabled"))),
+                **payload)
         else:
             dispatcher.dispatch(**payload)
     except Exception as exc:  # noqa: BLE001 - notification degrades
@@ -3119,7 +3121,8 @@ async def _run_track_check_claimed(
     # notified. Change detection must see the unfiltered result set.
     query = _render_query(query_template)
     results, _searches_used = await discovery.run_queries(
-        deps.perform_search, engine=str(dreams_setting("search_engine")),
+        discovery.guard_invocation(deps.perform_search, lambda: not switched_off()),
+        engine=str(dreams_setting("search_engine")),
         queries=[query], result_count=_TRACK_CHECK_RESULT_COUNT,
         date_range=None)
 
@@ -3184,7 +3187,8 @@ async def _run_track_check_claimed(
             return disabled
         try:
             response = await asyncio.to_thread(
-                chat, **_judge_call_kwargs(query, results))
+                discovery.guard_invocation(chat, lambda: not switched_off()),
+                **_judge_call_kwargs(query, results))
             verdict = _parse_verdict(extract_response_content(response))
         except asyncio.CancelledError:
             raise

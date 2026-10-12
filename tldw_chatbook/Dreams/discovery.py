@@ -9,10 +9,12 @@ media library before ranking by lexical topic overlap.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import wraps
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -130,6 +132,43 @@ def _extract_results(payload: Any) -> list[dict]:
     return out
 
 
+class InvocationSuppressed(RuntimeError):
+    """An admitted callback lost authority before its actual invocation."""
+
+
+def guard_invocation(
+    function: Callable[..., Any], allowed: Callable[[], bool], *,
+    async_allowed: Callable[[], Awaitable[bool]] | None = None,
+) -> Callable[..., Any]:
+    """Recheck at the callable body, after executor queueing and other waits."""
+    async def permitted_async():
+        return await async_allowed() if async_allowed is not None else allowed()
+
+    if inspect.iscoroutinefunction(function):
+        @wraps(function)
+        async def guarded_async(*args, **kwargs):
+            if not await permitted_async():
+                raise InvocationSuppressed("dreams invocation no longer authorized")
+            return await function(*args, **kwargs)
+        return guarded_async
+
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        if not allowed():
+            raise InvocationSuppressed("dreams invocation no longer authorized")
+        result = function(*args, **kwargs)
+        if inspect.isawaitable(result):
+            async def await_current():
+                if not await permitted_async():
+                    if inspect.iscoroutine(result):
+                        result.close()
+                    raise InvocationSuppressed("dreams invocation no longer authorized")
+                return await result
+            return await_current()
+        return result
+    return guarded
+
+
 async def run_queries(
     perform: Callable[..., Any],
     *,
@@ -173,7 +212,6 @@ async def run_queries(
     for query in queries:
         if before_each is not None and not await before_each():
             break
-        sent += 1
         try:
             payload = await asyncio.to_thread(
                 perform, engine, query,
@@ -183,11 +221,15 @@ async def run_queries(
                 result_count=result_count,
                 date_range=date_range,
             )
+        except InvocationSuppressed:
+            break
         except Exception as exc:  # noqa: BLE001 - one dead engine is degradation
+            sent += 1
             # Type name only: the query is built from the user's interest
             # profile (notes keywords, Personal Context), never logged.
             logger.warning("Dreams search failed: {}", type(exc).__name__)
             continue
+        sent += 1
         for item in _extract_results(payload):
             candidates.append(Candidate(
                 title=item["title"], url=item["url"], snippet=item["snippet"],

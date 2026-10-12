@@ -48,6 +48,7 @@ from tldw_chatbook.Notifications import (
 )
 from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
+from tldw_chatbook.Utils.egress import UrlProvenance
 from tldw_chatbook.Subscriptions.watchlist_bundle_service import (
     WatchlistBundleService,
 )
@@ -1997,7 +1998,8 @@ async def test_track_page_still_attaches_to_the_users_own_private_source(
     subs_db, service = subs_stack
     private_url = "http://192.168.1.10/status"
     existing = await service.create_source(
-        {"name": "My NAS", "url": private_url, "source_type": "url"})
+        {"name": "My NAS", "url": private_url, "source_type": "url",
+         "url_provenance": UrlProvenance.USER_ENTERED})
 
     result = await track_page(
         service, dreams_db, url=private_url, title="NAS", intent="topic")
@@ -2054,7 +2056,8 @@ async def _two_page_watches_and_a_question(dreams_db, service, scheduling_db):
         scheduling_db_getter=getter)
     users_url = "https://example.com/users-own"
     await service.create_source(
-        {"name": "User's own", "url": users_url, "source_type": "url"})
+        {"name": "User's own", "url": users_url, "source_type": "url",
+         "url_provenance": provenance})
     attached = await track_page(
         service, dreams_db, url=users_url, title="Theirs", intent="topic",
         origin_story_id=2, scheduling_db_getter=getter)
@@ -3009,7 +3012,8 @@ async def test_users_own_private_source_is_still_fetched_after_tracking_it(
     private_url = "http://nas.internal/status"
     _resolve_everything_to(monkeypatch, "192.168.1.10")
     existing = await service.create_source(
-        {"name": "My NAS", "url": private_url, "source_type": "url"})
+        {"name": "My NAS", "url": private_url, "source_type": "url",
+         "url_provenance": UrlProvenance.USER_ENTERED})
     tracked = await track_page(
         service, dreams_db, url=private_url, title="NAS", intent="topic")
     assert tracked["outcome"] == "attached"
@@ -3210,10 +3214,11 @@ async def test_disabling_dreams_during_the_judge_sends_no_tracked_update(
 # so the rule kept firing "Change:" alerts for a Dreams that was off.
 
 
-async def _attach_to_users_source(dreams_db, service, *, story_id=2):
+async def _attach_to_users_source(dreams_db, service, *, story_id=2, provenance=None):
     users_url = "https://example.com/users-own"
     existing = await service.create_source(
-        {"name": "User's own", "url": users_url, "source_type": "url"})
+        {"name": "User's own", "url": users_url, "source_type": "url",
+         "url_provenance": provenance})
     attached = await track_page(
         service, dreams_db, url=users_url, title="Theirs", intent="topic",
         origin_story_id=story_id)
@@ -3960,14 +3965,15 @@ async def test_egress_backfill_waits_for_the_watchlists_service(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("provenance", [None, UrlProvenance.USER_ENTERED])
 async def test_a_users_own_source_is_never_marked(
-        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, provenance):
     """Attaching, the backfill and the switch all leave a source the user
     created exactly as trusted as the user made it."""
     from tldw_chatbook.Dreams.track_service import backfill_egress_marks
 
     subs_db, service = subs_stack
-    source_id, attached = await _attach_to_users_source(dreams_db, service)
+    source_id, attached = await _attach_to_users_source(dreams_db, service, provenance=provenance)
     with dreams_db.transaction() as conn:
         conn.execute("UPDATE dream_tracked_items SET egress_marked = 0")
 
@@ -3976,7 +3982,8 @@ async def test_a_users_own_source_is_never_marked(
     await _switch(service, dreams_db, scheduling_db, off=True)
     await _switch(service, dreams_db, scheduling_db, off=False)
 
-    assert _stored_options(subs_db, source_id) == {}
+    assert _stored_options(subs_db, source_id) == {
+        "url_provenance": "user_entered" if provenance is UrlProvenance.USER_ENTERED else "unknown"}
 
 
 @pytest.mark.asyncio
@@ -4020,7 +4027,8 @@ async def test_a_users_own_change_rule_is_neither_adopted_nor_silenced(
     subs_db, service = subs_stack
     users_url = "https://example.com/users-own"
     existing = await service.create_source(
-        {"name": "User's own", "url": users_url, "source_type": "url"})
+        {"name": "User's own", "url": users_url, "source_type": "url",
+         "url_provenance": provenance})
     source_id = existing["source_id"]
     theirs = await _users_rule(service, job_id=source_id)
     everywhere = await _users_rule(

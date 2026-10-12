@@ -600,6 +600,10 @@ async def _refresh_profile_signals(
 
 
 async def _guardian_snapshot_authorized(deps: CycleDeps, snap: dict) -> bool:
+    return await asyncio.to_thread(_guardian_snapshot_authorized_sync, deps, snap)
+
+
+def _guardian_snapshot_authorized_sync(deps: CycleDeps, snap: dict) -> bool:
     """Refuse an outbound snapshot whose Guardian consent was revoked."""
     topics = {
         str(row["text"]).strip().lower()
@@ -615,7 +619,10 @@ async def _guardian_snapshot_authorized(deps: CycleDeps, snap: dict) -> bool:
         db = deps.guardian_db_getter()
         if db is None:
             return False
-        current = await asyncio.to_thread(profile_sources.read_guardian_topics, db)
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with operation_owned_connection(db):
+            current = profile_sources.read_guardian_topics(db)
         return bool(guardian_setting("enabled")) and topics <= {
             str(row["text"]).strip().lower() for row in current
         }
@@ -942,6 +949,13 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
             halted = halted or not authorized
             return not switched_off()
 
+        def invocation_allowed() -> bool:
+            nonlocal halted
+            if switched_off():
+                return False
+            halted = halted or not _guardian_snapshot_authorized_sync(deps, snap)
+            return not switched_off()
+
         profile_digest = hashlib.sha256(
             json.dumps(snap, sort_keys=True).encode()).hexdigest()[:16]
         collection_id = await asyncio.to_thread(
@@ -1017,6 +1031,9 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                 chat = await asyncio.to_thread(deps.chat_getter)
                 if not await may_spend():
                     chat = None
+                if chat is not None:
+                    chat = discovery.guard_invocation(
+                        chat, invocation_allowed, async_allowed=may_spend)
                 # The synthesis call spends the same daily llm budget as
                 # stories: its slot is taken BEFORE the call, and an
                 # exhausted budget searches the deterministic fallback
@@ -1104,7 +1121,7 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                 return bool(reserved) and await may_spend()
 
             found, sent = await discovery.run_queries(
-                deps.perform_search,
+                discovery.guard_invocation(deps.perform_search, invocation_allowed),
                 engine=str(dreams_setting("search_engine")),
                 queries=queries, before_each=may_search)
             if sent < len(queries) and not halted:
@@ -1201,6 +1218,8 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                 result = await asyncio.to_thread(
                     story_service.generate_story, chat,
                     candidate=candidate, snapshot=snap)
+                if halted:
+                    break
             await asyncio.to_thread(
                 _record_story, dreams_db, local_date, collection_id,
                 candidate=candidate, result=result,
