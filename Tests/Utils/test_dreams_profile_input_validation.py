@@ -485,3 +485,46 @@ def test_the_mongolian_vowel_separator_is_not_a_space():
     """It is a format character shaping needs, not whitespace: kept."""
     mongolian = "\u182e\u1823\u1829\u182d\u1823\u182f\u180e\u1820"
     assert validate_dreams_profile_text(mongolian) == mongolian
+
+
+# --- Review round 5, N4: an emoji the user can type is readable ------------------
+#
+# The readable test counted letters, numbers, other symbols (So) and
+# currency signs. Emoji written as punctuation or a maths sign with the
+# emoji presentation selector -- the keycaps, the double exclamation mark,
+# the left-right arrow -- were refused as "nothing readable".
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "#\ufe0f\u20e3",          # keycap number sign
+        "*\ufe0f\u20e3",          # keycap asterisk
+        "#\u20e3",                # keycap without the selector
+        "\u203c\ufe0f",           # double exclamation mark
+        "\u2049\ufe0f",           # exclamation question mark
+        "\u2194\ufe0f",           # left-right arrow
+        "\u203c\ufe0f news",
+    ],
+)
+def test_an_emoji_made_of_punctuation_or_a_sign_is_readable(value):
+    assert validate_dreams_profile_text(value) == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "+", "\u221e", "\u2192", "^", "~",  # maths signs and modifiers alone
+        "\u203c",                           # punctuation without the selector
+        "\ufe0f", "\u20e3", "\ufe0f\u20e3",  # the selectors on nothing
+        "+ - \u00d7",
+    ],
+)
+def test_maths_signs_punctuation_and_bare_selectors_are_not(value):
+    with pytest.raises(ValueError, match="nothing readable"):
+        validate_dreams_profile_text(value)
+
+
+@pytest.mark.parametrize("value", ["\u2665", "\u20ac", "\u00a9", "\U0001f3b8"])
+def test_a_symbol_alone_is_readable(value):
+    assert validate_dreams_profile_text(value) == value

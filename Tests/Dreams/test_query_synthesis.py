@@ -1014,3 +1014,24 @@ def test_a_short_real_query_is_still_a_query(line):
     from tldw_chatbook.Dreams.query_synthesis import _query_row
 
     assert _query_row(line, [(_G1, None)])["query"] == line
+
+
+# --- Review round 5, N4: what the guide says about the fallback's exploration line
+
+
+def test_the_fallback_has_one_exploration_line_except_at_one_query():
+    from tldw_chatbook.Dreams.query_synthesis import _fallback_queries
+
+    goals = [(_G1, None)]
+    for count in (2, 3, 6):
+        rows = _fallback_queries(["rust tui"], goals, count)
+        assert [row["query"] for row in rows].count(
+            "surprising adjacent to rust tui") == 1
+    assert [row["query"] for row in _fallback_queries([], goals, 3)][-1] == (
+        "curious new things this week")
+    # One query: the topic's (or the goal's) line, no exploration line.
+    assert [row["query"] for row in _fallback_queries(["rust tui"], goals, 1)
+            ] == ["rust tui recent developments"]
+    assert [row["goal"] for row in _fallback_queries([], goals, 1)] == [_G1]
+    assert [row["query"] for row in _fallback_queries([], [], 1)] == [
+        "curious new things this week"]

@@ -1918,6 +1918,14 @@ _DREAMS_TEXT_BLANK = frozenset("\u115f\u1160\U0001d159")
 _DREAMS_TEXT_FLAG_SEQUENCE_RE = re.compile(
     "\U0001f3f4[\U000e0030-\U000e0039\U000e0061-\U000e007a]+\U000e007f")
 
+#: A character turned into an emoji: followed by the emoji presentation
+#: selector, or capped with the combining enclosing keycap. That is how
+#: the keycaps (#\ufe0f\u20e3), the double exclamation mark and the arrow
+#: emoji are written; their base is punctuation or a maths sign, which
+#: alone is not readable, and the emoji is (round 5, N4).
+_DREAMS_TEXT_EMOJI_PRESENTATION_RE = re.compile(
+    "[^\\s\ufe0f\u20e3][\ufe0f\u20e3]")
+
 # One refusal per thing that can be wrong (round 4, C4): the caller shows
 # it after "Topic not added: " / "Goal not added: " / "Region not saved: ".
 _DREAMS_TEXT_TOO_LONG = (
@@ -1950,9 +1958,13 @@ def validate_dreams_profile_text(value: object) -> str:
     rule is about what the text IS, not about what it mentions:
 
     * one line: no control character, no line or paragraph separator;
-    * something to read: a letter or a number in any script, or an emoji
-      or symbol; punctuation alone, combining marks alone and characters
-      that render as nothing are not a topic (round 4, I3);
+    * something to read: a letter or a number in any script, an emoji
+      (including one written as punctuation or a sign with the emoji
+      selector or the keycap, round 5, N4), or a symbol of the "other"
+      or currency kind (heart, euro, copyright); punctuation, maths signs
+      (+, infinity, arrows), modifier symbols, combining marks and
+      characters that render as nothing alone are not a topic (round 4,
+      I3);
     * nothing hidden that changes what the text is: no bidirectional
       embedding/override/isolate control, and no other invisible format
       character except the joiners, directional marks and visible format
@@ -2048,7 +2060,7 @@ def validate_dreams_profile_text(value: object) -> str:
             category[0] in "LN" or category in ("So", "Sc", "Cn", "Co")
         ):
             readable = True
-    if not readable:
+    if not readable and not _DREAMS_TEXT_EMOJI_PRESENTATION_RE.search(text):
         raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
     # One spacing, one topic (round 5, N5): every run of spaces -- a
     # no-break, ideographic or em space, or what is left where an
