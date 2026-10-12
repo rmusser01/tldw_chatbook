@@ -1,5 +1,6 @@
 """Dreams uses the actual production Library route and existing action owners."""
 
+import asyncio
 import time
 
 import pytest
@@ -32,6 +33,76 @@ async def loaded(pilot, controller):
         if controller.detail is not None and not controller.loading:
             return
     pytest.fail(f"Dreams did not load: {controller.error} / {controller.detail_error}")
+
+
+async def mounted_modal(pilot, modal_type, selector):
+    """Wait within the route test's existing modal readiness budget."""
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        modal = pilot.app.screen
+        if isinstance(modal, modal_type) and modal.is_mounted and modal.query(selector):
+            return modal
+        await pilot.pause(0.03)
+    pytest.fail(f"{modal_type.__name__} did not mount {selector}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["story", "goals"])
+@private_profile_test
+async def test_modal_readiness_waits_for_real_composition(
+    tmp_path, request, monkeypatch, kind
+):
+    from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+
+    db = DreamsDB(tmp_path / "dreams.sqlite")
+    if kind == "story":
+        modal = DreamsStoryModal(
+            {"id": 1, "title": "Story", "body": "Body", "url": "https://example.com"},
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
+        )
+        selector = "#dsm-keep-button"
+    else:
+        modal = DreamsGoalsModal(dreams_db_getter=lambda: db, on_changed=lambda: None)
+        selector = "#dgm-goals"
+    entered, release = asyncio.Event(), asyncio.Event()
+    compose = modal._compose
+
+    async def held_compose():
+        entered.set()
+        await release.wait()
+        await compose()
+
+    monkeypatch.setattr(modal, "_compose", held_compose)
+    app = ConsolidatedCSSApp(css_path=list(APP_STYLESHEETS))
+    try:
+        async with app.run_test(size=(160, 50)) as pilot:
+            mount = app.push_screen(modal)
+            waiter = None
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                assert app.screen is modal  # Stack identity precedes child mount.
+                assert not modal.is_mounted
+                assert not modal.query(selector)
+                waiter = asyncio.create_task(
+                    mounted_modal(pilot, type(modal), selector)
+                )
+                await asyncio.sleep(
+                    0
+                )  # Let the readiness check reach the held boundary.
+                assert not waiter.done()
+                release.set()
+                assert await asyncio.wait_for(waiter, 5) is modal
+                assert modal.is_mounted
+                assert modal.query_one(selector).is_mounted
+            finally:
+                release.set()
+                await asyncio.wait_for(mount, 5)
+                if waiter is not None:
+                    await asyncio.gather(waiter, return_exceptions=True)
+    finally:
+        db.close_all()
 
 
 @pytest.mark.asyncio
@@ -93,13 +164,7 @@ async def test_production_library_dreams_story_actions_goals_and_literal_notice(
                 rendered.plain == "Collection notice: " + notice and not rendered.spans
             )
             await pilot.click("#library-artifacts-dreams-actions")
-            deadline = time.monotonic() + 5
-            while (
-                not isinstance(host.screen, DreamsStoryModal)
-                and time.monotonic() < deadline
-            ):
-                await pilot.pause(0.03)
-            modal = host.screen
+            modal = await mounted_modal(pilot, DreamsStoryModal, "#dsm-keep-button")
             assert isinstance(modal, DreamsStoryModal)
             assert modal._story["id"] == sid
             for name in (
@@ -119,12 +184,7 @@ async def test_production_library_dreams_story_actions_goals_and_literal_notice(
             await loaded(pilot, c)
             assert c.detail.dream_story["kept"] == 1
             await pilot.click("#library-artifacts-dreams-goals")
-            deadline = time.monotonic() + 5
-            while (
-                not isinstance(host.screen, DreamsGoalsModal)
-                and time.monotonic() < deadline
-            ):
-                await pilot.pause(0.03)
+            await mounted_modal(pilot, DreamsGoalsModal, "#dgm-goals")
             assert isinstance(host.screen, DreamsGoalsModal)
             await pilot.press("q")
     finally:

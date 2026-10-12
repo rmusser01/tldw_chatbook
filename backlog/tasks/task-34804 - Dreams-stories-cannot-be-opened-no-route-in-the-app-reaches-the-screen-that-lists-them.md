@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-10-12 02:33'
-updated_date: '2026-10-12 19:39'
+updated_date: '2026-10-12 21:09'
 labels:
   - dreams
   - navigation
@@ -50,6 +50,10 @@ Current source update: author0c941ba2ec984d960ba83376aeace0e830452bbc, 113 nonme
 PR2921 current private integration qualification (2026-10-12):
 Dreams now uses actual Library catalog/controller/reader and Story actions; every existing action and goals editor remains reachable. All 16 former source route scenarios now mount production Library, with native focus/late-generation/selection ownership. Final modal actions 38 pass; Library routes/catalog/layout/ownership/import 29 pass. Missing-origin tracking retains mechanism/query/last-check Details. Guide and F4 hints identify the actual destination. ADR-172/196 amendments apply.
 Full source-bound outcomes, original failures, native owners and tradeoffs: .superpowers/sdd/2026-10-11-pr2921-current-dev-integration/task-1-report.md; external pr-review-wave2/pr2921-current-integration. Local implementation is ready for independent review. Actual-base restack, complete independent review and hosted required gates remain pending; preserve In Progress and the existing acceptance checklist until the full DoD is met.
+
+Hosted publication Task2 plan (2026-10-12): Correct only the real Library test story/Goals readiness fences to require expected modal, mounted state and expected control within the existing five-second loop. Preserve every original action/assertion, marker, private child, fixture and deadline. Add a bounded held real-compose witness for both modal types, with a failing type-only control then corrected success. Qualify only amended nodes, UI census membership and static checks; production remains unchanged. ADR required: no, routine synchronization under the existing Library/Textual mount contract. Earlier original-node local pass remains non-reproduction; hosted UI4 failure is retained. No Done; scoped Task2 review/new-head hosted gates remain pending.
+
+Hosted publication Task2 results (2026-10-12): Corrected only the Library test story/Goals waits to require expected modal, mounted state and expected control within the existing five-second/0.03-second loop. All 9 original assertions, actions, markers and fixture parameters retained; production unchanged. Two controlled real held-compose witnesses fail the original type-only predicate and pass the correction; the corrected original Library journey also passes (3 cases total). Initial RED witness cleanup produced secondary NoMatches and is preserved separately; corrected cleanup awaits actual Textual mount, yielding clean 2-case early-return RED. Ruff/format/full actual-base whitespace and unchanged required UI census188 checks pass. Source-bound report/handoff: external pr-review-wave2/pr2921-hosted-readiness-task2-report.md and -handoff.json. Prior local pass remains non-reproduction, not confirmed hosted flake. Scoped Task2 review, separate root-owned Fast CI failure investigation and new-head hosted qualification/publication remain pending; preserve In Progress/AC.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
