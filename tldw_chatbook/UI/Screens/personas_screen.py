@@ -193,6 +193,7 @@ from ...Widgets.Persona_Widgets.personas_policy_rules_editor import (
 from ...Widgets.Persona_Widgets.personas_persona_visual_pack_widget import (
     BuddyCharacterCreateRequested,
     PersonaVisualAddCustomRequested,
+    PersonaVisualBuddyManageRequested,
     PersonaVisualCancelRequested,
     PersonaVisualClearRequested,
     PersonaVisualCustomStateDialog,
@@ -7455,6 +7456,27 @@ class PersonasScreen(BaseAppScreen):
         # app-level open_chat_with_handoff API with an explicit intent marker.
         event.stop()
         await self._attach_selection_to_console(intent="start_chat")
+
+    @on(PersonaVisualBuddyManageRequested)
+    def _handle_persona_visual_buddy_manage(
+        self, message: PersonaVisualBuddyManageRequested
+    ) -> None:
+        message.stop()
+        state = self._persona_visual_authoring
+        if (
+            state is None
+            or self.app.screen is not self
+            or self._io_dialog_active
+            or self._persona_visual_has_unsaved_authoring()
+            or message.browser is not state.snapshot.browser_ref()
+            or not self._persona_visual_snapshot_is_current(state.snapshot)
+            or message.inventory is None
+            or message.inventory is not message.browser.saved_inventory
+        ):
+            return
+        from ..Navigation.buddy_management import open_buddy_management
+
+        open_buddy_management(self.app)
 
     @on(PersonaBuddyActionRequested)
     def _handle_persona_buddy_action(
