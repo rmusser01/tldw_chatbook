@@ -170,4 +170,3 @@ tldw_chatbook/Widgets/Prompts/prompt_block_editor.py::_reconcile_lane	2
 tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py::handle_configure_provider_changed	1
 tldw_chatbook/Widgets/audio_troubleshooting_dialog.py::_initialize_audio	1
 tldw_chatbook/Widgets/llamacpp_snapshot_manager.py::_save_preferences	5
-tldw_chatbook/Widgets/model_search_picker.py::load_provider	1
