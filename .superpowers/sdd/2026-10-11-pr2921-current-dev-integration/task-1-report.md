@@ -242,3 +242,37 @@ prompts nor search queries. Mixed-selection-green-1:16pass2.55s, including
 existing dedup/exact-goal feedback/private-goal/lexical-non-attribution controls.
 Ranker and direct ranking tests Ruff clean; diff clean. User guide records the
 capacity limit. Tasks remain InProgress pending full integration and review.
+
+## Checkpoint: production Library Dreams reader (TASK34804 / TASK34815)
+
+ADR196 amendments a22f9b57fd/6e11770790 precede the production move and retention
+of existing tracked-watch status. The actual artifacts alias resolves Library;
+its existing rail/catalog/controller now admits Dreams story, tracked-item and
+empty-collection namespaces. Each contributes at most20 metadata candidates;
+count, rank, stable location and rows share one read snapshot, with bodies only
+on selection. No schema/aggregate store/new shell. Existing story/goals modals
+retain mutation owners. Story actions re-read selected revision; profile/owner
+getters fence modal callbacks and refresh waits for modal return. Tracked rows
+retain latest stored status/verdict, held reason and origin actions; absent
+origins are status-only. Stored degradation notes render through literal Text
+above the body and in Details; normal collections add no notice. Guides and
+Library architecture now describe reachable controls and bounded paging.
+
+Evidence: library-dreams-red-1 two missing-interface setup errors; green-1
+29existing catalog/state passes and2 owned incorrect SQL-column failures.
+Corrected new catalog2pass0.76s. UI-1 canonical-route/story/goals/literal positive
+1pass7.61s. UI-2 six passes15s includes real Keep after suspension, existing
+reader keyboard behavior, actual lazy ServiceWiring getter construction in the
+Library finite worker and physical native closed/new versus usable/borrowed
+handles probed on the still-alive owner thread. Tracked-red one intended missing
+row failure; tracked-green3pass1.08s. Final affected native/catalog+productionUI
+6pass10.98s. Scoped new/modified helper/controller/widget/tests Ruff clean; no
+broad inherited UI/config sweep. All raw/JUnit/source bindings retained.
+
+Root clarified that 'source preview' was shorthand, not a separate admitted
+work item. No preview feature/tests added. Remaining finite drain obligation is
+GuardianTrendHandler's grouped analysis/store/retention/watermark and actual
+shutdown/recovery drain/notification affinity (plan step7/source finding7).
+Whole Task1 remains InProgress: remaining Guardian proof audit, literal sinks,
+modal tokens/F4, narrow lint, actual required-lane binding, complete final
+source/function/caller matrix and independent final-head review are pending.

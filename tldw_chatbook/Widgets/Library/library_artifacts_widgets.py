@@ -58,6 +58,9 @@ class ArtifactItems(Vertical):
             yield Button("Last", id="library-artifacts-last", compact=True)
         yield Button("Retry", id="library-artifacts-retry", compact=True)
         yield Button(
+            "Goals & privacy…", id="library-artifacts-dreams-goals", compact=True
+        )
+        yield Button(
             "Manage Chatbook packs…", id="library-artifacts-manage", compact=True
         )
 
@@ -68,6 +71,7 @@ class ArtifactItems(Vertical):
             "reports": "Reports",
             "chatbooks": "Chatbooks",
             "all": "All artifacts",
+            "dreams": "Dreams",
         }[c.scope.view]
         self.query_one("#library-artifacts-heading", Static).update(f"{title} · Local")
         self.query_one(Input).placeholder = (
@@ -75,7 +79,13 @@ class ArtifactItems(Vertical):
             if c.scope.view == "reports"
             else "Find artifacts by title…"
         )
-        self.query_one("#library-artifacts-manage").display = c.scope.view != "reports"
+        self.query_one("#library-artifacts-manage").display = c.scope.view in (
+            "all",
+            "chatbooks",
+        )
+        self.query_one("#library-artifacts-dreams-goals").display = (
+            c.scope.view == "dreams"
+        )
         self.query_one("#library-artifacts-all").display = c.scope.view == "reports"
         self.query_one("#library-artifacts-kept").display = c.scope.view == "reports"
         self._syncing = True
@@ -118,6 +128,8 @@ class ArtifactItems(Vertical):
                     if c.scope.query or c.scope.kept_only
                     else "No Chatbooks yet. Open Manage Chatbook packs."
                     if c.scope.view == "chatbooks"
+                    else "No Dreams yet. Enable Dreams in F4 Settings to begin."
+                    if c.scope.view == "dreams"
                     else "No reports yet. Open Watchlists or try the report demo."
                 )
             self.query_one("#library-artifacts-count", Static).update(status)
@@ -189,6 +201,7 @@ class ArtifactWork(Vertical):
             yield Button("Details", id="library-artifacts-details", compact=True)
         yield Static("Select a report", id="library-artifacts-title", markup=False)
         yield Static("", id="library-artifacts-retention", markup=False)
+        yield Static("", id="library-artifacts-degradation", markup=False)
         with VerticalScroll(id="library-artifacts-body"):
             yield Static(
                 "Choose an item to read it here.",
@@ -202,6 +215,9 @@ class ArtifactWork(Vertical):
             yield Button("Scripts…", id="library-artifacts-scripts", compact=True)
             yield Button("Play", id="library-artifacts-play", compact=True)
         with Horizontal(classes="library-artifacts-toolbar"):
+            yield Button(
+                "Story actions…", id="library-artifacts-dreams-actions", compact=True
+            )
             yield Button("Share…", id="library-artifacts-share", compact=True)
             yield Button("Use in Console", id="library-artifacts-console", compact=True)
             yield Button("Open source", id="library-artifacts-source", compact=True)
@@ -222,7 +238,19 @@ class ArtifactWork(Vertical):
         )
         retained = c.selected and c.selected.source == "kept_report"
         chatbook = c.selected and c.selected.source == "chatbook"
+        dream = c.selected and c.selected.source in (
+            "dream_story",
+            "dream_collection",
+            "dream_track",
+        )
         metadata = dict(detail.details) if detail else {}
+        degradation = self.query_one("#library-artifacts-degradation", Static)
+        degradation.display = bool(metadata.get("Degradation"))
+        degradation.update(
+            Text("Collection notice: " + metadata["Degradation"])
+            if degradation.display
+            else ""
+        )
         self.query_one("#library-artifacts-retention", Static).update(
             " · ".join(
                 filter(
@@ -235,6 +263,11 @@ class ArtifactWork(Vertical):
                 )
             )
             if chatbook
+            else "Dreams · "
+            + metadata.get("Collection", "")
+            + " · "
+            + metadata.get("Collection status", "")
+            if dream
             else "Kept in Library · independent saved copy"
             if retained
             else "Watchlist copy · disappears if its Watchlist is deleted"
@@ -252,8 +285,12 @@ class ArtifactWork(Vertical):
         elif detail.body:
             body = Text("")
         else:
-            body = Text(
-                f"This report is {row.status if row else 'unavailable'}. Open Watchlists for its status."
+            body = (
+                Text("This discovery cycle recorded no stories.")
+                if dream
+                else Text(
+                    f"This report is {row.status if row else 'unavailable'}. Open Watchlists for its status."
+                )
             )
         preview = bool(
             detail and detail.body and c.mode == "preview" and not c.detail_loading
@@ -274,6 +311,7 @@ class ArtifactWork(Vertical):
             and not c.busy
         )
         for name, allowed in (
+            ("dreams-actions", detail and detail.dream_story is not None),
             ("keep", detail and detail.can_keep),
             ("export", detail and detail.can_export),
             ("play", detail and detail.can_play),
@@ -286,11 +324,12 @@ class ArtifactWork(Vertical):
             button.display = bool(allowed)
             button.disabled = not ready
         self.query_one("#library-artifacts-demo").display = (
-            c.scope.view != "chatbooks"
+            c.scope.view not in ("chatbooks", "dreams")
+            and not dream
             and (not c.selected or bool(row and row.status == "failed"))
         )
         self.query_one("#library-artifacts-watchlists").display = (
-            c.scope.view != "chatbooks" and not chatbook
+            c.scope.view not in ("chatbooks", "dreams") and not chatbook and not dream
         )
         for toolbar in self.query(Horizontal):
             toolbar.display = any(button.display for button in toolbar.query(Button))

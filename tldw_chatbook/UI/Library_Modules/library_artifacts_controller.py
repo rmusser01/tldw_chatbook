@@ -49,6 +49,7 @@ class LibraryArtifactsController:
         self.detail_generation = 0
         self.presentation = 0
         self.disposed = False
+        self._dreams_refresh_pending = False
         self.suspended = False
         self.search_timer = None
         self.reader_open = False
@@ -76,6 +77,96 @@ class LibraryArtifactsController:
             subscriptions_db=getattr(self.app_instance, "subscriptions_db", None),
             chachanotes_db=getattr(self.app_instance, "chachanotes_db", None),
             chatbook_service=getattr(self.app_instance, "local_chatbook_service", None),
+            dreams_db_getter=self._dreams_db,
+        )
+
+    def _dreams_db(self):
+        from ...Dreams.settings import dreams_setting
+
+        if not dreams_setting("enabled"):
+            return None
+        getter = getattr(self.app_instance, "get_dreams_db", None)
+        owner = (
+            getter()
+            if callable(getter)
+            else getattr(self.app_instance, "dreams_db", None)
+        )
+        if owner is None:
+            raise LookupError("Dreams storage is unavailable")
+        return owner
+
+    def _dreams_modal_getter(self, profile, owner):
+        # Modal suspension changes presentation, but never grants a new profile.
+        if self.disposed or self.profile() != profile:
+            return None
+        return owner if self._dreams_db() is owner else None
+
+    def _dreams_changed(self, profile):
+        if not self.disposed and self.profile() == profile and self.active():
+            if self.suspended:
+                self._dreams_refresh_pending = True
+            else:
+                self.request_scope(self.scope)
+
+    async def _open_dreams_goals(self, profile, presentation):
+        from ..Screens.artifacts_dreams_goals_modal import DreamsGoalsModal
+
+        try:
+            owner = await self.screen._run_library_service_call(self._dreams_db)
+        except LookupError:
+            if self.presentable(presentation, profile):
+                self.notify(
+                    "Dreams storage is unavailable. Retry after recovery.", "warning"
+                )
+            return
+        if not self.presentable(presentation, profile):
+            return
+        if owner is None:
+            self.notify("Enable Dreams in F4 Settings to edit goals.")
+            return
+        self.screen.app.push_screen(
+            DreamsGoalsModal(
+                dreams_db_getter=lambda: self._dreams_modal_getter(profile, owner),
+                on_changed=lambda: self._dreams_changed(profile),
+            )
+        )
+
+    def _open_dreams_story(self, detail, profile):
+        from ..Screens.artifacts_dreams_modal import DreamsStoryModal
+
+        owner = getattr(self.app_instance, "dreams_db", None)
+        if owner is None:
+            return
+
+        def current_app_value(name):
+            return (
+                getattr(self.app_instance, name, None)
+                if self._dreams_modal_getter(profile, owner)
+                else None
+            )
+
+        def capture():
+            ensure = current_app_value("ensure_collections_capture_services")
+            return (
+                ensure()
+                if callable(ensure)
+                else current_app_value("collections_capture_scope_service")
+            )
+
+        def scheduling():
+            return getattr(current_app_value("scheduling_service"), "db", None)
+
+        self.screen.app.push_screen(
+            DreamsStoryModal(
+                dict(detail.dream_story),
+                dreams_db_getter=lambda: self._dreams_modal_getter(profile, owner),
+                capture_backend_getter=capture,
+                subs_service_getter=lambda: current_app_value(
+                    "local_watchlists_service"
+                ),
+                scheduling_db_getter=scheduling,
+                on_changed=lambda: self._dreams_changed(profile),
+            )
         )
 
     def active(self) -> bool:
@@ -509,6 +600,9 @@ class LibraryArtifactsController:
             self._views.clear()
             self.request_scope(self.scope)
         elif self.active():
+            if self._dreams_refresh_pending:
+                self._dreams_refresh_pending = False
+                self.request_scope(self.scope)
             # Restart a query stopped while leaving; settled reads remain valid.
             if self.shell and self.shell.is_mounted:
                 query = self.shell.query_one("#library-artifacts-search", Input).value
@@ -556,6 +650,12 @@ class LibraryArtifactsController:
         elif name in {"preview", "details"}:
             self.mode = name
             self.sync()
+        elif name == "dreams-goals" and self.active():
+            self.screen.run_worker(
+                self._open_dreams_goals(self.profile(), self.presentation),
+                group="library-dreams-goals",
+                exclusive=True,
+            )
         elif name == "manage":
             from ..Navigation.main_navigation import NavigateToScreen
 
@@ -581,7 +681,16 @@ class LibraryArtifactsController:
                     "The report demo is unavailable in this runtime.", "warning"
                 )
         elif (
-            name in {"keep", "export", "scripts", "play", "source", "console"}
+            name
+            in {
+                "keep",
+                "export",
+                "scripts",
+                "play",
+                "source",
+                "console",
+                "dreams-actions",
+            }
             and self.detail
             and not (self.loading or self.error or self.busy)
         ):
@@ -632,7 +741,9 @@ class LibraryArtifactsController:
                     else "This copy changed. Retry to read its latest version."
                 )
                 return
-            if name == "keep" and fresh.can_keep:
+            if name == "dreams-actions" and fresh.dream_story is not None:
+                self._open_dreams_story(fresh, profile)
+            elif name == "keep" and fresh.can_keep:
                 from ...Subscriptions.briefing_keep import keep_briefing
 
                 result = await self.screen._run_library_service_call(
