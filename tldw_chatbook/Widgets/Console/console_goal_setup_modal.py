@@ -179,34 +179,39 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
             binding = next(b for b in self.bindings if b.binding_id == binding_id)
             tools = await self.discover_tools(binding)
             if (
-                not self.is_mounted
+                not self.is_current
                 or not self.query("#goal-start")
+                or not self.query("#goal-tools")
+                or not self.query("#goal-setup-error")
                 or version != self._binding_version
             ):
                 return
-            choices = self.query_one("#goal-tools", SelectionList)
+            choices = self.query("#goal-tools").first(SelectionList)
+            error = self.query("#goal-setup-error").first(Static)
             choices.clear_options()
             choices.add_options([(tool, tool, tool in selected) for tool in tools])
             self.tool_ids = tools
             self._catalog_binding_id = binding_id
-            self.query_one("#goal-setup-error", Static).update("")
+            error.update("")
         except Exception as exc:  # noqa: BLE001 - fail closed on changed discovery
             if (
-                self.is_mounted
+                self.is_current
                 and self.query("#goal-start")
+                and self.query("#goal-tools")
+                and self.query("#goal-setup-error")
                 and version == self._binding_version
             ):
                 self._catalog_binding_id = None
-                self.query_one("#goal-tools", SelectionList).clear_options()
+                self.query("#goal-tools").first(SelectionList).clear_options()
                 self.tool_ids = ()
-                self.query_one("#goal-setup-error", Static).update(
+                self.query("#goal-setup-error").first(Static).update(
                     str(exc)
                     if isinstance(exc, (ValueError, RuntimeError))
                     else "Tools could not be refreshed. Select the project again to retry."
                 )
         finally:
             if (
-                self.is_mounted
+                self.is_current
                 and self.query("#goal-start")
                 and version == self._binding_version
             ):
@@ -300,6 +305,16 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                         tuple(arguments),
                         tuple(inputs),
                     )
+                    if not self.is_current or not all(
+                        self.query(f"#goal-{name}")
+                        for name in (
+                            "selected-tools",
+                            "selected-checks",
+                            "setup-error",
+                            "start",
+                        )
+                    ):
+                        return
                 else:
                     submitted = GoalRequest.model_validate(values)
                 if version != self._binding_version:
@@ -309,14 +324,14 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                 submitted.validate_verifier_invocations()
                 self._submitted = submitted
                 if self.configure:
-                    self.query_one("#goal-selected-tools", Static).update(
+                    self.query("#goal-selected-tools").first(Static).update(
                         "Selected tools: "
                         + ", ".join(
                             self._submitted.tool_scope.catalog_tools
                             + self._submitted.tool_scope.runtime_tools
                         )
                     )
-                    self.query_one("#goal-selected-checks", Static).update(
+                    self.query("#goal-selected-checks").first(Static).update(
                         "Selected checks: "
                         + (
                             "; ".join(
@@ -330,18 +345,19 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                         "Input, TextArea, Select, SelectionList, Checkbox"
                     ):
                         widget.disabled = True
-                    self.query_one("#goal-setup-error", Static).update(
+                    self.query("#goal-setup-error").first(Static).update(
                         "Launch selections are fixed. Start to run; Cancel to change the setup."
                     )
-                    self.query_one("#goal-start", Button).label = "Start"
-                    self.query_one("#goal-selected-checks").scroll_visible()
+                    self.query("#goal-start").first(Button).label = "Start"
+                    self.query("#goal-selected-checks").first().scroll_visible()
                     return
             result = await self._start(self._submitted, self.launch_id)
-            self.dismiss(result)
+            if self.is_current:
+                self.dismiss(result)
         except Exception as exc:  # noqa: BLE001 - preserve a recoverable saved launch
-            if not self.query("#goal-setup-error"):
+            if not self.is_current or not self.query("#goal-setup-error"):
                 return
-            self.query_one("#goal-setup-error", Static).update(
+            self.query("#goal-setup-error").first(Static).update(
                 str(exc)
                 if isinstance(exc, (ValueError, RuntimeError))
                 else "Setup could not finish. Reopen Goal runs and retry the saved setup."

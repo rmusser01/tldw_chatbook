@@ -154,7 +154,7 @@ async def test_changes_control_opens_exact_saved_iteration_and_conversation(
     import asyncio
 
     from Tests.Agents.test_goal_progress import run_verifier
-    from Tests.UI.test_console_goal_controls import GoalHarness
+    from Tests.UI.test_console_goal_controls import GoalHarness, click_goal
     from tldw_chatbook.UI.Console_Modules.goals import ConsoleGoalsController
 
     co, goal, result, *_ = await run_verifier(stores, monkeypatch, tmp_path, human=True)
@@ -173,8 +173,7 @@ async def test_changes_control_opens_exact_saved_iteration_and_conversation(
         await pilot.pause()
         app.screen.review_changes = ui.review_changes
         app.screen.load_goal()
-        await pilot.pause()
-        await pilot.click("#goal-changes")
+        assert await click_goal(pilot, "#goal-changes")
         await pilot.pause()
         assert opened == [
             (

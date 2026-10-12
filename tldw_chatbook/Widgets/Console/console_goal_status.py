@@ -74,18 +74,41 @@ class ConsoleGoalStatus(ModalScreen[None]):
                 self.coordinator.service.get, self.goal_id
             )
         except Exception:  # noqa: BLE001 - private view failures must not crash the app
-            if self.is_mounted and self.query("#goal-error"):
-                self.query_one("#goal-error", Static).update(
+            if self.is_current and self.query("#goal-error"):
+                self.query("#goal-error").first(Static).update(
                     "Goal history is unavailable. Close and reopen to retry."
                 )
             return
-        if not self.is_mounted or not self.query("#goal-state"):
+        if not self.is_current:
             return
+        names = (
+            "state",
+            "accounting",
+            "reason",
+            "iteration",
+            "report",
+            "evidence",
+            "error",
+            "retry-setup",
+            "pause",
+            "stop",
+            "resume",
+            "review",
+            "changes",
+            "accept",
+            "reject",
+            "recovery",
+            "remove",
+        )
+        found = {name: self.query(f"#goal-{name}") for name in names}
+        if not all(found.values()):
+            return
+        widgets = {name: query.first() for name, query in found.items()}
         self.snapshot = goal
         if self._review_identity and self._review_identity[0] != goal.revision:
             self._review_identity = None
         running = self.coordinator.active_goal_id == goal.id
-        self.query_one("#goal-state", Static).update(
+        widgets["state"].update(
             f"{goal.request.objective if goal.request else 'Removed goal'}\nGoal {goal.id}\n{goal.status.replace('_', ' ')}"
             + (" · executing" if running else "")
         )
@@ -97,13 +120,13 @@ class ConsoleGoalStatus(ModalScreen[None]):
             if a.deadline_at
             else "starts at first acceptance"
         )
-        self.query_one("#goal-accounting", Static).update(
+        widgets["accounting"].update(
             f"Iterations {goal.iteration_count}; calls {a.used['model_call']}; tokens used {a.used['tokens']}, reserved/unknown {a.reserved['tokens']}\nElapsed deadline: {deadline}. Pauses and waits count; Resume never refills."
         )
         reason = (goal.pause_reason or "").replace("_", " ")
         if goal.status == "recovery_required":
             reason += "\nExecution may have had effects. Close uncertain keeps unknown accounting and never authorizes replay or payload removal."
-        self.query_one("#goal-reason", Static).update(
+        widgets["reason"].update(
             reason or "Results and changes remain saved across navigation."
         )
         available = {
@@ -123,8 +146,8 @@ class ConsoleGoalStatus(ModalScreen[None]):
             and goal.status == "awaiting_result_review",
         }
         for key, visible in available.items():
-            self.query_one(f"#goal-{key}", Button).display = visible
-        select = self.query_one("#goal-iteration", Select)
+            widgets[key].display = visible
+        select = widgets["iteration"]
         old = select.value
         with select.prevent(Select.Changed):
             select.set_options(
@@ -147,7 +170,7 @@ class ConsoleGoalStatus(ModalScreen[None]):
         await self.show_iteration()
 
     async def show_iteration(self) -> None:
-        if self.snapshot is None:
+        if self.snapshot is None or not self.is_current:
             return
         checkpoint = self.selected_checkpoint()
         text = (
@@ -157,25 +180,29 @@ class ConsoleGoalStatus(ModalScreen[None]):
         )
         if checkpoint:
             text += f"\nCheckpoint {checkpoint.id}\nArtifact {checkpoint.artifact_digest}\n{checkpoint.report.summary}\n{checkpoint.report.candidate_draft}"
-        self.query_one("#goal-report", Static).update(text)
+        report = self.query("#goal-report")
+        if not report:
+            return
+        report.first(Static).update(text)
         try:
             evidence = await self.coordinator.service.call(
                 self.coordinator.service.evidence, self.goal_id
             )
         except Exception:  # noqa: BLE001 - an evidence read must not close the app
-            if self.is_mounted and self.query("#goal-error"):
-                self.query_one("#goal-error", Static).update(
+            if self.is_current and self.query("#goal-error"):
+                self.query("#goal-error").first(Static).update(
                     "Evidence is unavailable. Reopen this goal to retry."
                 )
             return
         if (
-            not self.is_mounted
+            not self.is_current
             or not self.query("#goal-evidence")
+            or not self.query("#goal-iteration")
             or checkpoint != self.selected_checkpoint()
         ):
             return
         selected = [e for e in evidence if checkpoint and e.attempt_id == checkpoint.id]
-        self.query_one("#goal-evidence", Static).update(
+        self.query("#goal-evidence").first(Static).update(
             "\n\n".join(
                 f"{e.id} · run {e.run_id} · {e.verifier_id}\n{e.reason}; passed={e.passed}; checked version {e.source_digest}\nstdout:\n{e.stdout}\nstderr:\n{e.stderr}"
                 for e in selected
@@ -183,7 +210,10 @@ class ConsoleGoalStatus(ModalScreen[None]):
         )
 
     def selected_checkpoint(self):
-        selected = self.query_one("#goal-iteration", Select).value
+        select = self.query("#goal-iteration")
+        if not select:
+            return None
+        selected = select.first(Select).value
         return (
             next((c for c in self.snapshot.checkpoints if c.id == selected), None)
             if self.snapshot
@@ -227,15 +257,17 @@ class ConsoleGoalStatus(ModalScreen[None]):
                     checkpoint_id=checkpoint.id,
                     artifact_digest=checkpoint.artifact_digest,
                 )
+                if not self.is_current or not self.query("#goal-error"):
+                    return
                 self._review_identity = (
                     goal.revision,
                     checkpoint.id,
                     checkpoint.artifact_digest,
                 )
-                self.query_one("#goal-error", Static).update(
+                self.query("#goal-error").first(Static).update(
                     f"Fresh checks: {decision.reason.replace('_', ' ')}\nAccept records quality for this exact artifact. It cannot resolve uncertain execution or supply missing proof."
                 )
-                self.query_one("#goal-error").scroll_visible()
+                self.query("#goal-error").first().scroll_visible()
             elif action in {"accept", "reject"} and self._review_identity:
                 revision, checkpoint_id, artifact = self._review_identity
                 await self.coordinator.service.call(
@@ -260,7 +292,9 @@ class ConsoleGoalStatus(ModalScreen[None]):
                     self.review_changes(goal, checkpoint)
             self.coordinator.notify_goal_changed(goal.id)
         except Exception as exc:  # noqa: BLE001 - display a bounded save failure
-            self.query_one("#goal-error", Static).update(
+            if not self.is_current or not self.query("#goal-error"):
+                return
+            self.query("#goal-error").first(Static).update(
                 str(exc)
                 if isinstance(exc, (ValueError, RuntimeError))
                 else "Goal action could not be saved. Reopen this goal to inspect its current state."
@@ -275,8 +309,8 @@ class ConsoleGoalStatus(ModalScreen[None]):
                 )
             )
         except Exception as exc:  # noqa: BLE001 - owner retains paused state on failure
-            if self.is_mounted and self.query("#goal-error"):
-                self.query_one("#goal-error", Static).update(
+            if self.is_current and self.query("#goal-error"):
+                self.query("#goal-error").first(Static).update(
                     str(exc)
                     if isinstance(exc, (ValueError, RuntimeError))
                     else "Goal conversation could not be restored. Reopen this goal to retry."

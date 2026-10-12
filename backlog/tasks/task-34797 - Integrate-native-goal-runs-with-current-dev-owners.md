@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-11 22:38'
-updated_date: '2026-10-12 00:45'
+updated_date: '2026-10-12 00:53'
 labels: []
 dependencies: []
 ---
@@ -34,6 +34,8 @@ Reason: current-dev integration amendment to the accepted native-goal decision.
 Follow Docs/superpowers/plans/2026-10-11-pr2563-current-dev-integration.md; preserve historical source evidence and qualify actual current owners.
 
 Combined review fix wave from 8bf7c02e51: add real-SQLite regressions for unresolved root descendants and late uncertainty before quality review, then share canonical settlement guarding across checkpoint/removal/review. Add fresh-versus-borrowed finite/native connection retirement and maintenance-drain controls, then reuse existing operation_owned_connection/run_owned_db_call at Goal callback boundaries without changing foreign or in-memory owners. Compare inherited hook-preflight before scope expansion. Correct historical plan whitespace, rerun targeted native/mounted/restart and static qualification at exact fixed head, and append the task-1 fix report. ADR227 remains governing; TASK34797 AC5 stays open for root scoped re-review.
+
+Publication-contract closeout: inspect intended metadata diagnostic moves before regenerating the existing inventory; fix actual post-await Goal setup/status widget lookups with held-await dismissal regressions. Run the required preflight and affected widget lane without changing authority or caps; keep AC5 open until scoped review and guards pass. ADR required: no new ADR; existing227/097/150 apply.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
