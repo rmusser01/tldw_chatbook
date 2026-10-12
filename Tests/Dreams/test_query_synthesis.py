@@ -973,3 +973,44 @@ def test_a_removed_mark_leaves_no_punctuation_of_its_own_behind(line, query):
 
     assert _query_row(line, [(_G1, None), (_G2, None)]) == {
         "query": query, "goal_derived": True, "goal": _G1}
+
+
+# --- Review round 5, F2: a line with nothing to search for is not a query --------
+#
+# Round 4's cleaner stopped dropping lines that are only formatting: a
+# response wrapped in a code fence spent searches on '```', a rule on '---',
+# a stray bullet on '-'.
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["```", "```text", "```json", "---", "-", "***", "* * *", "___", "===",
+     "...",
+     "\"\"", "**", "> ", "[g1] ---", "- [g1] ...", "~~~", "|---|---|"],
+)
+def test_a_line_with_no_letter_or_digit_gives_no_query(line):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None), (_G2, None)]) is None
+
+
+@pytest.mark.asyncio
+async def test_a_fenced_response_spends_no_search_on_its_fences():
+    """The reviewer's probe: searched = ['```', 'rust tui news', 'japan rail
+    pass', '---', '-']."""
+    chat, _calls = _capture_chat(
+        "```\nrust tui news\n[g1] wednesday 13 tour\n---\n-\n```")
+
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [(row["query"], row["goal"]) for row in rows] == [
+        ("rust tui news", None), ("wednesday 13 tour", _G1)]
+
+
+@pytest.mark.parametrize(
+    "line", ["C#", "C++", "\u65e5\u672c", "1984", "x", "\u00e9"])
+def test_a_short_real_query_is_still_a_query(line):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None)])["query"] == line

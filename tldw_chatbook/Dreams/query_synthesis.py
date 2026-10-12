@@ -110,9 +110,11 @@ _LINE_EDGE = " \t\r\n\ufeff\u200b\u2060"
 #: the query's.
 _QUOTE_MARKER_RE = re.compile(r"^(?:>\s*)+")
 
-#: A Markdown heading line (``### Queries``): not a query at all. A
-#: hashtag (``#rustlang``) has no space after the hashes and is kept.
-_HEADING_RE = re.compile(r"^#{1,6}(?:\s|$)")
+#: A Markdown heading line (``### Queries``) or the fence of a code block
+#: (three backticks or tildes, with or without a language): not a query
+#: at all. A hashtag (``#rustlang``) has no space after the hashes and is
+#: kept.
+_HEADING_RE = re.compile(r"^(?:#{1,6}(?:\s|$)|(?:`{3,}|~{3,})[\w+-]*$)")
 
 #: Leading bullets: ``-``, ``*``, ``+`` or a bullet character, each
 #: followed by whitespace -- so ``*.rs lint rules`` does not start with
@@ -421,8 +423,9 @@ def _query_row(
       returns as a query contains a mark the model wrote as one (review
       of #2921, round 5, F1).
 
-    A heading line, a label line (``Goal queries:``) and a line too long
-    to be a query give no row.
+    A heading line, a code fence, a label line (``Goal queries:``), a
+    line with no letter or digit in it and a line too long to be a query
+    give no row.
 
     Args:
         line: One non-blank response line.
@@ -453,7 +456,10 @@ def _query_row(
     elif text.endswith(":"):
         return None  # "Goal queries:" -- a label over the lines that follow
     text = " ".join(_unwrap(text.strip()).split())
-    if not text:
+    if not any(char.isalnum() for char in text):
+        # Nothing to search for: a rule ("---"), a stray bullet, the
+        # debris of a mark-only line (round 5, F2 -- round 4 searched
+        # these).
         return None
     goal: str | None = None
     if len(positions) == 1:
