@@ -18689,6 +18689,11 @@ class ChatScreen(BaseAppScreen):
             return
 
         async def _poll_transcript() -> None:
+            # TASK-34789: work that ends while this paint is under way wrote
+            # its last rows after the paint read them, and nothing else
+            # repaints a finished turn. Only a paint begun with no live work
+            # may be the last one.
+            live_before_paint = self._console_transcript_poll_needed()
             await self._sync_native_console_chat_ui()
             controller = self._console_chat_controller
             if controller is None:
@@ -18723,7 +18728,7 @@ class ChatScreen(BaseAppScreen):
             # asyncio task first runs) must not let a poll beat in that gap
             # self-stop -- the wake turn would then stream with no poll and
             # freeze exactly as before the delivery hook existed.
-            if not self._console_transcript_poll_needed():
+            if not live_before_paint and not self._console_transcript_poll_needed():
                 # TASK-251: the run just left an active status -- invalidate
                 # so the finalized conversation's title/timestamps appear in
                 # the browser promptly instead of waiting out the TTL.

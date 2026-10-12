@@ -357,6 +357,50 @@ async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
         await _wait_for_text(console, pilot, "llama.cpp stream failed")
 
 
+@pytest.mark.asyncio
+async def test_console_poll_paints_again_after_work_that_ended_during_a_paint(
+    monkeypatch,
+):
+    """A turn that ends while a poll tick is painting committed its last rows
+    after that tick read them, and once a send's echo has replaced its
+    "Sending…" row nothing but the poll repaints a finished turn.
+
+    Measured on a loaded machine (TASK-34789, the test above, 1 run in 86):
+    one tick's paint took 0.35 s, the turn ended inside it, the tick then
+    found no live work and stopped the poll, and the Console stayed at
+    "Run: Validating provider." with the failed reply never shown.
+    """
+    host = _console_app(FailThenRecoverGateway())
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console._ensure_console_chat_controller()
+        # A late mount-time repaint would stand in for the one asserted below.
+        await pilot.pause(0.5)
+        live = True
+        painted_after_the_end = 0
+
+        async def paint() -> None:
+            nonlocal live, painted_after_the_end
+            if live:
+                live = False  # the work ends while this paint is under way
+            else:
+                painted_after_the_end += 1
+
+        monkeypatch.setattr(console, "_console_transcript_poll_needed", lambda: live)
+        monkeypatch.setattr(console, "_sync_native_console_chat_ui", paint)
+        console._start_console_transcript_sync_timer()
+        for _ in range(100):
+            if console._console_transcript_sync_timer is None:
+                break
+            await pilot.pause(0.05)
+        stopped = console._console_transcript_sync_timer is None
+
+    assert stopped
+    assert painted_after_the_end
+
+
 class _BlockThenStreamGateway(_ReadyResolutionGateway):
     def __init__(self) -> None:
         self.blocked = True
