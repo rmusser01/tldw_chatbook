@@ -155,7 +155,7 @@ def asked(*_):
         output.write("zq-asked-before-the-end\\n")
 signal.signal(signal.SIGUSR1, asked)
 print("zq-child-log-line", flush=True)
-while True:
+for _ in range(1200):  # at most 60 s: a parent ended mid-test leaves no orphan
     time.sleep(0.05)
 """
 
@@ -184,10 +184,47 @@ async def test_a_child_that_cannot_finish_is_asked_then_ended_before_the_parents
 
     assert asyncio.get_running_loop().time() - started < 30
     text = str(failure.value)
-    assert "(killed: still running after 5s)" in text
+    assert "(killed: still running after 5s; asked for its stacks first)" in text
     assert "(the child wrote no JUnit report)" in text
     assert "--- child stacks at its deadline ---\nzq-asked-before-the-end" in text
     assert "zq-child-log-line" in text
+
+
+_EXITS_ONCE_ASKED = """
+import os, signal, time
+def asked(*_):
+    with open(os.environ[{stacks!r}], "a") as output:
+        output.write("zq-asked\\n")
+    os._exit(1)
+signal.signal(signal.SIGUSR1, asked)
+for _ in range(1200):  # at most 60 s
+    time.sleep(0.05)
+"""
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signals")
+async def test_a_child_that_exits_once_asked_is_not_reported_as_killed(
+    request, tmp_path, monkeypatch
+):
+    spawn = asyncio.create_subprocess_exec
+
+    async def exits_once_asked(*_command, **options):
+        script = _EXITS_ONCE_ASKED.format(stacks=_CHILD_STACKS)
+        return await spawn(sys.executable, "-c", script, **options)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", exits_once_asked)
+    monkeypatch.setattr(
+        private_profile, "_child_deadlines", lambda _budget, _lead: (1.0, 3.0)
+    )
+    child = test_child_whose_worker_never_answers
+
+    with pytest.raises(pytest.fail.Exception) as failure:
+        await child(request=_as_parent(request, tmp_path, child))
+
+    text = str(failure.value)
+    assert "(killed" not in text
+    assert "asked for its stacks, it then exited by itself)" in text
+    assert "--- child stacks at its deadline ---\nzq-asked" in text
 
 
 def _ask_once_the_child_is_ready(monkeypatch, tmp_path) -> None:

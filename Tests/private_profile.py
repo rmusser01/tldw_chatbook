@@ -166,7 +166,7 @@ def _note_stacks(path: str, reason: str) -> None:
     say where an async test was waiting, and its thread dump goes through
     pytest's capture, where a child that then cannot finish loses it.
     """
-    with open(path, "a") as output:
+    with open(path, "a", encoding="utf-8", errors="replace") as output:
         output.write(_stacks_text(reason))
 
 
@@ -324,14 +324,18 @@ def private_profile_test(function):
             )
             try:
                 exited = await _exited_within(process, wait)
-                if not exited and hasattr(signal, "SIGUSR1"):
+                asked = not exited and hasattr(signal, "SIGUSR1")
+                if asked:
                     # Past its own limit and still running (a teardown or an
                     # exit that cannot finish): ask where before ending it.
+                    # Half the reserve for its dump leaves half for the kill
+                    # and this report, before the parent's own limit.
                     with contextlib.suppress(ProcessLookupError):
                         process.send_signal(signal.SIGUSR1)
-                    await _exited_within(process, 1.0)
+                    await _exited_within(process, _PARENT_RESERVE_SECONDS / 2)
             finally:
-                if process.returncode is None:
+                killed = process.returncode is None
+                if killed:
                     process.kill()
                     await process.wait()
         if coverage_controller is not None and coverage_file.is_file():
@@ -344,12 +348,26 @@ def private_profile_test(function):
             ) as output:
                 output.write(coverage_file.read_bytes())
         if process.returncode:
-            asked = stacks.read_text() if stacks.is_file() else ""
+            if exited:
+                ending = ""
+            elif killed:
+                ending = f"(killed: still running after {wait:.0f}s"
+                ending += "; asked for its stacks first)\n" if asked else ")\n"
+            else:
+                ending = (
+                    f"(still running after {wait:.0f}s; asked for its stacks, "
+                    "it then exited by itself)\n"
+                )
+            dumps = (
+                stacks.read_text(encoding="utf-8", errors="replace")
+                if stacks.is_file()
+                else ""
+            )
             pytest.fail(
                 f"{log}\n"
-                + ("" if exited else f"(killed: still running after {wait:.0f}s)\n")
+                + ending
                 + f"{_child_failure_report(report)}\n"
-                + (f"--- child stacks at its deadline ---\n{asked}" if asked else "")
+                + (f"--- child stacks at its deadline ---\n{dumps}" if dumps else "")
                 + f"--- child log tail ---\n{log.read_text()[-16000:]}"
             )
         if coverage_controller is not None and not coverage_file.is_file():
