@@ -58,6 +58,7 @@ from tldw_chatbook.UI.Evals.snippet_editor import (
     whitespace_warning_kinds,
 )
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
@@ -79,7 +80,11 @@ class _FakeAppInstance:
 
 
 class EvalsHarness(App):
-    CSS_PATH = _BUNDLED_CSS_PATH
+    # task-1515: bundle + screen-owned split sheets. The bundle alone
+    # has not carried the evals screen rules (e.g. `#evals-snippet-table
+    # { overflow-y: auto; }`) since TASK-24459's split, so a bundle-only
+    # pin failed this file's scroll-behaviour test deterministically.
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
         super().__init__()

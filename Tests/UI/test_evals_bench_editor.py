@@ -27,6 +27,7 @@ from textual.widgets import Button, Checkbox, Input, Select, TextArea
 
 import tldw_chatbook
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.word_bench.models import (
     BenchConfig,
@@ -80,7 +81,11 @@ class _FakeAppInstance:
 
 
 class EvalsHarness(ConsolidatedCSSApp):
-    CSS_PATH = _BUNDLED_CSS_PATH
+    # task-1515: bundle + screen-owned split sheets (the real app's
+    # full styling) -- see consolidated_css.APP_STYLESHEETS' own note;
+    # the bundle alone has not carried the evals screen rules since
+    # TASK-24459's split.
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
         super().__init__()
@@ -905,6 +910,12 @@ def test_never_run_bench_renders_unpreflighted_state(evals_db, never_run_bench):
     # (by design, to exercise `_primary_action_state` without the Textual
     # app machinery), so every flag it reads must be set by hand here too.
     screen._character_bench_run_running = False
+    # The FOURTH member of the same cross-check family (the skill-eval
+    # run worker) -- same bare-construction rationale as the two above:
+    # every flag `_primary_action_state` reads must be set by hand. Missed
+    # when the flag landed, which left this test red in isolation (found
+    # during task-1515's census).
+    screen._skill_eval_run_running = False
 
     label, disabled, tooltip = screen._primary_action_state()
 
