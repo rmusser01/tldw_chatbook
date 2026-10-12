@@ -7,6 +7,7 @@ payload contract) and chat (OpenAI-shaped ``chat_api_call`` reply). ``now``
 is fixed so the local date is deterministic on any machine's timezone.
 """
 import asyncio
+import re
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
@@ -1035,6 +1036,60 @@ async def test_no_goal_mark_or_list_marker_ever_reaches_the_search(
     assert (japan["query"], japan["goal"]) == (
         "japan rail pass deals", _GOAL_JAPAN)
     assert stories["https://dreams.test/bike"]["goal"] is None
+
+
+# Review round 5, F1: the name of the test above is a promise about EVERY
+# response, and round 4 broke it for most of them. These are the reviewer's
+# reproductions, driven through the whole cycle: whatever the model wraps
+# around a marked line, the search function never sees a mark and the story
+# keeps its goal.
+_F1_RESPONSES = {
+    "sections-restart-numbering": (
+        "Topic queries:\n1. bike repair tips\n2. cello practice routine\n"
+        "Goal queries:\n1. [g2] japan rail pass"),
+    "bold-numbers": "**1.** bike repair tips\n**2.** [g2] japan rail pass",
+    "bold-lines": "**1. bike repair tips**\n**2. [g2] japan rail pass**",
+    "bullet-and-number": "- 1. bike repair tips\n- 2. [g2] japan rail pass",
+    "one-numbered-line": "bike repair tips\n1. [g2] japan rail pass",
+    "label": "bike repair tips\nQuery: [g2] japan rail pass",
+    "mid-line": "bike repair tips\njapan [g2] rail pass",
+    "mark-in-bold-with-colon": "bike repair tips\n**[g2]:** japan rail pass",
+    "underscore-bold": "bike repair tips\n__[g2]__ japan rail pass",
+    "escaped-brackets": "bike repair tips\n\\[g2\\] japan rail pass",
+    "bom-and-crlf": "\ufeff[g2] japan rail pass\r\nbike repair tips\r\n",
+    "closing-mark": "bike repair tips\n[g2] japan rail pass [/g2]",
+    "quoted-in-a-quote-block": '> "[g2] japan rail pass"\n> bike repair tips',
+    "code-fence": "```\nbike repair tips\n[g2] japan rail pass\n```",
+}
+
+_ANY_GOAL_MARK = re.compile(r"\[\s*/?\s*g\s*-?\d+\s*\\?\]", re.IGNORECASE)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", sorted(_F1_RESPONSES))
+async def test_no_goal_mark_reaches_the_search_whatever_shape_the_response_has(
+        dreams_db, settings, shape):
+    _seed_two_goals(dreams_db)
+    searched: list[str] = []
+
+    def chat(**kwargs):
+        if "search queries" in str(kwargs.get("system_message") or ""):
+            return {"choices": [{"message": {"content": _F1_RESPONSES[shape]}}]}
+        return _fake_chat(**kwargs)
+
+    def perform(search_engine, search_query, **kwargs):
+        searched.append(search_query)
+        return _bike_and_japan_perform(search_engine, search_query, **kwargs)
+
+    result = await run_cycle(
+        _deps(dreams_db, perform=perform, chat=chat), trigger="manual")
+
+    assert searched, "fixture: the model's lines were searched"
+    assert not [query for query in searched if _ANY_GOAL_MARK.search(query)]
+    assert "japan rail pass" in searched and "bike repair tips" in searched
+    japan = _stories_by_url(
+        dreams_db, result["collection_id"])["https://dreams.test/japan"]
+    assert (japan["query"], japan["goal"]) == ("japan rail pass", _GOAL_JAPAN)
 
 
 @pytest.mark.asyncio

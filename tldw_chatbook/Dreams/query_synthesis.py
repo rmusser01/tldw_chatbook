@@ -20,9 +20,9 @@ flag is 1; the filter runs before any payload or query string is built.
 Goal provenance (review of #2921, item 1): every query row says which goal
 it was written for, or ``None``. A deterministic goal line knows by
 construction; the model is asked to mark each line it writes for a goal
-with that goal's position (``[g2] ...``), and a mark in front of the
-line or at its end is read and stripped, with the model's list markers
-and whole-line quoting, before the query is searched. The cycle carries the row's
+with that goal's position (``[g2] ...``), and every mark that stands
+alone on the line -- wherever the model put it -- is read and stripped,
+with the model's list markers and wrapping, before the query is searched. The cycle carries the row's
 goal through the search to the story it produced, so feedback on that
 story steers exactly that goal's angle. An unmarked line has unknown provenance and is
 attributed to no goal -- provenance is never guessed from shared words.
@@ -69,30 +69,30 @@ SYSTEM_PROMPT = (
 #: The mark the model puts on a line it wrote for a goal: ``[g2] cheap
 #: flights tokyo april``. The number is the goal's 1-based position in the
 #: payload's ``goals`` list. Read loosely -- ``[ G 2 ]``, ``[g-1]``, a
-#: doubled bracket ``[[g1]]`` -- because a mark that is not recognised is
-#: a mark that gets searched (review of #2921, round 3, item 1). An
-#: optional ``/`` covers the model that "closes" its mark: ``[g1] cheap
-#: flights [/g1]`` used to be searched as ``cheap flights [/g1]`` (round
-#: 4, C2).
-#:
-#: WHERE it counts is narrower than round 3 had it (round 4, I1). Matched
-#: anywhere, text that is no mark at all was read as one: ``arr[g1]
-#: indexing in c`` became goal 1 with the query ``arr indexing in c``. A
-#: mark stands alone, in FRONT of the line (after a list or quote marker)
-#: or at its END -- see ``_LEADING_MARKS_RE``/``_TRAILING_MARKS_RE``.
+#: doubled bracket ``[[g1]]``, Markdown-escaped brackets ``\[g1\]``, the
+#: "closing" form ``[/g1]`` -- because a mark that is not recognised is a
+#: mark that gets searched (review of #2921, round 3, item 1; round 4, C2).
 #:
 #: Every repetition in it is BOUNDED (round 5, N1). ``\s*/?\s*`` made a
 #: long run of spaces after a "[" cost its square -- 20,000 of them took
 #: 1.9 s on the event loop -- and ``\[+`` did the same for a run of
 #: brackets. No model pads a mark with more than a space or two.
 _GOAL_MARK = (
-    r"\[{1,3}\s{0,3}(?:/\s{0,3})?g\s{0,3}(-?\d+)\s{0,3}\]{1,3}")
+    r"(?:\\?\[){1,3}\s{0,3}(?:/\s{0,3})?g\s{0,3}(-?\d+)\s{0,3}(?:\\?\]){1,3}")
 _GOAL_MARK_RE = re.compile(_GOAL_MARK, re.IGNORECASE)
+
+#: A mark as it is REMOVED from a line: with the ``:`` a model sets after
+#: it (``[g1]: cheap flights``).
+_MARK_TOKEN_RE = re.compile(_GOAL_MARK + r":?", re.IGNORECASE)
 
 #: Longest line that can be a search query. A longer one is prose, is
 #: dropped, and so never reaches the patterns below (N1: whatever a
 #: pattern costs, it costs it on at most this much text per line).
 _MAX_QUERY_LINE_LENGTH = 300
+
+#: What may stand at the edge of a line without being part of it:
+#: whitespace, a byte order mark, a zero width space.
+_LINE_EDGE = " \t\r\n\ufeff\u200b\u2060"
 
 #: Leading Markdown quote markers (``> ``, ``>> ``): the model's, never
 #: the query's.
@@ -102,37 +102,54 @@ _QUOTE_MARKER_RE = re.compile(r"^(?:>\s*)+")
 #: hashtag (``#rustlang``) has no space after the hashes and is kept.
 _HEADING_RE = re.compile(r"^#{1,6}(?:\s|$)")
 
-#: A leading bullet: ``-``, ``*`` or a bullet character, followed by
-#: whitespace -- so ``*.rs lint rules`` does not start with one.
-_BULLET_RE = re.compile(r"^[-*\u2022]\s+")
+#: Leading bullets: ``-``, ``*``, ``+`` or a bullet character, each
+#: followed by whitespace -- so ``*.rs lint rules`` does not start with
+#: one.
+_BULLET_RE = re.compile(r"^(?:[-*+\u2022]\s+)+")
 
-#: A leading ``3.`` or ``3)``, followed by whitespace or ending the line
-#: (so ``3.5 inch`` is not one). Whether it is a LIST NUMBER is not a
-#: property of the line: ``2. Bundesliga Spielplan 2026`` and ``1. FC
-#: K\u00f6ln transfer news`` are queries (review of #2921, round 4, C3).
-#: See :func:`_is_numbered`.
-_NUMBER_RE = re.compile(r"^(\d+)[.)](?:\s+|$)")
+#: A leading list number as a model writes one: ``3.``, ``3)``, ``(3)``,
+#: bold ``**3.**`` or ``**3**.`` -- followed by whitespace or ending the
+#: line (so ``3.5 inch`` is not one, and neither is ``2026.``). Whether
+#: it IS a list number is not a property of the line: ``2. Bundesliga
+#: Spielplan 2026`` and ``1. FC K\u00f6ln transfer news`` are queries
+#: (review of #2921, round 4, C3). See :func:`_is_numbered`.
+_NUMBER_RE = re.compile(
+    r"^(?:\(?(\d{1,3})[.)]"
+    r"|(\*\*|__|\*|_)(\d{1,3})[.)]\2"
+    r"|(\*\*|__|\*|_)(\d{1,3})\4[.)]"
+    r")(?:\s+|$)")
 
-#: What a model wraps a whole line (or a mark) in: bold, quotes, code.
+#: What a model wraps a whole line in: bold, italics, quotes, code.
+#: Removed from ANY line, so only as a pair with none of its characters
+#: inside (:func:`_unwrap`); underscores are not in it, or ``__init__``
+#: would lose them.
 _WRAP_PAIRS = (
     ("**", "**"), ("*", "*"), ('"', '"'), ("'", "'"), ("`", "`"),
     ("\u201c", "\u201d"), ("\u2018", "\u2019"),
 )
 
-#: A goal mark together with the wrapping that stands DIRECTLY around it
-#: (``**[g1]**``, ``"[g1]"``): the model's emphasis of the mark goes with
-#: the mark. Wrapping separated from the mark by a space is the query's.
-_WRAPPED_MARK = "(?:" + "|".join(
-    [re.escape(opening) + _GOAL_MARK + re.escape(closing)
-     for opening, closing in _WRAP_PAIRS] + [_GOAL_MARK]) + ")"
+#: What a model wraps a MARK in, or opens in front of one: the above plus
+#: underscores and parentheses. Next to a mark these are formatting.
+_MARK_WRAP_PAIRS = (
+    ("**", "**"), ("__", "__"), ("*", "*"), ("_", "_"), ('"', '"'),
+    ("'", "'"), ("`", "`"), ("\u201c", "\u201d"), ("\u2018", "\u2019"),
+    ("(", ")"),
+)
+_CLOSER_OF = dict(_MARK_WRAP_PAIRS)
+_OPENING_WRAP_CHARS = "*_\"'`\u201c\u2018("
+_WRAP_TOKEN_RE = re.compile(
+    r"\*\*|__|[*_\"'`\u201c\u201d\u2018\u2019()]")
 
-#: One or more marks in front of the line, and one or more at its end
-#: (set off from the text by whitespace, so ``index into arr[g1]`` has
-#: none).
-_LEADING_MARKS_RE = re.compile(
-    rf"^(?:{_WRAPPED_MARK}\s*)+", re.IGNORECASE)
-_TRAILING_MARKS_RE = re.compile(
-    rf"(?:^|(?<=\s))(?:{_WRAPPED_MARK}\s*)+$", re.IGNORECASE)
+#: The pieces a line may consist of IN FRONT of its first mark and still
+#: be nothing but formatting there: whitespace, a list number, a label
+#: (``Query:``, ``Goal query 2:``), quote markers, bullets and wrapping.
+_PREFIX_PIECE_RE = re.compile(
+    r"\s+"
+    r"|\(?\d{1,3}[*_]{0,2}[.)]"
+    r"|[^\W\d_][^\W_]*(?: [^\W_]+){0,3} ?:"
+    r"|[>\-*+\u2022_\"'`\u201c\u2018(]"
+    r"|[)\u201d\u2019]"
+)
 
 #: Longest digit run read as a goal position; anything longer names no goal.
 _GOAL_POSITION_MAX_DIGITS = 9
@@ -188,7 +205,9 @@ def _goal_line(text: str, angle: str | None) -> str:
     return query
 
 
-def _unwrap(text: str) -> str:
+def _unwrap(
+    text: str, pairs: tuple[tuple[str, str], ...] = _WRAP_PAIRS,
+) -> str:
     """Remove quotes, backticks or asterisks that wrap the WHOLE text.
 
     Only as a matching pair with none of its characters inside: round 3
@@ -200,7 +219,7 @@ def _unwrap(text: str) -> str:
     unwrapped = True
     while unwrapped:
         unwrapped = False
-        for opening, closing in _WRAP_PAIRS:
+        for opening, closing in pairs:
             if (len(text) > len(opening) + len(closing)
                     and text.startswith(opening) and text.endswith(closing)):
                 inner = text[len(opening):len(text) - len(closing)]
@@ -210,18 +229,161 @@ def _unwrap(text: str) -> str:
     return text
 
 
+def _peel(text: str) -> str:
+    """Remove the formatting that is formatting on ANY line.
+
+    Whitespace and a byte order mark at the edges, Markdown quote
+    markers, bullets, and whole-line wrapping (:func:`_unwrap`) -- in
+    whatever order a model nested them. Numbers and labels are not here:
+    they are only formatting in a context (a numbered list, a mark).
+    """
+    for _ in range(4):
+        before = text
+        text = _QUOTE_MARKER_RE.sub("", text.strip(_LINE_EDGE))
+        text = _BULLET_RE.sub("", text)
+        text = _unwrap(text)
+        if text == before:
+            break
+    return text
+
+
+def _leading_number(line: str) -> int | None:
+    """The list number a line would start with once peeled, or ``None``."""
+    match = _NUMBER_RE.match(_peel(line))
+    if match is None:
+        return None
+    return int(match.group(1) or match.group(3) or match.group(5))
+
+
 def _is_numbered(lines: list[str]) -> bool:
     """Whether the response's leading numbers are list numbers.
 
-    They are when the lines that start with ``N.``/``N)`` are numbered by
-    their position among themselves: 1, 2, 3, ... in order, at least two
-    of them. A single ``2. Bundesliga Spielplan 2026`` among plain lines,
-    or three lines numbered 2, 2, 1, is not a list; a list after one line
-    of preamble still is.
+    They are when the lines that start with a number -- behind a bullet
+    or inside whole-line bold just the same -- count up from 1: each is
+    1 or one more than the one before, and there are at least two. So a
+    list is a list after a line of preamble, with bold numbers, and when
+    it starts again at 1 for a second section (review of #2921, round 5,
+    F1: round 4 wanted exactly 1..n on raw lines, and the lines of every
+    other list kept their numbers -- and their marks). A single ``2.
+    Bundesliga Spielplan 2026`` among plain lines, or lines numbered 2,
+    2, 1, is not a list.
     """
     numbers = [
-        int(match.group(1)) for match in map(_NUMBER_RE.match, lines) if match]
-    return len(numbers) >= 2 and numbers == list(range(1, len(numbers) + 1))
+        number for number in map(_leading_number, lines) if number is not None]
+    if len(numbers) < 2:
+        return False
+    previous = 0
+    for number in numbers:
+        if number != 1 and number != previous + 1:
+            return False
+        previous = number
+    return True
+
+
+def _is_subscript(text: str, start: int) -> bool:
+    """Whether the bracket at ``start`` is glued to a word in front of it.
+
+    ``arr[g1]``, ``arr_[g1]`` and ``f(x)[g1]`` are subscripts -- text. A
+    mark may have wrapping in front of it (``**[g1]``, ``"[g1]``), so the
+    look goes past opening wrapping to what stands before THAT.
+    """
+    while start > 0 and text[start - 1] in _OPENING_WRAP_CHARS:
+        start -= 1
+    return start > 0 and (text[start - 1].isalnum() or text[start - 1] in "])")
+
+
+def _grown_over_wrapping(text: str, start: int, end: int) -> tuple[int, int]:
+    """A mark's span grown over the wrapping that stands directly around it.
+
+    ``**[g1]**``, ``"[g1]"``, ``([g1])``, ``**[g1]:**`` -- the model's
+    emphasis of the mark goes with the mark, and so does a ``:`` behind
+    it. Wrapping separated from the mark by a space is the query's.
+    """
+    grown = True
+    while grown:
+        grown = False
+        for opening, closing in _MARK_WRAP_PAIRS:
+            if (text.endswith(opening, 0, start)
+                    and text.startswith(closing, end)):
+                start, end = start - len(opening), end + len(closing)
+                if text.startswith(":", end):
+                    end += 1
+                grown = True
+                break
+    return start, end
+
+
+def _unclosed_wrappers(prefix: str) -> list[str]:
+    """The closers still owed by wrapping opened in ``prefix``, in order.
+
+    ``**2.** `` owes nothing: the bold is closed again. ``**`` owes one
+    ``**``. A token closes what is open only the way Markdown closes it
+    -- directly behind something, never behind a space or behind the
+    opener itself -- so ``****`` and ``**1. **`` each open twice.
+    """
+    owed: list[str] = []
+    opened_at = 0
+    for match in _WRAP_TOKEN_RE.finditer(prefix):
+        token = match.group(0)
+        inside = prefix[opened_at:match.start()]
+        if (owed and owed[-1] == token and inside.strip()
+                and not inside[-1].isspace()):
+            owed.pop()
+        elif token in _CLOSER_OF:
+            owed.append(_CLOSER_OF[token])
+            opened_at = match.end()
+    return owed
+
+
+def _without_marks(text: str) -> tuple[str, set[int]] | None:
+    """A peeled line with its goal marks removed, and the positions they name.
+
+    ``None`` when the line carries no mark. A ``[gN]`` is a mark wherever
+    it STANDS ALONE -- in front, at the end, in the middle, with or
+    without the space after it -- and is text only where it is glued to
+    a word in front of it (:func:`_is_subscript`). A line that has one
+    mark loses every ``[gN]`` on it, glued or not (``[g1]x[g1]``).
+
+    What stands in front of the FIRST mark is dropped with it when it is
+    nothing but formatting there -- a list number, a label, a bullet,
+    opening wrapping (``**2.** [g1] ...``, ``Query: [g1] ...``); wrapping
+    opened there is closed at the end of the line, and that goes too.
+    Anything else in front of the mark is the query's.
+    """
+    if all(_is_subscript(text, match.start())
+           for match in _MARK_TOKEN_RE.finditer(text)):
+        return None
+    # On a line with a mark, underscores and parentheses around the whole
+    # line are wrapping too ("__cheap flights [g1]__").
+    text = _unwrap(text, _MARK_WRAP_PAIRS)
+    spans: list[tuple[int, int, str]] = []
+    for match in _MARK_TOKEN_RE.finditer(text):
+        start, end = match.span()
+        if not _is_subscript(text, start):
+            start, end = _grown_over_wrapping(text, start, end)
+            if spans:
+                start = max(start, spans[-1][1])
+        spans.append((start, end, match.group(1)))
+    positions = {
+        int(digits) if len(digits.lstrip("-")) <= _GOAL_POSITION_MAX_DIGITS
+        else 0
+        for _, _, digits in spans
+    }
+    prefix = text[:spans[0][0]]
+    in_front = not _PREFIX_PIECE_RE.sub("", prefix)
+    pieces = [] if in_front else [prefix]
+    for index, (_, end, _digits) in enumerate(spans):
+        following = spans[index + 1][0] if index + 1 < len(spans) else len(text)
+        pieces.append(text[end:following])
+    body = " ".join(pieces).strip()
+    if in_front:
+        for closer in _unclosed_wrappers(prefix):
+            if body.endswith(closer):
+                body = body[:-len(closer)].rstrip()
+        # What a removed leading mark leaves in front: "[g1] - x". A dash
+        # only when a space follows it: "-5 C tokyo" keeps its minus.
+        body = re.sub(r"^(?::|[-\u2013\u2014](?=\s|$))\s*", "", body)
+    return body, positions
 
 
 def _query_row(
@@ -232,24 +394,23 @@ def _query_row(
     What is the model's formatting rather than the query is removed
     before the line can reach a search provider -- and nothing else:
 
-    * one leading bullet (``- ``, ``* ``);
-    * a leading ``N.``/``N)`` when the response is a numbered list
+    * quote markers, bullets and whole-line wrapping (:func:`_peel`);
+    * a leading list number when the response is a numbered list
       (``numbered``, see :func:`_is_numbered`);
-    * leading Markdown quote markers (``> ``);
-    * quotes, backticks or asterisks that wrap the whole line as a pair
-      (:func:`_unwrap`), before and after the marks go;
-    * the goal marks in front of the line and at its end, with wrapping
-      that stands directly around them, and a ``:`` or dash a removed
-      leading mark leaves in front. A ``[g1]`` inside a word or in the
-      middle of the line is text and stays (round 4, I1).
+    * EVERY standalone goal mark, wherever on the line it stands, with
+      the wrapping directly around it -- and whatever formatting stands
+      in front of the first one (:func:`_without_marks`). No string this
+      returns as a query contains a mark the model wrote as one (review
+      of #2921, round 5, F1).
 
-    A Markdown heading line is not a query and gives no row.
+    A heading line, a label line (``Goal queries:``) and a line too long
+    to be a query give no row.
 
     Args:
         line: One non-blank response line.
         goals: The ``(text, angle)`` pairs of the SEARCHABLE goals, in the
             order the payload listed them.
-        numbered: The response numbers its lines by position.
+        numbered: The response numbers its lines.
 
     Returns:
         ``{"query", "goal_derived", "goal"}``, or ``None`` when nothing is
@@ -261,27 +422,18 @@ def _query_row(
     """
     if len(line) > _MAX_QUERY_LINE_LENGTH:
         return None
-    text = _QUOTE_MARKER_RE.sub("", line.strip())
+    text = _peel(line)
     if _HEADING_RE.match(text):
         return None
-    text = _BULLET_RE.sub("", text, count=1)
     number = _NUMBER_RE.match(text)
     if number and (numbered or number.end() == len(text)):
-        text = text[number.end():]  # a list number, or nothing but one
-    text = _unwrap(text.strip())
-    marks = ""
-    leading = _LEADING_MARKS_RE.match(text)
-    if leading:
-        marks += leading.group(0)
-        text = re.sub(r"^[:\-\u2013\u2014]\s*", "", text[leading.end():])
-    trailing = _TRAILING_MARKS_RE.search(text)
-    if trailing:
-        marks += trailing.group(0)
-        text = text[:trailing.start()]
-    positions = {
-        int(digits) if len(digits) <= _GOAL_POSITION_MAX_DIGITS else 0
-        for digits in _GOAL_MARK_RE.findall(marks)
-    }
+        text = _peel(text[number.end():])  # a list number, or nothing but one
+    positions: set[int] = set()
+    unmarked = _without_marks(text)
+    if unmarked is not None:
+        text, positions = unmarked
+    elif text.endswith(":"):
+        return None  # "Goal queries:" -- a label over the lines that follow
     text = " ".join(_unwrap(text.strip()).split())
     if not text:
         return None
@@ -297,9 +449,8 @@ def _response_rows(
     response_text: str, goals: list[tuple[str, str | None]],
 ) -> list[dict]:
     """Every usable line of one model response, as query rows."""
-    lines = [_QUOTE_MARKER_RE.sub("", line.strip())
-             for line in response_text.splitlines()
-             if line.strip() and len(line) <= _MAX_QUERY_LINE_LENGTH]
+    lines = [line for line in response_text.splitlines()
+             if line.strip(_LINE_EDGE) and len(line) <= _MAX_QUERY_LINE_LENGTH]
     numbered = _is_numbered(lines)
     rows = (_query_row(line, goals, numbered=numbered) for line in lines)
     return [row for row in rows if row is not None]
