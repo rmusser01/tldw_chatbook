@@ -260,7 +260,7 @@ async def test_a_resize_landing_while_the_header_is_torn_down_never_raises(
         except NoMatches as exc:
             outcome.append(f"raised: {exc}")
         else:
-            outcome.append("applied")
+            outcome.append("returned")
 
     monkeypatch.setattr(Horizontal, "on_unmount", on_unmount, raising=False)
     app = _EditorCanvasApp()
@@ -281,9 +281,8 @@ async def test_a_resize_landing_while_the_header_is_torn_down_never_raises(
 
         # The row was still attached and its children were already gone.
         assert seen == [(True, False)]
-        assert outcome == ["applied"]
+        assert outcome == ["returned"]
         if teardown == "recompose":
             # ... and the shape it asked for lands on the new children.
             row = canvas.query_one("#library-note-header-second-row")
             assert row.styles.layout.name == "vertical"
-
