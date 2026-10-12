@@ -4534,3 +4534,27 @@ def test_optional_number_validator_rejects_non_finite_values():
                 high=None,
                 exclusive_low=True,
             )
+
+
+# --- review fix (PR #3089): drift pin for the mirrored panel constants ------
+
+
+def test_panel_default_constants_match_the_voice_input_source():
+    """The four compose-time placeholder constants in the panel are mirrors
+    of `console_voice_input`'s (inlined there to keep the settings
+    pre-import route light — PR #3089). This pin turns the "verified
+    2026-10-12" provenance comment into an enforced contract: a source
+    change without a panel update fails here, not silently in the UI."""
+    from tldw_chatbook.Chat import console_voice_input as source
+    from tldw_chatbook.Widgets.Settings_Widgets import speech_tts_settings_panel as panel
+
+    assert (
+        panel.DEFAULT_HANDSFREE_SEND_DELAY_SECONDS
+        == source.DEFAULT_HANDSFREE_SEND_DELAY_SECONDS
+    )
+    assert (
+        panel.DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES
+        == source.DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES
+    )
+    assert panel.DEFAULT_REALTIME_MODEL == source.DEFAULT_REALTIME_MODEL
+    assert panel.DEFAULT_REALTIME_PROVIDER == source.DEFAULT_REALTIME_PROVIDER

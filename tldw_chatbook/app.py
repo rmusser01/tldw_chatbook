@@ -3386,9 +3386,6 @@ class TldwCli(
         # `_post_mount_setup` (TASK-22504: its `console_voice_input`
         # import must stay off the first-paint leg).
 
-        except Exception:
-            pass
-
         # Restore persisted Library ingest job history (self.library_ingest_jobs
         # already exists -- constructed store-less in __init__). Never raises:
         # a corrupt/unreadable store falls back to starting empty.
