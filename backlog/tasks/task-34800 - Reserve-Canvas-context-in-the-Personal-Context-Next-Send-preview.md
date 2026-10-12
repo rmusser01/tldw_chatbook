@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-11 23:58'
-updated_date: '2026-10-12 03:43'
+updated_date: '2026-10-12 04:06'
 labels:
   - memory
   - canvas
@@ -26,6 +26,7 @@ When Canvas tools are enabled and the model input budget is tight, the Personal 
 - [ ] #2 With identical profile, model, message and tool inputs, the Inspector and dispatched request agree on selected records and their available input budget, including Canvas schemas and runtime guidance.
 - [ ] #3 Preview does not register an executable Canvas run, create staging records, grant mutation authority, or change the selected Canvas.
 - [ ] #4 Disabled, unavailable and stale Canvas states preserve their existing fail-closed behavior, with native Python >=3.12 targeted verification and a recorded ADR check.
+- [ ] #5 Current Goal/Canvas preview budget parity and post-await Canvas ownership regressions execute in required PR checks.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -41,6 +42,8 @@ Reason: bounded correction of disposable first-request budgeting under existing 
 5. Obtain one fresh final review, update receipts/task notes and the existing PR against dev. Record current-dev qualification debt and any newly advanced base separately.
 
 Current-dev reconciliation (2026-10-11): repeat production preview/dispatch, current Goal narrowing, Canvas authority and private sidecar boundary qualification on the final integrated source. Preserve current budget/permission/custody owners and all original limits. Historical source evidence below is not a current-dev qualification claim.
+
+Complete-head review correction: follow Task2 in Docs/superpowers/plans/2026-10-11-pr2862-current-dev-integration.md. ADR required: no new ADR. Existing191/102/150/161 and required-regression governance apply. Reject pending-first retired provenance with a cheap host identity fence, preserve off-thread bootstrap, use literal Text.assemble, gate bounded critical privacy/native/Canvas/currentness/original-retirement regressions, and correct living architecture inventory before independent re-review and actual sequential-base qualification. Existing source/receipt history remains sealed; native observation entries are not unique-owner counts.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
