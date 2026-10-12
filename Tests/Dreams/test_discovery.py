@@ -228,3 +228,25 @@ def test_duplicate_urls_keep_the_goal_any_occurrence_was_found_for():
         "the first occurrence WITH a goal gives the goal and its query"
     )
     assert by_topic.goal is None, "inputs are never mutated"
+
+
+def test_mixed_topic_ranking_leaves_one_opportunity_for_a_goal():
+    topics = [Candidate(f"rust tui topic {i}", f"https://example.test/topic/{i}", "", "web") for i in range(4)]
+    goals = [Candidate(f"local teacher {i}", f"https://example.test/goal/{i}", "", "web",
+                       query="cello teacher sessions", goal="learn cello") for i in range(2)]
+    selected = dedupe_and_rank(topics + goals, seen_urls=set(), library_urls=set(),
+                               topics=[{"text": "rust tui"}], limit=3)
+    assert [item.url for item in selected] == [topics[0].url, topics[1].url, goals[0].url]
+    assert selected[-1].query == "cello teacher sessions"
+    assert topics[-1].goal is None
+
+
+def test_goal_opportunity_preserves_exclusions_and_single_slot_order():
+    topic = Candidate("rust tui", "https://example.test/topic", "", "web")
+    goal = Candidate("teacher", "https://example.test/goal", "", "web", goal="learn cello")
+    for excluded in (set(), {goal.url}):
+        selected = dedupe_and_rank([topic, goal], seen_urls=excluded, library_urls=set(),
+                                   topics=[{"text": "rust tui"}], limit=1)
+        assert selected == [topic]
+    assert dedupe_and_rank([topic, goal], seen_urls=set(), library_urls={goal.url},
+                           topics=[{"text": "rust tui"}], limit=3) == [topic]

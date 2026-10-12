@@ -339,7 +339,9 @@ def dedupe_and_rank(
     takes that occurrence's goal and query. Ranking is lexical topic
     overlap (see
     ``_overlap_score``) over title + snippet; ties keep original order
-    (stable sort), so zero-overlap pools fall back to arrival order.
+    (stable sort), so zero-overlap pools fall back to arrival order. With at
+    least two selected candidates, one place goes to the highest-ranked goal
+    result if topic ranking would otherwise exclude every goal result.
 
     Args:
         candidates: Both pools' candidates, web and watchlist interleaved.
@@ -375,4 +377,11 @@ def dedupe_and_rank(
         for index, cand in enumerate(kept)
     ]
     scored.sort(key=lambda entry: (-entry[0], entry[1]))
-    return [cand for _, _, cand in scored[:limit]]
+    selected = [cand for _, _, cand in scored[:limit]]
+    if len(selected) >= 2 and not any(cand.goal for cand in selected):
+        # A goal's own query can have no topic overlap. Keep one opportunity
+        # without changing weights, the other topic choices or the budget.
+        goal_candidate = next((cand for _, _, cand in scored if cand.goal), None)
+        if goal_candidate is not None:
+            selected[-1] = goal_candidate
+    return selected
