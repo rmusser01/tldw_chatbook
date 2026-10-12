@@ -11,6 +11,7 @@ import pytest
 from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.test_settings_connect_rows import _until
 from Tests.UI.test_settings_default_model_picker import (
     _SIZE,
     _app,
@@ -46,7 +47,7 @@ async def test_model_list_over_an_invalid_custom_id_restores_the_model(request):
         button = picker.query_one("#model-search-picker-custom", Button)
         assert host.focused is button
         await pilot.press("enter")  # Model list
-        await pilot.pause(0.2)
+        await _until(pilot, lambda: not picker.custom_mode and adapter.value == model)
 
         assert not picker.custom_mode
         assert adapter.value == field.value == picker.value == model
