@@ -13473,13 +13473,10 @@ class SettingsScreen(BaseAppScreen):
         return resolved
 
     def _provider_selection_source(self, key: str, shown: object) -> str:
-        """Say how the shown provider or model stands against the saved default.
-
-        "chat_defaults" when it is the saved one; otherwise "settings_draft"
-        beside a draft (Save writes it) and "navigation" in a linked form
-        nobody has edited. The draft pins both beside any edit, so an edit
-        elsewhere marks neither (captures 03 and 04).
-        """
+        """Name the shown provider's or model's source: "chat_defaults" when it
+        is the saved default's, else "settings_draft" beside a draft (Save
+        writes it) or "navigation" in a linked form nobody has edited. The
+        draft pins both beside any edit, so one elsewhere marks neither."""
         saved = getattr(resolve_effective_provider_model(self._chat_defaults()), key)
         normal = provider_config_key if key == "provider" else str.strip
         if normal(str(shown or "")) == normal(str(saved or "")):
@@ -17125,22 +17122,27 @@ class SettingsScreen(BaseAppScreen):
         if start_worker:
             self._drain_session_summary_saves()
 
-    def _show_session_summary(self, section_values: Mapping[str, Any]) -> None:
+    def _show_session_summary(self, shown: Mapping, sent: int | None = None) -> None:
         """Put saved values in the controls (99 reads 30) and the title."""
         controls = self._session_summary_controls()
         if controls is None:
             return
-        values = section_values["session_summary"]
+        values = shown["session_summary"]
         with controls[0].prevent(Checkbox.Changed):
             controls[0].value = values["enabled"]
-        controls[1].value = str(values["duration_seconds"])
+        typed = _session_summary_section_values(0, controls[1].value)["session_summary"]
+        # A finished write passes the duration it ``sent``: text typed in the
+        # focused field since then is newer and stays ("99" sent 30: reads 30).
+        if not controls[1].has_focus or sent in (None, typed["duration_seconds"]):
+            controls[1].value = str(values["duration_seconds"])
         self._refresh_advanced()  # the Advanced title says its state
 
-    def _session_summary_save_finished(self, written: Mapping[str, Any] | None) -> None:
-        """Show what is saved; a failed write (None) puts the old values back."""
-        if written is None:
+    def _session_summary_save_finished(self, sent: dict, saved: bool) -> None:
+        """Show what is saved; a failed write puts the old values back."""
+        if not saved:
             self.notify("Could not save session summary settings", severity="warning")
-        self._show_session_summary(written or self._saved_session_summary())
+        shown = sent if saved else self._saved_session_summary()
+        self._show_session_summary(shown, sent["session_summary"]["duration_seconds"])
 
     @work(thread=True, group="settings-session-summary-save")
     def _drain_session_summary_saves(self) -> None:
@@ -17159,8 +17161,7 @@ class SettingsScreen(BaseAppScreen):
                 self._session_summary_pending_save = None
             try:
                 app.call_from_thread(
-                    self._session_summary_save_finished,
-                    section_values if saved else None,
+                    self._session_summary_save_finished, section_values, saved
                 )
             except RuntimeError:  # the app stopped; the write is done
                 pass
@@ -30783,13 +30784,11 @@ class SettingsScreen(BaseAppScreen):
             queue.pop(0)
             self._update_provider_dynamic_widgets()
             return
-        # task-15673: a freshly MOUNTED Input posts Changed for its
-        # compose-time value (verified against Textual directly), so a deep
-        # link's recompose delivers the linked provider's endpoint here as if
-        # the user typed it, and that dirt made the deferred
-        # _apply_navigation_provider_context refuse to apply the nav model.
-        # With a draft the same text is the user's own (a character typed and
-        # deleted again): it is staged, so the draft can empty.
+        # task-15673: a freshly MOUNTED Input posts Changed for its compose-time
+        # value, so a deep link's recompose delivers the linked provider's
+        # endpoint as if typed, and that dirt made the deferred nav-model apply
+        # refuse. With a draft the same text is the user's own (a character
+        # typed and deleted again): it is staged, so the draft can empty.
         if (
             self._navigation_provider
             and self._provider_draft() is None

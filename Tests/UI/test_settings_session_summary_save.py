@@ -12,6 +12,8 @@ instant-apply.
 
 from __future__ import annotations
 
+import threading
+
 import pytest
 from textual.widgets import Checkbox, Collapsible, Input
 
@@ -194,3 +196,48 @@ async def test_a_hand_edited_duration_is_composed_as_a_quit_reads_it(
         assert field.value == used
         assert _title(screen) == f"{_TITLE}On · {used} s"
         assert config.writes == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_write_the_checkbox_started_leaves_newer_typed_text_alone(
+    request, monkeypatch
+):
+    """Fix round 1, finding 14: every finished write put the duration it
+    carried back in the field, also over text typed since the checkbox
+    started it (a slow disk, an encrypted config): "3" then "5" became 3."""
+    config = _Config(monkeypatch)
+    release = threading.Event()
+    fake_save = settings_screen.save_settings_to_cli_config
+
+    def held_save(section_values) -> bool:
+        release.wait(10)
+        return fake_save(section_values)
+
+    monkeypatch.setattr(settings_screen, "save_settings_to_cli_config", held_save)
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        _screen, checkbox, field = await _open_session_summary(host, pilot)
+        checkbox.focus()
+        await pilot.pause()
+        await pilot.press("space")  # the write starts, carrying 3 s
+        await pilot.pause()
+        field.focus()
+        await pilot.pause()
+        await pilot.press("end", "5")
+        await pilot.pause()
+        assert field.value == "35"
+
+        release.set()
+        await _settle(host, pilot)
+
+        assert config.writes == [{"enabled": True, "duration_seconds": 3}]
+        assert checkbox.value
+        assert field.value == "35"
+
+        # Committed, the typed text is saved and shown as a quit reads it.
+        await pilot.press("enter")
+        await _settle(host, pilot)
+        assert config.writes[1:] == [{"enabled": True, "duration_seconds": 30}]
+        assert field.value == "30"
