@@ -11,6 +11,7 @@ import sqlite3
 
 import pytest
 
+from Tests.Dreams.test_schema_lineage import replace_with_historical_fixture
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
 
 
@@ -254,23 +255,7 @@ def test_consecutive_track_dispositions_counts_trailing_run(db):
 
 
 def _rewind_to_v1(db) -> None:
-    """Rewind an open v2 database file to a faithful v1 state.
-
-    v2 is additive only, so dropping the two track tables (and their indexes)
-    and re-stamping the version row leaves exactly what a Phase 1 writer
-    would have on disk.
-    """
-    with db.transaction() as conn:
-        conn.execute("DROP INDEX IF EXISTS idx_dream_track_runs_item")
-        conn.execute("DROP INDEX IF EXISTS idx_dream_tracked_status")
-        conn.execute("DROP INDEX IF EXISTS idx_dream_tracked_origin_story")
-        conn.execute("DROP TABLE IF EXISTS dream_track_runs")
-        conn.execute("DROP TABLE IF EXISTS dream_tracked_items")
-        # A v1-created file holds exactly one stamp: version 1 (a fresh v2
-        # file only ever writes version 2, so rewriting the table, not
-        # deleting one row, is the faithful old-file shape).
-        conn.execute("DELETE FROM schema_version")
-        conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+    replace_with_historical_fixture(db, 1)
 
 
 def test_v1_file_upgrades_in_place_to_v2(tmp_path):
@@ -324,53 +309,8 @@ def test_v1_file_upgrades_in_place_to_v2(tmp_path):
 # --- Schema v3 (Guardian x Dreams, ADR-204 contract 3) -------------------------
 
 
-_PROFILE_V2_DDL = """
-CREATE TABLE dream_interest_profile (
-    id INTEGER PRIMARY KEY,
-    facet TEXT NOT NULL CHECK(facet IN ('topic', 'goal')),
-    text TEXT NOT NULL,
-    weight REAL NOT NULL DEFAULT 1.0,
-    searchable INTEGER NOT NULL DEFAULT 1,
-    source TEXT NOT NULL
-        CHECK(source IN ('user', 'seed', 'personal_context', 'notes', 'media')),
-    query_angle TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    last_boosted_at TEXT,
-    UNIQUE(facet, text)
-)
-"""
-
-
 def _rewind_to_v2(db) -> None:
-    """Rewind an open v3 database file to a faithful v2 state.
-
-    v3 changes a CHECK constraint (``source`` gains ``'guardian'``), and
-    SQLite CHECKs are baked into the table DDL, so the faithful rewind
-    rebuilds ``dream_interest_profile`` with the v2 shape. A real v2 writer
-    could never have stored ``source='guardian'`` rows (the CHECK refuses
-    them), so such rows are dropped, not carried. Re-stamping the version
-    row to 2 completes the old-file shape.
-    """
-    with db.transaction() as conn:
-        conn.execute("DROP TABLE IF EXISTS dream_interest_profile_v2")
-        conn.execute(
-            _PROFILE_V2_DDL.replace(
-                "dream_interest_profile", "dream_interest_profile_v2", 1
-            )
-        )
-        conn.execute(
-            "INSERT INTO dream_interest_profile_v2"
-            " SELECT * FROM dream_interest_profile"
-            " WHERE source != 'guardian'"
-        )
-        conn.execute("DROP TABLE dream_interest_profile")
-        conn.execute(
-            "ALTER TABLE dream_interest_profile_v2"
-            " RENAME TO dream_interest_profile"
-        )
-        conn.execute("DELETE FROM schema_version")
-        conn.execute("INSERT INTO schema_version (version) VALUES (2)")
+    replace_with_historical_fixture(db, 2)
 
 
 def test_v2_file_upgrades_in_place_to_v3_and_accepts_guardian_source(tmp_path):
@@ -475,10 +415,7 @@ def test_v3_file_upgrades_in_place_to_v4_keeping_its_stories(tmp_path):
     assert fresh_columns[-1] == "goal"
     collection = db.create_collection("2026-09-22", "scheduled", "digest")
     story_id = _insert_plain_story(db, collection)
-    with db.transaction() as conn:
-        conn.execute("ALTER TABLE dream_stories DROP COLUMN goal")
-        conn.execute("DELETE FROM schema_version")
-        conn.execute("INSERT INTO schema_version (version) VALUES (3)")
+    replace_with_historical_fixture(db, 3)
     assert "goal" not in _story_columns(db)
     db.close()
 
@@ -552,17 +489,7 @@ _V6_COLUMNS = ("egress_marked", "alert_rule_id", "reminder_event_date")
 
 
 def _rewind_tracked_items(db, *, to_version: int) -> None:
-    """Make a fresh file look like one an older build left behind."""
-    dropped = list(_V6_COLUMNS)
-    if to_version < 5:
-        dropped.append("suspension")
-    with db.transaction() as conn:
-        for column in dropped:
-            conn.execute(
-                f"ALTER TABLE dream_tracked_items DROP COLUMN {column}")
-        conn.execute("DELETE FROM schema_version")
-        conn.execute(
-            "INSERT INTO schema_version (version) VALUES (?)", (to_version,))
+    replace_with_historical_fixture(db, to_version)
 
 
 def _stored_version(db) -> int:
