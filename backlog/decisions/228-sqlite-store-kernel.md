@@ -29,6 +29,17 @@ ChaChaNotes' richer `TransactionContextManager` (depth-tracked nesting, quiescen
 
 Migration is incremental, one store per PR, pilot first (`RAG_Indexing_DB` — the best-documented port, whose comments largely move into the kernel verbatim). Stores with genuinely different contracts (Chunking_Lab's durability protocol, Client_Media's chunk/blob layer) may consume the kernel without inheriting its policy.
 
+### BaseDB-provenance stores (review round 1)
+
+Most planned migrations subclass `BaseDB`, whose per-call `_get_connection()` opens through the **`db.base`** private-sqlite owner, and `_register_core_connection` validates participants identity against exactly that policy. The kernel's `_kernel_sqlite_owner` is the *connect* owner for stores that open their own connections (like the pilot's `db.rag_indexing`); it is not a new participants identity, and no per-store `db.<name>` policy entries should be minted for BaseDB-provenance stores. For those stores:
+
+- **MRO is load-bearing**: declare `class Store(SQLiteStoreKernel, BaseDB)` — kernel first — so the kernel's autocommit `_get_connection()`, `transaction()`, and the participants-gated `close()` win over `BaseDB`'s per-call/non-autocommit `_get_connection` and its no-op `close()` (which the retirement closers map calls).
+- Where a store needs BaseDB's per-call connection for specific operations, it retains that seam explicitly rather than blending the two.
+- Per-store semantic deltas surface at migration time and are decided individually — e.g. Workspace's `transaction(*, immediate=False)` deferred-BEGIN default differs from the kernel's unconditional `BEGIN IMMEDIATE`; whether that store adopts fail-immediate or keeps its keyword is recorded in its own migration PR.
+
+Two micro-pins deferred to follow-up before the fleet migrates (kernel review, minor): the probe-error asymmetry (a failed probe on a still-live connection must propagate, not replace) and `_configure_connection` applying on revival. Both hold in the current code; they deserve dedicated tests in the next kernel PR.
+
+
 ## Consequences
 
 - Each migration deletes a store's private copy of the held-connection/transaction machinery (~120–180 LOC per store) and makes participants wiring non-optional-by-omission.

@@ -413,7 +413,7 @@ _SQLITE_OWNER_POLICIES = {
         "RAG indexing supports private files and exact in-memory targets.",
     ),
     "tests.store_kernel": SQLiteOwnerPolicy(
-        "tldw_chatbook/DB/store_kernel",
+        "Tests/DB/test_store_kernel",
         _PRIVATE_OR_MEMORY,
         "Kernel contract tests support private files and exact in-memory targets.",
     ),

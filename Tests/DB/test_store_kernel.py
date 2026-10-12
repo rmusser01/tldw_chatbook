@@ -114,3 +114,42 @@ def test_liveness_replaces_connection_closed_behind_our_back(tmp_path) -> None:
         count = conn.execute("SELECT COUNT(*) FROM kernel_probe").fetchone()[0]
     assert count == 1
     store.close()
+
+
+def test_kernel_wiring_is_participants_observable(tmp_path, monkeypatch) -> None:
+    """The kernel's entry points fire the Backup_Recovery hooks (ADR-228).
+
+    The kernel imports the ``_core_*`` helpers by name, so the pin patches
+    the kernel module's own bindings and asserts each hook fires with this
+    store — a refactor that drops the wiring fails here at the kernel seam,
+    before any store-level suite notices indirectly.
+    """
+    import tldw_chatbook.DB.store_kernel as kernel_mod
+
+    fired: list[tuple[str, object]] = []
+
+    def recorder(name):
+        def hook(*args):
+            fired.append((name, args[0] if args else None))
+
+        return hook
+
+    monkeypatch.setattr(kernel_mod, "_core_access", recorder("access"))
+    monkeypatch.setattr(
+        kernel_mod, "_register_core_connection", recorder("register")
+    )
+    monkeypatch.setattr(
+        kernel_mod, "_core_cached_connection",
+        lambda repo, conn: recorder("cached")(repo) or conn,
+    )
+
+    class _ObservedStore(_KernelStore):
+        _kernel_sqlite_owner = "tests.store_kernel"
+
+    store = _ObservedStore(str(tmp_path / "hooks.sqlite"))
+    store._held_connection()
+    store.close()
+
+    names = {name for name, _ in fired}
+    assert {"access", "register", "cached"} <= names
+    assert all(target is store for _, target in fired)

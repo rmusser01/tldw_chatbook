@@ -126,10 +126,8 @@ class RAGIndexingDB(SQLiteStoreKernel):
     the number of threads that touch this DB rather than by call volume.
     """
 
-    #: Liveness-ping gate (mirrors `Workspace_DB`/`ChaChaNotes_DB`,
-    #: task-261/3011): a per-call ``SELECT 1`` would double the statement
-    #: count on the per-item indexing path. A recently-used held
-    #: connection is known-good without a ping.
+    #: private-sqlite connect owner (participants identity stays the class);
+    #: the liveness-gate rationale above moved to the kernel constant.
     _kernel_sqlite_owner = "db.rag_indexing"
 
     def __init__(

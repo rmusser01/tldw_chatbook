@@ -58,6 +58,9 @@ class SQLiteStoreKernel:
     docstring.
     """
 
+    # A per-call SELECT 1 would double the statement count of every
+    # read path; the idle threshold limits the probe to connections a
+    # thread has not touched recently (reference-port rationale).
     _LIVENESS_PING_IDLE_SECONDS = 30.0
 
     #: private-sqlite owner key for this store (subclasses must set).
@@ -73,8 +76,15 @@ class SQLiteStoreKernel:
         Must run before any schema initialization that uses the held
         connection.
         """
+        if not self._kernel_sqlite_owner:
+            raise ValueError(
+                "SQLiteStoreKernel subclasses must set _kernel_sqlite_owner "
+                "(the store's private-sqlite connect owner key) before "
+                "_init_store_kernel() runs"
+            )
         self._thread_local = threading.local()
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
         """Open and configure a NEW database connection.
 
@@ -82,6 +92,7 @@ class SQLiteStoreKernel:
         per-connection property lives here or in the store's
         ``_configure_connection`` override.
         """
+        _core_access(self)
         conn = connect_private_sqlite(self._kernel_sqlite_owner, self.db_path_str)
         _register_core_connection(self, conn)
         try:
