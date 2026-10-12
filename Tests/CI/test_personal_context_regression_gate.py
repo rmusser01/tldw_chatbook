@@ -71,7 +71,7 @@ def lane_targets(lane):
     step = next(
         s for s in workflow["jobs"]["pr-fast-lane"]["steps"] if s.get("name") == lane
     )
-    return tuple(shlex.split(step["run"].replace("\\\n", " ")))
+    return tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True))
 
 
 @pytest.mark.parametrize("lane", CRITICAL)
@@ -86,4 +86,63 @@ def test_critical_personal_context_regressions_remain_in_required_lane(lane):
 def test_admission_sensitive_original_owner_controls_do_not_join_sandbox_lane():
     assert not set(CRITICAL["Run admission-sensitive suites"]) & set(
         lane_targets("Run fast PR contract")
+    )
+
+
+@pytest.mark.parametrize("case", ["current", "removed", "comment-only"])
+def test_membership_checks_executable_targets_in_copied_workflow(
+    tmp_path, monkeypatch, case
+):
+    workflow = yaml.safe_load(
+        (ROOT / ".github/workflows/derived-artifacts.yml").read_text()
+    )
+    step = next(
+        s
+        for s in workflow["jobs"]["pr-fast-lane"]["steps"]
+        if s.get("name") == "Run fast PR contract"
+    )
+    target = CRITICAL["Run fast PR contract"][-1]
+    if case != "current":
+        step["run"] = step["run"].replace(target + " \\\n", "")
+        assert target not in step["run"]
+    if case == "comment-only":
+        step["run"] += "\n# " + target + "\n"
+    executable = shlex.split(step["run"].replace("\\\n", " "), comments=True)
+    assert (target in executable) is (case == "current")
+    copied = tmp_path / ".github/workflows/derived-artifacts.yml"
+    copied.parent.mkdir(parents=True)
+    copied.write_text(yaml.safe_dump(workflow))
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    if case == "current":
+        test_critical_personal_context_regressions_remain_in_required_lane(
+            "Run fast PR contract"
+        )
+    else:
+        with pytest.raises(AssertionError, match="Restore critical regressions"):
+            test_critical_personal_context_regressions_remain_in_required_lane(
+                "Run fast PR contract"
+            )
+
+
+def test_lane_targets_preserve_quoted_hash_and_continuation(tmp_path, monkeypatch):
+    quoted_target = "Tests/example.py::test_value[hash#literal]"
+    run = (
+        "pytest \\\n  '"
+        + quoted_target
+        + "' \\\n  --timeout=180 --tb=short\n# Tests/comment_only.py\n"
+    )
+    workflow = {
+        "jobs": {
+            "pr-fast-lane": {"steps": [{"name": "Run fast PR contract", "run": run}]}
+        }
+    }
+    copied = tmp_path / ".github/workflows/derived-artifacts.yml"
+    copied.parent.mkdir(parents=True)
+    copied.write_text(yaml.safe_dump(workflow))
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    assert lane_targets("Run fast PR contract") == (
+        "pytest",
+        quoted_target,
+        "--timeout=180",
+        "--tb=short",
     )

@@ -159,7 +159,7 @@ def _named_step(job: dict, name: str) -> dict:
 
 
 def _pytest_targets(run: str) -> tuple[str, ...]:
-    tokens = shlex.split(run.replace("\\\n", " "))
+    tokens = shlex.split(run.replace("\\\n", " "), comments=True)
     return tuple(
         token
         for token in tokens[1:]
@@ -233,7 +233,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
 def _assert_fast_lane_invocation(workflow: dict) -> None:
     fast = workflow["jobs"]["pr-fast-lane"]
     run = _named_step(fast, "Run fast PR contract")["run"]
-    assert tuple(shlex.split(run.replace("\\\n", " "))) == (
+    assert tuple(shlex.split(run.replace("\\\n", " "), comments=True)) == (
         "pytest",
         *FAST_LANE_TARGETS,
         "--timeout=180",
@@ -387,7 +387,7 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
     # One red step must not hide the other; a cancelled run stops (round 4).
     assert admission["if"] == "${{ !cancelled() }}"
     for step, timeout in ((sandboxed, "--timeout=180"), (admission, "--timeout=300")):
-        tokens = shlex.split(step["run"].replace("\\\n", " "))
+        tokens = shlex.split(step["run"].replace("\\\n", " "), comments=True)
         assert tokens[0] == "pytest"
         assert tokens[-2:] == [timeout, "--tb=short"]
         assert _pytest_targets(step["run"]), step["name"]
@@ -583,3 +583,35 @@ def test_bundle_and_backlog_checks_run_on_push_events() -> None:
             )
     assert not (PROJECT_ROOT / ".github/workflows/css-bundle-guard.yml").exists()
     assert not (PROJECT_ROOT / ".github/workflows/backlog-guard.yml").exists()
+
+
+@pytest.mark.parametrize("comment_only", [False, True])
+def test_exact_targets_and_invocation_reject_missing_executable_target(comment_only):
+    workflow = copy.deepcopy(_workflow("derived-artifacts.yml"))
+    step = _named_step(workflow["jobs"]["pr-fast-lane"], "Run fast PR contract")
+    target = FAST_LANE_TARGETS[-1]
+    step["run"] = step["run"].replace(target + " \\\n", "")
+    assert target not in step["run"]
+    if comment_only:
+        step["run"] += "\n# " + target + "\n"
+    assert target not in _pytest_targets(step["run"])
+    with pytest.raises(AssertionError):
+        _assert_fast_lane_invocation(workflow)
+
+
+def test_target_parser_preserves_quoted_hash_and_continuation():
+    target = "Tests/example.py::test_value[hash#literal]"
+    run = (
+        "pytest \\\n  '"
+        + target
+        + "' \\\n  --timeout=180 --tb=short\n# Tests/comment_only.py\n"
+    )
+    assert _pytest_targets(run) == (target,)
+
+
+def test_exact_invocation_accepts_comments_without_changing_executable_argv():
+    workflow = copy.deepcopy(_workflow("derived-artifacts.yml"))
+    step = _named_step(workflow["jobs"]["pr-fast-lane"], "Run fast PR contract")
+    step["run"] = "# Required tests follow.\n" + step["run"] + "\n# End of command.\n"
+    assert _pytest_targets(step["run"]) == FAST_LANE_TARGETS
+    _assert_fast_lane_invocation(workflow)
