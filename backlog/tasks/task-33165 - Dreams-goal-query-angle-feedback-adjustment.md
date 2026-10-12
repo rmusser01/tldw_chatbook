@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-28 20:23'
-updated_date: '2026-10-12 00:55'
+updated_date: '2026-10-12 05:07'
 labels:
   - dreams
   - phase2
@@ -43,6 +43,8 @@ Spec feedback-loop section: feedback on a goal-derived story adjusts the QUERY A
    ADR-196's feedback contract).
 
 Current-dev integration (2026-10-11): follow Docs/superpowers/plans/2026-10-11-pr2921-current-dev-integration.md and the pinned audit. Reconcile exact feature range with actual sequential dev; fix reviewed consent, URL provenance, captured-chat notice, shared budget, query-goal attribution, disable, native lifetime, recovery and UI contracts in existing owners. Qualify actual integrated source before review/publication. ADR required: existing196/204/207/126 amendments as applicable; no competing new decision.
+
+Updated-source integration: frozen6c074d6eed feature range7b7193d647..head84commits/78paths, Dreamsv6; preserve addressed atomic reservation/generating-goal fixes and fix remaining actual privacy/dispatch/recovery/Guardian/production-Library boundaries plus admitted34801–4. Actual post-PC/Buddy dev and fresh author lease before code/publication; final qualification follows all product changes. Existing ADR196/204/207/126 amendments as needed, no duplicate IDs.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -101,4 +103,6 @@ Current-dev integration (2026-10-11): follow Docs/superpowers/plans/2026-10-11-p
   existed, unwritten).
 
 The earlier implementation notes below describe frozen source7f18b6ec1063009b916dad51d468629f20687917 and historical source qualification. Current integration is In Progress; reopened acceptance outcomes require the actual fixed current-dev candidate. No integrated test, publication or merged claim is made by this preparation.
+
+Scoped updated-plan preflight found final qualification preceded the admitted follow-up changes and required-CI coverage was absent from task acceptance. Plan order now places all changes before final source/node freeze and qualification; Guardian integration acceptance gains the bounded required-CI outcome. Collections predecessor/rollback/reopen/future-refusal and installed recovery obligations are explicit in extracted Task1. No product or completion claim.
 <!-- SECTION:NOTES:END -->

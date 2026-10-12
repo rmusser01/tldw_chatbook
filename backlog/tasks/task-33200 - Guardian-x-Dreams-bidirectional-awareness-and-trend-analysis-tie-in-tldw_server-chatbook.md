@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-23 06:07'
-updated_date: '2026-10-12 00:55'
+updated_date: '2026-10-12 05:07'
 labels:
   - guardian
   - dreams
@@ -23,10 +23,6 @@ priority: low
 Dreams (chatbook, ADR-196) and Guardian (tldw_server self-monitoring) are two sides of the same coin: Dreams informs the user of new things; Guardian makes the user aware of their own patterns. Tie them together bidirectionally - port Dreams functionality to tldw_server for connected clients and port Guardian self-monitoring to chatbook for local use - and extend Guardian's reactive per-message pattern rules with trend/topic identification over the user's actions, content, and chats. Configured 'topics of consideration' (doomscrolling/doom loops, fixation on a specific thing, self-harm ideation awareness) surface as humane reminders offering an opportunity to course-correct. User-enabled only; must be explicitly configured; disabled by default. Framing: supportive awareness tooling, not a clinical service (match Guardian's existing disclaimer).
 <!-- SECTION:DESCRIPTION:END -->
 
-> Renumbering provenance: filed as task-32902 on the pre-divergence docs
-> line; dev's older task-32902 (Work-stream the tier-2 P3 polish,
-> 2026-09-21) keeps the ID per the 2026-08-21 owner rule (TASK-19601).
-
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Integration design spec covering both directions (Dreams-to-tldw_server port and Guardian-to-chatbook port) exists and is reviewed, with an explicit local-vs-server privacy boundary extending ADR-029
@@ -35,12 +31,15 @@ Dreams (chatbook, ADR-196) and Guardian (tldw_server self-monitoring) are two si
 - [ ] #4 Crisis-resource surfacing reuses Guardian's built-in resource set (988 / Crisis Text Line / SAMHSA / IASP) and disclaimer where relevant
 - [ ] #5 Dreams interest-profile signals and Guardian trend analysis interoperate via a shared topic vocabulary or explicit mapping, with each loop independently opt-in
 - [ ] #6 All analysis and notice paths are disabled by default and run only when explicitly enabled and configured by the user; nothing leaves the machine without explicit consent
+- [ ] #7 Critical introduced Dreams and Guardian privacy, provenance, spend, recovery, navigation, notification and worker-currentness regressions run in the required PR lanes with exact executable membership checks; prior Goal, Personal Context and Buddy targets, order and limits remain intact.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
 Current-dev integration (2026-10-11): follow Docs/superpowers/plans/2026-10-11-pr2921-current-dev-integration.md and the pinned audit. Reconcile exact feature range with actual sequential dev; fix reviewed consent, URL provenance, captured-chat notice, shared budget, query-goal attribution, disable, native lifetime, recovery and UI contracts in existing owners. Qualify actual integrated source before review/publication. ADR required: existing196/204/207/126 amendments as applicable; no competing new decision.
+
+Updated-source integration: frozen6c074d6eed feature range7b7193d647..head84commits/78paths, Dreamsv6; preserve addressed atomic reservation/generating-goal fixes and fix remaining actual privacy/dispatch/recovery/Guardian/production-Library boundaries plus admitted34801–4. Actual post-PC/Buddy dev and fresh author lease before code/publication; final qualification follows all product changes. Existing ADR196/204/207/126 amendments as needed, no duplicate IDs.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -100,4 +99,10 @@ trends, interop), `Tests/UI/test_settings_guardian.py`,
 `Tests/Dreams/test_dreams_db_track.py` (v3).
 
 The earlier implementation notes below describe frozen source7f18b6ec1063009b916dad51d468629f20687917 and historical source qualification. Current integration is In Progress; reopened acceptance outcomes require the actual fixed current-dev candidate. No integrated test, publication or merged claim is made by this preparation.
+
+Scoped updated-plan preflight found final qualification preceded the admitted follow-up changes and required-CI coverage was absent from task acceptance. Plan order now places all changes before final source/node freeze and qualification; Guardian integration acceptance gains the bounded required-CI outcome. Collections predecessor/rollback/reopen/future-refusal and installed recovery obligations are explicit in extracted Task1. No product or completion claim.
 <!-- SECTION:NOTES:END -->
+
+> Renumbering provenance: filed as task-32902 on the pre-divergence docs
+> line; dev's older task-32902 (Work-stream the tier-2 P3 polish,
+> 2026-09-21) keeps the ID per the 2026-08-21 owner rule (TASK-19601).
