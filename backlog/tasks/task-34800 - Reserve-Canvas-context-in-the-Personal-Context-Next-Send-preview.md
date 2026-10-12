@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-11 23:58'
-updated_date: '2026-10-12 02:54'
+updated_date: '2026-10-12 03:43'
 labels:
   - memory
   - canvas
@@ -53,6 +53,8 @@ Corrected disposable Personal Context budgeting using the existing Canvas owner 
 Native Python 3.12.11 reproduced the original 123565 versus 121793 token mismatch on unchanged head 295ee2a02a. Seven fresh-review regressions failed before correction (unreadable/denied schemas, closure/disable/replacement during project preview, durable replacement and later Inspector validation). Final affected groups passed 93 context/Inspector cases and 367 agent/Canvas cases, followed by 19 shared-probe checks after simplifying the loop. All 41 exact private-profile children passed without skips; parent/child application and profile-library imports were verified against this PR worktree. Three legacy suites now use the existing bootstrap-profile marker; the unchanged control reproduced their config-source setup failure. Targeted lint, regression-file formatting, AST-preserving helper formatting and whitespace pass. ADR-121 and ADR-202 apply; no new policy or activation was selected. Current-dev integration qualification remains separately tracked.
 
 2026-10-11 current-dev implementation on323c3b0c: passive Canvas catalog metadata/schema loader now participates in the shared first-request planner before current Goal narrowing. A production Goal+Canvas regression reproduced123844 vs122349 token reservation and passed after reconciliation, preserving actual authenticated live dispatch and data-only preview. Exact session/Canvas/service/selection/expiry guards remain; no run/staging/permission/selection mutation occurs in preview. Current Inspector/Settings integration tests and native-owner qualification are recorded separately from historical source receipts in Task1 report. ADR121/202 apply; no new ADR or activation authority. Current integration remains In Progress pending complete-head independent root review and latest-dev transplant.
+
+2026-10-11 final Canvas handoff: passive production Goal+Canvas first-request planner regression and59-case helper/selection/snapshot group pass; affected Canvas fixture and feature cases have final joined410-node passing coverage with separate native retirement receipts. Preview authority/currentness remains data-only and native V2/schema8/AAD1/Forget/source/disclosure/server activation gates remain closed. Commits c0cb9f58ec and fa402213ac8aa78e99f64e1724bae46d59684b51; exact commands/source hash/node mapping in Task1 report and pr2862-final-integration receipt bundle. Existing ADR121/202 apply. Task remains In Progress until independent root review and actual post-Goal sequential-dev transplant; inherited guard/Goal deadline failures remain separately reported.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
