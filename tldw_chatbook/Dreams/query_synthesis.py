@@ -154,13 +154,21 @@ _OPENING_WRAP_CHARS = "*_\"'`\u201c\u2018("
 _WRAP_TOKEN_RE = re.compile(
     r"\*\*|__|[*_\"'`\u201c\u201d\u2018\u2019()]")
 
-#: The pieces a line may consist of IN FRONT of its first mark and still
-#: be nothing but formatting there: whitespace, a list number, a label
-#: (``Query:``, ``Goal query 2:``), quote markers, bullets and wrapping.
+#: The pieces a line may consist of IN FRONT of its first mark: whitespace,
+#: a list number, quote markers, bullets, wrapping -- and a label. Only a
+#: label made of the words a model labels its lines with (``Query:``,
+#: ``Goal query 2:``, ``Q1:``, ``Exploration:``) is formatting; any
+#: other "label" is the query's own subject and keeps its words, minus
+#: the colon (round 6, G1: "Kyoto: [g1] temples in autumn" was searched
+#: as "temples in autumn").
+_LABEL_WORDS = (
+    r"(?:goal|topic|search|query|idea|exploration|line|q)")
 _PREFIX_PIECE_RE = re.compile(
     r"\s+"
     r"|\(?\d{1,3}[*_]{0,2}[.)]"
-    r"|[^\W\d_][^\W_]*(?: [^\W_]+){0,3} ?:"
+    rf"|(?i:{_LABEL_WORDS}(?: (?:query|queries|search|searches|idea|ideas"
+    r"|line))? ?\d{0,3} ?:)"
+    r"|(?P<subject>[^\W\d_][^\W_]*(?: [^\W_]+){0,3}) ?:(?!:)"
     r"|[>\-*+\u2022_\"'`\u201c\u2018(]"
     r"|[)\u201d\u2019]"
 )
@@ -359,10 +367,13 @@ def _without_marks(text: str) -> tuple[str, set[int]] | None:
     mark loses every ``[gN]`` on it, glued or not (``[g1]x[g1]``).
 
     What stands in front of the FIRST mark is dropped with it when it is
-    nothing but formatting there -- a list number, a label, a bullet,
-    opening wrapping (``**2.** [g1] ...``, ``Query: [g1] ...``); wrapping
-    opened there is closed at the end of the line, and that goes too.
-    Anything else in front of the mark is the query's.
+    nothing but formatting there -- a list number, a label word, a
+    bullet, opening wrapping (``**2.** [g1] ...``, ``Query: [g1] ...``);
+    wrapping opened there is closed at the end of the line, and that goes
+    too. A label of any other words is the query's subject and keeps its
+    words without the colon (``Kyoto: [g1] temples`` -> ``Kyoto
+    temples``; round 6, G1). Anything else in front of the mark is the
+    query's.
     """
     if all(_is_subscript(text, match.start())
            for match in _MARK_TOKEN_RE.finditer(text)):
@@ -387,21 +398,28 @@ def _without_marks(text: str) -> tuple[str, set[int]] | None:
     behind = [
         text[end:spans[index + 1][0] if index + 1 < len(spans) else len(text)]
         for index, (_, end, _digits) in enumerate(spans)]
-    # Formatting in front of the mark -- unless nothing stands behind the
-    # mark and the "label" has words in it: then it IS the query, with the
-    # mark set after it ("cheap flights: [g1]").
-    in_front = not _PREFIX_PIECE_RE.sub("", prefix) and (
-        any(char.isalnum() for char in "".join(behind))
-        or not any(char.isalpha() for char in prefix))
-    pieces = behind if in_front else [prefix, *behind]
+    # Formatting in front of the mark goes; a subject label in it stays,
+    # without its colon ("Kyoto: [g1] temples" -> "Kyoto temples").
+    in_front = not _PREFIX_PIECE_RE.sub("", prefix)
     at_end = not behind[-1].strip()
-    body = " ".join(pieces).strip()
     if in_front:
+        subject = " ".join(
+            match.group("subject") for match in _PREFIX_PIECE_RE.finditer(prefix)
+            if match.group("subject"))
+        body = " ".join(behind).strip()
         for closer in _unclosed_wrappers(prefix):
             if body.endswith(closer):
                 body = body[:-len(closer)].rstrip()
-        body = _LEADING_LEFTOVER_RE.sub("", body)
-    if at_end:
+        body = " ".join(
+            part for part in (subject, _LEADING_LEFTOVER_RE.sub("", body))
+            if part)
+    else:
+        # Words in front of the mark that are not formatting at all: the
+        # query's. A single colon set right before the mark is the
+        # model's ("My trip to Tokyo: [g1] ..."); "::" is the query's.
+        prefix = re.sub(r"(?<!:):\s*$", " ", prefix)
+        body = " ".join([prefix, *behind]).strip()
+    if at_end and not body.endswith("::"):  # "::" is the query's (C++)
         body = _TRAILING_LEFTOVER_RE.sub("", body)
     return body, positions
 

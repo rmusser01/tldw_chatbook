@@ -1035,3 +1035,53 @@ def test_the_fallback_has_one_exploration_line_except_at_one_query():
     assert [row["goal"] for row in _fallback_queries([], goals, 1)] == [_G1]
     assert [row["query"] for row in _fallback_queries([], [], 1)] == [
         "curious new things this week"]
+
+
+# === Review of #2921, round 6 ======================================================
+
+# --- G1: words in front of a mark are the query's, unless they are a label word --
+#
+# Round 5 dropped up to four words and a colon in front of a mark as a
+# "label", so the goal's search lost its subject: "Kyoto: [g1] temples in
+# autumn" was searched as "temples in autumn".
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        ("Kyoto: [g1] temples in autumn", "Kyoto temples in autumn"),
+        ("Japan travel: [g1] cherry blossom tours",
+         "Japan travel cherry blossom tours"),
+        ("Wednesday 13: [g1] tour dates", "Wednesday 13 tour dates"),
+        ("Rust TUI: [g1] new releases", "Rust TUI new releases"),
+        ("Dune: [g1] Part Two tickets", "Dune Part Two tickets"),
+        ("Tokyo in April: [g1] cheap flights", "Tokyo in April cheap flights"),
+        ("**Kyoto:** [g1] temples", "Kyoto temples"),
+        ("- Kyoto: [g1] temples", "Kyoto temples"),
+        ("My long trip to Tokyo in April: [g1] cheap flights",
+         "My long trip to Tokyo in April cheap flights"),
+        ("Query results: [g1] x", "Query results x"),
+        ("Quebec: [g1] winter carnival", "Quebec winter carnival"),
+        ("C++ scope resolution operator :: [g1]",
+         "C++ scope resolution operator ::"),
+        # The generic labels are still formatting.
+        ("Query: [g1] cheap flights", "cheap flights"),
+        ("query: [g1] cheap flights", "cheap flights"),
+        ("Search: [g1] cheap flights", "cheap flights"),
+        ("Goal 1: [g1] cheap flights", "cheap flights"),
+        ("Goal query 2: [g1] cheap flights", "cheap flights"),
+        ("Topic query: [g1] cheap flights", "cheap flights"),
+        ("Q1: [g1] cheap flights", "cheap flights"),
+        ("Q: [g1] cheap flights", "cheap flights"),
+        ("Idea 3: [g1] cheap flights", "cheap flights"),
+        ("Exploration: [g1] cheap flights", "cheap flights"),
+        ("Line 4: [g1] cheap flights", "cheap flights"),
+        ("**Query:** [g1] cheap flights", "cheap flights"),
+    ],
+)
+def test_a_label_in_front_of_a_mark_is_dropped_only_when_it_is_a_label_word(
+        line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None), (_G2, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}

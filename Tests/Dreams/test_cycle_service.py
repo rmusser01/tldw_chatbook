@@ -2278,3 +2278,35 @@ async def test_mixed_profile_cycle_keeps_topic_and_goal_stories_without_changing
     assert all("private medical goal" not in query for query in searched)
     assert {row["text"]: row["weight"] for row in dreams_db.list_profile() if row["facet"] == "goal"} == {
         "learn cello": 0.9, "private medical goal": 1.0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "line, query",
+    [("Kyoto: [g2] japan temples in autumn", "Kyoto japan temples in autumn"),
+     ("Japan travel: [g2] rail pass", "Japan travel rail pass")],
+)
+async def test_the_subject_in_front_of_a_mark_reaches_the_search(
+        dreams_db, settings, line, query):
+    """Review round 6, G1, through the cycle: the search got 'temples in
+    autumn' -- the subject was dropped as a label."""
+    _seed_two_goals(dreams_db)
+    searched: list[str] = []
+
+    def chat(**kwargs):
+        if "search queries" in str(kwargs.get("system_message") or ""):
+            return {"choices": [{"message": {"content":
+                "bike repair tips\n" + line}}]}
+        return _fake_chat(**kwargs)
+
+    def perform(search_engine, search_query, **kwargs):
+        searched.append(search_query)
+        return _bike_and_japan_perform(search_engine, search_query, **kwargs)
+
+    result = await run_cycle(
+        _deps(dreams_db, perform=perform, chat=chat), trigger="manual")
+
+    assert searched == ["bike repair tips", query]
+    japan = _stories_by_url(
+        dreams_db, result["collection_id"])["https://dreams.test/japan"]
+    assert (japan["query"], japan["goal"]) == (query, _GOAL_JAPAN)
