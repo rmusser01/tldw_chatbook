@@ -859,9 +859,11 @@ def _marked_lines(draw):
     expected = base
     number = draw(st.sampled_from([1, 2]))
     mark = draw(st.sampled_from(_MARK_FORMS)).replace("{n}", str(number))
-    place = draw(st.sampled_from(["front", "front-glued", "end", "both", "mid"]))
+    place = draw(st.sampled_from(
+        ["front", "front-glued", "front-glued-wrapped", "end", "both", "mid"]))
     words = base.split(" ")
     exact = True
+    glued_quote = ""  # the straight quote around a glued mark, if any
     if place == "front":
         line = f"{mark} {base}"
     elif place == "front-glued":
@@ -871,6 +873,20 @@ def _marked_lines(draw):
         assume(not base.startswith("*"))
         mark = f"[g{number}]"
         line = f"{mark}{base}"
+    elif place == "front-glued-wrapped":
+        # A WRAPPED mark glued to the next word (round 7, H1): the wrapper
+        # goes with the mark. Left out where a person could not tell the
+        # two apart either: the next word starting with a wrapper
+        # character, and a straight quote around the mark when the query
+        # has the same quote in it (it may open that phrase).
+        wrapped = draw(st.sampled_from(
+            ["**[g{n}]**", "__[g{n}]__", "*[g{n}]*", "_[g{n}]_", "`[g{n}]`",
+             "([g{n}])", '"[g{n}]"', "'[g{n}]'", "\u201c[g{n}]\u201d",
+             "\u2018[g{n}]\u2019"])).replace("{n}", str(number))
+        assume(base[0] not in "*_\"'`(")
+        assume(not (wrapped[0] in "\"'" and wrapped[0] in base))
+        glued_quote = wrapped[0] if wrapped[0] in "\"'" else ""
+        line = f"{wrapped}{base}"
     elif place == "end":
         line = f"{base} {mark}"
     elif place == "both":
@@ -882,7 +898,7 @@ def _marked_lines(draw):
         # "1. [g1] FC Koeln ..." loses its "1.", as it should.
         assume(not re.fullmatch(r"\(?\d{1,3}[.)]", " ".join(words[:cut])))
         line = " ".join(words[:cut] + [mark] + words[cut:])
-    at_front = place in ("front", "front-glued", "both")
+    at_front = place in ("front", "front-glued", "front-glued-wrapped", "both")
     # Nested the way a model nests them: a number or a label directly in
     # front of the mark, bold/italics/quotes around the line (inside or
     # outside that number), and bullets and quote markers outermost.
@@ -898,6 +914,16 @@ def _marked_lines(draw):
                 expected = f"{subject} {base}"
             continue
         wrapper = draw(st.sampled_from(_LINE_WRAPPERS))
+        if base[-1] in wrapper.replace("{}", ""):
+            # "*...learn C**": the query's own last character and the
+            # wrapper's closer run together -- no reading is the one
+            # right one (found by seed 7 once glued wrappers were in).
+            exact = False
+        if glued_quote and glued_quote in wrapper:
+            # '""[g1]"cheap"': the outer quote closes the line AND could
+            # close a phrase the glued quote opens -- no reading is the
+            # one right one. Still: no mark, and the goal.
+            exact = False
         if not at_front:
             # Around a line whose mark is NOT in front, a pair is only
             # removed when none of its characters is inside (the rule
@@ -1228,6 +1254,41 @@ def test_a_mark_glued_to_a_word_is_searched_as_text(line):
 def test_a_quote_glued_behind_a_mark_opens_the_phrase(line, query):
     """Found by the widened generator (round 6, G-N7): a wrapper around a
     mark closes only where Markdown closes one, not glued to a word."""
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}
+
+
+# === Review of #2921, round 7 ======================================================
+
+# --- H1: a wrapper glued to the word after a mark is still the mark's ------------
+#
+# G-N7 made a wrapper around a mark close only before a space, punctuation
+# or another closer -- for every kind of wrapper. So "**[g1]**cheap" left
+# "*cheap". Only a straight quote can OPEN the next phrase, and only when
+# that phrase closes again later on the line.
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        ("**[g1]**cheap flights", "cheap flights"),
+        ('"[g1]"cheap flights', "cheap flights"),
+        ("'[g1]'cheap flights", "cheap flights"),
+        ("([g1])cheap flights", "cheap flights"),
+        ("`[g1]`cargo tips", "cargo tips"),
+        ("__[g1]__cheap flights", "cheap flights"),
+        ("_[g1]_cheap flights", "cheap flights"),
+        ("*[g1]*cheap flights", "cheap flights"),
+        ("\u201c[g1]\u201dcheap flights", "cheap flights"),
+        ("\u2018[g1]\u2019cheap flights", "cheap flights"),
+        # The case the rule exists for still holds.
+        ('"[g1]"Wednesday 13" tour dates 2026"', '"Wednesday 13" tour dates 2026'),
+        ('[g1]"Wednesday 13" tour dates', '"Wednesday 13" tour dates'),
+    ],
+)
+def test_a_wrapper_glued_to_the_next_word_is_removed_with_the_mark(line, query):
     from tldw_chatbook.Dreams.query_synthesis import _query_row
 
     assert _query_row(line, [(_G1, None)]) == {

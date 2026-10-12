@@ -328,6 +328,27 @@ def _is_subscript(text: str, start: int) -> bool:
     return start > 0 and (text[start - 1].isalnum() or text[start - 1] in "])")
 
 
+def _opens_the_next_phrase(text: str, closing: str, after: int) -> bool:
+    """Whether a straight quote right after a mark opens the next phrase.
+
+    In ``"[g1]"Wednesday 13" tour"`` the quote after the mark is not the
+    closer of ``"[g1]`` -- it opens ``"Wednesday 13"`` (round 6, G-N7). A
+    straight quote can do that: it is the same character either way. It
+    does it only when glued to the next word AND closed again later on
+    the line; ``"[g1]"cheap flights`` is a quoted mark. Every other
+    wrapper -- bold, italics, backticks, brackets, curly quotes -- has a
+    closer that cannot open anything, and closes around the mark even
+    glued to the next word (round 7, H1: G-N7 applied the rule to all of
+    them, and "**[g1]**cheap" left "*cheap").
+    """
+    if closing not in ('"', "'") or after >= len(text):
+        return False
+    following = text[after]
+    if following.isspace() or following in _CLOSES_A_WRAPPER:
+        return False
+    return closing in text[after:]
+
+
 def _grown_over_wrapping(text: str, start: int, end: int) -> tuple[int, int]:
     """A mark's span grown over the wrapping that stands directly around it.
 
@@ -342,13 +363,7 @@ def _grown_over_wrapping(text: str, start: int, end: int) -> tuple[int, int]:
             after = end + len(closing)
             if (text.endswith(opening, 0, start)
                     and text.startswith(closing, end)
-                    # A wrapper closes only where Markdown closes one:
-                    # not glued to the next word. In '"[g1]"Wednesday 13"
-                    # tour"' the quote after the mark OPENS the phrase
-                    # (round 6, G-N7); brackets may be glued.
-                    and (closing in ("]", "\\]") or after == len(text)
-                         or text[after].isspace()
-                         or text[after] in _CLOSES_A_WRAPPER)):
+                    and not _opens_the_next_phrase(text, closing, after)):
                 start, end = start - len(opening), end + len(closing)
                 if text.startswith(":", end):
                     end += 1
