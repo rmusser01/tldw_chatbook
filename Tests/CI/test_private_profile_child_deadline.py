@@ -60,6 +60,53 @@ async def test_child_whose_worker_never_answers(request):
     await _waits_on_the_worker()
 
 
+async def test_a_dump_groups_identical_stacks_and_keeps_its_head_within_its_bound(
+    monkeypatch,
+):
+    """40 threads in the same wait share one header; the main thread and the
+    await chain lead the dump, and the bound cuts what follows them."""
+    release, entered = threading.Event(), threading.Semaphore(0)
+
+    def stuck() -> None:
+        entered.release()
+        release.wait()
+
+    threads = [
+        threading.Thread(target=stuck, name=f"zq-same-{n}", daemon=True)
+        for n in range(40)
+    ]
+    for thread in threads:
+        thread.start()
+    for _ in threads:
+        entered.acquire()
+    task = asyncio.create_task(_waits_on_the_worker())
+    await asyncio.sleep(0)
+    monkeypatch.setattr(private_profile, "_awaiting", task.get_coro())
+    try:
+        for _ in range(100):  # until each worker has gone from release() to wait()
+            text = private_profile._stacks_text("in a test")
+            if "--- 40 threads: zq-same-" in text:
+                break
+            await asyncio.sleep(0.01)
+        assert text.startswith("--- stacks in a test\n--- thread MainThread\n")
+        assert text.count("--- 40 threads: zq-same-") == 1
+        assert "--- thread zq-same-" not in text
+        head = text[: text.index("--- 40 threads: ")]
+        assert (
+            "await asyncio.Event().wait()"
+            in head.split("--- the test, outermost await first")[1]
+        )
+
+        monkeypatch.setattr(private_profile, "_DUMP_LIMIT", len(head) + 100)
+        bounded = private_profile._stacks_text("in a test")
+    finally:
+        release.set()
+        task.cancel()
+    assert bounded.endswith(" more characters of this dump cut\n")
+    assert "await asyncio.Event().wait()" in bounded
+    assert len(bounded) < len(head) + 200
+
+
 def _as_parent(request, tmp_path, child):
     """A parent-side request for ``child``, as pytest would hand its wrapper."""
     module = request.node.nodeid.rsplit("::", 1)[0]

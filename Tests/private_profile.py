@@ -40,6 +40,11 @@ _CHILD_LEAD_SECONDS = 30.0
 _PARENT_RESERVE_SECONDS = 5.0
 #: The child's test coroutine while it runs, for ``_note_stacks``.
 _awaiting = None
+#: Characters one stack dump may take; a child writes at most two (its own
+#: timeout, then the parent's ask), so the parent's message stays bounded.
+_DUMP_LIMIT = 16_000
+#: Innermost frames kept of one thread's stack.
+_STACK_FRAMES = 60
 
 
 def is_private_profile_child(request: pytest.FixtureRequest) -> bool:
@@ -108,28 +113,61 @@ def _child_deadlines(budget: float, lead: float) -> tuple[float, float | None]:
     return budget, budget + lead - _PARENT_RESERVE_SECONDS
 
 
-def _note_stacks(*_signal) -> None:
-    """In the child: append every thread's stack and the test's chain of awaits.
+def _stacks_text(reason: str) -> str:
+    """Every thread's stack and the test's chain of awaits, bounded.
+
+    The main thread and the await chain come first; threads with the same
+    stack share one header naming them all. Past ``_DUMP_LIMIT`` the rest is
+    cut, with a note saying how much.
+
+    Args:
+        reason: Why the stacks are taken, for the dump's header.
+
+    Returns:
+        The dump.
+    """
+    names = {thread.ident: thread.name for thread in threading.enumerate()}
+    main = threading.main_thread().ident
+    groups: dict[str, list[str]] = {}
+    for ident, frame in sorted(
+        sys._current_frames().items(), key=lambda item: item[0] != main
+    ):
+        stack = "".join(traceback.format_stack(frame, _STACK_FRAMES))
+        groups.setdefault(stack, []).append(names.get(ident, str(ident)))
+    chain = []
+    awaiting = _awaiting
+    while awaiting is not None:
+        frame = getattr(awaiting, "cr_frame", None)
+        if frame is not None:
+            chain.extend(traceback.format_stack(frame))
+        awaiting = getattr(awaiting, "cr_await", None)
+    parts = [f"--- stacks {reason}\n"]
+    for index, (stack, threads) in enumerate(groups.items()):
+        if len(threads) == 1:
+            parts.append(f"--- thread {threads[0]}\n")
+        else:
+            parts.append(f"--- {len(threads)} threads: {', '.join(threads)}\n")
+        parts.append(stack)
+        if index == 0:  # the main thread
+            parts.append("--- the test, outermost await first\n")
+            parts.extend(chain)
+    text = "".join(parts)
+    if len(text) <= _DUMP_LIMIT:
+        return text
+    cut = len(text) - _DUMP_LIMIT
+    return f"{text[:_DUMP_LIMIT]}\n--- {cut} more characters of this dump cut\n"
+
+
+def _note_stacks(reason: str) -> None:
+    """In the child: append ``_stacks_text`` to the file the parent quotes.
 
     Runs when the child's own pytest-timeout fires and when the parent asks
     (SIGUSR1). pytest-timeout raises into the event loop, so its report cannot
     say where an async test was waiting, and its thread dump goes through
     pytest's capture, where a child that then cannot finish loses it.
     """
-    names = {thread.ident: thread.name for thread in threading.enumerate()}
-    parts = []
-    for ident, frame in sys._current_frames().items():
-        parts.append(f"--- thread {names.get(ident, ident)}\n")
-        parts.extend(traceback.format_stack(frame))
-    parts.append("--- the test, outermost await first\n")
-    awaiting = _awaiting
-    while awaiting is not None:
-        frame = getattr(awaiting, "cr_frame", None)
-        if frame is not None:
-            parts.extend(traceback.format_stack(frame))
-        awaiting = getattr(awaiting, "cr_await", None)
     with open(os.environ[_CHILD_STACKS], "a") as output:
-        output.write("".join(parts))
+        output.write(_stacks_text(reason))
 
 
 async def _exited_within(process, seconds: float | None) -> bool:
@@ -158,12 +196,14 @@ def private_profile_test(function):
                 def note_then_time_out(signum, frame):
                     __tracebackhide__ = True
                     with contextlib.suppress(Exception):
-                        _note_stacks()
+                        _note_stacks("when its own timeout fired")
                     own_timeout(signum, frame)
 
                 # pytest-timeout resets SIGALRM itself when the test ends.
                 signal.signal(signal.SIGALRM, note_then_time_out)
-                signal.signal(signal.SIGUSR1, _note_stacks)
+                signal.signal(
+                    signal.SIGUSR1, lambda *_: _note_stacks("when the parent asked")
+                )
             result = function(*args, **kwargs)
             if not inspect.isawaitable(result):
                 return result
