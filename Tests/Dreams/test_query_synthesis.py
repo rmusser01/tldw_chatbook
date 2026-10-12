@@ -817,7 +817,15 @@ _BASE_QUERIES = [
     "-5\u00b0C tokyo weather", "snake_case naming tips",
     "what does `ls -la` print", "#rustlang news", "caf\u00e9 culture paris",
     "\u65e5\u672c\u306e\u796d\u308a 2027", "C# tutorials", "x",
+    # Round 6, G-N7: queries that begin with a number of their own.
+    "1. FC K\u00f6ln transfer news", "2027 world cup tickets",
+    "3d printing news",
 ]
+
+#: Labels whose words are the query's subject (round 6, G1): in front of a
+#: mark they lose only their colon.
+_SUBJECT_LABELS = ["Kyoto", "Japan travel", "Wednesday 13", "Rust TUI",
+                   "Dune", "Tokyo in April"]
 
 #: How a model writes the mark itself (for goal ``{n}``).
 _MARK_FORMS = [
@@ -846,8 +854,9 @@ _MARK_ANYWHERE_RE = re.compile(r"\\?\[+\s*/?\s*g\s*-?\d+\s*\\?\]+", re.I)
 
 @st.composite
 def _marked_lines(draw):
-    """``(line, base query, goal number, exact)`` for one marked model line."""
+    """``(line, expected query, goal number, exact)`` for one marked line."""
     base = draw(st.sampled_from(_BASE_QUERIES))
+    expected = base
     number = draw(st.sampled_from([1, 2]))
     mark = draw(st.sampled_from(_MARK_FORMS)).replace("{n}", str(number))
     place = draw(st.sampled_from(["front", "front-glued", "end", "both", "mid"]))
@@ -856,10 +865,10 @@ def _marked_lines(draw):
     if place == "front":
         line = f"{mark} {base}"
     elif place == "front-glued":
-        # No space after the mark: only unambiguous for a bare mark in
-        # front of a word (``[g1]"Wednesday 13" tour`` inside quotes
-        # reads as a quoted mark to a person too).
-        assume(base[0].isalnum())
+        # No space after the mark (round 6, G-N7: a quoted phrase glued
+        # behind it is back in). Only an asterisk glued behind a mark is
+        # left out: "[g1]*.rs" reads as emphasis to a person too.
+        assume(not base.startswith("*"))
         mark = f"[g{number}]"
         line = f"{mark}{base}"
     elif place == "end":
@@ -869,6 +878,9 @@ def _marked_lines(draw):
     else:
         assume(len(words) > 1)
         cut = draw(st.integers(1, len(words) - 1))
+        # A list number alone in front of a mark is a list number:
+        # "1. [g1] FC Koeln ..." loses its "1.", as it should.
+        assume(not re.fullmatch(r"\(?\d{1,3}[.)]", " ".join(words[:cut])))
         line = " ".join(words[:cut] + [mark] + words[cut:])
     at_front = place in ("front", "front-glued", "both")
     # Nested the way a model nests them: a number or a label directly in
@@ -877,9 +889,13 @@ def _marked_lines(draw):
     steps = draw(st.permutations(["before-mark", "line", "line"]))
     for step in steps[:draw(st.integers(0, 3))]:
         if step == "before-mark":
-            if at_front:
+            if at_front and draw(st.booleans()):
                 line = draw(st.sampled_from(_BEFORE_MARK_ONLY)).replace(
                     "{n}", str(draw(st.integers(1, 9)))).replace("{}", line)
+            elif at_front:
+                subject = draw(st.sampled_from(_SUBJECT_LABELS))
+                line = f"{subject}: {line}"
+                expected = f"{subject} {base}"
             continue
         wrapper = draw(st.sampled_from(_LINE_WRAPPERS))
         if not at_front:
@@ -891,7 +907,7 @@ def _marked_lines(draw):
         line = wrapper.replace("{}", line)
     for _ in range(draw(st.integers(0, 2))):
         line = draw(st.sampled_from(_FRONT_WRAPPERS)).replace("{}", line)
-    return line, base, number, exact
+    return line, expected, number, exact
 
 
 @hyp_settings(max_examples=600, deadline=None)
@@ -911,25 +927,55 @@ def test_no_wrapping_lets_a_mark_through_or_loses_its_goal(case):
         assert row["query"] == base, (line, row["query"])
 
 
+#: Unmarked lines that end in a colon and ARE queries (round 6, G-N1).
+_COLON_QUERIES = ["kyoto temples:", "what is new in rust:",
+                  "C++ scope resolution operator ::"]
+
+
+@hyp_settings(max_examples=300, deadline=None)
+@given(st.text(alphabet="abcxyz 19", min_size=1, max_size=12).filter(
+           lambda text: text.strip() and any(c.isalpha() for c in text)),
+       st.sampled_from([":", " ::", "::"]))
+def test_an_unmarked_line_ending_in_a_colon_alone_is_a_query(words, ending):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    line = " ".join(words.split()) + ending
+    assert _query_row(line, [(_G1, None)])["query"] == line
+
+
 @hyp_settings(max_examples=300, deadline=None)
 @given(st.lists(_marked_lines(), min_size=1, max_size=6),
        st.sampled_from(["\n", "\r\n", "\n\n"]),
-       st.sampled_from(["", "{i}. ", "{i}) ", "**{i}.** ", "- {i}. "]))
+       st.sampled_from(["", "{i}. ", "{i}) ", "**{i}.** ", "- {i}. "]),
+       st.booleans(),
+       st.sampled_from([None, *_COLON_QUERIES]))
 def test_no_response_lets_a_mark_through_whatever_its_numbering(
-        cases, newline, numbering):
+        cases, newline, numbering, with_cpp_line, last_line):
     """The same through the response parser, with the lines numbered the
-    ways a model numbers them (or not at all), under either line ending."""
+    ways a model numbers them (or not at all), under either line ending --
+    and with a "::" query among them and a query ending in a colon last
+    (round 6, G-N7)."""
     from tldw_chatbook.Dreams.query_synthesis import _response_rows
 
     goals = [(_G1, None), (_G2, None)]
+    entries = [(line, number) for line, _expected, number, _exact in cases]
+    if with_cpp_line:
+        entries.insert(len(entries) // 2,
+                       ("C++ scope resolution operator ::", None))
     response = "Here are your queries:" + newline + newline.join(
         numbering.replace("{i}", str(index)) + line
-        for index, (line, _base, _number, _exact) in enumerate(cases, start=1))
+        for index, (line, _number) in enumerate(entries, start=1))
+    if last_line is not None:
+        response += newline + last_line
+        entries.append((last_line, None))
 
     rows = _response_rows(response, goals)
 
-    assert len(rows) == len(cases), response
-    for row, (line, _base, number, _exact) in zip(rows, cases):
+    assert len(rows) == len(entries), response
+    for row, (line, number) in zip(rows, entries):
+        if number is None:
+            assert row["query"] == line and row["goal"] is None, (line, row)
+            continue
         assert not _MARK_ANYWHERE_RE.search(row["query"]), (line, row["query"])
         assert row["goal"] == goals[number - 1][0], (line, row)
 
@@ -1167,3 +1213,22 @@ def test_a_mark_glued_to_a_word_is_searched_as_text(line):
 
     assert _query_row(line, [(_G1, None)]) == {
         "query": line, "goal_derived": False, "goal": None}
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        ('[g1]"Wednesday 13" tour dates', '"Wednesday 13" tour dates'),
+        ('"[g1]"Wednesday 13" tour dates 2026"',
+         '"Wednesday 13" tour dates 2026'),
+        ('"[g1]" cheap flights', "cheap flights"),
+        ('**"[g1]"** cheap flights', "cheap flights"),
+    ],
+)
+def test_a_quote_glued_behind_a_mark_opens_the_phrase(line, query):
+    """Found by the widened generator (round 6, G-N7): a wrapper around a
+    mark closes only where Markdown closes one, not glued to a word."""
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}

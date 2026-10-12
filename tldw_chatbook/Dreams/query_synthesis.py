@@ -153,6 +153,9 @@ _CLOSER_OF = dict(_MARK_WRAP_PAIRS)
 #: ...and what a mark is GROWN over: the same, plus further brackets --
 #: ``[[[[g1]]]]`` is one mark, not "[ ]" around one (round 6, G-N2).
 _MARK_GROWTH_PAIRS = _MARK_WRAP_PAIRS + (("\\[", "\\]"), ("[", "]"))
+#: What may follow a wrapper that closes around a mark: punctuation after
+#: the mark, or another closer.
+_CLOSES_A_WRAPPER = ":.,;*_\"'`)\u201d\u2019"
 _OPENING_WRAP_CHARS = "*_\"'`\u201c\u2018("
 _WRAP_TOKEN_RE = re.compile(
     r"\*\*|__|[*_\"'`\u201c\u201d\u2018\u2019()]")
@@ -336,8 +339,16 @@ def _grown_over_wrapping(text: str, start: int, end: int) -> tuple[int, int]:
     while grown:
         grown = False
         for opening, closing in _MARK_GROWTH_PAIRS:
+            after = end + len(closing)
             if (text.endswith(opening, 0, start)
-                    and text.startswith(closing, end)):
+                    and text.startswith(closing, end)
+                    # A wrapper closes only where Markdown closes one:
+                    # not glued to the next word. In '"[g1]"Wednesday 13"
+                    # tour"' the quote after the mark OPENS the phrase
+                    # (round 6, G-N7); brackets may be glued.
+                    and (closing in ("]", "\\]") or after == len(text)
+                         or text[after].isspace()
+                         or text[after] in _CLOSES_A_WRAPPER)):
                 start, end = start - len(opening), end + len(closing)
                 if text.startswith(":", end):
                     end += 1
