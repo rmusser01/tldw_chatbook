@@ -455,11 +455,24 @@ async def test_ro_first_rw_second_binding_refresh_launches_authorized_edit(
             summary = str(modal.query_one("#goal-selected-tools").render())
             assert "local:fs_edit" in summary and "local:fs_read" not in summary
             await pilot.click("#goal-start")
+            # The selected-root edit is native work, not a UI refresh. Observe
+            # its owning runner within the request's existing execution budget.
+            assert co._launch_task is not None
+            await asyncio.wait_for(
+                asyncio.shield(co._launch_task),
+                timeout=modal._submitted.policy.iteration_wall_seconds,
+            )
+            assert co._runner is not None
+            await asyncio.wait_for(
+                asyncio.shield(co._runner),
+                timeout=modal._submitted.policy.iteration_wall_seconds,
+            )
             for _ in range(200):
-                if calls and co.active_goal_id is None:
+                if artifact.read_text() == "valid\n":
                     break
                 await pilot.pause(0.01)
             assert artifact.read_text() == "valid\n"
+            assert calls
             assert (
                 ordinary.draft == "ordinary draft"
                 and store.active_session_id == ordinary.id
@@ -522,6 +535,100 @@ async def test_binding_discovery_ignores_late_cancelled_refresh(stores):
         assert modal.tool_ids == ("local:fs_read", "local:fs_edit")
         assert "local:fs_edit" in modal.query_one("#goal-tools", SelectionList).selected
         assert not modal.query_one("#goal-start").disabled
+
+
+@pytest.mark.asyncio
+async def test_removed_setup_controls_ignore_delayed_catalog(stores):
+    import asyncio
+
+    from textual.widgets import Select
+
+    req = stores[3]
+    readonly = req.binding.model_copy(update={"binding_id": "readonly", "access": "ro"})
+    entered, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    launches = []
+
+    async def discover(binding):
+        if binding.binding_id == "readonly":
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                await release.wait()
+        finished.set()
+        return ("local:fs_read",)
+
+    async def start(*args):
+        launches.append(args)
+        pytest.fail("Removed setup controls cannot launch")
+
+    app = App(css_path=str(BUNDLED_STYLESHEET))
+    async with app.run_test() as pilot:
+        modal = setup_view()(
+            req,
+            start=start,
+            bindings=(req.binding, readonly),
+            tool_ids=("local:fs_read",),
+            discover_tools=discover,
+            configure=lambda *args: None,
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        modal.query_one("#goal-binding", Select).value = "readonly"
+        await asyncio.wait_for(entered.wait(), 1)
+        await modal.query_one("#goal-tools").remove()
+        await pilot.pause()
+        release.set()
+        await asyncio.wait_for(finished.wait(), 1)
+        await pilot.pause()
+        assert app.screen is modal
+        assert modal._catalog_binding_id == req.binding.binding_id
+        assert not launches
+
+
+@pytest.mark.asyncio
+async def test_dismissed_setup_does_not_publish_delayed_validation(stores):
+    import asyncio
+
+    from tldw_chatbook.Agents.goal_models import GoalRequest
+
+    entered, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    launches = []
+
+    async def configure(values, *args):
+        entered.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        finished.set()
+        return GoalRequest.model_validate(values)
+
+    async def start(*args):
+        launches.append(args)
+        pytest.fail("Dismissed setup cannot launch")
+
+    app = App(css_path=str(BUNDLED_STYLESHEET))
+    async with app.run_test() as pilot:
+        modal = setup_view()(
+            stores[3],
+            start=start,
+            bindings=(stores[3].binding,),
+            tool_ids=stores[3].tool_scope.catalog_tools,
+            configure=configure,
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        await pilot.click("#goal-start")
+        await asyncio.wait_for(entered.wait(), 1)
+        app.pop_screen()
+        await pilot.pause()
+        release.set()
+        await asyncio.wait_for(finished.wait(), 1)
+        await pilot.pause()
+        assert app.screen is not modal
+        assert modal._submitted is None
+        assert not launches
 
 
 @pytest.mark.asyncio

@@ -61,3 +61,20 @@ The task-1 report records the complete fixed commit and byte-bound qualification
 when finished. The historical plan's added trailing whitespace is corrected.
 
 Code fix commit: `790d456f213c7c185e756f490162c47887bbae8e`. Supporting fix lanes pass 80 Goal runtime, 96 current owner/budget/hook/maintenance, and 36 mounted UI cases without resource warnings. Exact post-finalizer probes report zero retained AgentRuns, Chat and Workspace handles. Final complete-head qualification uses `pr2563-fixed-head-receipt.json` and `pr2563-fixed-head-verification.txt`; the report preserves both prior failed resource evidence and the baseline JSON overwrite/repeat provenance.
+
+
+## Task 2: Satisfy actual publication diagnostic and async-UI contracts
+
+This task closes newly observed required local preflight failures after independent complete-head review. It is the same authorized first-release scope, not an additional feature or changed architecture. Initial rebased head e1e2818dfacd5d31887b14178d6a812ffdc16885; actual base9f8533686c6f5d775b98a18bd57c9bee4c518c9f. Frozen pre-rebase review head b919d3ac0a040b7694fe1233497a3a19f2425499 is preserved at codex/wave2-reviewed-pr-2563-b919.
+
+ADR required: no new ADR.
+ADR path: existing227 native Goals,097 diagnostics/reference-backed Console and150 UI tokens.
+Reason: correct required artifact records and post-await widget lifetime handling within existing ownership; no new lifecycle authority or diagnostics/privacy policy.
+
+1. Read pr2563-fixed-preflight.log in the external wave2 evidence directory. The first restricted-network Mermaid failure is separately superseded by pr2563-fixed-mermaid-network.log, which passed6outputs; do not change that guard or assets.
+2. Inspect exact diagnostic statement deltas in console_goal_runs.py, console_chat_store.py and console_conversation_hydration.py using the existing inventory checker's --statements/--since interface, against actual pinned base. Verify moved calls retain metadata-only arguments, no user content/secrets/path leakage and no new persistent sink; only then regenerate the production diagnostic inventory. Record actual statements/dispositions rather than blindly --write.
+3. Fix the six actual post-await DOM callback contracts in console_goal_setup_modal.py launch/refresh_tools and console_goal_status.py control_pressed/load_goal/resume_goal/show_iteration. Use existing guarded current-widget patterns; keep service operations/accounting physical ownership and confirmed launch authority unchanged. After awaits, a removed/dismissed subtree must not crash or be retargeted. Do not add blanket exceptions, census exemptions, arbitrary mount assertions or stale side effects to silence the check. If a lookup is truly safe, document its exact owner proof rather than waive by default.
+4. Add one focused held-await mounted regression for setup and status demonstrating dismissal/removal during real delayed service/catalog work without NoMatches, late UI publication or incorrect control authority. Cover existing setup/control/navigation/CLI paths affected by changed callbacks. Preserve every current cap; no full sweep or cloud/user profile.
+5. Run all actual derived-artifact preflight guards with pinned public Mermaid input network access, scoped Ruff/format/diff/baseline-size checks and the targeted changed-widget behavior lane. Commit only these task-owned product/tests/inventory/task/plan files with normal hooks and gc.auto=0. Root obtains both spec and quality scoped review of this new Task2 diff, then performs final hygiene/publication. Keep all seven tasks In Progress/AC5 unchecked until the required guards/review pass.
+
+Report: this plan's SDD task-2-report.md; exact commands/results/head/source hashes, diagnostics review and held-await proof, commits and concerns. No GitHub writes or child agents. Root owns publication and merge.

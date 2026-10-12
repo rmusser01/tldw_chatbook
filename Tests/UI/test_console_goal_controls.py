@@ -175,7 +175,10 @@ async def test_view_unmount_does_not_cancel_runtime_and_removed_history_has_no_r
             app.push_screen(goal_view()(coordinator, goal.id))
             await pilot.pause()
             await click_goal(pilot, "#goal-remove")
-            await pilot.pause()
+            for _ in range(200):
+                if not app.screen.query_one("#goal-resume").display:
+                    break
+                await pilot.pause(0.01)
             assert not app.screen.query_one("#goal-resume").display
             assert (
                 "removed" in str(app.screen.query_one("#goal-state").render()).lower()
@@ -203,6 +206,43 @@ async def test_runtime_notifications_are_body_free_detachable_and_do_not_reaudit
         await asyncio.sleep(0)
         assert len(observed) == count
     finally:
+        await coordinator.shutdown()
+        await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_removed_status_controls_ignore_delayed_service_read(stores, monkeypatch):
+    goal, _, _, _, coordinator, gateway, _calls = build_goal_rig(stores, monkeypatch)
+    entered, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original_call = coordinator.service.call
+
+    async def delayed_call(method, *args, **kwargs):
+        if method == coordinator.service.get:
+            entered.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                await release.wait()
+        result = await original_call(method, *args, **kwargs)
+        finished.set()
+        return result
+
+    monkeypatch.setattr(coordinator.service, "call", delayed_call)
+    app = GoalHarness(coordinator, goal.id)
+    try:
+        async with app.run_test() as pilot:
+            modal = app.screen
+            await asyncio.wait_for(entered.wait(), 1)
+            await modal.query_one("#goal-accounting").remove()
+            await pilot.pause()
+            release.set()
+            await asyncio.wait_for(finished.wait(), 1)
+            await pilot.pause()
+            assert app.screen is modal
+            assert modal.snapshot is None
+            assert coordinator.service.get(goal.id).revision == goal.revision
+    finally:
+        release.set()
         await coordinator.shutdown()
         await gateway.aclose()
 
