@@ -8110,6 +8110,8 @@ class SettingsScreen(BaseAppScreen):
         self, provider: object, draft_key: str, values: dict[str, object]
     ) -> Select:
         """Build the staged closed-enum Select for a model-profile field."""
+        from ..Settings_Modules.settings_field_rows import INHERIT_PROMPT
+
         supported = self._model_profile_field_supported(
             provider, draft_key, values.get("model")
         )
@@ -8128,7 +8130,7 @@ class SettingsScreen(BaseAppScreen):
             id=f"settings-{draft_key.replace('_', '-')}",
             classes="settings-compact-select",
             allow_blank=True,
-            prompt="Inherit",
+            prompt=INHERIT_PROMPT,
             compact=True,
             disabled=not supported,
         )
