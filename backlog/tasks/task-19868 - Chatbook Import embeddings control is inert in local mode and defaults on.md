@@ -63,19 +63,19 @@ sweep will trust it.
 
 ## Acceptance Criteria
 
-- [ ] In local mode the user is not told that vector embeddings will be
+- [x] In local mode the user is not told that vector embeddings will be
       imported, whether by the control's presence, its label, or its default
       state
-- [ ] The control's behaviour matches the mode it is shown in — it is either
+- [x] The control's behaviour matches the mode it is shown in — it is either
       absent, disabled with a reason, or honoured
-- [ ] The capability gap is recorded: chatbooks do not contain embeddings
+- [x] The capability gap is recorded: chatbooks do not contain embeddings
       because the exporter never writes them, so the import side has nothing to
       consume even in principle
-- [ ] A test asserts that the local import path's collected options contain no
+- [x] A test asserts that the local import path's collected options contain no
       key that the local import call ignores, and is mutation-checked
       (re-adding an ignored key makes it red)
-- [ ] The comment at `:789-791` is either true of the code or removed
-- [ ] The server-mode path continues to filter embeddings on this value (no
+- [x] The comment at `:789-791` is either true of the code or removed
+- [x] The server-mode path continues to filter embeddings on this value (no
       regression to the half that works)
 
 ## Notes
@@ -84,3 +84,11 @@ The reason to fix the *default* and not only the wiring: a control that is off
 by default and does nothing is clutter, while a control that is **on** by
 default and does nothing is a claim. This one is a claim, made on every import,
 about a feature neither end of the pipeline implements.
+
+## Implementation Notes (post-review closeout, 2026-10-12; code shipped in PR #3082's original series)
+
+**What shipped** (commits 2727d5e8a4 series in this PR): the import embeddings option now matches the mode — control hidden in local mode, defaults OFF in server mode, key collected only in server mode; the false "every key is consumed" comment replaced with the true per-mode contract; `import_embeddings` removed from `import_chatbook`'s signature as a signature lock against silent reintroduction.
+
+**Capability-gap rationale (AC#3, recorded here per the reviewer's finding):** the embeddings option exists only for the server-import path — local imports run the embeddings pipeline unconditionally after import, so exposing the toggle locally would be a no-op lie; in server mode the server's job consumes the key, so the control is real there and only there. Code comments and the wizard copy encode this; this note is the task-file record.
+
+**DoD note:** the original agent session flipped status to Done without ticking ACs or writing notes — caught by the coordinator's post-hoc code review; the reviewer verified the code and tests genuinely satisfy all six ACs, so the boxes are now ticked with this provenance recorded rather than backdated silently.
