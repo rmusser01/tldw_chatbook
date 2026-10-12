@@ -563,9 +563,22 @@ class _CaptureStore(ConsoleChatStore):
         super().__init__(**kwargs)
         self.continuation_errors: list[str] = []
 
-    def persist_provider_continuation_event(self, event: Any) -> None:
+    def persist_provider_continuation_event(
+        self,
+        event: Any,
+        *,
+        checkpoint_finalizer: Any = None,
+    ) -> None:
+        # TASK-19642.7: the bridge's persist callback grew the
+        # ``checkpoint_finalizer`` kwarg with the managed-plugin continuation
+        # work (a7edb381d2, "Drain managed plugin revisions and constrain
+        # retained continuation authority"); forward it instead of
+        # TypeError-ing the run into "Provider continuation could not be
+        # persisted".
         try:
-            super().persist_provider_continuation_event(event)
+            super().persist_provider_continuation_event(
+                event, checkpoint_finalizer=checkpoint_finalizer
+            )
         except Exception as exc:
             self.continuation_errors.append(f"{type(exc).__name__}: {exc}")
             raise
@@ -935,6 +948,15 @@ def test_hosted_partial_call_cancellation_never_executes(
     assert server.stall_started.is_set()
     assert not server.stall_timed_out.is_set()
     assert len(server.requests) == 1
+    # TASK-19642.7: the cancelled stream's response is closed OFF the turn's
+    # critical path (a shielded async close task on the bridge loop, landed
+    # with the duplex-voice integration b7dd8e53f2), so the close can land
+    # just after run_reply returns. Wait for it deterministically instead of
+    # asserting it happened synchronously; the exactly-once count below is
+    # unchanged.
+    assert client_close_started.wait(timeout=10), (
+        "cancelled stream response was never closed"
+    )
     assert len(close_calls) == 1
     assert executions == []
     assert owner.provider_continuation is None

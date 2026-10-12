@@ -957,6 +957,15 @@ def test_qwencloud_partial_call_cancellation_never_executes(
     assert len(server.requests) == 1
     assert server.stall_started.is_set()
     assert not server.stall_timed_out.is_set()
+    # TASK-19642.7: the cancelled stream's response is closed OFF the turn's
+    # critical path (a shielded async close task on the bridge loop, landed
+    # with the duplex-voice integration b7dd8e53f2), so the close can land
+    # just after run_reply returns. Wait for it deterministically instead of
+    # asserting it happened synchronously; the exactly-once count below is
+    # unchanged.
+    assert client_close_started.wait(timeout=10), (
+        "cancelled stream response was never closed"
+    )
     assert len(close_calls) == 1
     assert executions == []
     assert not any(step.kind in {"tool_call", "tool_result"} for step in outcome.steps)
@@ -991,11 +1000,19 @@ def test_qwencloud_responses_usage_enforces_agent_budget(
         [("fc_budget", "call_budget", '{"expression":"2+2"}')],
         usage=usage,
     )
-    with _joined_qwen_server([body]) as server:
+    # TASK-19642.7: since 34d4ccb91b ("warn before budget exhaustion;
+    # summarize at it") the exhausted path makes ONE extra tools-stripped
+    # wrap-up summary call before the honest RUN_STUCK -- script its answer
+    # and expect two requests instead of one.
+    wrap_up = _responses_final_turn("SUMMARY-OF-PARTIAL-RUN")
+    with _joined_qwen_server([body, wrap_up]) as server:
         outcome, _store = _run_joined_reply(tmp_path, server, "responses")
 
     assert outcome.status == "stuck"
-    assert outcome.total_tokens == budget + 1
-    assert len(server.requests) == 1
+    # The +35 is the wrap-up summary call's own scripted usage
+    # (input 30 + output 5) -- the exhaustion accounting keeps counting the
+    # one bounded call it makes after the budget trips.
+    assert outcome.total_tokens == budget + 1 + 35
+    assert len(server.requests) == 2
     assert outcome.steps[-1].kind == "error"
     assert outcome.steps[-1].summary == "token budget exhausted"

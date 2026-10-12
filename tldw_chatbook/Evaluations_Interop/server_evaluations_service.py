@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
 
 if TYPE_CHECKING:
@@ -35,6 +34,18 @@ class ServerEvaluationsService:
         *,
         policy_enforcer: Any | None = None,
     ) -> "ServerEvaluationsService":
+        # TASK-19642.24: deferred like the tldw_api imports below (task-285
+        # phase 2). runtime_policy.bootstrap module-imports
+        # Utils.tls_trust -> httpx (094f9fb1d9), and Evaluations_Interop's
+        # package __init__ imports this service eagerly, so a module-level
+        # import here dragged the HTTP measurement stack into every
+        # local-only consumer -- character_probe.storage among them, whose
+        # import-boundary test pins that httpx never loads. Only this
+        # construction path needs the policy bootstrap.
+        from ..runtime_policy.bootstrap import (
+            build_runtime_api_client_provider_from_config,
+        )
+
         return cls(
             client=None,
             client_provider=build_runtime_api_client_provider_from_config(app_config),
