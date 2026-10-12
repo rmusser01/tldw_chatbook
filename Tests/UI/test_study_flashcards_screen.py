@@ -1424,6 +1424,50 @@ def _study_app_for(scope):
     return _build_full_study_app(app_instance)
 
 
+async def _until(pilot, condition, what: str) -> None:
+    for _ in range(250):
+        if condition():
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
+async def _open_flashcards_deck(pilot, app, scope):
+    """Open Flashcards on deck-local-1 and wait for its cards, with no sleep.
+
+    Args:
+        pilot: The running test pilot.
+        app: The full Study app under test.
+        scope: Its `GatedCardListStudyScopeService`; the gate is left open.
+
+    Returns:
+        The Study window, the deck Select and the card ListView.
+    """
+    await _until(
+        pilot, lambda: bool(app.screen.query("#view-flashcards-btn")), "the Study screen"
+    )
+    await pilot.click("#view-flashcards-btn")
+    await _until(pilot, lambda: bool(app.screen.query("#deck-select")), "Flashcards")
+    window = app.screen.query_one(StudyWindow)
+    deck_select = app.screen.query_one("#deck-select", Select)
+    card_list = window.query_one("#card-list", ListView)
+    scope.gate.set()
+    await _until(
+        pilot,
+        lambda: "deck-local-1" in _non_blank_option_values(deck_select._options),
+        "the deck list",
+    )
+    deck_select.value = "deck-local-1"
+    # The deck change's own rebuild: one listing, then its rows.
+    await _until(
+        pilot,
+        lambda: scope.list_calls >= 1 and len(card_list.children) > 0,
+        "the deck's cards",
+    )
+    await pilot.pause()
+    return window, deck_select, card_list
+
+
 async def _enter_review(pilot, app):
     """Open Flashcards, pick the deck, start a review and reveal the answer."""
     await pilot.pause(0.2)
@@ -1605,35 +1649,28 @@ async def test_a_held_card_list_rebuild_ends_quietly_when_the_sub_view_is_swappe
     app = _study_app_for(scope)
 
     async with app.run_test(size=(180, 60)) as pilot:
-        await pilot.pause(0.2)
-        await pilot.click("#view-flashcards-btn")
-        await pilot.pause(0.3)
-        window = app.screen.query_one(StudyWindow)
+        window, _deck_select, _card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
         controller = window.flashcards_controller
-        scope.gate.set()
-        await pilot.pause(0.3)
-        app.screen.query_one("#deck-select", Select).value = "deck-local-1"
-        await pilot.pause(0.3)
 
         # Hold one rebuild inside `list_flashcards`, then leave Flashcards.
         scope.gate.clear()
         held = scope.list_calls
         rebuild = asyncio.ensure_future(controller.refresh_cards())
-        for _ in range(200):
-            if scope.list_calls > held:
-                break
-            await pilot.pause(0.01)
-        assert scope.list_calls == held + 1, "the rebuild never reached the service"
+        await _until(
+            pilot, lambda: scope.list_calls > held, "the rebuild to reach the service"
+        )
         window.current_view = "quizzes"
-        for _ in range(200):
-            if not window.query("#review-status"):
-                break
-            await pilot.pause(0.01)
-        assert not window.query("#review-status"), "Flashcards was not swapped out"
+        await _until(
+            pilot,
+            lambda: not window.query("#review-status"),
+            "Flashcards to be swapped out",
+        )
 
         scope.gate.set()
         await rebuild  # NoMatches before the fix
-        await pilot.pause(0.1)
+        await pilot.pause()
         assert window.current_view == "quizzes"
 
 
@@ -1652,35 +1689,11 @@ async def test_two_awaited_card_list_rebuilds_do_not_interleave():
     scope = GatedCardListStudyScopeService()
     app = _study_app_for(scope)
 
-    async def until(condition, what: str) -> None:
-        for _ in range(250):
-            if condition():
-                return
-            await pilot.pause(0.02)
-        raise AssertionError(f"timed out waiting for {what}")
-
     async with app.run_test(size=(180, 60)) as pilot:
-        await until(
-            lambda: bool(app.screen.query("#view-flashcards-btn")), "the Study screen"
+        window, _deck_select, card_list = await _open_flashcards_deck(
+            pilot, app, scope
         )
-        await pilot.click("#view-flashcards-btn")
-        await until(lambda: bool(app.screen.query("#deck-select")), "Flashcards")
-        window = app.screen.query_one(StudyWindow)
         controller = window.flashcards_controller
-        deck_select = app.screen.query_one("#deck-select", Select)
-        card_list = window.query_one("#card-list", ListView)
-        scope.gate.set()
-        await until(
-            lambda: "deck-local-1" in _non_blank_option_values(deck_select._options),
-            "the deck list",
-        )
-        deck_select.value = "deck-local-1"
-        # The deck change's own rebuild: one listing, then its rows.
-        await until(
-            lambda: scope.list_calls >= 1 and len(card_list.children) > 0,
-            "the deck's cards",
-        )
-        await pilot.pause()
 
         # Hold both awaited rebuilds open together. The gate stops the one
         # that reaches the listing; the pauses then let the other run as far
@@ -1690,7 +1703,9 @@ async def test_two_awaited_card_list_rebuilds_do_not_interleave():
         scope.gate.clear()
         first = asyncio.ensure_future(controller.refresh_cards())
         second = asyncio.ensure_future(controller.refresh_cards())
-        await until(lambda: scope.list_calls > listed, "a rebuild to reach the listing")
+        await _until(
+            pilot, lambda: scope.list_calls > listed, "a rebuild to reach the listing"
+        )
         await pilot.pause()
         await pilot.pause()
         scope.gate.set()
