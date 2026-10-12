@@ -497,7 +497,7 @@ def _query_row(
     goals: list[tuple[str, str | None]],
     *,
     numbered: bool = False,
-    followed: bool = False,
+    heads_a_list: bool = False,
 ) -> dict | None:
     """One model line as a query row: its goal read, the line cleaned.
 
@@ -517,18 +517,26 @@ def _query_row(
 
     A heading line, a code fence, a label line, a line with no letter or
     digit in it and a line too long to be a query give no row. A label
-    line is an unmarked line ending in one colon (``Goal queries:``) with
-    another line after it (``followed``); the last line of a response,
-    and one ending in ``::``, is a query even if it ends in a colon
-    (round 6, G-N1: "kyoto temples:" and "C++ scope resolution operator
-    ::" were dropped).
+    line is an unmarked line ending in one colon (``Goal queries:``)
+    that heads a list (``heads_a_list``: it is the response's first line
+    with another line after it, or the line after it is a marked or
+    numbered query -- see :func:`_response_rows`). Any other line that
+    ends in a colon, and every line ending in ``::``, is a query (round
+    6, G-N1; round 7, H3).
+
+    What this still gets wrong, by construction: a real query ending in
+    one colon that is the first line of a longer response, or that is
+    followed by a marked or numbered query, is read as a label and
+    dropped ("Re:Zero season 3:" right above "[g1] ..."). And a heading
+    without a colon, or one above plain lines in the middle of a
+    response ("More ideas:" above "jazz guitar"), is searched.
 
     Args:
         line: One non-blank response line.
         goals: The ``(text, angle)`` pairs of the SEARCHABLE goals, in the
             order the payload listed them.
         numbered: The response numbers its lines.
-        followed: Another line of the response comes after this one.
+        heads_a_list: The line stands where a heading over a list stands.
 
     Returns:
         ``{"query", "goal_derived", "goal"}``, or ``None`` when nothing is
@@ -553,7 +561,7 @@ def _query_row(
     unmarked = _without_marks(text, tuple(goal for goal, _angle in goals))
     if unmarked is not None:
         text, positions = unmarked
-    elif followed and text.endswith(":") and not text.endswith("::"):
+    elif heads_a_list and text.endswith(":") and not text.endswith("::"):
         return None  # "Goal queries:" -- a label over the lines that follow
     text = " ".join(_unwrap(text.strip()).split())
     if not any(char.isalnum() for char in text):
@@ -576,9 +584,19 @@ def _response_rows(
     lines = [line for line in response_text.splitlines()
              if line.strip(_LINE_EDGE) and len(line) <= _MAX_QUERY_LINE_LENGTH]
     numbered = _is_numbered(lines)
+
+    def heads_a_list(index: int) -> bool:
+        """The first of several lines, or right above a marked or
+        numbered query (round 7, H3)."""
+        if index + 1 >= len(lines):
+            return False
+        following = lines[index + 1]
+        return (index == 0 or bool(_GOAL_MARK_RE.search(following))
+                or _leading_number(following) is not None)
+
     rows = (
         _query_row(line, goals, numbered=numbered,
-                   followed=index < len(lines) - 1)
+                   heads_a_list=heads_a_list(index))
         for index, line in enumerate(lines))
     return [row for row in rows if row is not None]
 

@@ -1338,3 +1338,68 @@ def test_a_goal_label_drops_its_description_only_when_it_repeats_the_goal(
     goals = [("visit tokyo", None), ("learn the cello", None)]
     assert _query_row(line, goals) == {
         "query": query, "goal_derived": True, "goal": "visit tokyo"}
+
+
+# --- H3: a colon line is a label over a list, not over any line ------------------
+#
+# Round 6 (G-N1) dropped every unmarked line ending in one colon that was
+# not the response's last line, so a real query in the middle of a plain
+# list was lost. A colon line is a label only when it is the first line,
+# or when the line after it is a marked or numbered query.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response, queries",
+    [
+        ("rust tui news\nwhat is new in rust:\njazz guitar",
+         ["rust tui news", "what is new in rust:", "jazz guitar"]),
+        ("rust tui news\nRe:Zero season 3:\njazz guitar",
+         ["rust tui news", "Re:Zero season 3:", "jazz guitar"]),
+        ("rust tui news\nwhat is new in rust:\n```",
+         ["rust tui news", "what is new in rust:"]),
+        # Labels.
+        ("rust tui news\nGoal queries:\n[g1] wednesday 13 tour",
+         ["rust tui news", "wednesday 13 tour"]),
+        ("rust tui news\nMore ideas:\n1. cello lessons\n2. tour dates",
+         ["rust tui news", "cello lessons", "tour dates"]),
+        ("Here you go:\nrust tui news\njazz guitar",
+         ["rust tui news", "jazz guitar"]),
+    ],
+)
+async def test_a_colon_line_heads_a_list_only_when_it_looks_like_one(
+        response, queries):
+    chat, _calls = _capture_chat(response)
+
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [row["query"] for row in rows] == queries
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response, queries",
+    [
+        # The residue the _query_row docstring names, pinned so it cannot
+        # widen silently: a query ending in a colon as the FIRST of several
+        # lines, or right above a marked or numbered query, is a label.
+        # (Two queries after it: one usable line alone would send the
+        # synthesis to its fallback.)
+        ("Re:Zero season 3:\njazz guitar\nrust tui news",
+         ["jazz guitar", "rust tui news"]),
+        ("rust tui news\nRe:Zero season 3:\n[g1] wednesday 13 tour",
+         ["rust tui news", "wednesday 13 tour"]),
+        # ...and a heading above plain lines in the middle is searched.
+        ("rust tui news\nMore ideas:\njazz guitar",
+         ["rust tui news", "More ideas:", "jazz guitar"]),
+    ],
+)
+async def test_the_colon_line_residue_is_what_the_docstring_says(
+        response, queries):
+    chat, _calls = _capture_chat(response)
+
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [row["query"] for row in rows] == queries
