@@ -320,6 +320,10 @@ watch is checked more often than once per
   searchable from the moment you add it; **s** in the goals list makes
   one private, and a private goal's text and angle are never sent. Never
   note bodies or Personal Context records either.
+- When two or more story slots are available, a goal result gets one place if
+  topic ranking would otherwise exclude every goal result. The remaining topic
+  choices keep their order. This does not change your goal weights or daily
+  budgets; a one-slot collection keeps its existing ranking.
 - Everything is stored locally in the Dreams SQLite database.
 
 Dreams' interest profile can also draw on [Guardian](guardian.md):

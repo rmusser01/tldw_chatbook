@@ -222,3 +222,23 @@ chat/Guardian boundaries, mixed selection, production Library routing/actions/
 degradation, unsafe literal sinks, modal/F4/token/docs/live checks and bounded
 required-lane membership/final source binding. No complete-product/task/merge
 claim. No broad rerun of unaffected prior phases.
+
+
+## Checkpoint: measured mixed goal/topic selection (TASK34801)
+
+ADR196 amendment7213b4d6e2 preceded the bounded opportunity rule. After existing
+URL exclusion/deduplication and stable topic ranking, a selection of at least
+two stories reserves its final slot for the highest-ranked goal result only
+when no goal result was otherwise selected. Other topic choices retain order;
+already-selected goal results and one-slot collections keep existing ranking.
+Generating goal/query attribution, topic matching, private-goal filtering,
+weights and shared reservations retain their existing owners.
+
+Mixed-selection-red-1: two intended failures/one exclusion-positive0.91s.
+Actual native mixed-profile cycle before:3topic/0goal stories,2searches/4model
+calls. After:2topic/1exact-goal story, same2searches/4model calls. Both public
+and private goal weights remain unchanged; private text enters neither model
+prompts nor search queries. Mixed-selection-green-1:16pass2.55s, including
+existing dedup/exact-goal feedback/private-goal/lexical-non-attribution controls.
+Ranker and direct ranking tests Ruff clean; diff clean. User guide records the
+capacity limit. Tasks remain InProgress pending full integration and review.

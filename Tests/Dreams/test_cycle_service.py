@@ -2080,3 +2080,38 @@ def test_feedback_steers_the_exact_goal_not_its_case_twin(dreams_db):
     angles = {row["text"]: row.get("query_angle")
               for row in dreams_db.list_profile() if row["facet"] == "goal"}
     assert angles == {"Visit Japan": "avoid: deal", "visit japan": None}
+
+
+@pytest.mark.asyncio
+async def test_mixed_profile_cycle_keeps_topic_and_goal_stories_without_changing_budgets(
+        dreams_db, settings):
+    _seed_topics(dreams_db)
+    dreams_db.upsert_profile_entry("goal", "learn cello", weight=0.9, searchable=1, source="user")
+    dreams_db.upsert_profile_entry("goal", "private medical goal", weight=1.0, searchable=0, source="user")
+    settings.update(stories_per_cycle=3, queries_per_cycle=2, exploration_slots=0)
+    prompts = []
+    searched = []
+    def chat(**kwargs):
+        prompts.append(str(kwargs))
+        if "search queries" in str(kwargs.get("system_message") or ""):
+            return {"choices": [{"message": {"content": "rust tui resources\n[g1] cello teacher sessions"}}]}
+        return _fake_chat(**kwargs)
+    def perform(engine, query, **kwargs):
+        searched.append(query)
+        prefix = "topic" if "rust" in query else "goal"
+        return {"results": [{"title": "rust tui resources" if prefix == "topic" else "local teacher sessions",
+                             "url": f"https://mixed.test/{prefix}/{i}", "content": "public details"}
+                            for i in range(3)]}
+    result = await run_cycle(_deps(dreams_db, perform=perform, chat=chat), trigger="manual")
+    stories = dreams_db.list_stories(result["collection_id"])
+    measurement = {"stories": len(stories), "goal_stories": sum(row["goal"] is not None for row in stories),
+                   "topic_stories": sum(row["goal"] is None for row in stories), "usage": dreams_db.usage_get(_today())}
+    print("MIXED_PROFILE_SELECTION", measurement)
+    assert measurement == {"stories": 3, "goal_stories": 1, "topic_stories": 2,
+                           "usage": {"searches": 2, "llm_calls": 4}}
+    goal_story = next(row for row in stories if row["goal"] is not None)
+    assert (goal_story["goal"], goal_story["query"]) == ("learn cello", "cello teacher sessions")
+    assert all("private medical goal" not in prompt for prompt in prompts)
+    assert all("private medical goal" not in query for query in searched)
+    assert {row["text"]: row["weight"] for row in dreams_db.list_profile() if row["facet"] == "goal"} == {
+        "learn cello": 0.9, "private medical goal": 1.0}
