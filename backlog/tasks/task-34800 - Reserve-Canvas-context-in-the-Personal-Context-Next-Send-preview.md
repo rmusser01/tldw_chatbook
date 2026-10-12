@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-11 23:58'
-updated_date: '2026-10-12 04:24'
+updated_date: '2026-10-12 04:58'
 labels:
   - memory
   - canvas
@@ -44,6 +44,8 @@ Reason: bounded correction of disposable first-request budgeting under existing 
 Current-dev reconciliation (2026-10-11): repeat production preview/dispatch, current Goal narrowing, Canvas authority and private sidecar boundary qualification on the final integrated source. Preserve current budget/permission/custody owners and all original limits. Historical source evidence below is not a current-dev qualification claim.
 
 Complete-head review correction: follow Task2 in Docs/superpowers/plans/2026-10-11-pr2862-current-dev-integration.md. ADR required: no new ADR. Existing191/102/150/161 and required-regression governance apply. Reject pending-first retired provenance with a cheap host identity fence, preserve off-thread bootstrap, use literal Text.assemble, gate bounded critical privacy/native/Canvas/currentness/original-retirement regressions, and correct living architecture inventory before independent re-review and actual sequential-base qualification. Existing source/receipt history remains sealed; native observation entries are not unique-owner counts.
+
+Task4: reconcile independently cleared feature-only range onto actual merged Goal9595facbbb; preserve atomic/lazy Goal Settings with cached PC identity, source-built CSS and exact current required targets/census187; qualify only changed joint native/UI/Canvas/import/CI boundaries. Actual post-Focus/latest-dev, independent clearance and protected CI remain required before publication/completion. ADR required: no new ADR; direct existing Personal Context/Canvas/Goal227 integration.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -60,6 +62,8 @@ Native Python 3.12.11 reproduced the original 123565 versus 121793 token mismatc
 2026-10-11 final Canvas handoff: passive production Goal+Canvas first-request planner regression and59-case helper/selection/snapshot group pass; affected Canvas fixture and feature cases have final joined410-node passing coverage with separate native retirement receipts. Preview authority/currentness remains data-only and native V2/schema8/AAD1/Forget/source/disclosure/server activation gates remain closed. Commits c0cb9f58ec and fa402213ac8aa78e99f64e1724bae46d59684b51; exact commands/source hash/node mapping in Task1 report and pr2862-final-integration receipt bundle. Existing ADR121/202 apply. Task remains In Progress until independent root review and actual post-Goal sequential-dev transplant; inherited guard/Goal deadline failures remain separately reported.
 
 2026-10-11 Task2 correction gates named production Goal/Canvas/native-tight/fenced-tight/unreadable/denied planner and both publication-drift controls in the existing required sandbox lane, plus selection factories and lazy worker cancellation in UI census. Complete bounded minimal-dependency selection826 sandbox (62 feature additions),13 admission and46 UI cases passed with unchanged deadlines/caps. All original179 UI entries retained; seven additions floor186, preserve root post-Goal180+7 at transplant. First-read canonical provenance owner fence, literal export label and living architecture corrections are in Task2 report/new pr2862-review-fixes receipt seal. V1/schema8/AAD1 and all closed activation gates remain. In Progress pending independent root scoped review, actual current-dev transplant and hosted clearance; no publication or merge by implementer.
+
+Task3 independent spec PASS and quality PASS at ea50008b3c, with38 affected CI/copy-probe controls passing and all prior/runtime seals unchanged. Task4 integration qualification begins against actual merged Goal; no Task Done or hosted clearance is claimed.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
