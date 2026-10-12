@@ -80,8 +80,19 @@ SYSTEM_PROMPT = (
 #: indexing in c`` became goal 1 with the query ``arr indexing in c``. A
 #: mark stands alone, in FRONT of the line (after a list or quote marker)
 #: or at its END -- see ``_LEADING_MARKS_RE``/``_TRAILING_MARKS_RE``.
-_GOAL_MARK = r"\[+\s*/?\s*g\s*(-?\d+)\s*\]+"
+#:
+#: Every repetition in it is BOUNDED (round 5, N1). ``\s*/?\s*`` made a
+#: long run of spaces after a "[" cost its square -- 20,000 of them took
+#: 1.9 s on the event loop -- and ``\[+`` did the same for a run of
+#: brackets. No model pads a mark with more than a space or two.
+_GOAL_MARK = (
+    r"\[{1,3}\s{0,3}(?:/\s{0,3})?g\s{0,3}(-?\d+)\s{0,3}\]{1,3}")
 _GOAL_MARK_RE = re.compile(_GOAL_MARK, re.IGNORECASE)
+
+#: Longest line that can be a search query. A longer one is prose, is
+#: dropped, and so never reaches the patterns below (N1: whatever a
+#: pattern costs, it costs it on at most this much text per line).
+_MAX_QUERY_LINE_LENGTH = 300
 
 #: Leading Markdown quote markers (``> ``, ``>> ``): the model's, never
 #: the query's.
@@ -248,6 +259,8 @@ def _query_row(
         different positions attribute the line to no goal -- provenance is
         never guessed.
     """
+    if len(line) > _MAX_QUERY_LINE_LENGTH:
+        return None
     text = _QUOTE_MARKER_RE.sub("", line.strip())
     if _HEADING_RE.match(text):
         return None
@@ -285,7 +298,8 @@ def _response_rows(
 ) -> list[dict]:
     """Every usable line of one model response, as query rows."""
     lines = [_QUOTE_MARKER_RE.sub("", line.strip())
-             for line in response_text.splitlines() if line.strip()]
+             for line in response_text.splitlines()
+             if line.strip() and len(line) <= _MAX_QUERY_LINE_LENGTH]
     numbered = _is_numbered(lines)
     rows = (_query_row(line, goals, numbered=numbered) for line in lines)
     return [row for row in rows if row is not None]

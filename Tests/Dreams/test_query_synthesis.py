@@ -617,3 +617,70 @@ def test_fallback_rows_are_distinct_queries_too():
         "jazz guitar recent developments",
         "surprising adjacent to Rust TUI",
     ]
+
+
+# --- Review round 5, N1: reading a mark must not be quadratic --------------------
+#
+# ``\s*/?\s*`` in the mark pattern made one long run of spaces after a "["
+# cost its square: 20,000 spaces took 1.9 s on the event loop. A run of
+# brackets followed by a run of spaces did the same through ``\[+``.
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "[" + " " * 200_000 + "x",
+        "[" * 20_000 + " " * 20_000 + "x",
+        "[" + " /" * 50_000,
+        "[g" + " " * 200_000 + "1",
+        "[g1" + " " * 200_000,
+        "[ g 1 ]" * 30_000,
+        "\\[" * 60_000,
+    ],
+    ids=["spaces", "brackets-then-spaces", "slashes", "g-spaces", "tail-spaces",
+         "many-marks", "escaped-brackets"],
+)
+def test_reading_marks_in_a_hostile_line_is_fast(line):
+    import time
+
+    from tldw_chatbook.Dreams.query_synthesis import (
+        _GOAL_MARK_RE,
+        _response_rows,
+    )
+
+    started = time.perf_counter()
+    list(_GOAL_MARK_RE.finditer(line))
+    _response_rows(line + "\nrust tui news", [(_G1, None)])
+    elapsed = time.perf_counter() - started
+
+    # Linear work on 200,000 characters is a few milliseconds; the
+    # quadratic pattern needed minutes for these. Loose on purpose.
+    assert elapsed < 2.0, f"{elapsed:.2f}s"
+
+
+@pytest.mark.parametrize(
+    "line, is_mark",
+    [
+        ("[g1]", True), ("[ g 1 ]", True), ("[  /  g  1  ]", True),
+        ("[[[g1]]]", True),
+        # More padding than any model writes is not a mark any more.
+        ("[" + " " * 10 + "g1]", False),
+        ("[g" + " " * 10 + "1]", False),
+    ],
+)
+def test_the_mark_pattern_is_bounded_but_still_loose(line, is_mark):
+    from tldw_chatbook.Dreams.query_synthesis import _GOAL_MARK_RE
+
+    assert bool(_GOAL_MARK_RE.fullmatch(line)) is is_mark
+
+
+def test_a_line_too_long_to_be_a_query_is_not_one():
+    """No search query is hundreds of characters long; a line like that is
+    prose, and nothing below has to scan it."""
+    from tldw_chatbook.Dreams.query_synthesis import _response_rows
+
+    rows = _response_rows(
+        "[g1] " + "very " * 200 + "long\n[g1] tour dates", [(_G1, None)])
+
+    assert [(row["query"], row["goal"]) for row in rows] == [
+        ("tour dates", _G1)]
