@@ -1982,8 +1982,6 @@ def chat_with_anthropic(
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["POST"],
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-
         def _anthropic_registry_session() -> requests.Session:
             # ADR-222 (TASK-34418): factory for the per-thread registry;
             # the mount must live here so a cached session keeps its
@@ -3015,8 +3013,6 @@ def chat_with_cohere(
         status_forcelist=[429, 500, 502, 503, 504],  # Standard retry statuses
         allowed_methods=["POST"],  # Retry only for POST requests
     )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-
     def _cohere_registry_session() -> requests.Session:
         # ADR-222 (TASK-34418): factory for the per-thread registry; the
         # mount lives here so a cached session keeps its adapter (and warm
@@ -3870,14 +3866,14 @@ def chat_with_google(
             status_forcelist=[429, 500, 503],
             allowed_methods=["POST"],
         )
-        adapter = HTTPAdapter(max_retries=google_retry)
+
 
         def _google_registry_session() -> requests.Session:
             # ADR-222 (TASK-34418): factory for the per-thread registry;
             # the mount lives here so a cached session keeps its adapter
             # (and warm pool) across calls.
             return create_pooled_default_session(
-                mount_retry=retry_strategy, mount_prefixes=("https://",)
+                mount_retry=google_retry, mount_prefixes=("https://",)
             )
 
         # ADR-222: nullcontext so leaving the block does NOT close the
@@ -4823,7 +4819,7 @@ def chat_with_huggingface(
                 # the mount lives here so a cached session keeps its adapter
                 # (and warm pool) across calls.
                 return create_pooled_default_session(
-                    mount_retry=retry_strategy,
+                    mount_retry=adapter.max_retries,
                     mount_prefixes=("https://", "http://"),
                 )
 
