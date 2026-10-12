@@ -254,7 +254,7 @@ def _warned_target_labels(
 
 
 def _failure_summary(
-    cells: dict[tuple[str, str], CellCapture | CellError],
+    cells: dict[tuple[str, str], CellCapture | CellError]
 ) -> tuple[int, int, Optional[str]]:
     """TASK-1477: one pass over the grid's already-loaded ``cells`` for the
     run-level failure callout (``ResultsGrid.compose()``) -- total attempted
@@ -275,7 +275,11 @@ def _failure_summary(
 
     Returns:
         ``(failed, total, dominant_reason)``. ``dominant_reason`` is
-        ``None`` when nothing failed.
+        ``None`` when nothing failed. ``total`` counts ATTEMPTED cells
+        only -- for a run whose group is not yet completed that is below
+        the snapshot's full grid size, which is exactly why the
+        "All N cells failed … run the bench again" sentence must be gated
+        on group status (task-1511), never on ``failed == total`` alone.
     """
     total = len(cells)
     failed = 0
@@ -290,6 +294,33 @@ def _failure_summary(
         max(reason_counts, key=reason_counts.__getitem__) if reason_counts else None
     )
     return failed, total, dominant_reason
+
+
+def _rolled_up_group_status(run_statuses: Sequence[Any]) -> str:
+    """The run GROUP's status from its per-target runs' own statuses.
+
+    task-1511: the exact precedence ``EvalsViewModel.run_groups()``'s own
+    pivot applies (any run "running" -> "running"; else any "cancelled" or
+    run-level "failed" -> "cancelled"; else "completed", including the
+    "pending with nothing else alongside it" fall-through, which only a
+    group whose runs never started can hold) -- re-implemented here on
+    ``load_grid``'s own ``run_statuses`` rather than reading the view
+    model, because the grid is a WIDGET that renders from its own loaded
+    snapshot and must not pivot every run in the database (the same
+    cost-based ruling ``_register_grid_shortcuts`` already makes for the
+    same classification).
+
+    The two rules MUST stay in lockstep: the rail's leading glyph and the
+    grid's callout both claim to describe the same run, and a run that
+    reads "in flight" in the rail but "All cells failed — run the bench
+    again" in the grid is the exact divergence this roll-up exists to
+    prevent.
+    """
+    if any(status == "running" for status in run_statuses):
+        return "running"
+    if any(status in ("cancelled", "failed") for status in run_statuses):
+        return "cancelled"
+    return "completed"
 
 
 @dataclass(frozen=True)
@@ -595,8 +626,52 @@ class ResultsGrid(NotifyMixin, Vertical):
         # same user-derived-text hazard the Statics above and
         # `degenerate_canary_text` below already guard against. Absent
         # entirely -- not an empty container -- when nothing failed.
+        #
+        # task-1511: the copy is gated on the GROUP's rolled-up status
+        # (`_rolled_up_group_status`, from this grid's own
+        # `run_statuses`). `_failure_summary`'s total counts ATTEMPTED
+        # cells, so for a run still in flight whose first K cells all
+        # failed, `failed == total_cells` is true while the run is still
+        # going -- "All N cells failed … then run the bench again" was a
+        # lie about a live run, and it stayed baked onto a hard-cancelled
+        # run's view forever (the self-correct-at-completion select()
+        # never fires for those). Only a COMPLETED group may claim "all
+        # cells" -- a completed run has attempted its full snapshot grid,
+        # so the sentence is true there and keeps its existing copy
+        # verbatim (consistent with the rail's ✓✗ all-cells-failed glyph
+        # for exactly that completed case, per TASK-1480's amendment).
         failed, total_cells, dominant_reason = self._failure_summary
-        if failed:
+        group_status = _rolled_up_group_status(self._grid.get("run_statuses") or ())
+        full_grid_size = len(snapshot.get("snippets") or ()) * len(
+            snapshot.get("targets") or ()
+        )
+        if group_status == "running":
+            # In flight: report the fact, prescribe nothing -- the run is
+            # still going and may yet capture the rest.
+            if failed:
+                yield Static(
+                    f"Run in flight — {failed} of {total_cells} attempted "
+                    f"cells failed so far — {dominant_reason}.",
+                    id="evals-grid-failure-callout",
+                    classes="ds-recovery-callout",
+                    markup=False,
+                )
+        elif group_status == "cancelled":
+            # Cancelled (or run-level failed, folded here exactly as the
+            # rail's ✗ glyph folds it): name the cancellation and the TRUE
+            # attempted/total proportions -- a partial grid is explained
+            # by the cancellation regardless of whether the attempted
+            # cells also failed, so this renders even with zero failures
+            # whenever the grid is partial.
+            if failed or total_cells < full_grid_size:
+                yield Static(
+                    f"Run cancelled — {total_cells} of {full_grid_size} cells "
+                    f"attempted, {failed} failed.",
+                    id="evals-grid-failure-callout",
+                    classes="ds-recovery-callout",
+                    markup=False,
+                )
+        elif failed:
             if failed == total_cells:
                 # Every cell failed: the run is otherwise unusable, so name
                 # the concrete next step (bench Run is recoverable -- see

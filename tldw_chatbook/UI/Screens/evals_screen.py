@@ -441,6 +441,13 @@ class EvalsScreen(LabScreen):
         #: skills-holding user at an empty rail gets pointed at
         #: "+ New skill eval", not the word-bench sample.
         self._store_has_skills: bool = False
+        #: task-1510: whether the rail has already been rebuilt for the
+        #: CURRENTLY in-flight run (so the in-flight ``●`` run row is
+        #: visible without further interaction). Set by the first progress
+        #: tick (``_refresh_rail_once_for_active_run``), cleared by every
+        #: worker start and settled-path refresh -- one rail rebuild per
+        #: run, not one per cell.
+        self._rail_shows_active_run: bool = False
 
     def _current_app_config(self) -> dict[str, Any]:
         """The app's loaded settings, read fresh on every recompose (not
@@ -1357,6 +1364,7 @@ class EvalsScreen(LabScreen):
         cancel_token = CancelToken()
         self._sample_bench_running = True
         self._sample_bench_cancel_token = cancel_token
+        self._rail_shows_active_run = False
         self._set_sample_bench_running_ui()
         result = None
         try:
@@ -1397,12 +1405,26 @@ class EvalsScreen(LabScreen):
             self._sample_bench_running = False
             self._sample_bench_cancel_token = None
             self._reset_sample_bench_running_ui()
+            # task-1512 AC2: a sample run failing while a bench is
+            # selected left the primary action stale-disabled ("A bench
+            # run is already in flight." is TRUE while the sample worker
+            # runs -- `_primary_action_state` ORs every worker's flag)
+            # with no restore of its own. One shared restore closes both
+            # workers' failure paths.
+            self._reset_bench_run_running_ui()
+        # task-1483: read the token BEFORE the finally above nulled it -- a
+        # cooperatively-cancelled sample run returns a normal result (the
+        # engine marks its runs "cancelled" and returns the partial
+        # group), so the token is the only cancellation signal here.
+        was_cancelled = cancel_token.is_cancelled
         if result is not None:
             if self._selection_unmoved_since_launch(
                 self._sample_bench_launch_selection, result.task_id
             ):
                 self.app_instance.notify(
-                    "Sample bench created and run.",
+                    "Sample bench created; run cancelled."
+                    if was_cancelled
+                    else "Sample bench created and run.",
                     severity="information",
                     markup=False,
                 )
@@ -1417,13 +1439,23 @@ class EvalsScreen(LabScreen):
                     severity="information",
                     markup=False,
                 )
+                self._refresh_rail_for_settled_run()
+        else:
+            # task-1510/1512: the failure path never selects, so the rail
+            # would keep the in-flight ● row until the next interaction.
+            self._refresh_rail_for_settled_run()
 
     def _on_sample_bench_progress(self, done: int, total: int) -> None:
         """``sample_bench.ProgressFn`` -- called synchronously from within
         ``WordBenchRunner.run``'s own coroutine (this worker's, not a
         separate OS thread), so mutating widgets directly here is safe,
         the same way ``_on_grid_cell_focused`` mutates the inspector
-        directly rather than needing ``call_from_thread``."""
+        directly rather than needing ``call_from_thread``.
+
+        task-1510: the first tick also rebuilds the rail once, so the
+        in-flight ``●`` run row (and the freshly created sample bench's
+        own row) appear without further user interaction."""
+        self._refresh_rail_once_for_active_run()
         self._set_sample_bench_running_ui(done=done, total=total)
 
     def _set_sample_bench_running_ui(self, *, done: int = 0, total: int = 0) -> None:
@@ -1432,19 +1464,30 @@ class EvalsScreen(LabScreen):
         docstring note above on why a disabled-but-not-yet-rerendered
         button is not by itself a sufficient guard against a second click,
         only a visible signal that one is already running.
+
+        task-1483: also shows ``#evals-cancel-bench-run`` -- the sample
+        bench run is one of the three run kinds that button can cancel,
+        and a run starting does not recompose any pane.
         """
         from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
 
         try:
             button = self.query_one("#evals-create-sample-bench", Button)
         except QueryError:
-            return
-        button.disabled = True
-        button.label = (
-            f"Running sample bench… ({done}/{total})"
-            if total
-            else "Creating sample bench…"
-        )
+            button = None
+        if button is not None:
+            button.disabled = True
+            button.label = (
+                f"Running sample bench… ({done}/{total})"
+                if total
+                else "Creating sample bench…"
+            )
+        try:
+            cancel = self.query_one("#evals-cancel-bench-run", Button)
+        except QueryError:
+            cancel = None
+        if cancel is not None:
+            cancel.display = True
 
     def _reset_sample_bench_running_ui(self) -> None:
         """Restores the button after a run ends -- on BOTH the success and
@@ -1460,7 +1503,13 @@ class EvalsScreen(LabScreen):
         button, at the same id, still needing to be un-disabled and
         re-labelled. The ``QueryError`` guard remains for the case the
         button genuinely isn't in the DOM at all (no configured provider,
-        so the rail renders "Open Settings" instead)."""
+        so the rail renders "Open Settings" instead).
+
+        task-1512: the sample worker's finally additionally calls
+        ``_reset_bench_run_running_ui`` (the primary-action block's own
+        restore) -- see that method's docstring for the stale-badge path
+        this closes; this method stays responsible for the rail's own
+        button only."""
         from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
 
         try:
@@ -1469,6 +1518,62 @@ class EvalsScreen(LabScreen):
             return
         button.disabled = False
         button.label = "Create sample bench"
+
+    def _any_run_in_flight(self) -> bool:
+        """Whether ANY of the four run workers is currently in flight --
+        the one flag every fresh-``LibraryRail`` seam needs (the rail's
+        Create button gate, and the rail-refresh helpers below)."""
+        return (
+            self._sample_bench_running
+            or self._bench_run_running
+            or self._character_bench_run_running
+            or self._skill_eval_run_running
+        )
+
+    def _refresh_rail_once_for_active_run(self) -> None:
+        """task-1510: rebuild the rail ONCE per run, at the first progress
+        tick, so the in-flight run row (``● HH:MM · name``) appears without
+        further user interaction.
+
+        Nothing else recomposes the rail when a run starts: the press
+        handler does not select, and the progress ticks otherwise touch
+        only buttons -- before this, the spec-advertised in-flight row
+        appeared only if the user happened to click something mid-run. The
+        refresh has to wait for the first progress callback rather than
+        firing at press time because the run group row does not exist
+        until ``WordBenchRunner.run``/``create_probe_run_group`` creates
+        it (and stamps its runs "running") -- the first tick is the
+        earliest moment the row is actually there to render.
+
+        ``rail.sample_bench_running`` is re-derived first, for the same
+        fresh-instance reason ``compose_lab_rail`` passes it in: a rail
+        composed before the run started still carries ``False``, and the
+        recompose would otherwise re-enable the Create button mid-run.
+        """
+        if self._rail_shows_active_run:
+            return
+        self._rail_shows_active_run = True
+        try:
+            rail = self.query_one(LibraryRail)
+        except QueryError:
+            return
+        rail.sample_bench_running = self._any_run_in_flight()
+        rail.refresh(recompose=True)
+
+    def _refresh_rail_for_settled_run(self) -> None:
+        """task-1510/1512: rebuild the rail after a run ends on a path
+        that does NOT ``select()`` (the failure path, and the toast-only
+        "user navigated elsewhere" completion path) so the in-flight
+        ``●`` glyph does not linger on a settled run. On the paths that
+        DO select(), the rail-dirty region swap this would duplicate has
+        already run."""
+        self._rail_shows_active_run = False
+        try:
+            rail = self.query_one(LibraryRail)
+        except QueryError:
+            return
+        rail.sample_bench_running = self._any_run_in_flight()
+        rail.refresh(recompose=True)
 
     @on(ResultsGrid.CellFocused)
     def _on_grid_cell_focused(self, event: ResultsGrid.CellFocused) -> None:
@@ -1569,6 +1674,7 @@ class EvalsScreen(LabScreen):
         cancel_token = CancelToken()
         self._bench_run_running = True
         self._bench_run_cancel_token = cancel_token
+        self._rail_shows_active_run = False
         self._set_bench_run_running_ui()
         result = None
         try:
@@ -1615,6 +1721,12 @@ class EvalsScreen(LabScreen):
             self._bench_run_running = False
             self._bench_run_cancel_token = None
             self._reset_bench_run_running_ui()
+        # task-1483: read the token BEFORE the finally above nulled it -- a
+        # cooperatively-cancelled run returns a NORMAL result (the engine
+        # marks its runs "cancelled" and hands back the partial group, so
+        # the select() below renders exactly the partial grid), and the
+        # token is the only signal distinguishing that from completion.
+        was_cancelled = cancel_token.is_cancelled
         if result is not None:
             launch_selection = EvalsSelection(kind="bench", id=task_id)
             if self._selection_unmoved_since_launch(launch_selection, task_id):
@@ -1623,7 +1735,11 @@ class EvalsScreen(LabScreen):
                 # pair consistent if it ever starts interpolating the
                 # bench name.
                 self.app_instance.notify(
-                    "Bench run finished.", severity="information", markup=False
+                    "Bench run cancelled."
+                    if was_cancelled
+                    else "Bench run finished.",
+                    severity="information",
+                    markup=False,
                 )
                 self.select(kind="run_group", id=result.run_group_id)
             else:
@@ -1636,6 +1752,13 @@ class EvalsScreen(LabScreen):
                     severity="information",
                     markup=False,
                 )
+                self._refresh_rail_for_settled_run()
+        else:
+            # task-1510/1512: the failure path never selects, so the rail
+            # would keep the in-flight ● row until the next interaction
+            # (and the inspector's mid-run Blocked badge is cleared by the
+            # shared restore in the finally above).
+            self._refresh_rail_for_settled_run()
 
     @staticmethod
     def _resolved_target_row(db: EvalsDB, target_id: str) -> Mapping[str, Any]:
@@ -1811,6 +1934,7 @@ class EvalsScreen(LabScreen):
         cancel_token = CharacterCancelToken()
         self._character_bench_run_running = True
         self._character_bench_run_cancel_token = cancel_token
+        self._rail_shows_active_run = False
         self._set_bench_run_running_ui()
         group_id: Optional[str] = None
         db: Optional[EvalsDB] = None
@@ -1877,7 +2001,16 @@ class EvalsScreen(LabScreen):
                 progress=self._on_bench_run_progress,
             )
             save_conversations(db, new_group_id, run_ids, conversations)
-            self._mark_character_run_ids(db, run_ids, "completed")
+            # task-1483: a COOPERATIVELY cancelled probe run returns
+            # normally (the token stops SCHEDULING further conversations;
+            # already-run ones were recorded), so the token is the only
+            # signal -- stamping "completed" would make the rail's glyph
+            # lie about a run the user asked to stop. "cancelled" folds
+            # into the same group-level ✗ the run-level "failed" stamp
+            # uses (see `_mark_character_run_ids`'s own docstring).
+            self._mark_character_run_ids(
+                db, run_ids, "cancelled" if cancel_token.is_cancelled else "completed"
+            )
             group_id = new_group_id
         except asyncio.CancelledError:
             # A hard cancellation (Textual's `exclusive=True` superseding
@@ -1939,11 +2072,18 @@ class EvalsScreen(LabScreen):
             self._character_bench_run_running = False
             self._character_bench_run_cancel_token = None
             self._reset_bench_run_running_ui()
+        # task-1483: read the token BEFORE the finally above nulled it --
+        # same rule as the word-bench worker's identical line.
+        was_cancelled = cancel_token.is_cancelled
         if group_id is not None:
             launch_selection = EvalsSelection(kind="character_bench", id=task_id)
             if self._selection_unmoved_since_launch(launch_selection, task_id):
                 self.app_instance.notify(
-                    "Bench run finished.", severity="information", markup=False
+                    "Bench run cancelled."
+                    if was_cancelled
+                    else "Bench run finished.",
+                    severity="information",
+                    markup=False,
                 )
                 self.select(kind="run_group", id=group_id)
             else:
@@ -1956,6 +2096,11 @@ class EvalsScreen(LabScreen):
                     severity="information",
                     markup=False,
                 )
+                self._refresh_rail_for_settled_run()
+        else:
+            # task-1510/1512: the failure path never selects, so the rail
+            # would keep the in-flight ● row until the next interaction.
+            self._refresh_rail_for_settled_run()
 
     @on(SkillEvalPanel.RunRequested)
     def _on_skill_eval_run_requested(self, event: SkillEvalPanel.RunRequested) -> None:
@@ -2801,7 +2946,15 @@ class EvalsScreen(LabScreen):
         """``sample_bench.ProgressFn`` -- called synchronously from within
         ``WordBenchRunner.run``'s own coroutine (this worker's, not a
         separate OS thread), so mutating the button directly here is safe,
-        mirroring ``_on_sample_bench_progress``."""
+        mirroring ``_on_sample_bench_progress``.
+
+        task-1510: the first tick also rebuilds the rail once, so the
+        in-flight ``●`` run row appears without further user interaction
+        (``CharacterProbeRunner``'s progress lands here too -- its
+        ``create_probe_run_group`` rows are stamped "running" before the
+        first conversation is scheduled, so the same hook covers both
+        engines)."""
+        self._refresh_rail_once_for_active_run()
         self._set_bench_run_running_ui(done=done, total=total)
 
     def _set_bench_run_running_ui(self, *, done: int = 0, total: int = 0) -> None:
@@ -2809,37 +2962,132 @@ class EvalsScreen(LabScreen):
         label for as long as a run is in flight -- see
         ``_set_sample_bench_running_ui``'s own note on why a disabled-but-
         not-yet-rerendered button is only a visible signal, not by itself a
-        sufficient guard against a second press."""
+        sufficient guard against a second press.
+
+        task-1483: also shows ``#evals-cancel-bench-run`` -- a run
+        starting does not recompose the inspector pane, so the affordance
+        has to be flipped live by id exactly like the button label above.
+        """
         from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
 
         try:
             button = self.query_one("#evals-primary-action", Button)
         except QueryError:
-            return
-        button.disabled = True
-        button.label = f"Running… ({done}/{total})" if total else "Running…"
+            button = None
+        if button is not None:
+            button.disabled = True
+            button.label = f"Running… ({done}/{total})" if total else "Running…"
+        try:
+            cancel = self.query_one("#evals-cancel-bench-run", Button)
+        except QueryError:
+            cancel = None
+        if cancel is not None:
+            cancel.display = True
 
     def _reset_bench_run_running_ui(self) -> None:
-        """Restores the primary-action button after a run ends, from
+        """Restores the FULL primary-action block after a run ends --
+        task-1512: not just the button. A mid-run recompose (a rail click
+        while the run was in flight) composed the "A bench run is already
+        in flight." Blocked badge + callout alongside a disabled button;
+        restoring only the button left an ENABLED button under a stale
+        "Blocked" badge on the failure path (no ``select()`` recompose
+        ever fires there). This reconciles all three pieces from
         ``_primary_action_state()`` -- the current selection's own fresh
-        label/disabled/tooltip, not a hardcoded constant, since (unlike
-        ``_reset_sample_bench_running_ui``'s "Create sample bench") the
-        ready-state label here is per-bench (``f"Run {name}"``). A no-op
-        (via the same ``QueryError`` guard) on the success path, where
-        ``self.select(...)`` immediately recomposes the inspector pane and
-        replaces this button entirely -- this only matters on the failure
-        path, where the SAME button instance survives and must not be left
-        permanently disabled with a stale "Running…" label."""
+        label/disabled/tooltip (not a hardcoded constant, since the
+        ready-state label is per-bench, ``f"Run {name}"``), the
+        badge/callout pair updated in place when the settled state is
+        legitimately blocked and hidden when it is not, and the Cancel
+        button (task-1483) hidden again.
+
+        A no-op (via the same ``QueryError`` guards) on the success path
+        for every piece a pane recompose would replace anyway --
+        ``self.select(...)`` rebuilds the whole inspector region right
+        after -- which is why this only visibly matters on the failure
+        and toast-only paths.
+
+        Also called from the SAMPLE worker's finally (task-1512 AC2): a
+        sample run mid-flight composes the same Blocked badge via
+        ``_primary_action_state``'s in-flight branch (it ORs every
+        worker's flag), so a sample run failing while a bench is selected
+        left the primary action stale-disabled until the next rail click.
+        """
         from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
 
+        label, disabled, tooltip = self._primary_action_state()
         try:
             button = self.query_one("#evals-primary-action", Button)
         except QueryError:
-            return
-        label, disabled, tooltip = self._primary_action_state()
-        button.disabled = disabled
-        button.label = label
-        button.tooltip = tooltip
+            button = None
+        if button is not None:
+            button.disabled = disabled
+            button.label = label
+            button.tooltip = tooltip
+
+        try:
+            status_badge = self.query_one("#evals-primary-action-status", Static)
+        except QueryError:
+            status_badge = None
+        try:
+            reason_callout = self.query_one("#evals-primary-action-reason", Static)
+        except QueryError:
+            reason_callout = None
+        if disabled and tooltip:
+            # The settled state is legitimately blocked (e.g. the run
+            # failed because the bench no longer resolves): keep the
+            # TASK-1076 badge+callout pair, with the FRESH reason -- the
+            # stale "already in flight" copy is the lie being retired.
+            if status_badge is not None:
+                status_badge.update(f"{label}: Blocked")
+            if reason_callout is not None:
+                reason_callout.update(tooltip)
+        else:
+            # Runnable (or no reason to state): the badge/callout pair,
+            # if a mid-run recompose composed it, is stale -- hide rather
+            # than remove: `Widget.remove()` is deferred/async, and the
+            # next selection change replaces this whole pane anyway.
+            if status_badge is not None:
+                status_badge.display = False
+            if reason_callout is not None:
+                reason_callout.display = False
+
+        try:
+            cancel = self.query_one("#evals-cancel-bench-run", Button)
+        except QueryError:
+            cancel = None
+        if cancel is not None:
+            cancel.display = False
+
+    @on(Button.Pressed, "#evals-cancel-bench-run")
+    def _on_cancel_bench_run_pressed(self, event: Button.Pressed) -> None:
+        """task-1483: cooperatively cancels the one in-flight
+        word/character/sample run, if any -- a no-op press otherwise (the
+        button is hidden whenever none is, but the handler stays
+        defensive, mirroring ``_on_skill_eval_cancel_requested``).
+
+        Exactly one of the three tokens can ever be set (the press-time
+        guards in ``_on_primary_action_pressed``/
+        ``_on_sample_bench_requested`` cross-check every other kind's
+        running flag, so two workers can never run concurrently -- PR
+        #1113), so cancelling the first non-``None`` token found IS
+        cancelling THE run. The cancellation is cooperative: the engine
+        stops scheduling further cells, already-captured cells and their
+        run group persist, and the worker's own completion path selects
+        the partial run group (see ``_run_bench_worker``).
+        """
+        event.stop()
+        for token in (
+            self._bench_run_cancel_token,
+            self._sample_bench_cancel_token,
+            self._character_bench_run_cancel_token,
+        ):
+            if token is not None:
+                token.cancel()
+                self.app_instance.notify(
+                    "Cancelling the run — captured cells are kept.",
+                    severity="information",
+                    markup=False,
+                )
+                return
 
     def _bench_delete_disabled_reason(self, bench_id: Optional[str]) -> Optional[str]:
         """Why ``#evals-delete-bench`` should be disabled for ``bench_id``,
@@ -3603,6 +3851,27 @@ class EvalsScreen(LabScreen):
             disabled=disabled,
             tooltip=tooltip,
         )
+        # task-1483: the Cancel affordance for an in-flight run -- composed
+        # for every selection kind that composes the primary action above
+        # (classic and skill-eval benches early-return BEFORE this point;
+        # the skill-eval panel carries its own Cancel). Always in the DOM
+        # at a stable id, hidden except while a word/character/sample run
+        # is genuinely in flight: a run starting does NOT recompose this
+        # pane (see `_set_bench_run_running_ui`, which shows it live by
+        # id), and a pane recomposed MID-run (a rail click) re-derives
+        # visibility from the running flags below -- the same
+        # fresh-instance seam `LibraryRail.sample_bench_running` closes
+        # for the rail's own Create button. `display`, not `disabled`: a
+        # permanently-disabled Cancel button next to Run is decoration a
+        # keyboard user has to tab past, not an affordance.
+        cancel_button = Button("Cancel run", id="evals-cancel-bench-run")
+        if not (
+            self._bench_run_running
+            or self._sample_bench_running
+            or self._character_bench_run_running
+        ):
+            cancel_button.display = False
+        yield cancel_button
 
         # task-1482 Task 7 fix round 1: composed AFTER `#evals-primary-
         # action`, not before it -- the design spec's inspector mock

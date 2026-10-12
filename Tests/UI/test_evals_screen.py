@@ -2667,7 +2667,13 @@ async def test_inspector_pane_buttons_compose_in_the_spec_order(
     ``[ Duplicate ]`` then ``[ Delete ]`` -- asserted as a real DOM-order
     check (not three separate presence checks, which pass regardless of
     order) so a future edit that reintroduces Duplicate/Delete BEFORE the
-    primary action fails here."""
+    primary action fails here.
+
+    task-1483 inserts ``#evals-cancel-bench-run`` directly after the
+    primary action -- part of the primary-action BLOCK (shown live by id
+    while a run is in flight, hidden otherwise), before the bench-level
+    Duplicate/Delete pair, matching the mock's ``[ Run bench ]`` row
+    carrying its own cancel affordance."""
     async with evals_app.run_test() as pilot:
         await pilot.pause()
         screen: EvalsScreen = evals_app.screen
@@ -2678,9 +2684,13 @@ async def test_inspector_pane_buttons_compose_in_the_spec_order(
         button_ids = [button.id for button in inspector_pane.query(Button) if button.id]
         assert button_ids == [
             "evals-primary-action",
+            "evals-cancel-bench-run",
             "evals-duplicate-bench",
             "evals-delete-bench",
         ], button_ids
+        # Hidden while nothing is in flight -- an affordance for a run,
+        # not permanent furniture.
+        assert screen.query_one("#evals-cancel-bench-run", Button).display is False
 
 
 @pytest.mark.asyncio
@@ -3762,3 +3772,259 @@ async def test_a_zero_call_character_bench_refuses_to_print_an_estimate(
         empty_state = screen.query_one("#evals-inspector-readiness-empty")
         state_text = str(empty_state.renderable)
         assert "Nothing to estimate yet" in state_text, state_text
+
+
+# ---------------------------------------------------------------------------
+# task-1483: Cancel affordance for in-flight runs. task-1510: the running
+# rail row appears without further user interaction. task-1512: the full
+# primary-action block is restored on the failure paths.
+# ---------------------------------------------------------------------------
+
+
+class _GatedThenFailingCaptureClient:
+    """Preflight blocks on ``gate`` and then raises -- gives a test a
+    deterministic window where a run is genuinely in flight (the worker
+    has started, the inspector has recomposed or not, at the test's
+    choice) before the failure lands."""
+
+    def __init__(self, gate: "asyncio.Event") -> None:
+        self._gate = gate
+
+    async def preflight(self, target, mode, top_k):
+        await self._gate.wait()
+        raise RuntimeError("Target 'notes[/].txt' could not be reached.")
+
+    async def capture(self, snippet, target, mode, top_k):
+        raise AssertionError("capture must not be reached -- preflight fails first")
+
+
+class _FirstCellThenGatedCaptureClient:
+    """The FIRST cell captures immediately (firing the first progress
+    tick), every later cell blocks on ``gate`` -- the deterministic window
+    task-1510's test needs: the run group exists and is stamped
+    ``running`` before the first tick, and stays in flight afterwards."""
+
+    def __init__(self, calls: list, gate: "asyncio.Event") -> None:
+        self._calls = calls
+        self._gate = gate
+
+    async def preflight(self, target, mode, top_k):
+        return PreflightResult(state="ok", k_returned=5, canary="pass")
+
+    async def capture(self, snippet, target, mode, top_k):
+        if self._calls:
+            await self._gate.wait()
+        self._calls.append((snippet, target.name))
+        return CellCapture(
+            prompt_mode=mode,
+            k_requested=top_k,
+            k_returned=1,
+            content_offset=0,
+            top_k=(TokenProb(token=" a", logprob=-0.3, token_id=1),),
+            canary="unchecked",
+            captured_at="2026-07-30T00:00:00Z",
+        )
+
+
+@pytest.fixture
+def three_snippet_bench(evals_db: EvalsDB) -> str:
+    """A runnable word bench with THREE snippets -- enough cells that a
+    cancellation after the first still leaves unattempted ones behind, so
+    a partial-run assertion actually discriminates."""
+    base_model_id = evals_db.create_model(
+        name="base", provider="llama_cpp", model_id="m"
+    )
+    dataset_id = evals_db.create_dataset(
+        name="loaded-nouns", format="custom", source_path="inline:loaded-nouns"
+    )
+    import_snippets_into_dataset(
+        evals_db,
+        dataset_id,
+        [
+            {"id": f"s{i}", "text": f"snippet {i}", "group": None, "note": None}
+            for i in range(3)
+        ],
+    )
+    config = BenchConfig(
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(base_model_id,),
+        probes=(" Sure",),
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.mark.asyncio
+async def test_the_running_rail_row_appears_without_further_interaction(
+    evals_app, three_snippet_bench
+):
+    """task-1510 AC1: starting a bench run makes the in-flight run row
+    (``●`` glyph) visible in the rail with NO select() call and no click
+    -- the first progress tick rebuilds the rail once (the run group row
+    does not exist until the engine creates it, which is why the refresh
+    waits for that tick)."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=three_snippet_bench)
+        await pilot.pause()
+        gate = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: (
+            _FirstCellThenGatedCaptureClient(calls, gate)
+        )
+
+        assert not screen.query("#evals-rail-row-runs-0")
+        await pilot.click("#evals-primary-action")
+        # No select(), no rail click -- the row must appear on its own
+        # once the first cell lands.
+        await _wait_until(pilot, lambda: bool(screen.query("#evals-rail-row-runs-0")))
+        run_row = screen.query_one("#evals-rail-row-runs-0", Button)
+        assert str(run_row.label).startswith("● "), str(run_row.label)
+
+        gate.set()
+        await _wait_until(pilot, lambda: screen._selection.kind == "run_group")
+        await pilot.pause()
+        # task-1510 AC2: settled state, and the completion select() keeps
+        # a real selection (the finished run group).
+        run_row = screen.query_one("#evals-rail-row-runs-0", Button)
+        assert str(run_row.label).startswith("✓ "), str(run_row.label)
+        assert screen._selection.id == screen._view_model.run_groups()[0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_an_in_flight_run_keeps_captured_cells_and_labels_the_group(
+    evals_app, three_snippet_bench
+):
+    """task-1483: the Cancel affordance is visible while a run is in
+    flight; cancelling cooperatively stops the run after the in-flight
+    cell, KEEPS every already-captured cell, lands the selection on the
+    partial run group, and the group reads as cancelled in the rail
+    (✗) -- with the cancelled word in the toast, not "finished"."""
+    from tldw_chatbook.Evals.word_bench.storage import load_grid
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=three_snippet_bench)
+        await pilot.pause()
+        gate = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: (
+            _FirstCellThenGatedCaptureClient(calls, gate)
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        cancel_button = screen.query_one("#evals-cancel-bench-run", Button)
+        assert cancel_button.display is True
+
+        # First cell captured (progress tick fired); later cells gated.
+        await _wait_until(pilot, lambda: len(calls) >= 1)
+        await pilot.click("#evals-cancel-bench-run")
+        gate.set()
+        await _wait_until(pilot, lambda: screen._selection.kind == "run_group")
+        await pilot.pause()
+
+        group = screen._view_model.run_groups()[0]
+        assert group["status"] == "cancelled"
+        run_row = screen.query_one("#evals-rail-row-runs-0", Button)
+        assert str(run_row.label).startswith("✗ "), str(run_row.label)
+
+        grid = load_grid(screen._view_model.db, group["id"])
+        # 3 snippets x 1 target = 3 cells in the full grid. Cell 1 was
+        # captured before the cancel; cell 2 was ALREADY in flight when
+        # the token was set, so it runs to completion and is kept too
+        # (cooperative cancellation stops SCHEDULING, never an in-flight
+        # cell); snippet 3's pre-cell token check stops the run. Exactly
+        # the two captured cells persist, out of three.
+        assert len(calls) == 2, calls
+        assert len(grid["cells"]) == 2
+
+        message, severity = screen.app_instance.notifications[-1]
+        assert severity == "information"
+        assert message == "Bench run cancelled."
+
+
+@pytest.mark.asyncio
+async def test_a_failed_run_restores_the_full_primary_action_block(
+    evals_app, runnable_bench
+):
+    """task-1512 AC1: a mid-run recompose composes the "already in
+    flight" Blocked badge + callout beside a disabled button; the run
+    then FAILING (no select() recompose) must restore the whole block --
+    enabled button under NO badge -- not just the button."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        gate = asyncio.Event()
+        screen._sample_bench_client_factory = lambda t: (
+            _GatedThenFailingCaptureClient(gate)
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        # Force the mid-run recompose (a rail click on the same bench is
+        # the real-world shape) that composes the stale-prone badge.
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        assert screen.query_one("#evals-primary-action-status").display is True
+        assert screen.query_one("#evals-primary-action-reason").display is True
+
+        gate.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        button = screen.query_one("#evals-primary-action", Button)
+        assert not button.disabled
+        assert "loaded-nouns v1" in str(button.label)
+        assert screen.query_one("#evals-primary-action-status").display is False
+        assert screen.query_one("#evals-primary-action-reason").display is False
+        # The Cancel affordance hides again with the run gone.
+        assert screen.query_one("#evals-cancel-bench-run", Button).display is False
+
+
+@pytest.mark.asyncio
+async def test_a_failed_sample_run_restores_the_primary_actions_true_state(
+    evals_app, runnable_bench
+):
+    """task-1512 AC2: while the SAMPLE worker runs, a mid-run recompose
+    composes the same Blocked badge (``_primary_action_state`` ORs every
+    worker's flag); the sample run failing must restore the selected
+    bench's own true primary-action state, which before this fix nothing
+    did (the sample finally reset only the rail's Create button)."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        # A bench is selected (its Run button is the primary action).
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        gate = asyncio.Event()
+        screen._sample_bench_client_factory = lambda t: (
+            _GatedThenFailingCaptureClient(gate)
+        )
+
+        # Start the SAMPLE run (the rail's one-click flow) while the
+        # bench stays selected.
+        screen.post_message(LibraryRail.SampleBenchRequested())
+        await _wait_until(pilot, lambda: screen._sample_bench_running)
+        # Mid-run recompose: reselecting the bench recomposes the
+        # inspector, whose in-flight branch renders the badge.
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        assert screen.query_one("#evals-primary-action-status").display is True
+        run_button = screen.query_one("#evals-primary-action", Button)
+        assert run_button.disabled
+
+        gate.set()
+        await _wait_until(pilot, lambda: not screen._sample_bench_running)
+        await pilot.pause()
+
+        assert not run_button.disabled
+        assert "loaded-nouns v1" in str(run_button.label)
+        assert screen.query_one("#evals-primary-action-status").display is False
+        assert screen.query_one("#evals-cancel-bench-run", Button).display is False
