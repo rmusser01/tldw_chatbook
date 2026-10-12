@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-11 23:58'
-updated_date: '2026-10-12 05:25'
+updated_date: '2026-10-12 06:02'
 labels:
   - memory
   - canvas
@@ -46,6 +46,8 @@ Current-dev reconciliation (2026-10-11): repeat production preview/dispatch, cur
 Complete-head review correction: follow Task2 in Docs/superpowers/plans/2026-10-11-pr2862-current-dev-integration.md. ADR required: no new ADR. Existing191/102/150/161 and required-regression governance apply. Reject pending-first retired provenance with a cheap host identity fence, preserve off-thread bootstrap, use literal Text.assemble, gate bounded critical privacy/native/Canvas/currentness/original-retirement regressions, and correct living architecture inventory before independent re-review and actual sequential-base qualification. Existing source/receipt history remains sealed; native observation entries are not unique-owner counts.
 
 Task4: reconcile independently cleared feature-only range onto actual merged Goal9595facbbb; preserve atomic/lazy Goal Settings with cached PC identity, source-built CSS and exact current required targets/census187; qualify only changed joint native/UI/Canvas/import/CI boundaries. Actual post-Focus/latest-dev, independent clearance and protected CI remain required before publication/completion. ADR required: no new ADR; direct existing Personal Context/Canvas/Goal227 integration.
+
+Task5: preserve actualdev352 concurrentNotes-sync inode/containment fix and executable admissiontarget while rebasing reviewed PC feature-only range; qualify only affected CI/nativeNotes/dependency controls and exact sourcebindings. Existing ADRs; no new ADR/authority/storage/permission/cap. FinalactualpostFocus/latestdev andprotectedhostedCI remain rootgates.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -66,6 +68,8 @@ Native Python 3.12.11 reproduced the original 123565 versus 121793 token mismatc
 Task3 independent spec PASS and quality PASS at ea50008b3c, with38 affected CI/copy-probe controls passing and all prior/runtime seals unchanged. Task4 integration qualification begins against actual merged Goal; no Task Done or hosted clearance is claimed.
 
 2026-10-11 Task4 current-Goal reconciliation: feature-only range transplanted onto exact merged9595facbbb, preserving current request/Goal/tool/root budgets and pure Canvas preview/currentness owners. Canvas/native boundary group54 pass/1 already retained Goal outer_timeout failure; that exact body also fails on isolated9595 source with unchanged two-second dispatch wait. Settings61, current Goal style/navigation2, native original-owner/Notes admission22 and executable CI/census105 pass; required target order/flags/deadlines retained, current180+7 census187, all12 offline preflight guards pass. Original seals untouched; new receipts/report are separate under pr2862-task4-current-goal-integration and Task4 SDD. No new cap, permission/schema/AAD/V1/V2/Forget/source/disclosure/server activation or GitHub mutation. Existing three component and broad lint/format failures retain exactbase evidence. Status/AC remain In Progress/open pending root independent clearance and actual post-Focus/latest-dev/hosted qualification. No new ADR; direct existing Canvas/PC/Goal227 integration.
+
+Task4 final independent specPASS/qualityPASS at31eb with all227feature paths/current41base owners/source/evidence seals verified; zero new findings, inherited4RED remain documented. Actualdev advanced withPR3077 nativeNotes/requiredCI changes, prompting boundedTask5 beforepublications. No TaskDone claim.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
