@@ -54,10 +54,22 @@ from tldw_chatbook.UI.Evals.results_grid import (
 )
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
 from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
 )
+
+#: task-1515: the bundle alone is NOT "the app's styling" since TASK-24459
+#: split the screen-owned evals rules (``#evals-cell-inspector { height:
+#: auto; }`` among them) into ``screen_feature_evals.tcss``, which the
+#: real app loads lazily per screen. A harness pinning only the bundle
+#: deterministically fails the geometry tests that depend on those rules
+#: (``max_scroll_y == 1``, the exact pre-fix signature this file's own
+#: viewport tests describe) -- see ``consolidated_css.APP_STYLESHEETS``'s
+#: own note that "the app's styling" means the bundle PLUS the split
+#: sheets.
+_APP_CSS_PATHS = [str(path) for path in APP_STYLESHEETS]
 
 
 class _FakeOrchestrator:
@@ -75,7 +87,7 @@ class _FakeAppInstance:
 
 
 class EvalsHarness(ConsolidatedCSSApp):
-    CSS_PATH = _BUNDLED_CSS_PATH
+    CSS_PATH = _APP_CSS_PATHS
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
         super().__init__()
@@ -2588,3 +2600,144 @@ async def test_group_mean_rows_match_analysis_group_means_over_the_rendered_dive
         col_index = table.get_column_index(poor_id)
         rendered = str(table.get_cell_at((row_key, col_index)))
         assert rendered == f"{expected:.2f}"
+
+
+# ---------------------------------------------------------------------------
+# task-1511: the failure callout is gated on the GROUP's rolled-up status
+# -- an in-flight or cancelled run must never read as "All N cells failed
+# … run the bench again" (a completed run has attempted its full snapshot
+# grid, so the completed copy keeps its TASK-1477 wording verbatim,
+# consistent with the rail's ✓✗ all-cells-failed glyph for that case).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_in_flight_run_never_renders_the_all_cells_failed_next_step(
+    evals_app, evals_db
+):
+    """task-1511 AC1: an in-flight group whose first-attempted cells ALL
+    failed reads as in flight, not as a completed dead run -- the old
+    ``failed == total`` gate counted only ATTEMPTED cells, so this run
+    showed "All 2 cells failed … then run the bench again" while it was
+    still going."""
+    group_id, base_id, steered_id, snippets, run_ids = _make_two_by_two_run_group(
+        evals_db, "inflight"
+    )
+    for run_id in run_ids.values():
+        evals_db.update_run_status(run_id, "running")
+    save_cell(
+        evals_db,
+        run_ids[base_id],
+        snippets[0],
+        CellError(reason="unreachable", detail="connection refused"),
+    )
+    save_cell(
+        evals_db,
+        run_ids[steered_id],
+        snippets[0],
+        CellError(reason="unreachable", detail="connection refused"),
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, group_id)
+        callout = grid.query_one("#evals-grid-failure-callout", Static)
+        text = callout.visual.plain
+        assert (
+            text
+            == "Run in flight — 2 of 2 attempted cells failed so far — unreachable."
+        )
+        assert "All" not in text
+        assert "run the bench again" not in text
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_run_states_cancellation_and_the_true_proportions(
+    evals_app, evals_db
+):
+    """task-1511 AC2: a cancelled run's callout names the cancellation and
+    the TRUE attempted/total proportions (2 of a 4-cell grid attempted, 1
+    failed) -- the old callout kept the misleading all-failed sentence
+    with ``N`` below the real grid size, permanently."""
+    group_id, base_id, steered_id, snippets, run_ids = _make_two_by_two_run_group(
+        evals_db, "cancelled"
+    )
+    for run_id in run_ids.values():
+        evals_db.update_run_status(run_id, "cancelled")
+    save_cell(
+        evals_db,
+        run_ids[base_id],
+        snippets[0],
+        CellError(reason="unreachable", detail="connection refused"),
+    )
+    save_cell(
+        evals_db,
+        run_ids[steered_id],
+        snippets[0],
+        _cap([(" a", 0.5), (" the", 0.3)]),
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, group_id)
+        callout = grid.query_one("#evals-grid-failure-callout", Static)
+        text = callout.visual.plain
+        assert text == "Run cancelled — 2 of 4 cells attempted, 1 failed."
+        assert "run the bench again" not in text
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_run_with_zero_failures_still_explains_its_partial_grid(
+    evals_app, evals_db
+):
+    """task-1511 AC2's other half: a cancelled run whose attempted cells
+    all SUCCEEDED still has a partial grid that needs explaining -- the
+    cancellation line renders with ``0 failed``, not nothing."""
+    group_id, _base_id, _steered_id, snippets, run_ids = _make_two_by_two_run_group(
+        evals_db, "cancelled-clean"
+    )
+    for run_id in run_ids.values():
+        evals_db.update_run_status(run_id, "cancelled")
+    save_cell(
+        evals_db,
+        run_ids[_base_id],
+        snippets[0],
+        _cap([(" a", 0.5), (" the", 0.3)]),
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grid = await _select_run_group(pilot, group_id)
+        callout = grid.query_one("#evals-grid-failure-callout", Static)
+        assert (
+            callout.visual.plain == "Run cancelled — 1 of 4 cells attempted, 0 failed."
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_completed_all_failed_run_keeps_its_existing_callout(
+    evals_app, all_cells_failed_run_group
+):
+    """task-1511 AC3: the completed-run callout is byte-for-byte
+    unchanged -- the existing
+    ``test_failure_callout_names_the_next_step_when_every_cell_failed``
+    already pins the exact sentence for a completed group; this companion
+    pins that the same grid read as COMPLETED (statuses stamped) produces
+    that same sentence, i.e. the status gate did not disturb the
+    completed path."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        # Stamp the fixture's runs completed the way the engine does at
+        # the end of a full pass (the bare fixture leaves them pending,
+        # which the roll-up also treats as completed -- stamping makes
+        # this test independent of that fall-through).
+        for run in pilot.app.screen._view_model.db.list_runs(
+            run_group_id=all_cells_failed_run_group["group_id"], limit=10
+        ):
+            pilot.app.screen._view_model.db.update_run_status(run["id"], "completed")
+        grid = await _select_run_group(pilot, all_cells_failed_run_group["group_id"])
+        callout = grid.query_one("#evals-grid-failure-callout", Static)
+        assert callout.visual.plain == (
+            "All 4 cells failed — unreachable. Check that the target's "
+            "server is running and reachable, then run the bench again."
+        )

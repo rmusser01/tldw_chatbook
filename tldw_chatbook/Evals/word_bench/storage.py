@@ -531,16 +531,25 @@ def load_grid(
 
     Returns:
         ``{"snapshot": …, "cells": {(snippet_id, target_id): cell},
-        "preflight": {target_id: PreflightResult}}``.
-        The snapshot is the run's own, never the live task's. A missing
-        cell means "not yet run" (see save_cell), so every result page for
-        every run in the group must be drained in full -- a truncated page
-        would silently read as unrun cells rather than lost ones.
-        ``preflight`` defaults to ``{}`` for run groups written before this
-        key existed, rather than raising on the missing key.
+        "preflight": {target_id: PreflightResult}, "run_statuses":
+        [status, ...]}``. The snapshot is the run's own, never the live
+        task's. A missing cell means "not yet run" (see save_cell), so
+        every result page for every run in the group must be drained in
+        full -- a truncated page would silently read as unrun cells
+        rather than lost ones. ``preflight`` defaults to ``{}`` for run
+        groups written before this key existed, rather than raising on
+        the missing key. ``run_statuses`` (task-1511) carries each
+        per-target run's own ``eval_runs.status``, in ``runs`` order --
+        the raw material a caller needs to roll a GROUP status (any
+        "running" -> running; else any "cancelled"/"failed" -> cancelled;
+        else completed -- ``EvalsViewModel.run_groups()``'s own
+        precedence) without re-reading ``list_runs``; a caller rendering
+        a live or cancelled group needs it to tell "attempted but
+        failed" apart from "never attempted" (a missing cell is BOTH, and
+        only the statuses say which).
 
-        Readiness-only callers should use ``load_run_preflight`` instead --
-        it reads the same snapshot without paging ``eval_results``.
+    Readiness-only callers should use ``load_run_preflight`` instead --
+    it reads the same snapshot without paging ``eval_results``.
 
     Raises:
         ValueError: If no runs share this run_group_id.
@@ -567,4 +576,9 @@ def load_grid(
                 break
             offset += page_size
 
-    return {"snapshot": snapshot, "cells": cells, "preflight": preflight}
+    return {
+        "snapshot": snapshot,
+        "cells": cells,
+        "preflight": preflight,
+        "run_statuses": [run.get("status") for run in runs],
+    }

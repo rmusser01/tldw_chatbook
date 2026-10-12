@@ -58,6 +58,7 @@ from tldw_chatbook.UI.Evals.snippet_editor import (
     whitespace_warning_kinds,
 )
 from tldw_chatbook.UI.Screens.evals_screen import EvalsScreen
+from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
@@ -79,7 +80,11 @@ class _FakeAppInstance:
 
 
 class EvalsHarness(App):
-    CSS_PATH = _BUNDLED_CSS_PATH
+    # task-1515: bundle + screen-owned split sheets. The bundle alone
+    # has not carried the evals screen rules (e.g. `#evals-snippet-table
+    # { overflow-y: auto; }`) since TASK-24459's split, so a bundle-only
+    # pin failed this file's scroll-behaviour test deterministically.
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
         super().__init__()
@@ -1108,3 +1113,92 @@ async def test_missing_dataset_still_shows_the_not_found_message(evals_app, eval
         await pilot.pause()
         missing = evals_app.screen.query_one("#evals-detail-missing")
         assert "deleted" in str(missing.renderable)
+
+
+# ---------------------------------------------------------------------------
+# task-1484: rename affordance
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_dataset_can_be_renamed_from_its_detail_pane(evals_app, evals_db):
+    """task-1484: the detail pane carries a rename affordance
+    (``DatasetRenameRow``); a rename persists through
+    ``EvalsDB.update_dataset`` and the rail row re-renders the new name
+    immediately via the screen's rail-dirty re-selection."""
+    from textual.widgets import Button as TextualButton
+    from textual.widgets import Input as TextualInput
+
+    dataset_id = _make_dataset(evals_db, "old name", [_snip("hello world")])
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        rename_input = screen.query_one("#evals-dataset-rename-input", TextualInput)
+        rename_input.value = "renamed dataset"
+        await pilot.click("#evals-dataset-rename")
+        await pilot.pause()
+        await pilot.pause()
+
+        # Persisted...
+        row = screen._view_model.db.get_dataset(dataset_id)
+        assert str(row.get("name")) == "renamed dataset"
+        # ...rail row reflects the new name immediately (re-selected with
+        # rail_dirty=True)...
+        rail_button = screen.query_one("#evals-rail-row-datasets-0", TextualButton)
+        assert "renamed dataset" in str(rail_button.label)
+        # ...and the detail pane's own heading re-rendered too.
+        heading = screen.query_one("#evals-detail-dataset-name")
+        assert str(heading.renderable) == "renamed dataset"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_rename_is_a_warning_not_a_write(evals_app, evals_db):
+    """A blank rename must toast and leave the stored name untouched --
+    never a silent no-op and never a write."""
+    dataset_id = _make_dataset(evals_db, "keep me", [_snip("hello world")])
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        rename_input = screen.query_one("#evals-dataset-rename-input")
+        rename_input.value = "   "
+        await pilot.click("#evals-dataset-rename")
+        await pilot.pause()
+
+        assert str(screen._view_model.db.get_dataset(dataset_id).get("name")) == (
+            "keep me"
+        )
+        message, severity = screen.app_instance.notifications[-1]
+        assert severity == "warning"
+
+
+@pytest.mark.asyncio
+async def test_a_colliding_rename_toasts_and_keeps_the_original_name(
+    evals_app, evals_db
+):
+    """``eval_datasets.name`` is UNIQUE with no ``deleted_at`` exemption --
+    renaming INTO an existing name must surface the collision as a toast,
+    keeping the original name, rather than crashing the pane."""
+    _make_dataset(evals_db, "taken", [])
+    dataset_id = _make_dataset(evals_db, "original", [_snip("hello world")])
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        evals_app.screen.select(kind="dataset", id=dataset_id)
+        await pilot.pause()
+        screen = evals_app.screen
+
+        rename_input = screen.query_one("#evals-dataset-rename-input")
+        rename_input.value = "taken"
+        await pilot.click("#evals-dataset-rename")
+        await pilot.pause()
+
+        assert str(screen._view_model.db.get_dataset(dataset_id).get("name")) == (
+            "original"
+        )
+        message, severity = screen.app_instance.notifications[-1]
+        assert severity == "error"

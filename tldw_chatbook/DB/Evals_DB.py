@@ -1353,13 +1353,25 @@ class EvalsDB:
             return None
 
     def list_datasets(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
-        """List evaluation datasets."""
+        """List evaluation datasets.
+
+        ``id DESC`` is a deterministic tiebreak on top of ``created_at
+        DESC``: ``created_at`` is written by SQLite's ``datetime('now')``
+        at one-second granularity, so two datasets created in the same
+        second (e.g. two probe-set imports back to back) tie, and SQLite's
+        order for tied rows is unspecified -- which made "the newest
+        dataset" (``list_datasets``'s first row) a coin flip between them.
+        ``id`` is a ``uuid4`` string, so the tiebreak order is arbitrary
+        but STABLE, which is the property callers actually need (see
+        ``EvalsScreen._on_new_character_bench_requested``'s "the first
+        entry IS the newest probe set" note, task-1913 AC4).
+        """
         with self.connection() as conn:
             cursor = conn.execute(
                 """
-            SELECT * FROM eval_datasets 
+            SELECT * FROM eval_datasets
             WHERE deleted_at IS NULL
-            ORDER BY created_at DESC LIMIT ? OFFSET ?
+            ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
         """,
                 (limit, offset),
             )

@@ -2460,3 +2460,46 @@ async def test_skills_steering_survives_without_a_provider(evals_db):
         hint = pilot.app.screen.query_one("#evals-rail-skill-eval-hint")
         assert "skills installed" in str(hint.renderable)
         assert not pilot.app.screen.query("#evals-rail-first-run-hint")
+
+
+# ---------------------------------------------------------------------------
+# task-1484: a probe set can be renamed from its (otherwise read-only)
+# detail pane -- a probe set IS a dataset row; only its NAME changes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_probe_set_can_be_renamed_from_its_detail_pane(
+    evals_app, evals_db: EvalsDB, tmp_path
+):
+    probe_file = tmp_path / "renamable.txt"
+    probe_file.write_text(
+        "What do you think about lying?\n---\nAnd to protect someone?"
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        rail = pilot.app.screen.query_one(LibraryRail)
+        await rail._handle_probe_import_file_selected(probe_file)
+        await pilot.pause()
+        screen = pilot.app.screen
+        probe_set_id = screen._selection.id
+        assert screen._selection.kind == "dataset"
+
+        rename_input = screen.query_one("#evals-dataset-rename-input")
+        rename_input.value = "renamed probe set"
+        await pilot.click("#evals-dataset-rename")
+        await pilot.pause()
+        await pilot.pause()
+
+        # Persisted under the new name, still marked as a probe set...
+        row = screen._view_model.db.get_dataset(probe_set_id)
+        assert str(row.get("name")) == "renamed probe set"
+        # ...the rail row reflects it immediately...
+        rail_button = screen.query_one("#evals-rail-row-datasets-0")
+        assert "renamed probe set" in str(rail_button.label)
+        # ...and the read-only probe listing is still mounted, still
+        # read-only, with its heading re-rendered.
+        heading = screen.query_one("#evals-probeset-detail-name")
+        assert str(heading.renderable) == "renamed probe set"
+        assert not screen.query("#evals-import-snippets")

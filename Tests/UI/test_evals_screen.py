@@ -2667,7 +2667,13 @@ async def test_inspector_pane_buttons_compose_in_the_spec_order(
     ``[ Duplicate ]`` then ``[ Delete ]`` -- asserted as a real DOM-order
     check (not three separate presence checks, which pass regardless of
     order) so a future edit that reintroduces Duplicate/Delete BEFORE the
-    primary action fails here."""
+    primary action fails here.
+
+    task-1483 inserts ``#evals-cancel-bench-run`` directly after the
+    primary action -- part of the primary-action BLOCK (shown live by id
+    while a run is in flight, hidden otherwise), before the bench-level
+    Duplicate/Delete pair, matching the mock's ``[ Run bench ]`` row
+    carrying its own cancel affordance."""
     async with evals_app.run_test() as pilot:
         await pilot.pause()
         screen: EvalsScreen = evals_app.screen
@@ -2678,9 +2684,13 @@ async def test_inspector_pane_buttons_compose_in_the_spec_order(
         button_ids = [button.id for button in inspector_pane.query(Button) if button.id]
         assert button_ids == [
             "evals-primary-action",
+            "evals-cancel-bench-run",
             "evals-duplicate-bench",
             "evals-delete-bench",
         ], button_ids
+        # Hidden while nothing is in flight -- an affordance for a run,
+        # not permanent furniture.
+        assert screen.query_one("#evals-cancel-bench-run", Button).display is False
 
 
 @pytest.mark.asyncio
@@ -2920,12 +2930,14 @@ async def test_a_real_rail_click_on_a_character_bench_row_routes_to_its_editor(
     """Real widget interaction, not a direct `select()` call -- per this
     phase's own 'real widgets, not `.value=`' rule for behavioural UI
     coverage: a `pilot.click` on the actual rail row is what proves
-    `library_rail.py`'s own marker-to-kind routing (`_benches_section_
-    body`'s `"character_bench" if is_character_bench(row) else "classic"`)
-    actually fires, not merely that `select()` accepts the new kind."""
+    `library_rail.py`'s own subgroup routing (`_benches_section_body`
+    renders a character-probe bench under its OWN `─ character ─` subgroup
+    with `kind="character_bench"` -- task-1910; the row prefix is the
+    character subgroup's own, never the classic one) actually fires, not
+    merely that `select()` accepts the new kind."""
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
-        await pilot.click("#evals-rail-row-benches-classic-0")
+        await pilot.click("#evals-rail-row-benches-character-0")
         await pilot.pause()
         screen = pilot.app.screen
         assert screen._selection.kind == "character_bench"
@@ -3540,8 +3552,9 @@ async def test_a_character_bench_with_no_resolvable_target_can_be_deleted_throug
         assert screen._view_model.character_bench_by_id(bench_id) is None
         remaining = [t for t in evals_db.list_tasks() if is_character_bench(t)]
         assert remaining == []
-        # ...and gone from the rail.
-        assert not screen.query("#evals-rail-row-benches-classic-0")
+        # ...and gone from the rail (task-1910: character-probe rows live
+        # under their OWN subgroup prefix, never the classic one).
+        assert not screen.query("#evals-rail-row-benches-character-0")
 
         message, severity = screen.app_instance.notifications[-1]
         assert severity == "information"
@@ -3549,19 +3562,465 @@ async def test_a_character_bench_with_no_resolvable_target_can_be_deleted_throug
 
 
 @pytest.mark.asyncio
-async def test_a_character_bench_with_no_duplicate_button_still_offers_delete(
+async def test_a_character_bench_offers_duplicate_and_delete(
     evals_app, character_bench_id
 ):
-    """Fix round: Duplicate stays word-bench-only this round (see
-    `_compose_inspector_pane`'s own comment on why -- `duplicate_bench`
-    engine call is word-bench-specific), but Delete must be there
-    regardless -- pinned as its own assertion so a future change can't
-    silently drop Delete while "fixing" Duplicate without a test
+    """task-1912 AC1: a character-probe bench is duplicated from the SAME
+    ``#evals-duplicate-bench`` affordance a word bench uses (the handler
+    dispatches to ``character_probe.storage.duplicate_character_bench`` for
+    this kind -- the engine counterpart that test lives beside in
+    ``Tests/Evals/character_probe/test_bench_storage.py``). Delete remains
+    beside it, pinned as its own assertion so a future change can't
+    silently drop either while "fixing" the other without a test
     noticing."""
     async with evals_app.run_test(size=(160, 45)) as pilot:
         screen: EvalsScreen = pilot.app.screen
         screen.select(kind="character_bench", id=character_bench_id)
         await pilot.pause()
-        assert not screen.query("#evals-duplicate-bench")
+        duplicate_button = screen.query_one("#evals-duplicate-bench", Button)
+        assert not duplicate_button.disabled
         delete_button = screen.query_one("#evals-delete-bench", Button)
         assert not delete_button.disabled
+
+
+@pytest.mark.asyncio
+async def test_pressing_duplicate_on_a_character_bench_copies_it_and_selects_the_copy(
+    evals_app, character_bench_id
+):
+    """task-1912 AC2/AC3 end to end through the real button: the copy is a
+    new character bench carrying the source's configuration under a unique
+    name, the ORIGINAL is undisturbed, and the screen lands on the copy
+    (its own editor mounted) with a toast naming the new bench."""
+    from tldw_chatbook.Evals.character_probe.storage import (
+        is_character_bench,
+        load_character_bench,
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        screen: EvalsScreen = pilot.app.screen
+        screen.select(kind="character_bench", id=character_bench_id)
+        await pilot.pause()
+        source_before = load_character_bench(screen._view_model.db, character_bench_id)
+
+        await pilot.click("#evals-duplicate-bench")
+        await pilot.pause()
+
+        assert screen._selection.kind == "character_bench"
+        new_id = screen._selection.id
+        assert new_id != character_bench_id
+        assert screen.query("#evals-character-bench-editor")
+
+        copy = load_character_bench(screen._view_model.db, new_id)
+        assert copy.name != source_before.name
+        assert copy.probe_set_id == source_before.probe_set_id
+        assert copy.character_ids == source_before.character_ids
+        assert copy.target_ids == source_before.target_ids
+        # The original is undisturbed.
+        assert load_character_bench(screen._view_model.db, character_bench_id) == (
+            source_before
+        )
+        # Two live character benches now exist in the DB.
+        rows = [t for t in screen._view_model.db.list_tasks() if is_character_bench(t)]
+        assert len(rows) == 2
+
+        message, severity = screen.app_instance.notifications[-1]
+        assert severity == "information"
+        assert message == f"Duplicated as {copy.name}."
+
+
+# ---------------------------------------------------------------------------
+# task-1910: character-probe benches render under their OWN rail subgroup
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_character_bench_renders_under_its_own_subgroup_not_classic(
+    evals_app, evals_db, seeded_bench, character_bench_id
+):
+    """task-1910 AC1: a character-probe bench row renders under a `─
+    character ─` labelled subgroup with its OWN row prefix -- never under
+    `─ classic ─`, which is defined app-wide as read-only pre-word-bench
+    rows."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        rail = screen.query_one("#evals-library-pane")
+
+        separators = [
+            str(s.renderable) for s in rail.query(".evals-rail-classic-separator")
+        ]
+        assert "─ character ─" in separators, separators
+
+        character_row = rail.query_one("#evals-rail-row-benches-character-0", Button)
+        assert "villain bench" in str(character_row.label)
+        # The diamond marker stays on the row (belt to the label's braces).
+        assert str(character_row.label).startswith("◆ ")
+
+
+@pytest.mark.asyncio
+async def test_word_benches_and_true_classic_tasks_keep_their_existing_grouping(
+    evals_app, evals_db, seeded_bench, character_bench_id
+):
+    """task-1910 AC2: a word bench still renders directly under the Benches
+    header, and a genuinely classic task still renders under `─ classic ─`
+    with the classic row prefix -- the new character subgroup changes
+    neither."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = pilot.app.screen
+        evals_db.create_task(
+            name="legacy task",
+            description="",
+            task_type="logprob",
+            config_format="custom",
+            config_data={},
+        )
+        screen.select(kind="none")
+        await pilot.pause()
+        rail = screen.query_one("#evals-library-pane")
+
+        # Word bench: directly under the Benches header, unmarked.
+        word_row = rail.query_one("#evals-rail-row-benches-0", Button)
+        assert "loaded-nouns v1" in str(word_row.label)
+
+        # Classic task: under the classic label, classic prefix.
+        classic_row = rail.query_one("#evals-rail-row-benches-classic-0", Button)
+        assert "legacy task" in str(classic_row.label)
+        assert not str(classic_row.label).startswith("◆ ")
+
+
+# ---------------------------------------------------------------------------
+# task-1911: the character-probe estimate uses a generation-based rate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_character_bench_estimate_uses_a_generation_based_rate(
+    evals_app, character_bench_id
+):
+    """task-1911 AC1/AC3: the character bench's projected duration is
+    computed from a per-TOKEN generation rate scaled by the bench's
+    ``max_tokens`` -- NOT the word bench's single-token logprob-probe
+    constant. The fixture bench is exactly one call (1 probe x 1 turn x 1
+    card x 1 target x 1 sample), so the rendered duration isolates the
+    rate: at the default ``max_tokens=512`` the logprob rate would project
+    well under a second ("~00:00"), while the generation rate projects
+    ~26 seconds."""
+    from tldw_chatbook.UI.Evals.inspector import (
+        _ASSUMED_SECONDS_PER_CALL,
+        _CHARACTER_ASSUMED_SECONDS_PER_TOKEN,
+        _format_estimate_duration,
+    )
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        screen: EvalsScreen = pilot.app.screen
+        screen.select(kind="character_bench", id=character_bench_id)
+        await pilot.pause()
+
+        estimate = screen.query_one("#evals-inspector-estimate-calls")
+        text = str(estimate.renderable)
+        assert text.startswith("1 calls · "), text
+
+        expected = _format_estimate_duration(
+            1 * 512 * _CHARACTER_ASSUMED_SECONDS_PER_TOKEN
+        )
+        logprob_rate = _format_estimate_duration(1 * _ASSUMED_SECONDS_PER_CALL)
+        assert expected != logprob_rate, (
+            "the character rate must not reproduce the logprob-probe rate's "
+            f"duration ({expected})"
+        )
+        assert text == f"1 calls · {expected}", text
+
+
+# ---------------------------------------------------------------------------
+# task-1913 AC1: one honesty rule across both zero-count estimate states
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_zero_call_character_bench_refuses_to_print_an_estimate(
+    evals_app, evals_db, probe_set_id
+):
+    """task-1913 AC1: a draft with no characters picked (the state every
+    "+ New character bench" draft starts in) must refuse to print an
+    estimate -- the SAME honesty rule the missing-probe-set branch already
+    applies -- rather than rendering "0 calls · ~00:00" as if that were a
+    real estimate of a runnable bench."""
+    from tldw_chatbook.Evals.character_probe.models import CharacterProbeConfig
+    from tldw_chatbook.Evals.character_probe.storage import save_character_bench
+
+    draft_id = save_character_bench(
+        evals_db,
+        CharacterProbeConfig(
+            name="draft character bench",
+            probe_set_id=probe_set_id,
+            character_ids=(),
+            target_ids=(),
+            strict=False,
+        ),
+    )
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        screen: EvalsScreen = pilot.app.screen
+        screen.select(kind="character_bench", id=draft_id)
+        await pilot.pause()
+
+        assert not screen.query("#evals-inspector-estimate-calls")
+        empty_state = screen.query_one("#evals-inspector-readiness-empty")
+        state_text = str(empty_state.renderable)
+        assert "Nothing to estimate yet" in state_text, state_text
+
+
+# ---------------------------------------------------------------------------
+# task-1483: Cancel affordance for in-flight runs. task-1510: the running
+# rail row appears without further user interaction. task-1512: the full
+# primary-action block is restored on the failure paths.
+# ---------------------------------------------------------------------------
+
+
+class _GatedThenFailingCaptureClient:
+    """Preflight blocks on ``gate`` and then raises -- gives a test a
+    deterministic window where a run is genuinely in flight (the worker
+    has started, the inspector has recomposed or not, at the test's
+    choice) before the failure lands."""
+
+    def __init__(self, gate: "asyncio.Event") -> None:
+        self._gate = gate
+
+    async def preflight(self, target, mode, top_k):
+        await self._gate.wait()
+        raise RuntimeError("Target 'notes[/].txt' could not be reached.")
+
+    async def capture(self, snippet, target, mode, top_k):
+        raise AssertionError("capture must not be reached -- preflight fails first")
+
+
+class _FirstCellThenGatedCaptureClient:
+    """The FIRST cell captures immediately (firing the first progress
+    tick), every later cell blocks on ``gate`` -- the deterministic window
+    task-1510's test needs: the run group exists and is stamped
+    ``running`` before the first tick, and stays in flight afterwards."""
+
+    def __init__(self, calls: list, gate: "asyncio.Event") -> None:
+        self._calls = calls
+        self._gate = gate
+
+    async def preflight(self, target, mode, top_k):
+        return PreflightResult(state="ok", k_returned=5, canary="pass")
+
+    async def capture(self, snippet, target, mode, top_k):
+        if self._calls:
+            await self._gate.wait()
+        self._calls.append((snippet, target.name))
+        return CellCapture(
+            prompt_mode=mode,
+            k_requested=top_k,
+            k_returned=1,
+            content_offset=0,
+            top_k=(TokenProb(token=" a", logprob=-0.3, token_id=1),),
+            canary="unchecked",
+            captured_at="2026-07-30T00:00:00Z",
+        )
+
+
+@pytest.fixture
+def three_snippet_bench(evals_db: EvalsDB) -> str:
+    """A runnable word bench with THREE snippets -- enough cells that a
+    cancellation after the first still leaves unattempted ones behind, so
+    a partial-run assertion actually discriminates."""
+    base_model_id = evals_db.create_model(
+        name="base", provider="llama_cpp", model_id="m"
+    )
+    dataset_id = evals_db.create_dataset(
+        name="loaded-nouns", format="custom", source_path="inline:loaded-nouns"
+    )
+    import_snippets_into_dataset(
+        evals_db,
+        dataset_id,
+        [
+            {"id": f"s{i}", "text": f"snippet {i}", "group": None, "note": None}
+            for i in range(3)
+        ],
+    )
+    config = BenchConfig(
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(base_model_id,),
+        probes=(" Sure",),
+    )
+    return save_bench(evals_db, config)
+
+
+@pytest.mark.asyncio
+async def test_the_running_rail_row_appears_without_further_interaction(
+    evals_app, three_snippet_bench
+):
+    """task-1510 AC1: starting a bench run makes the in-flight run row
+    (``●`` glyph) visible in the rail with NO select() call and no click
+    -- the first progress tick rebuilds the rail once (the run group row
+    does not exist until the engine creates it, which is why the refresh
+    waits for that tick)."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=three_snippet_bench)
+        await pilot.pause()
+        gate = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: (
+            _FirstCellThenGatedCaptureClient(calls, gate)
+        )
+
+        assert not screen.query("#evals-rail-row-runs-0")
+        await pilot.click("#evals-primary-action")
+        # No select(), no rail click -- the row must appear on its own
+        # once the first cell lands.
+        await _wait_until(pilot, lambda: bool(screen.query("#evals-rail-row-runs-0")))
+        run_row = screen.query_one("#evals-rail-row-runs-0", Button)
+        assert str(run_row.label).startswith("● "), str(run_row.label)
+
+        gate.set()
+        await _wait_until(pilot, lambda: screen._selection.kind == "run_group")
+        await pilot.pause()
+        # task-1510 AC2: settled state, and the completion select() keeps
+        # a real selection (the finished run group).
+        run_row = screen.query_one("#evals-rail-row-runs-0", Button)
+        assert str(run_row.label).startswith("✓ "), str(run_row.label)
+        assert screen._selection.id == screen._view_model.run_groups()[0]["id"]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_an_in_flight_run_keeps_captured_cells_and_labels_the_group(
+    evals_app, three_snippet_bench
+):
+    """task-1483: the Cancel affordance is visible while a run is in
+    flight; cancelling cooperatively stops the run after the in-flight
+    cell, KEEPS every already-captured cell, lands the selection on the
+    partial run group, and the group reads as cancelled in the rail
+    (✗) -- with the cancelled word in the toast, not "finished"."""
+    from tldw_chatbook.Evals.word_bench.storage import load_grid
+
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=three_snippet_bench)
+        await pilot.pause()
+        gate = asyncio.Event()
+        calls: list = []
+        screen._sample_bench_client_factory = lambda t: (
+            _FirstCellThenGatedCaptureClient(calls, gate)
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        cancel_button = screen.query_one("#evals-cancel-bench-run", Button)
+        assert cancel_button.display is True
+
+        # First cell captured (progress tick fired); later cells gated.
+        await _wait_until(pilot, lambda: len(calls) >= 1)
+        await pilot.click("#evals-cancel-bench-run")
+        gate.set()
+        await _wait_until(pilot, lambda: screen._selection.kind == "run_group")
+        await pilot.pause()
+
+        group = screen._view_model.run_groups()[0]
+        assert group["status"] == "cancelled"
+        run_row = screen.query_one("#evals-rail-row-runs-0", Button)
+        assert str(run_row.label).startswith("✗ "), str(run_row.label)
+
+        grid = load_grid(screen._view_model.db, group["id"])
+        # 3 snippets x 1 target = 3 cells in the full grid. Cell 1 was
+        # captured before the cancel; cell 2 was ALREADY in flight when
+        # the token was set, so it runs to completion and is kept too
+        # (cooperative cancellation stops SCHEDULING, never an in-flight
+        # cell); snippet 3's pre-cell token check stops the run. Exactly
+        # the two captured cells persist, out of three.
+        assert len(calls) == 2, calls
+        assert len(grid["cells"]) == 2
+
+        message, severity = screen.app_instance.notifications[-1]
+        assert severity == "information"
+        assert message == "Bench run cancelled."
+
+
+@pytest.mark.asyncio
+async def test_a_failed_run_restores_the_full_primary_action_block(
+    evals_app, runnable_bench
+):
+    """task-1512 AC1: a mid-run recompose composes the "already in
+    flight" Blocked badge + callout beside a disabled button; the run
+    then FAILING (no select() recompose) must restore the whole block --
+    enabled button under NO badge -- not just the button."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        gate = asyncio.Event()
+        screen._sample_bench_client_factory = lambda t: _GatedThenFailingCaptureClient(
+            gate
+        )
+
+        await pilot.click("#evals-primary-action")
+        await _wait_until(pilot, lambda: screen._bench_run_running)
+        # Force the mid-run recompose (a rail click on the same bench is
+        # the real-world shape) that composes the stale-prone badge.
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        assert screen.query_one("#evals-primary-action-status").display is True
+        assert screen.query_one("#evals-primary-action-reason").display is True
+
+        gate.set()
+        await _wait_until(pilot, lambda: not screen._bench_run_running)
+        await pilot.pause()
+
+        button = screen.query_one("#evals-primary-action", Button)
+        assert not button.disabled
+        assert "loaded-nouns v1" in str(button.label)
+        assert screen.query_one("#evals-primary-action-status").display is False
+        assert screen.query_one("#evals-primary-action-reason").display is False
+        # The Cancel affordance hides again with the run gone.
+        assert screen.query_one("#evals-cancel-bench-run", Button).display is False
+
+
+@pytest.mark.asyncio
+async def test_a_failed_sample_run_restores_the_primary_actions_true_state(
+    evals_app, runnable_bench
+):
+    """task-1512 AC2: while the SAMPLE worker runs, a mid-run recompose
+    composes the same Blocked badge (``_primary_action_state`` ORs every
+    worker's flag); the sample run failing must restore the selected
+    bench's own true primary-action state, which before this fix nothing
+    did (the sample finally reset only the rail's Create button)."""
+    async with evals_app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        screen: EvalsScreen = evals_app.screen
+        # A bench is selected (its Run button is the primary action).
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        gate = asyncio.Event()
+        screen._sample_bench_client_factory = lambda t: _GatedThenFailingCaptureClient(
+            gate
+        )
+
+        # Start the SAMPLE run (the rail's one-click flow) while the
+        # bench stays selected.
+        screen.post_message(LibraryRail.SampleBenchRequested())
+        await _wait_until(pilot, lambda: screen._sample_bench_running)
+        # Mid-run recompose: reselecting the bench recomposes the
+        # inspector, whose in-flight branch renders the badge.
+        screen.select(kind="bench", id=runnable_bench)
+        await pilot.pause()
+        assert screen.query_one("#evals-primary-action-status").display is True
+        run_button = screen.query_one("#evals-primary-action", Button)
+        assert run_button.disabled
+
+        gate.set()
+        await _wait_until(pilot, lambda: not screen._sample_bench_running)
+        await pilot.pause()
+
+        assert not run_button.disabled
+        assert "loaded-nouns v1" in str(run_button.label)
+        assert screen.query_one("#evals-primary-action-status").display is False
+        assert screen.query_one("#evals-cancel-bench-run", Button).display is False
