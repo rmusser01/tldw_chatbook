@@ -30708,7 +30708,7 @@ class SettingsScreen(BaseAppScreen):
             return
         if self._syncing_provider_context_window:
             return
-        if self._navigation_provider:
+        if self._navigation_provider and self._provider_draft() is None:
             navigation_window = self._provider_model_context_window(
                 self._navigation_provider,
                 self._navigation_model or "",
@@ -30774,8 +30774,16 @@ class SettingsScreen(BaseAppScreen):
             queue.pop(0)
             self._update_provider_dynamic_widgets()
             return
+        # task-15673: a freshly MOUNTED Input posts Changed for its
+        # compose-time value (verified against Textual directly), so a deep
+        # link's recompose delivers the linked provider's endpoint here as if
+        # the user typed it, and that dirt made the deferred
+        # _apply_navigation_provider_context refuse to apply the nav model.
+        # With a draft the same text is the user's own (a character typed and
+        # deleted again): it is staged, so the draft can empty.
         if (
             self._navigation_provider
+            and self._provider_draft() is None
             and event.value.strip()
             == self._provider_endpoint_value(self._navigation_provider)
         ):
@@ -30783,19 +30791,6 @@ class SettingsScreen(BaseAppScreen):
             return
         if self._syncing_provider_endpoint:
             self._update_provider_dynamic_widgets()
-            return
-        # task-15673: a freshly MOUNTED Input posts Changed for its
-        # compose-time initial value (verified against Textual directly), so a
-        # navigation preselect's recompose delivers the nav provider's
-        # endpoint here as if the user typed it -- staged against the OLD
-        # provider's loaded original, that dirt made the deferred
-        # _apply_navigation_provider_context refuse to apply the nav model.
-        # Same nav-echo tolerance handle_model_value_changed already has.
-        if (
-            self._navigation_provider
-            and event.value.strip()
-            == self._provider_endpoint_value(self._navigation_provider)
-        ):
             return
         if (
             event.value.strip()
@@ -30892,8 +30887,11 @@ class SettingsScreen(BaseAppScreen):
             queue.pop(0)
             self._update_provider_dynamic_widgets()
             return
+        # task-15673: see handle_provider_endpoint_changed -- the link's
+        # mount echo is no edit; with a draft the text is the user's own.
         if (
             self._navigation_provider
+            and self._provider_draft() is None
             and event.value.strip()
             == self._provider_credential_env_var(self._navigation_provider)
         ):
@@ -30901,14 +30899,6 @@ class SettingsScreen(BaseAppScreen):
             return
         if self._syncing_provider_credential_env_var:
             self._update_provider_dynamic_widgets()
-            return
-        # task-15673: see handle_provider_endpoint_changed -- the nav
-        # recompose's mount echo must not stage as a user edit.
-        if (
-            self._navigation_provider
-            and event.value.strip()
-            == self._provider_credential_env_var(self._navigation_provider)
-        ):
             return
         if (
             event.value.strip()

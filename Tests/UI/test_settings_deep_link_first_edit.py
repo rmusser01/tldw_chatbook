@@ -10,7 +10,7 @@ Save still wrote the linked provider.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Input, Select
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _active_destination_screen
@@ -331,3 +331,95 @@ async def test_a_value_equal_to_the_saved_default_s_is_staged_in_a_linked_form(
         assert screen._provider_draft_value("credential_env_var") == "SHARED_KEY_VAR"
         assert _staged_pair(screen) == _LINKED_PAIR
 
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_refused_saved_model_default_is_no_edit_in_a_linked_form(request):
+    """Finding 11(d): a hand-edited ``seed = -1`` is shown as a new chat reads
+    it and its mount echo is no edit; under a link the stager compared the
+    echo with the DEFAULT pair's saved value and staged it."""
+    app = _app()
+    app.app_config["api_settings"]["llama_cpp"] = {
+        "api_url": "http://127.0.0.1:9099",
+        "model_defaults": {"qwen": {"seed": -1, "temperature": 3.0}},
+    }
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _deep_link_to_anthropic_key(host, pilot, "llama_cpp", "qwen")
+        seed = screen.query_one("#settings-model-profile-seed", Input)
+        assert seed.value == "-1"
+        assert _form_provider(screen)[1:] == ("llama_cpp", "llama_cpp")
+
+        # The echo an Input posts when it mounts, delivered again.
+        screen._stage_model_profile_input(
+            "model_profile_seed", "-1", screen._normalise_model_profile_seed
+        )
+        await pilot.pause()
+
+        assert not screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_edit_typed_and_deleted_in_a_linked_form_leaves_no_draft(
+    request, monkeypatch
+):
+    """Finding 16: the link's mount-echo guard ran with a draft too, so the
+    Backspace that restored the saved value was dropped and the draft kept
+    the deleted character."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _deep_link_to_anthropic_key(host, pilot)
+        for selector in (
+            "#settings-provider-credential-env-var",
+            "#settings-provider-endpoint-value",
+        ):
+            screen.query_one(selector, Input).focus()
+            await pilot.pause()
+            await pilot.press("x")
+            await pilot.pause()
+            assert screen._category_has_unsaved_changes(PROVIDERS_MODELS), selector
+
+            await pilot.press("backspace")
+            await pilot.pause()
+            assert not screen._category_has_unsaved_changes(PROVIDERS_MODELS), selector
+            assert _form_provider(screen) == _ANTHROPIC
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_the_linked_model_s_window_can_be_staged_for_a_model_chosen_after(
+    request,
+):
+    """Finding 16 (2): with a model chosen in the linked form the context
+    window guard still compared with the LINK's model, so that model's own
+    size, pasted in one event, was not staged."""
+    from Tests.UI.test_settings_default_model_picker import _CatalogScope, _widgets
+
+    app = _app()
+    app.app_config["api_settings"]["anthropic"]["api_key"] = _TYPED_KEY
+    app.app_config["model_capabilities"] = {
+        "models": {"claude-sonnet-4-6": {"context_window": 123_456}}
+    }
+    app.llm_provider_catalog_scope_service = _CatalogScope(
+        "anthropic", catalog=("claude-sonnet-4-6", "claude-opus-4-1")
+    )
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _deep_link_to_anthropic_key(host, pilot)
+        _picker, field, _results, adapter = _widgets(screen)
+        field.focus()
+        await pilot.pause()
+        await pilot.press(*"opus", "down", "enter")
+        await _settle(host, pilot)
+        assert adapter.value == "claude-opus-4-1"
+
+        screen.query_one("#settings-model-context-window", Input).value = "123456"
+        await pilot.pause()
+
+        assert screen._provider_draft_value("model_context_window") == 123_456
