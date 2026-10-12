@@ -131,6 +131,7 @@ jobs:
             Tests/Library/test_library_notes_canvas_pending_lookup.py \
             Tests/Architecture/test_notes_sync_binding_profile_commits.py \
             Tests/Architecture/test_notes_sync_version_proxy_sites.py \
+            Tests/Notes/test_sync_containment.py \
             Tests/Agents/test_mcp_unavailable_builtin_tools.py \
             Tests/Chat/test_console_arrival_vocabulary.py \
             Tests/Chat/test_console_trace_missing_revision_diagnostic.py \

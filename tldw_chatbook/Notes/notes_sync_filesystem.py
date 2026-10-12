@@ -7,6 +7,7 @@ import os
 import stat
 import sys
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -283,14 +284,30 @@ class PosixNotesSyncFilesystem:
         selected_root: Path | str,
         *,
         max_file_bytes: int = 10 * 1024 * 1024,
+        identity_claimed: Callable[[int, int], bool] | None = None,
     ):
+        """Compose the adapter over one pinned root.
+
+        Args:
+            selected_root: The sync root directory.
+            max_file_bytes: The largest file an observation reads.
+            identity_claimed: Whether ``(device, inode)`` is recorded by an
+                active binding (TASK-34789). A file this adapter writes or
+                creates avoids such an inode number; the check is advisory,
+                and ``PinnedSyncRoot._create_temporary`` lists what gets
+                through. ``None`` (a read-only use, a harness without a
+                store) asks nothing.
+        """
+
         if not self.supports_writes():
             raise NotesSyncFilesystemError("writable_adapter_unavailable")
         if type(max_file_bytes) is not int or max_file_bytes <= 0:
             raise ValueError("max_file_bytes must be a positive integer.")
         self.canonical_root = _canonical_directory(selected_root)
         self._max_file_bytes = max_file_bytes
-        self._root = PinnedSyncRoot(self.canonical_root)
+        self._root = PinnedSyncRoot(
+            self.canonical_root, identity_claimed=identity_claimed
+        )
 
     @staticmethod
     def supports_writes(*, platform: str | None = None) -> bool:

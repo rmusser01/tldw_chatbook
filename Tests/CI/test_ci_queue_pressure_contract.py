@@ -68,6 +68,11 @@ FAST_LANE_TARGETS = (
     # TASK-34000.49: binding.note_version is never a precondition against
     # the live note (AST scan of the executor, under a second).
     "Tests/Architecture/test_notes_sync_version_proxy_sites.py",
+    # TASK-34789: the pinned sync root's containment and claimed-inode rules.
+    # The file ran in no pull-request lane, so its real-inode test, which only
+    # reaches the recycled-number branch on a filesystem that recycles, had
+    # never run on Linux before a merge. Plain filesystem unit tests, seconds.
+    "Tests/Notes/test_sync_containment.py",
     # TASK-34100.5: the first-reply and handoff unit guards -- the direct
     # runtime's unavailable tools never reach the agent catalog, plain arrival
     # words, the missing-revision trace diagnostic, the provider's own reason
