@@ -32,6 +32,9 @@ from Tests.UI.test_settings_configuration_hub import (
 )
 from Tests.UI.test_settings_connect_rows import _until
 from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
+from Tests.UI.test_settings_session_summary_save import (
+    _Config as _SessionSummaryConfig,
+)
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
@@ -679,12 +682,8 @@ async def test_session_summary_on_quit_is_a_one_row_disclosure_that_says_its_sta
     card Phase 7 rebuilt. It joins Advanced as a closed one-row disclosure
     whose title says its state, keeps its instant-apply writes, and re-says
     the state when toggled."""
-    writes: list[dict] = []
-    monkeypatch.setattr(
-        settings_screen_module,
-        "save_settings_to_cli_config",
-        lambda values: writes.append(values) or True,
-    )
+    # The title reads the saved values (C8), so the fake save keeps them.
+    config = _SessionSummaryConfig(monkeypatch)
     host = _SettingsCssHarness(_app(), "settings")
 
     async with host.run_test(size=_SIZE) as pilot:
@@ -705,4 +704,4 @@ async def test_session_summary_on_quit_is_a_one_row_disclosure_that_says_its_sta
         await host.workers.wait_for_complete()
         await pilot.pause()
         assert _title(screen, disclosure_id) == on
-        assert writes and writes[-1]["session_summary"]["enabled"] is True
+        assert config.writes and config.writes[-1]["enabled"] is True

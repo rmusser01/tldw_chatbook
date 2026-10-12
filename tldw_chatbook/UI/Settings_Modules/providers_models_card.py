@@ -100,7 +100,6 @@ from ..Screens.settings_screen import (
     _anthropic_auth_sources,
     _fold_long_tokens,
     _ProviderTestResult,
-    _session_summary_section_values,
     env_var_echo,
 )
 from .settings_field_rows import (
@@ -1192,7 +1191,7 @@ def snapshots_summary(screen: SettingsScreen) -> str:
 def session_summary_summary(screen: SettingsScreen) -> str:
     """Say whether the quit-time session summary shows, and for how long.
 
-    Reads the mounted controls (they write immediately), else the config.
+    Reads the saved values (C8): a duration being typed is not saved yet.
 
     Args:
         screen: The Settings screen.
@@ -1200,13 +1199,7 @@ def session_summary_summary(screen: SettingsScreen) -> str:
     Returns:
         "applies immediately · Off", or "… · On · 3 s".
     """
-    try:
-        enabled = screen.query_one("#settings-session-summary-enabled", Checkbox).value
-        duration = screen.query_one("#settings-session-summary-duration", Input).value
-    except QueryError:
-        enabled = bool(get_cli_setting("session_summary", "enabled", False))
-        duration = str(get_cli_setting("session_summary", "duration_seconds", 3))
-    values = _session_summary_section_values(enabled, duration)["session_summary"]
+    values = screen._saved_session_summary()["session_summary"]
     if not values["enabled"]:
         return f"{APPLIES_IMMEDIATELY} · Off"
     return f"{APPLIES_IMMEDIATELY} · On · {values['duration_seconds']} s"
