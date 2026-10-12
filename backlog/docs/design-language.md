@@ -93,10 +93,11 @@ only). No other durations in new UI.
 
 ### 2.5 Opacity and the disabled state
 
-`$ds-opacity-dim: 70%` is the only opacity token, for de-emphasized but
+`$ds-opacity-dim: 70%` is for de-emphasized but
 readable secondary content. **Opacity is not the disabled mechanism** for
 action controls: stacking `opacity: 50%` on already-dim text composited to a
-measured 1.34:1 and made disabled controls look absent (TASK-25822). The
+measured 1.34:1 and made disabled controls look absent (TASK-25822). `$ds-opacity-full: 100%`
+keeps explicitly enabled or disabled controls at full opacity. The
 disabled state is `$ds-disabled-bg` + `$ds-text-disabled-readable` at full
 opacity; hover on disabled keeps the disabled surface.
 

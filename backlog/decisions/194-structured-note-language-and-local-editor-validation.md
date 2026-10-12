@@ -151,3 +151,37 @@ app.py/config as __mp_main__ (1782 modules,1.949s). Therefore multiprocessing sp
 cannot satisfy this boundary. No production stderr workaround or worker pool is
 adopted. Installed package paths, copy/startup costs, cancellation and actual
 termination remain required E4 qualification, separately from editor adoption.
+
+### Secondary Research Quick Notes source preview (I2, Ruling43)
+
+The ResearchQuickNote read contract and its local/server row mappings omit mode
+presence. Its secondary preview therefore displays exact markup-disabled source
+for every note and is labeled Source preview. The raw TextArea and canonical save
+contract stay unchanged; omission is never manufactured into null metadata.
+This narrowly guarantees source-safe preview without adding a second metadata
+owner. It costs rendered Markdown preview in this secondary surface until its
+read contract carries qualified mode presence; the main Library Notes retains
+its existing Markdown preview for null/Markdown modes.
+
+### File editor representation mapping (I2, Ruling44)
+
+FileNotesService already presents homogeneous CRLF disk source as LF in its
+incumbent TextArea and serializes it back with the captured BOM/newline profile.
+The File-only editor adapter maps a qualified CRLF format proposal to that LF
+view before native admission. A mapped equality is an unchanged result and makes
+no edit, dirty revision, autosave or history entry. Captured original request
+facts, result identity/check qualification and synchronous source guards remain;
+Database Notes, parser, generic bridge and file serializer are unchanged. Mixed
+newlines and lone CR keep their existing read-only representation restrictions.
+
+### Database native representation fence (I2, Ruling45)
+
+If Textual's native document cannot round-trip the canonical Database body
+exactly, the body view is restricted to escaped source and native body edits,
+checks and formatting are unavailable. Title, mode and save continue through
+the canonical session using its original body. Queued Changed and pre-recompose
+flushes cannot import the normalized widget string. Existing copy/export read
+that same canonical body. Mode selection never removes this fence. This costs
+body editing for unsupported representations until a qualified adapter exists;
+it adds neither persisted body ownership nor Database newline normalization.
+Homogeneous LF/CRLF and lone CR remain usable when native round-trip is exact.

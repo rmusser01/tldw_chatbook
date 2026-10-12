@@ -699,6 +699,9 @@ class LifecycleMixin:
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        document_worker = getattr(self, "document_worker", None)
+        if document_worker is not None:
+            await document_worker.close()
         await self._shutdown_workflow_session()
         self._mcp_local_config_saves_closed = True
         self._tool_profile_operations_closed = True

@@ -19,8 +19,10 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.events import Focus, Resize
+from textual.document._document import Document
 from textual.message_pump import NoActiveAppError
 from textual.widgets import Button, Input, Markdown, Static, TextArea
+from tldw_chatbook.Widgets.document_diagnostics import DocumentDiagnostics
 
 from tldw_chatbook.Library.library_notes_state import (
     LibraryNoteSessionSnapshot,
@@ -528,6 +530,11 @@ def browse_row_overflows(pane_width: int, needed: int, *, already_split: bool) -
     if pane_width <= 0:
         return False
     return needed > pane_width - (_TOOLBAR_SPLIT_HYSTERESIS if already_split else 0)
+
+
+def native_note_source_is_exact(body: str) -> bool:
+    """Whether the incumbent native document preserves canonical source."""
+    return Document(body).text == body
 
 
 def _drop_leading_title_heading(body: str, title: str) -> str:
@@ -3222,8 +3229,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     placeholder="Comma-separated keywords",
                     id="library-note-keywords",
                 )
+            yield DocumentDiagnostics(id="library-note-document-tools")
             yield Static("Body", id="library-note-body-label", markup=False)
             yield NoteEditorTextArea(content, id="library-note-body")
+            with VerticalScroll(id="library-note-exact-source-region", can_focus=True):
+                yield Static(content, id="library-note-exact-source", markup=False)
 
         with root(VerticalScroll(id="library-note-preview-region", can_focus=True)):
             # task-32142 AC#1: the shared heading row's title Static (above)
@@ -3239,10 +3249,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 markup=False,
             )
             yield Markdown(
-                render_preview_source(content, title=title),
+                (
+                    render_preview_source(content, title=title)
+                    if native_note_source_is_exact(content)
+                    and snapshot.draft.content_language in (None, "markdown")
+                    else ""
+                ),
                 id="library-note-preview-body",
                 parser_factory=front_matter_parser_factory(),
             )
+            yield Static(content, id="library-note-source-preview", markup=False)
         with root(VerticalScroll(id="library-note-context-region", can_focus=True)):
             yield Static("Properties", classes="destination-section", markup=False)
             with Horizontal(id="library-note-context-keywords-row"):
@@ -3846,7 +3862,17 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # straight out of it; ``test_delete_confirmation_traps_tab_between_
         # cancel_and_delete`` asserts the disabled state for that reason.
         node("#library-note-title").disabled = not show_editor or locked
-        node("#library-note-body").disabled = not show_editor or locked
+        source_exact = native_note_source_is_exact(state.snapshot.body)
+        body = node("#library-note-body")
+        body.read_only = not source_exact
+        body.disabled = not show_editor or locked or not source_exact
+        body.display = source_exact
+        node("#library-note-exact-source-region").display = show_editor and not source_exact
+        source_mode = not source_exact or state.snapshot.draft.content_language not in (
+            None, "markdown",
+        )
+        node("#library-note-preview-body").display = not source_mode
+        node("#library-note-source-preview").display = source_mode
         # task-32642 AC#3: the same rule as the title and body above. This
         # field used to be disabled whenever the terminal was compact --
         # harmless while it lived undisplayed inside
@@ -3972,6 +3998,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         flags = self._editor_surface_flags(state)
         confirming_delete = flags.confirming_delete
         show_preview = flags.show_preview
+        source_exact = native_note_source_is_exact(snapshot.body)
 
         title_input = self.query_one("#library-note-title", Input)
         body_input = self.query_one("#library-note-body", TextArea)
@@ -4042,14 +4069,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # compose time too, so the staleness comparison below has to be
         # against the SAME rendered source -- comparing the raw body would
         # re-render every sync on any note carrying a link or a callout.
-        # TASK-32804.11: compute the (link/callout-rewritten) preview source
-        # ONLY when Preview is the active surface. It ran on every sync --
-        # including every keystroke while Preview was hidden -- exactly the
-        # hidden-render backlog the comment above says to avoid.
-        if show_preview:
-            preview_source = render_preview_source(
-                snapshot.body, title=snapshot.title
-            )
+        source_mode = not source_exact or snapshot.draft.content_language not in (
+            None, "markdown",
+        )
+        if show_preview and source_mode:
+            self.query_one("#library-note-source-preview", Static).update(snapshot.body)
+        if show_preview and not source_mode:
+            preview_source = render_preview_source(snapshot.body, title=snapshot.title)
             if preview_body.source != preview_source:
                 preview_body.update(preview_source)
         channels = state.status_channels or NotesStatusChannels(
@@ -4137,6 +4163,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             if self._static_text(confirm_copy) != wanted:
                 confirm_copy.update(wanted)
 
+        if not source_exact:
+            self.query_one("#library-note-exact-source", Static).update(snapshot.body)
         # TASK-34000.25: every display / disabled / is-active / can_focus gate
         # lives in ``_apply_editor_surface_gates`` -- the same helper
         # ``_compose_editor`` runs over the unmounted tree -- so compose and

@@ -8,9 +8,9 @@ from uuid import uuid4
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
-from textual.widgets import Button, Input, Markdown, Select, Static, TextArea
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 from ...Research_Workspace import (
     QualifiedWorkspaceRef,
@@ -156,9 +156,11 @@ class ResearchQuickNotesSection(Vertical):
             yield Button(
                 "Edit", id="research-quick-note-edit-mode", classes="is-active"
             )
-            yield Button("Markdown Preview", id="research-quick-note-preview-mode")
+            yield Button("Source preview", id="research-quick-note-preview-mode")
         yield TextArea(id="research-quick-note-body")
-        preview = Markdown("", id="research-quick-note-preview")
+        preview = VerticalScroll(
+            Static("", markup=False), id="research-quick-note-preview", can_focus=True
+        )
         preview.display = False
         yield preview
         with Horizontal(id="research-quick-note-actions"):
@@ -418,7 +420,9 @@ class ResearchQuickNotesSection(Vertical):
             title_input.value = title
             tags_input.value = ", ".join(tags)
             body.load_text(content)
-        self.query_one("#research-quick-note-preview", Markdown).update(content)
+        self.query_one("#research-quick-note-preview", VerticalScroll).query_one(
+            Static
+        ).update(content)
         self._sync_provenance()
 
     def _reset_editor(self) -> None:
@@ -518,7 +522,7 @@ class ResearchQuickNotesSection(Vertical):
     @on(Button.Pressed, "#research-quick-note-edit-mode")
     def show_edit(self) -> None:
         self.query_one("#research-quick-note-body", TextArea).display = True
-        self.query_one("#research-quick-note-preview", Markdown).display = False
+        self.query_one("#research-quick-note-preview", VerticalScroll).display = False
         self.query_one("#research-quick-note-edit-mode", Button).set_class(
             True, "is-active"
         )
@@ -528,11 +532,11 @@ class ResearchQuickNotesSection(Vertical):
 
     @on(Button.Pressed, "#research-quick-note-preview-mode")
     def show_preview(self) -> None:
-        self.query_one("#research-quick-note-preview", Markdown).update(
-            self.query_one("#research-quick-note-body", TextArea).text
-        )
+        self.query_one("#research-quick-note-preview", VerticalScroll).query_one(
+            Static
+        ).update(self.query_one("#research-quick-note-body", TextArea).text)
         self.query_one("#research-quick-note-body", TextArea).display = False
-        self.query_one("#research-quick-note-preview", Markdown).display = True
+        self.query_one("#research-quick-note-preview", VerticalScroll).display = True
         self.query_one("#research-quick-note-edit-mode", Button).set_class(
             False, "is-active"
         )

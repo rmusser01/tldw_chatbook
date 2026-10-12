@@ -5,7 +5,8 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input, Markdown, Static, TextArea
+from textual.widgets import Button, Input, Static, TextArea
+from textual.containers import VerticalScroll
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Research_Workspace import (
@@ -80,7 +81,7 @@ async def test_studio_mounts_compose_once_quick_notes_parity_controls() -> None:
             "Previous",
             "Next",
             "Edit",
-            "Markdown Preview",
+            "Source preview",
             "Save",
             "Delete",
             "Download .md",
@@ -126,7 +127,7 @@ async def test_quick_note_load_preview_clear_and_undo_patch_in_place() -> None:
         section.query_one("#research-quick-note-preview-mode", Button).press()
         await pilot.pause()
         assert not body.display
-        assert section.query_one("#research-quick-note-preview", Markdown).display
+        assert section.query_one("#research-quick-note-preview", VerticalScroll).display
 
         section.query_one("#research-quick-note-edit-mode", Button).press()
         section.query_one("#research-quick-note-clear", Button).press()
@@ -824,3 +825,36 @@ async def test_switch_and_conflict_recovery_modals_offer_no_force_overwrite() ->
         labels = {str(button.label) for button in app.screen.query(Button)}
         assert labels == {"Reload", "Copy as new", "Cancel"}
         assert not any("overwrite" in label.lower() for label in labels)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source",
+    [
+        "**Markdown**  \n",
+        "---\na: &anchor value\nb: *anchor\n",
+        '{"text":"a&b <tag>","n":9007199254740993}',
+    ],
+)
+async def test_secondary_source_preview_keeps_exact_canonical_body(source):
+    from dataclasses import replace
+
+    from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
+        ResearchQuickNotesSection,
+    )
+
+    app = _StudioHarness()
+    async with app.run_test(size=(72, 44)) as pilot:
+        section = app.screen.query_one(ResearchQuickNotesSection)
+        section.sync_note(replace(note(), content=source))
+        button = section.query_one("#research-quick-note-preview-mode", Button)
+        assert str(button.label) == "Source preview"
+        button.press()
+        await pilot.pause()
+        preview = section.query_one(
+            "#research-quick-note-preview", VerticalScroll
+        ).query_one(Static)
+        assert str(preview.renderable) == source
+        section.query_one("#research-quick-note-edit-mode", Button).press()
+        await pilot.pause()
+        assert section.query_one("#research-quick-note-body", TextArea).text == source

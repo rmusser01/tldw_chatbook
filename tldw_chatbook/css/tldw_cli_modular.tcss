@@ -268,6 +268,7 @@ $ds-duration-slow: 0.5s;
 
 
 $ds-opacity-dim: 70%;
+$ds-opacity-full: 100%;
 
 
 $ds-text-strong: bold;
@@ -339,6 +340,11 @@ $ds-conversation-action-width: 4;
 $ds-conversation-action-ascii-width: 9;
 $ds-inspector-usage-list-width: 60;
 $ds-conversation-menu-width: 30;
+
+$ds-document-language-width: 14;
+$ds-document-problems-height: 5;
+$ds-document-button-min-width: 5;
+
 
 /* ===== MODULE: core/_reset.tcss ===== */
 
@@ -10816,6 +10822,14 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
     outline: none;
 }
 
+#library-shell-grid.library-notes-compact #library-note-body {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    max-height: $ds-height-full;
+    margin: $ds-space-0;
+    overflow-x: hidden;
+}
+
 
 #library-shell-grid.library-notes-compact #library-note-context-region .destination-section,
 #library-shell-grid.library-notes-compact #library-note-preview-region .destination-section,
@@ -12019,6 +12033,54 @@ Collapsible.-active > CollapsibleTitle {
 
 
 
+
+
+DocumentDiagnostics {
+    height: auto;
+    color: $ds-text-primary;
+}
+DocumentDiagnostics .document-actions {
+    height: $ds-control-height-compact;
+    width: 1fr;
+}
+DocumentDiagnostics .document-language {
+    width: $ds-document-language-width;
+    height: $ds-control-height-compact;
+}
+DocumentDiagnostics Button {
+    width: auto;
+    min-width: $ds-document-button-min-width;
+    height: $ds-control-height-compact;
+    margin: $ds-space-0 $ds-space-inline;
+    background: $ds-surface-raised;
+    color: $ds-text-primary;
+    border: none;
+}
+DocumentDiagnostics Button:hover { background: $ds-hover-bg; color: $ds-hover-fg; }
+DocumentDiagnostics Button:focus { background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline; }
+DocumentDiagnostics Button:disabled { background: $ds-disabled-bg; color: $ds-text-disabled-readable; opacity: $ds-opacity-full; }
+DocumentDiagnostics .document-language-scope { height: $ds-control-height-compact; color: $ds-text-muted; }
+DocumentDiagnostics .document-check-status { height: auto; color: $ds-status-info; }
+DocumentDiagnostics .document-problems { height: auto; padding: $ds-space-0; margin: $ds-space-0; margin-bottom: $ds-space-0; border: none; }
+DocumentDiagnostics CollapsibleTitle { padding: $ds-space-0; }
+DocumentDiagnostics Contents { padding: $ds-space-0; }
+DocumentDiagnostics .document-problem-list { height: auto; max-height: $ds-document-problems-height; }
+DocumentDiagnostics .document-truncation { height: auto; color: $ds-status-warning; }
+#library-note-source-preview { height: auto; }
+
+DocumentDiagnostics .document-problems.-collapsed { height: $ds-control-height-compact; min-height: $ds-control-height-compact; margin-bottom: $ds-space-0; }
+
+#library-note-exact-source-region { height: 1fr; border: solid $ds-grid-line; padding: $ds-space-1; }
+
+
+#library-shell-grid.library-notes-compact #library-note-body {
+    border: none;
+    padding: $ds-space-0 $ds-space-inline;
+}
+#library-shell-grid.library-notes-compact #library-note-body:focus {
+    outline: none;
+    background: $ds-input-focus-bg;
+}
 
 /* ===== MODULE: features/_media.tcss ===== */
 

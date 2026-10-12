@@ -848,6 +848,7 @@ from ..Library_Modules.screen_support_types import (
     _ParakeetV2NoPendingReportError,
 )
 from ..Library_Modules.note_session_port import _LibraryDatabaseNoteSessionPort
+from ...Widgets.document_diagnostics import DocumentDiagnostics
 from ..Library_Modules.canvas_sync import (
     _move_library_list_row_focus,
     _patch_library_disabled_marker_label,
@@ -3381,6 +3382,7 @@ class LibraryScreen(BaseAppScreen):
         self._notes_controller = LibraryNotesController(
             self,
             notes_state_accessor=lambda: self._notes_state,
+            document_authority_accessor=lambda: self._library_document_authority(),
             # -- shared shell state this cluster READS (getter-only).
             library_canvas_projection_depth_accessor=(
                 lambda: self._library_canvas_projection_depth
@@ -4039,6 +4041,11 @@ class LibraryScreen(BaseAppScreen):
                 )
             except ValueError:
                 pass
+        self._library_document_authority = lambda: (
+            recovery_scope.key()
+            if recovery_scope is not None and note_authority_is_current()
+            else None
+        )
         runtime = getattr(app_instance, "notes_sync_runtime_owner", None)
         recovery = getattr(runtime, "draft_recovery", None)
         self._library_note_session = DatabaseNoteSessionCoordinator(
@@ -6110,6 +6117,10 @@ class LibraryScreen(BaseAppScreen):
         """
         self._notes_state.stage_applied_signature = None
         self._apply_library_notes_stage_legs()
+        self._notes_controller.synchronize_document_editor()
+        workspace = self._notes_state.file_notes_workspace
+        if workspace is not None:
+            workspace.synchronize_document_editor()
         self._notes_state.stage_applied_signature = (
             self._library_notes_stage_signature()
         )
@@ -9470,6 +9481,10 @@ class LibraryScreen(BaseAppScreen):
         self._artifacts_share_controller.suspend()
         if self._artifacts_controller is not None:
             self._artifacts_controller.suspend()
+        self._notes_controller.retire_document_editor()
+        workspace = self._notes_state.file_notes_workspace
+        if workspace is not None:
+            workspace.retire_document_editor()
         self._unavailable_navigation.clear_character_return(self)
         self._disarm_library_list_entry_focus()
         self._stop_library_media_selection_debounce()
@@ -9515,6 +9530,10 @@ class LibraryScreen(BaseAppScreen):
         self.call_after_refresh(self._artifacts_navigation.resume)
         if self._artifacts_controller is not None:
             self._artifacts_controller.resume()
+        self._notes_controller.synchronize_document_editor()
+        workspace = self._notes_state.file_notes_workspace
+        if workspace is not None:
+            workspace.synchronize_document_editor()
         # task-32039 AC#1: a new visit's auto-refresh (below) re-issues the
         # same scope; the fault episode must not read that as a consecutive
         # Retry and prepend the reopen recovery step on a first failure.
@@ -9876,6 +9895,7 @@ class LibraryScreen(BaseAppScreen):
         ``False`` after removal) -- so this call is what actually closes
         the window, not the guard.
         """
+        self._notes_controller.retire_document_editor()
         if self._media_state.analyze_running:
             # task-28007 AC#4: this screen owns the bulk-Analyze worker, so
             # Textual cancels it here (Widget._on_unmount -> cancel_node),
@@ -20005,6 +20025,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         self._notes_state.editor_armed = True
+        self._notes_controller.synchronize_document_editor()
 
     @on(LibraryNoteWorkPane.EditorReady)
     def handle_library_note_work_pane_editor_ready(
@@ -21328,6 +21349,10 @@ class LibraryScreen(BaseAppScreen):
     @on(Input.Changed, "#library-note-title")
     def handle_library_note_title_changed(self, event: Input.Changed) -> None:
         return self._notes_controller.handle_library_note_title_changed(event)
+
+    @on(DocumentDiagnostics.Action)
+    async def handle_document_action(self, event: DocumentDiagnostics.Action) -> None:
+        await self._notes_controller.handle_document_action(event)
 
     @on(TextArea.Changed, "#library-note-body")
     def handle_library_note_body_changed(self, event: TextArea.Changed) -> None:

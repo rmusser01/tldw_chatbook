@@ -4052,3 +4052,19 @@ launch closure must await one shielded cleanup; the real SIGTERM-ignoring contro
 caught cancellation interrupting reap before retirement became idempotent.
 See ADR194 and the E4 qualification report; keep Python reap/pipe closure before
 replacement distinct from browser native asynchronous termination.
+
+
+### Task34656: focused geometry can hide every native source row
+
+During structured Notes integration, the60x20 body first had a positive widget
+region but zero content rows because inherited Collapsible minimum height and
+margin consumed its allocation. After the existing compact borderless pattern
+made content_region positive, a focused native outline still painted over both
+rows: the compositor crop contained only outline glyphs, while typing and focus
+assertions passed. The exact rendered-source RED and final16-test GREEN are
+retained in Task12 evidence. Complete the incumbent compact focus pattern
+(including outline:none), and assert fixture source inside the body's actual
+composited rows; matching source elsewhere in a screenshot or checking geometry
+alone does not prove that the focused editor displays it. The same incident also
+caught a broad OptionList query selecting Select's nested mode overlay; Problems
+queries/events now target their own class explicitly.

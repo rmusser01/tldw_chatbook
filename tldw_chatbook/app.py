@@ -1536,6 +1536,9 @@ class TldwCli(
 
         self._wire_chat_conversation_services()
 
+        from .Document_Editing.worker import DocumentWorker
+
+        self.document_worker = DocumentWorker()
         self.server_notes_workspace_service = (
             ServerNotesWorkspaceService.from_server_context_provider(
                 self.server_context_provider,
