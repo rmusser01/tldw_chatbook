@@ -1085,3 +1085,35 @@ def test_a_label_in_front_of_a_mark_is_dropped_only_when_it_is_a_label_word(
 
     assert _query_row(line, [(_G1, None), (_G2, None)]) == {
         "query": query, "goal_derived": True, "goal": _G1}
+
+
+# --- G-N1: a line ending in a colon is a label only when a line follows it -------
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["C++ scope resolution operator ::", "kyoto temples:",
+     "what is new in rust:"],
+)
+def test_a_lone_line_ending_in_a_colon_is_a_query(line):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None)])["query"] == line
+
+
+@pytest.mark.asyncio
+async def test_a_colon_line_is_a_label_over_the_lines_below_it_only():
+    chat, _calls = _capture_chat(
+        "Topic queries:\n"
+        "rust tui news\n"
+        "C++ scope resolution operator ::\n"
+        "beginner cello lessons\n"
+        "what is new in rust:"
+    )
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [row["query"] for row in rows] == [
+        "rust tui news", "C++ scope resolution operator ::",
+        "beginner cello lessons", "what is new in rust:"]
+
