@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.response_rules.models import (
     RuleBinding,
     RuleCandidate,
     RuleLearningResult,
+    RuleRevision,
     RuleScope,
 )
 from tldw_chatbook.UI.Console_Modules.response_rules import reason_copy
@@ -192,7 +193,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
         if self.is_mounted:
             self.query_one("#rr-status", Static).update(text)
 
-    async def _reload(self) -> None:
+    async def _reload(self, *, selected_rule: RuleRevision | None = None) -> None:
         bindings = []
         for scope in self._scopes[self._scopes.index(self.scope) :]:
             if scope is not None:
@@ -232,8 +233,19 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
 
             options.add_option(Text(label))
         if self._rows:
-            options.highlighted = 0
-            self._load_row(0)
+            selected = next(
+                (
+                    index
+                    for index, (binding, _draft) in enumerate(self._rows)
+                    if selected_rule is not None
+                    and binding is not None
+                    and binding.rule_id == selected_rule.rule_id
+                    and binding.revision == selected_rule.revision
+                ),
+                0,
+            )
+            options.highlighted = selected
+            self._load_row(selected)
         else:
             self._selected = None
             self.query_one("#rr-details", Static).update(
@@ -555,13 +567,9 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                 await self.runtime.activate_tested(
                     result, self.scope, expected_binding_revision=self._expected
                 )
-                self._expected += 1
-                self._binding = next(
-                    b
-                    for b in self.store.list_bindings(self.scope)
-                    if b.rule_id == rule.rule_id
-                )
-                self._loaded_digest = result.rule.candidate.candidate_digest()
+                await self._reload(selected_rule=result.rule)
+                self.tested = result
+                self._show_examples(result)
                 self._status("Rule active · tested against examples.")
             elif action in {"disable", "exclude"}:
                 state = (
@@ -586,7 +594,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                     expected_binding_revision=self._expected,
                     current=self._current_scope,
                 )
-                await self._reload()
+                await self._reload(selected_rule=rule)
                 self._status(
                     "Enabled here."
                     if state == "enabled"

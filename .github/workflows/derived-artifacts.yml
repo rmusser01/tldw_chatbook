@@ -392,6 +392,8 @@ jobs:
             Tests/Chat/test_response_rules_runtime.py::test_cancelled_rule_db_call_keeps_real_handle_until_own_cleanup \
             Tests/Chat/test_response_rules_runtime.py::test_real_completed_tool_work_is_retained_during_native_repair \
             Tests/Chat/test_response_rules_external_hook.py \
+            Tests/Chat/test_response_rules_write_contention.py \
+            Tests/UI/test_response_rules_modal.py::test_saved_edit_stays_selected_and_pinned_for_next_manager_action \
             --timeout=300 \
             --tb=short
 

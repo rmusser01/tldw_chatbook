@@ -355,3 +355,80 @@ async def test_dirty_escape_discards_only_after_confirmation(native):
         for _ in range(8):
             await pilot.pause()
         assert modal not in host.screen_stack
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["promote", "toggle"])
+@pytest.mark.parametrize("size", [(80, 24), (120, 35)])
+async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
+    native, action, size
+):
+    from textual.widgets import OptionList, Static
+
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    _owner, rules, _chats, session, gateway, _controller = native
+    seed(native)
+    gateway.reply = "Evidence: corrected answer"
+    assert (
+        await rules.learn(session.id, "The answer omitted evidence")
+    ).state == "active"
+    scope = rules.scopes(session.id)[0]
+    modal = ResponseRulesModal(scope, rules.store, rules)
+    host = ManagerHost(modal)
+    async with host.run_test(size=size) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        modal.query_one("#rr-title", Input).value = "Edited evidence definition"
+        modal.query_one("#rr-test", Button).press()
+        for _ in range(50):
+            await pilot.pause()
+            if modal.tested is not None and not modal._busy:
+                break
+        tested = modal.tested
+        assert tested.rule.revision == 2 and tested.validation is not None
+        modal.query_one("#rr-save", Button).press()
+        for _ in range(20):
+            await pilot.pause()
+            if not modal._busy and rules.store.list_bindings(scope)[0].revision == 2:
+                break
+        saved_selection = modal._selected
+        saved_details = str(modal.query_one("#rr-details", Static).render())
+        options = modal.query_one("#rr-rules", OptionList)
+        saved_row = str(options.get_option_at_index(options.highlighted).prompt)
+        assert rules.store.list_bindings(scope)[0].revision == 2
+        if action == "promote":
+            modal.query_one("#rr-promote", Button).press()
+            for _ in range(10):
+                await pilot.pause()
+                if isinstance(host.screen, ConfirmationDialog):
+                    break
+            assert isinstance(host.screen, ConfirmationDialog)
+            preview = host.screen.message
+            host.screen.query_one("#confirm-button", Button).press()
+            for _ in range(15):
+                await pilot.pause()
+            binding = rules.store.list_bindings(rules.scopes(session.id)[2])[0]
+            assert binding.revision == 2, preview
+            assert "revision 2" in preview and "Edited evidence definition" in preview
+        else:
+            for state in ("disabled", "enabled"):
+                modal.query_one("#rr-disable", Button).press()
+                for _ in range(15):
+                    await pilot.pause()
+                    if (
+                        not modal._busy
+                        and rules.store.list_bindings(scope)[0].state == state
+                    ):
+                        break
+                binding = rules.store.list_bindings(scope)[0]
+                assert binding.state == state
+            assert binding.revision == 2
+        assert (
+            rules.store.get_revision(binding.rule_id, binding.revision).candidate
+            == tested.rule.candidate
+        )
+        assert saved_selection == tested.rule == modal._selected
+        assert "revision 2" in saved_details
+        assert "revision 2" in saved_row and "Edited evidence definition" in saved_row
+        assert modal.query_one("#rr-title", Input).value == tested.rule.candidate.title

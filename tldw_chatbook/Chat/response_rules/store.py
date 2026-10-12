@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable, Mapping
-from contextlib import nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import asdict, dataclass, field, replace
 from threading import RLock
 
@@ -235,6 +235,21 @@ class ResponseRuleStore:
                 global_scope=global_scope,
             )
 
+    @contextmanager
+    def _write_cursor(self, fence: ExitStack, admission_lock=None, *, durable=True):
+        """Wait for SQLite before fencing revocation; keep fences through settlement.
+
+        The caller owns the outer stack so commit/rollback finishes before either
+        lock is released. Memory publication follows this context's successful exit.
+        """
+        transaction = (
+            self.repository.db.transaction(immediate=True) if durable else nullcontext()
+        )
+        with transaction as cursor:
+            fence.enter_context(self._lock)
+            fence.enter_context(admission_lock or nullcontext())
+            yield cursor
+
     def activate(
         self,
         rule: RuleRevision,
@@ -247,49 +262,40 @@ class ResponseRuleStore:
     ) -> RuleBinding:
         """Publish a calibrated revision only after one successful local commit."""
         validate_activation(rule, validation)
-        with self._lock, admission_lock or nullcontext():
-            if current is not None and not current():
-                raise RuleBindingConflict("rule_source_changed")
-            self._assert_not_adopting(scope)
-            if (
-                scope.kind == "chat"
-                and scope.owner_id == rule.origin.session_id
-                and rule.origin.conversation_id is None
-            ):
-                self.register_temporary(scope.owner_id)
-            memory = self._memory(scope)
-            if memory is not None:
-                with self.repository.db.transaction(immediate=True) as cursor:
-                    self._assert_capacity(
-                        RuleBinding(scope, rule.rule_id, rule.revision, "enabled", 1),
-                        RuleScope("global", rule.origin.profile_id),
-                        cursor,
-                    )
-                previous = memory.bindings.get(rule.rule_id)
+        with ExitStack() as fence:
+            with self._write_cursor(fence, admission_lock) as cursor:
+                if current is not None and not current():
+                    raise RuleBindingConflict("rule_source_changed")
+                self._assert_not_adopting(scope)
                 if (
-                    previous.binding_revision if previous else 0
-                ) != expected_binding_revision:
-                    raise RuleBindingConflict("rule_binding_changed")
-                key = (rule.rule_id, rule.revision)
-                if key in memory.revisions and memory.revisions[key] != rule:
-                    raise ValueError("immutable_rule_revision")
-                binding = RuleBinding(
-                    scope,
-                    rule.rule_id,
-                    rule.revision,
-                    "enabled",
-                    expected_binding_revision + 1,
+                    scope.kind == "chat"
+                    and scope.owner_id == rule.origin.session_id
+                    and rule.origin.conversation_id is None
+                ):
+                    self.register_temporary(scope.owner_id)
+                memory = self._memory(scope)
+                self._assert_capacity(
+                    RuleBinding(scope, rule.rule_id, rule.revision, "enabled", 1),
+                    RuleScope("global", rule.origin.profile_id),
+                    cursor,
                 )
-                memory.revisions[key] = rule
-                memory.validations[key] = validation
-                memory.bindings[rule.rule_id] = binding
-            else:
-                with self.repository.db.transaction(immediate=True) as cursor:
-                    self._assert_capacity(
-                        RuleBinding(scope, rule.rule_id, rule.revision, "enabled", 1),
-                        RuleScope("global", rule.origin.profile_id),
-                        cursor,
+                if memory is not None:
+                    previous = memory.bindings.get(rule.rule_id)
+                    if (
+                        previous.binding_revision if previous else 0
+                    ) != expected_binding_revision:
+                        raise RuleBindingConflict("rule_binding_changed")
+                    key = (rule.rule_id, rule.revision)
+                    if key in memory.revisions and memory.revisions[key] != rule:
+                        raise ValueError("immutable_rule_revision")
+                    binding = RuleBinding(
+                        scope,
+                        rule.rule_id,
+                        rule.revision,
+                        "enabled",
+                        expected_binding_revision + 1,
                     )
+                else:
                     self.repository._assert_source(cursor, rule.origin)
                     self.repository._put_revision(cursor, rule)
                     self.repository._put_validation(cursor, rule, validation)
@@ -298,6 +304,10 @@ class ResponseRuleStore:
                         RuleBinding(scope, rule.rule_id, rule.revision, "enabled", 1),
                         expected_binding_revision,
                     )
+            if memory is not None:
+                memory.revisions[key] = rule
+                memory.validations[key] = validation
+                memory.bindings[rule.rule_id] = binding
             self._invalidate(scope, rule.rule_id)
             return binding
 
@@ -309,44 +319,41 @@ class ResponseRuleStore:
         current: Callable[[], bool] | None = None,
     ) -> RuleBinding:
         """Change a reviewed pin/state using compare-and-swap."""
-        with self._lock:
-            if current is not None and not current():
-                raise RuleBindingConflict("rule_scope_changed")
-            self._assert_not_adopting(binding.scope)
-            self._invalidate(binding.scope, binding.rule_id)
-            if binding.state == "enabled" and binding.revision is not None:
-                rule = self.get_revision(binding.rule_id, binding.revision)
-                validation = self.get_validation(binding.rule_id, binding.revision)
-                if validation is None:
-                    raise ValueError("validation_required")
-                validate_activation(rule, validation)
-            memory = self._memory(binding.scope)
-            if memory is not None:
-                if binding.state == "enabled":
-                    with self.repository.db.transaction(immediate=True) as cursor:
-                        self._assert_capacity(
-                            binding, RuleScope("global", rule.origin.profile_id), cursor
-                        )
-                previous = memory.bindings.get(binding.rule_id)
-                if (
-                    previous.binding_revision if previous else 0
-                ) != expected_binding_revision:
-                    raise RuleBindingConflict("rule_binding_changed")
-                if binding.revision is not None:
-                    self.get_revision(binding.rule_id, binding.revision)
-                updated = replace(
-                    binding, binding_revision=expected_binding_revision + 1
-                )
-                memory.bindings[binding.rule_id] = updated
-                return updated
-            with self.repository.db.transaction(immediate=True) as cursor:
+        with ExitStack() as fence:
+            with self._write_cursor(fence) as cursor:
+                if current is not None and not current():
+                    raise RuleBindingConflict("rule_scope_changed")
+                self._assert_not_adopting(binding.scope)
+                self._invalidate(binding.scope, binding.rule_id)
+                if binding.state == "enabled" and binding.revision is not None:
+                    rule = self.get_revision(binding.rule_id, binding.revision)
+                    validation = self.get_validation(binding.rule_id, binding.revision)
+                    if validation is None:
+                        raise ValueError("validation_required")
+                    validate_activation(rule, validation)
                 if binding.state == "enabled":
                     self._assert_capacity(
                         binding, RuleScope("global", rule.origin.profile_id), cursor
                     )
-                return self.repository._set_binding(
-                    cursor, binding, expected_binding_revision
-                )
+                memory = self._memory(binding.scope)
+                if memory is not None:
+                    previous = memory.bindings.get(binding.rule_id)
+                    if (
+                        previous.binding_revision if previous else 0
+                    ) != expected_binding_revision:
+                        raise RuleBindingConflict("rule_binding_changed")
+                    if binding.revision is not None:
+                        self.get_revision(binding.rule_id, binding.revision)
+                    updated = replace(
+                        binding, binding_revision=expected_binding_revision + 1
+                    )
+                else:
+                    updated = self.repository._set_binding(
+                        cursor, binding, expected_binding_revision
+                    )
+            if memory is not None:
+                memory.bindings[binding.rule_id] = updated
+            return updated
 
     def promote(
         self,
@@ -360,15 +367,15 @@ class ResponseRuleStore:
         """Pin the reviewed definition more broadly without copying fixtures."""
         if destination.kind == "chat":
             raise ValueError("promotion_scope_invalid")
-        with self._lock:
-            if current is not None and not current():
-                raise RuleBindingConflict("rule_scope_changed")
-            rule = self.get_revision(rule_id, revision)
-            validation = self.get_validation(rule_id, revision)
-            if validation is None:
-                raise ValueError("validation_required")
-            validate_activation(rule, validation)
-            with self.repository.db.transaction(immediate=True) as cursor:
+        with ExitStack() as fence:
+            with self._write_cursor(fence) as cursor:
+                if current is not None and not current():
+                    raise RuleBindingConflict("rule_scope_changed")
+                rule = self.get_revision(rule_id, revision)
+                validation = self.get_validation(rule_id, revision)
+                if validation is None:
+                    raise ValueError("validation_required")
+                validate_activation(rule, validation)
                 self._assert_capacity(
                     RuleBinding(destination, rule_id, revision, "enabled", 1),
                     (
@@ -401,43 +408,49 @@ class ResponseRuleStore:
         """Keep failed or tested inactive drafts in their explicit source scope."""
         if len(complaint.encode("utf-8")) > 8192:
             raise ValueError("complaint_too_large")
-        with self._lock, admission_lock or nullcontext():
-            if current is not None and not current():
-                raise RuleBindingConflict("rule_source_changed")
-            self._assert_not_adopting(scope)
-            if (
-                scope.kind == "chat"
-                and scope.owner_id == source.session_id
-                and source.conversation_id is None
-            ):
-                self.register_temporary(scope.owner_id)
-            memory = self._memory(scope)
+        temporary = (
+            scope.kind == "chat"
+            and scope.owner_id == source.session_id
+            and source.conversation_id is None
+        )
+        with ExitStack() as fence:
+            with self._write_cursor(
+                fence, admission_lock, durable=not temporary
+            ) as cursor:
+                if current is not None and not current():
+                    raise RuleBindingConflict("rule_source_changed")
+                self._assert_not_adopting(scope)
+                if temporary:
+                    self.register_temporary(scope.owner_id)
+                memory = self._memory(scope)
+                if memory is not None:
+                    if result.rule:
+                        key = (result.rule.rule_id, result.rule.revision)
+                        if (
+                            key in memory.revisions
+                            and memory.revisions[key] != result.rule
+                        ):
+                            raise ValueError("immutable_rule_revision")
+                else:
+                    if current is not None:
+                        self.repository._assert_source(cursor, source)
+                    self.repository._save_draft(
+                        cursor, scope, source, result, complaint
+                    )
             if memory is not None:
                 if result.rule:
-                    key = (result.rule.rule_id, result.rule.revision)
-                    if key in memory.revisions and memory.revisions[key] != result.rule:
-                        raise ValueError("immutable_rule_revision")
                     memory.revisions[key] = result.rule
                     if result.validation:
                         memory.validations[key] = result.validation
                 memory.drafts.append(
                     (
                         source,
-                        (
-                            replace(result, state="inactive")
-                            if result.state == "active"
-                            else result
-                        ),
+                        replace(result, state="inactive")
+                        if result.state == "active"
+                        else result,
                         complaint,
                     )
                 )
-            else:
-                with self.repository.db.transaction(immediate=True) as cursor:
-                    if current is not None:
-                        self.repository._assert_source(cursor, source)
-                    self.repository._save_draft(
-                        cursor, scope, source, result, complaint
-                    )
 
     def list_drafts(self, scope: RuleScope) -> tuple[RuleLearningResult, ...]:
         """Inspect drafts without crossing the requested scope."""
@@ -458,26 +471,32 @@ class ResponseRuleStore:
         current: Callable[[], bool] | None = None,
     ) -> None:
         """Remove one binding; promoted or independently drafted revisions survive."""
-        with self._lock:
-            if current is not None and not current():
-                raise RuleBindingConflict("rule_scope_changed")
-            self._assert_not_adopting(scope)
-            self._invalidate(scope, rule_id)
-            memory = self._memory(scope)
+        with ExitStack() as fence:
+            with self._write_cursor(fence) as cursor:
+                if current is not None and not current():
+                    raise RuleBindingConflict("rule_scope_changed")
+                self._assert_not_adopting(scope)
+                self._invalidate(scope, rule_id)
+                memory = self._memory(scope)
+                if memory is not None:
+                    old = memory.bindings.get(rule_id)
+                    if old is None or old.binding_revision != expected_binding_revision:
+                        raise RuleBindingConflict("rule_binding_changed")
+                else:
+                    removed = cursor.execute(
+                        "DELETE FROM console_response_rule_bindings WHERE scope_kind=? AND scope_id=? AND rule_id=? AND binding_revision=?",
+                        (
+                            scope.kind,
+                            scope.owner_id,
+                            rule_id,
+                            expected_binding_revision,
+                        ),
+                    )
+                    if removed.rowcount != 1:
+                        raise RuleBindingConflict("rule_binding_changed")
+                    self.repository._garbage_collect(cursor)
             if memory is not None:
-                old = memory.bindings.get(rule_id)
-                if old is None or old.binding_revision != expected_binding_revision:
-                    raise RuleBindingConflict("rule_binding_changed")
                 del memory.bindings[rule_id]
-                return
-            with self.repository.db.transaction(immediate=True) as cursor:
-                removed = cursor.execute(
-                    "DELETE FROM console_response_rule_bindings WHERE scope_kind=? AND scope_id=? AND rule_id=? AND binding_revision=?",
-                    (scope.kind, scope.owner_id, rule_id, expected_binding_revision),
-                )
-                if removed.rowcount != 1:
-                    raise RuleBindingConflict("rule_binding_changed")
-                self.repository._garbage_collect(cursor)
 
     def save_assessment(
         self,
@@ -487,27 +506,30 @@ class ResponseRuleStore:
         admission_lock=None,
     ) -> None:
         """Retain historical outcomes separately from admission authority."""
-        with self._lock, admission_lock or nullcontext():
-            if current is not None and not current():
-                raise RuleBindingConflict("rule_source_changed")
-            if assessment.source.conversation_id is None:
+        temporary = assessment.source.conversation_id is None
+        with ExitStack() as fence:
+            with self._write_cursor(
+                fence, admission_lock, durable=not temporary
+            ) as cursor:
+                if current is not None and not current():
+                    raise RuleBindingConflict("rule_source_changed")
+                if not temporary:
+                    if current is not None:
+                        self.repository._assert_source(cursor, assessment.source)
+                    cursor.execute(
+                        "INSERT INTO console_response_rule_assessments VALUES (?,?,?,?,?)",
+                        (
+                            assessment.assessment_id,
+                            assessment.source.conversation_id,
+                            assessment.source.message_id,
+                            assessment.state,
+                            canonical_json(asdict(assessment)),
+                        ),
+                    )
+            if temporary:
                 self.register_temporary(assessment.source.session_id)
                 self._temporary[assessment.source.session_id].assessments.append(
                     assessment
-                )
-                return
-            with self.repository.db.transaction() as cursor:
-                if current is not None:
-                    self.repository._assert_source(cursor, assessment.source)
-                cursor.execute(
-                    "INSERT INTO console_response_rule_assessments VALUES (?,?,?,?,?)",
-                    (
-                        assessment.assessment_id,
-                        assessment.source.conversation_id,
-                        assessment.source.message_id,
-                        assessment.state,
-                        canonical_json(asdict(assessment)),
-                    ),
                 )
 
     def adopt_temporary(
