@@ -183,3 +183,22 @@ change profile weights, private-goal eligibility, result limits or budgets.
 A one-slot collection keeps the existing ranking because both sources cannot
 be represented simultaneously. Existing selected goal results need no quota
 adjustment. No lexical overlap creates goal attribution.
+
+### Production Library reader (TASK34804 / TASK34815)
+
+Dreams is a Library Artifacts view under the existing ADR-172 reader and its
+profile, presentation and selected-revision fences. The fixed composite gains
+Dreams story and empty-collection namespaces; it does not gain another screen
+or persisted aggregate. Each Dreams namespace returns at most twenty metadata
+candidates with exact rank/count queries in one shared read snapshot. Bodies
+are read only for the selected story. Empty, failed and generating collections
+remain inspectable when they have no stories. Existing collection
+`degradation_notes` appear literally in the reader alongside stored status;
+normal collections add no warning. All artifacts includes these local results
+when Dreams is enabled; Reports and Chatbooks keep their existing owners.
+
+The existing Dreams story and goals modals retain mutation ownership. Library
+revalidates the selected revision before opening story actions, and modal
+getters remain bound to the captured profile/owner. Read workers encompass lazy
+Dreams construction and retire only connections they acquired. No browse action
+runs discovery or grants restored execution authority. No schema change.
