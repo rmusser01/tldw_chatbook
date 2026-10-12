@@ -16733,20 +16733,20 @@ class SettingsScreen(BaseAppScreen):
         try:
             adapter = self.query_one("#settings-model-value", Input)
             picker = self.query_one("#settings-model-picker")
-        except QueryError:
-            return
-        if provider is not None:
-            picker.refresh_provider(
-                provider, current_model=adapter.value, force=reload
-            )
-        elif picker.value != normalize_model_id(adapter.value) and not (
             # A Custom ID being typed is ahead of the adapter by the keys the
             # screen has not heard of yet: the field is the source, and
             # pushing the older text back would end Custom ID mode.
-            picker.custom_mode
-            and picker.query_one("#model-search-picker-input").has_focus
-        ):
-            picker.set_model_value(adapter.value)
+            typing = picker.custom_mode and picker.query(
+                "#model-search-picker-input:focus"
+            )
+            if provider is not None:
+                picker.refresh_provider(
+                    provider, current_model=adapter.value, force=reload
+                )
+            elif not typing and picker.value != normalize_model_id(adapter.value):
+                picker.set_model_value(adapter.value)
+        except QueryError:  # reached after an await: teardown prunes fields first
+            return
 
     @staticmethod
     def _model_to_activate_after_save(
