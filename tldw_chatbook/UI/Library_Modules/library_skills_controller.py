@@ -407,7 +407,7 @@ from .screen_constants import (
 )
 from .screen_helpers import _library_screen_is_current
 from .screen_support_types import LibraryEntryReconcileResult
-from ..Screens.skills_screen import SkillTrustBootstrapModal, SkillTrustPassphraseModal
+from .skills_trust_modals import SkillTrustBootstrapModal, SkillTrustPassphraseModal
 
 if TYPE_CHECKING:
     from ..Screens.library_screen import LibraryScreen

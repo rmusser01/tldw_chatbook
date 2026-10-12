@@ -705,7 +705,9 @@ async def test_skill_trust_bootstrap_modal_rejects_mismatched_confirmation():
     and refuse to dismiss on a mismatch instead of silently proceeding with
     a possibly-mistyped passphrase nobody could recover."""
     from textual import work
-    from tldw_chatbook.UI.Screens.skills_screen import SkillTrustBootstrapModal
+    from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
+        SkillTrustBootstrapModal,
+    )
 
     class _ModalHost(ConsolidatedCSSApp):
         def __init__(self) -> None:

@@ -47,9 +47,6 @@ from tldw_chatbook.UI.Screens import (
     library_screen as library_screen_module,
 )
 from tldw_chatbook.UI.Screens import (
-    skills_screen as skills_screen_module,
-)
-from tldw_chatbook.UI.Screens import (
     watchlists_collections_screen as wc_screen_module,
 )
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
@@ -1035,18 +1032,6 @@ SOURCE_PREP_WORKBENCHES = {
         "markers": ("#wc-empty-state", "#wc-service-error", "#wc-loading-state"),
         "marker_container": "#wl-centre-status",
     },
-    "skills": {
-        "workbench": "#skills-workbench",
-        "strip": "#skills-mode-strip",
-        "panes": ("#skills-list-pane", "#skills-detail-pane", "#skills-inspector-pane"),
-        "actions": ("#skills-import-skill", "#skills-attach-to-console"),
-        "markers": (
-            "#skills-empty-state",
-            "#skills-service-error",
-            "#skills-loading-state",
-        ),
-        "marker_container": "#skills-detail-pane",
-    },
 }
 
 #: `SOURCE_PREP_WORKBENCHES` minus Watchlists, whose responsive grips may
@@ -1061,7 +1046,7 @@ SOURCE_PREP_WORKBENCHES_HORIZONTAL = {
 @pytest.mark.parametrize(
     "route,contract",
     SOURCE_PREP_WORKBENCHES_HORIZONTAL.items(),
-    ids=("artifacts", "personas", "skills"),
+    ids=("artifacts", "personas"),
 )
 @pytest.mark.asyncio
 async def test_source_prep_destinations_use_list_detail_inspector_workbench(
@@ -1092,7 +1077,7 @@ async def test_source_prep_destinations_use_list_detail_inspector_workbench(
 @pytest.mark.parametrize(
     "route,contract",
     SOURCE_PREP_WORKBENCHES_HORIZONTAL.items(),
-    ids=("artifacts", "personas", "skills"),
+    ids=("artifacts", "personas"),
 )
 @pytest.mark.asyncio
 async def test_source_prep_default_empty_or_unavailable_states_preserve_workbench_geometry(
@@ -1631,11 +1616,6 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
             "#acp-workbench",
             ("Agents / Sessions", "Runtime Setup", "Compatibility / Actions"),
         ),
-        (
-            "skills",
-            "#skills-workbench",
-            ("Skill Library", "Skill Detail", "Skill Inspector"),
-        ),
         # Settings' Overview card title carries the column-title class.
         (
             "settings",
@@ -1651,7 +1631,6 @@ async def test_watchlists_right_rail_does_not_clip_action_labels(size):
         "schedules",
         "workflows",
         "acp",
-        "skills",
         "settings",
     ),
 )
@@ -1911,21 +1890,13 @@ SOURCE_PREP_LOADING_CONTRACTS = [
     # but `_assert_ascii_workbench_contract` requires three always-expanded
     # panes. Watchlists instead resolves responsive side-pane grips around a
     # permanent centre canvas. See `SOURCE_PREP_WORKBENCHES_HORIZONTAL` above.
-    (
-        "skills",
-        skills_screen_module.SkillsScreen,
-        "_refresh_local_skills_context",
-        "#skills-loading-state",
-        SOURCE_PREP_WORKBENCHES["skills"],
-        "#skills-detail-pane",
-    ),
 ]
 
 
 @pytest.mark.parametrize(
     "route,screen_cls,refresh_method,loading_marker,contract,loading_container",
     SOURCE_PREP_LOADING_CONTRACTS,
-    ids=("artifacts", "skills"),
+    ids=("artifacts",),
 )
 @pytest.mark.asyncio
 async def test_source_prep_loading_states_preserve_workbench_geometry(

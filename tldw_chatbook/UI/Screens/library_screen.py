@@ -537,7 +537,7 @@ from ..destination_recovery import (
     sync_load_failure_callout,
 )
 from .model_browser_state import install_failure_message
-from .skills_screen import (
+from ..Library_Modules.skills_trust_modals import (
     SkillRecoveryReviewModal,
 )
 from .study_scope_models import (
@@ -33976,11 +33976,11 @@ class LibraryScreen(BaseAppScreen):
             # not on screen here, so say why `n` did nothing (review M-2).
             if callable(notify := getattr(self.app_instance, "notify", None)):
                 status = self._notes_controller._library_note_status_line()
-                notify(
-                    f"Finish the open note first — {status}", severity="warning"
-                )
+                notify(f"Finish the open note first — {status}", severity="warning")
             return
-        self._notes_state.shortcut_status = f"Note from {title} — Media keeps your place"
+        self._notes_state.shortcut_status = (
+            f"Note from {title} — Media keeps your place"
+        )
         # The same fallback the source line's link text uses: one name for
         # an untitled document, in the title and in the first line.
         self._start_library_note_from_media_source(
@@ -33988,7 +33988,9 @@ class LibraryScreen(BaseAppScreen):
             content=source_line + "\n\n",
         )
 
-    def _start_library_note_from_media_source(self, *, title: str, content: str) -> None:
+    def _start_library_note_from_media_source(
+        self, *, title: str, content: str
+    ) -> None:
         return self._notes_controller._start_library_note_from_media_source(
             title=title, content=content
         )

@@ -79,7 +79,7 @@ _EMPTY_SKILLS_COPY = (
 )
 _EMPTY_SKILLS_FILTER_COPY = "No skills match your filter."
 
-# Trust panel copy/gating (Task 4). Mirrors ``skills_screen.py``'s own
+# Trust panel copy/gating (Task 4). Mirrors the retired skills screen's
 # ``_skill_trust_copy``/``SKILLS_TRUST_REVIEWABLE_STATUSES`` values (kept a
 # separate, smaller copy here rather than importing that screen's private
 # helpers -- this editor only needs the trust STATE line + two gating
@@ -1376,9 +1376,7 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
                 markup=False,
             )
             status_copy = " · ".join(
-                copy
-                for copy in (pager.status_copy, *layout.boundary_reasons)
-                if copy
+                copy for copy in (pager.status_copy, *layout.boundary_reasons) if copy
             )
             if status_copy:
                 yield Static(

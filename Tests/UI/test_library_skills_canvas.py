@@ -3468,7 +3468,9 @@ async def test_trust_passphrase_modal_accepts_purpose_copy():
     """task-418: Approve re-uses the passphrase modal, which always said
     'Unlock Local Skill Trust' -- a task/dialog mismatch. The modal now
     takes purpose copy overrides."""
-    from tldw_chatbook.UI.Screens.skills_screen import SkillTrustPassphraseModal
+    from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
+        SkillTrustPassphraseModal,
+    )
 
     class _Host(ConsolidatedCSSApp):
         pass
@@ -3487,7 +3489,7 @@ async def test_trust_passphrase_modal_accepts_purpose_copy():
 
 
 def _skill_trust_modal(kind: str):
-    from tldw_chatbook.UI.Screens.skills_screen import (
+    from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
         SkillTrustBootstrapModal,
         SkillTrustPassphraseModal,
     )

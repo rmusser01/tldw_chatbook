@@ -41,7 +41,9 @@ def make_dialog(kind, root: Path):
         )
         return NotesRecoveryDialog(review, current=lambda: True, approve=approve)
     from tldw_chatbook.Skills_Interop.recovery_activation import RecoveryReview
-    from tldw_chatbook.UI.Screens.skills_screen import SkillRecoveryReviewModal
+    from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
+        SkillRecoveryReviewModal,
+    )
 
     review = RecoveryReview("fixture", (), (str(root), 0, 0), (), (), (), "fixture")
     return SkillRecoveryReviewModal(review, root, lambda: True)

@@ -49,7 +49,9 @@ from tldw_chatbook.UI.ChatbookTemplatesWindow import ChatbookTemplatesWindow
 from tldw_chatbook.UI.Library_Modules.prompt_collection_manager_modal import (
     PromptCollectionManagerModal,
 )
-from tldw_chatbook.UI.Screens.skills_screen import SkillRecoveryReviewModal
+from tldw_chatbook.UI.Library_Modules.skills_trust_modals import (
+    SkillRecoveryReviewModal,
+)
 from tldw_chatbook.Widgets.Console.console_prompts_modal import ConsolePromptsModal
 from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
@@ -100,10 +102,7 @@ def _wide_rules(text: str) -> dict[str, int]:
             return int(tokens[value])
         return int(value)
 
-    return {
-        anchor.strip(): resolve(cap)
-        for anchor, cap in WIDE_RULE_RE.findall(text)
-    }
+    return {anchor.strip(): resolve(cap) for anchor, cap in WIDE_RULE_RE.findall(text)}
 
 
 def test_wide_tier_block_exists_in_source_module() -> None:
@@ -131,9 +130,7 @@ def test_every_wide_tier_rule_is_registered() -> None:
 
 
 @pytest.mark.parametrize(["anchor", "cap", "owner"], MODAL_WIDE_TIER)
-def test_every_anchor_targets_real_code(
-    anchor: str, cap: int, owner: str
-) -> None:
+def test_every_anchor_targets_real_code(anchor: str, cap: int, owner: str) -> None:
     """Each registered anchor resolves inside its owner module.
 
     A renamed modal id (or a moved file) fails here naming the owner, so the
@@ -288,9 +285,7 @@ def test_every_modalscreen_class_is_tiered_or_explicitly_skipped() -> None:
     modals = sorted(name for name in classes if _is_modal(name, classes))
 
     uncovered = {
-        name: classes[name][0]
-        for name in modals
-        if not _is_anchored(name, classes)
+        name: classes[name][0] for name in modals if not _is_anchored(name, classes)
     }
 
     stale_class_skips = sorted(set(MODAL_WIDE_TIER_SKIPPED) - set(modals))
@@ -306,16 +301,14 @@ def test_every_modalscreen_class_is_tiered_or_explicitly_skipped() -> None:
     )
     assert not missing, (
         "ModalScreen subclasses outside the wide tier and absent from both "
-        "skip lists (register an anchor or document a skip):\n  "
-        + "\n  ".join(missing)
+        "skip lists (register an anchor or document a skip):\n  " + "\n  ".join(missing)
     )
 
     stale_module_skips = sorted(
         module
         for module in MODAL_WIDE_TIER_SKIPPED_MODULES
         if not any(
-            unanchored_module == module
-            for unanchored_module in uncovered.values()
+            unanchored_module == module for unanchored_module in uncovered.values()
         )
     )
     assert not stale_module_skips, (
@@ -529,18 +522,10 @@ def _expected_base_width(
 @pytest.mark.parametrize(
     ("anchor", "size"),
     (
-        *[
-            (anchor, (200, 50))
-            for anchor in SPOT_REPRESENTATIVES
-        ],
-        *[
-            (anchor, (120, 40))
-            for anchor in SPOT_REPRESENTATIVES
-        ],
+        *[(anchor, (200, 50)) for anchor in SPOT_REPRESENTATIVES],
+        *[(anchor, (120, 40)) for anchor in SPOT_REPRESENTATIVES],
     ),
-    ids=lambda value: (
-        value[1:] if isinstance(value, str) else f"{value[0]}x{value[1]}"
-    ),
+    ids=lambda value: value[1:] if isinstance(value, str) else f"{value[0]}x{value[1]}",
 )
 @pytest.mark.asyncio
 async def test_spot_modal_geometry_per_tier(anchor: str, size: tuple[int, int]) -> None:

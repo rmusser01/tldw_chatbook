@@ -249,10 +249,10 @@ _SCREEN_ALIASES = {
     # rail row, built in Tasks 1-4). Existing startup configs / callers
     # using the legacy "skills" route id resolve to Library instead of the
     # standalone SkillsScreen -- mirrors the "notes"/"prompts" aliases
-    # above exactly. ``skills_screen.py``/``SkillsScreen`` are NOT deleted:
-    # the class is still directly exercised by its own destination-shell
-    # test suite, and its trust passphrase modal is reused by the Library
-    # skill editor's trust panel (Task 4).
+    # above exactly. The standalone ``skills_screen.py`` is deleted
+    # (task-34893); its three trust modals live on in
+    # ``UI/Library_Modules/skills_trust_modals.py`` for the Library skill
+    # editor's trust panel (Task 4).
     "skills": "library",
     # The standalone Ingest screen is retired (task-684.4): importing now
     # lives entirely inside Library's Import media canvas, which gained the
