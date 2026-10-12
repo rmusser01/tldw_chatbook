@@ -1279,10 +1279,10 @@ existing native identity, privacy and required persistence contracts. See
 
 ## Dreams, Guardian and capture provenance ownership (2026-10-12)
 
-The PR2921 integration declares optional Dreams v6 and Guardian v1 stores with
+The PR2921 integration declares optional Dreams v6 and Guardian v2 stores with
 exact selected default/custom paths, participant drains and installed schema
 catalogs. Absent unused optional stores remain absent. Supported populated Dreams
-v1-v5 predecessors and Guardian v1 require exact admission, rollback/reopen and
+v1-v5 predecessors and Guardian v1 (migrated to v2 per ADR204) require exact admission, rollback/reopen and
 unknown/future/hybrid refusal before their catalogs are accepted. Collections v5
 and Subscriptions v3 preserve conservative URL lineage across capture, relocation
 and restore. Recovery cannot turn a legacy unmarked URL into USER_ENTERED.

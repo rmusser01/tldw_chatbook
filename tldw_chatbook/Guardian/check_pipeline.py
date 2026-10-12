@@ -223,7 +223,7 @@ class GuardianChecker:
         outcomes = await self._run_store_work(
             db, self._record_matches, db, matches, session_id, visit_id, digest, now_iso
         )
-        if not self._gate_enabled() or generation != self._visit_generation:
+        if outcomes is None or not self._gate_enabled() or generation != self._visit_generation:
             return {**self._allow(), "recorded": bool(outcomes)}
         return await self._act(draft, matches, outcomes, session_id=session_id)
 
@@ -234,7 +234,15 @@ class GuardianChecker:
     async def _run_store_work(self, db: Any, operation: Callable, *args: Any) -> Any:
         from tldw_chatbook.DB.base_db import run_owned_db_call
 
-        task = asyncio.create_task(run_owned_db_call(db, operation, *args))
+        def admitted_operation():
+            from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+            with execution_scope(("db.guardian",), getattr(db, "db_path", None)) as allowed:
+                if allowed and self._gate_enabled():
+                    return operation(*args)
+            return None
+
+        task = asyncio.create_task(run_owned_db_call(db, admitted_operation))
         self._pending_store_work.add(task)
         def finished(completed: asyncio.Task) -> None:
             self._pending_store_work.discard(completed)
@@ -519,10 +527,13 @@ class GuardianChecker:
         return self._finalize_visits(db, tuple(self._visit_sessions.items()))
 
     def _finalize_visits(self, db: Any, visits: tuple[tuple[str, str], ...]) -> dict | None:
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
         from tldw_chatbook.DB.base_db import operation_owned_connection
 
         payloads = []
-        with operation_owned_connection(db):
+        with operation_owned_connection(db), execution_scope(("db.guardian",), getattr(db, "db_path", None)) as allowed:
+            if not allowed:
+                return None
             for session_id, visit_id in visits:
                 if not self._gate_enabled():
                     break

@@ -171,22 +171,31 @@ def read_guardian_topics(
         Topic rows ``{"facet": "topic", "text", "weight", "searchable",
         "source": "guardian"}``, heaviest first.
     """
-    cutoff = to_utc_iso(utc_now() - timedelta(days=window_days))
-    with guardian_db.connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT a.topic AS topic, COUNT(*) AS hits
-            FROM guardian_alerts AS a
-            JOIN guardian_rules AS r ON r.id = a.rule_id
-            WHERE r.feeds_discovery = 1
-              AND r.enabled = 1 AND r.is_crisis = 0
-              AND a.rule_id IS NOT NULL AND a.crisis_provenance = 0
-              AND a.ts >= ?
-            GROUP BY a.topic
-            ORDER BY hits DESC, a.topic COLLATE NOCASE
-            """,
-            (cutoff,),
-        ).fetchall()
+    from tldw_chatbook.Backup_Recovery.activation import execution_scope
+    from tldw_chatbook.Guardian.settings import guardian_setting
+
+    if not guardian_setting("enabled", False):
+        return []
+    with execution_scope(("db.guardian",), getattr(guardian_db, "db_path", None)) as allowed:
+        if not allowed:
+            return []
+        cutoff = to_utc_iso(utc_now() - timedelta(days=window_days))
+        with guardian_db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT a.topic AS topic, COUNT(*) AS hits
+                FROM guardian_alerts AS a
+                JOIN guardian_rules AS r ON r.id = a.rule_id
+                WHERE r.feeds_discovery = 1
+                  AND r.enabled = 1 AND r.is_crisis = 0
+                  AND a.rule_id IS NOT NULL AND a.crisis_provenance = 0
+                  AND a.ts >= ?
+                GROUP BY a.topic
+                ORDER BY hits DESC, a.topic COLLATE NOCASE
+                """,
+                (cutoff,),
+            ).fetchall()
+
     return [
         {
             "facet": "topic",

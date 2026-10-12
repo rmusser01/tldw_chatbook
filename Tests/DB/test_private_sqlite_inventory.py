@@ -738,6 +738,7 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C57 discovers native fleet results at launch without migration (ADR-135).
         # C92 owns local workflow definitions and recoverable authoring drafts.
         # C93/C94 own plugin registry and in-memory schema validation.
+        # C95 validates the installed Guardian v1/v2 recovery catalogs.
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
@@ -746,12 +747,12 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
         # C08/C09 were the legacy settings window's VACUUM and integrity
         # workers; they left with the window (TASK-33244).
-        for number in range(1, 95) if number not in {8, 9, 10, 75}
+        for number in range(1, 96) if number not in {8, 9, 10, 75}
     ]
     assert [row["id"] for row in backup_rows] == [
         # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).
         f"B{number:02d}"
-        for number in range(1, 39)
+        for number in range(1, 40)
         if number not in {4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 34}
     ]
 
@@ -1356,7 +1357,7 @@ def test_backup_and_restore_rows_explicitly_opt_into_centralized_backup() -> Non
             "backup_connection_to_private": 3,
             "backup_open_connections_to_private": 2,
             "backup_profile_migration_boundary": 1,
-            "copy_private_sqlite": 20,
+            "copy_private_sqlite": 21,
             "migrate_profile_store_to_candidate": 1,
         }
     )
@@ -1488,6 +1489,7 @@ def test_backup_inventory_matches_current_sqlite_and_settings_operations() -> No
         }
     )
     expected_calls.update({
+        ("tldw_chatbook/DB/recovery_dreams_guardian", "_GuardianAdapter.capture", "copy_private_sqlite"): 1,
         ('tldw_chatbook/Scheduling/recovery', '_ScheduledTasksAdapter.capture', "copy_private_sqlite"): 1,
         ('tldw_chatbook/Sync_Interop/recovery', '_SyncAdapter.capture', "copy_private_sqlite"): 1,
         ('tldw_chatbook/Notes/recovery', '_FileNotesAdapter.capture', "copy_private_sqlite"): 1,
@@ -1736,6 +1738,7 @@ def test_core_recovery_factory_exactly_matches_registered_backup_authority():
         "recovery.domain.evals", "recovery.domain.study",
     }
     installed_domain_authority |= {
+        'recovery.operations.guardian',
         'recovery.operations.workspaces',
         'recovery.operations.agent_runs',
         'recovery.operations.subscriptions',

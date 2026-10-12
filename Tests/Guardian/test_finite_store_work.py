@@ -2,6 +2,7 @@
 import asyncio
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC
 
 import pytest
 
@@ -143,3 +144,32 @@ async def test_daily_shutdown_drains_physical_analysis_and_suppresses_delivery(t
         release.set()
         await asyncio.gather(*tuple(handler_module._SPAWNED_TREND_RUNS), return_exceptions=True)
         db.close()
+
+
+@pytest.mark.asyncio
+async def test_projection_retires_only_its_worker_handle(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    from tldw_chatbook.Scheduling.services import guardian_projection
+    db = GuardianDB(tmp_path / "projection.db")
+    main = db._held_connection()
+    handles = []
+    original = db.get_meta
+    def read(key):
+        handles.append(db._held_connection())
+        return original(key)
+    monkeypatch.setattr(db, "get_meta", read)
+    monkeypatch.setattr(guardian_projection, "guardian_setting", lambda *args: True)
+    projection = guardian_projection.GuardianProjection(lambda: db)
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        loop.set_default_executor(executor)
+        try:
+            assert await asyncio.to_thread(projection.tasks, datetime.now(UTC))
+            assert len(handles) == 1
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                await asyncio.to_thread(handles[0].execute, "SELECT 1")
+            assert main.execute("SELECT 1").fetchone()[0] == 1
+        finally:
+            await asyncio.to_thread(db.close)
+            db.close()

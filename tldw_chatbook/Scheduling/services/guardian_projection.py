@@ -32,8 +32,9 @@ disabled Guardian projects nothing (ADR-204 contract 1).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from tldw_chatbook.Guardian.settings import guardian_setting
 from tldw_chatbook.Scheduling.models import ScheduledTask, TaskStatus
@@ -88,7 +89,7 @@ def _parse_iso_timestamp(value: str | None) -> datetime | None:
     except (ValueError, TypeError):
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
 
 
@@ -122,6 +123,12 @@ class GuardianProjection:
         )
 
     def tasks(self, now: datetime) -> list[ScheduledTask]:
+        """Materialize with finite native ownership when called on a worker."""
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+        return run_finite_local_worker(self._tasks, now)
+
+    def _tasks(self, now: datetime) -> list[ScheduledTask]:
         """Project the single ``guardian:trends`` daily task.
 
         Args:
@@ -138,31 +145,36 @@ class GuardianProjection:
         db = self._db_getter()
         if db is None:
             return []
-        current = now if now.tzinfo is not None else now.replace(
-            tzinfo=timezone.utc
-        )
-        current = current.astimezone(timezone.utc)
-        watermark = None
-        try:
-            watermark = _parse_iso_timestamp(
-                db.get_meta(TRENDS_LAST_RUN_META_KEY)
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+        with execution_scope(("db.guardian",), getattr(db, "db_path", None)) as allowed:
+            if not allowed:
+                return []
+            current = now if now.tzinfo is not None else now.replace(
+                tzinfo=UTC
             )
-        except Exception:  # noqa: BLE001 - a broken read means due now
+            current = current.astimezone(UTC)
             watermark = None
-        if watermark is None:
-            next_run_at = current
-        else:
-            next_run_at = watermark.astimezone(timezone.utc) + self._cadence
-        return [
-            ScheduledTask(
-                id=GUARDIAN_TRENDS_TASK_ID,
-                title="Guardian daily trend analysis",
-                type=GUARDIAN_TRENDS_TASK_TYPE,
-                status=TaskStatus.WAITING,
-                next_run_at=next_run_at,
-                owner_id="local",
-            )
-        ]
+            try:
+                watermark = _parse_iso_timestamp(
+                    db.get_meta(TRENDS_LAST_RUN_META_KEY)
+                )
+            except Exception:  # noqa: BLE001 - a broken read means due now
+                watermark = None
+            if watermark is None:
+                next_run_at = current
+            else:
+                next_run_at = watermark.astimezone(UTC) + self._cadence
+            return [
+                ScheduledTask(
+                    id=GUARDIAN_TRENDS_TASK_ID,
+                    title="Guardian daily trend analysis",
+                    type=GUARDIAN_TRENDS_TASK_TYPE,
+                    status=TaskStatus.WAITING,
+                    next_run_at=next_run_at,
+                    owner_id="local",
+                )
+            ]
 
     def list_jobs(
         self, owner_id: str = "local", *, now: datetime | None = None
@@ -179,7 +191,7 @@ class GuardianProjection:
         Returns:
             ``tasks(now)`` with ``owner_id`` overridden.
         """
-        current = now if now is not None else datetime.now(timezone.utc)
+        current = now if now is not None else datetime.now(UTC)
         return [
             task.model_copy(update={"owner_id": owner_id})
             for task in self.tasks(current)

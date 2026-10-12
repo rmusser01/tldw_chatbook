@@ -43,6 +43,7 @@ def _installed_owner(owner_id):
     # construction and no archive-supplied policy or migration authority.
     from tldw_chatbook.DB.recovery_core import core_adapters
     from tldw_chatbook.DB.recovery_operations import recovery_adapters as operations
+    from tldw_chatbook.DB.recovery_dreams_guardian import recovery_adapters as dreams_guardian
     from tldw_chatbook.Evals.recovery import recovery_adapters as evals
     from tldw_chatbook.Kanban_Interop.recovery import recovery_adapters as kanban
     from tldw_chatbook.Notes.recovery import recovery_adapters as notes
@@ -61,6 +62,7 @@ def _installed_owner(owner_id):
     for factory in (
         core_adapters,
         operations,
+        dreams_guardian,
         research,
         writing,
         evals,
@@ -311,6 +313,10 @@ class _Restrictions:
                 self.migrating and self.migration_owner == "db.library_collections"
                 and first == "quick_check" and second == "collection_capture_items"
             )
+            permitted |= (
+                self.migrating and self.migration_owner == "db.guardian"
+                and first == "quick_check" and second == "guardian_alerts"
+            )
             return sqlite3.SQLITE_OK if permitted else sqlite3.SQLITE_DENY
         if (
             self.reading_fts_metadata
@@ -454,7 +460,7 @@ class _Restrictions:
                 return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
             # ADR-207: installed provenance steps only. The candidate SQL was
             # matched to a complete historical catalog before this gate opens.
-            if self.migration_owner in {"db.library_collections", "db.subscriptions"}:
+            if self.migration_owner in {"db.library_collections", "db.subscriptions", "db.guardian"}:
                 allowed = database == "main" and source is None and (
                     action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE}
                     and first == "schema_version"
@@ -477,6 +483,11 @@ class _Restrictions:
                         or action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE}
                         and first == "sqlite_master"
                     )
+                )
+                allowed |= (
+                    self.migration_owner == "db.guardian"
+                    and action == sqlite3.SQLITE_ALTER_TABLE
+                    and (first, second, database, source) == ("main", "guardian_alerts", None, None)
                 )
                 if allowed:
                     return sqlite3.SQLITE_OK
@@ -824,6 +835,7 @@ def _version(connection, owner_id):
         "db.media.primary",
         "db.prompts.primary",
         "db.library_ingest_jobs",
+        "db.guardian",
     }:
         query = "SELECT version FROM schema_version"
     elif owner_id in {
