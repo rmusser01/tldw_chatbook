@@ -16852,8 +16852,13 @@ class SettingsScreen(BaseAppScreen):
         if status == "saved":
             provider_list_key = getattr(result, "provider_list_key", None)
             self._append_saved_discovered_models(provider_list_key, saved_model_ids)
+            self.app.notify("Discovered models saved.", severity="information")
             # The save belongs to its original provider even if the form moved.
+            # Discover or Clear since the press own the status line; the saved
+            # ids still group as saved while the form holds that provider.
             if revision != self._model_discovery_revision:
+                if provider_config_key(self._provider_widget_value()) == provider_key:
+                    self._sync_model_picker(provider, reload=True)
                 return
             # TASK-369: recognition over recall — offer the saved model for
             # activation instead of leaving an empty Model field the user must
@@ -16866,7 +16871,6 @@ class SettingsScreen(BaseAppScreen):
                 message or f"Saved {len(saved_model_ids)} discovered model(s)."
             )
             self._refresh_model_discovery_widgets()
-            self.app.notify("Discovered models saved.", severity="information")
             return
 
         if revision != self._model_discovery_revision:

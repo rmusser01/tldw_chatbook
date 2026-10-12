@@ -62,7 +62,13 @@ class _HeldSaveScope(_CatalogScope):
         "#settings-clear-discovered-provider-models",
     ],
 )
-async def test_save_selected_is_not_cancelled_by_discover_or_clear(request, interrupt):
+async def test_save_selected_is_not_cancelled_by_discover_or_clear(
+    request, monkeypatch, interrupt
+):
+    """Fix round 1, finding 13: the write landed, but with Discover or Clear
+    pressed meanwhile it said nothing and the Default model picker went on
+    listing the ids as unsaved; after Clear the only toast read as if the
+    save had been dropped."""
     app = _app("openai", "gpt-4o", catalog=("gpt-4o",), served=(_SERVED,))
     scope = app.llm_provider_catalog_scope_service = _HeldSaveScope(
         "openai", catalog=("gpt-4o",), served=(_SERVED,)
@@ -75,6 +81,16 @@ async def test_save_selected_is_not_cancelled_by_discover_or_clear(request, inte
         await _discover(host, pilot, screen)
         screen.query_one("#settings-discovered-models-list", SelectionList).select_all()
         await pilot.pause()
+        toasts: list[str] = []
+        monkeypatch.setattr(host, "notify", lambda message, **_: toasts.append(message))
+        reloads: list[tuple[object, bool]] = []
+        sync_picker = screen._sync_model_picker
+
+        def spy(provider=None, *, reload=False):
+            reloads.append((provider, reload))
+            sync_picker(provider, reload=reload)
+
+        monkeypatch.setattr(screen, "_sync_model_picker", spy)
 
         screen.query_one("#settings-save-discovered-provider-models", Button).press()
         await asyncio.wait_for(scope.started.wait(), timeout=10)
@@ -86,3 +102,5 @@ async def test_save_selected_is_not_cancelled_by_discover_or_clear(request, inte
 
         assert scope.saved == (_SERVED,)
         assert _SERVED in app.providers_models["OpenAI"]
+        assert "Discovered models saved." in toasts, toasts
+        assert ("openai", True) in reloads, reloads
