@@ -10,9 +10,17 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Union
 
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
+
 from ..Utils.timestamps import utc_now_iso
 from .base_db import BaseDB
-
 
 #: Upper bound for any list read the UI pages through.
 MAX_LIST_LIMIT = 200
@@ -270,13 +278,17 @@ class DreamsDB(BaseDB):
     # Connection handling (Library_Collections_DB idiom)
     # ------------------------------------------------------------------
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
+        _core_access(self)
         # ``check_same_thread=False`` (the other thread-local stores here --
         # ChaChaNotes, Prompts, Media -- open theirs the same way): each
         # thread still USES only the connection it holds; the one call
         # that crosses threads is ``close_all`` closing them.
         conn = super()._get_connection(check_same_thread=False)
+        _register_core_connection(self, conn)
         try:
+            _core_access(self)
             # Refuse unknown stores before WAL changes their header/journal state.
             self._validate_schema_lineage(conn)
             conn.execute("PRAGMA foreign_keys = ON")
@@ -301,9 +313,11 @@ class DreamsDB(BaseDB):
                     raise
                 time.sleep(0.01)
 
+    @_core_getter
     def _held_connection(self) -> sqlite3.Connection:
+        _core_access(self)
         """Return this thread's held connection, opening or reviving it."""
-        conn = getattr(self._thread_local, "conn", None)
+        conn = _core_cached_connection(self, getattr(self._thread_local, "conn", None))
         if conn is not None:
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
@@ -314,7 +328,12 @@ class DreamsDB(BaseDB):
                 try:
                     conn.execute("SELECT 1")
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    self._close_connection(conn)
+                    try:
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
+                        self._close_connection(conn)
+                    else:
+                        raise
                     conn = None
         if conn is None:
             conn = self._get_connection()
@@ -324,6 +343,7 @@ class DreamsDB(BaseDB):
         self._thread_local.conn_last_used = time.monotonic()
         return conn
 
+    @_core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Yield the thread's held connection (row factory, foreign keys on).
@@ -334,6 +354,7 @@ class DreamsDB(BaseDB):
         """
         yield self._held_connection()
 
+    @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Yield the held connection inside a write transaction.
@@ -357,20 +378,22 @@ class DreamsDB(BaseDB):
             conn.commit()
 
     def close(self) -> None:
-        """Close the current thread's held connection, if any."""
+        """Retire only the calling thread's handle when its owner permits."""
         conn = getattr(self._thread_local, "conn", None)
-        self._thread_local.conn = None
         if conn is not None:
-            self._close_connection(conn)
+            with _core_closing(self, conn) as allowed:
+                if allowed and self._close_connection(conn):
+                    self._thread_local.conn = None
 
-    def _close_connection(self, conn: sqlite3.Connection) -> None:
+    def _close_connection(self, conn: sqlite3.Connection) -> bool:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001 - retain uncertain native retirement
+            return False
         with self._opened_lock:
             if conn in self._opened:
                 self._opened.remove(conn)
-        try:
-            conn.close()
-        except Exception:  # noqa: BLE001 - best-effort teardown
-            pass
+        return True
 
     def close_all(self) -> None:
         """Close EVERY connection this object holds, on whatever thread.
@@ -386,13 +409,11 @@ class DreamsDB(BaseDB):
         connection.
         """
         with self._opened_lock:
-            opened, self._opened = self._opened, []
+            opened = tuple(self._opened)
         for conn in opened:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001 - best-effort teardown
-                pass
-        # Every thread's stale handle is forgotten with the old storage.
+            self._close_connection(conn)
+        # Existing explicit all-thread owner boundary; public close remains
+        # caller-only. Failed native closes stay strongly owned for retry.
         self._thread_local = threading.local()
 
     @staticmethod

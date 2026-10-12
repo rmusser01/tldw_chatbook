@@ -52,6 +52,10 @@ def operation_owned_connection(database: object) -> Iterator[None]:
         from .Workspace_DB import WorkspaceDB
 
         owned_types = {AgentRunsDB, LibraryCollectionsDB, WorkspaceDB}
+        if type(database).__module__ == "tldw_chatbook.DB.Dreams_DB":
+            from .Dreams_DB import DreamsDB
+
+            owned_types.add(DreamsDB)
         if type(database).__module__ == "tldw_chatbook.DB.Guardian_DB":
             from .Guardian_DB import GuardianDB
 
@@ -101,6 +105,10 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
         from .Workspace_DB import WorkspaceDB
 
         owned_types = {AgentRunsDB, CharactersRAGDB, WorkspaceDB}
+        if type(database).__module__ == "tldw_chatbook.DB.Dreams_DB":
+            from .Dreams_DB import DreamsDB
+
+            owned_types.add(DreamsDB)
         if type(database).__module__ == "tldw_chatbook.DB.Guardian_DB":
             from .Guardian_DB import GuardianDB
 

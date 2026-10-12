@@ -126,3 +126,49 @@ first connected run; no unnecessary rerun. New catalog/tests Ruff clean, diff
 check clean. Raw/JUnit/argv/environment/source hashes and census receipts retained.
 Installed Dreams recovery, activation/first-fetch and remaining whole Task1
 outcomes remain incomplete; no task or publication gate is closed.
+
+
+## Checkpoint: installed Dreams historical recovery and native ownership
+
+The optional db.dreams adapter declares the same30measured v1–v6 catalogs,
+selected default/custom paths, data-group membership and current activation
+requirement. Fixed shipped SQL files migrate each predecessor one version at a
+time without dropping historical marker rows. Early v2 gains its missing origin
+index exactly as the author initializer did. Native index SQL whitespace is
+preserved in migration artifacts; catalog admission remains exact. Restricted
+authority is specific to Dreams migration tables/indexes, schema metadata and
+SQLite's internal rename callbacks. Foreign tables, payload updates/deletes,
+attached catalogs and extension loading remain refused.
+
+Dreams is a concrete installed maintenance participant using its existing BaseDB
+connector. Cached reads and transactions count actual scope; a paused borrowed
+transaction survives caller close and prevents drain until rolled back and
+explicitly retired. Finite worker cleanup closes only newly acquired current
+thread handles, including lazy constructor acquisition, before the worker exits.
+Borrowed handles stay usable. Existing explicit close_all remains the author's
+all-thread owner boundary; public close remains caller-only (PR3042 unresolved).
+Failed native closes stay strongly owned for retry, rather than disappearing
+from the strong registry. No foreign handle/GC teardown was added.
+
+C96/B40 document exact new recovery.operations.dreams validation/copy seams and
+corresponding census membership (copy count22). Recovery tests cover every
+populated historical catalog, exact data/marker preservation, native reopen,
+future/malformed/hybrid refusal, optional unused/custom missing paths, actual
+maintenance borrower drain, failed migration atomic rollback followed by
+successful migration/reopen, and native capture+relocation preserving source
+bytes. Installed restoration execution/first-fetch outcomes remain a separate
+unfinished next phase; adapter activation_required is not itself that proof.
+
+Evidence: dreams-recovery-red-1 35missing-owner/participant failures0.83s.
+Green-1 28pass/7fail8.07s. Separate denial1–6 receipts show exact sequence/index/
+profile uniqueness/temp-catalog SQLite callbacks and one native SQL whitespace
+mismatch; no validator bypass was introduced. Green-2 71pass/6remaining v1/v2
+fail16.85s after native participant installation. Green-3 33pass/2early-v2
+missing-origin-index mismatches7.83s. Green-4 50pass10.71s (Dreams plus connected
+Guardian owner controls). Final dreams-native-owner-checkpoint-1:120pass24.95s
+across exact Dreams native DB/track/recovery/boot and Guardian finite controls.
+Dreams-recovery-inventory-1:35pass22.73s, exact raw/seam/authority/group census,
+no repeated unaffected inventory failures. Full argv/interpreter/environment/
+before-after source hashes and raw/JUnit retained. New adapter/test Ruff clean;
+Dreams_DB retains previously authored filename/type/constant lint diagnostics
+for final scoped lint, with new import order corrected. No full-suite claim.
