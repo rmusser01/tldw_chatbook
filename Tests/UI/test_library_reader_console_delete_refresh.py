@@ -175,6 +175,40 @@ async def _resume_in_console(app: Any, pilot: Any, library: Any, cid: str) -> An
     return console
 
 
+def _console_sync_settled(console: Any) -> bool:
+    """Whether no Console sync is running, requested or deferred.
+
+    TASK-34789: ``_sync_native_console_chat_ui`` can return without having
+    synced anything -- another sync is in flight, or a background thread
+    holds a config lock and ``run_console_config_sync`` hands the whole sync
+    to a trailing 0.2 s timer. That replay then repaints the transcript for
+    the selection made here, and a transcript refresh closes an open More
+    menu by design: the UI Fast Lane opened the menu in that gap and waited
+    30 s for a Delete entry that had already been dismissed.
+    """
+    return not (
+        console._console_sync_in_progress
+        or console._console_sync_requested
+        or getattr(console, "_console_control_bar_replay_whole_sync", False)
+        or getattr(console, "_console_control_bar_sync_scheduled", False)
+    )
+
+
+def test_the_settle_wait_reads_flags_the_console_still_sets():
+    """Two of the flags ``_console_sync_settled`` reads are assigned lazily, so
+    it reads them with ``getattr`` and a default, as the Console itself does.
+    A rename would make that wait pass without covering the deferred replay it
+    exists for; this fails instead.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    names = set(ChatScreen._run_coalesced_control_bar_sync.__code__.co_names)
+    assert {
+        "_console_control_bar_replay_whole_sync",
+        "_console_control_bar_sync_scheduled",
+    } <= names
+
+
 async def _delete_from_third_message(app: Any, pilot: Any, console: Any) -> None:
     """Delete message 3 (and the one after it) through More > Delete > confirm."""
     from tldw_chatbook.Widgets.Console import ConsoleTranscript
@@ -199,8 +233,19 @@ async def _delete_from_third_message(app: Any, pilot: Any, console: Any) -> None
     )
     transcript.select_message(target)
     await console._sync_native_console_chat_ui()
+    # The awaited sync may have been deferred; open More only once the sync
+    # for this selection has really run, so nothing is left to repaint it.
+    # One wait, then the press with no await in between: a separate wait for
+    # the opener would pump the app once more and reopen the gap.
     opener = f"#console-message-action-more-{target}"
-    await _wait_until(pilot, lambda: bool(console.query(opener)))
+    await _wait_until(
+        pilot,
+        lambda: _console_sync_settled(console) and bool(console.query(opener)),
+        lambda: (
+            "the Console sync for the selection never settled, or the More "
+            f"opener never rendered: settled={_console_sync_settled(console)}"
+        ),
+    )
     console.query_one(opener, Button).press()
     await _wait_until(
         pilot, lambda: bool(console.query("#console-message-more-delete"))

@@ -40,11 +40,14 @@ from Tests.UI.library_quit_guard_support import (
 from Tests.UI.test_library_shell import _seed_conversations, _wait_for_selector
 from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     DELETE_CONFIRM_COPY_SYNCED,
+    NOTE_LOCATION_SYNCED_PREFIX,
 )
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
 
 ROOT_STATUS = ".library-notes-sync-root-status"
+LIST = "#library-notes-canvas"
+WORK = "#library-note-work-pane"
 UP_TO_DATE_AS_OF = re.compile(r"^✓ Up to date as of \d\d:\d\d · Next: Check changes$")
 
 
@@ -62,29 +65,128 @@ def _text_or_empty(screen, selector: str) -> str:
         return ""
 
 
-def _note_row(screen, title: str) -> Button:
+def _settled_canvas(screen, selector: str):
+    """The Notes canvas at ``selector`` when it is not rebuilding, else None.
+
+    TASK-34789: a Notes canvas answers every sync that lands (a tree slice,
+    the trash reload, Undo's own reload, a sync publication) by recomposing.
+    While that runs its previous children are still in the DOM but pruning:
+    Textual reports them as not displayed, ``Button.press()`` on one does
+    nothing, and a read can land between the removal and the remount. A
+    recompose that is only queued has not pruned anything yet; it is excluded
+    too, so each read and press below starts from a canvas with nothing
+    pending. A canvas that is itself being removed (a whole-screen recompose)
+    keeps its ready flag, so it must also still be displayed.
+    """
+    canvases = screen.query(selector)
+    if not canvases:
+        return None
+    canvas = canvases.first()
+    if not canvas.display or not canvas._children_ready or canvas._recompose_required:
+        return None
+    return canvas
+
+
+def _live_button(screen, canvas: str, selector: str, accept=None) -> Button | None:
+    """The control a press will reach, or None while Notes is busy.
+
+    TASK-34789: a press reaches the Library only when its button is displayed
+    and enabled on a canvas that is not rebuilding, and no Notes mutation is
+    fenced. Otherwise Textual drops it (``press()`` on a pruning or disabled
+    button does nothing) or the screen's handler returns without acting, and
+    the step after it waits 30 s for nothing. "Displayed" is the button's own
+    ``display``: a button inside a hidden region still counts, as it did
+    before this helper existed.
+    """
+    owner = _settled_canvas(screen, canvas)
+    if owner is None or screen._library_notes_mutation_fenced():
+        return None
     return next(
-        button
-        for button in screen.query(".library-notes-tree-note-row").results(Button)
-        if title in str(button.label)
+        (
+            button
+            for button in owner.query(selector).results(Button)
+            if button.display
+            and not button.disabled
+            and (accept is None or accept(button))
+        ),
+        None,
+    )
+
+
+async def _press(screen, pilot, canvas: str, selector: str, what: str, accept=None):
+    """Press the live control at ``selector``, waiting until there is one."""
+    found: list[Button] = []
+
+    def pressable() -> bool:
+        button = _live_button(screen, canvas, selector, accept)
+        if button is not None:
+            found[:] = [button]
+        return button is not None
+
+    await _until(
+        pilot,
+        pressable,
+        f"{what}: no pressable control at {selector} on {canvas} (it must be "
+        "displayed and enabled, on a settled canvas, with no Notes mutation fenced)",
+    )
+    # No await since the check: the press is posted to a live button.
+    found[0].press()
+
+
+def _manage_rows_mounted(screen) -> bool:
+    """Whether Manage sync folders shows its rows on a pane that is not recomposing.
+
+    TASK-34789: the UI Fast Lane read the row a fixed 0.1 s after first
+    seeing it, with Undo's final sync landing in between, and raised
+    ``NoMatches`` -- the row is not in the DOM between a recompose's removal
+    and its remount.
+    """
+    return _settled_canvas(screen, WORK) is not None and bool(screen.query(ROOT_STATUS))
+
+
+def _delete_prompt_shown(screen) -> bool:
+    """Whether the delete prompt is displayed, with its state applied.
+
+    TASK-34789: the prompt's nodes are composed with every editor and shown
+    by ``display``, so waiting for ``#library-note-delete-confirm`` to exist
+    waits for nothing. The Delete press is an async handler (a save flush and
+    an admission precede the prompt); read before it finished, the copy is
+    still the compose-time default -- the unsynced wording.
+    """
+    prompts = screen.query("#library-note-delete-confirmation")
+    return (
+        _settled_canvas(screen, WORK) is not None
+        and bool(prompts)
+        and bool(prompts.first().display)
     )
 
 
 async def _open_manage_sync_folders(screen, pilot) -> str:
     # Fix round 1 (review Important 1): Undo's own recompose can leave the
-    # toolbar briefly unmounted; wait for the button and press the node the
-    # settle pause re-queried, never a detached one.
-    button = await _wait_for_selector(
-        screen, pilot, "#library-notes-manage-sync-folders"
+    # toolbar briefly unmounted; press the live button, never a detached one.
+    await _press(
+        screen,
+        pilot,
+        LIST,
+        "#library-notes-manage-sync-folders",
+        "Manage sync folders to be pressable",
     )
-    button.press()
     await _wait_for_selector(screen, pilot, ROOT_STATUS)
     await pilot.pause(0.1)
+    # Read the row from a settled pane, not from whatever frame the pause
+    # ended on; the caller's next press (‹ Back) is then on a mounted control.
+    await _until(
+        pilot,
+        lambda: _manage_rows_mounted(screen),
+        "Manage sync folders to finish recomposing",
+    )
     return _text(screen, ROOT_STATUS)
 
 
 async def _back_to_notes_list(screen, pilot) -> None:
-    screen.query_one("#notes-sync-roots-back", Button).press()
+    await _press(
+        screen, pilot, WORK, "#notes-sync-roots-back", "‹ Back to be pressable"
+    )
     await _until(
         pilot,
         lambda: screen._notes_state.view == "list",
@@ -93,21 +195,17 @@ async def _back_to_notes_list(screen, pilot) -> None:
 
 
 async def _open_synced_folder(screen, pilot) -> None:
-    await _until(
+    # TASK-34789: during the list's teardown the previous compose's VSync row
+    # is still the first match in the DOM. Pressed there, the folder never
+    # opened and the test waited 30 s for its note.
+    await _press(
+        screen,
         pilot,
-        lambda: any(
-            getattr(row, "folder_id", "") == "folder-1"
-            for row in screen.query(".library-notes-folder-row").results(Button)
-        ),
+        LIST,
+        ".library-notes-folder-row",
         "the synced folder to load",
+        lambda row: getattr(row, "folder_id", "") == "folder-1",
     )
-    # Settle pending recomposes before querying the current folder button.
-    await pilot.pause()
-    next(
-        button
-        for button in screen.query(".library-notes-folder-row").results(Button)
-        if getattr(button, "folder_id", "") == "folder-1"
-    ).press()
 
 
 @pytest.mark.parametrize("delayed_root_folders", [False, True])
@@ -129,7 +227,6 @@ async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(
                 screen = await _library(app, pilot)
                 release_folders = asyncio.Event()
                 readiness_reached = asyncio.Event()
-                wait_for_selector = _wait_for_selector
                 if delayed_root_folders:
                     # A real Unfiled row may paint before the independent
                     # folder slice. Gate that response, not the UI or data.
@@ -150,21 +247,12 @@ async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(
                         readiness_reached.set()
                         return await until(*args, **kwargs)
 
-                    async def observed_selector(*args, **kwargs):
-                        row = await wait_for_selector(*args, **kwargs)
-                        if args[2] == ".library-notes-folder-row":
-                            readiness_reached.set()
-                        return row
-
                     monkeypatch.setattr(__name__ + "._until", observed_until)
-                    monkeypatch.setattr(
-                        __name__ + "._wait_for_selector", observed_selector
-                    )
                 screen.query_one("#library-row-browse-notes", Button).press()
                 if delayed_root_folders:
                     opening = asyncio.create_task(_open_synced_folder(screen, pilot))
                     try:
-                        await wait_for_selector(
+                        await _wait_for_selector(
                             screen, pilot, ".library-notes-folder-row"
                         )
                         await until(
@@ -184,30 +272,46 @@ async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(
                         await asyncio.gather(opening, return_exceptions=True)
                 else:
                     await _open_synced_folder(screen, pilot)
+                await _press(
+                    screen,
+                    pilot,
+                    LIST,
+                    ".library-notes-tree-note-row",
+                    "the folder to list its note",
+                    lambda row: "quotes" in str(row.label),
+                )
+                await _armed_editor(screen, pilot, "note-1")
+                # TASK-34789: the prompt below words itself from the note's
+                # LIVE location, which its own worker resolves after the
+                # editor arms. Until it lands the editor (and the prompt)
+                # treat the note as unsynced, so wait for the row to say so.
                 await _until(
                     pilot,
-                    lambda: any(
-                        "quotes" in str(b.label)
-                        for b in screen.query(".library-notes-tree-note-row").results(
-                            Button
-                        )
+                    lambda: _text_or_empty(screen, "#library-note-location").startswith(
+                        NOTE_LOCATION_SYNCED_PREFIX
                     ),
-                    "the folder to list its note",
+                    "the editor to name the note's synced file",
                 )
-                _note_row(screen, "quotes").press()
-                await _armed_editor(screen, pilot, "note-1")
 
                 # Phase 1: Info ▸ Delete ▸ confirm, through the real buttons.
-                screen.query_one("#library-note-context", Button).press()
+                await _press(screen, pilot, WORK, "#library-note-context", "Info")
                 await pilot.pause()
-                screen.query_one("#library-note-context-delete", Button).press()
-                await _wait_for_selector(screen, pilot, "#library-note-delete-confirm")
+                await _press(
+                    screen, pilot, WORK, "#library-note-context-delete", "Delete"
+                )
+                await _until(
+                    pilot,
+                    lambda: _delete_prompt_shown(screen),
+                    "the delete prompt to be shown",
+                )
                 # The prompt for a synced note says what happens to its file.
                 assert (
                     _text(screen, "#library-note-delete-confirm-copy")
                     == DELETE_CONFIRM_COPY_SYNCED
                 )
-                screen.query_one("#library-note-delete-confirm", Button).press()
+                await _press(
+                    screen, pilot, WORK, "#library-note-delete-confirm", "confirm"
+                )
                 await _wait_for_selector(screen, pilot, "#library-notes-delete-undo")
                 await _until(
                     pilot,
@@ -226,8 +330,7 @@ async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(
                 await _back_to_notes_list(screen, pilot)
 
                 # Phase 2: Undo from the receipt.
-                await _wait_for_selector(screen, pilot, "#library-notes-delete-undo")
-                screen.query_one("#library-notes-delete-undo", Button).press()
+                await _press(screen, pilot, LIST, "#library-notes-delete-undo", "Undo")
                 await _until(
                     pilot,
                     lambda: owner.snapshot().roots[0].status == "up_to_date",
