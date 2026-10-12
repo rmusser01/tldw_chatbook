@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -11,18 +10,12 @@ from pathlib import Path
 from typing import Iterator, Union
 
 from .base_db import BaseDB
+from .store_kernel import SQLiteStoreKernel
 
-from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
-)
+from tldw_chatbook.Backup_Recovery.participants import _core_getter  # noqa: F401 - re-export
 
 
-class WorkspaceDB(BaseDB):
+class WorkspaceDB(SQLiteStoreKernel, BaseDB):
     """Database wrapper for local workspace registry state.
 
     task-3011: connections are held per thread (the ChaChaNotes
@@ -342,146 +335,57 @@ COMMIT;
     #: Liveness-ping gate (mirrors `ChaChaNotes_DB`, task-261): pinging on
     #: every call roughly doubles the raw statement count on query-heavy
     #: paths, and this DB is exactly such a path (~1,350 calls per Console
-    #: push). A recently-used held connection is known-good without a ping.
-    _LIVENESS_PING_IDLE_SECONDS = 30.0
+    #: BaseDB-provenance (ADR-228): connections open through BaseDB's
+    #: per-call path under the db.base owner; participants identity
+    #: stays db.base, so no per-store policy entry is minted.
+    _kernel_sqlite_owner = "db.base"
+
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
-        self._thread_local = threading.local()
+        self._init_store_kernel()
         super().__init__(db_path, client_id)
 
-    @_core_getter
-    def _get_connection(self) -> sqlite3.Connection:
-        _core_access(self)
-        conn = super()._get_connection()
-        _register_core_connection(self, conn)
-        try:
-            _core_access(self)
-            conn.execute("PRAGMA foreign_keys = ON")
-            if not self.is_memory_db:
-                conn.execute("PRAGMA journal_mode = WAL")
-            # NORMAL is safe under WAL (app-crash-safe; only an OS/power crash can
-            # lose the last commit, acceptable for this local registry cache) and
-            # avoids an fsync per commit -- DELETE+FULL's writer-exclusive-locks-
-            # readers behavior was a stall candidate on this held-connection,
-            # query-heavy path (task-15465). Unconditional: synchronous is
-            # per-connection, so every held connection needs it re-applied.
-            conn.execute("PRAGMA synchronous = NORMAL")
-            # task-3012 (missed at task-3011 port time; fixed at task-15480): a
-            # held (long-lived) connection needs true autocommit. Python's
-            # default isolation mode auto-BEGINs on any DML, and an implicit
-            # transaction accumulated outside `transaction()` makes the explicit
-            # `BEGIN` there fail with "cannot start a transaction within a
-            # transaction" -- and silently ROLLS BACK bare DML on close (masked
-            # pre-task-3011 by per-call connections, which committed
-            # explicitly). Audited (task-15480): every `connection()` call site
-            # in `Workspaces/registry_service.py` is read-only -- every write
-            # there already goes through `transaction()` -- and this class's own
-            # `connection()` sites (`_initialize_schema`'s `executescript`,
-            # `get_schema_version`'s read) self-commit or don't write at all.
-            # Latent today, not live; this closes the correctness fuse before
-            # any future bare-DML call site can trip it.
-            conn.isolation_level = None
-            _core_access(self)
-        except BaseException:
-            # Registration retains uncertain native close; never drop its lease.
-            conn.close()
-            raise
-        return conn
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open through BaseDB's db.base path (ADR-228 provenance section)."""
+        return BaseDB._get_connection(self)
 
-    @_core_getter
-    def _held_connection(self) -> sqlite3.Connection:
-        """Return this thread's held connection, opening or reviving it.
+    def _configure_connection(self, conn: sqlite3.Connection) -> sqlite3.Connection:
+        """Workspace per-connection policy (kernel wraps registration/gating).
 
-        A positively closed native connection is transparently replaced.
-        Probe failure on a still-live handle preserves it and propagates the
-        error, mirroring `ChaChaNotes_DB._get_thread_connection`.
+        NORMAL is safe under WAL (app-crash-safe; only an OS/power crash
+        can lose the last commit, acceptable for this local registry cache)
+        and avoids an fsync per commit -- DELETE+FULL's writer-exclusive-
+        locks-readers behavior was a stall candidate on this held-
+        connection, query-heavy path (task-15465). Unconditional:
+        synchronous is per-connection, so every held connection needs it
+        re-applied.
+
+        task-3012/task-15480: a held (long-lived) connection needs true
+        autocommit. Python's default isolation mode auto-BEGINs on any DML,
+        and an implicit transaction accumulated outside ``transaction()``
+        makes the explicit ``BEGIN`` there fail -- and silently ROLLS BACK
+        bare DML on close. Audited at task-15480: every ``connection()``
+        call site in Workspaces/registry_service.py is read-only and this
+        class's own sites self-commit or don't write.
         """
-        _core_access(self)
-        conn = getattr(self._thread_local, "conn", None)
-        conn = _core_cached_connection(self, conn)
-        if conn is not None:
-            last_used = getattr(self._thread_local, "conn_last_used", None)
-            if (
-                last_used is None
-                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
-            ):
-                try:
-                    conn.execute("SELECT 1")
-                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    # A failed probe does not retire a live native borrower.
-                    try:
-                        sqlite3.Connection.in_transaction.__get__(conn)
-                    except sqlite3.ProgrammingError:
-                        conn.close()  # Positively closed; failure retains cache.
-                    else:
-                        raise
-                    conn = None
-        if conn is None:
-            conn = self._get_connection()
-            self._thread_local.conn = conn
-        self._thread_local.conn_last_used = time.monotonic()
+        conn.execute("PRAGMA foreign_keys = ON")
+        if not self.is_memory_db:
+            conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.isolation_level = None
         return conn
 
-    @_core_transaction
-    @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        """Yield the thread's held connection (row factory, foreign keys on)."""
-
-        yield self._held_connection()
-
-    @_core_transaction
     @contextmanager
     def transaction(self, *, immediate: bool = False) -> Iterator[sqlite3.Connection]:
-        """Run a write transaction on the held connection; roll back on failure.
+        """Workspace's contract keeps the deferred-BEGIN default.
 
-        Nesting: this issues an explicit BEGIN on the ONE connection this
-        thread holds, so nesting a second `transaction()` call inside the
-        first raises `sqlite3.OperationalError: cannot start a transaction
-        within a transaction`. Pre-port each block had its own connection
-        and nesting silently "worked"; the outer block still rolls back
-        cleanly here, because the failure propagates through its `except`
-        before reaching the caller.
-
-        Args:
-            immediate: Reserve the write lock before the first read. Use for
-                read-then-write updates that must serialize concurrent writers.
-
-        Raises:
-            Exception: Re-raised after rolling back, on any error inside
-                the `with` block. On clean exit the transaction commits.
+        The kernel's semantics (BaseException rollback, fail-loud nesting,
+        participants gating) apply unchanged; only the default lock mode
+        differs, preserved for read-then-write call sites that serialize
+        through ``immediate=True`` explicitly (ADR-228).
         """
-
-        conn = self._held_connection()
-        conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
-        try:
+        with super().transaction(immediate=immediate) as conn:
             yield conn
-        # TASK-32801.5: BaseException, not Exception. A CancelledError or
-        # KeyboardInterrupt raised inside the block is not an Exception, so
-        # the rollback used to be skipped and the transaction stayed open --
-        # and because `transaction()` treats an already-open transaction as
-        # nested, every later write on that thread then rode it uncommitted
-        # and was lost at close. Proven on Prompts_DB: a write after an
-        # escaped KeyboardInterrupt did not survive close+reopen.
-        # Library_Collections_DB and Workflows_DB already do this.
-        except BaseException:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
-
-    def close(self) -> None:
-        """Close the current thread's held connection, if any."""
-
-        conn = getattr(self._thread_local, "conn", None)
-        if conn is not None:
-            with _core_closing(self, conn) as allowed:
-                if not allowed:
-                    return
-                try:
-                    conn.close()
-                except Exception:  # noqa: BLE001 - preserve explicit retirement route
-                    return
-                self._thread_local.conn = None
 
     def _initialize_schema(self) -> None:
         """Initialize the local workspace registry schema."""
