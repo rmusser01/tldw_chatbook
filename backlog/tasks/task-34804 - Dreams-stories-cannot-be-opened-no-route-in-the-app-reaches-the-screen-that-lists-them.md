@@ -1,12 +1,16 @@
 ---
 id: TASK-34804
-title: 'Dreams stories cannot be opened: no route in the app reaches the screen that
-  lists them'
-status: To Do
-created_date: 2026-10-12 02:33
+title: >-
+  Dreams stories cannot be opened: no route in the app reaches the screen that
+  lists them
+status: In Progress
+assignee: []
+created_date: '2026-10-12 02:33'
+updated_date: '2026-10-12 05:02'
 labels:
-- dreams
-- navigation
+  - dreams
+  - navigation
+dependencies: []
 priority: high
 ---
 
@@ -24,18 +28,26 @@ Dreams writes a daily collection of stories and the user guide says they appear 
 - [ ] #4 The user guide and the Settings hints name the real location and key
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Use actual production Library routing/catalog/controller to expose Dreams stories, all existing actions and goals editor; update tests to mount actual destination and guide/Settings real location/key. Preserve shell authority/layout/token/owner contracts and current PC/Goal. Direct ADR172/196 integration, no new ADR.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
+Source author follow-up admitted into the user-authorized complete PR2921 review/remediation. Historical source description/notes retained. Current integration plan targets frozen updated author6c074d6eed/v6; actual post-Buddy dev and fresh author lease remain required before implementation. No product change or completion claimed.
+<!-- SECTION:NOTES:END -->
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
 <!-- SECTION:FINAL_SUMMARY:END -->
 
-## Definition of Done
-<!-- DOD:BEGIN -->
-<!-- DOD:END -->
+<!-- SECTION:FINAL_SUMMARY:END -->

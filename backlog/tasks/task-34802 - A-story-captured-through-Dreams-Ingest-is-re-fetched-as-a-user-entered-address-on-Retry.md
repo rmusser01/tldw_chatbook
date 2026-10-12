@@ -1,12 +1,16 @@
 ---
 id: TASK-34802
-title: A story captured through Dreams Ingest is re-fetched as a user-entered address
+title: >-
+  A story captured through Dreams Ingest is re-fetched as a user-entered address
   on Retry
-status: To Do
-created_date: 2026-10-12 01:45
+status: In Progress
+assignee: []
+created_date: '2026-10-12 01:45'
+updated_date: '2026-10-12 05:02'
 labels:
-- dreams
-- security
+  - dreams
+  - security
+dependencies: []
 priority: medium
 ---
 
@@ -23,18 +27,26 @@ Dreams refuses to ingest a story whose address is not a public destination. A ca
 - [ ] #3 An existing collections store upgrades in place and its recovery catalog entries are updated in the same change
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Persist actual capture source authority through versioned Collections records and every fetch/redirect/Library Retry; conservative unknown migration, explicit user intranet positive. Update/amend existing ADR207/126 before code, exact predecessor rollback/reopen/future refusal and installed recovery catalogs/participants. No new ADR ID.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
+Source author follow-up admitted into the user-authorized complete PR2921 review/remediation. Historical source description/notes retained. Current integration plan targets frozen updated author6c074d6eed/v6; actual post-Buddy dev and fresh author lease remain required before implementation. No product change or completion claimed.
+<!-- SECTION:NOTES:END -->
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
 <!-- SECTION:FINAL_SUMMARY:END -->
 
-## Definition of Done
-<!-- DOD:BEGIN -->
-<!-- DOD:END -->
+<!-- SECTION:FINAL_SUMMARY:END -->
