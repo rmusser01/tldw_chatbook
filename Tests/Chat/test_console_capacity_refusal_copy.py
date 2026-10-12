@@ -11,7 +11,7 @@ refused again.
 TASK-34350 (merged to dev first, owner ruling 2026-10-03) now owns the copy
 and refuses a composer send before it is committed: the alert names the
 model, what fills the window and the setting that changes it, and says when
-the window is an estimate and where to set the real one. These tests pin that
+the window is assumed and where to set the real one. These tests pin that
 outcome for AC#3, and pin AC#3's own half for a turn the context preflight
 refuses AFTER it was accepted (a send that skips the pre-commit check): the
 card reads 'Not sent', and Retry is refused for every caller.

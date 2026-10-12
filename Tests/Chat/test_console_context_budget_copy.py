@@ -3,7 +3,7 @@
 The owner ruling (2026-10-03): a send over budget prompts to compact,
 auto-compacts when that is enabled, or alerts when compacting cannot make
 room. The alert must name what fills the window and the setting that changes
-it, and say when the window is only an estimate and where to set the real one.
+it, and say when the window is only assumed and where to set the real one.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ def test_nothing_to_compact_alert_offers_shortening_or_a_new_chat() -> None:
 
 
 @pytest.mark.parametrize("cause", list(ContextOverflowCause))
-def test_an_estimated_window_is_called_an_estimate_with_where_to_fix_it(cause) -> None:
+def test_an_estimated_window_is_called_assumed_with_where_to_fix_it(cause) -> None:
     copy = _alert(cause, estimated=True)
 
     # Rewritten on purpose (review of #3057, R4 M13): the word is "assumed".
@@ -76,7 +76,7 @@ def test_an_estimated_window_is_called_an_estimate_with_where_to_fix_it(cause) -
 
 
 @pytest.mark.parametrize("cause", list(ContextOverflowCause))
-def test_a_verified_window_is_not_called_an_estimate(cause) -> None:
+def test_a_verified_window_is_not_called_assumed(cause) -> None:
     copy = _alert(cause, estimated=False)
 
     assert "assumed" not in copy

@@ -3,7 +3,7 @@
 Owner ruling (2026-10-03): prompt to compact (compaction mode Ask), compact
 automatically (Automatic), or alert when compacting cannot make room. An
 estimated (fallback) context window takes the same routes as a verified one;
-its alert says it is an estimate and where to set the real window.
+its alert says it is assumed and where to set the real window.
 
 These drive the real ``_apply_conversation_memory_preflight`` with the real
 capacity resolver (``resolve_request_capacity``) and context policy, each in a
