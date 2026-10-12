@@ -120,3 +120,22 @@ Two repo-specific forces shaped the decision:
 - **LLM-knowledge-only discovery (kept as fallback only):** cheapest, but
   cannot surface new/timely content and goes generic — kept as the degraded
   mode, not the product.
+
+## Current integration authority amendment (2026-10-12)
+
+Dreams remains schema v6, retaining the author migrations and atomic BEGIN
+IMMEDIATE daily reservation owner. Every external invocation checks the live
+master switch after awaited prerequisites; observing disabled is sticky for that
+operation. Attempted calls retain their reservation. Pending Dreams-owned work
+fails closed if startup suspension or provenance reconciliation is incomplete;
+unrelated scheduler work remains eligible. Guardian-derived topics are admitted
+only under current enabled, non-crisis, feeds_discovery consent, separately from
+independent user/seed/media/note contributions. Generating goal IDs survive ranking
+and feedback; lexical overlap never establishes a goal's provenance.
+
+The production Library artifact owner exposes the existing Dreams story actions
+and goals modal. Collection detail displays existing degradation reasons literally.
+Dreams v6 and Guardian v1 are optional recovery owners with current custom-path
+selection and inert restored automatic behavior, governed by ADR-126. The later
+public DreamsDB quiescent-close outcome remains separate from finite retirement
+of connections acquired by these operations.

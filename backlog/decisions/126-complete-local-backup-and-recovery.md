@@ -1276,3 +1276,21 @@ compare the receipt with the actual pinned directory, not an earlier path probe.
 This corrects the Windows system-directory flush failure while preserving the
 existing native identity, privacy and required persistence contracts. See
 `Docs/superpowers/plans/2026-10-04-windows-recovery-verification-fixes.md`.
+
+## Dreams, Guardian and capture provenance ownership (2026-10-12)
+
+The PR2921 integration declares optional Dreams v6 and Guardian v1 stores with
+exact selected default/custom paths, participant drains and installed schema
+catalogs. Absent unused optional stores remain absent. Supported populated Dreams
+v1-v5 predecessors and Guardian v1 require exact admission, rollback/reopen and
+unknown/future/hybrid refusal before their catalogs are accepted. Collections v5
+and Subscriptions v3 preserve conservative URL lineage across capture, relocation
+and restore. Recovery cannot turn a legacy unmarked URL into USER_ENTERED.
+
+Restored Dreams/Guardian automatic behavior is inert until current activation
+review accepts the selected owners; restored settings/rules alone grant no runtime
+authority. Ordinary startup need not open Subscriptions to reconstruct source
+provenance: the source store and actual fetch boundary own that decision. New
+finite thread work drains under existing maintenance owners and retires only its
+own acquired native handles. No namespace exemption, borrowed-handle closure or
+weakened schema validator is authorized by adding these owners.
