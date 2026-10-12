@@ -23,15 +23,12 @@ no whitespace/credentials/backslashes) -- the same validation the Library
 quick-capture form applies to this exact operation. Backend failures
 propagate unchanged for the caller to surface as a notice.
 
-A story URL is then checked as a PUBLIC destination, with no trusted
-origin, before it is handed over (review of #2921, round 3, T24). The
-capture backend fetches every capture as a URL the user typed
-(``app_service_wiring._extract_collections_article`` passes
-``UrlProvenance.USER_ENTERED``, TASK-20973), which makes the URL's own
-origin trusted -- right for quick-capture, wrong for a URL a search
-result or the model supplied. This is the check at the door only: the
-capture row has no field to say "nobody typed this", so a later fetch of
-the same capture (a retry) is still made as user-entered.
+A story URL is checked as a PUBLIC destination, with no trusted origin,
+before handoff. Its CaptureSaveRequest retains UNKNOWN provenance in the
+Collections row. The initial fetch, every Library Retry and every redirect
+therefore use the public-address policy; only explicit user-entered capture
+boundaries can establish USER_ENTERED authority. The shared DNS policy lookup
+and transport connection are still separate operations (ADR-207).
 """
 
 from __future__ import annotations

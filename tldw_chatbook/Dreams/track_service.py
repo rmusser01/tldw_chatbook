@@ -97,6 +97,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
 from tldw_chatbook.Chat.Chat_Functions import extract_response_content
 from tldw_chatbook.Utils.egress import (
     URL_PROVENANCE_OPTION,
@@ -525,7 +526,7 @@ async def _dreams_rules_on(
         ``{rule_id: rule}`` for every recorded rule that still exists on
         the subscription (enabled or not), as ``list_alert_rules`` rows.
     """
-    wrappers = await asyncio.to_thread(
+    wrappers = await asyncio.to_thread(run_finite_local_worker,
         dreams_db.list_tracked_for_subscription, subscription_id)
     scoped = {
         int(rule["rule_id"]): rule
@@ -551,7 +552,7 @@ async def _dreams_rules_on(
                             story.get("title"), as_written_before=True))
                 return names
 
-            names = await asyncio.to_thread(expected_names)
+            names = await asyncio.to_thread(run_finite_local_worker, expected_names)
             adopted = next(
                 (rule_id for rule_id, rule in sorted(scoped.items())
                  if str(rule.get("name")) in names
@@ -559,7 +560,7 @@ async def _dreams_rules_on(
         else:
             # A later wrapper of a page whose rule IS recorded shares it.
             adopted = min(recorded)
-        await asyncio.to_thread(
+        await asyncio.to_thread(run_finite_local_worker,
             dreams_db.set_tracked_alert_rule, subscription_id, adopted,
             only_unrecorded=True)
         if adopted:
@@ -851,7 +852,7 @@ async def _retire_linked_reminders(
     if scheduling_db is None:
         return [], []
     try:
-        return await asyncio.to_thread(
+        return await asyncio.to_thread(run_finite_local_worker,
             _retire_reminders_sync, scheduling_db, dreams_db, item, hand_over)
     except Exception as exc:  # noqa: BLE001 - reminder degrades
         logger.warning(
@@ -879,7 +880,7 @@ async def _record_retirement(
     owed_subscription, owed_reminders, _rules = _owed(_suspension_record(item))
     owed_reminders = [value for value in owed_reminders if value not in handed]
     try:
-        await asyncio.to_thread(
+        await asyncio.to_thread(run_finite_local_worker,
             dreams_db.set_tracked_suspension, int(item["id"]), _record_text(
                 subscription=subscription or owed_subscription,
                 reminders=owed_reminders + reminders, rules=[],
@@ -1487,7 +1488,7 @@ async def sweep_track_lifecycle(
     Returns:
         Degradation notes naming every retirement/pause the sweep made.
     """
-    notes, retired = await asyncio.to_thread(
+    notes, retired = await asyncio.to_thread(run_finite_local_worker,
         _sweep_sync, dreams_db,
         now_date=now.date(), quiet_count=_quiet_retire_count())
 
@@ -1524,7 +1525,7 @@ async def sweep_track_lifecycle(
             and item.get("mechanism") == _PAGE_MECHANISM
             and int(item.get("created_by_dreams") or 0) == 1
             and subscription_id
-            and not await asyncio.to_thread(
+            and not await asyncio.to_thread(run_finite_local_worker,
                 dreams_db.count_active_tracked_for_subscription,
                 int(subscription_id))
         ):
@@ -2014,7 +2015,7 @@ async def _plan_source_stop(
             return _SourceStop(known=True, applied=True)
         owned = any(
             int(rider.get("created_by_dreams") or 0) == 1 for rider in riders
-        ) or await asyncio.to_thread(
+        ) or await asyncio.to_thread(run_finite_local_worker,
             dreams_db.subscription_dream_owned, subscription_id)
         # Running means "would be fetched, now or after one press of
         # Resume" (round 3, T9): the normalized ``active`` is ``is_active
@@ -2082,20 +2083,20 @@ async def _suspend_pass(
         subscription, reminders, rules = _owed(_suspension_record(item))
         try:
             if scheduling_db is not None:
-                reminders = reminders + await asyncio.to_thread(
+                reminders = reminders + await asyncio.to_thread(run_finite_local_worker,
                     _enabled_linked_reminder_ids, scheduling_db, item_id)
             if plan is not None and plan.applied:
                 subscription, rules = False, []  # its source is gone
             elif plan is not None:
                 subscription = subscription or plan.owed
                 rules = rules + plan.rules
-            await asyncio.to_thread(
+            await asyncio.to_thread(run_finite_local_worker,
                 partial(dreams_db.set_tracked_suspension, only_live=True),
                 item_id, _record_text(
                     subscription=subscription, reminders=reminders,
                     rules=rules))
             if reminders and scheduling_db is not None:
-                await asyncio.to_thread(
+                await asyncio.to_thread(run_finite_local_worker,
                     _disable_reminders, scheduling_db, reminders)
         except Exception as exc:  # noqa: BLE001 - one failed wrapper stops nothing
             logger.warning(
@@ -2135,7 +2136,7 @@ async def _suspend_pass(
             if payload:
                 await subs_service.update_source(subscription_id, payload)
             if plan.mark is not None:
-                await asyncio.to_thread(
+                await asyncio.to_thread(run_finite_local_worker,
                     dreams_db.set_egress_marked, subscription_id)
             plan.applied = True
         except Exception as exc:  # noqa: BLE001 - its riders stay unsettled
@@ -2148,7 +2149,7 @@ async def _suspend_pass(
         if scheduling_db is None or (plan is not None and not plan.applied):
             continue  # unfinished: a later pass (the next start) retries
         try:
-            await asyncio.to_thread(
+            await asyncio.to_thread(run_finite_local_worker,
                 partial(dreams_db.set_tracked_suspension, only_live=True),
                 int(item["id"]),
                 _record_text(subscription=subscription, reminders=reminders,
@@ -2241,7 +2242,7 @@ async def _resume_pass(
         async def write_unsettled(
             item_id: int, subscription: bool, reminders: list[str], rules: list[int]
         ) -> None:
-            await asyncio.to_thread(
+            await asyncio.to_thread(run_finite_local_worker,
                 partial(dreams_db.set_tracked_suspension, only_live=True),
                 item_id, _record_text(
                     subscription=subscription, reminders=reminders,
@@ -2254,7 +2255,7 @@ async def _resume_pass(
             # would re-arm its reminder and switch its source back on
             # with no live watch left (round 3, T14b). Its record stays
             # with the retired wrapper.
-            fresh = await asyncio.to_thread(dreams_db.get_tracked_item, item_id)
+            fresh = await asyncio.to_thread(run_finite_local_worker, dreams_db.get_tracked_item, item_id)
             if fresh is None or fresh.get("status") not in ("active", "paused"):
                 continue
             # The record stops saying "settled off" BEFORE anything is
@@ -2269,7 +2270,7 @@ async def _resume_pass(
             # user had made in between.
             await write_unsettled(item_id, subscription, reminders, rules)
             if reminders and scheduling_db is not None:
-                await asyncio.to_thread(
+                await asyncio.to_thread(run_finite_local_worker,
                     _restore_reminders, scheduling_db, reminders)
                 reminders = []
                 await write_unsettled(item_id, subscription, reminders, rules)
@@ -2338,7 +2339,7 @@ async def _resume_pass(
             # ``only_live``: a watch retired since the pass began carries
             # its retirement record, which this pass must not rewrite
             # from the row it read at its start (round 4).
-            await asyncio.to_thread(
+            await asyncio.to_thread(run_finite_local_worker,
                 partial(dreams_db.set_tracked_suspension, only_live=True),
                 item_id, text)
         except Exception as exc:  # noqa: BLE001 - the record stands for a retry
@@ -2417,7 +2418,7 @@ async def set_tracking_suspended(
     # Every watch that is not retired: a PAUSED one (the sweep paused its
     # failing checks) still owns an armed event reminder, and a disabled
     # Dreams must not send that either. One thread hop for both reads.
-    items = await asyncio.to_thread(
+    items = await asyncio.to_thread(run_finite_local_worker,
         lambda: [
             *dreams_db.list_tracked_items("active"),
             *dreams_db.list_tracked_items("paused"),

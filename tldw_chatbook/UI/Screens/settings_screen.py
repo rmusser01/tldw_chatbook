@@ -32676,6 +32676,8 @@ class SettingsScreen(BaseAppScreen):
         )
 
     async def _persist_guardian_toggle(self, enabled: bool) -> None:
+        from ...Backup_Recovery.participants import run_finite_local_worker
+
         try:
             mutation = await asyncio.to_thread(
                 apply_settings_mutation_to_cli_config,
@@ -32689,7 +32691,7 @@ class SettingsScreen(BaseAppScreen):
                 # First enable: create the storage the rules editor needs
                 # through the app-owned builder (no-op while already
                 # built). This toggle is the builder's ONLY caller.
-                await asyncio.to_thread(builder)
+                await asyncio.to_thread(run_finite_local_worker, builder)
         if not self.is_attached:
             return
         if mutation.fully_applied:
@@ -32733,13 +32735,15 @@ class SettingsScreen(BaseAppScreen):
         Args:
             enabled: The state to persist to ``[dreams] enabled``.
         """
+        from ...Backup_Recovery.participants import run_finite_local_worker
+
         builder = getattr(self.app_instance, "get_dreams_db", None)
         dreams_db = None
         if not enabled and callable(builder):
             # Switching OFF: resolve the store while the gate is still
             # open -- the app-owned builder only builds while Dreams is
             # enabled, and the watches to suspend are read from it.
-            dreams_db = await asyncio.to_thread(builder)
+            dreams_db = await asyncio.to_thread(run_finite_local_worker, builder)
         try:
             mutation = await asyncio.to_thread(
                 apply_settings_mutation_to_cli_config,
@@ -32751,7 +32755,7 @@ class SettingsScreen(BaseAppScreen):
             # First enable: create the storage the topic editor needs
             # through the app-owned builder (no-op while already built).
             # The pane rebuild below then finds a real dreams_db.
-            dreams_db = await asyncio.to_thread(builder)
+            dreams_db = await asyncio.to_thread(run_finite_local_worker, builder)
         if mutation.fully_applied:
             await self._switch_dreams_tracking(dreams_db)
         if not self.is_attached:

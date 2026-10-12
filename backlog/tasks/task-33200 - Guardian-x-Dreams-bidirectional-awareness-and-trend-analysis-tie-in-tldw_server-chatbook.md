@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-23 06:07'
-updated_date: '2026-10-12 19:39'
+updated_date: '2026-10-12 20:23'
 labels:
   - guardian
   - dreams
@@ -107,6 +107,14 @@ Current source update: author0c941ba2ec984d960ba83376aeace0e830452bbc, 113 nonme
 PR2921 current private integration qualification (2026-10-12):
 Implemented local-only Guardian live consent, captured nonempty Console ownership, historical crisis provenance (Guardian v2), finite daily native work/drain and installed optional recovery with inert restored activation. Native ownership proves physical close before worker/process exit and preserves borrowed handles. Existing resource/disclaimer projections cover direct, trend, aggregate and next-visit summary. Required bounded CI groups measured 160 and 80 passing; exact comment-aware membership guards preserve the original 64/23 targets and 187 UI prefix. ADR-204/126 amendments precede changes. Companion-server implementation is outside the approved local scope.
 Full source-bound outcomes, original failures, native owners and tradeoffs: .superpowers/sdd/2026-10-11-pr2921-current-dev-integration/task-1-report.md; external pr-review-wave2/pr2921-current-integration. Local implementation is ready for independent review. Actual-base restack, complete independent review and hosted required gates remain pending; preserve In Progress and the existing acceptance checklist until the full DoD is met.
+
+Final independent review fix plan (before code):
+1. Add native RED controls for file-backed Guardian inbox contention/currentness and actual Settings first-enable/pre-disable getter construction, borrowed handles and cancellation settlement.
+2. Enclose notification callbacks and all three Settings getter hops in existing finite local-worker ownership; retain daily physical tasks through shutdown, memory/unknown affinity and exact toggle/reconciliation ordering.
+3. Correct the stale ingest_action provenance explanation only.
+4. Qualify amended native controls, affected existing cases and recurring CI membership; preserve sealed evidence and write a separate post-review report. ADR required: no; existing ADR126/196/204 govern finite-worker and notification-affinity contracts. Status/AC stay unchanged pending independent review and publication.
+
+Final review fix implementation: file-backed Guardian delivery and all three Settings constructors now use existing finite local-worker ownership. Native controls exposed and then qualified the connected Dreams reconciliation worker caches in the same fix. Final native daily16/Settings9, connected ownership and membership47, existing mounted toggle/import6 pass. Borrowed handles, cancellation settlement, installed recovery drain and exact ordering remain covered; no public-close change. Full separate source-bound report: pr-review-wave2/pr2921-current-integration/post-review-fix-report.md. Existing ADR126/196/204 apply. Keep In Progress/AC/history; scoped independent re-review and hosted publication remain pending.
 <!-- SECTION:NOTES:END -->
 
 > Renumbering provenance: filed as task-32902 on the pre-divergence docs

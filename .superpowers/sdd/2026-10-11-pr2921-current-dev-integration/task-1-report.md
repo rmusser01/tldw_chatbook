@@ -561,3 +561,63 @@ failed/interrupted/setup receipts as such. Final commit/status live in these
 external artifacts to avoid a self-referential report hash. No old count is
 relabeled as a final whole-suite proof. No full sweep, external service, model
 download, shared-config change, GitHub write or child agent was used.
+
+## Complete-review fix wave on actual base
+
+FIX_BASE51e518abdb66ce64b8533db54a2863ba7afd2914, actualdev66a940d1.
+Complete independent review found two P2 finite-lifetime/responsiveness gaps.
+TASK33200/34792 concrete fix plans were appended via the isolated CLI before
+product changes, preserving history/status/AC. Existing ADR126/196/204 apply;
+no new architecture, task ID or public close contract.
+
+Daily file-backed notification persistence now uses the existing finite local
+worker helper and the handler's strong physical-task/shield/shutdown-drain owner.
+It checks enabled and restored execution authority inside the callback after
+executor queue waits. Memory/unknown stores remain inline. Already-started work
+settles; new acquisitions retire on their originating worker, borrowed handles
+survive. The original native-memory positive remains.
+
+All three real Settings builder callbacks now include construction in finite
+worker scope: Guardian first enable, Dreams first enable and Dreams pre-disable
+resolution. Cached DB objects and toggle/reconciliation ordering remain. Native
+RED:6 leaked-constructor failures/3borrowed positives16.64s. First green attempt
+was actually7pass/2fail17.13s: constructors retired, but real Dreams reconciliation
+opened another idle executor handle and blocked installed recovery drain. Root
+confirmed this connected caller belongs in the same finding. Its18 existing
+synchronous worker hops across8 existing functions now use the same finite helper;
+coalescing/shielded reconciliation, suspension debt, shared sources/reminder
+handover and public Dreams close/strong registry remain unchanged. Final native
+Settings9pass26.69s includes actual getter/callback/schema construction, all
+acquired handles, one-worker physical probes before exit, UI-handle retirement,
+installed participant drain, borrowed positives and cancellation settlement.
+
+Daily RED4fail4.55s: real SQLite inbox writer contention blocked the UI heartbeat,
+and delivery happened before the queued disable/shutdown boundary. Final daily
+native+existing finite/memory controls16pass8.06s. A real competing writer holds
+BEGIN IMMEDIATE, the actual INSERT begins and a heartbeat must run before that
+writer releases. No transport/provider/fake inbox substitutes for this boundary.
+Queued shutdown retains physical work until the occupied executor settles;
+disable suppresses the callback. Both new and borrowed notification handles are
+probed on the still-alive originating worker.
+
+Connected original reconciliation/debt/shared ownership cases plus recurring
+membership guard47pass34.57s. Five existing mounted toggle/order/leaving-Settings
+cases plus canonical preimport6pass46.10s. The existing headroom warning remains:
+552/558modules,418973/425347LOC,Library129376/135111LOC. No cap increase. New native
+Settings file is appended to the existing admission-sensitive required invocation
+and exact guard; daily native cases already belong to the enrolled family.
+Original64/23 targets and prior18boundary/4admission targets retain order; current
+feature admission adds one file (five targets), no new job or deadline change.
+
+The specific stale ingest_action docstring now describes stored UNKNOWN lineage
+through initial Capture/Retry/redirects and preserves the documented shared DNS
+policy/connection residual. Capture implementation is unchanged.
+
+Final source-bound Ruff finds zero new diagnostics: handler/ingest/new tests/CI
+clean; existing track_service3 and Settings119 match FIX_BASE. Textual-worker and
+diagnostic-inventory guards pass. No derived source output changed. Full new
+source/argv/JUnit/native results, failed receipts and final clean commit are bound
+in external post-review-fix-report.md and post-review-fix-handoff.json. Every
+sealed private/actual-base handoff and artifact remains unchanged. No broad160/80,
+full suite, native/UI cohort, child agent, foreign checkout or GitHub write.
+Scoped independent re-review and publication remain with root; tasks stay open.

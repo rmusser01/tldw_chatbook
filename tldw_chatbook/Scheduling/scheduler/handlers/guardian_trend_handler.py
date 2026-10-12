@@ -19,7 +19,8 @@ self-heals.
 
 Native store work runs in finite owned callbacks. Shutdown cancels delivery
 and drains admitted physical work before application store teardown. Notification
-delivery stays on the event loop so borrowed and memory stores keep their affinity.
+delivery uses finite workers for confirmed file-backed stores; memory and unknown
+stores stay on the event loop to preserve their affinity.
 """
 
 from __future__ import annotations
@@ -58,7 +59,12 @@ async def _store_work(db: Any, operation: Callable, *args: Any) -> Any:
         with execution_scope(("db.guardian",), getattr(db, "db_path", None)) as allowed:
             return operation(*args) if allowed else None
 
-    task = asyncio.create_task(run_owned_db_call(db, admitted_operation))
+    return await _physical_work(run_owned_db_call(db, admitted_operation))
+
+
+async def _physical_work(operation: Any) -> Any:
+    """Retain an admitted callback through cancellation and shutdown settlement."""
+    task = asyncio.create_task(operation)
     _PHYSICAL_TREND_WORK.add(task)
     def finished(completed: asyncio.Task) -> None:
         _PHYSICAL_TREND_WORK.discard(completed)
@@ -201,11 +207,23 @@ class GuardianTrendHandler:
                 try:
                     from tldw_chatbook.Backup_Recovery.activation import execution_scope
 
-                    with execution_scope(("db.guardian",), getattr(db, "db_path", None)) as allowed:
-                        if not allowed:
+                    def deliver(current_notice):
+                        # Recheck inside the callback, after any executor wait.
+                        if not admitted():
                             return
-                        dispatch(category="guardian", title=f"Guardian trend: {notice.label}",
-                            message=notice.message, severity="warning")
+                        with execution_scope(("db.guardian",), getattr(db, "db_path", None)) as allowed:
+                            if allowed:
+                                dispatch(category="guardian", title=f"Guardian trend: {current_notice.label}",
+                                    message=current_notice.message, severity="warning")
+
+                    if getattr(getattr(deps.dispatch_service, "store", None), "is_memory_db", None) is False:
+                        from tldw_chatbook.Backup_Recovery.participants import (
+                            run_finite_local_worker,
+                        )
+
+                        await _physical_work(asyncio.to_thread(run_finite_local_worker, deliver, notice))
+                    else:
+                        deliver(notice)
                 except Exception as exc:  # noqa: BLE001 - delivery is best effort
                     logger.debug("Guardian trend delivery failed ({})", type(exc).__name__)
             # Advance only after analysis and delivery, and revalidate inside
