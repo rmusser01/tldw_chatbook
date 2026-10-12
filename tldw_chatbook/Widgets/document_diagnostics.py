@@ -96,7 +96,7 @@ class DocumentDiagnostics(Vertical):
             with selector.prevent(Select.Changed):
                 selector.set_options(options)
                 selector.value = language
-        if result is not None:
+        if result is not None and not status:
             if result.state == "checked":
                 errors = sum(d.severity == "error" for d in result.diagnostics)
                 warnings = len(result.diagnostics) - errors

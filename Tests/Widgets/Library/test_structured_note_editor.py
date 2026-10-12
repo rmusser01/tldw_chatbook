@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from textual.pilot import Pilot
 from textual.widgets import Button, Select, TextArea
 
 from Tests.UI.app_factory import _build_test_app
@@ -14,8 +15,11 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Document_Editing.editor_controller import DocumentEditorController
 from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
+from tldw_chatbook.Widgets.document_diagnostics import DocumentDiagnostics
 
 
 def database_host(tmp_path: Path, source: str = '{"a":1}'):
@@ -33,7 +37,23 @@ def database_host(tmp_path: Path, source: str = '{"a":1}'):
     return LibraryProductionCSSHarness(app), service, note_id
 
 
-async def open_note(host, pilot, note_id):
+async def close_database_host(
+    host: LibraryProductionCSSHarness, service: NotesInteropService
+) -> None:
+    """Retire the exact fixture's worker and all its SQLite thread handles."""
+    worker = host.app_instance.document_worker
+    await worker.close()
+    assert worker._process is None
+    assert worker._task is None
+    service.close_all_user_connections()
+    db = host.app_instance.chachanotes_db
+    with db.quiesce_connections(timeout_seconds=2):
+        assert db.registered_connection_count() == 0
+
+
+async def open_note(
+    host: LibraryProductionCSSHarness, pilot: Pilot, note_id: str
+) -> LibraryScreen:
     screen = _active_library_screen(host)
     await _wait_for_library_shell(screen, pilot)
     screen.query_one("#library-row-browse-notes", Button).press()
@@ -62,7 +82,9 @@ async def test_invalid_source_saves_and_language_changes_only_metadata(tmp_path)
         body = screen.query_one("#library-note-body", TextArea)
         body.focus()
         await pilot.press("end", "space")
-        assert "Pending" in str(controls.query_one(".document-check-status").renderable)
+        status = str(controls.query_one(".document-check-status").renderable)
+        assert "Pending" in status
+        assert "read-only" not in status
         await pilot.pause(0.6)
         assert "error" in str(controls.query_one(".document-check-status").renderable)
         controls.query_one(Select).value = "yaml"
@@ -73,22 +95,30 @@ async def test_invalid_source_saves_and_language_changes_only_metadata(tmp_path)
         saved = service.get_note_by_id(host.app_instance.notes_user_id, note_id)
         assert saved["content"] == source
         assert saved["content_language"] == "yaml"
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
-async def native_history(pilot, editor, tools, controller):
+async def native_history(
+    pilot: Pilot,
+    editor: TextArea,
+    tools: DocumentDiagnostics,
+    controller: DocumentEditorController,
+) -> str:
     """Actual typing/buttons/history, including independent formatting undo."""
+    original = editor.text
     editor.focus()
-    await pilot.press("ctrl+end", "space")
+    await pilot.pause()
+    assert editor.has_focus
+    await pilot.press(*(["down"] * editor.document.line_count), "end")
+    assert editor.cursor_location == editor.document.end
+    await pilot.press("space")
     before = editor.text
     from textual.widgets import Button
 
     await _wait_for_condition(
         pilot,
         lambda: controller.result is not None and controller.result.format_allowed,
-        message="Qualified check",
+        message=lambda: f"Qualified check: request={controller.request!r}, result={controller.result!r}",
     )
     button = tools.query_one(".document-format", Button)
     button.focus()
@@ -98,7 +128,7 @@ async def native_history(pilot, editor, tools, controller):
     )
     formatted = editor.text
     assert editor.has_focus
-    await pilot.press("ctrl+end", "space")
+    await pilot.press(*(["down"] * editor.document.line_count), "end", "space")
     assert editor.text != formatted
     await pilot.press("ctrl+z")
     assert editor.text == formatted
@@ -109,7 +139,7 @@ async def native_history(pilot, editor, tools, controller):
     await pilot.press("ctrl+z")
     assert editor.text == before
     await pilot.press("ctrl+z")
-    assert editor.text == '{"a":1}'
+    assert editor.text == original
     return formatted
 
 
@@ -128,9 +158,7 @@ async def test_database_native_history_and_real_save(tmp_path):
             service.get_note_by_id(host.app_instance.notes_user_id, note_id)["content"]
             == body.text
         )
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -168,9 +196,7 @@ async def test_note_switch_and_authority_loss_retire_pending_results(tmp_path):
         screen._library_screen_suspended = False
         screen._notes_controller.synchronize_document_editor()
         assert screen._notes_controller._document_editor is not current
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -198,9 +224,7 @@ async def test_language_change_invalidates_pending_format_with_success_control(
         assert bridge.apply_format(result, request.key, editable=True) is True
         await pilot.pause()
         assert screen._library_note_session.snapshot.body == result.replacement
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -238,9 +262,7 @@ async def test_metadata_only_conflict_keeps_body_and_retires_format(tmp_path):
         saved = service.get_note_by_id(host.app_instance.notes_user_id, note_id)
         assert saved["content"] == '{"a":1}'
         assert saved["content_language"] == "yaml"
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -273,9 +295,7 @@ async def test_synchronous_source_readonly_noop_and_local_authority_retirement(
         host.app_instance.notes_user_id = "structured-test"
         screen._notes_controller.synchronize_document_editor()
         assert screen._notes_controller._document_editor is not controller
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -346,9 +366,7 @@ async def test_logical_diagnostic_navigation_and_bounded_states(tmp_path):
             )
             assert tools.query_one(".document-format", Button).disabled
         assert body.text == source
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -430,9 +448,7 @@ async def test_notes_compact_tools_focus_and_visual_capture(tmp_path, size):
         assert problems.region.height > 0
         assert status.region.bottom <= size[1]
         assert problems.region.bottom <= size[1]
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -462,9 +478,7 @@ async def test_main_preview_preserves_known_and_unknown_source(tmp_path, languag
         else:
             assert str(raw.renderable) == source
         assert screen.query_one("#library-note-body", TextArea).text == source
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -488,9 +502,7 @@ async def test_manual_check_uses_resource_limits_and_never_vetoes_save(tmp_path)
             service.get_note_by_id(host.app_instance.notes_user_id, note_id)["content"]
             == controller.editor.text
         )
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -508,9 +520,7 @@ async def test_native_language_chooser_keeps_its_own_options(tmp_path):
         assert selector.value == "yaml"
         assert screen._library_note_session.snapshot.draft.content_language == "yaml"
         assert controller.editor.text == '{"a":}'
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -536,9 +546,7 @@ async def test_database_crlf_formats_without_file_mapping(tmp_path):
             service.get_note_by_id(host.app_instance.notes_user_id, note_id)["content"]
             == controller.editor.text
         )
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -580,9 +588,7 @@ async def test_real_pending_format_cannot_cross_note_navigation(tmp_path):
             await _wait_for_selector(screen, pilot, "#library-note-body")
             assert screen.query_one("#library-note-body", TextArea).text == '{"b":2}'
             assert controller.request is None
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -600,9 +606,7 @@ async def test_database_supported_native_representations(tmp_path, source):
             service.get_note_by_id(host.app_instance.notes_user_id, note_id)["content"]
             == source
         )
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -655,9 +659,7 @@ async def test_database_lossy_representation_preserves_canonical_source(tmp_path
         await _wait_for_selector(screen, pilot, "#library-note-body")
         screen.handle_library_note_body_changed(TextArea.Changed(body))
         assert screen._library_note_session.snapshot.body == '{"b":2}'
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)
 
 
 @pytest.mark.asyncio
@@ -683,6 +685,4 @@ async def test_hidden_database_host_permanently_retires_and_reacquires(tmp_path)
         )
         assert await current.format()
         assert not await old.format()
-    await host.app_instance.document_worker.close()
-    service.close_all_user_connections()
-    host.app_instance.chachanotes_db.close()
+    await close_database_host(host, service)

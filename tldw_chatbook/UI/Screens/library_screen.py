@@ -11842,7 +11842,7 @@ class LibraryScreen(BaseAppScreen):
             # (fix round 1) A read that failed in 20 ms must not tell the
             # user it waited five seconds, so the KIND is recorded, not just
             # the fact. (fix round 2) By the CLOCK, not by the exception
-            # type: since 3.10 ``socket.timeout is TimeoutError`` and the
+            # type, since 3.10 ``socket.timeout is TimeoutError`` and the
             # OSError family raises it for ETIMEDOUT, so an isinstance check
             # let a transport timeout that fired instantly claim the
             # deadline's copy -- and ``wait_for`` propagates an inner
@@ -21684,7 +21684,7 @@ class LibraryScreen(BaseAppScreen):
         Args:
             selected_path: The chosen destination, or ``None`` if the
                 dialog was cancelled.
-            export_format: ``"markdown"`` or ``"text"`` (see
+            export_format: Source, portable note, Markdown, or text (see
                 ``build_note_export_content``).
             title: The note title captured when Export was pressed.
             content: The note body captured when Export was pressed.

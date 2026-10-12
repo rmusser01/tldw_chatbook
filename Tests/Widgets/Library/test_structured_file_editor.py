@@ -52,12 +52,20 @@ async def test_invalid_file_saves_and_override_is_temporary(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_file_native_history_and_real_save(tmp_path):
+@pytest.mark.parametrize(
+    ("language", "source"),
+    [
+        ("json", '{"a":1}'),
+        ("jsonl", '{"n":900719925474099312345,"s":"a&b <tag> 😀\\u0001"}'),
+        ("yaml", "---\nroot:\n    child: a&b <tag> 😀  "),
+    ],
+)
+async def test_file_native_history_and_real_save(tmp_path, language, source):
     from Tests.Widgets.Library.test_structured_note_editor import native_history
     from tldw_chatbook.Document_Editing.worker import DocumentWorker
 
-    path = tmp_path / "draft.json"
-    path.write_text('{"a":1}')
+    path = tmp_path / f"draft.{language}"
+    path.write_text(source)
     workspace = LibraryFileNotesWorkspace(
         root=tmp_path, replica=None, poll_interval=60, autosave_delay=60
     )
@@ -65,12 +73,12 @@ async def test_file_native_history_and_real_save(tmp_path):
     host.document_worker = DocumentWorker()
     async with host.run_test(size=(120, 40)) as pilot:
         await _wait_until(pilot, lambda: workspace.initialized, "Initialize")
-        assert await workspace.open_path("draft.json")
+        assert await workspace.open_path(path.name)
         editor = workspace.query_one("#file-notes-editor", TextArea)
         tools = workspace.query_one("#file-notes-document-tools")
         await native_history(pilot, editor, tools, workspace._document_editor)
         assert await workspace.flush_pending_work()
-        assert path.read_text() == editor.text
+        assert path.read_text() == editor.text == source
     await workspace.shutdown()
     await host.document_worker.close()
 

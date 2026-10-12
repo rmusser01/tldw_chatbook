@@ -98,7 +98,7 @@ class DocumentEditorController:
             self.request,
             None,
             "Checking" if immediate or language_changed else "Pending",
-            False,
+            editable,
         )
         if self._lease is not None:
             self._lease.submit(self.request, immediate=immediate or language_changed)
