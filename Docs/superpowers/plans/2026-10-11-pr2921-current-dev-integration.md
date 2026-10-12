@@ -82,3 +82,15 @@ Ruling: allow Dreams implementation on the independently cleared currentdev/PC/2
 ### Task 1 execution note: provenance qualification fixture scope
 
 The affected source authoring families `Tests/Subscriptions/test_local_watchlists_service.py` and `Tests/Watchlists/test_watchlists_bulk_source_authoring.py` require their existing private collection-time source selection. An isolated service node fails before the intended assertions on both the current provenance edits and the exact pre-phase c2bae700a1 export. Module-local `bootstrap_profile` markers repair only these source-bound families, retaining original assertions, private DB ownership, deadlines and teardown. This is pre-phase control evidence, not accepted-dev attribution. Final affected required-lane placement must include the real authoring/UI cases and their source-bound fixture admission; no global marker plugin or production admission exemption is authorized. Details and distinct raw receipts remain in the Task1 report.
+
+
+### Task1 execution ruling: Guardian historical crisis provenance
+
+Inspection of the integrated v1 guardian_alerts schema confirmed no durable crisis
+snapshot/payload field. A current-rule join cannot preserve classification after
+edit/deletion. Root approved the smallest additive next-version migration under
+ADR204 (amended before code): Guardian v2 crisis_provenance tri-state, unknown
+legacy rows excluded from discovery and resource-bearing when surfaced. Preserve
+all v1 proofs/catalogs as predecessor evidence; qualify populated migration,
+rollback/reopen/future/hybrid refusal and measured installed recovery. No fresh ADR
+or task ID and no broad rules/history redesign. Remaining Task1 gates unchanged.
