@@ -186,32 +186,44 @@ VALID_TABLES = {
         "world_books",
     },
     "media": {
+        # task-19867: re-synced against a freshly initialized MediaDatabase
+        # (see Tests/DB/test_sql_validation.py's media live-schema guard).
+        # Removed as stale: IngestionTriggerTracking, MediaModifications,
+        # MediaVersion, and the old FTS names (Keywords_fts / Media_fts /
+        # MediaChunks_fts -- the FTS tables are now keyword_fts / media_fts
+        # and MediaChunks_fts is gone; FTS tables are trigger-written and
+        # excluded from the allowlist by design). Added as missing:
+        # MediaReadItLaterState, ReadingProgress, schema_version.
         "Media",
         "Keywords",
         "MediaKeywords",
-        "MediaVersion",
-        "MediaModifications",
         "UnvectorizedMediaChunks",
         "DocumentVersions",
-        "IngestionTriggerTracking",
         "sync_log",
-        "Media_fts",
-        "Keywords_fts",
         "MediaChunks",
-        "MediaChunks_fts",
+        "MediaReadItLaterState",
+        "ReadingProgress",
         "Transcripts",
+        "schema_version",
         # task-8 (spec §5.2.1/AC 27): without this row, any use of a
         # generic helper for the new v7 columns would raise
         # ``InputError: Invalid table name``.
         "ChunkingTemplates",
     },
     "prompts": {
+        # task-19867: re-synced against a freshly initialized PromptsDatabase
+        # (see Tests/DB/test_sql_validation.py's prompts live-schema guard).
+        # Removed as stale: Keywords, PromptKeywords and the old FTS names
+        # (Prompts_fts / Keywords_fts -- the live FTS tables are prompts_fts
+        # and prompt_keywords_fts, trigger-written and excluded by design).
+        # Added as missing: LocalPromptDrafts, PromptKeywordLinks,
+        # PromptKeywordsTable, schema_version.
         "Prompts",
-        "Keywords",
-        "PromptKeywords",
         "sync_log",
-        "Prompts_fts",
-        "Keywords_fts",
+        "LocalPromptDrafts",
+        "PromptKeywordLinks",
+        "PromptKeywordsTable",
+        "schema_version",
     },
 }
 
