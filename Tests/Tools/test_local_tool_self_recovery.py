@@ -10,6 +10,7 @@ disclose.
 from pathlib import Path
 
 import pytest
+import tempfile
 
 from tldw_chatbook.Tools import local_tool_impls
 from tldw_chatbook.Tools.local_tool_impls import (
@@ -44,14 +45,20 @@ def _ws(tmp_path: Path) -> Path:
 
 def test_fs_edit_already_applied_returns_success_noop(tmp_path):
     ws = _ws(tmp_path)
-    (ws / "f.txt").write_text("alpha BETA gamma\n", encoding="utf-8")
+    (ws / "f.txt").write_text(
+        "alpha REPLACED_MARKER gamma\n", encoding="utf-8"
+    )
 
-    result = edit_file("f.txt", "beta", "BETA", workspace_root=ws)
+    result = edit_file(
+        "f.txt", "beta", "REPLACED_MARKER", workspace_root=ws
+    )
 
     assert "already applied" in result
     assert "0 replacements" in result
     # No change made: the file is byte-identical.
-    assert (ws / "f.txt").read_text(encoding="utf-8") == "alpha BETA gamma\n"
+    assert (ws / "f.txt").read_text(encoding="utf-8") == (
+        "alpha REPLACED_MARKER gamma\n"
+    )
 
 
 def test_fs_edit_deletion_without_positive_marker_keeps_error(tmp_path):
@@ -115,7 +122,9 @@ def test_fs_edit_already_applied_still_passes_the_same_admission(tmp_path):
     # AC#6: recovery never bypasses admission. The no-op path must resolve
     # the path with intent="write" exactly like a real edit.
     ws = _ws(tmp_path)
-    (ws / "f.txt").write_text("done\n", encoding="utf-8")
+    (ws / "f.txt").write_text(
+        "finished-marker\n", encoding="utf-8"
+    )
     calls: list[tuple[str, str]] = []
     real = local_tool_impls.resolve_workspace_path
 
@@ -127,7 +136,9 @@ def test_fs_edit_already_applied_still_passes_the_same_admission(tmp_path):
     original = monkeypatch_target.resolve_workspace_path
     monkeypatch_target.resolve_workspace_path = spy
     try:
-        result = edit_file("f.txt", "old", "done", workspace_root=ws)
+        result = edit_file(
+            "f.txt", "old", "finished-marker", workspace_root=ws
+        )
     finally:
         monkeypatch_target.resolve_workspace_path = original
     assert "already applied" in result
@@ -327,3 +338,63 @@ def test_fs_edit_whitespace_only_old_string_gets_no_hint(tmp_path):
     with pytest.raises(LocalToolError) as caught:
         edit_file("f.txt", "   \n\t", "x", workspace_root=ws)
     assert str(caught.value) == "old_string not found in f.txt"
+
+
+# --- review fix (PR #3086): adversarial coincidental-short cases --------------
+
+
+def test_coincidental_short_new_string_is_not_reported_as_already_applied():
+    """PR-review regression: presence of a SHORT new_string alone must not
+    earn the "edit already applied" success (the reviewer reproduced
+    "x" inside "item_x" returning a false no-op success). Weak evidence
+    falls to the ambiguity error path instead."""
+    import pytest
+
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "one.txt").write_text("prefix item_x suffix content")
+        with pytest.raises(LocalToolError) as excinfo:
+            edit_file(
+                "one.txt",
+                "FIXME_MARKER",
+                "x",
+                workspace_root=root,
+                replace_all=True,
+            )
+        assert "old_string not found" in str(excinfo.value)
+        assert "ambiguous" in str(excinfo.value)
+
+
+def test_coincidental_single_short_new_string_is_not_reported_applied():
+    """The single-occurrence variant of the same false-success shape."""
+    import pytest
+
+    from tldw_chatbook.Tools.local_tool_impls import LocalToolError
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "two.txt").write_text("prefix item_x suffix content")
+        with pytest.raises(LocalToolError) as excinfo:
+            edit_file(
+                "two.txt", "MISSING_OLD", "ok", workspace_root=root
+            )
+        assert "old_string not found" in str(excinfo.value)
+
+
+def test_distinctive_new_string_presence_still_reports_already_applied():
+    """The gate must not over-correct: a genuinely distinctive replacement
+    present exactly once with the old text absent keeps the no-op success."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "three.txt").write_text(
+            "the distinctive replacement landed here"
+        )
+        result = edit_file(
+            "three.txt",
+            "original text",
+            "the distinctive replacement",
+            workspace_root=root,
+        )
+        assert "already applied" in result

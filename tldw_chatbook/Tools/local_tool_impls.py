@@ -1107,7 +1107,17 @@ def _edit_relative_file(
         # ambiguity said out loud.
         if new_string:
             occurrences = content.count(new_string)
-            if occurrences == 1 or (replace_all and occurrences):
+            # Review fix (PR #3086): presence alone is NOT proof the edit
+            # landed — a coincidental short new_string ("x" inside "item_x")
+            # produced false successes. Require distinctive evidence: a
+            # stripped length of at least 8, or any presence under
+            # replace_all (whose completed retry leaves N occurrences of a
+            # distinctive-enough string). Weaker evidence falls through to
+            # the ambiguity note below.
+            distinctive = len(new_string.strip()) >= 8
+            if distinctive and (
+                occurrences == 1 or (replace_all and occurrences)
+            ):
                 return (
                     f"edit already applied to {shown}: the replacement text "
                     f"is present ({occurrences} occurrence"

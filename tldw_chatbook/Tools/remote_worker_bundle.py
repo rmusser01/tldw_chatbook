@@ -2803,7 +2803,8 @@ def _edit_relative_file(relative: Path, old_string: str, new_string: str, *, wor
     if count == 0:
         if new_string:
             occurrences = content.count(new_string)
-            if occurrences == 1 or (replace_all and occurrences):
+            distinctive = len(new_string.strip()) >= 8
+            if distinctive and (occurrences == 1 or (replace_all and occurrences)):
                 return f"edit already applied to {shown}: the replacement text is present ({occurrences} occurrence{('s' if occurrences != 1 else '')}) and the old text is absent (0 replacements, no change made)"
         parts: list[str] = []
         if new_string:
@@ -5561,4 +5562,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("f9e5c7166bb3a70bdcf6efe88e807920b44bff1c03f31929d7eeb63ee4ae1678")
+BUNDLE_SHA256 = _enter_worker_exchange("4f49b5338a785f6cc576372e3acc83c95920506b25ca0715a547c88fc6854327")
