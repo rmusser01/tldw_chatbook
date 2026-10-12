@@ -289,6 +289,9 @@ _SETUP_FIELDS = {
     "configure_credential": "api_key",
     "configure_endpoint": "endpoint",
     "save_endpoint": "endpoint",
+    # A key and no model. With no field named, Settings opens on Return to
+    # Console, whose Enter reopens the list on the same row.
+    "select_model": "model",
 }
 
 
@@ -675,8 +678,10 @@ def _open_switcher(
             verdict = readiness(chosen.provider, chosen.model)
             if not verdict.native_send_supported:
                 raise ValueError(f"Unavailable: {verdict.detail}")
-            if not adopt and submission.action is ConsoleSettingsAction.APPLY_TO_CHAT:
-                # Enter. Save as model default and Ctrl+N run as pressed.
+            if not adopt:
+                # Whichever action commits the pick, as the scope line says.
+                # Ctrl+N's writes the model's defaults too, so Save as model
+                # default loses nothing by running as it.
                 submission = replace(
                     submission,
                     action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,

@@ -88,7 +88,7 @@ def test_provider_settings_target_rejects_invalid_revision(revision: object) -> 
     )
 
 
-@pytest.mark.parametrize("field", ["endpoint", None])
+@pytest.mark.parametrize("field", ["endpoint", "model", None])
 def test_console_kind_provider_target_names_its_chat_and_any_field(
     field: str | None,
 ) -> None:

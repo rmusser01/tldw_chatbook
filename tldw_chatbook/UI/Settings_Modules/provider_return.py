@@ -152,10 +152,11 @@ def route_focus(screen: SettingsScreen, selector: str | None) -> str | None:
     """Where focus goes when Settings opens on a provider route.
 
     The field the route names, while it can take focus. Two routes have no
-    such field: one that names none (a cloud Retry; a NEEDS SETUP row of a
-    custom endpoint that lists no models), and one whose field is disabled
-    (the API key while a Claude subscription signs in; the API key or Endpoint
-    of a named custom endpoint, which Settings locks). Both arrive on the
+    such field: one that names none (a cloud Retry), and one whose field is
+    disabled (the API key while a Claude subscription signs in; the API key,
+    Endpoint or Default model of a named custom endpoint, which Settings
+    locks). The Default model field is disabled through the picker it sits
+    in, which is why ``is_disabled`` is read. Both arrive on the
     return when it is offered, so one Enter goes back. A Console return that
     an unsaved edit has withdrawn (one kept from an earlier visit) gives its
     landing to Return without saving, which asks before it discards. Chat
@@ -183,7 +184,7 @@ def route_focus(screen: SettingsScreen, selector: str | None) -> str | None:
     Returns:
         The selector to focus, or None to leave focus where it is.
     """
-    disabled = bool(selector) and any(w.disabled for w in screen.query(selector))
+    disabled = bool(selector) and any(w.is_disabled for w in screen.query(selector))
     if selector and not disabled:
         return selector
     if return_outcome(screen) is not None:

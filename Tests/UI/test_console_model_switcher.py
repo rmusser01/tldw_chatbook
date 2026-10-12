@@ -1883,6 +1883,8 @@ def test_needs_setup_route_names_the_provider_its_model_and_the_field() -> None:
         ("configure_credential", "api_key"),
         ("configure_endpoint", "endpoint"),
         ("save_endpoint", "endpoint"),
+        # A key and no model: the Default model field, not no field at all.
+        ("select_model", "model"),
     ],
 )
 def test_a_needs_setup_row_route_carries_its_field_and_the_pair_to_reopen_on(

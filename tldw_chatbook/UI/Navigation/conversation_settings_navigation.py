@@ -135,7 +135,7 @@ class _ProviderSettingsNavigationContext(_StrictNavigationContext):
     category: Literal["providers-models"]
     provider: str = Field(min_length=1, max_length=128)
     model: str | None = Field(default=None, max_length=512)
-    field: Literal["api_key", "endpoint"] | None
+    field: Literal["api_key", "endpoint", "model"] | None
     return_revision: int = Field(ge=1)
     session_id: _SessionId | None = None
 
@@ -283,7 +283,7 @@ class ProviderSettingsNavigationTarget:
     category: Literal["providers-models"]
     provider: str
     model: str | None
-    field: Literal["api_key", "endpoint"] | None
+    field: Literal["api_key", "endpoint", "model"] | None
     return_revision: int
     session_id: str | None = None
 

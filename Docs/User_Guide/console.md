@@ -763,8 +763,8 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   Find, and what you type next is added after it).
 - **NEEDS SETUP**, providers with a blocker such as a missing key. **Enter**
   on one never applies it: it closes the list and opens **Settings ▸
-  Providers & Models** at that provider, with its key or endpoint field in
-  focus. Keys are only ever entered in Settings. Saving there also makes
+  Providers & Models** at that provider, with its key, endpoint or model
+  field in focus. Keys are only ever entered in Settings. Saving there also makes
   that provider, with the model the page shows, the default for new chats:
   every new chat, and every open chat with no messages and no edited
   settings, moves to it. **Return to Console** there comes back to this chat
@@ -942,10 +942,11 @@ Settings offers no way back from there, so nothing reopens for it.
   own line, "<name> · no models reported · type its name and an id". When no
   model is saved for it either, the provider stays under NEEDS SETUP, reading
   "Not ready · no model", with its row highlighted; **Enter** there opens
-  Settings again, where a Default model can be chosen. Its name is already in
-  **Find**, so type the model id after it (as in "Ollama qwen3:32b"): the
-  pair appears under **TYPED MODEL ID**, the last row of the list, and
-  **Enter** on that row applies it.
+  Settings again with the **Model** field under **Default model for new
+  chats** in focus, where a model can be chosen and saved. Or stay in the
+  list: its name is already in **Find**, so type the model id after it (as
+  in "Ollama qwen3:32b"): the pair appears under **TYPED MODEL ID**, the last
+  row of the list, and **Enter** on that row applies it.
 - **A typed id another provider lists.** A listed row that holds every word
   in **Find**, in its model id or its provider's name, is highlighted ahead
   of the TYPED MODEL ID row, and it can be another provider's: an

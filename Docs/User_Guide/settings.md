@@ -427,9 +427,11 @@ When Settings was opened to fix a provider — by Chat settings' **Configure
 credential…**, or by a Console recovery such as the Get started card's **Set up
 provider**, a blocked chat's setup action, a **NEEDS SETUP** row in Switch
 model or a cloud **Retry connection** — it arrives on that provider with the
-named field (API key or Endpoint) in focus, and it remembers the way back. The
-way back is a status line, a return button and **Stay in Settings**, under the
-Default model's **Applies to** row.
+named field (API key, Endpoint or Model) in focus, and it remembers the way
+back. The way back is a status line, a return button and **Stay in Settings**,
+under the Default model's **Applies to** row. A **NEEDS SETUP** row names
+**Model** when the provider has its key and endpoint and only a model is
+missing.
 
 The page shows the model the request named. A Console request that names
 none (a **NEEDS SETUP** row of a provider that lists no models) shows that
@@ -446,11 +448,12 @@ when it is showing. When it is not, focus starts on **Sign in with**, or, for a
 Console recovery that arrives on unsaved edits to that provider, on **Return
 without saving**.
 
-The API key and Endpoint of a named custom endpoint are disabled too: its own
-entry holds them (see [Custom endpoints](#custom-endpoints)). The Console's
-**Set up provider** still names the API key for a chat on such an endpoint
-whose key is missing. The endpoint's **NEEDS SETUP** row in Switch model opens
-Settings as well, and names no field at all when the endpoint lists no models.
+The API key, Endpoint and Model of a named custom endpoint are disabled too:
+its own entry holds them (see [Custom endpoints](#custom-endpoints)). The
+Console's **Set up provider** still names the API key for a chat on such an
+endpoint whose key is missing. The endpoint's **NEEDS SETUP** row in Switch
+model opens Settings as well, and names the Model when the endpoint lists no
+models.
 Settings remembers no way back for a custom endpoint, so none of the return
 buttons described below ever shows for one. On each of these routes focus
 starts on **Edit this endpoint in Custom endpoints**, and **Enter** there opens

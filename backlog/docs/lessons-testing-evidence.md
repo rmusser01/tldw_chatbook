@@ -895,6 +895,27 @@ child pytest, so under load two focus assertions that wait one `pilot.pause()` f
 passed alone three times. This is diagnosis for a local change, as above: it does not make the
 tests run in CI.
 
+## A fix round that measures a finding's premise false must stop there (TASK-33008.3, 2026-10-11)
+
+**Incident.** Phase 8's final review said that on the Get started card's
+Switch model, Save as model default "ran as Ctrl+N" and that the model's own
+defaults were therefore never written. Final fix wave 1 measured it before
+fixing: the press did write `[api_settings.llama_cpp.model_defaults.model-a]`,
+because Ctrl+N's action writes that profile and `chat_defaults` on top. The
+report recorded the measurement, and the remedy went in anyway: only Enter
+kept the swap. The new test then pinned a contradiction sixteen lines apart:
+the scope line "Applies to: this chat · also the default for new chats"
+before the press, and `chat_defaults.model == ""` after it. The card
+unlocked, no new-chat default was saved, and the next new chat was blocked
+again, against the task's AC#5, the guide and the opener's docstring. Wave 2
+put the swap back.
+
+**What to do.** When your own measurement contradicts a finding's premise,
+its remedy is no longer a fix: report the measurement first, and re-read the
+AC the code serves before changing it. Read a new test's assertions against
+each other as well as against the code. One that asserts what the screen
+says and then the opposite of it is pinning a bug.
+
 ## A finding verified on the review's commit may already be fixed on your base -- diff the two before designing the RED (TASK-34000.4, 2026-10-04)
 
 **Incident.** The task said a regression test for the Library Media "Export…"

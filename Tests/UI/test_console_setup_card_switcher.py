@@ -345,14 +345,19 @@ async def test_card_choose_model_opens_switch_model_and_sets_the_new_chat_defaul
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_save_as_model_default_on_the_cards_list_saves_the_models_defaults(
+async def test_save_as_model_default_on_the_cards_list_also_sets_the_new_chat_default(
     monkeypatch, request
 ) -> None:
-    """Final review: while no new-chat default works, Enter on the card's
-    list also sets it (AC#5). The same swap was made for every action, so
-    Save as model default ran as Ctrl+N: the notice read "Eligible new-chat
-    default saved" and the model's own defaults were never written. Only
-    Enter is swapped; a default action runs as pressed."""
+    """AC#5, AC#6. Rewritten on purpose from
+    ``test_save_as_model_default_on_the_cards_list_saves_the_models_defaults``,
+    which pinned the press leaving ``chat_defaults`` with no model under a
+    scope line that said "also the default for new chats": the next new chat
+    was blocked on the card again.
+
+    While no new-chat default works, every pick on the card's list sets it,
+    whichever action commits the pick. Ctrl+N's action writes the model's own
+    defaults as well, so Save as model default loses nothing by running as
+    it: both are saved."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _console_app(
         {
@@ -360,10 +365,6 @@ async def test_save_as_model_default_on_the_cards_list_saves_the_models_defaults
             "api_settings.llama_cpp": {"api_url": SAVED_LLAMA, "model": ""},
         },
         {"llama_cpp": ["model-a", "model-b"]},
-    )
-    notices: list[str] = []
-    monkeypatch.setattr(
-        app, "notify", lambda message, **_kwargs: notices.append(str(message))
     )
     harness = _Harness(app)
     async with harness.run_test(size=(211, 44)) as pilot:
@@ -386,10 +387,10 @@ async def test_save_as_model_default_on_the_cards_list_saves_the_models_defaults
         saved = _saved()
         profile = saved["api_settings"]["llama_cpp"]["model_defaults"]["model-a"]
         assert profile["temperature"] == pytest.approx(0.31)
-        # As pressed: the model's defaults, not the default for new chats.
-        assert saved["chat_defaults"]["model"] == ""
-        assert "Model profile default saved: llama_cpp/model-a" in notices
-        assert not [notice for notice in notices if "new-chat default" in notice]
+        # What the scope line said before the press.
+        assert saved["chat_defaults"]["provider"] == "llama_cpp"
+        assert saved["chat_defaults"]["model"] == "model-a"
+        assert model_switcher.has_working_new_chat_default(console)
     assert app.console_default_durability_state.failure_phase is None
 
 

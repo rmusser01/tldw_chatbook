@@ -24692,6 +24692,7 @@ class SettingsScreen(BaseAppScreen):
         field_selectors = {
             "api_key": "#settings-provider-api-key",
             "endpoint": "#settings-provider-endpoint-value",
+            "model": "#model-search-picker-input",
             "credential_env_var": "#settings-provider-credential-env-var",
             "reasoning": "#settings-model-profile-reasoning-effort",
         }

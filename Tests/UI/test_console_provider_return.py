@@ -572,7 +572,10 @@ def test_a_route_with_no_field_to_focus_lands_on_the_first_control_that_acts() -
 
     For a disabled field that is Sign in with, then Edit this endpoint in
     Custom endpoints. The rule reads no field name, so a custom endpoint's
-    Endpoint lands as its API key does. A route that names no field skips
+    Endpoint lands as its API key does, and so does its Default model, which
+    is disabled through the picker it sits in (the real app's case is
+    ``test_a_custom_endpoint_row_with_no_field_to_focus_arrives_where_it_can_act``).
+    A route that names no field skips
     Sign in with, which is enabled on every Anthropic route and would take a
     one-way route that has nothing to do with it. The Edit button is hidden
     through display, which Textual's focusable does not read: a custom
@@ -597,7 +600,8 @@ def test_a_route_with_no_field_to_focus_lands_on_the_first_control_that_acts() -
         **unsaved,
     ):
         widgets = {
-            field: SimpleNamespace(disabled=field_disabled),
+            # is_disabled: its own disabled, or that of a control it sits in.
+            field: SimpleNamespace(is_disabled=field_disabled),
             sign_in: SimpleNamespace(display=True, disabled=provider != "anthropic"),
             edit: SimpleNamespace(display=edit_shown, disabled=False),
         }
@@ -1109,6 +1113,14 @@ async def test_every_unsaved_recovery_state_offers_return_without_saving(
         assert not app.pending_handoffs.has_pending(CHANNEL)
 
 
+_OWN_MODEL = "own-model-x"
+#: Each provider's own model, laid in the scratch config: the shipped template
+#: is no part of these tests, so a model id it refreshes or adds breaks none.
+#: "" is none (a missing key would load the template's value).
+_SAVED_MODELS = {
+    "api_settings.cerebras": {"model": ""},
+    "api_settings.deepseek": {"model": _OWN_MODEL},
+}
 #: route -> (provider, the model Settings shows for a route that names none).
 _ROUTES_THAT_NAME_NO_MODEL = {
     # The default provider: Settings' own model stays (TASK-33008.1).
@@ -1117,8 +1129,8 @@ _ROUTES_THAT_NAME_NO_MODEL = {
     # the 60 shipped providers are: none, never the default provider's.
     "lists-no-models": ("cerebras", ""),
     # Another provider that lists nothing here and has a model of its own
-    # saved (DeepSeek ships one): that model.
-    "its-own-saved-model": ("deepseek", "deepseek-v4-flash"),
+    # saved: that model.
+    "its-own-saved-model": ("deepseek", _OWN_MODEL),
 }
 
 
@@ -1178,7 +1190,7 @@ async def test_a_route_that_names_no_model_never_borrows_another_providers_model
     provider, shown = _ROUTES_THAT_NAME_NO_MODEL[route]
     for name in ("CEREBRAS_API_KEY", "DEEPSEEK_API_KEY"):
         monkeypatch.delenv(name, raising=False)
-    app = _cloud_app(monkeypatch)
+    app = _cloud_app(monkeypatch, **_SAVED_MODELS)
 
     async with app.run_test(size=(211, 44)) as pilot:
         _console, settings = await _route_with_no_model(app, pilot, provider)
@@ -1204,13 +1216,26 @@ def _painted_pairs(switcher) -> str:
     return "\n".join(painted[pairs.y : pairs.bottom])
 
 
+def _reopened_on_its_setup_row(app, provider: str) -> bool:
+    """Switch model is open with ``provider``'s model-less NEEDS SETUP row
+    highlighted."""
+    if not isinstance(app.screen, ConsoleModelPopover):
+        return False
+    row = app.screen.highlighted_row()
+    return row is not None and (row.kind, row.provider, row.model) == (
+        "setup",
+        provider,
+        None,
+    )
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_a_provider_saved_with_no_model_is_finished_on_the_reopened_list(
     monkeypatch, request
 ):
     """Controller ruling (c), the rest of the trip, on the real app. Cerebras
-    lists no models and has none saved, so its NEEDS SETUP row routes none
+    lists no models and has none saved here, so its NEEDS SETUP row routes none
     and the saved default for new chats is "Cerebras" with no model. The
     untouched chat follows it, so the Get started card still blocks, and
     Switch model reopens over it on "Cerebras ". Its row is still under NEEDS
@@ -1218,7 +1243,7 @@ async def test_a_provider_saved_with_no_model_is_finished_on_the_reopened_list(
     says what to type. The id typed after the name applies to the chat and,
     with no working new-chat default, becomes that too."""
     monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
-    app = _cloud_app(monkeypatch)
+    app = _cloud_app(monkeypatch, **_SAVED_MODELS)
 
     async with app.run_test(size=(211, 44)) as pilot:
         console, _settings = await _route_with_no_model(
@@ -1226,18 +1251,11 @@ async def test_a_provider_saved_with_no_model_is_finished_on_the_reopened_list(
         )
         await _save_the_typed_key(app, pilot)
         await pilot.press("enter")
-
-        def reopened_on_its_row() -> bool:
-            if not isinstance(app.screen, ConsoleModelPopover):
-                return False
-            row = app.screen.highlighted_row()
-            return row is not None and (row.kind, row.provider, row.model) == (
-                "setup",
-                "cerebras",
-                None,
-            )
-
-        await _until(pilot, reopened_on_its_row, "Switch model on Cerebras's own row")
+        await _until(
+            pilot,
+            lambda: _reopened_on_its_setup_row(app, "cerebras"),
+            "Switch model on Cerebras's own row",
+        )
         reopened = app.screen
         _chat, readiness = console._active_console_settings_readiness()
         assert _chat_pair(console) == ("cerebras", None)
@@ -1276,6 +1294,61 @@ async def test_a_provider_saved_with_no_model_is_finished_on_the_reopened_list(
         assert _saved_config()["chat_defaults"]["provider"] == "cerebras"
         _chat, readiness = console._active_console_settings_readiness()
         assert readiness.operability == "ready_to_send"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_no_model_rows_enter_opens_settings_in_the_default_model_field(
+    monkeypatch, request
+):
+    """Final fix wave 2, on the real app. After ruling (c) a provider saved
+    with a key and no model comes back with its NEEDS SETUP row highlighted,
+    now for its model. Enter there named no field, so Settings opened on
+    Return to Console, and Enter on that reopened the list on the same row:
+    two keys that changed nothing. The row's blocker is its model, so the
+    route names the Default model field and focus starts in it. Focus is no
+    edit: the return is still offered."""
+    monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+    app = _cloud_app(monkeypatch, **_SAVED_MODELS)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _route_with_no_model(app, pilot, "cerebras", reopen_switcher=True)
+        await _save_the_typed_key(app, pilot)
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: _reopened_on_its_setup_row(app, "cerebras"),
+            "Switch model on Cerebras's own row",
+        )
+
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and (target := app.screen._provider_return_target) is not None
+                and target.field != "api_key"  # the first visit's is gone
+            ),
+            "Settings to open again on the row's own route",
+        )
+        settings = app.screen
+        target = settings._provider_return_target
+        assert (target.provider, target.model, target.field) == (
+            "cerebras",
+            None,
+            "model",
+        )
+        picker = settings.query_one("#settings-model-picker", ModelSearchPicker)
+        field = picker.query_one("#model-search-picker-input", Input)
+        await _until(
+            pilot,
+            lambda: app.focused is field,
+            "focus in the Default model field",
+        )
+        assert not settings._category_has_unsaved_changes(
+            settings._active_category_id()
+        )
+        assert settings.query_one("#settings-provider-return-continuation").display
 
 
 @pytest.mark.asyncio
@@ -1743,11 +1816,16 @@ _CUSTOM_ENDPOINT_ROWS = {
 @pytest.mark.asyncio
 @pytest.mark.parametrize("row", list(_CUSTOM_ENDPOINT_ROWS))
 @private_profile_test
-async def test_a_custom_endpoint_row_that_names_no_field_arrives_where_it_can_act(
+async def test_a_custom_endpoint_row_with_no_field_to_focus_arrives_where_it_can_act(
     monkeypatch, request, row: str
 ):
-    """A NEEDS SETUP row in Switch model opens Settings too, and for a custom
-    endpoint it can name no field: nothing in Providers & Models fixes an
+    """Renamed on purpose from
+    ``test_a_custom_endpoint_row_that_names_no_field_arrives_where_it_can_act``:
+    a row whose blocker is its model now names the Default model field, which
+    Settings locks for a custom endpoint. The landings are unchanged.
+
+    A NEEDS SETUP row in Switch model opens Settings too, and for a custom
+    endpoint it has no field to focus: nothing in Providers & Models fixes an
     endpoint that lists no models, or one whose entry was deleted. No return
     can name a custom endpoint either (R35), so nothing took focus and it
     stayed on the nav bar's Home button, where one more Enter opened Home.
