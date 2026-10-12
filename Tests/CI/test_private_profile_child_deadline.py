@@ -335,3 +335,29 @@ async def test_a_child_that_exits_once_asked_is_not_reported_as_killed(
     assert "(killed" not in text
     assert "asked for its stacks, it then exited by itself)" in text
     assert "--- child stacks at its deadline ---\nzq-asked" in text
+
+
+_HAS_NO_HANDLER = """
+import os, pathlib, time
+pathlib.Path(os.environ[{ready!r}]).touch()
+for _ in range(1200):  # at most 60 s
+    time.sleep(0.05)
+"""
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signals")
+async def test_a_child_ended_by_the_ask_itself_is_reported_as_such(
+    request, tmp_path, monkeypatch
+):
+    """Review of #3091, round 2, item R3: with no handler installed yet, the
+    ask's default action ends the child; that is not exiting by itself."""
+    _ask_once_the_child_is_ready(monkeypatch, tmp_path)
+    _watch_the_spawn(monkeypatch, {}, _HAS_NO_HANDLER.format(ready=_READY))
+    child = test_child_whose_worker_never_answers
+
+    with pytest.raises(pytest.fail.Exception) as failure:
+        await child(request=_as_parent(request, tmp_path, child))
+
+    text = str(failure.value)
+    assert "ended by the ask for its stacks before it could answer)" in text
+    assert "exited by itself" not in text and "(killed" not in text

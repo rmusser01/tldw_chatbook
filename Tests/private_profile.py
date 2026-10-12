@@ -354,6 +354,13 @@ def private_profile_test(function):
             elif killed:
                 ending = f"(killed: still running after {wait:.0f}s"
                 ending += "; asked for its stacks first)\n" if asked else ")\n"
+            elif process.returncode == -signal.SIGUSR1:
+                # No handler yet (still starting up, or the module imported
+                # off the main thread): the signal's default action ended it.
+                ending = (
+                    f"(still running after {wait:.0f}s; ended by the ask for "
+                    "its stacks before it could answer)\n"
+                )
             else:
                 ending = (
                     f"(still running after {wait:.0f}s; asked for its stacks, "
