@@ -37,6 +37,8 @@ MODEL_ID_MAX_LENGTH = 256
 #: The committed model's row says so in words, not colour alone (shared with
 #: Switch model).
 CURRENT_MARK = "● CURRENT"
+#: The status line until a provider's first catalog load ends.
+LOADING_STATUS = "Loading models..."
 _BLUR_RESTORE_DELAY_SECONDS = 0.05
 _PROVENANCE_GROUP_LABELS = {
     ConsoleModelProvenance.SERVED_NOW: "Served now",
@@ -311,7 +313,7 @@ class ModelSearchPicker(Widget):
                 # still decide when a shown button is displayed (Settings).
                 custom_button.display = False
             yield custom_button
-        yield Static("Loading models...", id="model-search-picker-status", markup=False)
+        yield Static(LOADING_STATUS, id="model-search-picker-status", markup=False)
         results = OptionList(
             id="model-search-picker-results",
             name="model-options",
@@ -378,7 +380,7 @@ class ModelSearchPicker(Widget):
             self._render_catalog_status()
             return
 
-        self._set_status("Loading models...")
+        self._set_status(LOADING_STATUS)
         self._load_counts[cache_key] = self._load_counts.get(cache_key, 0) + 1
         try:
             from tldw_chatbook.UI.Screens.provider_model_resolution import (
@@ -662,6 +664,13 @@ class ModelSearchPicker(Widget):
             return
         options = self._provider_options()
         model_ids = self._catalog_model_ids()
+        if not model_ids and self._provider and (
+            cache_key not in self._options_by_provider
+        ):
+            # The provider's first load is still in flight (it sets the key
+            # when it ends, failed or not): nothing was reported yet.
+            self._set_status(LOADING_STATUS)
+            return
         if not model_ids:
             self._set_status(
                 "No models reported for this provider. Use Custom ID if needed."

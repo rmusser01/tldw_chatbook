@@ -282,3 +282,33 @@ async def test_a_catalog_load_that_ends_after_the_field_is_gone_exits_nothing(gr
 
         assert errors == [], f"the load worker raised: {errors!r}"
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("grouped", [False, True], ids=["flat", "grouped"])
+async def test_the_status_says_loading_until_the_first_catalog_load_ends(grouped):
+    """Fix round 1, finding 22: focusing the field, typing in it or deleting
+    the filter while the provider's first load was in flight replaced
+    "Loading models..." with "No models reported for this provider. Use
+    Custom ID if needed." A slow or unreachable local endpoint held that
+    false line for its whole timeout."""
+    app = PickerTestApp({"OpenRouter": []}, ())
+    scope = _BlockingScope(_entries("OpenRouter", ["a/one"]))
+    app.llm_provider_catalog_scope_service = scope
+    async with app.run_test() as pilot:
+        await scope.started.wait()
+        app.query_one(ModelSearchPicker)._show_provenance = grouped
+        field = app.query_one("#model-search-picker-input", Input)
+
+        field.focus()
+        await pilot.pause()
+        assert _status_text(app) == "Loading models..."
+        await pilot.press("a")
+        await pilot.pause()
+        assert _status_text(app) == "Loading models..."
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert _status_text(app) == "Loading models..."
+
+        scope.release.set()
+        await _until(pilot, lambda: "available" in _status_text(app))
+        assert _status_text(app) == "1 model available. Type to filter."
