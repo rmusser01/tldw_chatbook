@@ -65,7 +65,6 @@ from ...config import (
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
-from ...MCP.redaction import looks_like_secret_value
 from ...Widgets.model_search_picker import (
     _BLUR_RESTORE_DELAY_SECONDS,
     ModelSearchPicker,
@@ -102,6 +101,7 @@ from ..Screens.settings_screen import (
     _fold_long_tokens,
     _ProviderTestResult,
     _session_summary_section_values,
+    env_var_echo,
 )
 from .settings_field_rows import (
     BUILT_IN,
@@ -508,26 +508,6 @@ def selection_source_word(source: object, value: object) -> str:
     return SELECTION_SOURCE_WORDS.get(
         str(source), SELECTION_SOURCE_WORDS["chat_defaults"]
     )
-
-
-def env_var_echo(name: str) -> str:
-    """Name an env var in another row's help, unless it looks like a key (C4).
-
-    The Env var field is not masked, so a key pasted there by mistake must
-    not be repeated beside API key. No provider publishes a key pattern
-    here; the shared secret shapes stand in for one.
-
-    Args:
-        name: The Env var field's value, saved or being typed.
-
-    Returns:
-        The name, or "that variable" for a secret-shaped value or one over
-        40 characters with no underscore.
-    """
-    looks_like_key = looks_like_secret_value(name) or (
-        len(name) > 40 and "_" not in name
-    )
-    return "that variable" if looks_like_key else name
 
 
 def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
