@@ -145,6 +145,45 @@ async def test_the_committed_model_and_a_typed_id_both_keep_a_row_past_the_cap()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("twentieth", "past_cap"),
+    [("gpt-4", "gpt-4-committed"), ("gpt-4-committed", "gpt-4")],
+    ids=["typed-id-20th", "committed-20th"],
+)
+async def test_a_row_that_must_stay_is_not_given_away_to_the_other(twentieth, past_cap):
+    """Fix round 1, finding 18: a row past the cap that must stay was written
+    over the LAST shown row whatever that was. With the id typed in full as
+    the 20th match and the committed model past the cap, the committed model
+    took its row and Enter picked "gpt-4-00"; the other way round the
+    committed model lost its row and its CURRENT mark."""
+    model_ids = [
+        *(f"gpt-4-{index:02d}" for index in range(19)),
+        twentieth,
+        *(f"gpt-4-x{index}" for index in range(4)),
+        past_cap,
+    ]
+    app = PickerTestApp(
+        {"OpenRouter": []},
+        _entries("OpenRouter", model_ids),
+        current_model="gpt-4-committed",
+    )
+    async with app.run_test() as pilot:
+        _picker, _field, results = await _mounted(pilot, model_ids, grouped=False)
+
+        await pilot.press(*"gpt-4")
+        await pilot.pause()
+        rows = _result_prompts(results)
+        assert len(rows) == ModelSearchPicker.MAX_RESULTS
+        assert "gpt-4" in rows
+        assert f"gpt-4-committed  {CURRENT_MARK}" in rows
+        assert _highlighted_row(results) == "gpt-4"
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.selected_models == ["gpt-4"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("grouped", [False, True], ids=["flat", "grouped"])
 async def test_clearing_the_filter_puts_the_catalog_line_back(grouped):
     """R3 #5: "N found · Enter picks · Esc cancels" stayed after the filter
@@ -242,3 +281,4 @@ async def test_a_catalog_load_that_ends_after_the_field_is_gone_exits_nothing(gr
         await pilot.pause()
 
         assert errors == [], f"the load worker raised: {errors!r}"
+

@@ -901,19 +901,24 @@ class ModelSearchPicker(Widget):
         self._show_typed_filter(results, normalized_query, len(ordered_options))
 
     def _capped(self, entries: list, model_id_of, normalized_query: str) -> list:
-        """The first MAX_RESULTS entries, with the last slots given to rows
-        past the cap that must stay reachable: the committed model, so large
-        catalogs keep its mark and Down (C7(b)), and an id typed in full, so
-        the row Enter picks is the one typed and is on the list."""
+        """The first MAX_RESULTS entries, with the last free slots given to
+        rows past the cap that must stay reachable: the committed model, so
+        large catalogs keep its mark and Down (C7(b)), and an id typed in
+        full, so the row Enter picks is the one typed and is on the list. A
+        slot is free when its own row is neither of those."""
+
+        def must_stay(entry) -> bool:
+            model_id = model_id_of(entry)
+            return (
+                model_id == self._selected_model
+                or model_id.lower() == normalized_query
+            )
+
         shown = entries[: self.MAX_RESULTS]
-        kept = [
-            entry
-            for entry in entries[self.MAX_RESULTS :]
-            if model_id_of(entry) == self._selected_model
-            or model_id_of(entry).lower() == normalized_query
-        ]
-        if kept:
-            shown[-len(kept) :] = kept
+        kept = [entry for entry in entries[self.MAX_RESULTS :] if must_stay(entry)]
+        free = [index for index, entry in enumerate(shown) if not must_stay(entry)]
+        for index, entry in zip(free[-len(kept) :] if kept else (), kept):
+            shown[index] = entry
         return shown
 
     def _add_result(
