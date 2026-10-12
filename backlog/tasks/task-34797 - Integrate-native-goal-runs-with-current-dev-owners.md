@@ -1,11 +1,11 @@
 ---
 id: TASK-34797
 title: Integrate native goal runs with current dev owners
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-11 22:38'
-updated_date: '2026-10-12 00:53'
+updated_date: '2026-10-12 01:49'
 labels: []
 dependencies: []
 ---
@@ -22,7 +22,7 @@ Make the accepted native-goal first release safe on current storage, runtime, ac
 - [x] #2 Progress wakes, chat starts, allowance roots and authority remain valid with goal iterations.
 - [x] #3 An unstarted paused goal resumes safely; accepted uncertain work cannot replay.
 - [x] #4 Mounted controls, isolated CLI failure/correction/success and restart evidence demonstrate the integrated behavior.
-- [ ] #5 Independent review and targeted static/governance checks have no unresolved blocking findings.
+- [x] #5 Independent review and targeted static/governance checks have no unresolved blocking findings.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,4 +50,6 @@ New Python files pass Ruff and format; modified shared files introduce no Ruff f
 Resource qualification reopened: the complete-head 62-case receipt passed but reported FD growth 785; earlier mounted/native lanes also warned. Exact database/worker-owner diagnosis is pending while source stays frozen at 8bf7c02e51 for independent review. Do not interpret the preceding closeout as a completed resource-lifetime qualification. Task1 report records this DONE_WITH_CONCERNS status.
 
 Combined independent-review fix 790d456f21: canonical allowance-root descendants and unknown accounting now block checkpoint settlement and late result approval; native Goal service/coordinator/UI/provider/tool callbacks retire only their newly acquired handles through current operation-owned boundaries. Fresh/borrowed real CLI and mounted paths, cancellation until physical completion, in-memory/foreign controls and maintenance drains pass. Supporting targeted lanes: 80 Goal runtime, 96 current budget/hooks/SQLite/maintenance, 36 mounted UI; no resource warnings. The exact post-finalizer fixed probe has zero AgentRuns/Chat/Workspace connections for both actual native paths. Original warning receipts and the explicitly labeled repeated baseline remain historical; fixed receipts use distinct names. ADR227 governs; source IDs/notes retained. New exact committed-head qualification is recorded in pr2563-fixed-head-receipt.json and pr2563-fixed-head-verification.txt, with full commands/limitations in the task-1 report. Status remains In Progress pending root scoped independent re-review; TASK34797 AC5 remains unchecked. No full sweep or live external-model trial.
+
+Current integration closeout: independent complete-head and P1 fix review passed; publication-contract Task2 and its one scoped fix re-review passed with zero blockers. Latest dev7b7193d647 rebase preserved canonical native continuation ownership;25 affected continuation/startup tests passed, with unchanged1033/1033 startup-headroom warning. Actual current preflight passed all derived-artifact guards. Earlier79 byte-bound goal cases,80 runtime/96 owner/36 mounted lanes,37 affected UI and final14 setup cases retain distinct receipts; counts overlap. Goal worker cleanup has zero retained owned DB handles. Current F4, schema24/exact recovery and ADR227 govern; historical source failures and baseline size/style debt stay labelled. No full suite, external model quality or physical terminal UAT was claimed. Root publication/required hosted checks/merge remain separate gates.
 <!-- SECTION:NOTES:END -->

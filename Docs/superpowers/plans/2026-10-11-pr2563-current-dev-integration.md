@@ -78,3 +78,7 @@ Reason: correct required artifact records and post-await widget lifetime handlin
 5. Run all actual derived-artifact preflight guards with pinned public Mermaid input network access, scoped Ruff/format/diff/baseline-size checks and the targeted changed-widget behavior lane. Commit only these task-owned product/tests/inventory/task/plan files with normal hooks and gc.auto=0. Root obtains both spec and quality scoped review of this new Task2 diff, then performs final hygiene/publication. Keep all seven tasks In Progress/AC5 unchecked until the required guards/review pass.
 
 Report: this plan's SDD task-2-report.md; exact commands/results/head/source hashes, diagnostics review and held-await proof, commits and concerns. No GitHub writes or child agents. Root owns publication and merge.
+
+## Reviewed current-dev closeout
+
+Complete-head and combined P1 fix reviews passed; publication-contract Task2 passed after its single catalog-control fix round. Latest dev7b7193d647 rebase was clean, including canonical continuation-owner correction. Code head013412725b845c7b860a3e5b3ff04f444f4c661a passed25 affected continuation/startup cases; actual current preflight passed all guards. Previous source-bound and UI/resource receipts remain scoped to their exact bytes. Seven Goal tasks are locally qualified and Done; GitHub publication/required hosted CI/protected merge remain root-owned. No full sweep, external model quality or physical terminal UAT was performed.
