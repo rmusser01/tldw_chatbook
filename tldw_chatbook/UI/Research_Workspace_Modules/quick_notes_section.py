@@ -106,6 +106,7 @@ class ResearchQuickNotesSection(Vertical):
         self._save_available = False
         self._delete_available = False
         self._operation_id = f"research-note-{uuid4().hex}"
+        self._unrepresentable_source: str | None = None
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="research-quick-note-heading-row"):
@@ -386,7 +387,18 @@ class ResearchQuickNotesSection(Vertical):
         self._baseline = self._snapshot()
 
     def show_recovery(self, message: str) -> None:
+        if self._unrepresentable_source is not None:
+            message += (
+                " · Unsupported native representation: body editing unavailable. "
+                "Exact source preview, title and Save remain available."
+            )
         self.query_one("#research-quick-note-status", Static).update(message)
+
+    def _body_source(self) -> str:
+        """Read exact owner source while fenced, otherwise the current native draft."""
+        if self._unrepresentable_source is not None:
+            return self._unrepresentable_source
+        return self.query_one("#research-quick-note-body", TextArea).text
 
     def _snapshot(self) -> _EditorSnapshot:
         if not self.is_mounted:
@@ -402,7 +414,7 @@ class ResearchQuickNotesSection(Vertical):
         )
         return _EditorSnapshot(
             self.query_one("#research-quick-note-title", Input).value.strip(),
-            self.query_one("#research-quick-note-body", TextArea).text,
+            self._body_source(),
             tags,
             self._message_ids,
             self._source_ids,
@@ -420,9 +432,21 @@ class ResearchQuickNotesSection(Vertical):
             title_input.value = title
             tags_input.value = ", ".join(tags)
             body.load_text(content)
+        was_fenced = self._unrepresentable_source is not None
+        # View-only authority from the canonical load; Changed delivery may lag.
+        self._unrepresentable_source = content if body.text != content else None
+        body.read_only = self._unrepresentable_source is not None
+        self.query_one("#research-quick-note-edit-mode", Button).disabled = (
+            body.read_only
+        )
+        self.query_one("#research-quick-note-clear", Button).disabled = body.read_only
         self.query_one("#research-quick-note-preview", VerticalScroll).query_one(
             Static
         ).update(content)
+        if body.read_only:
+            self.show_preview()
+        elif was_fenced:
+            self.show_edit()
         self._sync_provenance()
 
     def _reset_editor(self) -> None:
@@ -433,6 +457,9 @@ class ResearchQuickNotesSection(Vertical):
         self._source_ids = ()
         if self.is_mounted:
             self._set_fields("", "", ())
+        else:
+            self._unrepresentable_source = None
+        if self.is_mounted:
             self.query_one("#research-quick-note-delete", Button).disabled = True
         self._baseline = _EditorSnapshot("", "", (), (), ())
         self._undo = None
@@ -451,12 +478,10 @@ class ResearchQuickNotesSection(Vertical):
 
     def _sync_dirty_status(self) -> None:
         self._sync_provenance()
-        self.query_one("#research-quick-note-status", Static).update(
-            "Unsaved changes" if self.is_dirty else "Saved"
-        )
+        self.show_recovery("Unsaved changes" if self.is_dirty else "Saved")
 
     def _sync_editor_state(self, status: str) -> None:
-        self.query_one("#research-quick-note-status", Static).update(status)
+        self.show_recovery(status)
         self.query_one("#research-quick-note-undo", Button).disabled = (
             self._undo is None
         )
@@ -521,6 +546,9 @@ class ResearchQuickNotesSection(Vertical):
 
     @on(Button.Pressed, "#research-quick-note-edit-mode")
     def show_edit(self) -> None:
+        if self._unrepresentable_source is not None:
+            self.show_preview()
+            return
         self.query_one("#research-quick-note-body", TextArea).display = True
         self.query_one("#research-quick-note-preview", VerticalScroll).display = False
         self.query_one("#research-quick-note-edit-mode", Button).set_class(
@@ -534,7 +562,7 @@ class ResearchQuickNotesSection(Vertical):
     def show_preview(self) -> None:
         self.query_one("#research-quick-note-preview", VerticalScroll).query_one(
             Static
-        ).update(self.query_one("#research-quick-note-body", TextArea).text)
+        ).update(self._body_source())
         self.query_one("#research-quick-note-body", TextArea).display = False
         self.query_one("#research-quick-note-preview", VerticalScroll).display = True
         self.query_one("#research-quick-note-edit-mode", Button).set_class(
@@ -576,6 +604,8 @@ class ResearchQuickNotesSection(Vertical):
 
     @on(Button.Pressed, "#research-quick-note-clear")
     def clear_editor(self) -> None:
+        if self._unrepresentable_source is not None:
+            return
         self._undo = self._snapshot()
         self._message_ids = ()
         self._source_ids = ()

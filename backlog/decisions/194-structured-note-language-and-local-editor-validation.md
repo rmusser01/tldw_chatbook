@@ -185,3 +185,19 @@ that same canonical body. Mode selection never removes this fence. This costs
 body editing for unsupported representations until a qualified adapter exists;
 it adds neither persisted body ownership nor Database newline normalization.
 Homogeneous LF/CRLF and lone CR remain usable when native round-trip is exact.
+
+
+### Secondary native representation fence (I2 fix1, Ruling46)
+
+Research Quick Notes retains the canonical source supplied by its existing owner
+when loading it into the native TextArea loses representation. Its transient
+view fence admits that exact source to Source preview, download, draft snapshots,
+title-only Save and navigation flush; native body editing and Clear are unavailable.
+Title, tags, provenance and the existing canonical save contract remain usable.
+Supported drafts continue using live native text, including edited previews and
+saves. Load, clear/undo and owner navigation reset the view qualification; queued
+Changed messages never acquire authority over a fenced source. This adds no
+persisted body owner or mode-presence contract, implicit null, normalization,
+parser/bridge or File mapping policy. The cost is body editing unavailable for
+rare unrepresentable secondary bodies until a qualified adapter exists. Main
+Library Notes retains Ruling45's fence for the same unsupported profiles.

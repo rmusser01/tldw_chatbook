@@ -62,3 +62,27 @@ limits remain; no pure package/bootstrap/engine/worker/bridge contract changed.
 Task34656 stays In Progress for independent controller review. No full suite,
 server implementation, new export labels, provider/config/store/editor replacement,
 shared installation rebind, push or merge was performed.
+
+
+Fix1 qualification (Ruling46, original review Important I1): Quick Notes' native
+TextArea normalizes some mixed line endings. The secondary view now fences those
+bodies using canonical loaded source for preview, snapshots, download and title/
+metadata/save/navigation flush. Body editing and Clear are unavailable, visibly
+explained in its existing status; supported drafts regain native editing and
+preview/save current edits. No language-presence, persisted owner or normalization
+contract changed. ADR194 records this secondary cost before adoption.
+
+The new RED measured mixed JSON/Markdown preview loss and a title-only save
+request's normalized body; it stopped before a write. Corrected mounted controls
+use actual Save-button/controller/LocalResearchWorkspaceAdapter/NotesScopeService/
+NotesInteropService and dedicated SQLite databases, retaining exact mixed source
+and known json metadata through title-only Save and navigation flush. Supported
+native typing/preview/Save, queued old Changed and owner navigation, native delete
+refusal and exact homogeneous CRLF/lone-CR previews are positive controls. Both
+Quick Notes test files pass85 tests; a subsequent fixture-owned interop connection
+cleanup is separately covered by its SQLite test (1 passed), with production
+bytes unchanged. Immutable cb6e6e5 comparisons add no scoped
+Ruff/mypy/formatter debt. Fix1 commands/hashes are separate in task-12-evidence/fix1;
+the original522-artifact index remains unchanged. Original limits and all three
+Minor findings remain open for final branch triage; no physical input/resource or
+whole-branch qualification is implied by this Important-only fix.
