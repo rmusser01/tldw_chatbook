@@ -267,6 +267,70 @@ def test_git_status_porcelain(tmp_git_repo: Path) -> None:
     assert "untracked" in out
 
 
+@pytest.mark.bootstrap_profile
+def test_git_status_description_matches_the_scoping_implementation() -> None:
+    """TASK-19874 AC: the model-facing description cannot drift from the argv.
+
+    The implementation applies ``path`` as a positive ``:(literal)``
+    pathspec (see ``git_status``); the provider's schema description must
+    say the parameter LIMITS the output, and must not carry the old
+    repository-discovery-only phrasing that made an agent narrowing to a
+    subdirectory silently receive the whole repository.
+    """
+    import ast
+
+    from tldw_chatbook.Agents.local_tool_provider import (
+        LocalToolExposure,
+        LocalToolProvider,
+    )
+    from tldw_chatbook.Tools import git_tool_impls
+    from Tests.Agents.test_local_tool_provider import InProcessWorkspaceExecutor
+
+    provider = LocalToolProvider(
+        workspace_root=Path.cwd(),
+        workspace_executor=InProcessWorkspaceExecutor(Path.cwd()),
+    )
+    spec = next(
+        candidate
+        for candidate in provider.specs_for_exposure(
+            LocalToolExposure.CONSOLE_AND_EXTERNAL_MCP
+        )
+        if candidate.name == "git_status"
+    )
+    description = spec.parameters["properties"]["path"]["description"]
+    assert "Limit" in description and "status" in description.lower(), (
+        f"git_status's path description no longer states the scoping "
+        f"contract:\n{description!r}"
+    )
+    assert "default: the workspace root" not in description, (
+        "the old discovery-only phrasing is back"
+    )
+
+    # The implementation side of the agreement: git_status itself must
+    # build a positive literal pathspec (the structural magic tripwire in
+    # test_git_tool_sensitive_paths.py then guarantees it is spelled
+    # safely). If this ever disappears, the description above lies.
+    source = Path(git_tool_impls.__file__).read_text()
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "git_status"
+    )
+    calls = {
+        node.func.id
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"_literal_pathspec", "_denylist_pathspecs"}
+    }
+    assert "_literal_pathspec" in calls, (
+        "git_status no longer applies `path` as a positive literal pathspec; "
+        "its description (and git_diff/git_log symmetry) now overstates it"
+    )
+    assert "_denylist_pathspecs" in calls, "the denylist exclusions were dropped"
+
+
 def test_git_status_not_repo(tmp_path: Path) -> None:
     with pytest.raises(LocalToolError, match="not a git repository"):
         git_status(tmp_path)

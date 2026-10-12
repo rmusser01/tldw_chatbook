@@ -788,14 +788,17 @@ def git_status(
 
     Args:
         workspace_root: The confinement root ``path`` must resolve inside.
-        path: Used ONLY to discover which repository to report on (a file
-            or directory anywhere inside the target repo works, since
-            discovery walks up to the repo root). It is NOT applied as a
-            scoping pathspec: unlike ``git_diff``/``git_log``, this
-            function's argv carries no positive pathspec for ``path``, so
-            the status returned always covers the WHOLE repository —
-            asking for a subdirectory's status still returns every
-            changed file in the repo, not just that subdirectory's.
+        path: Scopes the reported entries to this path (a file or
+            directory), relative to the workspace root, exactly as
+            ``git_diff``/``git_log`` apply theirs. The path ALSO discovers
+            which repository to report on (discovery walks up to the repo
+            root from it). TASK-19874: this used to be discovery-only --
+            a model narrowing to a subdirectory silently received every
+            changed file in the whole repository; the argv now carries
+            the path as a ``:(literal)`` positive pathspec ahead of the
+            denylist exclusions, so a magic-shaped filename cannot invert
+            the scope and the exclusions still apply on top (both pinned
+            by tests).
 
     Returns:
         The branch header line, one ``category: XY path`` (or
@@ -813,6 +816,32 @@ def git_status(
         executable=executable,
         own_process_group=own_process_group,
     )
+    pathspecs: list[str] = []
+    if path not in (None, "."):
+        # TASK-19874: the positive scoping pathspec, spelled exactly like
+        # git_diff/git_log's (``_literal_pathspec`` -- ``:(literal)`` kills
+        # pathspec magic, so a repository file named like a magic prefix
+        # cannot invert the scope; TASK-19632's tripwire covers this call
+        # site like the other two).
+        pathspecs.append(
+            _literal_pathspec(
+                _repo_relative_path(
+                    workspace_root,
+                    repo_root,
+                    path,
+                    context=context,
+                    sensitive_exclusions=sensitive_exclusions,
+                )
+            )
+        )
+    pathspecs.extend(
+        _denylist_pathspecs(
+            repo_root,
+            context=context,
+            workspace_root=workspace_root,
+            sensitive_exclusions=sensitive_exclusions,
+        )
+    )
     result = _run_git_checked(
         [
             "git",
@@ -823,12 +852,7 @@ def git_status(
             "--branch",
             "--untracked-files=all",
             "--",
-            *_denylist_pathspecs(
-                repo_root,
-                context=context,
-                workspace_root=workspace_root,
-                sensitive_exclusions=sensitive_exclusions,
-            ),
+            *pathspecs,
         ],
         subcommand="status",
         cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
