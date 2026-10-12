@@ -82,3 +82,43 @@ Report: this plan's SDD task-2-report.md; exact commands/results/head/source has
 ## Reviewed current-dev closeout
 
 Complete-head and combined P1 fix reviews passed; publication-contract Task2 passed after its single catalog-control fix round. Latest dev7b7193d647 rebase was clean, including canonical continuation-owner correction. Code head013412725b845c7b860a3e5b3ff04f444f4c661a passed25 affected continuation/startup cases; actual current preflight passed all guards. Previous source-bound and UI/resource receipts remain scoped to their exact bytes. Seven Goal tasks are locally qualified and Done; GitHub publication/required hosted CI/protected merge remain root-owned. No full sweep, external model quality or physical terminal UAT was performed.
+
+
+## Task 3: Close hosted performance ratchets
+
+Hosted Perf Guard at published c4f7926ce9 reproduced locally two actual added costs: ancestor-scoped bare-type selectors282/274 and screen-preimport559/558 (settings_goal_policy). Keep both limits and current owner boundaries unchanged.
+
+ADR required: no new ADR.
+ADR path: existing097 boot ratchets,150 UI tokens and227 native Goals.
+Reason: mechanical selector scoping and first-use helper import inside accepted UI behavior.
+
+1. Preserve hosted logs and reproduce both exact failing tests before code; reopen TASK34797 AC5.
+2. Scope the added Goal CSS subjects with classes on their intended composed widgets. Preserve token values, generated-source ownership, control focus/state behavior and mounted geometry; rebuild CSS from its source.
+3. Defer settings_goal_policy into actual Settings calls, including ordered atomic draft save. Keep one authoritative Goal key/default inventory and all validation/save/revert semantics; no duplicate constants or raised caps.
+4. Run the two red ratchets, affected fastpath/settings/setup/status/history and CSS/token/generated/preflight contracts. Verify no new shared-owner growth or lint findings. Obtain scoped independent spec and quality review, update exact receipts and task notes, then publish with the exact prior-head lease and wait for fresh hosted CI.
+
+## Task4: Required UI gate Notes timer prerequisite
+
+Hosted UI lane1 failed during Notes recovery teardown with native Timer._tick active_app LookupError; two following apps then could not bind TTS. Exact three-case candidate run passes locally, so do not claim a consistently reproduced original journey. Inspect the unchanged Notes status listener and native Textual context, then add a deterministic native same-thread empty-context publication and cross-thread control before production edits. If the pre-existing boundary defect reproduces, create the debounce timer under the existing app context and refuse publications after app shutdown admission closes. Keep debounce, exclusive read-only refresh and runtime authority unchanged. Run existing pure listener, real watcher/recovery and Library delete/undo plus native teardown regressions; record original journey and deterministic proof separately.
+
+ADR required:no new ADR.
+ADR path:existing app lifecycle and Textual integration contracts.
+Reason:routine callback-context/closed-admission correction; no new owner or protocol.
+
+TASK34797 now includes the specific prerequisite AC6, opened before the regression or production change. Do not change TTS binding rules or swallow shutdown errors to silence a cascade.
+
+### Task4 independent-review correction
+
+The new9-case native/pure listener module passed but no required PR lane selected it. Append it to scripts/ui_pr_gate_census.txt and tighten MINIMUM_FILES179->180; retain every existing entry and shard. Run the census checker and its targeted CI contracts, then close the review finding. This is a coverage-floor increase, not a performance-budget exception.
+
+## Task5: Correct the required v15 migration fixture
+
+Hosted fast contract1906passed/2failed; admission-sensitive489passed/1existingxfail. The two failures happen before upgrade, while the synthetic v15 fixture drops automatic_wake_attempts but retains v24 goal_launch_immutable and seven Goal tables. Reproduce first, then strip precisely the Goal shape absent from real v15 before stripping its later dependencies, with an explicit no-Goal-residue assertion. Exercise ordinary and standalone upgrade/reopen plus current Goal migrations/catalog controls. Do not relax production migration or immutability/recovery validation. TASK34797 AC1 is reopened until this corrected predecessor path qualifies.
+
+ADR required:no new ADR.
+ADR path:existing227 native Goals.
+Reason:test fixture coherence for the existing supported predecessor; no new schema or migration behavior.
+
+## Hosted-failure local closeout
+
+Tasks3-5 are locally qualified and independently PASS/PASS with zero findings. Exact final14 navigation/listener and74 migration/census receipts, retained red/partial lanes, shared static baselines and source hashes are in pr2563-hosted-fixes-local-receipt.json and pr2563-hosted-fixes-independent-review.md. Notes regression now gates every PR; no runtime ratchet or production migration changed. Dev c23e0ba141 adds only three nonoverlapping task-note files; product/test bytes remain identical across the next rebase. TASK34797 is locally Done; fresh hosted CI/protected merge remain root gates. No full suite, physical terminal, external model or latency improvement is claimed.

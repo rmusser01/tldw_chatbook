@@ -174,7 +174,7 @@ async def test_changes_control_opens_exact_saved_iteration_and_conversation(
         app.screen.review_changes = ui.review_changes
         app.screen.load_goal()
         assert await click_goal(pilot, "#goal-changes")
-        await pilot.pause()
+        await wait_until(pilot, lambda: bool(opened))
         assert opened == [
             (
                 result.native_run_id,
@@ -252,9 +252,19 @@ async def test_older_history_reaches_retained_goal_behind_newer_tombstones(
             await pilot.pause()
             assert len(app.screen.rows) == 50
             assert await pilot.click("#goal-history-older")
+            await wait_until(
+                pilot, lambda: hasattr(app.screen, "rows") and len(app.screen.rows) == 1
+            )
             await pilot.pause()
             app.screen.query_one("#goal-history", Select).value = old.id
             assert await pilot.click("#goal-history-open")
+            await wait_until(
+                pilot,
+                lambda: (
+                    getattr(app.screen, "goal_id", None) == old.id
+                    and app.screen.snapshot is not None
+                ),
+            )
             await pilot.pause()
             assert app.screen.goal_id == old.id
             assert await pilot.click("#goal-remove")

@@ -29,28 +29,61 @@ class ConsoleGoalStatus(ModalScreen[None]):
         self._review_identity = None
 
     def compose(self) -> ComposeResult:
-        with Vertical():
-            with VerticalScroll():
-                yield Static("Goal runs", id="goal-state", markup=False)
-                yield Static("", id="goal-accounting", markup=False)
-                yield Static("", id="goal-reason", markup=False)
+        with Vertical(classes="goal-dialog-panel"):
+            with VerticalScroll(classes="goal-dialog-scroll"):
+                yield Static(
+                    "Goal runs",
+                    id="goal-state",
+                    markup=False,
+                    classes="goal-dialog-text",
+                )
+                yield Static(
+                    "", id="goal-accounting", markup=False, classes="goal-dialog-text"
+                )
+                yield Static(
+                    "", id="goal-reason", markup=False, classes="goal-dialog-text"
+                )
                 yield Select([], prompt="Select saved iteration", id="goal-iteration")
-                yield Static("", id="goal-report", markup=False)
-                yield Static("", id="goal-evidence", markup=False)
-                yield Static("", id="goal-error", markup=False)
-            with Horizontal():
-                yield Button("Retry setup", id="goal-retry-setup")
-                yield Button("Pause", id="goal-pause")
-                yield Button("Stop", id="goal-stop")
-                yield Button("Resume", id="goal-resume")
-                yield Button("Review", id="goal-review", variant="primary")
-                yield Button("Changes", id="goal-changes")
-            with Horizontal():
-                yield Button("Accept result", id="goal-accept", variant="success")
-                yield Button("Reject result", id="goal-reject")
-                yield Button("Close uncertain", id="goal-recovery")
-                yield Button("Remove payloads", id="goal-remove")
-                yield Button("Close", id="goal-close")
+                yield Static(
+                    "", id="goal-report", markup=False, classes="goal-dialog-text"
+                )
+                yield Static(
+                    "", id="goal-evidence", markup=False, classes="goal-dialog-text"
+                )
+                yield Static(
+                    "", id="goal-error", markup=False, classes="goal-dialog-text"
+                )
+            with Horizontal(classes="goal-dialog-actions"):
+                yield Button(
+                    "Retry setup", id="goal-retry-setup", classes="goal-dialog-action"
+                )
+                yield Button("Pause", id="goal-pause", classes="goal-dialog-action")
+                yield Button("Stop", id="goal-stop", classes="goal-dialog-action")
+                yield Button("Resume", id="goal-resume", classes="goal-dialog-action")
+                yield Button(
+                    "Review",
+                    id="goal-review",
+                    variant="primary",
+                    classes="goal-dialog-action",
+                )
+                yield Button("Changes", id="goal-changes", classes="goal-dialog-action")
+            with Horizontal(classes="goal-dialog-actions"):
+                yield Button(
+                    "Accept result",
+                    id="goal-accept",
+                    variant="success",
+                    classes="goal-dialog-action",
+                )
+                yield Button(
+                    "Reject result", id="goal-reject", classes="goal-dialog-action"
+                )
+                yield Button(
+                    "Close uncertain", id="goal-recovery", classes="goal-dialog-action"
+                )
+                yield Button(
+                    "Remove payloads", id="goal-remove", classes="goal-dialog-action"
+                )
+                yield Button("Close", id="goal-close", classes="goal-dialog-action")
 
     def on_mount(self) -> None:
         self._unsubscribe = self.coordinator.subscribe(self._changed)
@@ -328,8 +361,12 @@ class ConsoleGoalHistory(ModalScreen[None]):
         self.older, self.newer, self.page = older, newer, page
 
     def compose(self):
-        with Vertical():
-            yield Static(f"Goal runs · page {self.page}", markup=False)
+        with Vertical(classes="goal-dialog-panel"):
+            yield Static(
+                f"Goal runs · page {self.page}",
+                markup=False,
+                classes="goal-dialog-text",
+            )
             yield Select(
                 [(f"{r.status.replace('_', ' ')} · {r.id}", r.id) for r in self.rows],
                 prompt="Select a saved goal",
@@ -339,21 +376,38 @@ class ConsoleGoalHistory(ModalScreen[None]):
                 yield Static(
                     "No saved goals on this page.",
                     markup=False,
+                    classes="goal-dialog-text",
                 )
             if self.older or self.newer:
-                with Horizontal():
+                with Horizontal(classes="goal-dialog-actions"):
                     yield Button(
-                        "Newer", id="goal-history-newer", disabled=self.newer is None
+                        "Newer",
+                        id="goal-history-newer",
+                        disabled=self.newer is None,
+                        classes="goal-dialog-action",
                     )
                     yield Button(
-                        "Older", id="goal-history-older", disabled=self.older is None
+                        "Older",
+                        id="goal-history-older",
+                        disabled=self.older is None,
+                        classes="goal-dialog-action",
                     )
-            with Horizontal():
-                yield Button("New goal", id="goal-history-new", variant="primary")
+            with Horizontal(classes="goal-dialog-actions"):
                 yield Button(
-                    "Open", id="goal-history-open", disabled=not bool(self.rows)
+                    "New goal",
+                    id="goal-history-new",
+                    variant="primary",
+                    classes="goal-dialog-action",
                 )
-                yield Button("Close", id="goal-history-close")
+                yield Button(
+                    "Open",
+                    id="goal-history-open",
+                    disabled=not bool(self.rows),
+                    classes="goal-dialog-action",
+                )
+                yield Button(
+                    "Close", id="goal-history-close", classes="goal-dialog-action"
+                )
 
     def action_close(self):
         self.dismiss(None)
