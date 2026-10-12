@@ -1848,8 +1848,8 @@ def _normalize_legacy_provider_api_key(
     (it has its own env fallback), this bridge deliberately does not write
     env-sourced values into `api_settings` (see the paragraph above on
     `api_key_source` and prefill safety -- that behavior is pinned and
-    correct), google's legacy dict is `google_generative_api` which the
-    handler no longer reads, and `chat_with_google` has no env fallback of
+    correct), google's legacy top-level dict was removed as dead code
+    (nothing read it), and `chat_with_google` has no env fallback of
     its own. A caller that passes no explicit `api_key` -- the Library RAG
     path among them -- is therefore gated OPEN and fails at the wire. Any
     claim that google is fully closed must say "config-sourced" or name
@@ -2606,7 +2606,6 @@ def _load_settings_uncached(
     huggingface_api_key = _bridged_provider_api_keys["huggingface"]
     openrouter_api_key = _bridged_provider_api_keys["openrouter"]
     deepseek_api_key = _bridged_provider_api_keys["deepseek"]
-    google_api_key = _bridged_provider_api_keys["google"]
     mistral_api_key = _bridged_provider_api_keys["mistral"]
     elevenlabs_api_key = get_api_key("elevenlabs_api_key", "ELEVENLABS_API_KEY")
 
@@ -2822,20 +2821,6 @@ def _load_settings_uncached(
             "api_timeout": api_section_legacy.get("deepseek_api_timeout", 90),
             "api_retries": api_section_legacy.get("deepseek_api_retry", 3),
             "api_retry_delay": api_section_legacy.get("deepseek_api_retry_delay", 5),
-        },
-        "google_generative_api": {  # Renamed to avoid confusion with Google Search API
-            "api_key": google_api_key,
-            "model": api_section_legacy.get("google_model", "gemini-2.5-flash"),
-            "streaming": api_section_legacy.get("google_streaming", False),
-            "temperature": api_section_legacy.get("google_temperature", 0.7),
-            "top_p": api_section_legacy.get("google_top_p", 0.95),
-            "min_p": api_section_legacy.get(
-                "google_min_p", 0.05
-            ),  # Check if 'min_p' is valid for Gemini
-            "max_tokens": api_section_legacy.get("google_max_tokens", 4096),
-            "api_timeout": api_section_legacy.get("google_api_timeout", 90),
-            "api_retries": api_section_legacy.get("google_api_retry", 3),
-            "api_retry_delay": api_section_legacy.get("google_api_retry_delay", 5),
         },
         "groq_api": {
             "api_key": groq_api_key,
@@ -9830,8 +9815,6 @@ def get_media_ingestion_defaults(media_type: str) -> Dict[str, Any]:
     )
 
 
-
-
 def get_ocr_backend_config(backend_name: str) -> Dict[str, Any]:
     """
     Get configuration for a specific OCR backend.
@@ -10944,10 +10927,15 @@ def get_user_data_dir() -> Path:
     walked = set(_chain(result))
     # The result must be one of the stamped candidates: a working directory
     # changed mid-resolution makes a relative data dir resolve elsewhere.
-    if before is not None and before == after and walked <= set(stamped) and all(
-        stamp is not None and not stat.S_ISLNK(stamp[2])
-        for path, stamp in zip(stamped, after)
-        if path in walked
+    if (
+        before is not None
+        and before == after
+        and walked <= set(stamped)
+        and all(
+            stamp is not None and not stat.S_ISLNK(stamp[2])
+            for path, stamp in zip(stamped, after)
+            if path in walked
+        )
     ):
         with _USER_DATA_DIR_MEMO_LOCK:
             _USER_DATA_DIR_MEMO = (key, after, result)

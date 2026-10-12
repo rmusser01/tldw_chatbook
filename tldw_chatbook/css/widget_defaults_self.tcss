@@ -234,6 +234,10 @@
         background: $background 75%;
     }
 
+/* ===== WIDGET: SkillRecoveryReviewModal (UI/Library_Modules/skills_trust_modals.py) ===== */
+
+    SkillRecoveryReviewModal { align: center middle; }
+
 /* ===== WIDGET: LogsWindow (UI/Logs_Window.py) ===== */
 
     LogsWindow {
@@ -348,33 +352,6 @@
         margin-bottom: 1;
     }
     ArtifactShareDialog #share-dialog-status { color: $warning; }
-
-/* ===== WIDGET: DreamsGoalsModal (UI/Screens/artifacts_dreams_goals_modal.py) ===== */
-
-    DreamsGoalsModal { align: center middle; background: $background 70%; }
-    DreamsGoalsModal > VerticalScroll {
-        width: 76; max-width: 96%; height: auto; max-height: 90%;
-        background: $surface; border: solid $primary; padding: 1 2;
-    }
-    DreamsGoalsModal #dgm-region { margin-top: 1; }
-    DreamsGoalsModal #dgm-goals { height: auto; max-height: 12; margin-top: 1; }
-    DreamsGoalsModal #dgm-new-goal { margin-top: 1; }
-    DreamsGoalsModal #dgm-hints { color: $warning; margin-top: 1; }
-
-/* ===== WIDGET: DreamsStoryModal (UI/Screens/artifacts_dreams_modal.py) ===== */
-
-    DreamsStoryModal { align: center middle; background: $background 70%; }
-    DreamsStoryModal > VerticalScroll {
-        width: 76; max-width: 96%; height: auto; max-height: 90%;
-        background: $surface; border: solid $primary; padding: 1 2;
-    }
-    DreamsStoryModal #dsm-hints { color: $warning; margin-top: 1; }
-    DreamsStoryModal #dsm-actions {
-        grid-size: 2; grid-columns: 1fr 1fr;
-        grid-rows: 1; grid-gutter: 1;
-        height: auto; margin-top: 1;
-    }
-    DreamsStoryModal #dsm-actions Button { width: 100%; min-width: 0; }
 
 /* ===== WIDGET: BackupRestoreScreen (UI/Screens/backup_restore_screen.py) ===== */
 
@@ -993,21 +970,6 @@
         height: auto;
         padding: 1;
     }
-
-/* ===== WIDGET: GuardianRuleEditModal (UI/Screens/settings_screen.py) ===== */
-
-    GuardianRuleEditModal { align: center middle; background: $background 70%; }
-    GuardianRuleEditModal > VerticalScroll {
-        width: 76; max-width: 96%; height: auto; max-height: 90%;
-        background: $surface; border: solid $primary; padding: 1 2;
-    }
-    GuardianRuleEditModal #grm-crisis-copy { color: $warning; margin-top: 1; }
-    GuardianRuleEditModal #grm-status { color: $warning; margin-top: 1; }
-    GuardianRuleEditModal #grm-buttons { margin-top: 1; height: auto; }
-
-/* ===== WIDGET: SkillRecoveryReviewModal (UI/Screens/skills_screen.py) ===== */
-
-    SkillRecoveryReviewModal { align: center middle; }
 
 /* ===== WIDGET: TrajectoryScreen (UI/Screens/trajectory_screen.py) ===== */
 

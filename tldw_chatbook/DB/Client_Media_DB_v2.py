@@ -8797,69 +8797,6 @@ def ingest_article_to_db_new(
     )
 
 
-def import_obsidian_note_to_db(
-    db_instance: MediaDatabase, note_data: Dict[str, Any]
-) -> Tuple[Optional[int], Optional[str], str]:
-    """
-    Wrapper function to add or update an Obsidian note using `add_media_with_keywords`.
-
-    Extracts relevant fields from the `note_data` dictionary. Uses Obsidian tags
-    as keywords and YAML frontmatter (if present and valid) as `analysis_content`.
-    Constructs a default URL like 'obsidian://note/TITLE'.
-
-    Requires `pyyaml` to be installed to parse frontmatter.
-
-    Args:
-        db_instance (MediaDatabase): An initialized Database instance.
-        note_data (Dict[str, Any]): A dictionary containing note information.
-            Expected keys: 'title' (str, required), 'content' (str, required).
-            Optional keys: 'tags' (List[str|int]), 'frontmatter' (Dict),
-            'file_created_date' (str, ISO 8601 UTC), 'overwrite' (bool).
-
-    Returns:
-        Tuple[Optional[int], Optional[str], str]: Result from `add_media_with_keywords`:
-            (media_id, media_uuid, message).
-
-    Raises:
-        TypeError: If `db_instance` is not a Database object or `note_data` is not a dict.
-        InputError: If required keys ('title', 'content') are missing or invalid in `note_data`.
-        ConflictError: If overwrite=True and update fails due to version conflict.
-        DatabaseError: For underlying database or sync/FTS errors.
-        ImportError: If `yaml` library is needed but not installed.
-    """
-    if not isinstance(db_instance, MediaDatabase):
-        raise TypeError("db_instance required.")
-    required = ["title", "content"]
-    missing = [k for k in required if k not in note_data or note_data[k] is None]
-    if missing:
-        raise InputError(f"Obsidian note missing required keys: {missing}")
-    url_id = f"obsidian://note/{note_data['title']}"
-    kw = note_data.get("tags", [])
-    kw = [str(k) for k in kw if isinstance(k, (str, int))]
-    fm_str = None
-    fm = note_data.get("frontmatter")
-    author = None
-    if isinstance(fm, dict):
-        author = fm.get("author")
-        try:
-            fm_str = yaml.dump(fm, default_flow_style=False)
-        except Exception as e:
-            logger.error(f"Error dumping frontmatter: {e}")
-    return db_instance.add_media_with_keywords(
-        url=url_id,
-        title=note_data["title"],
-        media_type="obsidian_note",
-        content=note_data["content"],
-        keywords=kw,
-        author=author,
-        prompt="Obsidian Frontmatter" if fm_str else None,
-        analysis_content=fm_str,
-        ingestion_date=note_data.get("file_created_date"),
-        overwrite=note_data.get("overwrite", False),
-    )
-
-
-# Read functions call instance methods or query directly with filters
 def get_media_transcripts(db_instance: MediaDatabase, media_id: int) -> List[Dict]:
     """
     Retrieves all active transcripts associated with an active media item.
@@ -9513,41 +9450,6 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
 
 
 # Keyword read functions use instance methods or query directly
-def fetch_keywords_for_media(db_instance: MediaDatabase, media_id: int) -> List[str]:
-    """
-    Fetches all active keywords associated with a specific active media item.
-
-    Filters results to only include keywords where both the Keyword itself and
-    the parent Media item are not soft-deleted (`deleted = 0`).
-    Results are sorted alphabetically (case-insensitive).
-
-    Args:
-        media_id (int): The ID of the Media item.
-        db_instance (MediaDatabase): An initialized Database instance.
-
-    Returns:
-        List[str]: A sorted list of active keyword strings linked to the media item.
-                   Returns an empty list if none are found or if the media item
-                   is inactive.
-
-    Raises:
-        TypeError: If `db_instance` is not Database object or `media_id` not int.
-        DatabaseError: For database query errors.
-    """
-    if not isinstance(db_instance, MediaDatabase):
-        raise TypeError("db_instance required.")
-    logger.debug(f"Fetching keywords media_id={media_id} DB: {db_instance.db_path_str}")
-    try:
-        query = "SELECT k.keyword FROM Keywords k JOIN MediaKeywords mk ON k.id = mk.keyword_id JOIN Media m ON mk.media_id = m.id WHERE mk.media_id = ? AND k.deleted = 0 AND m.deleted = 0 ORDER BY k.keyword COLLATE NOCASE"
-        cursor = db_instance.execute_query(query, (media_id,))
-        return [row["keyword"] for row in cursor.fetchall()]
-    except (DatabaseError, sqlite3.Error) as e:
-        logger.opt(exception=True).error(
-            f"Error fetching keywords media_id {media_id} '{db_instance.db_path_str}': {e}"
-        )
-        raise DatabaseError(f"Failed fetch keywords {media_id}") from e
-
-
 def fetch_keywords_for_media_batch(
     db_instance: MediaDatabase, media_ids: List[int]
 ) -> Dict[int, List[str]]:

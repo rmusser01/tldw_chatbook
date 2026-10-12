@@ -20,7 +20,7 @@ from hypothesis import HealthCheck, assume, given, settings, strategies as st
 # Adjust the import path based on your project structure
 from tldw_chatbook.DB.Client_Media_DB_v2 import (
     MediaDatabase,
-    fetch_keywords_for_media,
+    fetch_keywords_for_media_batch,
     empty_trash,
 )
 
@@ -143,7 +143,8 @@ class TestMediaItemProperties:
         assert not retrieved["deleted"]
 
         linked_keywords = {
-            kw.lower().strip() for kw in fetch_keywords_for_media(db_instance, media_id)
+            kw.lower().strip()
+            for kw in fetch_keywords_for_media_batch(db_instance, [media_id])[media_id]
         }
         expected_keywords = {kw.lower().strip() for kw in media_data["keywords"]}
         assert linked_keywords == expected_keywords

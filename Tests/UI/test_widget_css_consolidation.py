@@ -1127,7 +1127,6 @@ _UNCONSOLIDATED_CSS_ALLOWLIST: frozenset[tuple[str, str, str]] = frozenset(
             "InlineLoadingIndicator",
             "DEFAULT_CSS",
         ),
-        ("UI/ChatbookCreationWindow.py", "ChatbookCreationWindow", "DEFAULT_CSS"),
         (
             "UI/ChatbookExportManagementWindow.py",
             "ChatbookExportManagementWindow",

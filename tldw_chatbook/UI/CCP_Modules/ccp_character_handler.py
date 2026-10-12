@@ -159,8 +159,7 @@ def delete_character(character_id: CharacterId, expected_version: int) -> bool:
 def import_character_card(file_path: str) -> Any:
     """Compatibility helper for character import.
 
-    Delegates to ``import_and_save_character_from_file`` (the previous
-    ``ccv3_parser.import_character_card_json`` target is an empty module).
+    Delegates to ``import_and_save_character_from_file``.
     Returns the imported character's DB id, or ``None`` when the file does
     not contain a valid character card.
     """

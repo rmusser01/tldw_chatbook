@@ -1309,9 +1309,7 @@ def _completion_text_from_response(response_data: Any) -> str:
                 return content
             if isinstance(content, list):
                 return "".join(
-                    part.get("text", "")
-                    for part in content
-                    if isinstance(part, dict)
+                    part.get("text", "") for part in content if isinstance(part, dict)
                 )
         content_blocks = response_data.get("content")
         if isinstance(content_blocks, list):
@@ -2411,7 +2409,10 @@ def chat_with_anthropic(
                 usage,
                 provider="anthropic",
                 model=current_model,
-                fallback_texts=(_estimate_prompt_text(input_data), full_assistant_content),
+                fallback_texts=(
+                    _estimate_prompt_text(input_data),
+                    full_assistant_content,
+                ),
             )
 
             return normalized_response
@@ -3622,8 +3623,8 @@ def chat_with_google(
     # `google_api` table: the shipped default config writes `[api_settings.
     # google]`, `config.py`'s credential bridge (`_normalize_legacy_
     # provider_api_key`) writes `api_settings["google"]["api_key"]`, and
-    # the legacy dict is the top-level `google_generative_api` (not under
-    # `api_settings` at all). So this lookup always returned `{}` and every
+    # the legacy top-level `google_generative_api` dict was removed as
+    # dead code (nothing read it). So this lookup always returned `{}` and every
     # Google call fell back to the hardcoded defaults below -- meaning a
     # credential set the modern OR legacy way could not reach the spend
     # path even while readiness reported ready and the Library RAG gate
@@ -4200,7 +4201,10 @@ def chat_with_google(
                     normalized_usage,
                     provider="google",
                     model=current_model,
-                    fallback_texts=(_estimate_prompt_text(input_data), assistant_content),
+                    fallback_texts=(
+                        _estimate_prompt_text(input_data),
+                        assistant_content,
+                    ),
                 )
 
             # Log non-streaming success metrics
@@ -4759,8 +4763,7 @@ def chat_with_huggingface(
                             {
                                 "error": {
                                     "message": (
-                                        "Stream connection error: "
-                                        f"{e_chunked}"
+                                        f"Stream connection error: {e_chunked}"
                                     ),
                                     "type": "huggingface_stream_error",
                                 }
@@ -4814,6 +4817,7 @@ def chat_with_huggingface(
                     # or method_whitelist for older versions.
                 )
             )
+
             def _hf_registry_session() -> requests.Session:
                 # ADR-222 (TASK-34418): factory for the per-thread registry;
                 # the mount lives here so a cached session keeps its adapter

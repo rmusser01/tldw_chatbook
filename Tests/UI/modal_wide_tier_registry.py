@@ -193,7 +193,6 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     # named (base caps 100-120 the ladder relaxes at wide viewports)
     ("#notes-recovery-dialog", 170, "Widgets/Library/notes_recovery_dialog.py"),
     ("#skills-recovery-review", 170, "UI/Library_Modules/skills_trust_modals.py"),
-    ("ChatbookCreationWindow > Container", 170, "UI/ChatbookCreationWindow.py"),
     (
         "ChatbookExportManagementWindow > Container",
         170,
