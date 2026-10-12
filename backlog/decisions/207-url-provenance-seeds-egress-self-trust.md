@@ -82,3 +82,22 @@ was the one place that sentence was not actually enforced.
 - `Utils/egress.py` module docstring (the contract's canonical text)
 - `Docs/superpowers/specs/2026-07-23-web-fetch-hardening-design.md`
 - Tests: `Tests/Local_Ingestion/test_video_url_provenance.py`
+
+## Durable source and Capture lineage amendment (2026-10-12)
+
+Subscriptions' next schema is v3; Collections' next schema is v5. Their durable URL
+lineage distinguishes explicit USER_ENTERED from UNKNOWN. Legacy, missing,
+malformed and restored unmarked lineage is UNKNOWN at the first actual fetch,
+independent of Dreams enablement or backfill completion. Migration must not infer
+user entry from the presence of an address or from a missing Dreams association.
+An explicit source-address edit or direct user Capture form establishes user entry;
+Dreams story Capture preserves UNKNOWN through its first extraction, saved record,
+Retry and every guarded redirect. Stored values are decoded conservatively at the
+shared consumption boundary. Explicit user-entered intranet sources retain their
+existing configured-origin behavior.
+
+The versioned storage updates require populated-predecessor migration, rollback,
+reopen, future/hybrid refusal and installed recovery catalog/participant validation.
+Periodic Dreams marks remain reconciliation evidence, never authority to self-trust.
+Shared resolve-then-connect address pinning is an existing residual; this amendment
+does not claim that checking redirect/DNS policy eliminates transport TOCTOU.
