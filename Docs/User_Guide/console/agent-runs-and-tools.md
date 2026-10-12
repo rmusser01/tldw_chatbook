@@ -1739,6 +1739,17 @@ This boundary describes Chatbook-managed local tools only. Attachments,
 Library/RAG content, generated media, provider-hosted tools, and external MCP
 servers keep their own storage and authority contracts.
 
+**Self-recovery hints.** When an `fs_*` call almost succeeds, the tool
+answers with an actionable recovery note instead of a bare error: `fs_edit`
+reports an already-applied edit as a success no-op, and diagnoses a failed
+match by naming the closest candidate lines with whitespace made visible;
+`fs_write` verifies the bytes that actually landed on disk; `fs_glob` and
+`fs_grep` suggest near-miss names or case-insensitive matches when a search
+finds nothing; `fs_patch` names the nearest candidate location for a context
+mismatch. Every hint is short, labeled `hint (tool-generated)`, and advisory
+only — it changes no permission decision, and near-miss suggestions can only
+ever name files the same filtered walk was already allowed to show.
+
 ### Read-only virtual CLI
 
 Console agents can see one model tool named `virtual_cli`. It accepts a
