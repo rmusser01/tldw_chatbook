@@ -149,3 +149,17 @@ this enrolls approved outcomes without a new service/storage/runtime boundary.
 Native schema receipt tests must write under pytest's private tmp_path, never
 under an implementation machine's evidence directory; external source-bound
 receipts are retained separately by the qualification runner.
+
+## Task 2: Qualify the required Library modal readiness contract
+
+**Files:** Tests/UI/test_library_dreams_reader.py and TASK34804 existing notes; this plan and source-bound review/qualification records. Published Task1 code7bdfe6a7 remains independently cleared; this task fixes the newly observed hosted required-test boundary without changing production behavior.
+
+ADR required:no. ADR path:N/A (existing current Library/modal contracts). Reason:routine test synchronization correction under existing Textual asynchronous mount contract, no application/service/schema/policy choice.
+
+1. Read pr2921-hosted-ui4-investigation.md, exact completed UI4 job114997169971/run38305118522, current source and TASK34804. Preserve non-reproduced original-node1PASS and captured decorated-child environment as such; no baseline node exists on dev and no confirmed-flake claim. Append concrete plan to existing TASK34804 via private CLI before test edits, retain full history/status/AC.
+2. Correct only the new test's story and Goals readiness fences: wait for expected modal, mounted state and actual expected control within original five-second loop, then retain every existing literal/list/selectedID/eight-button/action/DB/refresh/close assertion. No deadline/sleep/marker/fixture/service/runtime change. Use an existing relevant waiting pattern where possible, minimum code.
+3. Add a bounded real mount-boundary witness that shows screen-stack identity precedes child readiness, proves the corrected readiness remains pending at that boundary and succeeds after release. Use actual Textual modal/harness, preserve original private child and admission/physical lifetimes; no forced GC/warning suppression/background-service fixes. Hosted error is actual original failure; distinguish controlled local witness from natural local non-reproduction.
+4. Run only corrected exact node and relevant small mount witness/current family controls; verify source before/after, node inventory/JUnit, Ruff/diff checks and existing required UI census membership. Test-only delta keeps production trees and limits unchanged. No replay of310-case shard/160/80/full native/UI/full suite.
+5. Self-review, normal commit/gc.auto=0; append final notes via private CLI, no task Done or GH writes. Root gets one scoped independent task review, exact lease/currentdev refresh and normal new-head required hosted qualification before protected merge. Source source-bound earlier green groups retain their exact head and are not reclassified as current-head CI.
+
+Report: external pr2921-hosted-readiness-task2-report.md, separate handoff/source/node/argv/raw/JUnit integrity; preserve all sealed earlier private/actual/fix/whitespace assets. No child agents, other worktree edits, source/functionality expansion, new IDs or late unrelated cleanup.
