@@ -48,6 +48,7 @@ COMMANDS = [
     "/settings",
     "/context",
     "/endpoint",
+    "/goal",
 ]
 
 
@@ -214,3 +215,14 @@ def test_context_none_outside_completion_contexts():
     # A trailing newline (Shift+Enter multiline draft) leaves the context --
     # the pattern's `\Z` (not `$`) exists for exactly this.
     assert completion_context_for_draft("/prompt\n") is None
+
+
+def test_goal_command_completion_preserves_description_mode():
+    result = suggestions_for_draft("/go", default_console_registry(), SKILLS)
+    assert _labels(result) == ["/goal"]
+    assert (
+        suggestions_for_draft(
+            "/goal repair fixture", default_console_registry(), SKILLS
+        )
+        is None
+    )

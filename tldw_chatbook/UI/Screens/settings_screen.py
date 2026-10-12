@@ -64,6 +64,13 @@ from tldw_chatbook.UI.focus_ownership import (
 from ...Chat.console_runtime import ensure_console_runtime
 from ...Agents.agent_models import LOOP_DETECTION_N
 from ...Chat.Chat_Deps import ChatConfigurationError
+from .settings_goal_policy import (
+    GOAL_SETTING_DEFAULTS,
+    GOAL_SETTING_KEYS,
+    normalize_goal_setting,
+    compose_goal_policy,
+    sync_goal_policy,
+)
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
 from ...Canvas.limits import CanvasLimits
 from ...Chat.console_chat_controller import CapturePolicyMutationStatus
@@ -1510,6 +1517,7 @@ CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
     }
 )
 CONSOLE_BEHAVIOR_SAVE_ORDER = (
+    *GOAL_SETTING_KEYS,
     "collapse_large_pastes",
     "show_model_thinking",
     "thinking_history_policy_default",
@@ -7184,8 +7192,30 @@ class SettingsScreen(BaseAppScreen):
             ),
             "thinking_budget_tokens": self._loaded_console_default_thinking_budget_tokens(),
         }
+        agents = self._app_config_mapping().get("agents", {})
+        values.update(
+            {
+                key: agents.get(key, default)
+                for key, default in GOAL_SETTING_DEFAULTS.items()
+            }
+        )
         values.update(load_context_memory_values(self._console_settings()).to_mapping())
         return values
+
+    @on(Input.Changed, ".settings-goal-policy")
+    @on(Checkbox.Changed, "#settings-goal-runs-enabled")
+    def _goal_policy_changed(self, event) -> None:
+        if getattr(self, "_syncing_goal_policy", False):
+            return
+        widget = event.control
+        key = widget.id.removeprefix("settings-").replace("-", "_")
+        value = event.value
+        try:
+            value = normalize_goal_setting(key, value)
+        except ValueError:
+            pass  # Preserve incomplete input; Save validates the same value.
+        self._stage_console_default_value(key, value)
+        self._mark_console_behavior_settings_staged()
 
     def _loaded_console_background_effects(self) -> dict[str, object]:
         return normalize_console_background_effects(
@@ -19447,6 +19477,7 @@ class SettingsScreen(BaseAppScreen):
         ):
             if compact:
                 yield Static("Console behavior", classes="destination-section")
+            yield from compose_goal_policy(self)
             yield Static("Start here", classes="destination-section")
             yield Checkbox(
                 self._show_model_thinking_label(),
@@ -32730,6 +32761,11 @@ class SettingsScreen(BaseAppScreen):
                 if key in draft.dirty_keys
             }
             try:
+                for key in GOAL_SETTING_KEYS:
+                    if key in dirty_values:
+                        dirty_values[key] = normalize_goal_setting(
+                            key, dirty_values[key]
+                        )
                 if "user_display_name" in dirty_values:
                     dirty_values["user_display_name"] = normalize_chat_display_name(
                         dirty_values["user_display_name"], blank_means_none=False
@@ -32919,6 +32955,11 @@ class SettingsScreen(BaseAppScreen):
                 dict(console_values),
                 dict(chat_default_values),
                 workbench_scope_fallback,
+                {
+                    key: dirty_values[key]
+                    for key in GOAL_SETTING_KEYS
+                    if key in dirty_values
+                },
             )
             return
 
@@ -33433,8 +33474,11 @@ class SettingsScreen(BaseAppScreen):
     def _save_console_behavior_values(
         console_values: Mapping[str, object],
         chat_default_values: Mapping[str, object],
+        agents_values: Mapping[str, object] | None = None,
     ) -> bool:
         section_values = {}
+        if agents_values:
+            section_values["agents"] = dict(agents_values)
         if console_values:
             section_values["console"] = dict(console_values)
         if chat_default_values:
@@ -34009,8 +34053,13 @@ class SettingsScreen(BaseAppScreen):
         console_values: Mapping[str, object],
         chat_default_values: Mapping[str, object],
         workbench_scope_fallback: bool = False,
+        agents_values: Mapping[str, object] | None = None,
     ) -> None:
         if saved:
+            if agents_values:
+                self._app_config_update_target().setdefault("agents", {}).update(
+                    agents_values
+                )
             normalized_console_values = dict(console_values)
             if "background_effects" in normalized_console_values:
                 self._console_settings()["background_effects"] = dict(
@@ -34062,20 +34111,25 @@ class SettingsScreen(BaseAppScreen):
         console_values: Mapping[str, object],
         chat_default_values: Mapping[str, object],
         workbench_scope_fallback: bool = False,
+        agents_values: Mapping[str, object] | None = None,
     ) -> None:
         # An admitted write may finish after Settings has been unmounted.
         # Retain its host before blocking; the detached screen has no app parent.
         host = self.app
-        saved = self._save_console_behavior_values(console_values, chat_default_values)
+        saved = self._save_console_behavior_values(
+            console_values, chat_default_values, agents_values
+        )
         host.call_from_thread(
             self._apply_console_behavior_save_result,
             saved,
             dict(console_values),
             dict(chat_default_values),
             workbench_scope_fallback,
+            agents_values,
         )
 
     def _sync_console_behavior_widgets(self) -> None:
+        sync_goal_policy(self)
         self._console_capture_policy = runtime_capture_policy()
         try:
             self.query_one(

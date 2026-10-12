@@ -2569,3 +2569,31 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 /* TASK-33004.5: the value row's one-row controls and Source-word column. */
 .console-popover-value { width: $ds-size-8; height: $ds-control-height-compact; }
 .console-popover-source { width: $ds-size-18; }
+
+/* Native goal controls (ADR-227). */
+
+    ConsoleGoalSetupModal { align: center middle; }
+    ConsoleGoalSetupModal > Vertical { width: $ds-size-76; max-width: $ds-width-full; height: $ds-percent-90; background: $ds-surface-raised; border: solid $ds-control-edge; }
+    ConsoleGoalSetupModal VerticalScroll { height: $ds-height-fill; padding: $ds-space-0 $ds-space-inline; }
+    ConsoleGoalSetupModal TextArea { height: $ds-textarea-min-height; }
+    ConsoleGoalSetupModal SelectionList { height: $ds-textarea-min-height; }
+    ConsoleGoalSetupModal Static, ConsoleGoalSetupModal Label { height: $ds-height-auto; }
+    ConsoleGoalSetupModal Horizontal { height: $ds-control-height; }
+    ConsoleGoalSetupModal Button { min-width: $ds-size-12; width: $ds-width-fill; }
+
+
+/* Native goal controls (ADR-227). */
+
+    ConsoleGoalStatus { align: center middle; }
+    ConsoleGoalStatus > Vertical { width: $ds-size-90; max-width: $ds-width-full; height: $ds-percent-95; background: $ds-surface-raised; border: solid $ds-control-edge; }
+    ConsoleGoalStatus VerticalScroll { height: $ds-height-fill; padding: $ds-space-0 $ds-space-inline; }
+    ConsoleGoalStatus Static { height: $ds-height-auto; }
+    ConsoleGoalStatus Horizontal { height: $ds-control-height; }
+    ConsoleGoalStatus Button { min-width: $ds-size-9; width: $ds-width-fill; }
+
+
+
+    ConsoleGoalHistory { align: center middle; }
+    ConsoleGoalHistory > Vertical { width: $ds-size-76; max-width: $ds-width-full; height: $ds-height-auto; max-height: $ds-percent-90; background: $ds-surface-raised; border: solid $ds-control-edge; padding: $ds-space-inset; }
+    ConsoleGoalHistory Horizontal { height: $ds-control-height; }
+    ConsoleGoalHistory Button { width: $ds-width-fill; min-width: $ds-size-10; }

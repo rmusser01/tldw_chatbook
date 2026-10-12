@@ -282,6 +282,8 @@ from ...Chat.console_command_grammar import (
     PREFILL_COMMAND_NAME,
     PROMPT_COMMAND_HANDLER_ID,
     PROMPT_COMMAND_NAME,
+    GOAL_COMMAND_HANDLER_ID,
+    GOAL_COMMAND_NAME,
     RESEARCH_COMMAND_HANDLER_ID,
     RESEARCH_COMMAND_NAME,
     HELP_COMMAND_HANDLER_ID,
@@ -19037,6 +19039,7 @@ class ChatScreen(BaseAppScreen):
         EMERGENCY_STOP_COMMAND_NAME: EMERGENCY_STOP_COMMAND_HANDLER_ID,
         STOP_COMMAND_NAME: STOP_COMMAND_HANDLER_ID,
         RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
+        GOAL_COMMAND_NAME: GOAL_COMMAND_HANDLER_ID,
         HELP_COMMAND_NAME: HELP_COMMAND_HANDLER_ID,
         DOCTOR_COMMAND_NAME: DOCTOR_COMMAND_HANDLER_ID,
         **{
@@ -19106,6 +19109,7 @@ class ChatScreen(BaseAppScreen):
             EMERGENCY_STOP_COMMAND_HANDLER_ID: self._console_command_emergency_stop,
             STOP_COMMAND_HANDLER_ID: partial(run_controls.stop_command, self),
             RESEARCH_COMMAND_HANDLER_ID: self._console_command_research,
+            GOAL_COMMAND_HANDLER_ID: self._console_command_goal,
             HELP_COMMAND_HANDLER_ID: self._console_command_help,
             DOCTOR_COMMAND_HANDLER_ID: self._console_command_doctor,
             CONSOLE_ACTION_COMMAND_HANDLER_ID: self._console_command_run_action,
@@ -19394,6 +19398,17 @@ class ChatScreen(BaseAppScreen):
                 "prefilled sends."
             )
         return
+
+    @property
+    def _goals(self):
+        from ..Console_Modules.goals import build_goals_controller
+
+        if "_goal_ui" not in self.__dict__:
+            self._goal_ui = build_goals_controller(self)
+        return self._goal_ui
+
+    async def _console_command_goal(self, parse: CommandParse) -> None:
+        self._goals.open_setup(objective=parse.args)
 
     async def _console_command_research(self, parse: CommandParse) -> None:
         """``/research <question>``: launch a local deep-research run whose
@@ -20405,6 +20420,8 @@ class ChatScreen(BaseAppScreen):
         self,
         run_id: str | None = None,
         *,
+        conversation_id: str | None = None,
+        review_workspace_roots: tuple[str, ...] | None = None,
         initial_path: str | None = None,
         initial_snapshot_id: int | None = None,
         initial_current_mode: bool = False,
@@ -20432,38 +20449,14 @@ class ChatScreen(BaseAppScreen):
                 whose whole subject is uncommitted work; ``False`` -- and
                 byte-compatible -- for every other caller.
         """
-        provider = self._review_selection._console_change_review_provider()
-        if provider is None:
-            self.app_instance.notify(
-                "Change review needs git and a saved conversation.",
-                severity="warning",
-            )
-            return
-        from tldw_chatbook.UI.Screens.change_review_screen import (
-            ChangeReviewScreen,
-        )
-
-        # TASK-16801 arc B (Task 9): the conversation's LIVE workspace
-        # roots -- see `_console_change_review_workspace_roots`'s docstring
-        # for why this matters (it is what makes `current` mode reachable
-        # from a fresh conversation with no recorded turns).
-        workspace_roots = (
-            self._review_selection._console_change_review_workspace_roots()
-        )
-
-        # initial_run_id/initial_path/initial_snapshot_id all ride the
-        # constructor: a post-push select_turn/select_file call raced the
-        # screen's own compose (NoMatches) -- caught by the opener wiring
-        # test (TASK-1972 / TASK-18060 Task 3).
-        self.app.push_screen(
-            ChangeReviewScreen(
-                provider,
-                initial_run_id=run_id,
-                initial_path=initial_path,
-                initial_snapshot_id=initial_snapshot_id,
-                workspace_roots=workspace_roots,
-                initial_current_mode=initial_current_mode,
-            )
+        self._review_selection.open_change_review(
+            run_id,
+            push_screen=self.app.push_screen,
+            conversation_id=conversation_id,
+            review_workspace_roots=review_workspace_roots,
+            initial_path=initial_path,
+            initial_snapshot_id=initial_snapshot_id,
+            initial_current_mode=initial_current_mode,
         )
 
     def _open_change_review_current_mode(self) -> None:

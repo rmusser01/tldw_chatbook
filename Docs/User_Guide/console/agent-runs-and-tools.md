@@ -35,6 +35,79 @@ context" rail, the Inspector's status rows, the status chips above the
 composer, and the approval and confirm cards that appear above the
 transcript.
 
+## Goal runs
+
+Enable **F4 Settings → Console behavior → Goal runs**, save, then open
+**Ctrl+P → Console: Goal runs… → New goal**, or type
+`/goal <task description>` in the composer and send it. For example,
+`/goal Fix the failing tests in this project` opens the same setup form with that
+objective filled in. Bare `/goal` opens the form without a supplied objective;
+the slash popup also offers `/goal` completion. Review the launch, then choose
+**Start** to begin. Cancel or a setup refusal keeps your composer draft, and the
+command is never sent as an ordinary chat message. Pasted text keeps the
+composer's existing literal-text behavior.
+
+Goal enablement is independent of fleet wakes. The current conversation supplies the provider/model selection;
+Start creates a dedicated goal conversation and preserves your ordinary draft.
+
+Enter an objective and success criteria, select a ready local project binding,
+optional read-only source bindings, and the allowed tools. The initial surface
+supports local file tools, the existing trusted skill-script executor, and
+connected local MCP tools with a fixed process/configuration identity. Remote
+MCP tools are not selectable in this release. A selection narrows existing
+permission; it never grants skill trust, tool approval, or a wider binding.
+
+For a command-backed check, select a previously trusted local skill and its
+script path. Arguments and checked input paths are JSON arrays. Pass the project
+path explicitly as an argument: the script runs in a temporary working directory.
+Keep the verifier outside the editable project. **Review launch** fixes the
+objective, criteria, review requirement, provider, bindings, tools, arguments,
+verifier hash and input scope before validation waits; **Start** then launches
+those same selections. Failed validation restores editable controls. Every
+iteration receives the selected target and exact verifier invocation, so you do
+not need to duplicate command arguments in the objective. Cancel to revise them. Result review is required
+by default. Turning it off requires at least one configured objective check.
+A passing model report alone cannot satisfy that check.
+
+The status view shows iterations, charged calls/tokens, reserved or unknown
+usage, and the elapsed deadline. Pauses, approvals and waits count toward that
+deadline. **Pause** saves a clean checkpoint when the current work settles;
+**Stop** signals active work and refuses later increments. **Resume** continues
+an eligible saved checkpoint without refilling its allowance. Navigation closes
+the view while the runtime owns execution. Shutdown fences new work and drains
+execution before closing stores. After restart, clean continuation requires
+explicit Resume. An interrupted **Starting** launch instead offers **Retry setup**
+with its saved identity, preventing a second conversation.
+
+Choose an iteration to inspect its exact report, artifact fingerprint and saved
+check output. **Changes** opens that iteration's native run in its goal
+conversation, even when another conversation is foreground. **Review** refreshes
+proof; **Accept result** records quality for the captured checkpoint and artifact.
+It rechecks freshness and refuses stale or missing proof. **Reject result** keeps
+the saved work for revision. A settled review waiting across restart can still be
+reviewed without another model call.
+
+Interrupted execution with uncertain effects uses a separate **Close uncertain**
+action. Closing preserves unknown accounting; it cannot authorize replay or
+remove uncertain evidence. **Remove payloads** is available only for settled
+eligible history and removes private goal reports/evidence while retaining
+accounting tombstones. It is not a general deletion of existing run logs or files.
+
+Selected additional sources are available through the selected `fs_read` and
+`fs_list` tools using absolute paths, under existing tool permissions. Selecting
+a source does not automatically select either tool or grant access. Relative
+paths, `fs_glob`, `fs_grep`, and file writes stay within the primary binding;
+unselected sibling roots remain inaccessible. Source bindings and directory
+identity are checked again after waits and before use. Source files are untrusted
+data; their `AGENTS.md` files are not automatically activated as instructions.
+
+Trusted scripts retain
+the executor's actual authority; a scratch directory is not an operating-system
+sandbox for arbitrary script code. The real CLI qualification for this release
+covers the POSIX skill path. The finite local Qwen endpoint demonstration did not
+successfully use tools and paused safely; it does not certify that model for
+successful goal execution. See the [qualification evidence](../../superpowers/qa/native-goals/task5/README.md).
+
 ## Layout tour — what you see during a run
 
 Each Console tab runs its own agent, and a run keeps going in the background
@@ -46,8 +119,8 @@ a one-time banner spells it out:
 
 The number is your configured cap (default 3). Sending past the cap is
 refused with a message like "2 agents already running (…). Wait for one to
-finish or interrupt it." Runs live only while Console stays open — see
-[Console agent runs are screen-scoped](../index.md#console-agent-runs-are-screen-scoped).
+finish or interrupt it." The app-owned Console runtime keeps admitted work alive across Console navigation;
+shutdown drains it before stores close.
 
 **In the reply row itself** — while the turn works, the unfinished
 `Assistant` row shows a live activity line in place of its (empty) text, so
@@ -574,7 +647,7 @@ draft. Approval is remembered for the exact definition across restarts; saving
 a hook does not approve it. Revoke and **Disable now** apply immediately to
 future launches. Revocation does not terminate a process already running.
 
-Use **F9 Settings → Expert → Hooks** to add, edit, enable, disable, or remove
+Use **F4 Settings → Expert → Hooks** to add, edit, enable, disable, or remove
 hooks. Edits are staged until **Save**; **Revert** reloads the current saved
 configuration under the usual discard confirmation. **Review saved hooks**
 keeps unsaved edits and reviews saved definitions. New hooks start disabled.

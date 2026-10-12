@@ -354,10 +354,10 @@ class ConsoleReviewSelectionController:
         self.annotation_previews: dict[str, tuple[str, ...]] = {}
         self.selection_feedback_inflight = False
 
-    def _console_change_review_provider(self) -> Any | None:
+    def _console_change_review_provider(self, conversation_id=None) -> Any | None:
         """Return the live provider recipe, degrading on missing collaborators."""
         try:
-            conversation_id = self._agent_conversation_id_accessor()
+            conversation_id = conversation_id or self._agent_conversation_id_accessor()
             if not conversation_id:
                 return None
             provider = self._change_review_provider_accessor(conversation_id)
@@ -637,6 +637,54 @@ class ConsoleReviewSelectionController:
         self._notify("Building trace…")
         self._run_worker(
             build_worker, thread=True, exclusive=True, group="trajectory-launch"
+        )
+
+    def open_change_review(
+        self,
+        run_id=None,
+        *,
+        push_screen,
+        conversation_id=None,
+        review_workspace_roots=None,
+        initial_path=None,
+        initial_snapshot_id=None,
+        initial_current_mode=False,
+    ):
+        """Open the exact conversation and workspace through the shared review owner."""
+        provider = self._console_change_review_provider(conversation_id=conversation_id)
+        if provider is None:
+            self._notify(
+                "Change review needs git and a saved conversation.",
+                severity="warning",
+            )
+            return
+        from tldw_chatbook.UI.Screens.change_review_screen import (
+            ChangeReviewScreen,
+        )
+
+        # TASK-16801 arc B (Task 9): the conversation's LIVE workspace
+        # roots -- see `_console_change_review_workspace_roots`'s docstring
+        # for why this matters (it is what makes `current` mode reachable
+        # from a fresh conversation with no recorded turns).
+        workspace_roots = (
+            review_workspace_roots
+            if conversation_id is not None
+            else self._console_change_review_workspace_roots()
+        )
+
+        # initial_run_id/initial_path/initial_snapshot_id all ride the
+        # constructor: a post-push select_turn/select_file call raced the
+        # screen's own compose (NoMatches) -- caught by the opener wiring
+        # test (TASK-1972 / TASK-18060 Task 3).
+        push_screen(
+            ChangeReviewScreen(
+                provider,
+                initial_run_id=run_id,
+                initial_path=initial_path,
+                initial_snapshot_id=initial_snapshot_id,
+                workspace_roots=workspace_roots,
+                initial_current_mode=initial_current_mode,
+            )
         )
 
 

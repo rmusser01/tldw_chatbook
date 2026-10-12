@@ -1,5 +1,28 @@
 # Settings — Saved defaults for providers, appearance, storage, and app behavior.
 
+## Goal policy in Console behavior
+
+**F9 → Console behavior → Goal runs** stages changes with the existing **Save**
+and **Revert** controls. Saving updates the `[agents]` section in the same atomic
+batch as the other Console settings. Named Agents and fleet wake controls keep
+their existing meaning.
+
+| Setting | Initial value |
+|---|---:|
+| Enable goal runs | Off |
+| Goal iterations (`max_goal_generations`) | 3 |
+| Model calls, including helpers (`max_goal_model_calls`) | 32 |
+| Budget tokens (`max_goal_budget_tokens`) | 500000 |
+| Output tokens per call (`max_goal_output_tokens`) | 8192 |
+| Elapsed seconds (`max_goal_wall_seconds`) | 900 |
+
+Limits are finite, nonnegative integers; zero disables admission rather than
+meaning unlimited. Each iteration also has at most 8 model turns, 64 steps and
+240 seconds, narrowed by remaining goal allowance and executor limits. Live
+reductions apply to saved goals; increases cannot exceed their launch snapshots.
+Pauses and waits consume elapsed time. Environment overrides retain precedence.
+See [Goal runs](console/agent-runs-and-tools.md#goal-runs) for launch and review.
+
 ## What this screen is for
 
 Settings edits **saved defaults**. It is not a control room: nothing here starts

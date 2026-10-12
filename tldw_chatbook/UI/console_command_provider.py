@@ -45,6 +45,11 @@ class ConsoleCommandProvider(Provider):
 
         return (
             (
+                "Console: Goal runs…",
+                lambda: screen._goals.open_history(),
+                "Start, inspect, pause or review a finite goal",
+            ),
+            (
                 "Console: Recover agent work…",
                 screen.action_recover_agent_work,
                 "Review recorded agent work in this conversation and selected repository",

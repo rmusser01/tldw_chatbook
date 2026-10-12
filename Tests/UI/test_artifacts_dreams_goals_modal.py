@@ -21,6 +21,8 @@ standalone.
 from __future__ import annotations
 
 import pytest
+
+pytestmark = pytest.mark.bootstrap_profile
 from rich.text import Text
 from textual.app import App
 from textual.widgets import Input, ListView, Static
