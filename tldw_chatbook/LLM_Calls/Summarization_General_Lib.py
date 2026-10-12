@@ -2735,14 +2735,23 @@ _SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
     "llama.cpp": lambda ak, text, cp, temp, sm, st: summarize_with_llama(
         text, cp, ak, temp, sm, st
     ),
+    # TASK-34812: kobold's signature is (input_data, api_key,
+    # custom_prompt_input, system_message, temp, kobold_api_ip, streaming);
+    # the old positional order silently bound system_message=temp,
+    # temp=system_message, the streaming flag onto kobold_api_ip, and left
+    # streaming False.
     "kobold": lambda ak, text, cp, temp, sm, st: summarize_with_kobold(
-        text, ak, cp, temp, sm, st
+        text, ak, cp, sm, temp, streaming=st
     ),
     "ooba": lambda ak, text, cp, temp, sm, st: summarize_with_oobabooga(
         text, ak, cp, sm, temp=temp, streaming=st
     ),
+    # TASK-34812: tabbyapi's signature is (input_data,
+    # custom_prompt_input, system_message, api_key, temp, api_IP,
+    # streaming); the old positional order bound system_message=temp,
+    # api_key=system_message, and temp=streaming.
     "tabbyapi": lambda ak, text, cp, temp, sm, st: summarize_with_tabbyapi(
-        text, cp, temp, sm, st
+        text, cp, sm, ak, temp, streaming=st
     ),
     "vllm": lambda ak, text, cp, temp, sm, st: summarize_with_vllm(
         ak, text, cp, temp, sm, st
@@ -2756,7 +2765,11 @@ _SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
     "custom-openai-api-2": lambda ak, text, cp, temp, sm, st: summarize_with_custom_openai_2(
         ak, text, cp, temp, sm, st
     ),
+    # TASK-34812: ollama's signature is (input_data, custom_prompt,
+    # api_url, api_key, temp, system_message, model, ...); the old
+    # positional call landed the streaming flag on model and api_url on
+    # the slot meant for model.
     "ollama": lambda ak, text, cp, temp, sm, st: summarize_with_ollama(
-        text, cp, None, ak, temp, sm, st
+        text, cp, api_key=ak, temp=temp, system_message=sm, streaming=st
     ),
 }
