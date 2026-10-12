@@ -15474,6 +15474,7 @@ class LibraryScreen(BaseAppScreen):
             "artifacts-all",
             "artifacts-reports",
             "artifacts-chatbooks",
+            "artifacts-dreams",
         }:
             if self._artifacts_controller is None:
                 from ..Library_Modules.library_artifacts_controller import (

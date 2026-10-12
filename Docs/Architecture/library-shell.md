@@ -77,3 +77,15 @@ ADR-013 (`013-library-ingest-ownership-and-job-lifecycle.md`, superseded), ADR-0
 2. The writer-claim must stay one synchronous UI-thread call — a two-call exit path previously stranded jobs behind a stale runner flag.
 3. v2→v3 of the jobs store is a table **rebuild** (SQLite can't alter a CHECK) with an explicit column list.
 4. The ingest store runs with `isolation_level = None`; `transaction()`'s explicit BEGIN is the only transaction owner.
+
+### Dreams artifacts
+
+Library's Artifacts → Dreams row uses the existing artifact controller and
+composite catalog. The local Dreams owner supplies bounded story, tracked-watch
+and empty-collection metadata windows through `Library/dreams_artifact_snapshot.py`.
+One read snapshot covers count/rank/candidate queries; selected bodies and
+persisted degradation notes are read on demand. Library's finite service worker
+includes lazy owner construction, retaining borrowed handles. The existing
+Dreams story/goals modals retain writes and capability-specific actions, with
+captured profile/owner getters and a refresh deferred until modal return.
+ADR-196 extends the ADR-172 fixed composite; no aggregate store or schema is added.

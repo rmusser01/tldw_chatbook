@@ -182,25 +182,24 @@ the defaults:
 
 ## Where the stories live
 
-Dreams stories surface on the **[Artifacts](artifacts.md)** screen
-(**Ctrl+6**) as rows of the **Dreams** type — one per story, plus a
-status row for a cycle that failed outright. Selecting a row opens the
-story detail: title, source URL, body, and a "what we'll look for" preview
-of the next cycle's queries.
+Open **Library → Artifacts → Dreams**. The **Ctrl+6** Artifacts shortcut
+also opens Library. Dreams lists stories, tracked watches and status rows for
+collections with no stories. Pages contain at most twenty items; use search,
+sort and First/Prev/Next/Last to reach older results. All artifacts also includes
+Dreams while the feature is enabled.
 
-Known limitation: the Artifacts screen has since been folded into
-Library, and at the moment the app's own navigation may not lead to this
-list. Stories are still written and kept; until that is fixed, they —
-and the actions below, which all start from an open story — may not be
-reachable.
+Select a story to read it, then choose **Story actions…** for its existing
+actions and next-cycle fallback-query preview. **Goals & privacy…** opens the
+goals editor even when there are no stories. A partial collection's saved
+explanation appears as a literal **Collection notice** above the story body;
+**Details** includes its date and status. Normal collections add no notice.
 
 ## The actions
 
 From an open story you can:
 
 - **Dive deeper (d)** — stage the story into Chat and dismiss.
-- **Keep (k)** — mark the story. A kept story is listed first among its
-  day's stories, and keeping it counts as a positive signal. Dreams never
+- **Keep (k)** — mark the story. The Library row shows its Kept label, and keeping it counts as a positive signal. Dreams never
   deletes stories, kept or not.
 - **Export (e)** — write a Markdown stub to `~/Documents/tldw_exports/dreams`.
 - **Ingest (i)** — submit the story's URL to your read-it-later capture
@@ -277,9 +276,9 @@ track its story again; no second watch is added.
 the story's discovery query is re-run as a search on the check cadence,
 and one judge call decides whether the results materially changed — an
 unchanged digest never spends the judge. A changed verdict surfaces as a
-row in the **Tracked** group above the Dreams rows; selecting a Tracked
-row opens the story it came from (or a summary notice, when its origin
-story is gone). Both kinds of watch retire the same way (see below).
+a **Tracked** row in Library → Artifacts → Dreams. Select it to read the
+latest saved verdict in **Details**, then use **Story actions…** for its origin
+story. A missing origin leaves the tracking status readable without story actions. Both kinds of watch retire the same way (see below).
 
 Tracked watches retire on their own: an event-dated watch retires one
 day after its event has passed, and any watch that comes back unchanged
@@ -309,9 +308,9 @@ watch is checked more often than once per
   stays counted — at most one search and one model call each time.
 - When a cycle stops short of its plan — the search budget was used up
   by other Dreams work part-way, no model call was left for a story, a
-  source failed — it records why with that day's collection. Nothing in
-  the app shows those notes yet; they are kept in the Dreams database
-  (the `degradation_notes` column of `dreams_collections`).
+  source failed — it records why with that day's collection. Read the
+  **Collection notice** in Library → Artifacts → Dreams. A halted run that
+  removed its empty collection has no saved collection notice to display.
 - What the model is sent: for query synthesis, your topic names, the
   text of every searchable goal together with its query angle, and the
   region; for a story, the candidate's title/snippet/URL, your topic

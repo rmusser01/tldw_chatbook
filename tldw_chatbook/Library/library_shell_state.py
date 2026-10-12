@@ -31,6 +31,7 @@ LIBRARY_ROW_BROWSE_COLLECTIONS = "browse-collections"
 LIBRARY_ROW_ARTIFACTS_ALL = "artifacts-all"
 LIBRARY_ROW_ARTIFACTS_REPORTS = "artifacts-reports"
 LIBRARY_ROW_ARTIFACTS_CHATBOOKS = "artifacts-chatbooks"
+LIBRARY_ROW_ARTIFACTS_DREAMS = "artifacts-dreams"
 LIBRARY_ROW_CREATE_NOTE = "create-note"
 LIBRARY_CANVAS_KIND_NOTES_CREATE = "notes-create"
 # The three Study staging (handoff) rows -- consumers that need "is this a
@@ -622,6 +623,13 @@ def build_library_shell_state(
             title="Reports",
             target_kind="canvas",
             target_id=LIBRARY_ROW_ARTIFACTS_REPORTS,
+        ),
+        LibraryRailRow(
+            row_id=LIBRARY_ROW_ARTIFACTS_DREAMS,
+            section_id="artifacts",
+            title="Dreams",
+            target_kind="canvas",
+            target_id=LIBRARY_ROW_ARTIFACTS_DREAMS,
         ),
     )
 

@@ -576,6 +576,7 @@ def test_artifact_routes_remain_local(runtime_source):
         ("artifacts-all", "All artifacts", "canvas", "artifacts-all"),
         ("artifacts-chatbooks", "Chatbooks", "canvas", "artifacts-chatbooks"),
         ("artifacts-reports", "Reports", "canvas", "artifacts-reports"),
+        ("artifacts-dreams", "Dreams", "canvas", "artifacts-dreams"),
     ]
     assert not section.rows[0].disabled
     assert shell.canvas_kind == "artifacts-reports"

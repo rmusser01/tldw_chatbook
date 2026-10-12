@@ -416,6 +416,7 @@ LIBRARY_NAV_MODE_TO_ROW_ID = {
     "artifacts-all": "artifacts-all",
     "artifacts-reports": "artifacts-reports",
     "artifacts-chatbooks": "artifacts-chatbooks",
+    "artifacts-dreams": "artifacts-dreams",
     "conversations": LIBRARY_ROW_BROWSE_CONVERSATIONS,
     "collections": LIBRARY_ROW_BROWSE_COLLECTIONS,
     "search": LIBRARY_ROW_BROWSE_SEARCH,
