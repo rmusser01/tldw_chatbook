@@ -3317,6 +3317,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 compact=True,
             )
             yield Button(
+                "Download source",
+                id="library-note-context-export-source",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
+                "Export note",
+                id="library-note-context-export-portable",
+                classes="library-canvas-action",
+                compact=True,
+            )
+            yield Button(
                 "Export Markdown",
                 id="library-note-context-export-md",
                 classes="library-canvas-action",
@@ -3394,6 +3406,18 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             wide_actions = Horizontal(classes="ds-toolbar")
             wide_actions.add_class("h-auto")
             with wide_actions:
+                yield Button(
+                    "Download source",
+                    id="library-note-export-source",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
+                yield Button(
+                    "Export note",
+                    id="library-note-export-portable",
+                    classes="library-canvas-action",
+                    compact=True,
+                )
                 yield Button(
                     "Export Markdown",
                     id="library-note-export-md",
@@ -3891,11 +3915,15 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             "#library-note-preview",
             "#library-note-context",
             "#library-note-use-in-console",
+            "#library-note-export-source",
+            "#library-note-export-portable",
             "#library-note-export-md",
             "#library-note-export-txt",
             "#library-note-copy",
             "#library-note-delete",
             "#library-note-context-use-in-console",
+            "#library-note-context-export-source",
+            "#library-note-context-export-portable",
             "#library-note-context-export-md",
             "#library-note-context-export-txt",
             "#library-note-context-copy",
@@ -3906,10 +3934,14 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             )
         for selector in (
             "#library-note-use-in-console",
+            "#library-note-export-source",
+            "#library-note-export-portable",
             "#library-note-export-md",
             "#library-note-export-txt",
             "#library-note-copy",
             "#library-note-context-use-in-console",
+            "#library-note-context-export-source",
+            "#library-note-context-export-portable",
             "#library-note-context-export-md",
             "#library-note-context-export-txt",
             "#library-note-context-copy",

@@ -4427,9 +4427,9 @@ class LibraryNotesController:
         Mirrors the retired standalone Notes screen's export dialog flow --
         a ``FileSave`` prompt pre-filled with a sanitized default filename,
         whose callback writes the built export content once a path is
-        chosen. The export reads the *live* editor widgets (via
-        ``_read_library_note_editor_fields``), never the DB, so unlike
-        Save there is nothing to flush first.
+        chosen. The export captures the canonical coordinator snapshot,
+        including retained source behind native representation fences.
+        Source and language travel together; there is nothing to flush first.
 
         Note: the real ``Third_Party.textual_fspicker.FileSave`` dialog
         only accepts ``location``/``title``/``default_file`` (not the
@@ -4440,8 +4440,10 @@ class LibraryNotesController:
         Args:
             export_format: ``"markdown"`` for the frontmatter export
                 (Export .md), or ``"text"`` for the plain-text export
-                (Export .txt).
+                (Export .txt); "source" downloads the exact body and "portable"
+                exports its existing versioned envelope.
         """
+
         if self._library_notes_view != "editor" or not self._selected_note_id:
             return
         fields = self._read_library_note_editor_fields()
@@ -4452,6 +4454,7 @@ class LibraryNotesController:
             return
         title, content, keywords_text = fields
         note_id = self._selected_note_id
+        content_language = self._library_note_session.snapshot.draft.content_language
         safe_title = (
             "".join(
                 char
@@ -4460,12 +4463,26 @@ class LibraryNotesController:
             ).rstrip()
             or "note"
         )
-        default_filename = f"{safe_title}.{'md' if export_format == 'markdown' else 'txt'}"
-        dialog_title = (
-            "Export Note as Markdown"
-            if export_format == "markdown"
-            else "Export Note as Text"
-        )
+        extension = {
+            "text": "txt",
+            "markdown": "md",
+            "yaml": "yaml",
+            "json": "json",
+            "jsonl": "jsonl",
+        }.get(content_language, "txt")
+        suffix = {
+            "markdown": "md",
+            "text": "txt",
+            "portable": "note.json",
+            "source": extension,
+        }[export_format]
+        default_filename = f"{safe_title}.{suffix}"
+        dialog_title = {
+            "markdown": "Export Note as Markdown",
+            "text": "Export Note as Text",
+            "source": "Download source",
+            "portable": "Export note",
+        }[export_format]
         from .library_file_export import library_export_picker_location  # lazy, TASK-34000.3
 
         await self.app.push_screen(
@@ -4483,8 +4500,24 @@ class LibraryNotesController:
                 keywords_text,
                 note_id,
                 operation,
+                content_language=content_language,
             ),
         )
+
+    @on(Button.Pressed, "#library-note-context-export-source")
+    @on(Button.Pressed, "#library-note-export-source")
+    async def handle_library_note_download_source(self, event: Button.Pressed) -> None:
+        """Download captured canonical source without document conversion."""
+        event.stop()
+        await self._export_library_note("source")
+
+    @on(Button.Pressed, "#library-note-context-export-portable")
+    @on(Button.Pressed, "#library-note-export-portable")
+    async def handle_library_note_export_portable(self, event: Button.Pressed) -> None:
+        """Export the captured source and language in the reviewed envelope."""
+        event.stop()
+        await self._export_library_note("portable")
+
     @on(Button.Pressed, "#library-note-context-export-md")
     @on(Button.Pressed, "#library-note-export-md")
     async def handle_library_note_export_markdown(self, event: Button.Pressed) -> None:

@@ -350,6 +350,8 @@ def export_library_note_file(
     keywords_text: str,
     note_id: str,
     operation: Any,
+    *,
+    content_language: str | None = None,
 ) -> None:
     """Write (after a replace check) the note export ``LibraryScreen`` validated.
 
@@ -378,7 +380,8 @@ def export_library_note_file(
             write_export_text(
                 target,
                 build_note_export_content(
-                    title, content, keywords_text, note_id, export_format
+                    title, content, keywords_text, note_id, export_format,
+                    content_language=content_language,
                 ),
                 overwrite=overwrite,
             )

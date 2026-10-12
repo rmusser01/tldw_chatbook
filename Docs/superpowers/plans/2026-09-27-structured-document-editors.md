@@ -126,7 +126,7 @@ same-key control so a bridge that refuses every format cannot pass.
 
 **Dependencies:** F6, I2, I3.
 **Files C:** modify `tldw_chatbook/Widgets/Library/library_notes_canvas.py`, `tldw_chatbook/UI/Library_Modules/library_notes_controller.py`; add `Docs/User_Guide/structured-document-editing.md`, `Tests/UI/test_structured_note_export_actions.py`.
-**Files U:** modify `src/components/Notes/NotesEditorHeader.tsx`, `hooks/useNotesExport.tsx`; add `src/components/Notes/__tests__/NotesEditorHeader.structured-export.test.tsx`. Add corresponding server user-guide documentation in `S/Docs/User_Guide/structured-document-editing.md` under a server task.
+**Files U:** modify `src/components/Notes/NotesEditorHeader.tsx`, `hooks/useNotesExport.tsx`; add `src/components/Notes/__tests__/NotesEditorHeader.structured-export.test.tsx`. Add corresponding server user-guide documentation in `S/Docs/User_Guides/WebUI_Extension/Notes_Structured_Source.md` under a server task.
 **Interfaces:** F6 `buildStructuredSource` and `buildPortableNote`; C export controller invokes the equivalent existing archive/raw-export boundaries without adding formatting to either path.
 
 - [ ] Add action tests asserting Download source produces exactly `{"x":9007199254740993}\n` for a JSON note while Export note produces an envelope containing that exact string and language.

@@ -21658,6 +21658,8 @@ class LibraryScreen(BaseAppScreen):
         keywords_text: str,
         note_id: str,
         operation: LibraryNotesOperationState | None = None,
+        *,
+        content_language: str | None = None,
     ) -> None:
         """Write the exported note content to the path chosen via ``FileSave``.
 
@@ -21728,10 +21730,21 @@ class LibraryScreen(BaseAppScreen):
             keywords_text,
             note_id,
             active_operation,
+            content_language=content_language,
         )
 
-    @on(Button.Pressed, "#library-note-context-export-md")
-    @on(Button.Pressed, "#library-note-export-md")
+    @on(Button.Pressed, "#library-note-context-export-source")
+    @on(Button.Pressed, "#library-note-export-source")
+    async def handle_library_note_download_source(self, event: Button.Pressed) -> None:
+        return await self._notes_controller.handle_library_note_download_source(event)
+
+    @on(Button.Pressed, "#library-note-context-export-portable")
+    @on(Button.Pressed, "#library-note-export-portable")
+    async def handle_library_note_export_portable(self, event: Button.Pressed) -> None:
+        return await self._notes_controller.handle_library_note_export_portable(event)
+
+    @on(Button.Pressed, '#library-note-context-export-md')
+    @on(Button.Pressed, '#library-note-export-md')
     async def handle_library_note_export_markdown(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_note_export_markdown(event)
 
