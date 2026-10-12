@@ -35,7 +35,7 @@ ConfigCrypto.encrypt_value/decrypt_value run scrypt per value with a fresh rando
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Memoized scrypt via bounded lru_cache on (password,salt,N); lifecycle clears wired into config.py; ADR-212; 43+58 targeted tests green
+Memoized scrypt via bounded lru_cache on (password,salt,N); lifecycle clears wired into config.py; ADR-228; 43+58 targeted tests green
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
@@ -57,7 +57,7 @@ Memoized scrypt via bounded lru_cache on (password,salt,N); lifecycle clears wir
   keys derived under an old password do not survive a password change. Encrypt keeps its
   fresh random salt per value (no format change); decrypt-after-encrypt and all repeat
   decrypt cycles (the save pipeline's ~3N scrypt per save) now hit the memo.
-- ADR: `backlog/decisions/212-config-encryption-derived-key-memoization.md` (in-memory
+- ADR: `backlog/decisions/228-config-encryption-derived-key-memoization.md` (in-memory
   key retention tradeoff, alternatives incl. deferred master-key v3 format, no-new-oracle reasoning).
 - Tests: `Tests/Utils/test_config_encryption.py::TestDerivedKeyMemoization` (5 tests,
   call-counted scrypt across round-trips, clears, v1/v2 separation); full file 43 passed;

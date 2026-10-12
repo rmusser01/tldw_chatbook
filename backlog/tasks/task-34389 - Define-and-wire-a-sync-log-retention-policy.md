@@ -23,7 +23,7 @@ sync_log triggers embed a second full copy of every message/media body (ChaChaNo
 ## Implementation Plan
 
 <!-- SECTION:IMPLEMENTATION_PLAN:BEGIN -->
-ADR: yes — [ADR-213: Time-based retention window for the local sync journals](../decisions/213-sync-log-retention-policy.md) (retention/deletion policy over user data; records the 90-day default window, the age-based prune scope, and the explicit deferral of payload slimming pending a consumer audit).
+ADR: yes — [ADR-229: Time-based retention window for the local sync journals](../decisions/229-sync-log-retention-policy.md) (retention/deletion policy over user data; records the 90-day default window, the age-based prune scope, and the explicit deferral of payload slimming pending a consumer audit).
 
 1. Add `[sync] sync_log_retention_days = 90` to the default config TOML and project the section through `load_settings`.
 2. Add `delete_sync_log_entries_older_than(cutoff)` to `ChaChaNotes_DB` and `Client_Media_DB_v2` (one parameterized DELETE over the indexed `timestamp` column).

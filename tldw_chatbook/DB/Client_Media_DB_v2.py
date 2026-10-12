@@ -3727,7 +3727,7 @@ class MediaDatabase:
         """
         Deletes sync log entries whose timestamp predates a cutoff.
 
-        Time-based retention (task-34389, ADR-213): parity with
+        Time-based retention (task-34389, ADR-229): parity with
         ``ChaChaNotes_DB.delete_sync_log_entries_older_than``. One
         parameterized ``DELETE`` over the indexed ``timestamp`` column, so a
         media/chunk sync event older than the configured window leaves the

@@ -1409,6 +1409,26 @@ def create_default_session(
     return create_pooled_default_session(timeout=timeout)
 
 
+def create_owned_default_session(
+    *, timeout: float | tuple[float, float] | None = None
+) -> DefaultTimeoutSession:
+    """Build a PRIVATE default-timeout session the caller owns.
+
+    Unlike :func:`create_default_session` (shared, pooled, closed by nobody),
+    the returned session is not pooled: the caller may mutate session-level
+    state (``trust_env``, cookies, headers) and must close it. Intended for
+    seams that transfer session ownership elsewhere -- e.g. the guarded
+    recovery ``_Operation`` in ``LLM_Calls``, which closes the session at
+    operation end and (recovered mode) sets ``trust_env = False``
+    (ADR-222 §5).
+    """
+    from .tls_trust import requests_verify
+
+    session = DefaultTimeoutSession(default_timeout=timeout)
+    session.verify = requests_verify()
+    return session
+
+
 # TASK-34387: process-wide pool of shared sessions so HTTP keep-alive actually
 # happens (each call used to pay a fresh DNS+TCP+TLS handshake to the same
 # provider host). Keyed on every dimension that changes wire behavior: the
@@ -1425,8 +1445,9 @@ class PooledDefaultTimeoutSession(DefaultTimeoutSession):
 
     Context-manager exit and ``close()`` do not close the session: the pool
     owns its lifetime so pooled connections survive between requests, and a
-    caller that closes "its" session cannot break other sharers. Use
-    :func:`close_pooled_default_sessions` (tests/shutdown) to release them.
+    caller that closes "its" session cannot break other sharers.
+    :func:`close_pooled_default_sessions` exists for tests and any future
+    explicit shutdown wiring; nothing calls it in production today.
     """
 
     def __exit__(self, *exc_info: Any) -> bool:

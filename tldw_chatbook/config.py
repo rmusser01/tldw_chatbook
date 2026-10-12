@@ -2339,7 +2339,7 @@ def _load_settings_uncached(
     # the ingest template resolution order (``[chunking] default_template``).
     # Distinct from the legacy CamelCase "Chunking" server section above.
     final_chunking_settings_cli = get_toml_section("chunking")
-    # (task-34389, ADR-213) The [sync] table -- the sync-journal retention
+    # (task-34389, ADR-229) The [sync] table -- the sync-journal retention
     # window the startup maintenance pass reads.
     final_sync_settings_cli = get_toml_section("sync")
     final_image_generation_settings_cli = get_toml_section("image_generation")
@@ -2740,7 +2740,7 @@ def _load_settings_uncached(
         "appearance": copy.deepcopy(toml_config_data.get("appearance", {})),
         "notes": final_notes_settings_cli,  # For notes auto-save settings
         "chunking": final_chunking_settings_cli,  # Template default for ingest (§9.1)
-        "sync": final_sync_settings_cli,  # Sync-journal retention (task-34389, ADR-213)
+        "sync": final_sync_settings_cli,  # Sync-journal retention (task-34389, ADR-229)
         "console": final_console_settings_cli,  # For Console behavior settings
         "first_run": final_first_run_settings_cli,  # Wizard setup_started/setup_completed flags
         "hooks": final_hooks_settings_cli,  # Raw [hooks] table for Agents/run_hooks.py (Console run hooks)
@@ -6002,7 +6002,7 @@ default_template = ""
 # pruned rows is logged. Rows within the window are never touched, so sync
 # consumers reading by change_id cursor still see every unpruned change.
 # Set 0 (or any negative number) to disable pruning entirely.
-# (TASK-34389; ADR-213.)
+# (TASK-34389; ADR-229.)
 sync_log_retention_days = 90
 
 

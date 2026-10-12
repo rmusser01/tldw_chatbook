@@ -1,4 +1,4 @@
-"""Time-based ``sync_log`` retention (task-34389, ADR-213).
+"""Time-based ``sync_log`` retention (task-34389, ADR-229).
 
 The reachability retention from task-19564 bounds ``sync_log`` to the rows
 its readers can reach, but the frontier rows of live entities still live

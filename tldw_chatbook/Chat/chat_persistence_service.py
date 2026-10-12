@@ -1,3 +1,4 @@
+import base64
 import json
 import sqlite3
 import threading
@@ -4284,6 +4285,20 @@ class ChatPersistenceService:
         conversation_id: str,
         chatbot_history: List[Dict[str, Any]],
     ) -> int:
+        """Persist (resave) a full conversation history.
+
+        Recomputes each message's payload from ``chatbot_history`` — text
+        parts plus ``data:`` URI images decoded to bytes — then updates the
+        matching existing rows in place (variant closure included) without
+        re-reading rows already held in memory.
+
+        Args:
+            conversation_id: The conversation whose messages are resaved.
+            chatbot_history: The full message list, in conversation order.
+
+        Returns:
+            The number of messages updated.
+        """
         existing_messages = self.db.get_messages_for_conversation(
             conversation_id,
             limit=10000,
@@ -4420,6 +4435,11 @@ class ChatPersistenceService:
     def _extract_message_payload(
         message_obj: Dict[str, Any],
     ) -> Tuple[str, Optional[bytes], Optional[str]]:
+        """Flatten one history message into (text, image_bytes, image_mime).
+
+        ``data:`` URI image parts are base64-decoded; anything malformed
+        degrades to an inline error placeholder rather than raising.
+        """
         text_content_parts: List[str] = []
         image_data_bytes: Optional[bytes] = None
         image_mime_type_str: Optional[str] = None

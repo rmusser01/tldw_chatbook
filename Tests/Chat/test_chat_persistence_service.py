@@ -3383,3 +3383,40 @@ def test_save_history_resaves_repeated_id_against_bumped_version(
 
     messages = db_instance.get_messages_for_conversation(conversation_id)
     assert [message["content"] for message in messages] == ["Second pass"]
+
+
+class TestDataUriImageRoundTrip:
+    """task-34387 review I1: a `data:` URI image in a resaved history must
+    decode to real bytes (this regressed when `base64` went unimported and
+    the decode failure was swallowed into a placeholder)."""
+
+    def test_data_uri_image_decodes_to_bytes(
+        self, db_instance: CharactersRAGDB
+    ) -> None:
+        import base64 as b64
+
+        service = ChatPersistenceService(db_instance)
+        conversation_id = service.create_conversation(
+            assistant_kind="generic", assistant_id="console"
+        )
+        raw = b"\x89PNG\r\n\x1a\nfakepng"
+        data_uri = "data:image/png;base64," + b64.b64encode(raw).decode("ascii")
+        history = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "see attachment"},
+                    {"type": "image_url", "image_url": {"url": data_uri}},
+                ],
+            }
+        ]
+        service.save_history(
+            conversation_id=conversation_id, chatbot_history=history
+        )
+        messages = service.db.get_messages_for_conversation(
+            conversation_id, limit=10
+        )
+        stored = messages[0]
+        assert stored["image_data"] == raw
+        assert stored["image_mime_type"] == "image/png"
+        assert "Failed to decode" not in stored["content"]

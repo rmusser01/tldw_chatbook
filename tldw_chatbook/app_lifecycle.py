@@ -1720,7 +1720,7 @@ class LifecycleMixin:
                 )
                 return
             if retention_days <= 0:
-                return  # Documented off-switch (ADR-213).
+                return  # Documented off-switch (ADR-229).
             from datetime import datetime, timedelta, timezone
 
             cutoff = (

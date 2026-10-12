@@ -1,4 +1,4 @@
-# ADR-213: Time-based retention window for the local sync journals
+# ADR-229: Time-based retention window for the local sync journals
 
 Date: 2026-10-11
 Status: Accepted

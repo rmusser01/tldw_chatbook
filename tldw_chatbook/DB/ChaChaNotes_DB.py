@@ -21701,7 +21701,7 @@ DELETE FROM keywords
     def delete_sync_log_entries_older_than(self, cutoff_timestamp: str) -> int:
         """Delete ``sync_log`` rows whose ``timestamp`` predates a cutoff.
 
-        Time-based retention (task-34389, ADR-213): the companion to
+        Time-based retention (task-34389, ADR-229): the companion to
         :meth:`prune_sync_log`, which bounds the log by REACHABILITY. This
         method bounds it by AGE -- one parameterized ``DELETE`` over the
         indexed ``timestamp`` column, so a journal row older than the

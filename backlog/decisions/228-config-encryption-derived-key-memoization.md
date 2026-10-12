@@ -1,4 +1,4 @@
-# ADR-212: Memoize scrypt-derived config-encryption keys in process memory
+# ADR-228: Memoize scrypt-derived config-encryption keys in process memory
 
 Date: 2026-10-11
 Status: Accepted
