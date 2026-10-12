@@ -112,6 +112,7 @@ from .agent_models import (
     ToolLoadSelection,
     ToolResult,
     ToolReviewValue,
+    ToolCatalogEntry,
     ToolSchema,
     clamp_child_budget,
     contain_child_budget,
@@ -784,6 +785,8 @@ def build_first_request_schema_plan(
     spawn_override_targets: tuple[tuple[str, tuple[str, ...]], ...] = (),
     context_window: object | None = None,
     plain_system_prompt: str | None = None,
+    catalog_entries: tuple[ToolCatalogEntry, ...] | None = None,
+    schema_loader: Callable[[str], ToolSchema] | None = None,
 ) -> FirstRequestSchemaPlan:
     """Choose direct disclosure only when schema share and request both fit.
 
@@ -820,6 +823,9 @@ def build_first_request_schema_plan(
             see ``first_request_window``) instead of the static catalog limit.
         plain_system_prompt: Prompt sent when no tool is disclosed, so a
             tool-less request carries no instructions for an absent protocol.
+        catalog_entries: Optional disposable catalog metadata for inspection.
+        schema_loader: Read-only loader for that metadata; grants no execution
+            or registration authority.
 
     Returns:
         A frozen schema plan whose ``request_fits`` flag proves whether any
@@ -831,7 +837,11 @@ def build_first_request_schema_plan(
 
     def _deferred_names() -> tuple[str, ...]:
         try:
-            entries = registry.list_catalog()
+            entries = (
+                catalog_entries
+                if catalog_entries is not None
+                else registry.list_catalog()
+            )
         except Exception:  # noqa: BLE001 -- an unreadable catalog lists nothing
             return ()
         allowed = frozenset(allowed_tools)
@@ -1031,6 +1041,8 @@ def build_first_request_schema_plan(
                 native_tools=config.native_tools,
                 reasoning_replay=config.reasoning_replay,
             ),
+            catalog_entries=catalog_entries,
+            schema_loader=schema_loader,
         )
         if active is None:
             return settle(validated_fallback(context_limit))

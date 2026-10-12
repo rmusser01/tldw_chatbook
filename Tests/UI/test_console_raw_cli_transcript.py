@@ -12,6 +12,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+
+from Tests.Chat.test_console_agent_bridge import (  # noqa: F401 - owned fixture
+    _retire_original_run_databases,
+)
 from textual.app import ComposeResult
 from textual.widgets import Button, Static
 
@@ -60,6 +64,7 @@ def _presentation(**changes: object) -> RawCliPresentation:
     return RawCliPresentation(**(values | changes))  # type: ignore[arg-type]
 
 
+@pytest.mark.bootstrap_profile
 def test_raw_cli_presentation_is_frozen_and_strictly_bounded() -> None:
     """The marker carries data, never callbacks or unbounded free-form state."""
     presentation_type = getattr(console_chat_models, "RawCliPresentation", None)
@@ -129,6 +134,7 @@ def test_raw_cli_presentation_is_frozen_and_strictly_bounded() -> None:
         _presentation(lifecycle_state="running", started_at_monotonic=None)
 
 
+@pytest.mark.bootstrap_profile
 def test_store_rejects_unbounded_raw_marker_writes_and_trajectory_bypass() -> None:
     store = ConsoleChatStore()
     session = store.create_session(title="raw bounds")
@@ -161,7 +167,7 @@ def test_store_rejects_unbounded_raw_marker_writes_and_trajectory_bypass() -> No
         with pytest.raises(ValueError, match="64 KiB"):
             store.update_tool_marker(session.id, marker.id, **{field: oversized})
 
-    with pytest.raises(ValueError, match="raw CLI presentation"):
+    with pytest.raises(ValueError, match="record_trajectory=False requires a live tool presentation"):
         store.append_message(
             session.id,
             role=ConsoleMessageRole.TOOL,
@@ -170,6 +176,7 @@ def test_store_rejects_unbounded_raw_marker_writes_and_trajectory_bypass() -> No
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_store_updates_one_display_only_raw_marker_without_trajectory() -> None:
     """Streaming replaces a marker snapshot, never a tree or trajectory row."""
     store = ConsoleChatStore()
@@ -262,6 +269,7 @@ def _marker(presentation: RawCliPresentation) -> ConsoleChatMessage:
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_raw_cli_actions_are_bounded_to_one_active_invocation() -> None:
     service = ConsoleMessageActionService()
     running = _marker(_presentation())
@@ -368,6 +376,7 @@ class _PreAdmissionExecutor:
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_runtime_registration_callback_closes_stop_before_admission_race(
     tmp_path: Path,
 ) -> None:
@@ -522,6 +531,7 @@ def _controller_with_store(
     return controller, store, session.id, workers, appended, updated
 
 
+@pytest.mark.bootstrap_profile
 def test_controller_streams_one_stable_marker_and_never_loses_terminal_update(
     tmp_path: Path,
 ) -> None:
@@ -619,6 +629,7 @@ class _RegistrationBlockingRuntime(_StreamingRuntime):
         )
 
 
+@pytest.mark.bootstrap_profile
 def test_marker_stop_before_runtime_admission_cancels_once_and_disables(
     tmp_path: Path,
 ) -> None:
@@ -660,6 +671,7 @@ def test_marker_stop_before_runtime_admission_cancels_once_and_disables(
     assert terminal.raw_cli_presentation.lifecycle_state == "cancelled"
 
 
+@pytest.mark.bootstrap_profile
 def test_stale_running_updates_do_not_regress_stopping_or_terminal(
     tmp_path: Path,
 ) -> None:
@@ -757,6 +769,7 @@ class _ExceptionAfterTruncationRuntime(_StreamingRuntime):
         raise RuntimeError("runtime failed after bounded output")
 
 
+@pytest.mark.bootstrap_profile
 def test_runtime_exception_preserves_stream_truncation_on_failed_marker(
     tmp_path: Path,
 ) -> None:
@@ -777,6 +790,7 @@ def test_runtime_exception_preserves_stream_truncation_on_failed_marker(
     assert "Truncated: Yes" in marker.content
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_raw_cli_projection_coalesces_to_one_worker_with_trailing_refresh() -> (
     None
@@ -853,6 +867,7 @@ async def test_raw_cli_projection_coalesces_to_one_worker_with_trailing_refresh(
     assert failing._raw_cli_projection_dirty is False
 
 
+@pytest.mark.bootstrap_profile
 def test_raw_cli_callbacks_after_session_removal_are_teardown_safe(
     tmp_path: Path,
 ) -> None:
@@ -877,6 +892,7 @@ def test_raw_cli_callbacks_after_session_removal_are_teardown_safe(
     assert store.sessions() == []
 
 
+@pytest.mark.bootstrap_profile
 def test_initial_raw_marker_append_failure_prevents_launch(tmp_path: Path) -> None:
     class Runtime:
         permitted = True
@@ -915,6 +931,7 @@ def test_initial_raw_marker_append_failure_prevents_launch(tmp_path: Path) -> No
     assert runtime.launched is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_chat_screen_routes_only_the_bounded_raw_stop_action() -> None:
     marker = _marker(_presentation())
@@ -955,6 +972,7 @@ async def test_chat_screen_routes_only_the_bounded_raw_stop_action() -> None:
     assert stopped == [marker]
 
 
+@pytest.mark.bootstrap_profile
 def test_raw_cli_status_copy_distinguishes_every_required_terminal_state() -> None:
     status_copy = getattr(assistant_turn_module, "raw_cli_status_copy", None)
     assert status_copy is not None, "raw CLI lifecycle copy helper is missing"
@@ -1037,6 +1055,7 @@ def _rendered_static_text(widget: Any, selector: str) -> str:
     return str(widget.query_one(selector, Static).renderable)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_prelaunch_and_terminal_rows_hold_no_elapsed_timer() -> None:
     app = RawCliTranscriptHarness()
@@ -1078,6 +1097,7 @@ async def test_mounted_prelaunch_and_terminal_rows_hold_no_elapsed_timer() -> No
         assert _rendered_static_text(transcript, header_selector) == before
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_activity_headers_allocate_only_active_elapsed_timer() -> None:
     app = RawCliActivityHeaderHarness()
@@ -1109,6 +1129,7 @@ async def test_activity_headers_allocate_only_active_elapsed_timer() -> None:
         assert running_timer._task is None
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_raw_cli_row_is_literal_focusable_and_lifecycle_complete() -> (
     None

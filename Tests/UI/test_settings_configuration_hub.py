@@ -3,6 +3,7 @@ import threading
 import hashlib
 import inspect
 import logging
+import os
 import re
 import time
 import builtins
@@ -3051,6 +3052,7 @@ async def test_settings_overview_reselect_refreshes_cached_source_rows(
         assert refresh_calls >= 2
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_screen_resume_refreshes_cached_source_rows(monkeypatch):
     refresh_calls = 0
@@ -3286,6 +3288,7 @@ def test_settings_apply_manual_sync_result_includes_conflict_review_summary():
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("button_id", "action", "new_name"),
@@ -12262,6 +12265,7 @@ async def test_settings_advanced_config_save_reports_invalid_env_override(
     assert "unsafe$(touch bad)" not in model.status
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_advanced_config_shows_raw_editor_and_safety_actions():
     app = _build_test_app()
@@ -12281,6 +12285,7 @@ async def test_settings_advanced_config_shows_raw_editor_and_safety_actions():
         assert "Save blocked until the current text validates" in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_advanced_config_keeps_safety_actions_before_raw_editor():
     app = _build_test_app()
@@ -12299,6 +12304,7 @@ async def test_settings_advanced_config_keeps_safety_actions_before_raw_editor()
         assert actions.region.y < editor.region.y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_advanced_config_uses_editor_owned_scroll_region():
     app = _build_test_app()
@@ -12341,6 +12347,7 @@ def test_settings_pane_widths_are_owned_by_stylesheet_not_inline_python():
     assert "min-height: 0;" in card_block
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_advanced_config_blocks_invalid_toml_and_redacts_secret():
     app = _build_test_app()
@@ -12360,6 +12367,7 @@ async def test_settings_advanced_config_blocks_invalid_toml_and_redacts_secret()
         assert "sk-secret-token" not in text
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_advanced_config_blocks_non_mapping_toml_on_save():
     app = _build_test_app()
@@ -12380,13 +12388,13 @@ async def test_settings_advanced_config_blocks_non_mapping_toml_on_save():
         assert not screen._raw_config_model().can_save
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_settings_advanced_config_saves_atomically_with_backup(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     config_path.write_text('[chat_defaults]\nprovider = "OpenAI"\n', encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -12416,17 +12424,17 @@ async def test_settings_advanced_config_saves_atomically_with_backup(
     assert app.app_config["chat_defaults"]["model"] == "llama3"
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_settings_advanced_config_loads_backup_preview_without_saving(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
-    config_path = tmp_path / "config.toml"
-    backup_path = tmp_path / "config.toml.bak"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    backup_path = config_path.with_suffix(".toml.bak")
     current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
     backup_text = '[chat_defaults]\nprovider = "Ollama"\nmodel = "llama3"\n'
     config_path.write_text(current_text, encoding="utf-8")
     backup_path.write_text(backup_text, encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -12471,17 +12479,17 @@ async def test_settings_advanced_config_backup_preview_handles_config_path_error
     assert model.state.text == original
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_settings_advanced_config_load_backup_reports_decode_failure(
-    monkeypatch,
+    request,     monkeypatch,
     tmp_path,
 ):
-    config_path = tmp_path / "config.toml"
-    backup_path = tmp_path / "config.toml.bak"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    backup_path = config_path.with_suffix(".toml.bak")
     current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
     config_path.write_text(current_text, encoding="utf-8")
     backup_path.write_bytes(b"\xff\xfe\xfa")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -12498,6 +12506,7 @@ async def test_settings_advanced_config_load_backup_reports_decode_failure(
         assert screen.query_one("#settings-advanced-save-config").disabled
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
     app = _build_test_app()
@@ -12520,14 +12529,15 @@ async def test_settings_advanced_config_guided_path_buttons_escape_raw_toml():
         assert "Selected category: Providers & Models" in _visible_text(screen)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_settings_advanced_config_new_file_save_reports_no_backup(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     from tldw_chatbook.UI.Screens.settings_advanced_config import AdvancedConfigSettings
 
-    config_path = tmp_path / "new.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    config_path.unlink(missing_ok=True)
     model = AdvancedConfigSettings(lambda: None, lambda loaded: None)
     await model.inspect_current()
     model.edit('[chat_defaults]\nprovider = "Ollama"\n')
@@ -12538,6 +12548,7 @@ async def test_settings_advanced_config_new_file_save_reports_no_backup(
     assert not config_path.with_suffix(".toml.bak").exists()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_settings_mount_triggers_at_most_one_post_mount_recompose():
     """task-290: on_mount used to fire TWO independent thread workers whose
@@ -13961,6 +13972,7 @@ async def test_settings_manual_sync_dialog_readable_fallback_when_counts_unloade
         assert "Loading" not in dialog.message
 
 
+@pytest.mark.bootstrap_profile
 def test_settings_screen_resume_skips_refresh_while_manual_sync_run_in_flight(
     monkeypatch,
 ):
@@ -14059,17 +14071,17 @@ async def test_settings_manual_sync_run_token_guards_stale_worker_finally():
     assert screen._manual_sync_run_in_flight is False
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typing(
-    monkeypatch, tmp_path
+    request, monkeypatch, tmp_path
 ):
     """TASK-19559: retained-session backup completion must preserve live typing."""
-    config_path = tmp_path / "config.toml"
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     current_text = '[chat_defaults]\nprovider = "OpenAI"\n'
     backup_text = '[chat_defaults]\nprovider = "Ollama"\n'
     config_path.write_text(current_text, encoding="utf-8")
     config_path.with_suffix(".toml.bak").write_text(backup_text, encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     started, release = threading.Event(), threading.Event()
     host = DestinationHarness(_build_test_app(), "settings")
     async with host.run_test(size=(180, 50)) as pilot:

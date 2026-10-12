@@ -332,6 +332,7 @@ async def test_a_real_exchange_append_wakes_parked_maintenance(
         await _until(lambda: LegacyTraceNormalizer(db).read_calls(second))
     finally:
         await runtime.dispose()
+        db.close_connection()
 
 
 @pytest.mark.asyncio
@@ -386,6 +387,7 @@ async def test_a_signal_woken_real_pass_opens_only_its_write_transaction(
         await _until(lambda: LegacyTraceNormalizer(db).read_calls(second))
     finally:
         await runtime.dispose()
+        db.close_connection()
 
     assert passes[woken_at] == [True], f"the signal-woken pass opened {passes[woken_at]}"
 
@@ -439,6 +441,7 @@ async def test_a_real_write_landing_mid_pass_flags_the_next_real_pass(
         await _until(lambda: LegacyTraceNormalizer(db).read_calls(second))
     finally:
         await runtime.dispose()
+        db.close_connection()
 
     assert passes[1] == [True], f"the pass after a mid-pass write opened {passes[1]}"
 
@@ -486,3 +489,4 @@ async def test_parked_maintenance_still_collects_once_per_interval(
         await _until(lambda: len(collects) >= 2)
     finally:
         await runtime.dispose()
+        db.close_connection()

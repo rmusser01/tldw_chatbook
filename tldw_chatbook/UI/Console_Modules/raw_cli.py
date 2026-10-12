@@ -394,306 +394,311 @@ class ConsoleRawCliController:
         if db is None:
             refuse_for_persistence_error()
             return
-        try:
-            run_id = db.create_run(
-                conversation_id=durable_conversation_id,
-                agent_kind=LOCAL_COMMAND_AGENT_KIND,
-                task=LOCAL_COMMAND_TASK,
-                assistant_message_id=request.transcript_anchor_id,
-            )
+        from ...DB.base_db import operation_owned_connection
+
+        # The native command callback owns only the connection it acquires.
+        # A pre-existing caller connection remains with its original owner.
+        with operation_owned_connection(db):
             try:
-                db.append_steps(
-                    run_id,
-                    [
-                        {
-                            "index": 0,
-                            "kind": STEP_TOOL_CALL,
-                            "summary": "Local command started",
-                            "tool_name": LOCAL_COMMAND_TOOL_NAME,
-                            "args": {
-                                "command": request.command,
-                                "shell": request.shell,
-                                "cwd": str(request.initial_directory),
-                                "invocation_id": request.invocation_id,
-                            },
-                        }
-                    ],
+                run_id = db.create_run(
+                    conversation_id=durable_conversation_id,
+                    agent_kind=LOCAL_COMMAND_AGENT_KIND,
+                    task=LOCAL_COMMAND_TASK,
+                    assistant_message_id=request.transcript_anchor_id,
                 )
-            except Exception:  # noqa: BLE001 -- terminalize the admitted row
                 try:
-                    db.set_status(run_id, "error")
-                except Exception:  # noqa: BLE001 -- original failure stays local
-                    pass
-                raise
-        except Exception:  # noqa: BLE001 -- never launch without its run row
-            refuse_for_persistence_error()
-            return
-
-        candidate_writer: RunLogWriter | None = None
-        try:
-            root = self._run_log_access()
-            if root is None:
-                raise RuntimeError("local command run-log root unavailable")
-            candidate_writer = RunLogWriter(
-                root=Path(root),
-                dir_name=LOCAL_COMMAND_RUN_LOG_DIR,
-                max_record_bytes=private_record_limit,
-            )
-            candidate_writer.bind(run_id)
-            if not candidate_writer.is_active:
-                raise RuntimeError("local command run-log bind failed")
-            initial_record = candidate_writer.append(
-                run_id=run_id,
-                kind=LOCAL_COMMAND_AGENT_KIND,
-                type=STEP_TOOL_CALL,
-                content=request.command,
-                tool=LOCAL_COMMAND_TOOL_NAME,
-                status="running",
-                call_id=request.invocation_id,
-            )
-            if initial_record is None or not candidate_writer.is_active:
-                raise RuntimeError("local command run-log append failed")
-            writer = candidate_writer
-        except Exception:  # noqa: BLE001 -- DB remains the durable owner
-            report_persistence_error("Raw CLI persistence was incomplete.")
-            if candidate_writer is not None:
-                try:
-                    candidate_writer.close()
-                except Exception:  # noqa: BLE001 -- close was attempted
-                    pass
-
-        def finalize_local_run(result: RawCliResult) -> None:
-            nonlocal finalized
-            if finalized:
+                    db.append_steps(
+                        run_id,
+                        [
+                            {
+                                "index": 0,
+                                "kind": STEP_TOOL_CALL,
+                                "summary": "Local command started",
+                                "tool_name": LOCAL_COMMAND_TOOL_NAME,
+                                "args": {
+                                    "command": request.command,
+                                    "shell": request.shell,
+                                    "cwd": str(request.initial_directory),
+                                    "invocation_id": request.invocation_id,
+                                },
+                            }
+                        ],
+                    )
+                except Exception:  # noqa: BLE001 -- terminalize the admitted row
+                    try:
+                        db.set_status(run_id, "error")
+                    except Exception:  # noqa: BLE001 -- original failure stays local
+                        pass
+                    raise
+            except Exception:  # noqa: BLE001 -- never launch without its run row
+                refuse_for_persistence_error()
                 return
-            finalized = True
-            status = local_command_run_status(result)
-            durable_output, _ = _utf8_prefix(
-                result.record_output,
-                DEFAULT_MAX_RECORD_BYTES,
-            )
-            private_output, _ = _utf8_prefix(
-                result.record_output,
-                private_record_limit,
-            )
-            stdout_preview, _ = _utf8_prefix(
-                result.stdout_preview,
-                MAX_RAW_PREVIEW_BYTES,
-            )
-            remaining = MAX_RAW_PREVIEW_BYTES - len(stdout_preview.encode("utf-8"))
-            stderr_preview, _ = _utf8_prefix(result.stderr_preview, remaining)
-            tool_outcome = (
-                "success"
-                if result.terminal_state == "exited" and result.exit_code == 0
-                else (
-                    "blocked"
-                    if result.terminal_state in {"cancelled", "timed_out"}
-                    else "failed"
-                )
-            )
-            result_step = {
-                "index": 1,
-                "kind": STEP_TOOL_RESULT,
-                "summary": "Local command completed",
-                "tool_name": LOCAL_COMMAND_TOOL_NAME,
-                "result": durable_output,
-                "args": {
-                    "invocation_id": result.invocation_id,
-                    "shell": result.resolved_shell,
-                    "cwd": str(result.initial_directory),
-                    "stdout_preview": stdout_preview,
-                    "stderr_preview": stderr_preview,
-                    "elapsed_seconds": result.elapsed_seconds,
-                    "exit_code": result.exit_code,
-                    "terminal_state": result.terminal_state,
-                    "truncated": result.truncated,
-                    "cleanup_proven": result.cleanup_proven,
-                },
-                "status": status,
-                "tool_outcome": tool_outcome,
-            }
+
+            candidate_writer: RunLogWriter | None = None
             try:
-                db.set_terminal_with_step(run_id, status, None, result_step)
-            except Exception:  # noqa: BLE001 -- display completion must still land
+                root = self._run_log_access()
+                if root is None:
+                    raise RuntimeError("local command run-log root unavailable")
+                candidate_writer = RunLogWriter(
+                    root=Path(root),
+                    dir_name=LOCAL_COMMAND_RUN_LOG_DIR,
+                    max_record_bytes=private_record_limit,
+                )
+                candidate_writer.bind(run_id)
+                if not candidate_writer.is_active:
+                    raise RuntimeError("local command run-log bind failed")
+                initial_record = candidate_writer.append(
+                    run_id=run_id,
+                    kind=LOCAL_COMMAND_AGENT_KIND,
+                    type=STEP_TOOL_CALL,
+                    content=request.command,
+                    tool=LOCAL_COMMAND_TOOL_NAME,
+                    status="running",
+                    call_id=request.invocation_id,
+                )
+                if initial_record is None or not candidate_writer.is_active:
+                    raise RuntimeError("local command run-log append failed")
+                writer = candidate_writer
+            except Exception:  # noqa: BLE001 -- DB remains the durable owner
                 report_persistence_error("Raw CLI persistence was incomplete.")
-            if writer is not None:
-                try:
-                    terminal_record = writer.append(
-                        run_id=run_id,
-                        kind=LOCAL_COMMAND_AGENT_KIND,
-                        type=STEP_TOOL_RESULT,
-                        content=private_output,
-                        tool=LOCAL_COMMAND_TOOL_NAME,
-                        status=status,
-                        call_id=result.invocation_id,
-                    )
-                    if terminal_record is None or not writer.is_active:
-                        report_persistence_error("Raw CLI persistence was incomplete.")
-                except Exception:  # noqa: BLE001 -- best-effort private log
-                    report_persistence_error("Raw CLI persistence was incomplete.")
-                try:
-                    writer.write_manifest(
-                        {
-                            "run_id": run_id,
-                            "agent_kind": LOCAL_COMMAND_AGENT_KIND,
-                            "status": status,
-                        }
-                    )
-                except Exception:  # noqa: BLE001 -- best-effort private log
-                    report_persistence_error("Raw CLI persistence was incomplete.")
-                try:
-                    writer.close()
-                except Exception:  # noqa: BLE001 -- close was attempted
-                    report_persistence_error("Raw CLI persistence was incomplete.")
+                if candidate_writer is not None:
+                    try:
+                        candidate_writer.close()
+                    except Exception:  # noqa: BLE001 -- close was attempted
+                        pass
 
-        started_at: float | None = None
-        stdout = ""
-        stderr = ""
-        stream_truncated = False
-        marker_started = False
-        repaint_lock = threading.Lock()
-        repaint_timer: threading.Timer | None = None
-        pending_repaint: tuple[str, str, bool] | None = None
-        terminal = False
-
-        def flush_repaint() -> None:
-            nonlocal repaint_timer, pending_repaint
-            with repaint_lock:
-                repaint_timer = None
-                if terminal or pending_repaint is None or started_at is None:
+            def finalize_local_run(result: RawCliResult) -> None:
+                nonlocal finalized
+                if finalized:
                     return
-                pending = pending_repaint
-                pending_repaint = None
+                finalized = True
+                status = local_command_run_status(result)
+                durable_output, _ = _utf8_prefix(
+                    result.record_output,
+                    DEFAULT_MAX_RECORD_BYTES,
+                )
+                private_output, _ = _utf8_prefix(
+                    result.record_output,
+                    private_record_limit,
+                )
+                stdout_preview, _ = _utf8_prefix(
+                    result.stdout_preview,
+                    MAX_RAW_PREVIEW_BYTES,
+                )
+                remaining = MAX_RAW_PREVIEW_BYTES - len(stdout_preview.encode("utf-8"))
+                stderr_preview, _ = _utf8_prefix(result.stderr_preview, remaining)
+                tool_outcome = (
+                    "success"
+                    if result.terminal_state == "exited" and result.exit_code == 0
+                    else (
+                        "blocked"
+                        if result.terminal_state in {"cancelled", "timed_out"}
+                        else "failed"
+                    )
+                )
+                result_step = {
+                    "index": 1,
+                    "kind": STEP_TOOL_RESULT,
+                    "summary": "Local command completed",
+                    "tool_name": LOCAL_COMMAND_TOOL_NAME,
+                    "result": durable_output,
+                    "args": {
+                        "invocation_id": result.invocation_id,
+                        "shell": result.resolved_shell,
+                        "cwd": str(result.initial_directory),
+                        "stdout_preview": stdout_preview,
+                        "stderr_preview": stderr_preview,
+                        "elapsed_seconds": result.elapsed_seconds,
+                        "exit_code": result.exit_code,
+                        "terminal_state": result.terminal_state,
+                        "truncated": result.truncated,
+                        "cleanup_proven": result.cleanup_proven,
+                    },
+                    "status": status,
+                    "tool_outcome": tool_outcome,
+                }
+                try:
+                    db.set_terminal_with_step(run_id, status, None, result_step)
+                except Exception:  # noqa: BLE001 -- display completion must still land
+                    report_persistence_error("Raw CLI persistence was incomplete.")
+                if writer is not None:
+                    try:
+                        terminal_record = writer.append(
+                            run_id=run_id,
+                            kind=LOCAL_COMMAND_AGENT_KIND,
+                            type=STEP_TOOL_RESULT,
+                            content=private_output,
+                            tool=LOCAL_COMMAND_TOOL_NAME,
+                            status=status,
+                            call_id=result.invocation_id,
+                        )
+                        if terminal_record is None or not writer.is_active:
+                            report_persistence_error("Raw CLI persistence was incomplete.")
+                    except Exception:  # noqa: BLE001 -- best-effort private log
+                        report_persistence_error("Raw CLI persistence was incomplete.")
+                    try:
+                        writer.write_manifest(
+                            {
+                                "run_id": run_id,
+                                "agent_kind": LOCAL_COMMAND_AGENT_KIND,
+                                "status": status,
+                            }
+                        )
+                    except Exception:  # noqa: BLE001 -- best-effort private log
+                        report_persistence_error("Raw CLI persistence was incomplete.")
+                    try:
+                        writer.close()
+                    except Exception:  # noqa: BLE001 -- close was attempted
+                        report_persistence_error("Raw CLI persistence was incomplete.")
+
+            started_at: float | None = None
+            stdout = ""
+            stderr = ""
+            stream_truncated = False
+            marker_started = False
+            repaint_lock = threading.Lock()
+            repaint_timer: threading.Timer | None = None
+            pending_repaint: tuple[str, str, bool] | None = None
+            terminal = False
+
+            def flush_repaint() -> None:
+                nonlocal repaint_timer, pending_repaint
+                with repaint_lock:
+                    repaint_timer = None
+                    if terminal or pending_repaint is None or started_at is None:
+                        return
+                    pending = pending_repaint
+                    pending_repaint = None
+                    self._marshal_to_ui(
+                        self._update_running_marker,
+                        request,
+                        session_id,
+                        started_at,
+                        *pending,
+                    )
+
+            def cancel_repaint() -> None:
+                nonlocal repaint_timer, pending_repaint, terminal
+                with repaint_lock:
+                    terminal = True
+                    timer = repaint_timer
+                    repaint_timer = None
+                    pending_repaint = None
+                if timer is not None:
+                    timer.cancel()
+
+            def on_registered() -> None:
+                nonlocal marker_started
+                self._marshal_to_ui(
+                    self._append_starting_marker,
+                    request,
+                    session_id,
+                )
+                marker_started = True
+
+            def on_started(timestamp: float) -> None:
+                nonlocal started_at
+                started_at = timestamp
                 self._marshal_to_ui(
                     self._update_running_marker,
                     request,
                     session_id,
-                    started_at,
-                    *pending,
+                    timestamp,
+                    "",
+                    "",
+                    False,
                 )
 
-        def cancel_repaint() -> None:
-            nonlocal repaint_timer, pending_repaint, terminal
-            with repaint_lock:
-                terminal = True
-                timer = repaint_timer
-                repaint_timer = None
-                pending_repaint = None
-            if timer is not None:
-                timer.cancel()
+            def on_event(event: RawCliStreamEvent) -> None:
+                nonlocal stdout, stderr, stream_truncated, repaint_timer
+                nonlocal pending_repaint
+                with repaint_lock:
+                    if terminal:
+                        return
+                    stdout, stderr, clipped = _bounded_stream_append(
+                        stdout,
+                        stderr,
+                        event.stream,
+                        event.text,
+                    )
+                    stream_truncated = stream_truncated or event.truncated or clipped
+                    pending_repaint = (stdout, stderr, stream_truncated)
+                    if repaint_timer is not None:
+                        return
+                    repaint_timer = threading.Timer(
+                        _RAW_CLI_REPAINT_SECONDS,
+                        flush_repaint,
+                    )
+                    repaint_timer.daemon = True
+                    repaint_timer.start()
 
-        def on_registered() -> None:
-            nonlocal marker_started
-            self._marshal_to_ui(
-                self._append_starting_marker,
-                request,
-                session_id,
-            )
-            marker_started = True
-
-        def on_started(timestamp: float) -> None:
-            nonlocal started_at
-            started_at = timestamp
-            self._marshal_to_ui(
-                self._update_running_marker,
-                request,
-                session_id,
-                timestamp,
-                "",
-                "",
-                False,
-            )
-
-        def on_event(event: RawCliStreamEvent) -> None:
-            nonlocal stdout, stderr, stream_truncated, repaint_timer
-            nonlocal pending_repaint
-            with repaint_lock:
-                if terminal:
-                    return
-                stdout, stderr, clipped = _bounded_stream_append(
-                    stdout,
-                    stderr,
-                    event.stream,
-                    event.text,
+            try:
+                result = runtime.execute(
+                    request,
+                    on_event,
+                    on_registered=on_registered,
+                    on_started=on_started,
                 )
-                stream_truncated = stream_truncated or event.truncated or clipped
-                pending_repaint = (stdout, stderr, stream_truncated)
-                if repaint_timer is not None:
-                    return
-                repaint_timer = threading.Timer(
-                    _RAW_CLI_REPAINT_SECONDS,
-                    flush_repaint,
+            except Exception:  # noqa: BLE001 -- runtime already owns diagnostic detail
+                cancel_repaint()
+                failed_result = RawCliResult(
+                    invocation_id=request.invocation_id,
+                    caller=request.caller,
+                    resolved_shell=request.shell,
+                    initial_directory=request.initial_directory,
+                    elapsed_seconds=(
+                        0.0 if started_at is None else max(0.0, monotonic() - started_at)
+                    ),
+                    stdout_preview=stdout,
+                    stderr_preview=stderr,
+                    record_output="",
+                    exit_code=None,
+                    terminal_state="spawn_failed",
+                    truncated=stream_truncated,
+                    cleanup_proven=False,
                 )
-                repaint_timer.daemon = True
-                repaint_timer.start()
-
-        try:
-            result = runtime.execute(
-                request,
-                on_event,
-                on_registered=on_registered,
-                on_started=on_started,
-            )
-        except Exception:  # noqa: BLE001 -- runtime already owns diagnostic detail
+                finalize_local_run(failed_result)
+                if marker_started:
+                    self._marshal_to_ui(
+                        self._fail_running_marker,
+                        request,
+                        session_id,
+                        started_at,
+                        stdout,
+                        stderr,
+                        stream_truncated,
+                    )
+                else:
+                    self._marshal_to_ui(
+                        self._append_execution_error,
+                        session_id,
+                        "Raw CLI execution failed locally.",
+                    )
+                return
             cancel_repaint()
-            failed_result = RawCliResult(
-                invocation_id=request.invocation_id,
-                caller=request.caller,
-                resolved_shell=request.shell,
-                initial_directory=request.initial_directory,
-                elapsed_seconds=(
-                    0.0 if started_at is None else max(0.0, monotonic() - started_at)
-                ),
-                stdout_preview=stdout,
-                stderr_preview=stderr,
-                record_output="",
-                exit_code=None,
-                terminal_state="spawn_failed",
-                truncated=stream_truncated,
-                cleanup_proven=False,
-            )
-            finalize_local_run(failed_result)
+            finalize_local_run(result)
             if marker_started:
                 self._marshal_to_ui(
-                    self._fail_running_marker,
+                    self._finish_marker,
                     request,
                     session_id,
                     started_at,
-                    stdout,
-                    stderr,
-                    stream_truncated,
+                    result,
                 )
-            else:
+            if result.terminal_state == "refused":
                 self._marshal_to_ui(
-                    self._append_execution_error,
+                    self._refuse,
                     session_id,
-                    "Raw CLI execution failed locally.",
+                    stash,
+                    _AUTHORITY_CHANGED_REFUSAL,
                 )
-            return
-        cancel_repaint()
-        finalize_local_run(result)
-        if marker_started:
-            self._marshal_to_ui(
-                self._finish_marker,
-                request,
-                session_id,
-                started_at,
-                result,
-            )
-        if result.terminal_state == "refused":
-            self._marshal_to_ui(
-                self._refuse,
-                session_id,
-                stash,
-                _AUTHORITY_CHANGED_REFUSAL,
-            )
-        elif result.terminal_state == "containment_unavailable":
-            self._marshal_to_ui(
-                self._refuse,
-                session_id,
-                stash,
-                _CONTAINMENT_REFUSAL,
-            )
+            elif result.terminal_state == "containment_unavailable":
+                self._marshal_to_ui(
+                    self._refuse,
+                    session_id,
+                    stash,
+                    _CONTAINMENT_REFUSAL,
+                )
 
     @staticmethod
     def _marker_id(invocation_id: str) -> str:

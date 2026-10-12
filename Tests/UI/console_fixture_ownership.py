@@ -39,6 +39,7 @@ async def owned_console_apps(request, monkeypatch):
             owner = original(*args, **kwargs)
             captured.append(
                 (
+                    owner,
                     owner.console_runtime,
                     [
                         owner.local_library_collections_db,
@@ -54,7 +55,7 @@ async def owned_console_apps(request, monkeypatch):
         return build
 
     def register_database(runtime, database):
-        for captured_runtime, databases, _ in captured:
+        for _, captured_runtime, databases, _ in captured:
             if captured_runtime is runtime:
                 databases.append(database)
                 return
@@ -67,11 +68,24 @@ async def owned_console_apps(request, monkeypatch):
         yield register_database
     finally:
         errors = []
-        for runtime, databases, lock_handle in reversed(captured):
+        for app, runtime, databases, lock_handle in reversed(captured):
             # Join app-owned work before the original file-owner boundary.
             if runtime is not None:
                 try:
-                    await asyncio.wait_for(runtime.dispose(), 5)
+                    from tldw_chatbook.Chat.console_runtime import (
+                        ConsoleRuntime,
+                        dispose_console_runtime,
+                    )
+
+                    # Detach the exact real owner after successful disposal so
+                    # outer app cleanup cannot reopen its already-closed DBs.
+                    dispose = (
+                        dispose_console_runtime(app)
+                        if isinstance(runtime, ConsoleRuntime)
+                        and app.console_runtime is runtime
+                        else runtime.dispose()
+                    )
+                    await asyncio.wait_for(dispose, 5)
                 except BaseException as error:  # noqa: BLE001 - aggregate and rethrow
                     # Undrained work retains its exact file owners. Independent
                     # apps still need retirement, and the error must stay loud.

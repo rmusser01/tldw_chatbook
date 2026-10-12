@@ -3210,9 +3210,13 @@ class ConsoleRuntime:
         if store is None or controller is None:
             return None
         session = next(row for row in store.sessions() if row.id == session_id)
-        values = controller._run_owned_chat_db_operation(
-            controller._hook_authority_values, session_id
-        )
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        registry = getattr(self._app, "workspace_registry_service", None)
+        with operation_owned_connection(getattr(registry, "db", None)):
+            values = controller._run_owned_chat_db_operation(
+                controller._hook_authority_values, session_id
+            )
         return (
             session.workspace_id,
             values["workspace_roots"],

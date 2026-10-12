@@ -251,7 +251,6 @@ CSS_MODULES = [
     # rules now live in _settings_splash_theme.tcss at this same manifest
     # position so cascade order is unchanged.
     "components/_settings_splash_theme.tcss",
-    "components/_settings_personal_context.tcss",
     "components/_profile_interview.tcss",
     # TASK-394: generic, app-wide component styles moved OUT of the splash/theme
     # module. Kept at this manifest position (immediately after it) so the
@@ -272,6 +271,7 @@ CSS_MODULES = [
     "features/_library.tcss",
     "features/_library_panels.tcss",
     "features/_library_artifacts.tcss",
+    "components/_settings_personal_context.tcss",
     "features/_settings.tcss",
     "features/_home.tcss",
     "features/_chat.tcss",
@@ -408,7 +408,7 @@ MODAL_OWNED_SPLIT_SHEETS: dict[str, tuple[str, str]] = {
 #: PR #2281 became moot when the console split was dissolved -- every
 #: console rule but the Delete receipt's rides the boot bundle now -- and
 #: the settings pin moved to the settings split below.)
-SETTINGS_SPLIT_PINNED_TOKENS = frozenset({"settings-input-label"})
+SETTINGS_SPLIT_PINNED_TOKENS = frozenset({"settings-input-label", "personal-context-recovery-dialog"})
 
 _SPLIT_HEADER = """/* ========================================
  * GENERATED FILE - DO NOT EDIT DIRECTLY
@@ -481,12 +481,12 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # composed by Widgets/Persona_Widgets/personas_policy_rules_editor.py,
     # so its rule must ride the boot bundle, not the lazy settings sheet.
     ScreenOwnedSplit(
-        modules=("features/_settings.tcss",),
+        modules=("components/_settings_personal_context.tcss", "features/_settings.tcss"),
         sheets={"settings": "screen_agentic_settings.tcss"},
         # Hook review shares this existing lazy source with canonical Settings;
         # its own modal CSS_PATH loads it when opened from Console first.
         prefixes={
-            "settings": ("settings", "console-hooks", "hook-review", "-wide-viewport")
+            "settings": ("settings", "personal-context", "console-hooks", "hook-review", "-wide-viewport")
         },
         pinned=SETTINGS_SPLIT_PINNED_TOKENS,
     ),

@@ -1877,7 +1877,7 @@ def test_pretooluse_hook_denies_before_permission_store(tmp_path):
 
 
 @pytest.mark.bootstrap_profile
-def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
+def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path, request):
     """Task 6 bridge wiring: run_reply must wrap the caller's review chain
     with the engine's PreToolUse layer when the bridge was built with an
     ``ensure_run_hooks`` accessor.
@@ -1941,6 +1941,7 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
         ]
     )
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+    request.addfinalizer(db.close)
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
