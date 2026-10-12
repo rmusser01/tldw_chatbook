@@ -3662,7 +3662,7 @@ def test_settings_copy_names_the_rail_category_and_the_real_control():
 
     assert "console defaults" not in source.lower()
     assert "Override current Console model" not in source
-    assert guidance["Boundary"].endswith(f"routed to {rail}")
+    assert guidance["Boundary"].endswith(f"are in {rail}")
 
 
 @pytest.mark.asyncio

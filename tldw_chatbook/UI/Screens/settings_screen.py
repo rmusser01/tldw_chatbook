@@ -2427,7 +2427,7 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Boundary",
-            "Sampling and transport defaults are routed to Console Behavior",
+            "Global fallbacks are in Console Behavior",
         ),
     ),
     SettingsCategoryId.SPEECH_TTS: (
