@@ -1,10 +1,13 @@
 ---
 id: TASK-34801
 title: Stories found for a Dreams goal rarely reach the daily collection
-status: To Do
-created_date: 2026-10-12 01:45
+status: In Progress
+assignee: []
+created_date: '2026-10-12 01:45'
+updated_date: '2026-10-12 05:02'
 labels:
-- dreams
+  - dreams
+dependencies: []
 priority: medium
 ---
 
@@ -20,18 +23,26 @@ A Dreams cycle searches for the user's goals as well as topics, and feedback on 
 - [ ] #2 The effect on a mixed profile of topics and goals is measured before and after and recorded
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+Measure actual mixed goal/topic daily selection before and after; apply the smallest goal-result opportunity rule while retaining topic results, private-goal exclusion, generating provenance and shared budgets. Qualify real discovery/cycle story outcomes and required regression membership. Existing ADR196; no new ADR.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
+Source author follow-up admitted into the user-authorized complete PR2921 review/remediation. Historical source description/notes retained. Current integration plan targets frozen updated author6c074d6eed/v6; actual post-Buddy dev and fresh author lease remain required before implementation. No product change or completion claimed.
+<!-- SECTION:NOTES:END -->
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
 <!-- SECTION:FINAL_SUMMARY:END -->
 
-## Definition of Done
-<!-- DOD:BEGIN -->
-<!-- DOD:END -->
+<!-- SECTION:FINAL_SUMMARY:END -->
