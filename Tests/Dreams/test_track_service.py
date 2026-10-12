@@ -5325,17 +5325,26 @@ async def test_a_restored_unmarked_source_is_stamped_by_the_verifying_backfill(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provenance", [None, UrlProvenance.USER_ENTERED],
+    ids=["no-provenance", "user-entered"])
 async def test_the_verifying_backfill_leaves_the_users_own_sources_alone(
-        tmp_path, dreams_db, settings, subs_stack):
+        tmp_path, dreams_db, settings, subs_stack, provenance):
+    """A source the user created is never stamped by the verifying
+    backfill -- whatever provenance it was created with. With none,
+    create_source now stores {"url_provenance": "unknown"} itself (ADR-207);
+    the backfill must leave that alone too, not just the user-entered case
+    (review of #3097, item 2)."""
     from tldw_chatbook.Dreams.track_service import backfill_egress_marks
 
     subs_db, service = subs_stack
     source_id, _attached = await _attach_to_users_source(
-        dreams_db, service, provenance=UrlProvenance.USER_ENTERED)
+        dreams_db, service, provenance=provenance)
+    before = _stored_options(subs_db, source_id)
 
     assert await backfill_egress_marks(service, dreams_db, verify=True) == 0
 
-    assert _stored_options(subs_db, source_id) == {"url_provenance": "user_entered"}
+    assert _stored_options(subs_db, source_id) == before
 
 
 # --- Round 4 nit: a held source is not an active source ---------------------------
