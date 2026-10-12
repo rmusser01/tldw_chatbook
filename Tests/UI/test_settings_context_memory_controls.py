@@ -18,6 +18,8 @@ from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _build_test_app,
+    _wait_for_selector,
+    _wait_for_visible_text,
 )
 from Tests.UI.test_settings_provider_keyboard_journeys import _settle
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
@@ -35,6 +37,10 @@ from tldw_chatbook.UI.Screens.settings_context_memory import (
 )
 from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Utils.token_counter import get_table_model_token_limit
+
+#: How long a gated test waits for the pane a category select composes, or
+#: for a save's result (a timeout costs nothing on a green run).
+_PANE_TIMEOUT = 30.0
 
 
 class StyledSettingsDestinationHarness(DestinationHarness):
@@ -489,12 +495,24 @@ async def test_console_memory_controls_mount_stage_and_fit_narrow_settings(
         await pilot.app.workers.wait_for_complete()
         screen = _active_destination_screen(host)
         screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
-        await pilot.pause()
+        # The pane the select composes, then the focus the jump moves: a
+        # single pause was not always enough under load (gated in the UI lane).
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-console-context-memory-jump",
+            timeout=_PANE_TIMEOUT,
+        )
 
         jump = screen.query_one("#settings-console-context-memory-jump", Button)
         assert "Conversation context and memory" in str(jump.label)
         jump.press()
-        await pilot.pause()
+        await _wait_for_selector(
+            screen,
+            pilot,
+            "#settings-console-context-budget-mode:focus",
+            timeout=_PANE_TIMEOUT,
+        )
         budget_mode = screen.query_one("#settings-console-context-budget-mode", Select)
         assert screen.focused is budget_mode
 
@@ -569,12 +587,16 @@ async def test_console_memory_save_blocks_invalid_trigger_target_pair(request) -
         await pilot.app.workers.wait_for_complete()
         screen = _active_destination_screen(host)
         screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
-        await pilot.pause()
+        await _wait_for_selector(
+            screen, pilot, "#settings-console-behavior-result", timeout=_PANE_TIMEOUT
+        )
 
         screen._stage_console_default_value("compaction_trigger_ratio", 0.80)
         screen._stage_console_default_value("compaction_target_ratio", 0.70)
         screen.action_settings_save_category(allow_text_entry_focus=True)
-        await pilot.pause()
+        await _wait_for_visible_text(
+            screen, pilot, "at least 15 percentage points", timeout=_PANE_TIMEOUT
+        )
 
         result = screen.query_one("#settings-console-behavior-result", Static)
         assert "at least 15 percentage points" in _static_text(result)
@@ -612,7 +634,12 @@ async def test_console_memory_save_routes_normalized_values_to_console_section(
             await pilot.app.workers.wait_for_complete()
             screen = _active_destination_screen(host)
             screen._select_category(SettingsCategoryId.CONSOLE_BEHAVIOR.value)
-            await pilot.pause()
+            await _wait_for_selector(
+                screen,
+                pilot,
+                "#settings-console-context-budget-mode",
+                timeout=_PANE_TIMEOUT,
+            )
 
             screen.query_one(
                 "#settings-console-context-budget-mode", Select
