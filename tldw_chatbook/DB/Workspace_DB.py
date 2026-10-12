@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +11,6 @@ from typing import Iterator, Union
 from .base_db import BaseDB
 from .store_kernel import SQLiteStoreKernel
 
-from tldw_chatbook.Backup_Recovery.participants import _core_getter  # noqa: F401 - re-export
 
 
 class WorkspaceDB(SQLiteStoreKernel, BaseDB):
@@ -332,14 +330,10 @@ INSERT OR IGNORE INTO schema_version (version) VALUES (6);
 COMMIT;
 """
 
-    #: Liveness-ping gate (mirrors `ChaChaNotes_DB`, task-261): pinging on
-    #: every call roughly doubles the raw statement count on query-heavy
-    #: paths, and this DB is exactly such a path (~1,350 calls per Console
     #: BaseDB-provenance (ADR-228): connections open through BaseDB's
     #: per-call path under the db.base owner; participants identity
     #: stays db.base, so no per-store policy entry is minted.
     _kernel_sqlite_owner = "db.base"
-
 
     def __init__(self, db_path: Union[str, Path], client_id: str = "default") -> None:
         self._init_store_kernel()
