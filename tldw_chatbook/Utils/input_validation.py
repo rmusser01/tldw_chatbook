@@ -1846,10 +1846,18 @@ DREAMS_PROFILE_TEXT_MAX_LENGTH = 200
 #: longer than this however its letters are decorated.
 _DREAMS_TEXT_MAX_STORED_LENGTH = DREAMS_PROFILE_TEXT_MAX_LENGTH * 3
 
-#: Input longer than this is refused before any Unicode work is done on
-#: it. NFC composition can shorten text (a letter and its combining mark
-#: become one code point), so the exact bound is applied after it; this
-#: one only keeps a multi-megabyte paste from being normalised and scanned.
+#: Raw input longer than this is refused before anything is done with
+#: it: it only keeps a multi-megabyte paste from being copied, normalised
+#: and scanned. Generous on purpose -- it runs BEFORE the invisible
+#: characters are removed, and text that is short once they are gone is
+#: not refused for them (round 5, N6: 800 zero width spaces and an "x"
+#: were "longer than 200 characters").
+_DREAMS_TEXT_RAW_LENGTH_CAP = 20_000
+
+#: Text still longer than this once the invisible characters are removed
+#: is refused before any per-character Unicode work. NFC composition can
+#: shorten text, so the exact bound is applied after it; this one only
+#: bounds the work.
 _DREAMS_TEXT_PRECHECK_LENGTH = DREAMS_PROFILE_TEXT_MAX_LENGTH * 4
 
 #: General categories that end a line or are raw controls: every C0/C1
@@ -1886,9 +1894,11 @@ _DREAMS_TEXT_ALLOWED_FORMAT = frozenset(
 #: Thai and Khmer are typed with zero width spaces between words, pasted
 #: text carries soft hyphens and a leading byte order mark, and none of
 #: them is part of what the user means. Zero width space, soft hyphen,
-#: word joiner, byte order mark, object replacement character.
+#: word joiner, byte order mark, object replacement character -- and the
+#: invisible maths operators (function application, invisible times,
+#: separator and plus) that pasted formulas carry (round 5, N6).
 _DREAMS_TEXT_REMOVED = dict.fromkeys(
-    map(ord, "\u200b\u00ad\u2060\ufeff\ufffc"))
+    map(ord, "\u200b\u00ad\u2060\ufeff\ufffc\u2061\u2062\u2063\u2064"))
 
 #: Blanks that take up room: braille's own space and the Hangul fillers
 #: people use as an "invisible letter". Written as a plain space, so
@@ -2002,11 +2012,17 @@ def validate_dreams_profile_text(value: object) -> str:
     typed = value.strip() if isinstance(value, str) else ""
     if not typed:
         raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
-    # Length first: nothing below may run on an unbounded paste.
-    if len(typed) > _DREAMS_TEXT_PRECHECK_LENGTH:
+    # Length first: nothing below may run on an unbounded paste. The raw
+    # bound is generous, the real one is taken once the characters that
+    # are removed anyway are gone (round 5, N6).
+    if len(typed) > _DREAMS_TEXT_RAW_LENGTH_CAP:
         raise ValueError(_DREAMS_TEXT_TOO_LONG)
     typed = typed.translate(_DREAMS_TEXT_REMOVED).translate(
         _DREAMS_TEXT_BLANK_AS_SPACE).strip()
+    if not typed:
+        raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
+    if len(typed) > _DREAMS_TEXT_PRECHECK_LENGTH:
+        raise ValueError(_DREAMS_TEXT_TOO_LONG)
     text = unicodedata.normalize("NFC", typed)
     # Tag characters count only inside a well-formed flag: scan the text
     # with every such flag reduced to its base emoji.

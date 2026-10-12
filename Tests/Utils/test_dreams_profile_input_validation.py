@@ -96,8 +96,8 @@ _WALES = "\U0001f3f4\U000e0067\U000e0062\U000e0077\U000e006c\U000e0073\U000e007f
         ("nul\x00byte", _ONE_LINE),
         ("esc\x1bape", _ONE_LINE),
         # Unicode's own line and paragraph separators.
-        ("two lines", _ONE_LINE),
-        ("two paragraphs", _ONE_LINE),
+        ("two\u2028lines", _ONE_LINE),
+        ("two\u2029paragraphs", _ONE_LINE),
         ("next\u0085line", _ONE_LINE),
         # Bidirectional embedding/override/isolate controls make text
         # DISPLAY in another order than it is stored and sent.
@@ -125,7 +125,6 @@ _WALES = "\U0001f3f4\U000e0067\U000e0062\U000e0077\U000e006c\U000e0073\U000e007f
         ("???", _NOTHING),
         ("— —", _NOTHING),
         # Invisible characters that mean something else than what shows:
-        ("a⁢b", _HIDDEN),            # invisible times
         ("a⁪b", _HIDDEN),            # deprecated format character
         ("a￹b", _HIDDEN),            # interlinear annotation anchor
         ("a\U000e0041b", _HIDDEN),        # a tag character outside a flag
@@ -405,3 +404,50 @@ def test_validating_the_stored_form_again_changes_nothing(typed):
         return  # refused input stores nothing
 
     assert validate_dreams_profile_text(stored) == stored
+
+
+# --- Review round 5, N6: the bound is on what is left, not on what is removed -----
+
+
+def test_text_that_is_short_once_invisible_characters_are_removed_is_kept():
+    """A zero width character x800 in front of "x" was refused as "longer
+    than 200 characters": the pre-check ran before the removal."""
+    assert validate_dreams_profile_text("\u200b" * 800 + "x") == "x"
+    # 206 characters as pasted, 166 once the soft hyphens are gone.
+    assert validate_dreams_profile_text(
+        ("jazz\u00ad" * 40) + "guitar") == "jazz" * 40 + "guitar"
+
+
+@pytest.mark.parametrize(
+    "value, stored",
+    [
+        # Pasted maths carries the invisible operators; like the soft
+        # hyphen they are removed, not refused.
+        ("a\u2062b", "ab"),
+        ("f\u2061(x)", "f(x)"),
+        ("x\u2063y", "xy"),
+        ("2\u20643", "23"),
+    ],
+)
+def test_invisible_maths_operators_are_removed_like_the_soft_hyphen(
+        value, stored):
+    assert validate_dreams_profile_text(value) == stored
+
+
+def test_a_huge_paste_is_still_refused_before_any_unicode_work(monkeypatch):
+    """The cheap bound stays, on the raw text: 5,000,000 characters -- of
+    letters, or of characters that would be removed -- never reach the
+    per-character work."""
+
+    class _NoUnicodeWork:
+        @staticmethod
+        def category(_char):
+            raise AssertionError("scanned an over-long text")
+
+        normalize = bidirectional = category
+
+    monkeypatch.setattr(input_validation, "unicodedata", _NoUnicodeWork)
+
+    for paste in ("x" * 5_000_000, "\u200b" * 5_000_000 + "x"):
+        with pytest.raises(ValueError, match="longer than"):
+            validate_dreams_profile_text(paste)
