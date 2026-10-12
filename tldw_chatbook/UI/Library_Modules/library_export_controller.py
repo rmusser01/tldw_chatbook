@@ -260,6 +260,7 @@ from ...Library.library_shell_state import (
 )
 from ...Third_Party.textual_fspicker import FileSave
 from ...Utils.path_validation import validate_path_simple
+from .canvas_sync import _sync_library_canvas
 from .library_export_state import LibraryExportState
 
 if TYPE_CHECKING:
@@ -934,17 +935,29 @@ class LibraryExportController:
         run_id = self._library_export_run_id
         self._library_export_cancel_event = threading.Event()
         cancel_event = self._library_export_cancel_event
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._sync_library_emergency_guard_presentation)
-        self.call_after_refresh(
-            self._start_library_export_worker,
-            run_id=run_id,
-            scope=self._library_export_scope,
-            name=name,
-            description=description,
-            media_quality=media_quality,
-            destination=destination,
-            cancel_event=cancel_event,
+
+        # TASK-21243: canvas-scoped. The transition INTO ``running`` only
+        # changes export-canvas inputs (status line, running gate on the
+        # Export button); the whole-screen recompose it used to pay rebuilt
+        # the rail and shell for a form the user never left. The
+        # emergency-guard sync and the worker start are ordered after the
+        # canvas's own recompose via the seam's follow-up hook; a failure
+        # inside the seam takes its own whole-screen fallback and re-runs
+        # the follow-up there, preserving the old ordering.
+        def _after_export_running_recompose() -> None:
+            self._sync_library_emergency_guard_presentation()
+            self._start_library_export_worker(
+                run_id=run_id,
+                scope=self._library_export_scope,
+                name=name,
+                description=description,
+                media_quality=media_quality,
+                destination=destination,
+                cancel_event=cancel_event,
+            )
+
+        _sync_library_canvas(
+            self._screen, "export", then=_after_export_running_recompose
         )
 
     @staticmethod
@@ -1288,17 +1301,26 @@ class LibraryExportController:
         self._library_export_quality_choices_visible = (
             not self._library_export_quality_choices_visible
         )
-        self.refresh(recompose=True)
-        if self._library_export_quality_choices_visible:
-            self.call_after_refresh(
-                self._focus_library_choice_strip_active,
-                ".library-export-quality-choice",
-                str(self._library_export_form.get("quality", DEFAULT_MEDIA_QUALITY)),
-            )
-        else:
-            self.call_after_refresh(
-                self._focus_library_control, "#library-export-quality"
-            )
+
+        # TASK-21243: canvas-scoped -- the strip open/close only changes
+        # export-canvas inputs. The focus follow-up rides the canvas's own
+        # recompose through the seam (the ordering guarantee the
+        # PostRecomposeCallback hook exists for); a seam failure takes the
+        # whole-screen fallback and re-runs it there.
+        def _after_quality_strip_recompose() -> None:
+            if self._library_export_quality_choices_visible:
+                self._focus_library_choice_strip_active(
+                    ".library-export-quality-choice",
+                    str(
+                        self._library_export_form.get("quality", DEFAULT_MEDIA_QUALITY)
+                    ),
+                )
+            else:
+                self._focus_library_control("#library-export-quality")
+
+        _sync_library_canvas(
+            self._screen, "export", then=_after_quality_strip_recompose
+        )
 
     @on(Button.Pressed, ".library-export-quality-choice")
     def handle_library_export_quality_choice(self, event: Button.Pressed) -> None:
@@ -1312,8 +1334,14 @@ class LibraryExportController:
         self._library_export_quality_choices_visible = False
         if requested in MEDIA_QUALITY_OPTIONS:
             self._library_export_form["quality"] = requested
-        self.refresh(recompose=True)
-        self.call_after_refresh(self._focus_library_control, "#library-export-quality")
+
+        # TASK-21243: canvas-scoped (same shape as the strip open/close).
+        def _after_quality_choice_recompose() -> None:
+            self._focus_library_control("#library-export-quality")
+
+        _sync_library_canvas(
+            self._screen, "export", then=_after_quality_choice_recompose
+        )
 
     @on(Button.Pressed, "#library-export-destination")
     def handle_library_export_choose_destination(self, event: Button.Pressed) -> None:
@@ -1406,7 +1434,9 @@ class LibraryExportController:
         self._library_export_form["destination"] = str(normalized_path)
         self._library_export_form["destination_error"] = ""
         self._library_export_form["destination_exists"] = normalized_path.exists()
-        self.refresh(recompose=True)
+        # TASK-21243: canvas-scoped -- only the export canvas's destination
+        # row changes.
+        _sync_library_canvas(self._screen, "export")
 
     def _refuse_library_export_destination(self, reason: str) -> None:
         """Clear the destination and say why, on the destination row.
@@ -1419,7 +1449,8 @@ class LibraryExportController:
         self._library_export_form["destination_error"] = (
             f"Can't save there: {reason}"
         )
-        self.refresh(recompose=True)
+        # TASK-21243: canvas-scoped (same destination-row-only delta).
+        _sync_library_canvas(self._screen, "export")
 
 # --- BEGIN generated export-controller-state shims ---
 # Permanent, not a cleanup-PR deletion target -- same reasoning as
