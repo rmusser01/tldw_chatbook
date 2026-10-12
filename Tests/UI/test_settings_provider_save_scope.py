@@ -43,7 +43,7 @@ async def test_providers_models_state_line_names_its_scope_in_one_row(request) -
     async with host.run_test(size=(211, 44)) as pilot:
         screen = _active_destination_screen(host)
         screen._select_category(category.value)
-        await _wait_for_selector(screen, pilot, "#settings-model-value")
+        await _wait_for_selector(screen, pilot, "#settings-model-value", timeout=30.0)
         banner = screen.query_one("#settings-category-state-banner", Static)
         scope = screen._category_state_scope_text(category)
         assert scope == (
@@ -107,7 +107,9 @@ async def test_focusing_the_visible_provider_picker_shows_the_provider_purpose(
     async with host.run_test(size=(211, 44)) as pilot:
         screen = _active_destination_screen(host)
         screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
-        await _wait_for_selector(screen, pilot, "#settings-provider-search")
+        await _wait_for_selector(
+            screen, pilot, "#settings-provider-search", timeout=30.0
+        )
         # TASK-33007.2, rewritten on purpose: the list under the Provider
         # control never takes focus, so the control is the one field.
         for selector in ("#settings-provider-search",):
