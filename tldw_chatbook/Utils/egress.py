@@ -83,6 +83,17 @@ class UrlProvenance(Enum):
     UNKNOWN = "unknown"
 
 
+#: Key under which a stored record that holds a URL (a subscription's
+#: ``processing_options``) carries that URL's provenance as a
+#: :class:`UrlProvenance` value. A record with no such key holds a URL its
+#: owner configured, which is how every record written before the key
+#: existed is read. Written by a producer that stores a URL nobody typed
+#: (a Dreams story's page), and read back at fetch time by
+#: ``Subscriptions.monitoring_engine``, so that such a URL is never its
+#: own trusted origin -- not when it is stored, and not on any later fetch.
+URL_PROVENANCE_OPTION = "url_provenance"
+
+
 def trusted_origins_for(url: str, provenance: UrlProvenance) -> frozenset:
     """The egress ``trusted_origins`` a URL's provenance actually earns.
 
@@ -101,6 +112,59 @@ def trusted_origins_for(url: str, provenance: UrlProvenance) -> frozenset:
     if provenance is UrlProvenance.USER_ENTERED:
         return origin_set(url)
     return frozenset()
+
+
+def provenance_of_stored_source(processing_options: Any) -> UrlProvenance:
+    """How a stored source came to hold its URL, read from its options.
+
+    A source whose URL nobody typed records that in
+    ``processing_options[URL_PROVENANCE_OPTION]`` (Dreams stamps the
+    subscriptions it creates from a story's URL). The options arrive
+    parsed from the watchlists service and as raw JSON text from a bare
+    subscription row; both are read.
+
+    Args:
+        processing_options: The source's stored options -- a mapping, its
+            JSON text, or None.
+
+    Returns:
+        ``UrlProvenance.UNKNOWN`` when the record says the URL is not the
+        user's own entry, else ``USER_ENTERED`` -- including for every
+        source with no such record, which is every one a user created.
+    """
+    options = processing_options
+    if isinstance(options, str):
+        try:
+            options = _json.loads(options)
+        except ValueError:
+            options = None
+    if (
+        isinstance(options, Mapping)
+        and options.get(URL_PROVENANCE_OPTION) == UrlProvenance.UNKNOWN.value
+    ):
+        return UrlProvenance.UNKNOWN
+    return UrlProvenance.USER_ENTERED
+
+
+def source_trusted_origins(url: str, processing_options: Any) -> frozenset:
+    """The trusted origins a stored source's own URL earns on a fetch.
+
+    The one answer for every fetch arm of a stored source -- page, feed,
+    sitemap, API (review of #2921, round 3, T17): the source vouches for
+    itself only when a user entered it; one marked as not user-entered
+    gets the empty set, on every fetch.
+
+    Args:
+        url: The source URL about to be fetched.
+        processing_options: The source's stored options (see
+            :func:`provenance_of_stored_source`).
+
+    Returns:
+        ``origin_set(url)``, or ``frozenset()`` for a marked source.
+    """
+    return trusted_origins_for(
+        url, provenance_of_stored_source(processing_options))
+
 
 # Cloud metadata endpoints: blocked even for trusted origins.
 _METADATA_IPS = frozenset(

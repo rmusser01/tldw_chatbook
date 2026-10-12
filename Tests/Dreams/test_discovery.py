@@ -150,3 +150,81 @@ def test_fetch_watchlist_candidates_returns_only_fresh_new_items(tmp_path):
         assert len(fresh.snippet) == 800
     finally:
         subs.close_all_connections()
+
+
+@pytest.mark.asyncio
+async def test_run_queries_records_the_query_that_surfaced_each_candidate():
+    """Review of #2921, item 1: a candidate carries its generating query,
+    so the story written from it -- and the goal that query was written
+    for -- can be attributed exactly instead of guessed by word overlap."""
+    def perform(engine, query, **kwargs):
+        return {"results": [
+            {"title": f"{query} result", "url": f"https://x.test/{query[:4]}",
+             "content": "…"}]}
+
+    found, used = await run_queries(
+        perform, engine="duckduckgo", queries=["rust tui news", "jazz dates"])
+
+    assert used == 2
+    assert [(c.title, c.query) for c in found] == [
+        ("rust tui news result", "rust tui news"),
+        ("jazz dates result", "jazz dates"),
+    ]
+    assert Candidate("t", "https://x.test/w", "s", "watchlist").query == "", (
+        "a watchlist item was surfaced by no query"
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_queries_asks_before_each_query_and_stops_when_told():
+    """Review round 3, item 2: the caller decides, per query, whether the
+    next search may go out (the cycle reads the master switch and takes one
+    budget slot there). A refusal ends the batch, and the count returned is
+    the searches actually sent."""
+    sent: list[str] = []
+    asked: list[int] = []
+
+    def perform(search_engine, search_query, **kwargs):
+        sent.append(search_query)
+        return {"results": [{"title": search_query,
+                             "url": f"https://ok.x/{len(sent)}",
+                             "content": "s"}]}
+
+    async def before_each() -> bool:
+        asked.append(len(sent))
+        return len(sent) < 2
+
+    found, used = await run_queries(
+        perform, engine="duckduckgo", queries=["a", "b", "c", "d"],
+        before_each=before_each)
+
+    assert sent == ["a", "b"]
+    assert used == 2
+    assert asked == [0, 1, 2], "asked before each query, not once per batch"
+    assert [c.query for c in found] == ["a", "b"]
+
+
+def test_duplicate_urls_keep_the_goal_any_occurrence_was_found_for():
+    """Review round 3, N2: the same page found by a topic query first and a
+    goal's query second used to keep the first occurrence only, so the
+    story named no goal although a search for that goal had found it."""
+    from tldw_chatbook.Dreams.discovery import Candidate
+
+    by_topic = Candidate(title="Rail pass sale", url="https://e.x/pass?utm_source=a",
+                         snippet="s", source="web", query="japan news")
+    by_goal = Candidate(title="Rail pass sale", url="https://e.x/pass",
+                        snippet="s", source="web", query="japan rail deals",
+                        goal="plan a trip to Japan")
+    other_goal = Candidate(title="Rail pass sale", url="https://E.X/pass/",
+                           snippet="s", source="web", query="cello lessons",
+                           goal="learn the cello")
+
+    (kept,) = dedupe_and_rank(
+        [by_topic, by_goal, other_goal], seen_urls=set(), library_urls=set(),
+        topics=[], limit=5)
+
+    assert kept.url == "https://e.x/pass?utm_source=a", "first URL, verbatim"
+    assert (kept.goal, kept.query) == ("plan a trip to Japan", "japan rail deals"), (
+        "the first occurrence WITH a goal gives the goal and its query"
+    )
+    assert by_topic.goal is None, "inputs are never mutated"

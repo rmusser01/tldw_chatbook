@@ -11,6 +11,8 @@ the Task-6 ``DestinationHarness`` harness from
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from rich.console import Group
 from rich.markdown import Markdown
@@ -38,6 +40,29 @@ _STORY_BODY = "A story about fares."
 
 
 # --- Shared helpers ---------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _egress_policy_seams(monkeypatch):
+    """Keep the track action's public-destination check inside the box.
+
+    ``track_page`` asks the app-wide egress policy about a story URL
+    before it creates a subscription (Qodo #1, PR #2921). The policy reads
+    ``[web_security]`` through the guarded config loader -- which fails
+    closed under the per-test config sandbox, like the two config seams
+    the track tests below already serve directly -- and resolves the
+    host. Defaults are served and every hostname resolves to one public
+    address through the module's documented ``_resolve_async`` seam.
+    """
+    from tldw_chatbook.Utils import egress
+
+    monkeypatch.setattr(
+        egress, "get_cli_setting", lambda section, key, default=None: default)
+
+    async def _public(_host):
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(egress, "_resolve_async", _public)
 
 
 def _enable_dreams(monkeypatch) -> None:
@@ -179,6 +204,12 @@ async def test_keep_toggle_writes_kept_feedback_and_refreshes(tmp_path):
 
         assert _story_kept(db, story["id"]) == 1, "k must set kept via the real DB"
         assert _feedback_kinds(db, story["id"]) == ["kept"]
+        # Review round 3, item 10: nothing prunes stories, so "survives
+        # future cycles" promised a protection that does not exist. Keep
+        # sorts the story first within its day and is a positive signal.
+        notices = [str(n.message) for n in app._notifications]
+        assert any("listed first" in notice for notice in notices), notices
+        assert not any("survives" in notice for notice in notices), notices
         assert changed == [1], "on_changed must fire exactly once per action"
         assert app.screen is modal, "keep keeps the modal open"
         assert "Unkeep" in _button_labels(modal), "button label must flip"
@@ -213,6 +244,61 @@ async def test_more_records_feedback_and_dismisses(tmp_path):
         assert _feedback_kinds(db, story["id"]) == ["more"]
         assert changed == [1]
         assert app.screen is not modal, "more/less dismiss the modal"
+        assert any("lean toward" in str(n.message) for n in app._notifications)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key, kind", [("m", "more"), ("l", "less")])
+async def test_feedback_on_a_story_with_nothing_to_steer_says_so(
+        tmp_path, key, kind):
+    """Review round 3, N6: feedback moves the topics a story matched and
+    the goal whose query found it. A story with neither still got "future
+    cycles will lean toward/away", which was not true of anything."""
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    story["matched_topics"] = []
+    story["goal"] = None
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press(key)
+        await pilot.pause()
+
+        assert _feedback_kinds(db, story["id"]) == [kind], "still recorded"
+        notices = [str(n.message) for n in app._notifications]
+        assert any("none of your topics or goals" in n for n in notices), notices
+        assert not any("lean" in n for n in notices), notices
+
+
+@pytest.mark.asyncio
+async def test_feedback_on_a_goal_story_without_topics_still_steers(tmp_path):
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    story["matched_topics"] = []
+    story["goal"] = "visit japan"
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("l")
+        await pilot.pause()
+
+        assert any("lean away" in str(n.message) for n in app._notifications)
 
 
 @pytest.mark.asyncio
@@ -411,6 +497,42 @@ async def test_ingest_failure_is_a_notice_not_a_crash(tmp_path):
         )
         assert changed == [], "on_changed must not fire for a failure"
         assert app.screen is modal, "a failed ingest must not dismiss or crash"
+
+
+@pytest.mark.asyncio
+async def test_ingest_of_a_story_at_a_private_address_is_refused_with_a_notice(
+        tmp_path, monkeypatch):
+    """Review round 3, T24: the capture backend fetches a capture as a URL
+    the user typed; a story's URL is checked as a public destination
+    before it is handed over."""
+    from tldw_chatbook.Utils import egress
+
+    async def resolve(_host):
+        return ["192.168.1.1"]
+
+    monkeypatch.setattr(egress, "_resolve_async", resolve)
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    backend = FakeCaptureBackend()
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: backend,
+            on_changed=lambda: None,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("i")
+        await pilot.pause()
+
+        assert backend.requests == [], "nothing reached the capture backend"
+        assert _feedback_kinds(db, story["id"]) == []
+        assert any("private network" in str(n.message)
+                   for n in app._notifications)
+        assert app.screen is modal
 
 
 @pytest.mark.asyncio
@@ -615,10 +737,15 @@ async def test_track_on_disabled_foreign_source_is_a_notice_and_writes_nothing(
         assert stored is not None and int(stored[0]) == 0, (
             "the foreign source stays exactly as disabled as the user left it"
         )
-        assert any(
-            "exists" in n.message and "disabled" in n.message
-            for n in app._notifications
-        ), "the notice must explain the source exists but is disabled"
+        (notice,) = [
+            n.message for n in app._notifications if "switched off" in n.message]
+        assert "already has a source" in notice, (
+            "the notice must explain the source exists but is switched off"
+        )
+        # Review round 4, A2: Watchlists has no control that switches an
+        # existing source back on, so the notice names what the user CAN do.
+        assert "enable" not in notice.lower()
+        assert "delete that source in Watchlists and track again" in notice
         assert app.screen is modal, "a refused track must not dismiss or crash"
 
 
@@ -910,7 +1037,7 @@ async def test_http_story_still_offers_ingest(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_footer_hints_advertise_exactly_the_ten_actions(tmp_path):
+async def test_footer_hints_advertise_exactly_the_eleven_actions(tmp_path):
     db = _seed_db(tmp_path)
     story = _story_row(db)
     app = App()
@@ -1300,7 +1427,11 @@ async def test_track_with_event_date_promotes_reminder(tmp_path, monkeypatch):
             await pilot.pause()
 
             (task,) = scheduling.list_reminder_tasks()
-            assert task["run_at"].startswith("2026-09-24"), (
+            # The stored instant is nine in the morning LOCAL time on the
+            # lead date (Qodo #14, PR #2921), so the date is read back on
+            # the local calendar -- its UTC date differs far east of UTC.
+            fires = datetime.fromisoformat(task["run_at"]).astimezone()
+            assert fires.date().isoformat() == "2026-09-24", (
                 "the reminder fires a week before the event"
             )
             assert task["link_type"] == "dream_tracked_item"
@@ -1413,3 +1544,123 @@ async def test_track_on_credential_url_is_a_notice_and_writes_nothing(
         assert any("not a valid http(s) URL" in n.message
                    for n in app._notifications)
         assert app.screen is modal, "the refusal must not dismiss or crash"
+
+
+# --- Qodo #1 (PR #2921): a story URL must be a public destination --------------
+
+
+@pytest.mark.asyncio
+async def test_track_on_private_network_url_is_a_notice_and_writes_nothing(
+        tmp_path, monkeypatch
+):
+    """A story whose URL points at the user's own network (an untrusted
+    search result can supply one) is refused before Dreams stores it as a
+    watch: its own notice, no tracked row, no subscription, no feedback."""
+    db = _seed_db(tmp_path)
+    collection = db.create_collection("2026-09-24", "scheduled", "digest2")
+    db.insert_story(
+        collection,
+        title="Router admin",
+        url="http://192.168.1.1/admin",
+        snippet="hidden",
+        body="body",
+        status="complete",
+        source="web",
+        kind="content",
+        event_date=None,
+        location=None,
+        matched_topics=["routers"],
+        query="router admin",
+    )
+    story = next(
+        row for row in list_recent_dreams(db, limit=10)
+        if "192.168.1.1" in str(row.get("url"))
+    )
+    subs_db, service = _subs_stack(tmp_path)
+    _track_settings_defaults(monkeypatch)
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            subs_service_getter=lambda: service,
+            on_changed=lambda: changed.append(1),
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        await pilot.press("t")
+        await pilot.pause()
+
+        assert _feedback_kinds(db, story["id"]) == []
+        assert db.list_tracked_items() == []
+        assert _sub_count(subs_db) == 0
+        assert changed == []
+        assert any("private network" in n.message for n in app._notifications)
+        assert app.screen is modal, "the refusal must not dismiss or crash"
+
+
+# --- Qodo #10 (PR #2921): Untrack retires the PAGE watch, not the newest -------
+
+
+@pytest.mark.asyncio
+async def test_untrack_retires_the_page_watch_when_a_question_watch_is_newer(
+        tmp_path, monkeypatch
+):
+    """A story tracked by page (``t``) and then watched by question (``w``)
+    owns two active wrappers. ``u`` is the page watch's inverse: it must
+    retire the page wrapper and disable its subscription, leaving the
+    question watch running -- not retire the (newer) question watch and
+    leave the page subscription fetching. A second ``u`` then stops the
+    question watch, so no watch is ever left without a way to stop it."""
+    _track_settings_defaults(monkeypatch)
+    db = _seed_db(tmp_path)
+    story = _story_row(db)
+    subs_db, service = _subs_stack(tmp_path)
+    app = App()
+    async with app.run_test(size=(120, 40)) as pilot:
+        modal = DreamsStoryModal(
+            story,
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            subs_service_getter=lambda: service,
+            on_changed=lambda: None,
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.press("t")
+        await pilot.pause()
+        await pilot.press("w")
+        await pilot.pause()
+        by_mechanism = {
+            item["mechanism"]: item for item in db.list_tracked_items()}
+        assert set(by_mechanism) == {"page", "question"}, "fixture: both watches"
+        page, question = by_mechanism["page"], by_mechanism["question"]
+
+        await pilot.press("u")
+        await pilot.pause()
+
+        assert db.get_tracked_item(page["id"])["status"] == "retired", (
+            "Untrack retires the page watch"
+        )
+        assert int(
+            subs_db.get_subscription(page["subscription_id"])["is_active"]
+        ) == 0, "and stops the page's subscription"
+        assert db.get_tracked_item(question["id"])["status"] == "active", (
+            "the question watch keeps running"
+        )
+        assert any(n.message == "Stopped tracking this page."
+                   for n in app._notifications)
+        assert "· tracked" in _visible_text(modal), (
+            "the story is still tracked: its question watch is live"
+        )
+
+        await pilot.press("u")
+        await pilot.pause()
+
+        assert db.get_tracked_item(question["id"])["status"] == "retired"
+        assert any(n.message == "Stopped watching this question."
+                   for n in app._notifications)
+        assert "· tracked" not in _visible_text(modal)

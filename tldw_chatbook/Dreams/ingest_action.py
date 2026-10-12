@@ -22,6 +22,16 @@ URL shape goes through the shared ``validate_url`` seam (http/https only,
 no whitespace/credentials/backslashes) -- the same validation the Library
 quick-capture form applies to this exact operation. Backend failures
 propagate unchanged for the caller to surface as a notice.
+
+A story URL is then checked as a PUBLIC destination, with no trusted
+origin, before it is handed over (review of #2921, round 3, T24). The
+capture backend fetches every capture as a URL the user typed
+(``app_service_wiring._extract_collections_article`` passes
+``UrlProvenance.USER_ENTERED``, TASK-20973), which makes the URL's own
+origin trusted -- right for quick-capture, wrong for a URL a search
+result or the model supplied. This is the check at the door only: the
+capture row has no field to say "nobody typed this", so a later fetch of
+the same capture (a retry) is still made as user-entered.
 """
 
 from __future__ import annotations
@@ -32,6 +42,7 @@ from tldw_chatbook.Library.collections_capture_models import (
     CaptureSaveRequest,
     CollectionsCaptureError,
 )
+from tldw_chatbook.Utils.egress import evaluate_url_policy_async
 from tldw_chatbook.Utils.input_validation import validate_url
 
 if TYPE_CHECKING:
@@ -44,6 +55,14 @@ if TYPE_CHECKING:
 #: the Local backend never produces it). Inventing a capture id there would
 #: be a hallucinated receipt, so the caller gets this short status string.
 UNKNOWN_OUTCOME_IDENTIFIER = "unknown"
+
+
+class StoryUrlNotPublic(ValueError):
+    """The story's URL is not a public destination; nothing was submitted.
+
+    The message carries the egress policy's reason slug
+    (``private``/``metadata``/``dns_failure``/...), never the URL.
+    """
 
 
 def _authority_key(backend: Any) -> str:
@@ -84,11 +103,19 @@ async def ingest_story_url(
 
     Raises:
         ValueError: The URL failed shape validation (never submitted).
+        StoryUrlNotPublic: The URL points at a private network, a
+            loopback or metadata address, or a host that does not resolve
+            (never submitted).
         CollectionsCaptureError: No authority key could be resolved off
             the backend, or the backend raised its typed error.
     """
     if not validate_url(str(url or "")):
         raise ValueError("invalid story URL: expected an http(s) URL without whitespace")
+    # No trusted origins: a story URL never vouches for itself.
+    decision = await evaluate_url_policy_async(str(url))
+    if not decision.allowed:
+        raise StoryUrlNotPublic(
+            f"refusing to ingest a non-public destination ({decision.reason})")
     outcome = await backend.save_capture(
         CaptureSaveRequest(
             _authority_key(backend),

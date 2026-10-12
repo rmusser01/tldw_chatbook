@@ -96,6 +96,29 @@ async def test_goal_renders_with_searchable_marker_and_region_line(
 
 
 @pytest.mark.asyncio
+async def test_region_line_shows_no_region_when_the_stored_one_is_ignored(
+    tmp_path, monkeypatch
+):
+    """Review round 3, item 7: the line is labelled "used in queries", so
+    it must show the region Dreams actually uses. A stored value that
+    fails the text rule is ignored by ``dreams_region()`` -- showing it
+    here as "used in queries" was false."""
+    _region(monkeypatch, "Seattle\u202e")
+    db = _seed_db(tmp_path)
+    app = App()
+    async with app.run_test(size=(100, 30)) as pilot:
+        modal = DreamsGoalsModal(
+            dreams_db_getter=lambda: db, on_changed=lambda: None
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        text = _visible_text(modal)
+        assert "Region (used in queries): (not set)" in text
+        assert "Seattle" not in text
+
+
+@pytest.mark.asyncio
 async def test_footer_hints_advertise_exactly_the_four_actions(tmp_path):
     db = _seed_db(tmp_path)
     app = App()
@@ -168,6 +191,47 @@ async def test_a_adds_goal_from_input_as_user_source(tmp_path):
             "the input clears after a successful add"
         )
         assert changed == [1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "typed, says",
+    [("g" * 201, "longer than 200 characters"),
+     ("tickets\u202egnp.exe", "hidden text-direction characters"),
+     ("\u200b", "nothing readable")],
+    ids=["overlong", "hidden-direction-override", "invisible-only"],
+)
+async def test_a_refuses_invalid_goal_text_and_keeps_it_for_correction(
+    tmp_path, typed, says
+):
+    """Qodo #8 (PR #2921): goal text reaches query synthesis and outbound
+    search, so the add path validates it (shared input validation) instead
+    of persisting whatever survived ``strip()``. A refusal writes nothing,
+    says why, and leaves the typed text in place to fix."""
+    db = _seed_db(tmp_path)
+    changed: list[int] = []
+    app = App()
+    async with app.run_test(size=(100, 30)) as pilot:
+        modal = DreamsGoalsModal(
+            dreams_db_getter=lambda: db, on_changed=lambda: changed.append(1)
+        )
+        await app.push_screen(modal)
+        await pilot.pause()
+
+        modal.query_one("#dgm-new-goal", Input).value = typed
+        await pilot.press("a")
+        await pilot.pause()
+
+        assert [row["text"] for row in _goal_rows(db)] == ["visit Japan"], (
+            "a refused goal must not be persisted"
+        )
+        assert modal.query_one("#dgm-new-goal", Input).value == typed
+        assert changed == [], "a refusal is not a mutation"
+        notices = [str(n.message) for n in app._notifications]
+        # The notice names what was wrong (round 4, C4).
+        assert any(
+            message.startswith("Goal not added: ") and says in message
+            for message in notices), notices
 
 
 @pytest.mark.asyncio

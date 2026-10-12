@@ -43,3 +43,27 @@ def dreams_setting(key: str, default: Any = None) -> Any:
     if default is None and key in DREAMS_DEFAULTS:
         default = DREAMS_DEFAULTS[key]
     return get_cli_setting("dreams", key, default)
+
+
+def dreams_region() -> str:
+    """The configured ``[dreams] region``, or ``""`` when it is not usable.
+
+    The region goes verbatim into the query-synthesis prompt, a tracked
+    question's search query and a story's location, and it can reach the
+    config through Settings, Advanced Config or a text editor. Every read
+    therefore goes through here and applies the rule a topic or goal must
+    pass (review of #2921, item 8): one visible line, bounded, with no
+    control or invisible formatting characters. A value that fails is
+    treated as no region rather than passed on.
+
+    Returns:
+        The trimmed region, or an empty string when unset or refused.
+    """
+    # Imported at call time: this module is on the boot path and the
+    # validator's module is not this one's to load there.
+    from tldw_chatbook.Utils.input_validation import validate_dreams_profile_text
+
+    try:
+        return validate_dreams_profile_text(dreams_setting("region", ""))
+    except ValueError:
+        return ""

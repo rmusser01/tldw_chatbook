@@ -3,7 +3,9 @@
 ``run_cycle`` is the whole discovery pipeline of spec §discovery staged
 end-to-end — reclaim stale rows, refresh the interest profile from
 notes/media/Personal-Context signals (ruling R18), apply the feedback loop
-to topic weights (ruling R19), snapshot the profile, claim the local date,
+to topic weights (ruling R19) and to goal query angles (task-33165:
+goals never change weight, their feedback steers the angle), snapshot the
+profile, claim the local date,
 synthesize queries, search, harvest the watchlist, rank unseen candidates,
 generate one story per pick, and write every outcome as a row. Every
 blocking call (web search, chat, SQLite) runs under ``asyncio.to_thread``
@@ -30,6 +32,7 @@ import asyncio
 import hashlib
 import json
 import re
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -50,6 +53,7 @@ from tldw_chatbook.Dreams import (
 from tldw_chatbook.Dreams.discovery import Candidate
 from tldw_chatbook.Dreams.settings import dreams_setting
 from tldw_chatbook.Dreams.story_service import StoryResult
+from tldw_chatbook.Utils.input_validation import validate_dreams_profile_text
 from tldw_chatbook.Utils.timestamps import to_utc_iso
 from tldw_chatbook.Web_Scraping.WebSearch_APIs import perform_websearch
 
@@ -126,6 +130,12 @@ class CycleDeps:
             to disable the one-time reminder linked to a retired tracked
             item (Qodo #13, PR #2890). ``None`` (the default) leaves
             linked reminders enabled.
+        guardian_db_getter: Returns the Guardian DB or ``None``; read only
+            by the profile refresh, whose Guardian reader
+            (``profile_sources.read_guardian_topics``) contributes
+            AGGREGATE topic counts from feeds_discovery rules' alerts
+            (ADR-204 contract 3). ``None`` (the default) means no
+            Guardian signal -- a disabled Guardian never feeds Dreams.
     """
     dreams_db: DreamsDB
     chachanotes_db_getter: Callable[[], Any]
@@ -140,6 +150,7 @@ class CycleDeps:
     dispatch_getter: Callable[[], Any] | None = None
     subs_service_getter: Callable[[], Any] | None = None
     scheduling_db_getter: Callable[[], Any] | None = None
+    guardian_db_getter: Callable[[], Any] | None = None
 
 
 @dataclass(slots=True)
@@ -237,6 +248,7 @@ def _finish_cycle(
     provider: str | None,
     model: str | None,
     completed_at: str,
+    claim: tuple[str, str] | None = None,
 ) -> tuple[str, int]:
     """Stamp the collection's final status judged on its TOTAL story rows.
 
@@ -263,10 +275,15 @@ def _finish_cycle(
         final = "complete"
     else:
         final = "partial"
-    dreams_db.set_collection_status(
+    if not dreams_db.set_collection_status(
         collection_id, final, provider=provider, model=model,
         degradation_notes=degradation_notes, completed_at=completed_at,
-        story_count=total)
+        story_count=total, claim=claim,
+    ) and claim is not None:
+        # The id names another collection now (round 4, I5): this cycle's
+        # verdict is not that collection's to carry.
+        raise sqlite3.IntegrityError(
+            "dream collection is no longer the one this cycle claimed")
     return final, total
 
 
@@ -290,11 +307,16 @@ def _matched_topics(topics: list[dict], candidate: Candidate) -> list[str]:
 def _attributed_query(candidate: Candidate, queries: list[str]) -> str:
     """The search query that surfaced a candidate, for the story row.
 
-    ``discovery.run_queries`` flattens the pool without provenance, so a web
-    candidate is attributed the run's best word-overlapping query (ties keep
-    the first). Watchlist items were not surfaced by any query (""), and an
-    llm-knowledge story IS its query (carried as the candidate title).
+    ``discovery.run_queries`` stamps each web candidate with the query
+    that surfaced it, and an llm-knowledge candidate is built from its
+    query, so the answer is normally exact (``candidate.query``).
+    Watchlist items were not surfaced by any query (""). Only a web
+    candidate that arrives without its query (a caller building
+    candidates by hand) falls back to the run's best word-overlapping
+    query (ties keep the first).
     """
+    if candidate.query:
+        return candidate.query
     if candidate.source == "llm":
         return candidate.title
     if candidate.source == "watchlist" or not queries:
@@ -318,17 +340,16 @@ def _record_story(
     result: StoryResult,
     matched_topics: list[str],
     query: str,
-    count_call: bool,
+    goal: str | None = None,
+    claim: tuple[str, str] | None = None,
 ) -> None:
-    """Persist one story outcome row and its budget spend (one thread hop).
+    """Persist one story outcome row (one thread hop).
 
     Plain synchronous SQLite only — the cycle runs it under
-    ``asyncio.to_thread``; keeping both writes together gives one hop per
-    story instead of two. ``count_call`` skips the llm-budget bump for rows
-    that never reached an LLM (no chat resolved — nothing was spent).
+    ``asyncio.to_thread``. The story's model call is NOT counted here: its
+    budget slot was reserved before the call was made (review of #2921,
+    item 6).
     """
-    if count_call:
-        dreams_db.usage_bump(local_date, llm_calls=1)
     dreams_db.insert_story(
         collection_id,
         title=result.title,
@@ -343,6 +364,8 @@ def _record_story(
         matched_topics=matched_topics,
         query=query,
         error=result.error,
+        goal=goal,
+        claim=claim,
     )
 
 
@@ -368,9 +391,9 @@ def _preferred_sources(
 
     A topic the sources agree on keeps ONE row, so it needs one ``source``:
     the reader whose signal contributed the most weight wins, first-read
-    order (notes, media, personal context) breaking ties. The reader's own
-    ``source`` value is preferred when it sets one, with the origin name as
-    the fallback.
+    order (notes, media, guardian, personal context) breaking ties. The
+    reader's own ``source`` value is preferred when it sets one, with the
+    origin name as the fallback.
     """
     winners: dict[tuple[str, str], tuple[float, str]] = {}
     for origin, rows in collected:
@@ -387,12 +410,46 @@ def _preferred_sources(
     return {key: source for key, (_, source) in winners.items()}
 
 
+def _stored_form_signals(
+    collected: list[tuple[str, list[dict]]],
+) -> tuple[list[tuple[str, list[dict]]], int]:
+    """Every source's signal rows in the form they will be stored in.
+
+    Review of #2921, round 4, I2. The text rule -- and with it the stored
+    (NFC) spelling -- used to be applied after the sources were merged.
+    One keyword arriving composed from notes and decomposed from media
+    was then two merged rows with ONE stored key: upserted twice, the
+    last write winning (1.0 from notes and 0.25 from media stored 0.25,
+    source media). Each row is therefore put into its stored form before
+    anything is merged or attributed, so the merge sums the two and the
+    heavier source names the row.
+
+    Returns:
+        ``(collected, dropped)``: the same origins with the rows that
+        pass the rule, their ``text`` replaced by the stored form; and
+        how many rows failed it.
+    """
+    normalised: list[tuple[str, list[dict]]] = []
+    dropped = 0
+    for origin, rows in collected:
+        kept: list[dict] = []
+        for row in rows:
+            try:
+                kept.append({**row, "text": validate_dreams_profile_text(
+                    str(row.get("text", "")))})
+            except ValueError:
+                dropped += 1
+        normalised.append((origin, kept))
+    return normalised, dropped
+
+
 def _upsert_profile_signals(
     dreams_db: DreamsDB,
     merged: list[dict],
     source_by_key: dict[tuple[str, str], str],
     *,
     now_iso: str,
+    dropped: int = 0,
 ) -> None:
     """Persist merged signal rows; sync, the caller thread-offloads.
 
@@ -411,6 +468,11 @@ def _upsert_profile_signals(
     this stage builds would evaporate before a single query is synthesized.
     ``upsert_profile_entry`` deliberately never touches that column (it is
     owned by these flows), so the stamp is a separate batched UPDATE.
+
+    A merged row whose text fails ``validate_dreams_profile_text`` is not
+    stored at all (counted in one debug line, never quoted). ``dropped``
+    is how many rows the caller already left out for the same reason
+    (:func:`_stored_form_signals`), so the one line reports them all.
     """
     protected = {
         (str(row["facet"]), str(row["text"]))
@@ -419,15 +481,30 @@ def _upsert_profile_signals(
     }
     stamped: list[tuple[str, str]] = []
     for row in merged:
-        key = (str(row["facet"]), str(row["text"]))
+        merged_key = (str(row["facet"]), str(row["text"]))
+        try:
+            # The rule a typed topic must pass (review of #2921, round 3,
+            # item 9): these keywords come from notes, media, Personal
+            # Context and Guardian -- some from ingested third-party
+            # content -- and enter the same synthesis prompt and fallback
+            # search queries. The validated (NFC) form is what is stored.
+            key = (merged_key[0], validate_dreams_profile_text(merged_key[1]))
+        except ValueError:
+            dropped += 1
+            continue
         if key in protected:
             continue
         dreams_db.upsert_profile_entry(
             key[0], key[1],
             weight=float(row["weight"]), searchable=1,
-            source=source_by_key.get(key, "notes"),
+            source=source_by_key.get(merged_key, "notes"),
         )
         stamped.append(key)
+    if dropped:
+        # The count only: the text is exactly what must not be passed on.
+        logger.debug(
+            "Dreams signal refresh: dropped {} derived topic(s) that fail "
+            "the profile text rule", dropped)
     if stamped:
         with dreams_db.transaction() as conn:
             conn.executemany(
@@ -442,11 +519,18 @@ async def _refresh_profile_signals(
 ) -> list[str]:
     """Stage 0a (ruling R18): rebuild derived profile rows from signals.
 
-    Reads the three signal sources through the injected getters (a ``None``
-    skips that source silently), merges them, and upserts the merged topics.
-    Every source — and the write — degrades with a note on failure; the
-    cycle always continues. Reads run one ``asyncio.to_thread`` hop per
-    source DB, and the Dreams write is one more hop (stage discipline).
+    Reads the signal sources through the injected getters (a ``None``
+    skips that source silently), merges them, and upserts the merged
+    topics. Every source — and the write — degrades with a note on
+    failure; the cycle always continues. Reads run one ``asyncio.to_thread``
+    hop per source DB, and the Dreams write is one more hop (stage
+    discipline).
+
+    The Guardian source (ADR-204 contract 3) rides the same discipline:
+    ``guardian_db_getter`` contributes AGGREGATE topic counts from
+    feeds_discovery rules' alerts only (the gate lives in
+    ``profile_sources.read_guardian_topics``'s join), written under origin
+    ``'guardian'`` so the profile keeps the provenance of every row.
     """
     notes: list[str] = []
     collected: list[tuple[str, list[dict]]] = []
@@ -464,6 +548,14 @@ async def _refresh_profile_signals(
                 profile_sources.read_media_topics, media_db)))
         except Exception as exc:  # noqa: BLE001
             notes.append(f"profile signals: media failed: {exc}")
+    guardian_getter = getattr(deps, "guardian_db_getter", None)
+    guardian_db = guardian_getter() if guardian_getter is not None else None
+    if guardian_db is not None:
+        try:
+            collected.append(("guardian", await asyncio.to_thread(
+                profile_sources.read_guardian_topics, guardian_db)))
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"profile signals: guardian failed: {exc}")
     pc_service = deps.pc_service_getter()
     if pc_service is not None:
         try:
@@ -479,30 +571,93 @@ async def _refresh_profile_signals(
                 cache_path=cache_path)))
     if not collected:
         return notes
+    # Stored form FIRST, then merge (round 4, I2).
+    collected, dropped = _stored_form_signals(collected)
     merged = interest_profile.merge_signals([rows for _, rows in collected])
     if not merged:
         return notes
     try:
         await asyncio.to_thread(
             _upsert_profile_signals, deps.dreams_db, merged,
-            _preferred_sources(collected), now_iso=to_utc_iso(now))
+            _preferred_sources(collected), now_iso=to_utc_iso(now),
+            dropped=dropped)
     except Exception as exc:  # noqa: BLE001 - a failed write degrades
         notes.append(f"profile signals: profile write failed: {exc}")
     return notes
+
+
+#: Feedback kinds carrying a POSITIVE signal (ruling R19): they net +1 on
+#: the topic-weight path and steer a matched goal's angle toward "prefer".
+_POSITIVE_FEEDBACK_KINDS = ("more", "kept", "dived", "ingested", "tracked")
+
+#: Story kinds a query angle may name (task-33165 R1); ``unknown`` stories
+#: steer as ``content``.
+_ANGLE_STORY_KINDS = ("content", "event", "deal", "social_opportunity")
+
+
+def _feedback_window_rows(dreams_db: DreamsDB, *, now: datetime) -> list:
+    """The trailing window's feedback rows joined to stories, oldest first.
+
+    One parameterized read shared by BOTH feedback halves (task-33165): the
+    topic-weight net and the goal query-angle pass walk the same rows, so
+    they can never disagree about what the window contains. Ordered by
+    ``(created_at, id)`` so the angle pass's replacement semantics ("any
+    positive after a negative replaces it") read chronologically even when
+    reactions share a timestamp (insertion order breaks ties).
+    """
+    cutoff = to_utc_iso(now - timedelta(days=_FEEDBACK_WINDOW_DAYS))
+    with dreams_db.connection() as conn:
+        return conn.execute(
+            "SELECT ds.matched_topics AS matched, ds.kind AS story_kind,"
+            " ds.goal AS goal, fb.kind AS kind"
+            " FROM dream_feedback AS fb"
+            " JOIN dream_stories AS ds ON ds.id = fb.story_id"
+            " WHERE fb.created_at >= ?"
+            " ORDER BY fb.created_at, fb.id",
+            (cutoff,),
+        ).fetchall()
+
+
+def _matched_texts(row: Any) -> list[str]:
+    """Decode one window row's matched-topics JSON; junk decodes to []."""
+    try:
+        matched = json.loads(row["matched"] or "[]")
+    except ValueError:
+        return []
+    return [str(topic) for topic in matched] if isinstance(matched, list) else []
+
+
+def _net_from_rows(rows: list) -> dict[str, int]:
+    """Net each row's reactions per normalized topic (pure; nothing written).
+
+    +1 per ``more``/``kept``/``dived``/``ingested``/``tracked`` -- tracking
+    a story is a positive signal, the Phase 2 Track flip -- −1 per ``less``;
+    ``exported`` is neutral. ``interest_profile.snapshot`` applies the
+    result as an offset, so a reaction counts exactly once per cycle for as
+    long as it is inside the window -- never compounding into the stored
+    weight -- and a derived topic's refresh cannot erase it.
+    """
+    net: dict[str, int] = {}
+    for row in rows:
+        kind = str(row["kind"])
+        delta = (1 if kind in _POSITIVE_FEEDBACK_KINDS
+                 else -1 if kind == "less" else 0)
+        if delta == 0:
+            continue
+        for topic in _matched_texts(row):
+            topic = topic.strip().lower()
+            if topic:
+                net[topic] = net.get(topic, 0) + delta
+    return {topic: value for topic, value in net.items() if value}
 
 
 def _feedback_net(dreams_db: DreamsDB, *, now: datetime) -> dict[str, int]:
     """Net reactions per matched topic over the trailing window (sync).
 
     Joins ``dream_feedback`` → ``dream_stories.matched_topics`` and nets
-    each normalized topic (+1 per ``more``/``kept``/``dived``/``ingested``/
-    ``tracked`` -- tracking a story is a positive signal, the Phase 2
-    Track flip -- −1 per ``less``; ``exported`` is neutral). Nothing is
-    written: ``interest_profile.snapshot`` applies the result as an offset,
-    so a reaction counts exactly once per cycle for as long as it is inside
-    the window -- never compounding into the stored weight -- and a derived
-    topic's refresh cannot erase it. Goals are immune because the snapshot
-    only offsets ``facet='topic'`` rows.
+    each normalized topic. Nothing is written: the snapshot applies the
+    result as an offset. Goals are immune because the snapshot only offsets
+    ``facet='topic'`` rows.
 
     Args:
         dreams_db: The Dreams database.
@@ -511,49 +666,99 @@ def _feedback_net(dreams_db: DreamsDB, *, now: datetime) -> dict[str, int]:
     Returns:
         ``{normalized_topic: net}`` with zero nets omitted.
     """
-    cutoff = to_utc_iso(now - timedelta(days=_FEEDBACK_WINDOW_DAYS))
-    with dreams_db.connection() as conn:
-        rows = conn.execute(
-            "SELECT ds.matched_topics AS matched, fb.kind AS kind"
-            " FROM dream_feedback AS fb"
-            " JOIN dream_stories AS ds ON ds.id = fb.story_id"
-            " WHERE fb.created_at >= ?",
-            (cutoff,),
-        ).fetchall()
-    net: dict[str, int] = {}
+    return _net_from_rows(_feedback_window_rows(dreams_db, now=now))
+
+
+def _write_goal_angles(dreams_db: DreamsDB, rows: list) -> None:
+    """Steer goals' ``query_angle`` from window rows (task-33165).
+
+    The OTHER feedback half: a goal never changes weight -- feedback on a
+    story that a goal's own search query surfaced instead writes that
+    goal's query angle, a short steering note derived from the reaction
+    and the story's kind: ``less`` records ``"avoid: {kind}"`` and any
+    positive kind records ``"prefer: {kind}"``; ``exported`` and
+    unrecognized reactions are neutral. An ``unknown`` story steers as
+    ``content``.
+
+    Which goal a story belongs to is PROVENANCE, read from the story row's
+    ``goal`` column (review of #2921, item 1): the cycle records the goal
+    the generating query was written for and nothing else. It is never
+    inferred from the story's text or from ``matched_topics`` -- a shared
+    word ("to", "in") made every goal match every story, and a topic may
+    carry the same text as a goal.
+
+    Rows arrive oldest-first and each write REPLACES the previous note
+    (plain UPDATE, no accumulation), so the newest non-neutral reaction in
+    the window wins -- a positive after a negative replaces it and vice
+    versa. The recorded goal joins the profile on its EXACT stored text --
+    the key the profile itself uses, and what the cycle records -- so two
+    goals that differ only by case stay two goals (round 3, N3: a
+    lowercased key collapsed them and the angle landed on whichever was
+    listed last). A goal that has since been removed matches no row.
+
+    Args:
+        dreams_db: The Dreams database.
+        rows: ``_feedback_window_rows`` output, oldest first.
+    """
+    goals = {
+        str(row["text"])
+        for row in dreams_db.list_profile()
+        if row.get("facet") == "goal"
+    }
+    if not goals:
+        return
+    updates: dict[str, str] = {}
     for row in rows:
-        try:
-            topics = json.loads(row["matched"] or "[]")
-        except ValueError:
+        goal = str(row["goal"] or "")
+        if goal not in goals:
             continue
         kind = str(row["kind"])
-        delta = (1 if kind in ("more", "kept", "dived", "ingested", "tracked")
-                 else -1 if kind == "less" else 0)
-        if delta == 0 or not isinstance(topics, list):
+        if kind not in _POSITIVE_FEEDBACK_KINDS and kind != "less":
             continue
-        for topic in topics:
-            topic = str(topic).strip().lower()
-            if topic:
-                net[topic] = net.get(topic, 0) + delta
-    return {topic: value for topic, value in net.items() if value}
+        story_kind = str(row["story_kind"] or "unknown")
+        if story_kind not in _ANGLE_STORY_KINDS:
+            story_kind = "content"
+        angle = (f"prefer: {story_kind}" if kind in _POSITIVE_FEEDBACK_KINDS
+                 else f"avoid: {story_kind}")
+        updates[goal] = angle
+    for text, angle in updates.items():
+        dreams_db.set_goal_query_angle("goal", text, angle=angle)
+
+
+def _apply_goal_angles(dreams_db: DreamsDB, *, now: datetime) -> None:
+    """Read the window once, then steer matched goals' angles (sync)."""
+    _write_goal_angles(dreams_db, _feedback_window_rows(dreams_db, now=now))
 
 
 async def _apply_feedback(
     deps: CycleDeps, now: datetime
 ) -> tuple[dict[str, int], list[str]]:
-    """Stage 0b (ruling R19): read recent story feedback for the snapshot.
+    """Stage 0b (rulings R19 + task-33165): read recent story feedback.
 
-    One ``asyncio.to_thread`` hop against the Dreams DB; any failure
-    degrades with a note (and no offset) and never aborts the cycle.
+    One ``asyncio.to_thread`` hop runs BOTH feedback halves against one
+    window read: the topic net the snapshot applies as a weight offset, and
+    the goal query-angle writes (goals never change weight; their feedback
+    steers the angle instead). Any failure degrades with a note and never
+    aborts the cycle; an angle-write failure does not take the topic
+    offset down with it (independent mechanisms, separate notes).
 
     Returns:
         ``(net_by_topic, degradation_notes)``.
     """
+
+    def stage() -> tuple[dict[str, int], list[str]]:
+        rows = _feedback_window_rows(deps.dreams_db, now=now)
+        notes: list[str] = []
+        try:
+            _write_goal_angles(deps.dreams_db, rows)
+        except Exception as exc:  # noqa: BLE001 - angles degrade alone
+            notes.append(f"goal angle feedback failed: {exc}")
+        return _net_from_rows(rows), notes
+
     try:
-        net = await asyncio.to_thread(_feedback_net, deps.dreams_db, now=now)
+        return await asyncio.to_thread(stage)
     except Exception as exc:  # noqa: BLE001 - the loop degrades, not the cycle
         return {}, [f"feedback loop failed: {exc}"]
-    return net, []
 
 
 async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
@@ -564,6 +769,17 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
     R18) and recent story feedback is netted per topic and applied by the
     snapshot as a weight offset (ruling R19) — both degrade with notes and
     never abort the cycle.
+
+    The master switch binds the run itself (Qodo #15, PR #2921): with
+    ``[dreams] enabled`` off the cycle does not start (``"disabled"``,
+    nothing claimed, nothing spent), and a cycle already running re-reads
+    the flag before query synthesis, before EACH search, and before each
+    story -- once it is off, no further search or model call starts, the
+    stories already written are kept, and the collection row is closed
+    with a degradation note rather than left ``generating``. A cycle
+    switched off before it wrote ANY story reports ``"disabled"`` too and
+    leaves no collection behind (review item 7): the date stays open, so
+    switching Dreams back on runs the cycle without waiting out a cadence.
 
     Never raises for provider/search failures: they degrade the collection
     (notes on the row) while every candidate still becomes a story row. A
@@ -584,7 +800,17 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
     Returns:
         ``{"collection_id": int | None, "status": str, "stories": int}`` —
         ``stories`` is the date's TOTAL story rows after this run.
+        ``status`` is the collection's final status, or one of the
+        no-run markers ``"disabled"``/``"inflight"``/``"date_taken"``.
     """
+    # The master switch is checked HERE, where every trigger arrives, and
+    # again before each spend below (Qodo #15, PR #2921): callers gate on
+    # ``[dreams] enabled`` before they start a cycle, but a cycle runs for
+    # minutes and the Settings toggle only writes the flag, so one already
+    # in flight kept searching and calling the model after Dreams was
+    # switched off.
+    if not dreams_setting("enabled"):
+        return {"collection_id": None, "status": "disabled", "stories": 0}
     now = deps.now()
     local_date = _local_date(now)
     dreams_db = deps.dreams_db
@@ -594,6 +820,21 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
     if local_date in _ACTIVE_CYCLE_DATES:
         return {"collection_id": None, "status": "inflight", "stories": 0}
     _ACTIVE_CYCLE_DATES.add(local_date)
+    halted = False
+
+    def switched_off() -> bool:
+        """Whether Dreams was switched off since this cycle started.
+
+        Read live before each spend (synthesis, each search, each
+        story), and sticky once true: a halted cycle starts no further
+        search or model call and goes straight to closing its collection
+        row. A call already in flight is allowed to finish -- a worker
+        thread cannot be recalled -- and what it produced is kept.
+        """
+        nonlocal halted
+        halted = halted or not dreams_setting("enabled")
+        return halted
+
     try:
         cutoff = to_utc_iso(now - timedelta(minutes=_STALE_GENERATING_MINUTES))
         reclaimed = await asyncio.to_thread(
@@ -625,6 +866,27 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
             )
         except Exception as exc:  # noqa: BLE001 - the sweep degrades, never aborts
             stage_notes.append(f"track sweep failed: {exc}")
+        # What a resume of the master switch could not finish -- above all
+        # a tracked page left off because its name could not be looked up
+        # then -- gets another try here, once per cycle (review round 4,
+        # B2). Needs the watchlists service; degrades like the sweep.
+        try:
+            subs_service_getter = getattr(deps, "subs_service_getter", None)
+            subs_service = (
+                subs_service_getter() if subs_service_getter else None)
+            if subs_service is not None:
+                # ...and, on the same daily visit, every source Dreams
+                # owns is checked for its egress mark from its real
+                # options (round 4, B4).
+                await track_service.backfill_egress_marks(
+                    subs_service, dreams_db, verify=True)
+                await track_service.retry_unfinished_resume(
+                    subs_service, dreams_db,
+                    scheduling_db_getter=getattr(
+                        deps, "scheduling_db_getter", None),
+                    now=now)
+        except Exception as exc:  # noqa: BLE001 - degrades, never aborts
+            stage_notes.append(f"track resume retry failed: {exc}")
         # Profile stages (rulings R18/R19) run BEFORE the snapshot so it
         # reflects refreshed signals and the feedback offsets; both degrade
         # with notes and never abort the cycle. Their notes are carried into
@@ -639,6 +901,11 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
             json.dumps(snap, sort_keys=True).encode()).hexdigest()[:16]
         collection_id = await asyncio.to_thread(
             dreams_db.create_collection, local_date, trigger, profile_digest)
+        # What this cycle holds is not an id but a ROW: ids are reused
+        # after a halted cycle's empty collection is deleted, so every
+        # later write names the row by its date and creation stamp as
+        # well (review of #2921, round 4, I5).
+        claim: tuple[str, str] | None = None
         notes: list[str] = list(stage_notes)
         configured_cap = int(dreams_setting("stories_per_cycle"))
         # Append mode (ruling R11): the date is taken, so this trigger
@@ -655,6 +922,7 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                 return {"collection_id": None, "status": "date_taken",
                         "stories": 0}
             collection_id = int(target["id"])
+            claim = (local_date, str(target["created_at"]))
             append_mode = True
             prior_notes = target.get("degradation_notes")
             existing_urls = set(target["urls"])
@@ -667,58 +935,70 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                 return {"collection_id": collection_id,
                         "status": str(target["status"]),
                         "stories": int(target["story_rows"])}
+        if claim is None:
+            created = await asyncio.to_thread(
+                dreams_db.get_collection_by_date, local_date)
+            if created is not None and int(created["id"]) == collection_id:
+                claim = (local_date, str(created["created_at"]))
         logger.info("Dreams cycle {} for {} (trigger={}, append={})",
                     collection_id, local_date, trigger, append_mode)
         queries: list[str] = []
+        # Goal provenance (review of #2921, item 1): each synthesized or
+        # fallback query row names the goal it was written for; this maps
+        # the query string to that goal so a story can be attributed to
+        # the goal whose query surfaced it -- exactly, never by overlap.
+        # The rows are distinct queries (``query_synthesis._distinct``), so
+        # a string names exactly one row.
+        query_rows: list[dict] = []
         chat: Callable[..., Any] | None = None
-        synthesis_called = False
 
-        def counting_chat(**kwargs: Any) -> Any:
-            """Chat seam wrapper recording whether synthesis invoked the LLM.
-
-            The one synthesis call shares the daily ``llm_calls`` budget
-            (spec §budgets / Task 4 review ruling), so the cycle must bump
-            only when the LLM was actually invoked — the deterministic
-            fallback after an unresolved provider makes no call at all.
-            """
-            nonlocal synthesis_called
-            synthesis_called = True
-            return chat(**kwargs)
-
-        # The synthesis call spends the same daily llm budget as stories, so
-        # it is checked BEFORE the call: an exhausted budget searches the
-        # deterministic fallback queries and makes no model call at all.
+        # Every spend is RESERVED before the work it pays for (review of
+        # #2921, item 6), one slot at a time, right before the search or
+        # model call it pays for: ``usage_reserve`` is one atomic
+        # check-and-count, shared with the track checks, so a check
+        # running while this cycle is mid-search or mid-story sees the
+        # slot as taken. Reading the usage first and bumping it after the
+        # work let the two of them spend the same last slot.
         query_count = int(dreams_setting("queries_per_cycle"))
-        pre_usage = await asyncio.to_thread(dreams_db.usage_get, local_date)
-        llm_left = (int(dreams_setting("max_llm_calls_per_day"))
-                    - int(pre_usage["llm_calls"]))
+        max_llm_calls = int(dreams_setting("max_llm_calls_per_day"))
         try:
-            # Thread-offloaded: the getter force-reloads config from disk
-            # and may reach the keyring — neither belongs on the event loop.
-            chat = await asyncio.to_thread(deps.chat_getter)
-            if llm_left > 0:
-                queries = await query_synthesis.synthesize_queries(
-                    counting_chat, snapshot=snap, count=query_count,
-                    exploration_slots=int(dreams_setting("exploration_slots")))
-            else:
-                # preview_queries now returns labeled rows (Phase 2 Task 1);
-                # the cycle still wants plain query strings. Its internal
-                # filter already dropped unsearchable goals.
-                queries = [row["query"] for row in
-                           query_synthesis.preview_queries(
-                               [str(t["text"]) for t in snap["topics"]],
-                               snap.get("goals", []), count=query_count)]
-                notes.append("llm budget exhausted: fallback queries, no "
-                             "synthesis call")
+            # Switched off already (Qodo #15, PR #2921): no provider is
+            # resolved and nothing is synthesized -- with no chat and no
+            # queries every later stage has nothing to spend on.
+            if not switched_off():
+                # Thread-offloaded: the getter force-reloads config from
+                # disk and may reach the keyring — neither belongs on the
+                # event loop.
+                chat = await asyncio.to_thread(deps.chat_getter)
+                # The synthesis call spends the same daily llm budget as
+                # stories: its slot is taken BEFORE the call, and an
+                # exhausted budget searches the deterministic fallback
+                # queries and makes no model call at all.
+                if chat is not None and not await asyncio.to_thread(
+                        dreams_db.usage_reserve, local_date,
+                        counter="llm_calls", limit=max_llm_calls):
+                    # The labeled fallback rows (Phase 2 Task 1); their
+                    # internal filter already dropped unsearchable goals.
+                    query_rows = query_synthesis.preview_queries(
+                        [str(t["text"]) for t in snap["topics"]],
+                        snap.get("goals", []), count=query_count)
+                    notes.append("llm budget exhausted: fallback queries, no "
+                                 "synthesis call")
+                else:
+                    query_rows = await query_synthesis.synthesize_query_rows(
+                        chat, snapshot=snap, count=query_count,
+                        exploration_slots=int(
+                            dreams_setting("exploration_slots")))
         except Exception as exc:  # noqa: BLE001 - provider unavailable, degrade
             notes.append(f"query synthesis failed: {exc}")
-        if synthesis_called:
-            # Recorded BEFORE usage_get so the story budget below sees the
-            # synthesis call as spent (controller ruling: the budget is
-            # shared by the loop's LLM calls — synthesis is one).
-            await asyncio.to_thread(
-                dreams_db.usage_bump, local_date, llm_calls=1)
+        queries = [str(row["query"]) for row in query_rows]
+        goal_by_query = {
+            str(row["query"]): str(row["goal"])
+            for row in query_rows if row.get("goal")
+        }
 
+        # A PLAN, not a spend: how much of the day is left to aim for. The
+        # slots themselves are reserved below, right before each use.
         usage = await asyncio.to_thread(dreams_db.usage_get, local_date)
         budget = _plan_budget(usage)
         if len(queries) > budget.searches:
@@ -734,13 +1014,64 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
         slots = min(budget.stories, story_cap)
 
         candidates: list[Candidate] = []
-        if (dreams_setting("web_search_enabled") and budget.searches > 0
+        if switched_off():
+            # Switched off during synthesis: no search goes out.
+            pass
+        elif slots <= 0:
+            # A story needs a model call. With no llm slot left for one,
+            # a search would be made, counted and thrown away (review of
+            # #2921, round 3, item 4); the track check has the same guard
+            # (``_reserve_check_search``).
+            notes.append(
+                "llm budget exhausted: no searches made, no story could "
+                "be written from them")
+        elif (dreams_setting("web_search_enabled") and budget.searches > 0
                 and queries):
-            found, used = await discovery.run_queries(
-                deps.perform_search, engine=str(dreams_setting("search_engine")),
-                queries=queries)
-            await asyncio.to_thread(
-                dreams_db.usage_bump, local_date, searches=used)
+            max_searches = int(dreams_setting("max_searches_per_day"))
+
+            async def may_search() -> bool:
+                """Whether the next search may go out; asked before each.
+
+                One live read of the master switch, then ONE reserved
+                slot -- exactly as each story reserves one llm slot
+                (review of #2921, round 3, item 2). Reserving the whole
+                batch up front left searches counted that a switch-off or
+                a cancellation never sent, and the switch was read once
+                for the batch, so the rest of it still went out.
+
+                The bound that is left (round 4, I4): ONE slot can stay
+                counted for a search that is never sent -- when the task
+                is cancelled, or the app closed, while the reservation is
+                on its thread hop or between it and the send. It is not
+                handed back: a refund path is one more thing to get wrong
+                for at most one unit per cycle. The same holds for the one
+                model call each story reserves, and for a tracked check's
+                one search and one judge call. The guide's budget
+                paragraph says so.
+                """
+                if switched_off():
+                    return False
+                return bool(await asyncio.to_thread(
+                    dreams_db.usage_reserve, local_date,
+                    counter="searches", limit=max_searches))
+
+            found, sent = await discovery.run_queries(
+                deps.perform_search,
+                engine=str(dreams_setting("search_engine")),
+                queries=queries, before_each=may_search)
+            if sent < len(queries) and not halted:
+                # The plan above counted on these, but another Dreams
+                # task took the slots meanwhile: stop at the cap.
+                notes.append(
+                    f"search budget: stopped after {sent} of "
+                    f"{len(queries)} searches (spent by other Dreams work "
+                    "meanwhile)")
+            # Only what was searched is a query of this cycle from here on.
+            queries = queries[:sent]
+            for candidate in found:
+                # The goal rides the candidate (round 3, N2) so the
+                # duplicate-URL merge below can keep it.
+                candidate.goal = goal_by_query.get(candidate.query)
             candidates.extend(found)
         else:
             notes.append("web search disabled or over budget")
@@ -777,11 +1108,13 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
         # LLM-knowledge mode (spec §error handling): total search failure or
         # the web-search kill switch still yields stories straight from the
         # model, visibly marked — a degraded cycle beats a silent one.
-        if not candidates and queries and slots > 0 and chat is not None:
+        if (not candidates and queries and slots > 0 and chat is not None
+                and not halted):
             llm_pool = [
                 Candidate(title=query, snippet="", source="llm",
                           url=f"{_LLM_URL_PREFIX}{index}/"
-                              f"{quote(query, safe='')}")
+                              f"{quote(query, safe='')}", query=query,
+                          goal=goal_by_query.get(query))
                 for index, query in enumerate(queries)
             ]
             # Same cross-cycle dedupe as the web pool: a recurring fallback
@@ -796,12 +1129,25 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
 
         results: list[tuple[Candidate, StoryResult]] = []
         for candidate in picked:
+            if switched_off():
+                # One live read per story: the model call about to start
+                # is the cycle's main spend. Stories already written stay.
+                break
             if chat is None:
                 result = StoryResult(
                     title=candidate.title, body="", kind="content",
                     event_date=None, location=None, status="failed",
                     error="chat provider unavailable")
             else:
+                if not await asyncio.to_thread(
+                        dreams_db.usage_reserve, local_date,
+                        counter="llm_calls", limit=max_llm_calls):
+                    # The plan above counted on this call, but another
+                    # Dreams task took it meanwhile: stop at the cap.
+                    notes.append(
+                        "llm budget: spent by other Dreams work mid-cycle; "
+                        "no further stories")
+                    break
                 result = await asyncio.to_thread(
                     story_service.generate_story, chat,
                     candidate=candidate, snapshot=snap)
@@ -810,8 +1156,36 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                 candidate=candidate, result=result,
                 matched_topics=_matched_topics(snap["topics"], candidate),
                 query=_attributed_query(candidate, queries),
-                count_call=chat is not None)
+                # Only a query that found this page attributes a goal; a
+                # watchlist item (no query) names none.
+                goal=candidate.goal, claim=claim)
             results.append((candidate, result))
+
+        if halted and not results:
+            # Switched off before this run produced a story (review of
+            # #2921, item 7). Nothing happened that a collection could
+            # truthfully record, and closing one as ``failed`` would also
+            # cost the user a cadence when they switch Dreams back on (a
+            # failed row is an attempt the projection retries one cadence
+            # later, and a date that owns a row is skipped by the boot
+            # catch-up). So the run is reported as not run: an existing
+            # collection it would have appended to is left exactly as it
+            # was, and the row this run claimed is handed back. What was
+            # already spent stays counted in the day's usage.
+            logger.info(
+                "Dreams cycle {} for {}: switched off before its first "
+                "story; nothing recorded", collection_id, local_date)
+            if append_mode:
+                return {"collection_id": collection_id,
+                        "status": str(target["status"]),
+                        "stories": int(target["story_rows"])}
+            await asyncio.to_thread(
+                dreams_db.delete_empty_collection, collection_id)
+            return {"collection_id": None, "status": "disabled", "stories": 0}
+        if halted:
+            notes.append(
+                "dreams disabled mid-cycle: stopped before further searches "
+                "or model calls")
 
         # Every PICKED candidate's URL is upserted into the seen ledger,
         # whatever its outcome — surfaced-but-unpicked URLs are not recorded
@@ -835,7 +1209,7 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
             degradation_notes=combined_notes,
             provider=getattr(chat, "provider", None),
             model=getattr(chat, "model", None),
-            completed_at=to_utc_iso(deps.now()))
+            completed_at=to_utc_iso(deps.now()), claim=claim)
         logger.info("Dreams cycle {} finished {}: {} story row(s) total",
                     collection_id, final, total_rows)
         return {"collection_id": collection_id, "status": final,

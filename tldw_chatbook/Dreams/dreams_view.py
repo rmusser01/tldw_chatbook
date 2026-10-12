@@ -25,6 +25,7 @@ is an ACTIVE tracked origin (one parameterized SELECT through the same
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -114,8 +115,10 @@ def list_tracked_updates(
 
     Returns:
         Rows shaped ``{id: tracked_item_id, label, mechanism, intent,
-        status, last_checked, last_run_status, event_date,
-        synthetic: False}``.
+        status, last_checked, last_run_status, event_date, held,
+        synthetic: False}``. ``held`` is ``None`` for a running watch, or
+        the reason its page source was left disabled when Dreams was
+        switched back on (see ``track_service.set_tracking_suspended``).
     """
     from tldw_chatbook.DB.Dreams_DB import clamp_limit
 
@@ -140,6 +143,7 @@ def list_tracked_updates(
                 "last_checked": item.get("last_checked"),
                 "last_run_status": last_run_status,
                 "event_date": item.get("event_date"),
+                "held": _held_reason(item),
                 "synthetic": False,
             }
         )
@@ -190,7 +194,31 @@ def format_tracked_row(update: Mapping[str, Any]) -> str:
     label = f"> Tracked: {update.get('label', '')}"
     if update.get("last_run_status"):
         label += f" · {update['last_run_status']}"
+    held = update.get("held")
+    if held:
+        # The watch is listed but its page is not being checked: say so,
+        # and why, where the user looks at their watches.
+        label += " · paused: " + (
+            "page address could not be resolved" if held == "dns_failure"
+            else "page address is not a public web address")
     return label
+
+
+def _held_reason(item: Mapping[str, Any]) -> str | None:
+    """Why a tracked item's page source is being held disabled, or None.
+
+    Read off the wrapper's suspension record (the track service owns its
+    shape; this module only needs the ``held`` reason and stays free of
+    that module's import chain). Anything unreadable is "not held".
+    """
+    try:
+        record = json.loads(item.get("suspension") or "null")
+    except ValueError:
+        return None
+    if not isinstance(record, dict):
+        return None
+    held = record.get("held")
+    return str(held) if held else None
 
 
 def _label(story: Mapping[str, Any]) -> str:

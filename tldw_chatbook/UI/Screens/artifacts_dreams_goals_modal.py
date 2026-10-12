@@ -45,6 +45,8 @@ from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Input, ListItem, ListView, Static
 
+from ...Utils.input_validation import validate_dreams_profile_text
+
 #: Weight for goal rows: goals never decay and never carry signal weight,
 #: so every write uses the same nominal value.
 _GOAL_WEIGHT = 1.0
@@ -103,6 +105,15 @@ class DreamsGoalsModal(ModalScreen[None]):
     # --- Compose ---------------------------------------------------------
 
     def compose(self) -> ComposeResult:
+        """Build the dialog: region line, goals list, add input, hint line.
+
+        The list starts empty; :meth:`on_mount` fills it from the database
+        so a broken read degrades to the empty-state hint instead of
+        failing composition.
+
+        Returns:
+            The dialog's widgets, in display order.
+        """
         with VerticalScroll(id="dgm-dialog"):
             yield Static("", id="dgm-region")
             yield ListView(id="dgm-goals")
@@ -123,6 +134,11 @@ class DreamsGoalsModal(ModalScreen[None]):
         return hints
 
     def on_mount(self) -> None:
+        """Paint the region line and the goal rows, then focus the list.
+
+        Returns:
+            None.
+        """
         self._load_region()
         self._reload()
         # The list (not the Input) holds focus so the single-letter
@@ -133,9 +149,12 @@ class DreamsGoalsModal(ModalScreen[None]):
         """Paint the read-only region line (region editing is TASK-32903)."""
         try:
             # Lazy Dreams import (same pattern as the story modal).
-            from ...Dreams.settings import dreams_setting
+            # The region Dreams actually USES: a stored value that fails
+            # the text rule is ignored, and this line says "used in
+            # queries" (review of #2921, round 3, item 7).
+            from ...Dreams.settings import dreams_region
 
-            region = str(dreams_setting("region") or "").strip()
+            region = dreams_region()
         except Exception:  # noqa: BLE001 - a broken config read is no region
             region = ""
         line = Text()
@@ -204,6 +223,17 @@ class DreamsGoalsModal(ModalScreen[None]):
         if not value:
             self._input().focus()
             self.notify("Type a goal first.", markup=False)
+            return
+        try:
+            # Qodo #8 (PR #2921): goal text reaches query synthesis and
+            # outbound search, so it is bounded and checked at the entry
+            # point rather than persisted after a bare strip().
+            value = validate_dreams_profile_text(value)
+        except ValueError as exc:
+            self._input().focus()
+            self.notify(
+                f"Goal not added: {exc}", severity="warning", markup=False
+            )
             return
         db = self._db()
         if db is None:
@@ -287,6 +317,14 @@ class DreamsGoalsModal(ModalScreen[None]):
         self._changed()
 
     def action_close(self) -> None:
+        """Dismiss the modal with ``None`` (``q`` and Escape).
+
+        Closing writes nothing: every edit was already persisted, and
+        reported through ``on_changed``, by the action that made it.
+
+        Returns:
+            None.
+        """
         self.dismiss(None)
 
     # --- Event routing ----------------------------------------------------

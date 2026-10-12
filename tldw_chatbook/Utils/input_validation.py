@@ -1827,6 +1827,202 @@ def validate_text_input(
     return True
 
 
+#: Bound for one user-typed Dreams phrase (a topic, a goal, the region),
+#: in Unicode code points of the stored (NFC) form. The text is embedded
+#: in the query-synthesis prompt and, on the deterministic fallback, in an
+#: outbound search query.
+DREAMS_PROFILE_TEXT_MAX_LENGTH = 200
+
+#: Input longer than this is refused before any Unicode work is done on
+#: it. NFC composition can shorten text (a letter and its combining mark
+#: become one code point), so the exact bound is applied after it; this
+#: one only keeps a multi-megabyte paste from being normalised and scanned.
+_DREAMS_TEXT_PRECHECK_LENGTH = DREAMS_PROFILE_TEXT_MAX_LENGTH * 4
+
+#: General categories that end a line or are raw controls: every C0/C1
+#: control (which includes every ASCII line break) and Unicode's own line
+#: and paragraph separators.
+_DREAMS_TEXT_LINE_CATEGORIES = frozenset({"Cc", "Zl", "Zp"})
+
+#: The bidirectional embedding, override and isolate controls: they make
+#: text DISPLAY in another order than it is stored and sent.
+_DREAMS_TEXT_DIRECTION_CONTROLS = frozenset(
+    "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+
+#: The format characters (category Cf) real text needs or shows:
+#:
+#: * the two joiners (emoji sequences, Persian and Indic shaping), the
+#:   three directional MARKS, and the Mongolian vowel separator (shaping);
+#: * the VISIBLE ones -- Unicode's prepended concatenation marks: the
+#:   Arabic number sign and its siblings, end of ayah, the Syriac
+#:   abbreviation mark, the Kaithi number signs (round 4, C4: these were
+#:   refused although people type them and they show).
+#:
+#: Every other Cf character is refused -- the direction controls above,
+#: invisible operators, deprecated format characters, interlinear
+#: annotation, tag characters outside a flag: all of them change what
+#: the text IS without changing what the user sees. (Variation selectors
+#: are category Mn, not Cf, and stay allowed.)
+_DREAMS_TEXT_ALLOWED_FORMAT = frozenset(
+    "\u200c\u200d\u200e\u200f\u061c\u180e"
+    "\u0600\u0601\u0602\u0603\u0604\u0605\u06dd\u070f"
+    "\u0890\u0891\u08e2\U000110bd\U000110cd")
+
+#: Invisible characters that only hint at line breaks or ride along with
+#: a paste. They are REMOVED from the text, not refused (round 4, C4):
+#: Thai and Khmer are typed with zero width spaces between words, pasted
+#: text carries soft hyphens and a leading byte order mark, and none of
+#: them is part of what the user means. Zero width space, soft hyphen,
+#: word joiner, byte order mark, object replacement character.
+_DREAMS_TEXT_REMOVED = dict.fromkeys(
+    map(ord, "\u200b\u00ad\u2060\ufeff\ufffc"))
+
+#: Blanks that take up room: braille's own space and the Hangul fillers
+#: people use as an "invisible letter". Written as a plain space, so
+#: ``jazz<U+2800>guitar`` is stored as what it looks like (round 4, I3).
+_DREAMS_TEXT_BLANK_AS_SPACE = dict.fromkeys(
+    map(ord, "\u2800\u3164\uffa0"), " ")
+
+#: Characters that render as nothing although Unicode files them under
+#: letters or symbols, and that are left where they are because Hangul
+#: jamo composition (and music notation) uses them structurally. They do
+#: not count as readable text.
+_DREAMS_TEXT_BLANK = frozenset("\u115f\u1160\U0001d159")
+
+#: A well-formed emoji tag sequence -- a subdivision flag such as
+#: England's: WAVING BLACK FLAG, tag letters/digits, CANCEL TAG. Tag
+#: characters are legitimate inside one and nowhere else (round 4, C4).
+_DREAMS_TEXT_FLAG_SEQUENCE_RE = re.compile(
+    "\U0001f3f4[\U000e0030-\U000e0039\U000e0061-\U000e007a]+\U000e007f")
+
+# One refusal per thing that can be wrong (round 4, C4): the caller shows
+# it after "Topic not added: " / "Goal not added: " / "Region not saved: ".
+_DREAMS_TEXT_TOO_LONG = (
+    f"it is longer than {DREAMS_PROFILE_TEXT_MAX_LENGTH} characters.")
+_DREAMS_TEXT_NOT_ONE_LINE = (
+    "it has a line break or a control character in it; use a single line.")
+_DREAMS_TEXT_NOTHING_READABLE = (
+    "there is nothing readable in it; type a word, a number or an emoji.")
+_DREAMS_TEXT_HIDDEN_DIRECTION = (
+    "it has hidden text-direction characters in it, which make text show "
+    "in another order than it is stored; type it again without them.")
+_DREAMS_TEXT_HIDDEN_FORMAT = (
+    "it has invisible formatting characters in it; type it again without "
+    "them.")
+_DREAMS_TEXT_NOT_TEXT = "it has a character in it that is not valid text."
+
+
+def _is_noncharacter(char: str) -> bool:
+    """Whether a code point is one of Unicode's 66 noncharacters."""
+    code = ord(char)
+    return 0xFDD0 <= code <= 0xFDEF or (code & 0xFFFE) == 0xFFFE
+
+
+def validate_dreams_profile_text(value: object) -> str:
+    """Validate one user-typed Dreams phrase and return the form to store.
+
+    A topic, a goal and the region each end up embedded in the
+    query-synthesis prompt and (on the deterministic fallback, and for
+    the region in a tracked question) in an outbound search query. The
+    rule is about what the text IS, not about what it mentions:
+
+    * one line: no control character, no line or paragraph separator;
+    * something to read: a letter or a number in any script, or an emoji
+      or symbol; punctuation alone, combining marks alone and characters
+      that render as nothing are not a topic (round 4, I3);
+    * nothing hidden that changes what the text is: no bidirectional
+      embedding/override/isolate control, and no other invisible format
+      character except the joiners, directional marks and visible format
+      characters real text needs (``_DREAMS_TEXT_ALLOWED_FORMAT``), and
+      tag characters inside a subdivision flag;
+    * no noncharacter and no lone surrogate (which cannot even be written
+      to SQLite or TOML);
+    * at most ``DREAMS_PROFILE_TEXT_MAX_LENGTH`` Unicode code points --
+      of the text as typed or of the stored form, whichever is shorter,
+      so an emoji counts once, a decomposed accent composes away, and a
+      letter NFC writes as two code points still counts once.
+
+    Text people type is not refused for what this interpreter's Unicode
+    tables happen to know (round 4, C4): private-use code points (the
+    Apple logo) and code points "unassigned" in this Python's Unicode
+    version (next year's emoji) are ordinary characters here. Invisible
+    characters that are not part of what the user means are removed
+    instead of refused -- zero width space, soft hyphen, word joiner,
+    byte order mark -- and a blank that takes up room (braille's space,
+    the Hangul filler) is stored as a space.
+
+    There is deliberately NO script or markup rule (review of #2921,
+    round 3, item 8). Nothing renders this text as HTML or script -- the
+    TUI shows it literally (``markup=False`` / ``rich.text.Text``), prompts
+    and searches carry it as plain strings -- so such a rule protected
+    nothing, while it refused ordinary interests ("JavaScript: The Good
+    Parts") and was trivially evaded anyway. Angle brackets, square
+    brackets and braces are ordinary text here. The app-wide
+    ``validate_text_input`` is therefore not consulted.
+
+    "Shows it literally" is a statement about Dreams' OWN screens, and it
+    stopped being the whole story once this text leaves them (round 4,
+    C1): a watched query becomes an event reminder's title and a
+    notification's title, a story's title an alert rule's and a source's
+    name, and other features' screens DO read ``[...]`` as Rich markup.
+    That is handled where the text leaves, not here:
+    ``Dreams.track_service._label`` writes those copies with square
+    brackets as parentheses, and the shared notification helper shows
+    runtime text with markup off. This rule still accepts brackets.
+
+    Args:
+        value: The raw text from the input widget or the config.
+
+    Returns:
+        The text to store: trimmed, without the removable invisible
+        characters, in NFC -- so a composed and a decomposed spelling of
+        the same phrase are one stored value.
+
+    Raises:
+        ValueError: If the value is not text, has nothing readable in it,
+            or breaks one of the rules above. The message names the one
+            thing that was wrong, is fixed copy fit for a notice, and
+            never echoes the input.
+    """
+    typed = value.strip() if isinstance(value, str) else ""
+    if not typed:
+        raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
+    # Length first: nothing below may run on an unbounded paste.
+    if len(typed) > _DREAMS_TEXT_PRECHECK_LENGTH:
+        raise ValueError(_DREAMS_TEXT_TOO_LONG)
+    typed = typed.translate(_DREAMS_TEXT_REMOVED).translate(
+        _DREAMS_TEXT_BLANK_AS_SPACE).strip()
+    text = unicodedata.normalize("NFC", typed)
+    # Tag characters count only inside a well-formed flag: scan the text
+    # with every such flag reduced to its base emoji.
+    scanned = _DREAMS_TEXT_FLAG_SEQUENCE_RE.sub("\U0001f3f4", text)
+    readable = False
+    for char in scanned:
+        category = unicodedata.category(char)
+        if category in _DREAMS_TEXT_LINE_CATEGORIES:
+            raise ValueError(_DREAMS_TEXT_NOT_ONE_LINE)
+        if category == "Cs" or _is_noncharacter(char):
+            raise ValueError(_DREAMS_TEXT_NOT_TEXT)
+        if char in _DREAMS_TEXT_DIRECTION_CONTROLS:
+            raise ValueError(_DREAMS_TEXT_HIDDEN_DIRECTION)
+        if category == "Cf":
+            if char not in _DREAMS_TEXT_ALLOWED_FORMAT:
+                raise ValueError(_DREAMS_TEXT_HIDDEN_FORMAT)
+        elif char not in _DREAMS_TEXT_BLANK and (
+            # A letter, a number, an emoji or symbol, a currency sign --
+            # or a code point these tables do not know (Cn) or leave to
+            # the font (Co): a newer Unicode's emoji must not be
+            # "unreadable" on an older Python.
+            category[0] in "LN" or category in ("So", "Sc", "Cn", "Co")
+        ):
+            readable = True
+    if not readable:
+        raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
+    if min(len(typed), len(text)) > DREAMS_PROFILE_TEXT_MAX_LENGTH:
+        raise ValueError(_DREAMS_TEXT_TOO_LONG)
+    return text
+
+
 def validate_navigation_context_text(
     value: object,
     *,

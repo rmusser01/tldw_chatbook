@@ -1246,6 +1246,15 @@ class TldwCli(
         #: reads and clears this one-shot slot to show a single toast.
         #: 0 means nothing to report.
         self._console_fleet_teardown_notice: int = 0
+        #: guardian task 2 (ADR-204 §Post-visit summary): the LAST Console
+        #: visit's Guardian summary payload (``{per_topic_counts,
+        #: escalated_rules, trend_notices}``), staged by
+        #: ``ChatScreen.on_unmount`` -> ``GuardianChecker.finalize_visit``
+        #: and consumed exactly once by the NEXT Console mount's slot
+        #: check (the report-on-next-mount precedent above). ``None``
+        #: means nothing to report; empty visits mint nothing. Task 3
+        #: polishes the surfacing copy.
+        self._guardian_visit_summary_notice: dict | None = None
         self.service_policy_enforcer = (
             ServicePolicyEnforcer.from_runtime_policy_context(self.runtime_policy)
         )
@@ -4537,10 +4546,15 @@ class TldwCli(
                 group="scheduling",
             )
 
-        # dreams phase 1: Dreams DB + projection + boot catch-up, all after
-        # `_ui_ready` (ADR-097 boot-census ratchet; guarded internally, a
-        # disabled Dreams stops at two cheap settings reads).
+        # dreams phase 1: Dreams DB + projection + boot catch-up + the watch
+        # reconcile, all after `_ui_ready` (ADR-097 boot-census ratchet;
+        # guarded internally: a disabled Dreams is settings reads + one stat).
         self._wire_dreams_scheduler_integration()
+
+        # guardian task 2: the daily trend task rides the same post-
+        # `_ui_ready` seam (same ADR-097 discipline; internally gated on
+        # `[guardian] enabled`, a disabled Guardian projects nothing).
+        self._wire_guardian_scheduler_integration()
 
         self._schedule_deferred_startup_work()
         from .Backup_Recovery.profile_open import acknowledge_mounted
