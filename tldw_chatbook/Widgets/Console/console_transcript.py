@@ -5493,6 +5493,20 @@ class ConsoleTranscript(VerticalScroll):
         if not text:
             self.notify("This message has no text to select.", severity="warning")
             return False
+        # TASK-21237: entering keyboard selection MID-MOUSE-DRAG used to
+        # re-arm the manager on the new row while the drag's highlight
+        # stayed painted on the origin row -- a ghost no later event would
+        # clear, because TASK-21114 replaced the per-move sweep with one
+        # sweep at drag-arm time. Cancel the in-flight drag (so a late
+        # MouseUp cannot finish the keyboard selection as if it were the
+        # drag's release), drop the drag's mouse capture, and sweep every
+        # OTHER row's stale highlight -- the same arm-time sweep
+        # `on_mouse_down` performs.
+        if self.selection_manager.state.active:
+            self.selection_manager.cancel()
+            self._selection_origin_row = None
+            self.release_mouse()
+        self._clear_other_selection_highlights(row)
         row.scroll_visible(animate=False)
         self.selection_manager.begin_drag(row.id, 0)
         self.selection_manager.extend_drag(row.id, 1)
