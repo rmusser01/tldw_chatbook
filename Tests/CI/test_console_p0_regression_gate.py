@@ -164,6 +164,7 @@ _BOOTSTRAP_OK = (
     "UI Fast Lane census",
     "PR Fast Lane (admission-sensitive)",
     "Console P0 gate (admission-sensitive)",
+    "Dreams contracts (admission-sensitive)",
 )
 
 
@@ -195,6 +196,12 @@ def _lanes() -> dict[str, tuple[str, ...]]:
         ),
         "Console P0 gate (admission-sensitive)": _step_targets(
             "console-p0-gate", "Run the admission-sensitive Console P0 regression tests"
+        ),
+        "Dreams and Guardian contracts (sandboxed)": _step_targets(
+            "console-p0-gate", "Run Dreams and Guardian boundary contracts"
+        ),
+        "Dreams contracts (admission-sensitive)": _step_targets(
+            "console-p0-gate", "Run Dreams admission-sensitive contracts"
         ),
     }
 

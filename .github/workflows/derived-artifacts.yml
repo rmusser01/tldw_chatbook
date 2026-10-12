@@ -208,45 +208,6 @@ jobs:
             --timeout=300 \
             --tb=short
 
-      # PR2921: bounded privacy, native recovery and actual dispatch contracts.
-      - name: Run Dreams and Guardian boundary contracts
-        if: ${{ !cancelled() }}
-        run: |
-          pytest \
-            Tests/Dreams/test_dispatch_currentness.py \
-            Tests/Dreams/test_cycle_service.py::test_mixed_profile_cycle_keeps_topic_and_goal_stories_without_changing_budgets \
-            Tests/Dreams/test_cycle_service.py::test_no_goal_mark_or_list_marker_ever_reaches_the_search \
-            Tests/Dreams/test_cycle_service.py::test_cycle_and_check_cannot_both_spend_the_last_search \
-            Tests/Guardian/test_live_discovery_consent.py \
-            Tests/Guardian/test_captured_dispatch_ownership.py \
-            Tests/Guardian/test_daily_native_lifecycle.py \
-            Tests/Guardian/test_crisis_provenance.py \
-            Tests/Guardian/test_crisis_resources.py \
-            Tests/Backup_Recovery/test_guardian_owner.py \
-            Tests/Backup_Recovery/test_dreams_owner.py \
-            Tests/Backup_Recovery/test_guardian_activation.py \
-            Tests/Backup_Recovery/test_dreams_activation.py \
-            Tests/Backup_Recovery/test_restored_source_first_fetch.py \
-            Tests/Backup_Recovery/test_collections_provenance_owner.py \
-            Tests/Library/test_library_artifacts_dreams.py \
-            Tests/Watchlists/test_runtime_name_literals.py \
-            Tests/Notifications/test_notification_toast_markup.py \
-            --timeout=180 \
-            --tb=short
-
-      # PR2921: bounded privacy, native recovery and actual dispatch contracts.
-      - name: Run Dreams admission-sensitive contracts
-        if: ${{ !cancelled() }}
-        run: |
-          pytest \
-            Tests/Dreams/test_boot_dispatch_admission.py \
-            Tests/Library/test_capture_url_provenance.py::test_actual_capture_first_and_retry_apply_egress_at_every_hop \
-            Tests/Subscriptions/test_local_watchlists_service.py \
-            Tests/Watchlists/test_watchlists_bulk_source_authoring.py \
-            Tests/UI/test_settings_dreams_guardian_native_lifecycle.py \
-            --timeout=300 \
-            --tb=short
-
   ui-fast-lane:
     # TASK-32908. Until now `Tests/UI` -- 25,917 collected tests, the biggest
     # directory in the tree -- gated NOTHING on a pull request.
@@ -418,6 +379,45 @@ jobs:
             Tests/UI/test_console_hook_review_send_freeze.py::test_the_app_pump_answers_ctrl_q_while_the_enter_review_is_open \
             Tests/UI/test_console_hook_review_send_freeze.py::test_a_declined_send_review_settles_and_keeps_the_draft \
             Tests/UI/test_console_hook_review_send_freeze.py::test_allow_all_resumes_the_captured_send_exactly_once \
+            --timeout=300 \
+            --tb=short
+
+      # PR2921: bounded privacy, native recovery and actual dispatch contracts.
+      - name: Run Dreams and Guardian boundary contracts
+        if: ${{ !cancelled() }}
+        run: |
+          pytest \
+            Tests/Dreams/test_dispatch_currentness.py \
+            Tests/Dreams/test_cycle_service.py::test_mixed_profile_cycle_keeps_topic_and_goal_stories_without_changing_budgets \
+            Tests/Dreams/test_cycle_service.py::test_no_goal_mark_or_list_marker_ever_reaches_the_search \
+            Tests/Dreams/test_cycle_service.py::test_cycle_and_check_cannot_both_spend_the_last_search \
+            Tests/Guardian/test_live_discovery_consent.py \
+            Tests/Guardian/test_captured_dispatch_ownership.py \
+            Tests/Guardian/test_daily_native_lifecycle.py \
+            Tests/Guardian/test_crisis_provenance.py \
+            Tests/Guardian/test_crisis_resources.py \
+            Tests/Backup_Recovery/test_guardian_owner.py \
+            Tests/Backup_Recovery/test_dreams_owner.py \
+            Tests/Backup_Recovery/test_guardian_activation.py \
+            Tests/Backup_Recovery/test_dreams_activation.py \
+            Tests/Backup_Recovery/test_restored_source_first_fetch.py \
+            Tests/Backup_Recovery/test_collections_provenance_owner.py \
+            Tests/Library/test_library_artifacts_dreams.py \
+            Tests/Watchlists/test_runtime_name_literals.py \
+            Tests/Notifications/test_notification_toast_markup.py \
+            --timeout=180 \
+            --tb=short
+
+      # PR2921: bounded privacy, native recovery and actual dispatch contracts.
+      - name: Run Dreams admission-sensitive contracts
+        if: ${{ !cancelled() }}
+        run: |
+          pytest \
+            Tests/Dreams/test_boot_dispatch_admission.py \
+            Tests/Library/test_capture_url_provenance.py::test_actual_capture_first_and_retry_apply_egress_at_every_hop \
+            Tests/Subscriptions/test_local_watchlists_service.py \
+            Tests/Watchlists/test_watchlists_bulk_source_authoring.py \
+            Tests/UI/test_settings_dreams_guardian_native_lifecycle.py \
             --timeout=300 \
             --tb=short
 

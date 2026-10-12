@@ -395,7 +395,14 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
     target under a listed directory, nothing listed twice.
     """
     steps = _pytest_step_targets()
-    assert len(steps) == 4, [name for name, _ in steps]
+    assert tuple(name for name, _ in steps) == (
+        "pr-fast-lane: Run fast PR contract",
+        "pr-fast-lane: Run admission-sensitive suites",
+        "console-p0-gate: Run the sandboxed Console P0 regression tests",
+        "console-p0-gate: Run the admission-sensitive Console P0 regression tests",
+        "console-p0-gate: Run Dreams and Guardian boundary contracts",
+        "console-p0-gate: Run Dreams admission-sensitive contracts",
+    )
     overlapping = _census_checker().overlapping_targets
     for name, targets in steps:
         assert targets, f"{name} lists no targets"
@@ -413,3 +420,30 @@ def test_every_node_id_target_in_a_pr_lane_step_resolves():
             if node:
                 reason = resolve(PROJECT_ROOT / file_part, node)
                 assert reason is None, f"{name}: {target}: {reason}"
+
+
+@pytest.mark.parametrize("mutation", ["wrong-job", "missing", "duplicate", "order", "overlap", "unresolved"])
+def test_pr_step_contract_rejects_location_and_target_drift(monkeypatch, mutation):
+    workflow = _workflow()
+    fast = workflow["jobs"]["pr-fast-lane"]["steps"]
+    p0 = workflow["jobs"]["console-p0-gate"]["steps"]
+    step = p0[-2]
+    if mutation == "wrong-job":
+        fast.append(p0.pop(-2))
+    elif mutation == "missing":
+        p0.pop(-2)
+    elif mutation == "duplicate":
+        p0.append(dict(step))
+    elif mutation == "order":
+        p0[-2:] = reversed(p0[-2:])
+    elif mutation == "overlap":
+        step["run"] += " Tests/Dreams/test_dispatch_currentness.py"
+    else:
+        step["run"] = step["run"].replace(
+            "Tests/Dreams/test_dispatch_currentness.py",
+            "Tests/Dreams/test_dispatch_currentness.py::test_missing_ci_witness",
+        )
+    monkeypatch.setattr(f"{__name__}._workflow", lambda: workflow)
+    with pytest.raises(AssertionError):
+        test_every_pr_lane_pytest_step_has_disjoint_targets()
+        test_every_node_id_target_in_a_pr_lane_step_resolves()
