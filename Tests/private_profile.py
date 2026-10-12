@@ -23,13 +23,17 @@ _CHILD_STACKS = "TLDW_TEST_PRIVATE_PROFILE_STACKS"
 _NO_CHILD_FAILURE = (
     "(the child's JUnit report records no failure or error; see the log tail)"
 )
-#: How far the child's own pytest-timeout leads its parent's (TASK-34789). They
-#: used to be equal and the parent's clock starts first, so a hung child was
-#: only ever a bare parent timeout with the child's log unread. The lead covers
-#: the child's start-up (a trivial private-profile test takes 6.6 s end to end
-#: in CI) and its failure report. The slowest passing private-profile test in
-#: 177 CI logs took 126 s of its 180 s, start-up included; a 150 s child limit
-#: leaves that one about 30 s.
+#: How much later the parent's own pytest-timeout fires, so that the child's
+#: fires first (TASK-34789). They used to be equal and the parent's clock starts
+#: first, so a hung child was only ever a bare parent timeout with the child's
+#: log unread. The child keeps the whole budget the test had (a little more:
+#: its start-up no longer counts against it), so this takes nothing from a
+#: passing test; the slowest passing private-profile test in 189 CI logs took
+#: 127.1 s of its 180 s. A hung test is reported up to this much later than the
+#: lane's --timeout, by the child's own timeout naming the lane's value; the
+#: lead covers the child's start-up (6.6 s for a trivial test in CI) and its
+#: report. Should the parent's own timeout still fire, it too names the lane's
+#: value.
 _CHILD_LEAD_SECONDS = 30.0
 #: What the parent keeps of its own limit to end a child that is still running
 #: and report it, before the parent's pytest-timeout would fire instead.
@@ -66,22 +70,42 @@ def _child_failure_report(report: Path) -> str:
     return quoted or _NO_CHILD_FAILURE
 
 
-def _child_deadlines(remaining: float) -> tuple[float, float | None]:
-    """Split what is left of the parent's limit between the child and itself.
+def _extend_own_alarm(armed: float) -> float:
+    """Move the parent's own pytest-timeout ``_CHILD_LEAD_SECONDS`` later.
+
+    pytest-timeout's signal method keeps its deadline only in ITIMER_REAL, and
+    cancels the timer whatever its value when the test ends. Its thread method
+    (Windows; a test off the main thread) arms no itimer and is left alone.
 
     Args:
-        remaining: Seconds left on the parent test's own timeout; 0 for none.
+        armed: Seconds left on ITIMER_REAL; 0 when it is not armed.
 
     Returns:
-        The child's ``--timeout`` and how long the parent waits for the child
-        (``None``: no limit). A limit under three minutes scales both margins
-        down, so the child keeps at least five sixths of it.
+        The lead given, or 0.0 when the parent's limit did not move.
     """
-    if remaining <= 0:
+    if armed <= 0 or not callable(signal.getsignal(signal.SIGALRM)):
+        return 0.0
+    signal.setitimer(signal.ITIMER_REAL, armed + _CHILD_LEAD_SECONDS)
+    return _CHILD_LEAD_SECONDS
+
+
+def _child_deadlines(budget: float, lead: float) -> tuple[float, float | None]:
+    """The child's ``--timeout`` and how long the parent waits for the child.
+
+    Args:
+        budget: Seconds left of the test's own timeout; 0 for none.
+        lead: How far the parent's own limit moved later; 0 for not at all.
+
+    Returns:
+        The child keeps the whole budget. Where the parent's limit moved, the
+        parent waits until ``_PARENT_RESERVE_SECONDS`` before the moved limit;
+        where it did not, it waits as it always did (``None``: no limit).
+    """
+    if budget <= 0:
         return 0.0, None
-    lead = min(_CHILD_LEAD_SECONDS, remaining / 6)
-    reserve = min(_PARENT_RESERVE_SECONDS, remaining / 10)
-    return remaining - lead, remaining - reserve
+    if not lead:
+        return budget, budget
+    return budget, budget + lead - _PARENT_RESERVE_SECONDS
 
 
 def _note_stacks(*_signal) -> None:
@@ -186,7 +210,9 @@ def private_profile_test(function):
             if hasattr(signal, "getitimer")
             else 0.0
         )
-        child_timeout, wait = _child_deadlines(min(armed or timeout, timeout))
+        child_timeout, wait = _child_deadlines(
+            min(armed or timeout, timeout), _extend_own_alarm(armed)
+        )
         report = work / "pytest.xml"
         log = work / "pytest.log"
         stacks = work / "stacks.txt"

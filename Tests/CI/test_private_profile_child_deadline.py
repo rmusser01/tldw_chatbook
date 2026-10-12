@@ -2,9 +2,10 @@
 
 ``private_profile_test`` gave the child its parent's own timeout, and the
 parent's clock starts first: six UI Fast Lane runs of one hung child ended as
-a bare parent timeout, the child's log unread. The child now stops first and
-writes its stacks to a file the parent quotes; a child that still cannot
-finish is asked once more and ended before the parent's own limit.
+a bare parent timeout, the child's log unread. The parent's own limit now
+moves later, so the child stops first and writes its stacks to a file the
+parent quotes; a child that still cannot finish is asked once more and ended
+before the parent's moved limit.
 """
 
 import asyncio
@@ -27,14 +28,15 @@ from Tests.private_profile import (
 _CHILD_LIMIT = 3
 
 
-def test_the_child_stops_before_its_parent_and_the_parent_before_its_own_limit():
-    # The UI Fast Lane limit. The slowest passing private-profile test in 177
-    # CI logs took 126 s there, child start-up included.
-    assert _child_deadlines(180.0) == (150.0, 175.0)
-    assert _child_deadlines(300.0) == (270.0, 295.0)
-    # A short limit leaves the child five sixths of it.
-    assert _child_deadlines(30.0) == (25.0, 27.0)
-    assert _child_deadlines(0.0) == (0.0, None)
+def test_the_child_keeps_its_budget_and_the_parent_waits_for_it():
+    # The UI Fast Lane limit, with the parent's own limit moved 30 s later:
+    # the child keeps all 180 s, the parent waits until 5 s before 210 s.
+    assert _child_deadlines(180.0, 30.0) == (180.0, 205.0)
+    # A limit that could not move (thread method, Windows): as before.
+    assert _child_deadlines(180.0, 0.0) == (180.0, 180.0)
+    assert _child_deadlines(0.0, 30.0) == (0.0, None)
+    # Nothing armed: the parent's limit is not touched.
+    assert private_profile._extend_own_alarm(0.0) == 0.0
 
 
 def _stuck_worker(release: threading.Event) -> None:
@@ -120,7 +122,9 @@ async def test_a_child_that_cannot_finish_is_asked_then_ended_before_the_parents
         return await spawn(sys.executable, "-c", script, **options)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", never_exits)
-    monkeypatch.setattr(private_profile, "_child_deadlines", lambda _left: (1.0, 5.0))
+    monkeypatch.setattr(
+        private_profile, "_child_deadlines", lambda _budget, _lead: (1.0, 5.0)
+    )
     child = test_child_whose_worker_never_answers
     started = asyncio.get_running_loop().time()
 
