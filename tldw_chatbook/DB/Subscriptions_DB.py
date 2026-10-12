@@ -84,7 +84,7 @@ if TYPE_CHECKING:
     )
 
 
-_CURRENT_SCHEMA_VERSION = 2
+_CURRENT_SCHEMA_VERSION = 3
 _AGENT_NAME_ORDER_PREFIX_CHARS = 96
 
 INTERRUPTED_RUN_ERROR = "Interrupted: the application stopped before this run finished."
@@ -774,26 +774,19 @@ class SubscriptionsDB(BaseDB):
                 # untouched: normalizing it away would delete a newer build's
                 # marker and then run v2 assumptions over schema and data this
                 # build has never seen (Qodo #4).
-                recognized = set(versions) <= {1, _CURRENT_SCHEMA_VERSION}
-                if recognized and _CURRENT_SCHEMA_VERSION in versions:
-                    # The current version is present, possibly beside stale rows
-                    # left by an abnormal exit (the fresh-create path's
-                    # `INSERT OR IGNORE` and the migration path's `DELETE` +
-                    # insert can disagree about what "the" row is -- task-32343).
-                    # Normalize rather than refuse to open.
-                    if len(versions) > 1:
-                        with self.transaction() as tx_conn:
-                            tx_conn.execute(
-                                "DELETE FROM schema_version WHERE version != ?",
-                                (_CURRENT_SCHEMA_VERSION,),
-                            )
-                elif versions == [1]:
-                    self._migrate_from_v1_to_v2()
-                else:
+                recognized = bool(versions) and set(versions) <= {1, 2, 3}
+                if not recognized:
                     raise SubscriptionError(
                         f"Unsupported subscriptions schema version {versions} in "
                         f"{self.db_path_str}; this build supports {_CURRENT_SCHEMA_VERSION}"
                     )
+                if max(versions) == 1:
+                    self._migrate_from_v1_to_v2()
+                if max(versions) < 3:
+                    self._migrate_from_v2_to_v3()
+                elif len(versions) > 1:
+                    with self.transaction() as tx_conn:
+                        tx_conn.execute("DELETE FROM schema_version WHERE version != 3")
 
             with self.transaction() as conn:
                 conn.executescript("""
@@ -803,7 +796,7 @@ class SubscriptionsDB(BaseDB):
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY NOT NULL
             );
-            INSERT OR IGNORE INTO schema_version (version) VALUES (2);
+            INSERT OR IGNORE INTO schema_version (version) VALUES (3);
             
             -- Unified subscription table with enhanced features
             CREATE TABLE IF NOT EXISTS subscriptions (
@@ -1149,8 +1142,21 @@ class SubscriptionsDB(BaseDB):
             conn.execute("DELETE FROM schema_version")
             conn.execute(
                 "INSERT INTO schema_version (version) VALUES (?)",
-                (_CURRENT_SCHEMA_VERSION,),
+                (2,),
             )
+
+    def _migrate_from_v2_to_v3(self):
+        """Persist conservative URL lineage before any restored source is fetched."""
+        with self.transaction(immediate=True) as conn:
+            migration = Path(__file__).with_name("migrations") / "subscriptions_v2_to_v3_url_provenance.sql"
+            pending = ""
+            for line in migration.read_text(encoding="utf-8").splitlines(keepends=True):
+                pending += line
+                if sqlite3.complete_statement(pending):
+                    conn.execute(pending)
+                    pending = ""
+            if pending.strip():
+                raise SubscriptionError("incomplete_provenance_migration")
 
     def _ensure_watchlists_schema(self, conn=None):
         """Idempotent migration for watchlists screen schema additions."""
@@ -2283,6 +2289,16 @@ class SubscriptionsDB(BaseDB):
             ID of the created subscription
         """
         start_time = time.time()
+        options = kwargs.get("processing_options")
+        if isinstance(options, str):
+            try:
+                options = json.loads(options)
+            except ValueError:
+                options = None
+        options = dict(options) if isinstance(options, dict) else {}
+        if options.get("url_provenance") != "user_entered":
+            options["url_provenance"] = "unknown"
+        kwargs["processing_options"] = options
 
         _core_access(self)
         # A cold settings load owns startup/config admission independently.

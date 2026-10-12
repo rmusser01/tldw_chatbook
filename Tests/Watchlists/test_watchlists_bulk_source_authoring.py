@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+
+# Real guarded config consumers retain their collection-time private profile.
+pytestmark = pytest.mark.bootstrap_profile
 from unittest.mock import AsyncMock, Mock
 from textual.app import ComposeResult
 from textual.widgets import Button, DataTable, Input, Select, Static, TextArea

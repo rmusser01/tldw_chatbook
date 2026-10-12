@@ -833,6 +833,8 @@ class LibraryCollectionsController:
         self._library_collections_action_content = ""
         self._refresh_library_collections_capture_reader()
         try:
+            from tldw_chatbook.Utils.egress import UrlProvenance
+
             outcome = await controller.scope_service.save_capture(
                 CaptureSaveRequest(
                     controller.state.authority_key,
@@ -840,6 +842,7 @@ class LibraryCollectionsController:
                     title=title or None,
                     tags=tags,
                     freeform_note=note or None,
+                    url_provenance=UrlProvenance.USER_ENTERED,
                 )
             )
         except CollectionsCaptureError as exc:

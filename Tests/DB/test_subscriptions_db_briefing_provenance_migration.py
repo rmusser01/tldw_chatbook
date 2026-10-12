@@ -258,7 +258,7 @@ def test_fresh_database_is_direct_v2_with_one_version_row(tmp_path: Path) -> Non
     db = SubscriptionsDB(tmp_path / "fresh.db")
     assert [
         tuple(row) for row in db.conn.execute("SELECT version FROM schema_version")
-    ] == [(2,)]
+    ] == [(3,)]
     assert "selection_position" in _columns(db.conn, "briefing_items")
     assert "item_effective_date" in _columns(db.conn, "briefing_items")
     assert {
@@ -277,7 +277,7 @@ def test_v1_upgrade_snapshots_legacy_rows_reconciles_duplicates_and_reopens(
     db = SubscriptionsDB(path)
     assert [
         tuple(row) for row in db.conn.execute("SELECT version FROM schema_version")
-    ] == [(2,)]
+    ] == [(3,)]
     row = dict(db.conn.execute("SELECT * FROM briefing_items").fetchone())
     assert row["item_id"] == 11
     assert row["live_item_id"] == 11
@@ -325,7 +325,7 @@ def test_v1_upgrade_snapshots_legacy_rows_reconciles_duplicates_and_reopens(
     assert [
         tuple(row)
         for row in reopened.conn.execute("SELECT version FROM schema_version")
-    ] == [(2,)]
+    ] == [(3,)]
     assert (
         reopened.conn.execute("SELECT COUNT(*) FROM briefing_items").fetchone()[0] == 1
     )

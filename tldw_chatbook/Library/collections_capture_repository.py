@@ -380,9 +380,9 @@ class CollectionsCaptureRepository:
                     "title, summary, freeform_note, text_content, clean_html, byline, "
                     "published_at, read_at, content_hash, word_count, status, favorite, "
                     "processing_state, last_fetch_error, media_authority_key, media_item_id, "
-                    "created_at, updated_at, revision, purge_state"
+                    "created_at, updated_at, revision, purge_state, url_provenance"
                     ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                    "NULL, NULL, NULL, ?, ?, 1, NULL)",
+                    "NULL, NULL, NULL, ?, ?, 1, NULL, ?)",
                     (
                         self.authority_key,
                         identity.capture_id,
@@ -404,6 +404,7 @@ class CollectionsCaptureRepository:
                         processing_state,
                         now,
                         now,
+                        request.url_provenance.value,
                     ),
                 )
                 self._add_tags(connection, identity.capture_id, request.tags)
@@ -433,7 +434,7 @@ class CollectionsCaptureRepository:
                     read_at = None
                 connection.execute(
                     "UPDATE collection_capture_items SET "
-                    "submitted_url = ?, domain = ?, title = ?, summary = ?, "
+                    "submitted_url = ?, url_provenance = ?, domain = ?, title = ?, summary = ?, "
                     "freeform_note = ?, text_content = ?, clean_html = ?, byline = ?, "
                     "published_at = ?, read_at = ?, content_hash = ?, word_count = ?, "
                     "status = ?, favorite = ?, processing_state = ?, last_fetch_error = ?, "
@@ -442,6 +443,7 @@ class CollectionsCaptureRepository:
                     "WHERE authority_key = ? AND capture_id = ?",
                     (
                         request.submitted_url,
+                        request.url_provenance.value,
                         domain,
                         request.title if request.title is not None else existing["title"],
                         request.summary if request.summary is not None else existing["summary"],
@@ -1560,8 +1562,13 @@ class CollectionsCaptureRepository:
             media_reference = ExternalMediaReference(
                 str(row["media_authority_key"]), str(row["media_item_id"])
             )
+        from tldw_chatbook.Utils.egress import provenance_of_stored_source
+
         return CaptureDetail(
             identity=identity,
+            url_provenance=provenance_of_stored_source(
+                {"url_provenance": row["url_provenance"]}
+            ),
             canonical_url=str(row["canonical_url"]),
             submitted_url=str(row["submitted_url"]),
             title=row["title"],

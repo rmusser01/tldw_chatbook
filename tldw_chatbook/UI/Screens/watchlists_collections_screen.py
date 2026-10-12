@@ -6804,8 +6804,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             event.modal.show_write_failure(WC_SERVICE_UNAVAILABLE_COPY)
             return
         try:
+            from tldw_chatbook.Utils.egress import UrlProvenance
+
             results = await service.create_sources_exact_batch(
-                [row.payload for row in event.rows]
+                [{**row.payload, "url_provenance": UrlProvenance.USER_ENTERED}
+                 for row in event.rows]
             )
         except Exception:
             logger.warning("Bulk source creation failed.")
@@ -6872,6 +6875,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         # reaches a backend that has no column for it.
         payload = dict(payload)
         watchlist_id = payload.pop("watchlist_id", None)
+        if runtime_backend == "local":
+            from tldw_chatbook.Utils.egress import UrlProvenance
+
+            payload["url_provenance"] = UrlProvenance.USER_ENTERED
         try:
             created = await self._controller.create_source(
                 runtime_backend=runtime_backend,

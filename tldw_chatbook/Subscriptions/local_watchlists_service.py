@@ -22,6 +22,7 @@ from ..Utils.egress import (
     UrlProvenance,
     guarded_fetch_httpx_async,
     source_trusted_origins,
+    provenance_of_stored_source,
 )
 from .db_offload import run_db_off_loop
 from .item_persist import (
@@ -795,6 +796,17 @@ class LocalWatchlistsService:
                     **self._subscription_config_fields(payload),
                 }
             )
+        for row, payload in zip(rows, payloads, strict=True):
+            options = self._parsed_options(row)
+            # This enum is supplied by app-owned input, never a serialized API
+            # payload. Shared/agent writers cannot vouch for their own URL.
+            provenance = payload.get("url_provenance")
+            options[URL_PROVENANCE_OPTION] = (
+                UrlProvenance.USER_ENTERED.value
+                if provenance is UrlProvenance.USER_ENTERED
+                else UrlProvenance.UNKNOWN.value
+            )
+            row["processing_options"] = options
         return rows
 
     @staticmethod
@@ -864,24 +876,21 @@ class LocalWatchlistsService:
         if "source_type" in payload:
             changes["type"] = self._local_type_for_source_type(payload["source_type"])
         changes.update(self._subscription_config_fields(payload))
-        if "source" in changes and "processing_options" not in changes:
-            # A URL the user changes is the USER's entry: the "nobody typed
-            # this URL" mark Dreams puts on a source it created no longer
-            # describes it (review of #2921, round 3, T17). The record is
-            # REPLACED by one that says so, not removed (round 4): "no
-            # record" is also what a source from before the mark existed
-            # looks like, and Dreams stamps those -- it stamped the
-            # user's edited source back at the next switch-off. A write
-            # that leaves the URL as it is -- every write Dreams makes --
-            # keeps the mark, and so does one that sets the options
-            # itself.
+        if "source" in changes or "processing_options" in changes:
             current = await run_db_off_loop(db, db.get_subscription, int(source_id))
-            options = self._parsed_options(current)
-            if (current is not None and URL_PROVENANCE_OPTION in options
-                    and str(changes["source"]) != str(current.get("source"))):
-                options[URL_PROVENANCE_OPTION] = (
-                    UrlProvenance.USER_ENTERED.value)
-                changes["processing_options"] = options
+            options = self._parsed_options(
+                changes if "processing_options" in changes else current
+            )
+            provenance = provenance_of_stored_source(
+                (current or {}).get("processing_options")
+            )
+            if "source" in changes:
+                if payload.get("url_provenance") is UrlProvenance.USER_ENTERED:
+                    provenance = UrlProvenance.USER_ENTERED
+                elif str(changes["source"]) != str((current or {}).get("source")):
+                    provenance = UrlProvenance.UNKNOWN
+            options[URL_PROVENANCE_OPTION] = provenance.value
+            changes["processing_options"] = options
         if changes:
             await run_db_off_loop(db, db.update_subscription, int(source_id), **changes)
         row = await run_db_off_loop(db, db.get_subscription, int(source_id))

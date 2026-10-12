@@ -186,7 +186,7 @@ class LocalCollectionsCaptureService:
         repository: CollectionsCaptureRepository,
         *,
         offline_store: CollectionsOfflineStore | None = None,
-        extractor: Callable[[str], Mapping[str, Any]] | None = None,
+        extractor: Callable[..., Mapping[str, Any]] | None = None,
         summarizer: Callable[[CaptureDetail], str] | None = None,
         listener: Callable[[CaptureDetail], str] | None = None,
         heartbeat_interval: float = 30.0,
@@ -312,7 +312,11 @@ class LocalCollectionsCaptureService:
             self._heartbeat(claimed.identity, owner, stopped)
         )
         try:
-            result = await asyncio.to_thread(self.extractor, claimed.submitted_url)
+            result = await asyncio.to_thread(
+                self.extractor,
+                claimed.submitted_url,
+                url_provenance=claimed.url_provenance,
+            )
             stopped.set()
             await heartbeat
             await self._call(

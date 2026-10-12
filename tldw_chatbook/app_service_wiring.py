@@ -720,16 +720,17 @@ async def _resolve_collections_note_reference(
     return ExternalReferenceAvailability("available")
 
 
-def _extract_collections_article(url: str) -> Mapping[str, Any]:
+def _extract_collections_article(
+    url: str, *, url_provenance: Any = None
+) -> Mapping[str, Any]:
     """Fetch one capture through the existing guarded article extractor."""
     from tldw_chatbook.Local_Ingestion.web_article_ingestion import (
         extract_article_for_ingest,
     )
     from tldw_chatbook.Utils.egress import UrlProvenance
 
-    # A capture URL is what the user typed into quick-capture (TASK-20973).
     return extract_article_for_ingest(
-        url, {}, url_provenance=UrlProvenance.USER_ENTERED
+        url, {}, url_provenance=url_provenance or UrlProvenance.UNKNOWN
     )
 
 
