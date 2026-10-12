@@ -43,6 +43,8 @@ def _row(monkeypatch, *, registry=None, subscription=None, reason="") -> tuple:
     screen = SimpleNamespace(
         _provider_auth_readiness_config=lambda provider: {},
         _provider_registry_credential_text=lambda provider, readiness: registry,
+        _provider_draft=lambda: None,
+        _validate_credential_env_var=SettingsScreen._validate_credential_env_var,
     )
     return card.api_key_row_copy(screen, "openai")
 

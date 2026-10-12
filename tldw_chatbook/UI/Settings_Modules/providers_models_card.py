@@ -154,6 +154,7 @@ SUBSCRIPTION_KEY_HELP = {
     "missing": "missing · log in with Claude Code",
 }
 API_KEY_INVALID_HELP = "repair it in Advanced Config"
+ENV_VAR_NOT_A_NAME_HELP = "Env var is not a variable's name"
 #: ADR-012:29: the env var is the safer path. C4: the row says the field
 #: holds a name ("a", not the ruling's "the", to fit 39 cells with "safer").
 ENV_VAR_HELP_COPY = "safer: a variable's name, never the key"
@@ -534,15 +535,19 @@ def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
         return "this endpoint", registry.removesuffix(" (this endpoint)")
     if readiness.subscription_status is not None:
         return "subscription", SUBSCRIPTION_KEY_HELP[readiness.subscription_status]
-    if readiness.reason == "Invalid provider settings":
-        return "invalid", API_KEY_INVALID_HELP
     draft = screen._provider_draft()
     dirty = draft.dirty_keys if draft is not None else frozenset()
+    # A name being typed decides, as on the Key check row, not the saved one.
+    env_edit = "credential_env_var" in dirty
+    typed = str(draft.values.get("credential_env_var") or "") if env_edit else ""
+    if screen._validate_credential_env_var(typed):
+        return "invalid", ENV_VAR_NOT_A_NAME_HELP
+    if readiness.reason == "Invalid provider settings" and not env_edit:
+        return "invalid", API_KEY_INVALID_HELP
     if "api_key" in dirty:
         if str(draft.values.get("api_key") or "").strip():
             return EDITED, "masked · s saves it to config"
         return CLEARED, API_KEY_CLEARED_HELP
-    env_edit = "credential_env_var" in dirty
     if screen._provider_saved_api_key_present(provider):
         if env_edit and (
             screen._provider_current_credential_source(provider) == "environment"
@@ -554,9 +559,7 @@ def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
     env_var = readiness.env_var
     config = screen._provider_readiness_app_config()
     if env_edit:
-        env_var = str(draft.values.get("credential_env_var") or "").strip() or (
-            default_api_key_env_var(provider_config_key(provider))
-        )
+        env_var = typed or default_api_key_env_var(provider_config_key(provider))
         config = screen._provider_test_staged_config(provider)
     source = provider_credential_source(provider, config)
     if (source or "").startswith("env:"):

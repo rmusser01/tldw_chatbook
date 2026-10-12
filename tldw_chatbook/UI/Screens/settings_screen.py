@@ -17280,7 +17280,9 @@ class SettingsScreen(BaseAppScreen):
             config += {
                 "Unknown provider": " — choose a supported provider",
                 "Invalid provider settings": (
-                    " — fix this provider's settings in Advanced Config"
+                    " — check the Env var field"  # most likely a typo made here
+                    if "credential_env_var" in dirty
+                    else " — fix this provider's settings in Advanced Config"
                 ),
             }.get(readiness.reason, "")
 
