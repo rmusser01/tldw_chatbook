@@ -92,6 +92,7 @@ def user_data_dir(config: Mapping[str, object]) -> Path:
 
 # owner, setting, canonical profile leaf, legacy shipped sentinel (None = no sentinel).
 DATABASE_PATHS = (
+    ("db.dreams", "dreams_db_path", "dreams.sqlite", None),
     ("db.guardian", "guardian_db_path", "guardian.sqlite", None),
     (
         "db.chachanotes.primary",

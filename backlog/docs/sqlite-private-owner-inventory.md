@@ -371,3 +371,6 @@ execution API is initialized. It is excluded from centralized backup.
 
 | C95 | tldw_chatbook/DB/recovery_dreams_guardian | _GuardianAdapter.validate | recovery.operations.guardian | private_file, read_only_uri | exact installed Guardian v1/v2 schema/history validation | Migrated via `connect_private_sqlite`. Immutable measured catalogs; no runtime constructor or authority inference from current rules. |
 | B39 | tldw_chatbook/DB/recovery_dreams_guardian | _GuardianAdapter.capture | recovery.operations.guardian | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Owner-checked private snapshot; restored rules and history remain inactive until explicit approval. |
+
+| C96 | tldw_chatbook/DB/recovery_dreams_guardian | _DreamsAdapter.validate | recovery.operations.dreams | private_file, read_only_uri | exact installed historical Dreams v1–v6 catalogs | Migrated via `connect_private_sqlite`. Complete measured catalogs and positive historical version markers; no runtime reference-store construction. |
+| B40 | tldw_chatbook/DB/recovery_dreams_guardian | _DreamsAdapter.capture | recovery.operations.dreams | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Owner-checked private snapshot preserves historical data; restoration grants no automatic execution. |

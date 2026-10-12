@@ -227,6 +227,12 @@ class _Restrictions:
             return sqlite3.SQLITE_OK
         if self._evals_drop_column_step(action, first, second, database):
             return sqlite3.SQLITE_OK
+        if (self.migrating and self.migration_owner == "db.dreams"
+            and action in {sqlite3.SQLITE_READ, sqlite3.SQLITE_UPDATE}
+            and first == "sqlite_temp_master" and second in {"type", "name", "tbl_name", "sql"}
+            and database == "temp" and source is None):
+            # SQLite's fixed table rename inspects its empty temp catalog.
+            return sqlite3.SQLITE_OK
         if database not in (None, "main"):
             return sqlite3.SQLITE_DENY
         if action in (
@@ -266,6 +272,8 @@ class _Restrictions:
                     allowed.add("trim")
                 if self.migration_owner == "db.subscriptions":
                     allowed |= {"json_valid", "json_type", "json_extract", "json_set"}
+                if self.migration_owner == "db.dreams":
+                    allowed |= {"sqlite_rename_table", "sqlite_rename_column"}
                 if self.migration_owner == "db.evals":
                     allowed.add("sqlite_drop_column")
                 # ADR-224 v78->v79: normalization UPDATEs (julianday/strftime),
@@ -458,6 +466,26 @@ class _Restrictions:
                     )
                 )
                 return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
+            # Fixed Dreams predecessor migrations only; candidate catalog matched
+            # before this gate. No writes to story/profile payloads outside copy.
+            if self.migration_owner == "db.dreams":
+                tables = {"dream_tracked_items", "dream_track_runs", "dream_interest_profile_v3", "sqlite_sequence"}
+                indexes = {"idx_dream_tracked_status", "idx_dream_tracked_origin_story", "idx_dream_track_runs_item", "sqlite_autoindex_dream_interest_profile_v3_1"}
+                allowed = source is None and database == "main" and (
+                    action == sqlite3.SQLITE_CREATE_TABLE and first in tables
+                    or action in {sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_REINDEX} and first in indexes
+                    or action == sqlite3.SQLITE_DROP_TABLE and first in {"dream_interest_profile", "dream_interest_profile_v3"}
+                    or action == sqlite3.SQLITE_INSERT and first in {"schema_version", "sqlite_master", "dream_interest_profile_v3", "sqlite_sequence"}
+                    or action == sqlite3.SQLITE_DELETE and first in {"sqlite_master", "dream_interest_profile", "dream_interest_profile_v3"}
+                    or action == sqlite3.SQLITE_UPDATE and first == "sqlite_master"
+                    and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    or action == sqlite3.SQLITE_UPDATE and first == "sqlite_sequence" and second == "name"
+                )
+                allowed |= (action == sqlite3.SQLITE_ALTER_TABLE
+                    and first == "main" and second in {"dream_interest_profile_v3", "dream_stories", "dream_tracked_items"}
+                    and database is None and source is None)
+                if allowed:
+                    return sqlite3.SQLITE_OK
             # ADR-207: installed provenance steps only. The candidate SQL was
             # matched to a complete historical catalog before this gate opens.
             if self.migration_owner in {"db.library_collections", "db.subscriptions", "db.guardian"}:
@@ -847,6 +875,7 @@ def _version(connection, owner_id):
         "notifications.client",
         "runtime.event_state",
         "runtime.sync_state",
+        "db.dreams",
     }:
         query = "SELECT MAX(version) FROM schema_version"
     elif owner_id == "kanban.local":
@@ -855,6 +884,10 @@ def _version(connection, owner_id):
         query = "SELECT 0"
     else:
         query = "PRAGMA user_version"
+    if owner_id == "db.dreams":
+        history = [row[0] for row in connection.execute("SELECT version FROM schema_version")]
+        if not history or any(type(version) is not int or version not in range(1, 7) for version in history):
+            return None
     rows = connection.execute(query).fetchmany(2)
     return rows[0][0] if len(rows) == 1 else None
 
