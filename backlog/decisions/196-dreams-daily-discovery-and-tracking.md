@@ -202,3 +202,10 @@ revalidates the selected revision before opening story actions, and modal
 getters remain bound to the captured profile/owner. Read workers encompass lazy
 Dreams construction and retire only connections they acquired. No browse action
 runs discovery or grants restored execution authority. No schema change.
+
+The same fixed reader also retains the author's existing Tracked rows as a
+Dreams tracked-item namespace. Status, latest stored verdict and pause reason
+remain readable, and an available origin story supplies the existing story
+actions. Missing origins remain status-only. This is the existing Phase 2
+surface moving with its stories, not a new tracking workflow. It obeys the same
+twenty-candidate, metadata-only page and selected-body contracts above.
