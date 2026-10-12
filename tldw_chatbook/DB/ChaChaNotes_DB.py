@@ -19780,7 +19780,13 @@ DELETE FROM keywords
         params = (now, next_version_val, self.client_id, note_id, expected_version)
 
         try:
-            with self.transaction() as conn:
+            # TASK-34789: read-then-write, so the write lock is taken up
+            # front. Deferred, a commit from any other connection between
+            # the version read below and the UPDATE made SQLite refuse the
+            # upgrade at once ("database is locked", no busy wait) and the
+            # Library reported "Delete failed" -- reproduced with notes-sync
+            # wiring creating the Agent_Lessons folder mid-delete.
+            with self.transaction(immediate=True) as conn:
                 try:
                     current_db_version = self._get_current_db_version(
                         conn, "notes", "id", note_id
@@ -19872,7 +19878,8 @@ DELETE FROM keywords
         params = (now, next_version_val, self.client_id, note_id, expected_version)
 
         try:
-            with self.transaction() as conn:
+            # TASK-34789: read-then-write, same as ``soft_delete_note``.
+            with self.transaction(immediate=True) as conn:
                 current_state = conn.execute(
                     "SELECT deleted, version FROM notes WHERE id = ?", (note_id,)
                 ).fetchone()
