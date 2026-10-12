@@ -11,7 +11,7 @@ import traceback
 
 # The XML comes only from the selected pytest child in its private directory.
 import xml.etree.ElementTree as ET  # nosec B405
-from functools import wraps
+from functools import partial, wraps
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -158,7 +158,7 @@ def _stacks_text(reason: str) -> str:
     return f"{text[:_DUMP_LIMIT]}\n--- {cut} more characters of this dump cut\n"
 
 
-def _note_stacks(reason: str) -> None:
+def _note_stacks(path: str, reason: str) -> None:
     """In the child: append ``_stacks_text`` to the file the parent quotes.
 
     Runs when the child's own pytest-timeout fires and when the parent asks
@@ -166,8 +166,27 @@ def _note_stacks(reason: str) -> None:
     say where an async test was waiting, and its thread dump goes through
     pytest's capture, where a child that then cannot finish loses it.
     """
-    with open(os.environ[_CHILD_STACKS], "a") as output:
+    with open(path, "a") as output:
         output.write(_stacks_text(reason))
+
+
+def _answer_the_parent(path: str, *_signal) -> None:
+    """SIGUSR1 in a child: the parent is about to end it; say where it is."""
+    with contextlib.suppress(Exception):
+        _note_stacks(path, "when the parent asked")
+
+
+#: The child's stacks file, read once at import: a test may replace os.environ.
+_STACKS_PATH = os.environ.get(_CHILD_STACKS) if _CHILD_NODE in os.environ else None
+if (
+    _STACKS_PATH
+    and hasattr(signal, "SIGUSR1")
+    and threading.current_thread() is threading.main_thread()
+):
+    # From import, during collection: a child asked while a fixture hangs, or
+    # one under pytest-timeout's thread method, answers instead of dying of
+    # the signal's default action.
+    signal.signal(signal.SIGUSR1, partial(_answer_the_parent, _STACKS_PATH))
 
 
 async def _exited_within(process, seconds: float | None) -> bool:
@@ -191,19 +210,16 @@ def private_profile_test(function):
             own_timeout = (
                 signal.getsignal(signal.SIGALRM) if hasattr(signal, "SIGALRM") else None
             )
-            if os.environ.get(_CHILD_STACKS) and callable(own_timeout):
+            if _STACKS_PATH and callable(own_timeout):
 
                 def note_then_time_out(signum, frame):
                     __tracebackhide__ = True
                     with contextlib.suppress(Exception):
-                        _note_stacks("when its own timeout fired")
+                        _note_stacks(_STACKS_PATH, "when its own timeout fired")
                     own_timeout(signum, frame)
 
                 # pytest-timeout resets SIGALRM itself when the test ends.
                 signal.signal(signal.SIGALRM, note_then_time_out)
-                signal.signal(
-                    signal.SIGUSR1, lambda *_: _note_stacks("when the parent asked")
-                )
             result = function(*args, **kwargs)
             if not inspect.isawaitable(result):
                 return result

@@ -13,6 +13,8 @@ import os
 import signal
 import sys
 import threading
+import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -26,6 +28,8 @@ from Tests.private_profile import (
 )
 
 _CHILD_LIMIT = 3
+#: Where a child says it has reached the state its parent test asks it in.
+_READY = "TLDW_TEST_PRIVATE_PROFILE_CHILD_READY"
 
 
 def test_the_child_keeps_its_budget_and_the_parent_waits_for_it():
@@ -184,3 +188,115 @@ async def test_a_child_that_cannot_finish_is_asked_then_ended_before_the_parents
     assert "(the child wrote no JUnit report)" in text
     assert "--- child stacks at its deadline ---\nzq-asked-before-the-end" in text
     assert "zq-child-log-line" in text
+
+
+def _ask_once_the_child_is_ready(monkeypatch, tmp_path) -> None:
+    """The parent asks half a second after its child says it is in place.
+
+    The child's start-up takes seconds and varies with load; a fixed deadline
+    would ask some runs before the child got where the test needs it.
+    """
+    ready = tmp_path / "ready"
+    monkeypatch.setenv(_READY, str(ready))
+    real = private_profile._exited_within
+    waits = []
+
+    async def exited_within(process, seconds):
+        if not waits:  # the parent's deadline wait
+            for _ in range(1200):  # at most 60 s of start-up
+                if ready.exists() or process.returncode is not None:
+                    break
+                await asyncio.sleep(0.05)
+        waits.append(seconds)
+        return await real(process, seconds)
+
+    monkeypatch.setattr(private_profile, "_exited_within", exited_within)
+    monkeypatch.setattr(
+        private_profile, "_child_deadlines", lambda _budget, _lead: (600.0, 0.5)
+    )
+
+
+@pytest.mark.skipif(_CHILD_NODE not in os.environ, reason="the child of the next test")
+@pytest.mark.timeout(_CHILD_LIMIT, func_only=True)
+@private_profile_test
+async def test_child_that_replaces_its_environment(request, monkeypatch):
+    monkeypatch.setattr(os, "environ", {})
+    await _waits_on_the_worker()
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGALRM"), reason="POSIX signals")
+async def test_a_child_that_replaces_os_environ_still_writes_its_stacks(
+    request, tmp_path, monkeypatch
+):
+    """Review of #3091, item 4a: the dump's path is read at import, not when
+    the signal arrives, so a test that replaces os.environ keeps it."""
+    monkeypatch.setattr(
+        private_profile, "_child_deadlines", lambda _budget, _lead: (1.0, 60.0)
+    )
+    child = test_child_that_replaces_its_environment
+
+    with pytest.raises(pytest.fail.Exception) as failure:
+        await child(request=_as_parent(request, tmp_path, child))
+
+    text = str(failure.value)
+    assert f"Timeout (>{_CHILD_LIMIT}.0s) from pytest-timeout" in text
+    assert "--- stacks when its own timeout fired" in text
+
+
+@pytest.fixture
+def _hangs_in_setup():
+    Path(os.environ[_READY]).touch()
+    for _ in range(1200):  # at most 60 s; the parent ends it first
+        time.sleep(0.05)
+
+
+@pytest.mark.skipif(_CHILD_NODE not in os.environ, reason="the child of the next test")
+@pytest.mark.timeout(120, method="thread")
+@private_profile_test
+async def test_child_hung_in_a_fixture(request, _hangs_in_setup):
+    pass
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signals")
+async def test_a_child_asked_in_fixture_setup_under_the_thread_method_answers(
+    request, tmp_path, monkeypatch
+):
+    """Review of #3091, item 4b: the child answers the parent's ask from
+    import on, whatever its timeout method, not only once its test body has
+    started under the signal method; before, the ask itself killed it."""
+    _ask_once_the_child_is_ready(monkeypatch, tmp_path)
+    child = test_child_hung_in_a_fixture
+
+    with pytest.raises(pytest.fail.Exception) as failure:
+        await child(request=_as_parent(request, tmp_path, child))
+
+    text = str(failure.value)
+    assert "(killed: still running after" in text
+    assert "--- stacks when the parent asked" in text
+    assert "in _hangs_in_setup" in text.split("--- stacks when the parent asked")[1]
+
+
+@pytest.mark.skipif(_CHILD_NODE not in os.environ, reason="the child of the next test")
+@private_profile_test
+async def test_child_whose_stacks_file_cannot_be_written(request):
+    os.mkdir(os.environ[_CHILD_STACKS])
+    Path(os.environ[_READY]).touch()
+    await _waits_on_the_worker()
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signals")
+async def test_a_dump_that_fails_when_asked_does_not_end_the_child(
+    request, tmp_path, monkeypatch
+):
+    """Review of #3091, item 4c: a dump that raises under SIGUSR1 (here its
+    file is a directory) is swallowed, as under the child's own timeout, and
+    does not end the child's test with an unrelated error."""
+    _ask_once_the_child_is_ready(monkeypatch, tmp_path)
+    child = test_child_whose_stacks_file_cannot_be_written
+
+    with pytest.raises(pytest.fail.Exception) as failure:
+        await child(request=_as_parent(request, tmp_path, child))
+
+    text = str(failure.value)
+    assert "(killed: still running after" in text
+    assert "IsADirectoryError" not in text
