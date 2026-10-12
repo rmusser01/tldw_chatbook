@@ -155,3 +155,18 @@ fetch. This conservative delay is preferable to either globally wedging the
 scheduler or dispatching a disabled private source. Guarded occurrences do not
 advance their schedule or claim a successful run. Native boot-task ownership,
 maintenance admission and both-store execution checks remain in force.
+
+
+### Historical Dreams catalog admission (2026-10-12)
+
+The exact author history has multiple valid catalogs under the same version:
+retained early indexes, SQLite's rewritten table SQL after ALTER/rename, and
+prior version rows retained by INSERT OR IGNORE. Admit only measured full
+catalogs for versions 1–6. Version history must contain positive supported
+integers whose maximum agrees with that catalog; do not erase valid earlier
+markers. Empty/missing/malformed/future/hybrid lineages are refusals, never a
+request to reconstruct missing tables. An actually empty database is the sole
+fresh-initialization case. Existing v6 columns and migration semantics remain;
+no new stored shape is introduced. Preserve all original data and perform
+upgrades atomically. This trades repair of unverifiable partial stores for
+explicit refusal; recovery retains the original bytes for investigation.
