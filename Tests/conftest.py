@@ -1558,6 +1558,18 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # and rationale as test_chunker_v2.py above.
             "test_golden_parity.py",
 
+            # The token-fallback offsets property suite constructs the real
+            # engine Chunker per max_size×overlap node, and the Chunk_Lib shim
+            # contract suite drives improved_chunking_process/Chunker, whose
+            # ChunkerConfig reads chatbook's [Chunking] TOML through the
+            # _shims/config.py guarded config loader under the per-test
+            # redirect (same admission signature as test_chunker_v2.py above:
+            # RecoveryRequired("raw_source_selection_changed") before any
+            # assertion runs). Neither suite re-selects a config itself, so
+            # they keep the bootstrap profile.
+            "test_tokens_fallback_offsets.py",
+            "test_chunk_lib_shim.py",
+
             # TASK-19642.11: the managed model-artifact transfer suites drive
             # the real fetch hot path against loopback fixture servers
             # (stream_fetch -> check_url_or_raise_async -> egress

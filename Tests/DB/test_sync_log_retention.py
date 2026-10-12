@@ -249,15 +249,22 @@ def _fake_app(**dbs) -> SimpleNamespace:
 
 
 def _run_pass(monkeypatch: pytest.MonkeyPatch, fake_app: SimpleNamespace, days) -> None:
-    """Drive TldwCli._perform_sync_log_retention without booting the app."""
-    from tldw_chatbook import app as app_module
+    """Drive LifecycleMixin._perform_sync_log_retention without booting the app."""
+    from tldw_chatbook import app_lifecycle as lifecycle_module
 
+    # Patch the name the code actually reads: the pass lives on LifecycleMixin
+    # and resolves get_cli_setting in app_lifecycle's namespace (the perf
+    # snapshot carried a seam pointing at tldw_chatbook.app, the pre-port
+    # home -- patching there silently missed, so the "0 disables" case ran a
+    # real 90-day prune and failed).
     monkeypatch.setattr(
-        app_module,
+        lifecycle_module,
         "get_cli_setting",
         lambda *args, **kwargs: days,
     )
-    asyncio.run(app_module.TldwCli._perform_sync_log_retention(fake_app))
+    asyncio.run(
+        lifecycle_module.LifecycleMixin._perform_sync_log_retention(fake_app)
+    )
 
 
 def test_app_pass_prunes_both_stores(
@@ -374,11 +381,16 @@ def test_default_config_tree_carries_sync_section():
 
 def test_real_loader_resolves_sync_retention_default(tmp_path, monkeypatch):
     """A fresh profile (missing config file) still resolves the knob."""
-    from tldw_chatbook import config as config_module
+    from Tests.Backup_Recovery.config_test_support import select_config_source
 
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+    # Select the fresh profile through the ADR-126-compliant seam: a raw
+    # TLDW_CONFIG_PATH redirect fails the config-participant admission closed
+    # (RecoveryRequired) because the imported source stays bound to the
+    # bootstrap selection. select_config_source installs an independent
+    # source module, exactly as Tests/test_config_chunking_defaults.py does.
+    source = select_config_source(monkeypatch, tmp_path / "missing-config.toml")
 
-    settings = config_module.load_settings(force_reload=True)
+    settings = source.load_settings(force_reload=True)
 
     assert settings["sync"]["sync_log_retention_days"] == 90
-    assert config_module.get_cli_setting("sync", "sync_log_retention_days", None) == 90
+    assert source.get_cli_setting("sync", "sync_log_retention_days", None) == 90

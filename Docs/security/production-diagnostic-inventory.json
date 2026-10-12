@@ -709,7 +709,7 @@
     },
     {
       "call_count": 28,
-      "diagnostic_digest": "1becc71ef24da6b3a671",
+      "diagnostic_digest": "65556627220e4c324921",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Chunking/Chunk_Lib.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -904,22 +904,22 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 365,
-      "diagnostic_digest": "e35b5637a05f476c5ae2",
+      "call_count": 368,
+      "diagnostic_digest": "d24324bc397d4884084a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 343,
-      "diagnostic_digest": "171bda01c150b0151ebb",
+      "call_count": 346,
+      "diagnostic_digest": "06bf8119057a509a2b8c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Client_Media_DB_v2.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 17,
-      "diagnostic_digest": "94982be9a67c49554c8d",
+      "call_count": 18,
+      "diagnostic_digest": "c6016202b039ca8d452b",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Evals_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1037,8 +1037,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 42,
-      "diagnostic_digest": "c7be003e23f145c4abeb",
+      "call_count": 43,
+      "diagnostic_digest": "ad1854a6edce4b57554d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Embeddings/Embeddings_Lib.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1450,8 +1450,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 6,
-      "diagnostic_digest": "1c6fd6d47c770ba845d5",
+      "call_count": 7,
+      "diagnostic_digest": "ac2565ca8e31fac5d26a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/LLM_Provider_Catalog/local_llm_provider_catalog_service.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1801,7 +1801,7 @@
     },
     {
       "call_count": 11,
-      "diagnostic_digest": "e2a7942c821278f05062",
+      "diagnostic_digest": "e31f16fdcc726188cb4c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Metrics/metrics.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2066,8 +2066,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 13,
-      "diagnostic_digest": "9a06797eb230d295260e",
+      "call_count": 15,
+      "diagnostic_digest": "39bdd75174cd591a9a55",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/simplified/indexing_helpers.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4649,8 +4649,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 85,
-      "diagnostic_digest": "7c7816a009ca3f62c139",
+      "call_count": 89,
+      "diagnostic_digest": "f2f538ba4d6378056f2d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app_lifecycle.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -5636,6 +5636,33 @@
             "self.db_path_str"
           ],
           "scope": "MediaDatabase.delete_sync_log_entries_before",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "bfd055e586083275",
+          "method": "error",
+          "path_expressions": [
+            "self.db_path_str"
+          ],
+          "scope": "MediaDatabase.delete_sync_log_entries_older_than",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "e5ef436e2bb41e35",
+          "method": "error",
+          "path_expressions": [
+            "self.db_path_str"
+          ],
+          "scope": "MediaDatabase.delete_sync_log_entries_older_than",
+          "status": "legacy_unreviewed"
+        },
+        {
+          "call_digest": "021a7908410ce8f1",
+          "method": "info",
+          "path_expressions": [
+            "self.db_path_str"
+          ],
+          "scope": "MediaDatabase.delete_sync_log_entries_older_than",
           "status": "legacy_unreviewed"
         },
         {
