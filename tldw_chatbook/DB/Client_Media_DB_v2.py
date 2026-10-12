@@ -4811,6 +4811,19 @@ class MediaDatabase:
                 return
 
             created = self._get_current_utc_timestamp_str()
+            # task-34399: build all row params first, then one executemany --
+            # the shape process_unvectorized_chunks already uses -- instead
+            # of one round-trip per chunk. `idx` stays the position in the
+            # CALLER's list (invalid entries still consume their index), and
+            # the sync-event payloads are byte-identical to the per-chunk
+            # loop this replaces.
+            insert_sql = """INSERT INTO UnvectorizedMediaChunks (media_id, chunk_text, chunk_index, start_char, end_char,
+                                                            chunk_type, creation_date, last_modified_orig, is_processed,
+                                                            metadata, chunk_engine_version, uuid, last_modified, version, client_id, deleted,
+                                                            prev_version, merge_parent_uuid)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+            chunk_params: List[tuple] = []
+            sync_events: List[Dict[str, Any]] = []
             for idx, ch in enumerate(chunks):
                 if not isinstance(ch, dict) or ch.get("text") is None:
                     logging.warning(
@@ -4819,12 +4832,7 @@ class MediaDatabase:
                     continue
 
                 chunk_uuid = self._generate_uuid()
-                cnx.execute(
-                    """INSERT INTO UnvectorizedMediaChunks (media_id, chunk_text, chunk_index, start_char, end_char,
-                                                            chunk_type, creation_date, last_modified_orig, is_processed,
-                                                            metadata, chunk_engine_version, uuid, last_modified, version, client_id, deleted,
-                                                            prev_version, merge_parent_uuid)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                chunk_params.append(
                     (
                         media_id,
                         ch["text"],
@@ -4849,25 +4857,39 @@ class MediaDatabase:
                         0,
                         None,
                         None,
-                    ),
+                    )
                 )
+                sync_events.append(
+                    {
+                        "uuid": chunk_uuid,
+                        "chunk_index": idx,
+                        "payload": {
+                            **ch,
+                            "media_id": media_id,
+                            "uuid": chunk_uuid,
+                            "chunk_index": idx,
+                            "creation_date": created,
+                            "last_modified": created,
+                            "version": 1,
+                            "client_id": client_id,
+                            "deleted": 0,
+                        },
+                    }
+                )
+
+            if chunk_params:
+                cnx.executemany(insert_sql, chunk_params)
+            # _log_sync_event serializes each event's own payload (they all
+            # differ, embedding the chunk text) and has no batched variant,
+            # so the events stay per-chunk INSERTs inside this transaction.
+            for event in sync_events:
                 self._log_sync_event(
                     cnx,
                     "UnvectorizedMediaChunks",
-                    chunk_uuid,
+                    event["uuid"],
                     "create",
                     1,
-                    {
-                        **ch,
-                        "media_id": media_id,
-                        "uuid": chunk_uuid,
-                        "chunk_index": idx,
-                        "creation_date": created,
-                        "last_modified": created,
-                        "version": 1,
-                        "client_id": client_id,
-                        "deleted": 0,
-                    },
+                    event["payload"],
                 )
 
         # ------------------------------------------------------------------

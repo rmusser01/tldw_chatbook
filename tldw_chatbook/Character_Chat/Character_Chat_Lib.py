@@ -4272,7 +4272,12 @@ def find_messages_in_conversation(
     """
     try:
         found_messages = db.search_messages_by_content(
-            content_query=search_query, conversation_id=conversation_id, limit=limit
+            content_query=search_query,
+            conversation_id=conversation_id,
+            limit=limit,
+            # task-34399: placeholder substitution below consumes text only,
+            # so skip transferring image BLOBs (task-260 pattern).
+            include_image_data=False,
         )
 
         processed_results = []

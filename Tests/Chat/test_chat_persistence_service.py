@@ -3251,3 +3251,135 @@ class TestConsoleConversationAppearance:
             appearance=ConsoleConversationAppearance(icon="🧪"),
             max_attempts=2,
         )
+
+
+def test_save_history_retains_transitive_variant_chains(
+    db_instance: CharactersRAGDB,
+) -> None:
+    service = ChatPersistenceService(db_instance)
+    conversation_id = service.create_conversation(
+        assistant_kind="persona", assistant_id="planner"
+    )
+    service.create_message(
+        conversation_id=conversation_id,
+        sender="assistant",
+        content="Root",
+        message_id="msg-root",
+    )
+    now = db_instance._get_current_utc_timestamp_iso()
+    with db_instance.transaction() as connection:
+        for message_id, variant_of, content in (
+            ("msg-child", "msg-root", "Child variant"),
+            ("msg-grandchild", "msg-child", "Grandchild variant"),
+        ):
+            connection.execute(
+                """
+                INSERT INTO messages (
+                    id, conversation_id, parent_message_id, sender, content,
+                    role, variant_of, timestamp, last_modified, version,
+                    client_id, deleted
+                ) VALUES (?, ?, NULL, 'assistant', ?, 'assistant', ?, ?, ?, 1, ?, 0)
+                """,
+                (
+                    message_id,
+                    conversation_id,
+                    content,
+                    variant_of,
+                    now,
+                    now,
+                    db_instance.client_id,
+                ),
+            )
+
+    service.save_history(
+        conversation_id=conversation_id,
+        chatbot_history=[
+            {
+                "id": "msg-root",
+                "role": "assistant",
+                "content": "Root updated",
+            }
+        ],
+    )
+
+    active_ids = {
+        message["id"]
+        for message in db_instance.get_messages_for_conversation(conversation_id)
+    }
+    assert active_ids == {"msg-root", "msg-child", "msg-grandchild"}
+
+
+def test_save_history_skips_per_message_re_reads_for_loaded_rows(
+    db_instance: CharactersRAGDB,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ChatPersistenceService(db_instance)
+    conversation_id = service.create_conversation(
+        assistant_kind="persona", assistant_id="planner"
+    )
+    service.save_history(
+        conversation_id=conversation_id,
+        chatbot_history=[
+            {"id": "msg-user-1", "role": "user", "content": "First"},
+            {
+                "id": "msg-assistant-1",
+                "role": "assistant",
+                "content": "Reply",
+            },
+        ],
+    )
+
+    reread_calls: list[str] = []
+    original_get = db_instance.get_message_by_id
+
+    def counting_get(message_id: str):
+        reread_calls.append(message_id)
+        return original_get(message_id)
+
+    monkeypatch.setattr(db_instance, "get_message_by_id", counting_get)
+
+    service.save_history(
+        conversation_id=conversation_id,
+        chatbot_history=[
+            {"id": "msg-user-1", "role": "user", "content": "First updated"},
+            {
+                "id": "msg-assistant-1",
+                "role": "assistant",
+                "content": "Reply updated",
+            },
+        ],
+    )
+
+    assert reread_calls == []
+    messages = {
+        message["id"]: message
+        for message in db_instance.get_messages_for_conversation(conversation_id)
+    }
+    assert messages["msg-user-1"]["content"] == "First updated"
+    assert messages["msg-assistant-1"]["content"] == "Reply updated"
+
+
+def test_save_history_resaves_repeated_id_against_bumped_version(
+    db_instance: CharactersRAGDB,
+) -> None:
+    service = ChatPersistenceService(db_instance)
+    conversation_id = service.create_conversation(
+        assistant_kind="persona", assistant_id="planner"
+    )
+    service.save_history(
+        conversation_id=conversation_id,
+        chatbot_history=[
+            {"id": "msg-1", "role": "user", "content": "Initial"},
+        ],
+    )
+
+    service.save_history(
+        conversation_id=conversation_id,
+        chatbot_history=[
+            {"id": "msg-1", "role": "user", "content": "First pass"},
+            {"id": "msg-1", "role": "user", "content": "Second pass"},
+        ],
+    )
+
+    messages = db_instance.get_messages_for_conversation(conversation_id)
+    assert [message["content"] for message in messages] == ["Second pass"]

@@ -16,6 +16,7 @@ from collections.abc import (
     Callable,
     Collection,
     Generator,
+    Iterable,
     Mapping,
     Sequence,
 )
@@ -6157,6 +6158,7 @@ class FileNotesGitService:
         ):
             return None
         repository_ownership: dict[int, StagingOwnership] = {}
+        walk_cache = _EndpointWalkCache()
         for group_id, ownership in current.staging_ownership.items():
             group = groups_by_id.get(group_id)
             if group is None:
@@ -6165,6 +6167,7 @@ class FileNotesGitService:
                 root,
                 repository,
                 group,
+                walk_cache,
             )
             if invalid is not None or repository_group is None:
                 return None
@@ -6835,12 +6838,14 @@ class FileNotesGitService:
         ):
             return _blocked_commit_review("Session staging authority changed.")
         repository_ownership: dict[int, StagingOwnership] = {}
+        walk_cache = _EndpointWalkCache()
         for group_id, item in ownership.items():
             session_group = groups_by_id[group_id]
             repository_group, invalid = self._map_group(
                 root,
                 repository,
                 session_group,
+                walk_cache,
             )
             if invalid is not None or repository_group is None:
                 return _blocked_commit_review("Session staging authority changed.")
@@ -8128,11 +8133,13 @@ class FileNotesGitService:
         repository_groups: list[SessionChangeGroup] = []
         original_groups: dict[int, SessionChangeGroup] = {}
         invalid_rows: dict[int, SessionGitRow] = {}
+        walk_cache = _EndpointWalkCache()
         for group in groups:
             mapped_group, invalid_row = self._map_group(
                 root,
                 repository,
                 group,
+                walk_cache,
             )
             if invalid_row is not None:
                 invalid_rows[group.group_id] = invalid_row
@@ -8289,17 +8296,16 @@ class FileNotesGitService:
             os.fsencode(path) for group in groups for path in group.endpoints
         )
         if repository_paths:
+            endpoint_index = _build_endpoint_overlap_index(
+                path for group in groups for path in group.endpoints
+            )
             allowed_paths = frozenset(
                 {
-                    *(path for group in groups for path in group.endpoints),
+                    *endpoint_index.exact,
                     *(
                         entry.path
                         for entry in index_entries
-                        if any(
-                            _paths_overlap(entry.path, endpoint)
-                            for group in groups
-                            for endpoint in group.endpoints
-                        )
+                        if endpoint_index.overlaps(entry.path)
                     ),
                 }
             )
@@ -8367,8 +8373,9 @@ class FileNotesGitService:
         groups = coalesce_session_changes(snapshot.changes)
         repository_groups: dict[int, SessionChangeGroup] = {}
         invalid_rows: dict[int, SessionGitRow] = {}
+        walk_cache = _EndpointWalkCache()
         for group in groups:
-            mapped, invalid = self._map_group(root, repository, group)
+            mapped, invalid = self._map_group(root, repository, group, walk_cache)
             if invalid is not None:
                 invalid_rows[group.group_id] = invalid
             else:
@@ -8465,11 +8472,13 @@ class FileNotesGitService:
         groups = coalesce_session_changes(snapshot.changes)
         repository_groups: dict[int, SessionChangeGroup] = {}
         invalid_rows: dict[int, SessionGitRow] = {}
+        walk_cache = _EndpointWalkCache()
         for group in groups:
             mapped, invalid = self._map_group_for_unstage(
                 root,
                 repository,
                 group,
+                walk_cache,
             )
             if invalid is not None:
                 invalid_rows[group.group_id] = invalid
@@ -8547,6 +8556,19 @@ class FileNotesGitService:
         affected_paths: dict[int, tuple[str, ...]] = {}
         groups_by_id = {group.group_id: group for group in inspection.groups}
         ownership_revoked = False
+        all_repository_groups = tuple(inspection.repository_groups.values())
+        bulk_ambiguous_ids = _ambiguous_group_ids(
+            all_repository_groups,
+            inspection.status_records,
+        )
+        bulk_mutation_paths = _bulk_effective_mutation_paths(
+            all_repository_groups,
+            inspection.status_records,
+        )
+        endpoint_paths_by_id = {
+            group_id: frozenset(group.endpoints)
+            for group_id, group in inspection.repository_groups.items()
+        }
 
         for group_id in requested:
             group = groups_by_id.get(group_id)
@@ -8564,6 +8586,7 @@ class FileNotesGitService:
                     current_owned,
                     inspection,
                     repository_group,
+                    endpoint_paths=endpoint_paths_by_id[group_id],
                 )
                 eligible = (
                     owned_matches
@@ -8576,7 +8599,11 @@ class FileNotesGitService:
             effective = stage_pathspecs(
                 repository_group,
                 inspection.status_records,
-                groups=tuple(inspection.repository_groups.values()),
+                groups=all_repository_groups,
+                ambiguous_group_ids=bulk_ambiguous_ids,
+                effective_mutation_paths=bulk_mutation_paths[
+                    repository_group.group_id
+                ],
             )
             if not eligible:
                 if owned_clean:
@@ -8635,11 +8662,13 @@ class FileNotesGitService:
         root = self._safe_root(binding)
         endpoint_safety_changed = root is None
         if root is not None:
+            walk_cache = _EndpointWalkCache()
             for group_id in staged:
                 remapped, invalid = self._map_group(
                     root,
                     inspection.repository,
                     groups_by_id[group_id],
+                    walk_cache,
                 )
                 if (
                     invalid is not None
@@ -8808,7 +8837,10 @@ class FileNotesGitService:
         ownership: StagingOwnership,
         inspection: _StageInspection,
         group: SessionChangeGroup,
+        endpoint_paths: Collection[str] | None = None,
     ) -> bool:
+        if endpoint_paths is None:
+            endpoint_paths = frozenset(group.endpoints)
         if (
             ownership.repository != inspection.repository
             or ownership.head != inspection.head
@@ -8823,7 +8855,7 @@ class FileNotesGitService:
             path not in ownership.post_stage_entries
             for record in inspection.status_records
             for path in _staged_record_paths(record)
-            if path in group.endpoints
+            if path in endpoint_paths
         )
 
     async def _read_stage_postflight(
@@ -8901,6 +8933,10 @@ class FileNotesGitService:
         """Restore only exact saved baselines for valid selected ownership."""
         snapshot = self._owner.snapshot(binding)
         groups_by_id = {group.group_id: group for group in inspection.groups}
+        endpoint_paths_by_id = {
+            group_id: frozenset(group.endpoints)
+            for group_id, group in inspection.repository_groups.items()
+        }
         valid: list[int] = []
         blocked: list[int] = []
         revoked: list[int] = []
@@ -8929,7 +8965,8 @@ class FileNotesGitService:
                 blocked.append(group_id)
                 continue
             if any(
-                entry.stage != 0 and entry.path in repository_group.endpoints
+                entry.stage != 0
+                and entry.path in endpoint_paths_by_id[group_id]
                 for entry in inspection.index_sequence
             ):
                 blocked.append(group_id)
@@ -9231,13 +9268,16 @@ class FileNotesGitService:
         notes_root: Path,
         repository: RepositoryIdentity,
         group: SessionChangeGroup,
+        walk_cache: _EndpointWalkCache | None = None,
     ) -> tuple[SessionChangeGroup | None, SessionGitRow | None]:
         mapping: dict[str, str] = {}
+        worktree_root = Path(repository.worktree_root)
         for endpoint in group.endpoints:
             mapped, problem = _map_session_endpoint(
                 notes_root,
-                Path(repository.worktree_root),
+                worktree_root,
                 endpoint,
+                walk_cache,
             )
             if problem == "nested_repository":
                 return None, SessionGitRow(
@@ -9277,6 +9317,7 @@ class FileNotesGitService:
         notes_root: Path,
         repository: RepositoryIdentity,
         group: SessionChangeGroup,
+        walk_cache: _EndpointWalkCache | None = None,
     ) -> tuple[SessionChangeGroup | None, SessionGitRow | None]:
         """Map safe endpoint text without rejecting owned replacements."""
         worktree_root = Path(repository.worktree_root)
@@ -9303,18 +9344,48 @@ class FileNotesGitService:
                     "unsupported",
                     disabled_reason="Unsafe File Notes path",
                 )
-            for depth in range(1, len(components) + 1):
-                boundary = notes_root.joinpath(*components[:depth])
-                try:
-                    boundary_stat = boundary.stat(follow_symlinks=False)
-                except (FileNotFoundError, NotADirectoryError):
+            for depth in range(1, len(components)):
+                outcome = _endpoint_parent_outcome(
+                    notes_root,
+                    components[:depth],
+                    "/".join(components[:depth]),
+                    walk_cache,
+                )
+                if outcome in {
+                    "missing",
+                    "safe_directory",
+                    "not_a_directory",
+                }:
                     continue
-                except OSError:
+                if outcome == "unsafe_path":
                     return None, SessionGitRow(
                         group,
                         "unsupported",
                         disabled_reason="Unsafe File Notes path",
                     )
+                if outcome == "unsafe_nested_boundary":
+                    return None, SessionGitRow(
+                        group,
+                        "unsupported",
+                        disabled_reason="Unsafe nested repository boundary",
+                    )
+                return None, SessionGitRow(
+                    group,
+                    "nested_repository",
+                    disabled_reason="Nested repository unsupported",
+                )
+            boundary = notes_root.joinpath(*components)
+            try:
+                boundary_stat = boundary.stat(follow_symlinks=False)
+            except (FileNotFoundError, NotADirectoryError):
+                boundary_stat = None
+            except OSError:
+                return None, SessionGitRow(
+                    group,
+                    "unsupported",
+                    disabled_reason="Unsafe File Notes path",
+                )
+            if boundary_stat is not None:
                 if stat.S_ISLNK(boundary_stat.st_mode):
                     return None, SessionGitRow(
                         group,
@@ -10414,10 +10485,80 @@ def _filesystem_identity(path: Path) -> FileSystemIdentity:
     )
 
 
+_EndpointParentOutcome = Literal[
+    "missing",
+    "safe_directory",
+    "not_a_directory",
+    "unsafe_path",
+    "unsafe_nested_boundary",
+    "nested_repository",
+]
+
+
+@dataclass(slots=True)
+class _EndpointWalkCache:
+    """One inspection pass's memo of endpoint parent-directory outcomes.
+
+    Sibling endpoints share parent directories, so caching one outcome per
+    parent prefix turns the per-endpoint stat walk into one stat walk per
+    distinct parent directory. The cache is threaded explicitly through the
+    pass; nothing is retained between inspections.
+    """
+
+    parent_outcomes: dict[str, _EndpointParentOutcome] = field(
+        default_factory=dict
+    )
+
+
+def _inspect_endpoint_parent(
+    notes_root: Path,
+    components: Sequence[str],
+) -> _EndpointParentOutcome:
+    """Classify one endpoint parent directory's stat and .git boundary."""
+    parent = notes_root.joinpath(*components)
+    try:
+        parent_stat = parent.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return "missing"
+    except NotADirectoryError:
+        return "not_a_directory"
+    except OSError:
+        return "unsafe_path"
+    if stat.S_ISLNK(parent_stat.st_mode):
+        return "unsafe_path"
+    if not stat.S_ISDIR(parent_stat.st_mode):
+        return "not_a_directory"
+    git_boundary = parent / ".git"
+    try:
+        git_boundary.stat(follow_symlinks=False)
+    except FileNotFoundError:
+        return "safe_directory"
+    except OSError:
+        return "unsafe_nested_boundary"
+    return "nested_repository"
+
+
+def _endpoint_parent_outcome(
+    notes_root: Path,
+    components: Sequence[str],
+    outcome_key: str,
+    walk_cache: _EndpointWalkCache | None,
+) -> _EndpointParentOutcome:
+    """Return the cached parent outcome for one prefix, walking on a miss."""
+    if walk_cache is None:
+        return _inspect_endpoint_parent(notes_root, components)
+    outcome = walk_cache.parent_outcomes.get(outcome_key)
+    if outcome is None:
+        outcome = _inspect_endpoint_parent(notes_root, components)
+        walk_cache.parent_outcomes[outcome_key] = outcome
+    return outcome
+
+
 def _map_session_endpoint(
     notes_root: Path,
     worktree_root: Path,
     relative_path: str,
+    walk_cache: _EndpointWalkCache | None = None,
 ) -> tuple[str | None, str | None]:
     if not relative_path or relative_path.startswith("/") or "\0" in relative_path:
         return None, "Unsafe File Notes path"
@@ -10429,24 +10570,19 @@ def _map_session_endpoint(
 
     candidate = notes_root.joinpath(*components)
     for depth in range(1, len(components)):
-        parent = notes_root.joinpath(*components[:depth])
-        try:
-            parent_stat = parent.stat(follow_symlinks=False)
-        except FileNotFoundError:
+        outcome = _endpoint_parent_outcome(
+            notes_root,
+            components[:depth],
+            "/".join(components[:depth]),
+            walk_cache,
+        )
+        if outcome in {"missing", "safe_directory"}:
             continue
-        except OSError:
+        if outcome in {"unsafe_path", "not_a_directory"}:
             return None, "Unsafe File Notes path"
-        if stat.S_ISLNK(parent_stat.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
-            return None, "Unsafe File Notes path"
-        git_boundary = parent / ".git"
-        try:
-            git_boundary.stat(follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        except OSError:
+        if outcome == "unsafe_nested_boundary":
             return None, "Unsafe nested repository boundary"
-        else:
-            return None, "nested_repository"
+        return None, "nested_repository"
 
     try:
         resolved_candidate = candidate.resolve(strict=False)
@@ -10696,8 +10832,12 @@ def compute_stage_closure(
 ) -> frozenset[str]:
     """Return literal endpoints plus tracked index ancestors/descendants."""
     closure = set(endpoints)
-    for endpoint in endpoints:
-        closure.update(path for path in index_entries if _paths_overlap(endpoint, path))
+    endpoint_index = _build_endpoint_overlap_index(endpoints)
+    closure.update(
+        path
+        for path in index_entries
+        if endpoint_index.overlaps(path)
+    )
     return frozenset(closure)
 
 
@@ -10707,14 +10847,16 @@ def compute_unstage_closure(
 ) -> frozenset[str]:
     """Return paths an exact baseline restoration may replace in the index."""
     closure = set(baselines)
-    for path, baseline in baselines.items():
-        if baseline.entry is None:
-            continue
-        closure.update(
-            current_path
-            for current_path in current_index_entries
-            if _paths_overlap(path, current_path)
-        )
+    baseline_index = _build_endpoint_overlap_index(
+        path
+        for path, baseline in baselines.items()
+        if baseline.entry is not None
+    )
+    closure.update(
+        current_path
+        for current_path in current_index_entries
+        if baseline_index.overlaps(current_path)
+    )
     return frozenset(closure)
 
 
@@ -10758,12 +10900,28 @@ def stage_pathspecs(
     status_records: Sequence[PorcelainRecord],
     *,
     groups: Sequence[SessionChangeGroup],
+    ambiguous_group_ids: frozenset[int] | None = None,
+    effective_mutation_paths: frozenset[str] | None = None,
 ) -> tuple[bytes, ...]:
-    """Encode only effective endpoints, omitting absent transient lineage."""
-    if group.group_id in _ambiguous_group_ids(groups, status_records):
+    """Encode only effective endpoints, omitting absent transient lineage.
+
+    Bulk callers pass the per-operation ambiguity and mutation-path sets so a
+    many-group stage does not recompute the shared sets once per group.
+    """
+    if ambiguous_group_ids is None:
+        ambiguous_group_ids = _ambiguous_group_ids(groups, status_records)
+    if group.group_id in ambiguous_group_ids:
         return ()
-    changed_paths = _effective_mutation_paths(group, status_records)
-    return tuple(os.fsencode(path) for path in group.endpoints if path in changed_paths)
+    if effective_mutation_paths is None:
+        effective_mutation_paths = _effective_mutation_paths(
+            group,
+            status_records,
+        )
+    return tuple(
+        os.fsencode(path)
+        for path in group.endpoints
+        if path in effective_mutation_paths
+    )
 
 
 def ownership_signature_matches(
@@ -10829,21 +10987,32 @@ def classify_session_rows(
     for entry in flattened_entries:
         if entry.path not in entries_by_path or entry.stage == 0:
             entries_by_path[entry.path] = entry
-    global_records = tuple(record for record in status_records if record.path is None)
+    global_records = tuple(
+        record for record in status_records if record.path is None
+    )
+    group_positions_by_path: dict[str, set[int]] = {}
+    for position, group in enumerate(groups):
+        for path in group.endpoints:
+            group_positions_by_path.setdefault(path, set()).add(position)
+    records_by_group: list[list[PorcelainRecord]] = [[] for _ in groups]
+    for record in status_records:
+        touched_positions = group_positions_by_path.get(
+            record.path, frozenset()
+        ) | group_positions_by_path.get(record.original_path, frozenset())
+        for position in touched_positions:
+            records_by_group[position].append(record)
+    entries_by_group: list[list[IndexEntry]] = [[] for _ in groups]
+    for entry in flattened_entries:
+        for position in group_positions_by_path.get(entry.path, ()):
+            entries_by_group[position].append(entry)
     ambiguous_groups = _ambiguous_group_ids(groups, status_records)
     rows: list[SessionGitRow] = []
-    for group in groups:
-        records = global_records + tuple(
-            record for record in status_records if _record_touches_group(record, group)
-        )
-        entries = tuple(
-            entry for entry in flattened_entries if entry.path in group.endpoints
-        )
+    for position, group in enumerate(groups):
         rows.append(
             _classify_group(
                 group,
-                records,
-                entries,
+                global_records + tuple(records_by_group[position]),
+                entries_by_group[position],
                 entries_by_path,
                 ownership.get(group.group_id),
                 group.group_id in ambiguous_groups,
@@ -10959,6 +11128,47 @@ def _paths_overlap(first: str, second: str) -> bool:
         first == second
         or first.startswith(f"{second}/")
         or second.startswith(f"{first}/")
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _EndpointOverlapIndex:
+    """Prebuilt endpoint membership for prefix-directory overlap lookups.
+
+    ``_paths_overlap`` treats two paths as overlapping when they are equal or
+    one is a directory ancestor of the other. Indexing each endpoint plus its
+    ancestor directories once turns every per-path query into a bounded number
+    of set lookups instead of a scan over every endpoint of every group.
+    """
+
+    exact: frozenset[str]
+    ancestor_directories: frozenset[str]
+
+    def overlaps(self, path: str) -> bool:
+        """Return whether ``path`` overlaps any indexed endpoint."""
+        if path in self.exact or path in self.ancestor_directories:
+            return True
+        parts = path.split("/")
+        return any(
+            "/".join(parts[:depth]) in self.exact
+            for depth in range(1, len(parts))
+        )
+
+
+def _build_endpoint_overlap_index(
+    endpoints: Iterable[str],
+) -> _EndpointOverlapIndex:
+    """Index endpoints and their ancestor directories for overlap queries."""
+    exact: set[str] = set()
+    ancestor_directories: set[str] = set()
+    for endpoint in endpoints:
+        exact.add(endpoint)
+        parts = endpoint.split("/")
+        for depth in range(1, len(parts)):
+            ancestor_directories.add("/".join(parts[:depth]))
+    return _EndpointOverlapIndex(
+        frozenset(exact),
+        frozenset(ancestor_directories),
     )
 
 
@@ -11125,14 +11335,52 @@ def _effective_mutation_paths(
     return frozenset(paths)
 
 
+def _bulk_effective_mutation_paths(
+    groups: Sequence[SessionChangeGroup],
+    status_records: Sequence[PorcelainRecord],
+) -> dict[int, frozenset[str]]:
+    """Compute every group's effective mutation paths in one record pass."""
+    groups_by_path: dict[str, set[int]] = {}
+    for group in groups:
+        for path in group.endpoints:
+            groups_by_path.setdefault(path, set()).add(group.group_id)
+    paths_by_group: dict[int, set[str]] = {
+        group.group_id: set() for group in groups
+    }
+    for record in status_records:
+        if (
+            record.kind != "untracked"
+            and record.worktree_status == "."
+        ):
+            continue
+        for path in (record.path, record.original_path):
+            for group_id in groups_by_path.get(path, ()):
+                paths_by_group[group_id].add(path)
+    return {
+        group_id: frozenset(paths)
+        for group_id, paths in paths_by_group.items()
+    }
+
+
 def _ambiguous_group_ids(
     groups: Sequence[SessionChangeGroup],
     status_records: Sequence[PorcelainRecord],
 ) -> frozenset[int]:
-    path_groups: dict[str, set[int]] = {}
+    groups_by_path: dict[str, set[int]] = {}
     for group in groups:
-        for path in _effective_mutation_paths(group, status_records):
-            path_groups.setdefault(path, set()).add(group.group_id)
+        for path in group.endpoints:
+            groups_by_path.setdefault(path, set()).add(group.group_id)
+    path_groups: dict[str, set[int]] = {}
+    for record in status_records:
+        if (
+            record.kind != "untracked"
+            and record.worktree_status == "."
+        ):
+            continue
+        for path in (record.path, record.original_path):
+            claimed = groups_by_path.get(path)
+            if claimed:
+                path_groups.setdefault(path, set()).update(claimed)
     return frozenset(
         group_id
         for group_ids in path_groups.values()

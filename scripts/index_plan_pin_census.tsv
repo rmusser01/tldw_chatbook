@@ -136,6 +136,9 @@ idx_documentversions_merge_parent_uuid	pre-convention	plan never captured withou
 idx_documentversions_prev_version	pre-convention	plan never captured without stats
 idx_documentversions_uuid	pre-convention	plan never captured without stats
 idx_eval_results_run	pre-convention	plan never captured without stats
+# task-34399: get_run_results pages WHERE run_id = ? ORDER BY created_at ASC;
+# the plan must SEARCH eval_results on this index with no re-sort B-tree.
+idx_eval_results_run_created	plan-pinned	Tests/DB/test_eval_results_run_created_index_plan.py::test_run_results_page_uses_the_index_without_stats
 idx_eval_run_metrics_run	pre-convention	plan never captured without stats
 idx_eval_runs_group	pre-convention	plan never captured without stats
 idx_eval_runs_model	pre-convention	plan never captured without stats
@@ -257,6 +260,9 @@ idx_subscription_stats_date	pre-convention	plan never captured without stats
 idx_subscriptions_folder	pre-convention	plan never captured without stats
 idx_subscriptions_last_checked	pre-convention	plan never captured without stats
 idx_subscriptions_priority_active	pre-convention	plan never captured without stats
+# task-34399: the OPML-dedupe exact-source lookups (WHERE source = ?) ran
+# inside BEGIN IMMEDIATE; the plan must SEARCH on this index, never SCAN.
+idx_subscriptions_source	plan-pinned	Tests/DB/test_subscriptions_source_index_plan.py::test_exact_source_lookup_does_not_scan_subscriptions
 idx_subscriptions_tags	pre-convention	plan never captured without stats
 idx_sync_conflicts_note	pre-convention	plan never captured without stats
 idx_sync_conflicts_resolution	pre-convention	plan never captured without stats

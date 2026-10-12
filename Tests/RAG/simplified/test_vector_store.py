@@ -379,3 +379,97 @@ class TestChromaVectorStore:
             assert results[0].document == "persisted doc"
         finally:
             reopened.close()
+
+    def test_add_passes_ndarray_through_without_list_conversion(self, tmp_path):
+        """task-34398: the (m, d) matrix reaches chromadb as an ndarray (the
+        old ``tolist()`` copied the whole matrix on every ingest add)."""
+        from types import SimpleNamespace
+
+        from tldw_chatbook.RAG_Search.simplified.vector_store import (
+            ChromaVectorStore,
+        )
+
+        store = ChromaVectorStore(persist_directory=tmp_path / "chroma")
+        captured = {}
+        store._collection = SimpleNamespace(add=lambda **kw: captured.update(kw))
+        try:
+            embeddings = _embed([1.0, 0.0, 0.0], [0.0, 1.0, 0.0])
+            store.add(
+                ids=["a", "b"],
+                embeddings=embeddings,
+                documents=["doc about apples", "doc about bees"],
+                metadata=[{"topic": "fruit"}, {"topic": "insects"}],
+            )
+        finally:
+            store._collection = None
+            store.close()
+
+        assert isinstance(captured["embeddings"], np.ndarray), (
+            "add must pass the ndarray through to chromadb, not a list copy"
+        )
+        np.testing.assert_array_equal(captured["embeddings"], embeddings)
+        assert captured["embeddings"].dtype == np.float32
+        assert captured["ids"] == ["a", "b"]
+
+    def test_search_passes_ndarray_query_through(self, tmp_path):
+        """task-34398: the query vector reaches chromadb as an ndarray too."""
+        from types import SimpleNamespace
+
+        from tldw_chatbook.RAG_Search.simplified.vector_store import (
+            ChromaVectorStore,
+            SearchResult,
+        )
+
+        store = ChromaVectorStore(persist_directory=tmp_path / "chroma")
+        captured = {}
+
+        def fake_query(**kwargs):
+            captured.update(kwargs)
+            return {
+                "ids": [["a"]],
+                "distances": [[0.1]],
+                "documents": [["doc about apples"]],
+                "metadatas": [[{"topic": "fruit"}]],
+            }
+
+        store._collection = SimpleNamespace(query=fake_query)
+        try:
+            results = store.search(_embed([0.9, 0.1, 0.0])[0], top_k=1)
+        finally:
+            store._collection = None
+            store.close()
+
+        (query,) = captured["query_embeddings"]
+        assert isinstance(query, np.ndarray), (
+            "search must pass the ndarray query through, not a list copy"
+        )
+        np.testing.assert_array_equal(query, _embed([0.9, 0.1, 0.0])[0])
+        assert isinstance(results[0], SearchResult)
+        assert results[0].id == "a"
+
+    def test_list_embeddings_still_validated_and_stored(self, tmp_path):
+        """The list-input branch keeps its validation and still stores."""
+        from tldw_chatbook.RAG_Search.simplified.vector_store import (
+            ChromaVectorStore,
+        )
+
+        store = ChromaVectorStore(persist_directory=tmp_path / "chroma")
+        try:
+            store.add(
+                ids=["a", "b"],
+                embeddings=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                documents=["doc about apples", "doc about bees"],
+                metadata=[{"topic": "fruit"}, {"topic": "insects"}],
+            )
+            results = store.search([0.9, 0.1, 0.0], top_k=1)
+            assert [r.id for r in results] == ["a"]
+
+            with pytest.raises(ValueError, match="doesn't match"):
+                store.add(
+                    ids=["c", "d"],
+                    embeddings=[[1.0, 0.0, 0.0]],
+                    documents=["x", "y"],
+                    metadata=[{"topic": "fruit"}, {"topic": "insects"}],
+                )
+        finally:
+            store.close()

@@ -4154,3 +4154,132 @@ async def test_start_failure_records_a_bounded_diagnostic(tmp_path: Path) -> Non
     assert "legacy migration" in logged
     assert "RuntimeError" in logged
     assert "/private/path/leaks/here" not in logged
+
+
+@pytest.mark.asyncio
+async def test_observe_root_rename_match_hashes_each_file_once_per_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        build_notes_sync_runtime_owner,
+    )
+
+    store = _store(tmp_path)
+    root_dir = tmp_path / "root"
+    snapshots = {}
+    for index in range(5):
+        name = f"note-{index}.md"
+        (root_dir / name).write_text(f"body {index}", encoding="utf-8")
+        with PosixNotesSyncFilesystem(root_dir) as filesystem:
+            snapshots[name] = filesystem.observe(name)
+        store.create_binding(
+            NotesSyncBindingRecord(
+                binding_id=f"binding-{index}",
+                root_id="root-1",
+                note_scope_id="local_note",
+                note_id=f"local-{index}",
+                normalized_relative_path=name,
+                stable_identity_digest=(
+                    NotesSyncExecutor.stable_identity_digest(snapshots[name])
+                ),
+                state=NotesSyncBindingState.ACTIVE,
+                serialization=snapshots[name].observation.serialization,
+                content_digest=snapshots[name].observation.content_digest,
+                note_version=1,
+            )
+        )
+    for index in range(5):
+        (root_dir / f"note-{index}.md").rename(root_dir / f"moved-{index}.md")
+    local_notes = _CreatingLocalNotes("old")
+    service = NotesScopeService(local_notes, None, folder_repository=_Folders())
+    owner = build_notes_sync_runtime_owner(
+        notes_scope_service=service,
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+        database_path=tmp_path / "sync.sqlite3",
+        migrate_legacy=lambda: None,
+        local_user_id="user-1",
+        recovery_capacity_bytes=1024 * 1024,
+    )
+
+    digest_calls: list[object] = []
+    original_digest = NotesSyncExecutor.stable_identity_digest
+
+    def counting_digest(snapshot: object) -> str:
+        digest_calls.append(snapshot)
+        return original_digest(snapshot)
+
+    monkeypatch.setattr(
+        NotesSyncExecutor,
+        "stable_identity_digest",
+        staticmethod(counting_digest),
+    )
+    request = await owner._adapter.observe_root(store.get_root("root-1"))
+    monkeypatch.undo()
+
+    assert {observation.relative_path for observation in request.bindings} == {
+        f"moved-{index}.md" for index in range(5)
+    }
+    # One digest per discovered file for the shared rename index plus one
+    # per matched binding observation -- not a full rescan per missing
+    # binding (5 x 5 with the old per-binding scan).
+    assert len(digest_calls) < 5 * 5
+    await owner.shutdown()
+
+
+def test_display_path_suffix_matches_path_suffix_for_tricky_names() -> None:
+    from tldw_chatbook.Notes.notes_sync_runtime import _display_path_suffix
+
+    displays = (
+        "root/note.md",
+        "root/note.markdown",
+        "root/note.txt",
+        "root/note.JSON",
+        "root/.hidden",
+        "root/note.",
+        "root/note",
+        "root/archive.tar.md",
+        "root/dir.v2/note.md",
+        "root/note.md/",
+        "root//double.md",
+        "root/deep/leaf.txt",
+        "/",
+        "",
+    )
+
+    for display in displays:
+        assert _display_path_suffix(display) == Path(display).suffix, display
+
+
+def test_discovery_signature_tracks_syncable_entries_only(
+    tmp_path: Path,
+) -> None:
+    from tldw_chatbook.Notes.note_import_discovery import (
+        discover_import_sources,
+    )
+    from tldw_chatbook.Notes.note_import_plan_models import ImportBounds
+    from tldw_chatbook.Notes.notes_sync_runtime import (
+        _ProductionRuntimeAdapter,
+    )
+
+    bounds = ImportBounds(
+        max_files=100,
+        max_file_bytes=1024 * 1024,
+        max_total_bytes=8 * 1024 * 1024,
+        max_depth=8,
+        max_entries=1_000,
+    )
+    signature = _ProductionRuntimeAdapter._discovery_signature
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "note.md").write_text("body", encoding="utf-8")
+    base = signature(discover_import_sources((root,), bounds))
+
+    assert base == signature(discover_import_sources((root,), bounds))
+
+    (root / "ignored.json").write_text("{}", encoding="utf-8")
+    assert signature(discover_import_sources((root,), bounds)) == base
+
+    (root / "other.md").write_text("other", encoding="utf-8")
+    assert signature(discover_import_sources((root,), bounds)) != base
