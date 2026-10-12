@@ -206,6 +206,7 @@ class LocalMCPControlService:
         if isinstance(self.runtime_delegate, LocalMCPRuntimeDelegate):
             self.runtime_delegate._definition_store = self.store
         self._runtime_activity_limit = 50
+        self._goal_connected_profiles: dict[str, tuple[object, str]] = {}
         self.connection_ownership = None
 
     def save_owned_profile(
@@ -737,6 +738,11 @@ class LocalMCPControlService:
             )
 
         session = getattr(client, "sessions", {}).get(profile_id)
+        if session is not None:
+            self._goal_connected_profiles[profile_id] = (
+                session,
+                self._goal_profile_digest(profile),
+            )
         try:
             snapshot = await client.describe_server(profile.profile_id)
             if not self._has_capabilities(snapshot):
@@ -754,6 +760,84 @@ class LocalMCPControlService:
             ):
                 await self._disconnect_best_effort(client, profile_id)
             raise
+
+    @staticmethod
+    def _goal_profile_digest(profile) -> str:
+        """Hash launch arguments and unresolved environment references only."""
+        import hashlib
+
+        payload = (
+            profile.command,
+            profile.args,
+            profile.cwd,
+            profile.transport,
+            profile.protocol_version,
+            tuple(sorted(profile.env.items())),
+        )
+        return hashlib.sha256(
+            json.dumps(payload, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    def goal_tool_binding(self, profile_id: str, tool_name: str, *, tool_id: str):
+        """Snapshot an exact configured target and its currently discovered shape."""
+        from tldw_chatbook.Agents.goal_models import GoalMCPBinding
+        from tldw_chatbook.MCP.permission_store import definition_hash
+
+        profile = self.store.get_profile(profile_id)
+        if (
+            profile is None
+            or profile.transport != "stdio"
+            or profile.plugin_owner is not None
+        ):
+            raise ValueError("Goal MCP requires a selected local stdio profile")
+        tools = self._get_client().get_server_tools(profile_id)
+        tool = next((item for item in tools if item["name"] == tool_name), None)
+        if tool is None:
+            raise ValueError("MCP definition missing")
+        return GoalMCPBinding(
+            tool_id=tool_id,
+            server_key="local:" + profile_id,
+            tool_name=tool_name,
+            profile_sha256=self._goal_profile_digest(profile),
+            definition_sha256=definition_hash(
+                tool.get("description"), tool.get("inputSchema")
+            ),
+        )
+
+    def _check_goal_tool_binding(self, goal, profile_id, tool_name, *, connected):
+        from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+        binding = next(
+            (
+                item
+                for item in goal.goal.request.tool_scope.mcp_bindings
+                if item.server_key == "local:" + profile_id
+                and item.tool_name == tool_name
+            ),
+            None,
+        )
+        profile = self.store.get_profile(profile_id)
+        if (
+            binding is None
+            or profile is None
+            or self._goal_profile_digest(profile) != binding.profile_sha256
+        ):
+            raise AutomaticWorkRefused("mcp_binding_changed")
+        if connected:
+            session, digest = self._goal_connected_profiles.get(
+                profile_id, (None, None)
+            )
+            if (
+                session is None
+                or session is not self._get_client().sessions.get(profile_id)
+                or digest != binding.profile_sha256
+            ):
+                raise AutomaticWorkRefused("mcp_connection_changed")
+            if (
+                self.goal_tool_binding(profile_id, tool_name, tool_id=binding.tool_id)
+                != binding
+            ):
+                raise AutomaticWorkRefused("mcp_definition_changed")
 
     @producer_call
     async def disconnect_profile(self, profile_id: str) -> bool:
@@ -834,6 +918,9 @@ class LocalMCPControlService:
         automatic_work = current_automatic_work()
         if automatic_work is not None:
             automatic_work.check()
+        goal = automatic_work.goal if automatic_work is not None else None
+        if goal is not None:
+            self._check_goal_tool_binding(goal, profile_id, tool_name, connected=False)
         client = self._get_client()
         profile = self.store.get_profile(profile_id)
         if profile is not None and profile.plugin_owner is not None:
@@ -867,6 +954,8 @@ class LocalMCPControlService:
         check_mcp_invocation_policies()
         if automatic_work is not None:
             automatic_work.check()
+        if goal is not None:
+            self._check_goal_tool_binding(goal, profile_id, tool_name, connected=True)
         if typed_result:
             call = getattr(client, "call_tool_result", None)
             if not callable(call):

@@ -1437,12 +1437,18 @@ def _automatic_generation(
         prepared.accounting.total_input_tokens,
         prepared.capacity.effective_response_tokens,
     )
+    from tldw_chatbook.LLM_Calls.provider_outcomes import PRE_EFFECT_ERRORS
+
     completed = False
+    pre_effect = False
     try:
         yield
         completed = True
+    except PRE_EFFECT_ERRORS:
+        pre_effect = True
+        raise
     finally:
-        actual = None
+        actual = 0 if pre_effect else None
         if completed and signals is not None:
             try:
                 actual = _automatic_budget_tokens(
@@ -2192,6 +2198,7 @@ class _QueueItem:
     # "no real status available" (a bare RuntimeError, say), which the
     # consumer maps to ChatProviderError's own upstream-error default.
     status_code: int | None = None
+    adapter_error: BaseException | None = None
     # TASK-32369: the failure never left the client (a status-less
     # ChatConfigurationError), so the consumer must not report a provider 502.
     local: bool = False
@@ -5553,6 +5560,10 @@ class ConsoleProviderGateway:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            from tldw_chatbook.LLM_Calls.provider_outcomes import PRE_EFFECT_ERRORS
+
+            if isinstance(exc, PRE_EFFECT_ERRORS):
+                raise
             typed_error = project_provider_error(exc, provider)
             if typed_error is not None:
                 raise typed_error from None
@@ -6871,6 +6882,11 @@ class ConsoleProviderGateway:
                     signals.close_exchange(status="error")
                 enqueue(_QueueItem.trace_verification_error())
             except BaseException as exc:
+                from tldw_chatbook.LLM_Calls.provider_outcomes import PRE_EFFECT_ERRORS
+
+                if isinstance(exc, PRE_EFFECT_ERRORS):
+                    enqueue(_QueueItem("error", adapter_error=exc))
+                    return
                 raw_status = getattr(exc, "status_code", None)
                 status_code = raw_status if type(raw_status) is int else None
                 try:
@@ -6935,6 +6951,8 @@ class ConsoleProviderGateway:
                 if item.kind == "done":
                     break
                 if item.kind == "error":
+                    if item.adapter_error is not None:
+                        raise item.adapter_error
                     if isinstance(item.payload, ChatAPIError):
                         item.payload.console_copy = item.text
                         raise item.payload

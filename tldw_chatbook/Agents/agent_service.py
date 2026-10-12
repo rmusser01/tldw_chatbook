@@ -105,6 +105,7 @@ from .agent_models import (
     ModelTurn,
     ProviderContinuationEvent,
     RunOutcome,
+    RunTerminationReason,
     SkillFileBindings,
     SpawnAdmissionRefusal,
     ToolCall,
@@ -2008,7 +2009,16 @@ def _call_with_timeout(
         operation = owner.reserve_tool() if owner is not None else None
     except (CapacityRefused, AutomaticWorkRefused) as exc:
         return ToolResult(
-            ok=False, error=f"tool call refused: {exc}", dispatch_state="not_started"
+            ok=False,
+            error=f"tool call refused: {exc}",
+            dispatch_state="not_started",
+            termination_reason=(
+                exc.termination_reason
+                if isinstance(exc, AutomaticWorkRefused)
+                else RunTerminationReason.PREFLIGHT_REFUSED
+            )
+            if automatic_work is not None and automatic_work.goal is not None
+            else None,
         )
     box: dict = {"dispatch_state": "not_started"}
 
@@ -2032,7 +2042,7 @@ def _call_with_timeout(
                     else result
                 )
         except BaseException as exc:  # noqa: BLE001 — surfaced as a failed ToolResult, never propagated to the worker's exit
-            box["error"] = str(exc)
+            box["error"] = exc
         finally:
             if operation is not None:
                 operation.finish()
@@ -2084,12 +2094,25 @@ def _call_with_timeout(
     if "error" in box:
         return ToolResult(
             ok=False,
-            error=box["error"],
+            error=str(box["error"]),
+            termination_reason=(
+                box["error"].termination_reason
+                if isinstance(box["error"], AutomaticWorkRefused)
+                else RunTerminationReason.UNKNOWN_EFFECT
+                if automatic_work is not None and automatic_work.goal is not None
+                else None
+            ),
             dispatch_state=box.get("dispatch_state", "settled"),
         )
     result = box.get("result")
     if result is None:
-        return ToolResult(ok=False, error=f"tool call produced no result: {tool_name}")
+        return ToolResult(
+            ok=False,
+            error=f"tool call produced no result: {tool_name}",
+            termination_reason=RunTerminationReason.UNKNOWN_EFFECT
+            if automatic_work is not None and automatic_work.goal is not None
+            else None,
+        )
     return result
 
 
@@ -4921,7 +4944,9 @@ class AgentService:
                         and not automatic_work.ledger.commit(
                             automatic_child_reservation,
                             owner_id=automatic_work.owner_id,
-                            limits=AutomaticWorkLimits.from_settings(),
+                            limits=AutomaticWorkLimits.from_settings(
+                                automatic_work.policy_kind()
+                            ),
                         )
                     ):
                         raise AutomaticWorkRefused("child_already_launched")
@@ -5344,6 +5369,17 @@ class AgentService:
         # Task 7: reused verbatim (not re-derived) as the gate on whether the
         # system prompt's RUN_LOG_PROMPT_SECTION gets appended below, so the
         # prompt can never mention a tool this run didn't actually disclose.
+        if self._automatic_work is not None and self._automatic_work.goal is not None:
+            goal = self._automatic_work.goal
+            active = [
+                schema for schema in active if schema.name in config.allowed_tools
+            ]
+            disclosed_names = {schema.name for schema in active}
+            runtime_schemas = [
+                schema
+                for schema in runtime_schemas
+                if goal.permits_runtime(schema.name)
+            ]
         log_active = schema_plan.log_active
         project_context = self.project_instruction_context
         payload_state: InstructionChainPayloadState | None = None
@@ -5599,7 +5635,9 @@ class AgentService:
                         owner_id=automatic_work.owner_id,
                         kind="child_launch",
                         amount=1,
-                        limits=AutomaticWorkLimits.from_settings(),
+                        limits=AutomaticWorkLimits.from_settings(
+                            automatic_work.policy_kind()
+                        ),
                     ).id
                 return (
                     self.runtime_capacity.begin_execution(
@@ -8987,6 +9025,13 @@ class AgentService:
                         # "not running" -- the honest-refusal contract for a
                         # finished or crashed run (AC#5).
                         self._unregister_primary_mailbox(run_id)
+            except AutomaticWorkRefused as error:
+                budget_tokens_known = False
+                outcome = RunOutcome(
+                    status=RUN_STUCK,
+                    steps=[],
+                    termination_reason=error.termination_reason,
+                )
             except _ProjectInstructionPayloadError as error:
                 budget_tokens_known = False
                 outcome = RunOutcome(
@@ -9002,6 +9047,10 @@ class AgentService:
                     FAILURE_SUMMARY_MAX_CHARS,
                     describe_stream_failure,
                 )
+                from tldw_chatbook.LLM_Calls.provider_outcomes import (
+                    PreEffectPermanentError,
+                    PreEffectRateLimitError,
+                )
 
                 budget_tokens_known = False
                 if (
@@ -9016,6 +9065,13 @@ class AgentService:
                 # instead — this summary becomes user-facing failure copy.
                 outcome = RunOutcome(
                     status=RUN_ERROR,
+                    termination_reason=(
+                        RunTerminationReason.PRE_EFFECT_RATE_LIMIT
+                        if isinstance(exc, PreEffectRateLimitError)
+                        else RunTerminationReason.PRE_EFFECT_PERMANENT
+                        if isinstance(exc, PreEffectPermanentError)
+                        else RunTerminationReason.UNKNOWN_EFFECT
+                    ),
                     steps=[
                         self._service_error_step(
                             run_id,

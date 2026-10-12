@@ -22,13 +22,13 @@ from uuid import uuid4
 from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
 from tldw_chatbook.Agents.automatic_work_budget import (
     AutomaticChatStartAttempt,
-    GoalAttempt,
-    RuntimeRecoveryResult,
     AutomaticWakeAttempt,
     AutomaticWorkLimits,
     AutomaticWorkRefused,
     AutomaticWorkReservation,
     AutomaticWorkSnapshot,
+    GoalAttempt,
+    RuntimeRecoveryResult,
 )
 
 if TYPE_CHECKING:

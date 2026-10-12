@@ -611,6 +611,7 @@ async def hydrate_console_session(
     target_scope_type: str | None = None,
     target_workspace_id: str | None = None,
     activate: bool = True,
+    session_id: str | None = None,
     prepared_data: ConsoleConversationHydrationData | None = None,
 ) -> Any:
     """Create a Console session from a persisted tree.
@@ -739,6 +740,7 @@ async def hydrate_console_session(
         settings = replace(settings, character_label=character_name or "")
     prior_active_session_id = store.active_session_id
     session = store.restore_persisted_session(
+        session_id=session_id,
         title=title,
         workspace_id=workspace_id,
         persisted_conversation_id=target,
@@ -787,3 +789,26 @@ async def hydrate_console_session(
         )
         raise
     return session
+
+
+def restored_project_instruction_state(
+    persistence, persisted_conversation_id, initial_project_instruction_state
+):
+    """Decode existing durable controls without publishing a restored session."""
+    from .console_project_instructions import (
+        ProjectInstructionControlState,
+        decode_project_context_json,
+    )
+
+    project_instruction_state = ProjectInstructionControlState.legacy_disabled()
+    getter = getattr(persistence, "get_conversation_console_project_context", None)
+    if callable(getter):
+        try:
+            raw_project_context = getter(conversation_id=str(persisted_conversation_id))
+        except Exception:  # noqa: BLE001 - preserve existing durable-control fallback
+            logger.warning("project_instruction_state_read_failed")
+        else:
+            project_instruction_state = decode_project_context_json(raw_project_context)
+    if initial_project_instruction_state is not None:
+        project_instruction_state = initial_project_instruction_state
+    return project_instruction_state

@@ -2472,6 +2472,7 @@ class ConsoleRuntime:
         queue_entry_id: str | None = None,
         queue_authorization: Any | None = None,
         wake_authorization: Any | None = None,
+        goal_authorization: Any | None = None,
         terminal_callback: Callable[[bool], None] | None = None,
         recover_before_acceptance: bool = True,
     ) -> str:
@@ -2504,6 +2505,7 @@ class ConsoleRuntime:
             queue_entry_id=queue_entry_id,
             queue_authorization=queue_authorization,
             wake_authorization=wake_authorization,
+            goal_authorization=goal_authorization,
             raise_on_refusal=recover_before_acceptance,
         )
         try:
@@ -2583,6 +2585,7 @@ class ConsoleRuntime:
         queue_entry_id: str | None,
         queue_authorization: Any | None,
         wake_authorization: Any | None,
+        goal_authorization: Any | None,
         raise_on_refusal: bool,
     ) -> Any:
         """Run one screen-free turn using only its frozen custody record."""
@@ -2624,6 +2627,7 @@ class ConsoleRuntime:
                 queue_entry_id=queue_entry_id,
                 queue_authorization=queue_authorization,
                 wake_authorization=wake_authorization,
+                goal_authorization=goal_authorization,
                 configuration=replace(
                     request.configuration,
                     skill_context_maximum={
@@ -2645,7 +2649,11 @@ class ConsoleRuntime:
 
         result = (
             await submit()
-            if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+            if origin
+            in {
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
+            }
             else await controller.run_prompt_chain(
                 session_id=request.session_id,
                 initial_turn=submit,
@@ -4425,6 +4433,50 @@ class ConsoleRuntime:
             )
             return self._run_hooks_engine
 
+    def ensure_goal_coordinator(self):
+        """Attach goal execution to the existing startup audit and runtime owner."""
+        controller = self._chat_controller
+        if controller is None or self._disposed:
+            raise RuntimeError("Console runtime is unavailable")
+        coordinator = getattr(controller, "_goal_coordinator", None)
+        if coordinator is None:
+            from tldw_chatbook.Agents.goal_run_service import GoalRunService
+            from tldw_chatbook.Chat.console_goal_runs import ConsoleGoalCoordinator
+
+            bridge = controller._agent_bridge
+            persistence = controller.store.persistence
+            if bridge is None or persistence is None:
+                raise RuntimeError("Native goal stores are unavailable")
+            coordinator = ConsoleGoalCoordinator(
+                controller, GoalRunService(bridge.runs_db, persistence)
+            )
+            controller._goal_coordinator = coordinator
+        coordinator.bind_runtime_submitter(self._submit_goal_iteration)
+        return coordinator
+
+    async def _submit_goal_iteration(
+        self, handoff: str, *, session_id: str, goal_authorization: Any
+    ) -> Any:
+        """Freeze goal input under the same custody owner as manual and wake turns."""
+        controller = self._chat_controller
+        if controller is None:
+            raise RuntimeError("Console controller is unavailable for goal custody.")
+        request = ConsoleTurnCustodyRequest(
+            turn_id=str(uuid4()),
+            session_id=session_id,
+            draft=handoff,
+            configuration=controller.resolve_runtime_turn_configuration_snapshot(
+                session_id
+            ),
+        )
+        turn_id = self.accept_turn(
+            request,
+            origin=ConsoleSubmissionOrigin.GOAL_ITERATION,
+            goal_authorization=goal_authorization,
+            recover_before_acceptance=False,
+        )
+        return await self.wait_for_turn(turn_id)
+
     # -- the view seam -----------------------------------------------------
 
     def has_answerable_view(self) -> bool:
@@ -5280,6 +5332,9 @@ class ConsoleRuntime:
                 self._execution_capacity.close()
         self.detach_view(None)
         controller, gateway = self._chat_controller, self._provider_gateway
+        goals = getattr(controller, "_goal_coordinator", None)
+        if goals is not None:
+            goals.close_admission()
         canvas_gateway = self._canvas_gateway
         canvas_authority = self._canvas_native_authority
         coordinator = self._change_review_coordinator
@@ -5349,6 +5404,8 @@ class ConsoleRuntime:
 
         progress_cleanups = set(self._progress_cleanup_tasks)
         drain_tasks: set[asyncio.Future[Any]] = set(progress_cleanups)
+        if goals is not None:
+            drain_tasks.add(asyncio.create_task(goals.shutdown()))
         voice_cleanup = None
         if self._voice_worker is not None or self._voice_process_supervisor is not None:
 

@@ -2380,6 +2380,13 @@ class ToolCatalogRegistry:
         # Returns a ToolResult rather than raising: the pure loop must never
         # see an exception out of tool invocation.
         def invoke_current() -> ToolResult:
+            from .automatic_work_runtime import current_automatic_work
+
+            automatic = current_automatic_work()
+            if automatic is not None and automatic.goal is not None:
+                automatic.check()
+                if tool_id not in automatic.goal.goal.request.tool_scope.catalog_tools:
+                    return ToolResult.blocked("Tool outside goal scope.")
             if expected_definition is not None:
                 try:
                     if self.snapshot_for_hook(name) != expected_definition:

@@ -294,6 +294,16 @@ class ConsoleFleetWakeCoordinator:
         """The runtime fence shared by wake and chat-start attempts."""
         return self._owner_id
 
+    @property
+    def recovery_result(self):
+        """The single startup audit, shared with goal recovery projection."""
+        database = self._runs_db()
+        return (
+            getattr(database.automatic_work, "recovery_result", None)
+            if database is not None
+            else None
+        )
+
     def try_claim_automatic_primary(self, session_id: str, token: object) -> bool:
         """Claim one shared automatic slot while retaining manual capacity."""
         if (

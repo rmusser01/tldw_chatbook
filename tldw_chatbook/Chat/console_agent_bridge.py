@@ -5090,6 +5090,12 @@ def build_console_first_request_plan(
         workspace_context_note=workspace_note,
         response_reserve_tokens=response_reserve,
     )
+    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+    automatic = current_automatic_work()
+    if automatic is not None and automatic.goal is not None:
+        config = automatic.goal.narrow_config(config, registry)
+        allowed_tools = config.allowed_tools
     messages = agent_messages
     if turn_bundle_block:
         messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
@@ -6430,6 +6436,11 @@ class ConsoleAgentBridge:
         registry = first_request_plan.registry
         allowed_tools = first_request_plan.allowed_tools
         config = first_request_plan.config
+        from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+        automatic = current_automatic_work()
+        if automatic is not None and automatic.goal is not None:
+            config = automatic.goal.narrow_config(config, registry)
         project_instruction_context = None
         service_confirm_project_instruction_dispatch = (
             confirm_project_instruction_dispatch
@@ -6595,6 +6606,40 @@ class ConsoleAgentBridge:
         # -> asyncio.run(install) -> broad-catch wrap. import_skill_file
         # raises a bare ValueError("local_skill_exists:...") on collision, so
         # the install catch is broad.
+        def goal_tool_refusal(name: str) -> ToolResult | None:
+            from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+            from tldw_chatbook.Agents.automatic_work_runtime import (
+                current_automatic_work,
+            )
+
+            context = current_automatic_work()
+            if context is None or context.goal is None:
+                return None
+            try:
+                context.check()
+                if not context.goal.permits_runtime(name):
+                    raise AutomaticWorkRefused("goal_tool_scope")
+            except AutomaticWorkRefused as exc:
+                return ToolResult(
+                    ok=False,
+                    error=exc.reason,
+                    termination_reason=exc.termination_reason,
+                )
+            return None
+
+        from tldw_chatbook.Agents.agent_models import RunTerminationReason
+
+        def goal_tool_failure(message: str, reason: RunTerminationReason) -> ToolResult:
+            return ToolResult(
+                ok=False,
+                error=message,
+                termination_reason=(
+                    reason
+                    if automatic is not None and automatic.goal is not None
+                    else None
+                ),
+            )
+
         install_skill_tool = None
         if (
             self._skills_service is not None
@@ -6603,6 +6648,13 @@ class ConsoleAgentBridge:
             scope = self._skills_service
 
             def install_skill_tool(url: str) -> ToolResult:
+                from tldw_chatbook.Agents.automatic_work_budget import (
+                    AutomaticWorkRefused,
+                )
+
+                refusal = goal_tool_refusal("install_skill")
+                if refusal is not None:
+                    return refusal
                 from tldw_chatbook.Skills_Interop.skill_remote_fetch import (
                     classify_skill_source_url,
                     install_skill_from_url,
@@ -6612,13 +6664,19 @@ class ConsoleAgentBridge:
                 try:
                     scope.enforce_install_remote()
                 except PolicyDeniedError as exc:
-                    return ToolResult(ok=False, error=exc.user_message)
+                    return goal_tool_failure(
+                        exc.user_message, RunTerminationReason.PERMISSION_REFUSED
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    return ToolResult(ok=False, error=str(exc))
+                    return goal_tool_failure(
+                        str(exc), RunTerminationReason.AUTHORITY_CHANGED
+                    )
                 try:
                     classify_skill_source_url(url)
                 except Exception as exc:  # noqa: BLE001 (RemoteSkillError etc.)
-                    return ToolResult(ok=False, error=str(exc))
+                    return goal_tool_failure(
+                        str(exc), RunTerminationReason.AUTHORITY_CHANGED
+                    )
                 try:
                     allowed = bool(
                         request_skill_install_confirm(url)
@@ -6628,8 +6686,9 @@ class ConsoleAgentBridge:
                 except Exception:  # noqa: BLE001 — a UI error fails closed
                     allowed = False
                 if not allowed:
-                    return ToolResult(
-                        ok=False, error="The user declined to install this skill."
+                    return goal_tool_failure(
+                        "The user declined to install this skill.",
+                        RunTerminationReason.PERMISSION_REFUSED,
                     )
                 try:
                     from tldw_chatbook.Agents.automatic_work_runtime import (
@@ -6639,11 +6698,22 @@ class ConsoleAgentBridge:
                     automatic_work = current_automatic_work()
                     if automatic_work is not None:
                         automatic_work.check()
+                    refusal = goal_tool_refusal("install_skill")
+                    if refusal is not None:
+                        return refusal
                     result = asyncio.run(
                         install_skill_from_url(url, scope_service=scope)
                     )
+                except AutomaticWorkRefused as exc:
+                    return goal_tool_failure(exc.reason, exc.termination_reason)
+                except PolicyDeniedError as exc:
+                    return goal_tool_failure(
+                        exc.user_message, RunTerminationReason.PERMISSION_REFUSED
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    return ToolResult(ok=False, error=str(exc))
+                    return goal_tool_failure(
+                        str(exc), RunTerminationReason.UNKNOWN_EFFECT
+                    )
                 name = result.get("name", "") if isinstance(result, dict) else ""
                 return ToolResult(
                     ok=True,
@@ -6680,20 +6750,37 @@ class ConsoleAgentBridge:
             def run_skill_script_tool(
                 skill_name: str, script_path: str, args: list[str]
             ) -> ToolResult:
+                from tldw_chatbook.Agents.automatic_work_budget import (
+                    AutomaticWorkRefused,
+                )
+
+                refusal = goal_tool_refusal("run_skill_script")
+                if refusal is not None:
+                    return refusal
                 from tldw_chatbook.runtime_policy.types import PolicyDeniedError
+                from tldw_chatbook.Skills_Interop.skill_trust_models import (
+                    SkillTrustBlockedError,
+                )
 
                 try:
                     scope.enforce_run_script()
                 except PolicyDeniedError as exc:
-                    return ToolResult(ok=False, error=exc.user_message)
+                    return goal_tool_failure(
+                        exc.user_message, RunTerminationReason.PERMISSION_REFUSED
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    return ToolResult(ok=False, error=str(exc))
+                    return goal_tool_failure(
+                        str(exc), RunTerminationReason.AUTHORITY_CHANGED
+                    )
                 try:
                     plan = asyncio.run(
                         scope.describe_skill_script(skill_name, script_path)
                     )
                 except Exception as exc:  # noqa: BLE001 (trust/path/type)
-                    return ToolResult(ok=False, error=f"run_skill_script: {exc}")
+                    return goal_tool_failure(
+                        f"run_skill_script: {exc}",
+                        RunTerminationReason.AUTHORITY_CHANGED,
+                    )
 
                 granted = False
                 if trust_service is not None:
@@ -6726,8 +6813,9 @@ class ConsoleAgentBridge:
                     if not isinstance(decision, Mapping):
                         decision = {"allow": False, "remember": False}
                     if not decision.get("allow", False):
-                        return ToolResult(
-                            ok=False, error="The user declined to run this script."
+                        return goal_tool_failure(
+                            "The user declined to run this script.",
+                            RunTerminationReason.PERMISSION_REFUSED,
                         )
                     if decision.get("remember", False) and trust_service is not None:
                         # Deliberate ordering: this persists the standing
@@ -6752,6 +6840,9 @@ class ConsoleAgentBridge:
                     automatic_work = current_automatic_work()
                     if automatic_work is not None:
                         automatic_work.check()
+                    refusal = goal_tool_refusal("run_skill_script")
+                    if refusal is not None:
+                        return refusal
                     if scratch_root is not None and scratch_lease is not None:
                         with scratch_lease():
                             outcome = asyncio.run(
@@ -6770,10 +6861,24 @@ class ConsoleAgentBridge:
                                 list(args),
                             )
                         )
+                except AutomaticWorkRefused as exc:
+                    return goal_tool_failure(exc.reason, exc.termination_reason)
+                except PolicyDeniedError as exc:
+                    return goal_tool_failure(
+                        exc.user_message, RunTerminationReason.PERMISSION_REFUSED
+                    )
+                except SkillTrustBlockedError:
+                    return goal_tool_failure(
+                        "Skill trust changed.", RunTerminationReason.AUTHORITY_CHANGED
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    return ToolResult(ok=False, error=f"run_skill_script: {exc}")
+                    return goal_tool_failure(
+                        f"run_skill_script: {exc}", RunTerminationReason.UNKNOWN_EFFECT
+                    )
 
                 lines = [f"exit_code: {outcome.exit_code}"]
+                if outcome.goal_evidence_id:
+                    lines.append(f"goal_evidence_id: {outcome.goal_evidence_id}")
                 if outcome.timed_out:
                     lines.append("timed out — the script was killed")
                 if outcome.output_capped:
@@ -6807,7 +6912,15 @@ class ConsoleAgentBridge:
                         except ValueError:
                             display_output_dir = "private scratch output"
                     lines.append(f"output directory: {display_output_dir}")
-                return ToolResult(ok=True, content="\n".join(lines))
+                return ToolResult(
+                    ok=True,
+                    content="\n".join(lines),
+                    termination_reason=RunTerminationReason.UNKNOWN_EFFECT
+                    if automatic_work is not None
+                    and automatic_work.goal is not None
+                    and outcome.exit_code is None
+                    else None,
+                )
 
         # One event loop for the whole run (PR #629 Fix 1(c)): every turn
         # this run makes -- primary tool-call turns, any sub-agent turns,

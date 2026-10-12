@@ -378,7 +378,6 @@ from tldw_chatbook.Chat.console_fleet_wake import (
     ConsoleFleetWakeCoordinator,
 )
 from tldw_chatbook.Chat.message_metadata import (
-    MESSAGE_ORIGIN_AGENT_WAKE,
     MESSAGE_ORIGIN_HOOK,
     MessageMetadata,
 )
@@ -394,6 +393,7 @@ from tldw_chatbook.Chat.console_skill_resolver import (
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_goal_runs import GoalIterationAuthorization
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
     from tldw_chatbook.Chat.console_context_budget_copy import ContextOverflowCause
     from tldw_chatbook.Agents.hook_permissions import HookPermissions
@@ -6486,21 +6486,9 @@ class ConsoleChatController:
                 )
 
     def _hook_admission_reason(self) -> str | None:
-        from tldw_chatbook.Agents.run_hooks import inspect_hooks_config
-        from tldw_chatbook.config import read_hooks_config_snapshot
+        from .console_automatic_submission import hook_admission_reason
 
-        try:
-            if self._hook_permissions_accessor is not None:
-                return self._hook_permissions_accessor().snapshot().blocked_reason
-            saved = read_hooks_config_snapshot()
-            inventory = inspect_hooks_config(
-                {"hooks": saved.section} if saved.section_present else {}
-            )
-            if not inventory.requires_authority:
-                return None
-            return "Hook review required; permission owner unavailable."
-        except Exception:  # noqa: BLE001 -- unavailable authority must refuse admission
-            return "Hooks unavailable; review or disable hooks before sending."
+        return hook_admission_reason(self)
 
     async def hook_admission_reason(self) -> str | None:
         """Read hook authority off-thread before acquiring new draft custody."""
@@ -9450,6 +9438,7 @@ class ConsoleChatController:
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        goal_authorization: GoalIterationAuthorization | None = None,
         chat_start_authorization: AgentChatStartAuthorization | None = None,
         preserve_composer: bool = False,
         configuration: ConsoleTurnConfigurationSnapshot | None = None,
@@ -9476,6 +9465,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 queue_authorization=queue_authorization,
                 wake_authorization=wake_authorization,
+                goal_authorization=goal_authorization,
                 chat_start_authorization=chat_start_authorization,
                 preserve_composer=preserve_composer,
                 configuration=configuration,
@@ -9507,6 +9497,7 @@ class ConsoleChatController:
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        goal_authorization: GoalIterationAuthorization | None = None,
         chat_start_authorization: AgentChatStartAuthorization | None = None,
         preserve_composer: bool = False,
         configuration: ConsoleTurnConfigurationSnapshot | None = None,
@@ -9524,18 +9515,31 @@ class ConsoleChatController:
         _operation: Callable[[], Awaitable[ConsoleSubmitResult]] | None = None,
     ) -> ConsoleSubmitResult:
         """Fence one complete submit lifecycle for close and shutdown."""
+        from .console_automatic_submission import resolve_automatic_authorization
+
+        coordinator, wake_authorization = resolve_automatic_authorization(
+            self, origin, session_id, wake_authorization, goal_authorization
+        )
 
         owner_key = session_id or self.store.active_session_id
         if self._disposed or (
             self._shutdown_requested.is_set()
-            and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            and origin
+            not in (
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
+            )
         ):
             return ConsoleSubmitResult(False, False, "Console is shutting down.")
         reason = await self.hook_admission_reason()
         if reason is not None:
             if (
-                origin is ConsoleSubmissionOrigin.AGENT_WAKE
-                and self._fleet_wake.authorizes(wake_authorization, owner_key)
+                origin
+                in (
+                    ConsoleSubmissionOrigin.AGENT_WAKE,
+                    ConsoleSubmissionOrigin.GOAL_ITERATION,
+                )
+                and coordinator.authorizes(wake_authorization, owner_key)
                 and not wake_authorization.acceptance_started
                 and not wake_authorization.accepted
             ):
@@ -9571,6 +9575,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 queue_authorization=queue_authorization,
                 wake_authorization=wake_authorization,
+                goal_authorization=goal_authorization,
                 chat_start_authorization=chat_start_authorization,
                 preserve_composer=preserve_composer,
                 configuration=configuration,
@@ -9594,6 +9599,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 queue_authorization=queue_authorization,
                 wake_authorization=wake_authorization,
+                goal_authorization=goal_authorization,
                 chat_start_authorization=chat_start_authorization,
                 preserve_composer=preserve_composer,
                 configuration=configuration,
@@ -9672,6 +9678,7 @@ class ConsoleChatController:
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        goal_authorization: GoalIterationAuthorization | None = None,
         chat_start_authorization: AgentChatStartAuthorization | None = None,
         preserve_composer: bool = False,
         configuration: ConsoleTurnConfigurationSnapshot | None = None,
@@ -9688,17 +9695,14 @@ class ConsoleChatController:
         _resume_resolution: Any | None = None,
     ) -> ConsoleSubmitResult:
         """Submit work, explicitly identifying a wake's proven preflight refusal."""
-        from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
+        from .console_automatic_submission import resolve_automatic_authorization
 
-        scope = (
-            nullcontext()
-            if origin
-            in {
-                ConsoleSubmissionOrigin.AGENT_WAKE,
-                ConsoleSubmissionOrigin.AGENT_CHAT_START,
-            }
-            else manual_work_scope()
+        coordinator, wake_authorization = resolve_automatic_authorization(
+            self, origin, session_id, wake_authorization, goal_authorization
         )
+        from .console_automatic_submission import submission_scope
+
+        scope = submission_scope(self, origin, session_id)
         try:
             with scope:
                 result = await self._submit_draft_body(
@@ -9708,6 +9712,7 @@ class ConsoleChatController:
                     queue_entry_id=queue_entry_id,
                     queue_authorization=queue_authorization,
                     wake_authorization=wake_authorization,
+                    goal_authorization=goal_authorization,
                     chat_start_authorization=chat_start_authorization,
                     preserve_composer=preserve_composer,
                     configuration=configuration,
@@ -9724,10 +9729,10 @@ class ConsoleChatController:
         except BaseException as exc:
             # A wake may stop while preparation is still awaiting a helper,
             # before the streaming layer owns its terminal-state cleanup.
-            if (
-                origin is ConsoleSubmissionOrigin.AGENT_WAKE
-                and self._fleet_wake.authorizes(wake_authorization, session_id)
-            ):
+            if origin in (
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
+            ) and coordinator.authorizes(wake_authorization, session_id):
                 self._signal_stop(session_id=session_id)
                 if (
                     self.run_state_for(session_id).status
@@ -9747,8 +9752,12 @@ class ConsoleChatController:
             raise
 
         if (
-            origin is ConsoleSubmissionOrigin.AGENT_WAKE
-            and self._fleet_wake.authorizes(
+            origin
+            in (
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
+            )
+            and coordinator.authorizes(
                 wake_authorization, result.session_id or session_id
             )
             and not wake_authorization.acceptance_started
@@ -9768,106 +9777,29 @@ class ConsoleChatController:
         chat_start_authorization=None,
     ) -> ConsoleSubmitResult | None:
         """Reuse the owning submission's provisional hook scope and reservation."""
-        session_id = session.id
-        hook_runtime = getattr(self, "_hooks_v2_runtime", None)
-        if hook_runtime is not None:
-            # Recheck after awaited reference expansion; reserve without an await.
-            busy = self._live_busy_session_ids()
-            if (
-                origin is ConsoleSubmissionOrigin.QUEUED
-                and self.prompt_queue_coordinator.reuses_claimed_slot(
-                    queue_authorization, session_id, recovery=recovery
-                )
-            ):
-                # Claimed turns and authorized recovery reuse the queue's
-                # held capacity instead of competing with themselves.
-                busy = [identity for identity in busy if identity != session_id]
-            if (
-                origin is ConsoleSubmissionOrigin.AGENT_CHAT_START
-                and self._chat_start.authorizes(chat_start_authorization, session_id)
-            ):
-                busy = [identity for identity in busy if identity != session_id]
-            if session_id in busy or len(busy) >= self.max_parallel_runs:
-                return ConsoleSubmitResult(False, False, "A run is already preparing.")
-            self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.VALIDATING, "Initializing hooks."),
-                session_id=session_id,
-            )
-            submissions = getattr(self, "_hooks_v2_submissions", None)
-            if submissions is None:
-                submissions = self._hooks_v2_submissions = {}
-            submissions[asyncio.current_task()] = (None, None, session_id)
-            try:
-                lifecycle = await hook_runtime.prepare_hooks_v2(
-                    session_id,
-                    configuration=configuration,
-                    reason="resume" if session.persisted_conversation_id else "startup",
-                    initiator=(
-                        "manual"
-                        if origin is ConsoleSubmissionOrigin.MANUAL
-                        else "scheduled"
-                    ),
-                )
-                if lifecycle is not None:
-                    scope = lifecycle.turn_scope or lifecycle.open_scope()
-                    lifecycle.turn_scope = scope
-                    submissions[asyncio.current_task()] = (lifecycle, scope, session_id)
-                    await lifecycle.wait(scope)
-            except asyncio.CancelledError:
-                self._set_run_state(
-                    ConsoleRunState(
-                        ConsoleRunStatus.STOPPED, "Initialization cancelled."
-                    ),
-                    session_id=session_id,
-                )
-                raise
-            except Exception:  # noqa: BLE001 -- hook boundary
-                self._set_run_state(
-                    ConsoleRunState(
-                        ConsoleRunStatus.BLOCKED, "Required hook initialization failed."
-                    ),
-                    session_id=session_id,
-                )
-                return ConsoleSubmitResult(
-                    False, False, "Required hook initialization failed."
-                )
-        return None
+        from .console_automatic_submission import prepare_submission_hooks
+
+        return await prepare_submission_hooks(
+            self,
+            session,
+            configuration,
+            origin,
+            queue_authorization,
+            recovery=recovery,
+            chat_start_authorization=chat_start_authorization,
+        )
 
     async def _submission_hook_input(
         self, draft, origin, provider_messages=()
     ) -> list[dict[str, Any]]:
-        """Fire input under the exact task's existing scope and deliver its context."""
-        hook_owner = getattr(self, "_hooks_v2_submissions", {}).get(
-            asyncio.current_task()
-        )
-        if hook_owner is None or hook_owner[0] is None:
-            return []
-        lifecycle, scope, _session_key = hook_owner
-        if origin is ConsoleSubmissionOrigin.MANUAL:
-            await lifecycle.fire(
-                lifecycle.event("UserPromptSubmit", data={"prompt": draft}), scope
-            )
-        await lifecycle.wait(scope)
-        rows = lifecycle.context.blocks(scope, "model")
-        from tldw_chatbook.Agents.agent_models import check_host_context
+        from .console_automatic_submission import submission_hook_input
 
-        check_host_context([*provider_messages, *rows], strip=False)
-        return rows
+        return await submission_hook_input(self, draft, origin, provider_messages)
 
     async def _legacy_submission_hook_input(self, draft, session_id):
-        """Use the existing legacy engine and bounded prompt projection."""
-        from tldw_chatbook.Agents.run_hooks import truncate_hook_text
+        from .console_automatic_submission import legacy_submission_hook_input
 
-        hooks_engine = self._run_hooks_engine()
-        return (
-            await hooks_engine.fire_async(
-                "UserPromptSubmit",
-                session_id=session_id,
-                data={"prompt": truncate_hook_text(draft)},
-            )
-            if hooks_engine is not None
-            else None
-        )
+        return await legacy_submission_hook_input(self, draft, session_id)
 
     async def _submit_draft_body(
         self,
@@ -9878,6 +9810,7 @@ class ConsoleChatController:
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        goal_authorization: GoalIterationAuthorization | None = None,
         chat_start_authorization: AgentChatStartAuthorization | None = None,
         preserve_composer: bool = False,
         configuration: ConsoleTurnConfigurationSnapshot | None = None,
@@ -9941,6 +9874,11 @@ class ConsoleChatController:
             the time this runs (see ``_session_closed_result``); ``True``
             once the turn actually proceeds.
         """
+        from .console_automatic_submission import resolve_automatic_authorization
+
+        coordinator, wake_authorization = resolve_automatic_authorization(
+            self, origin, session_id, wake_authorization, goal_authorization
+        )
         if not isinstance(origin, ConsoleSubmissionOrigin):
             raise ValueError("origin must be an explicit ConsoleSubmissionOrigin")
         target_id = session_id or self.store.active_session_id or ""
@@ -10002,11 +9940,14 @@ class ConsoleChatController:
                 raise PermissionError(
                     "queued sends require coordinator-issued generation authority"
                 )
-        elif origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+        elif origin in (
+            ConsoleSubmissionOrigin.AGENT_WAKE,
+            ConsoleSubmissionOrigin.GOAL_ITERATION,
+        ):
             # PR3a-2 Task 5: only the wake coordinator can mint the token
             # (queue-token precedent) -- no other code path can fabricate
             # a machine-origin send.
-            if not self._fleet_wake.authorizes(wake_authorization, target_id):
+            if not coordinator.authorizes(wake_authorization, target_id):
                 raise PermissionError(
                     "agent-wake sends require coordinator-issued wake authority"
                 )
@@ -10038,9 +9979,17 @@ class ConsoleChatController:
             session_id=session_id,
             # A raced wake refusal is machine-internal (retried later);
             # only user-facing origins get the explanatory SYSTEM row.
-            append_row=origin is not ConsoleSubmissionOrigin.AGENT_WAKE,
+            append_row=origin
+            not in (
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
+            ),
             queue_authorization=queue_authorization,
         )
+        if origin is ConsoleSubmissionOrigin.GOAL_ITERATION and coordinator.authorizes(
+            goal_authorization, target_id
+        ):
+            active_rejection = None
         if active_rejection is not None and resumed_preparation is None:
             return active_rejection
 
@@ -10111,11 +10060,7 @@ class ConsoleChatController:
         admitted_prefill_from_one_shot = False
         admitted_prefill_revision: int | None = None
         if (
-            origin
-            not in {
-                ConsoleSubmissionOrigin.AGENT_WAKE,
-                ConsoleSubmissionOrigin.AGENT_CHAT_START,
-            }
+            not origin.automatic
             and custodied_inputs
         ):
             if captured_one_shot_prefill:
@@ -10130,11 +10075,7 @@ class ConsoleChatController:
             else list(accepted_attachments or ())
             if custodied_inputs
             else self.store.pending_attachments(session.id)
-            if origin
-            not in {
-                ConsoleSubmissionOrigin.AGENT_WAKE,
-                ConsoleSubmissionOrigin.AGENT_CHAT_START,
-            }
+            if not origin.automatic
             and not preserve_composer
             else []
         )
@@ -10151,10 +10092,7 @@ class ConsoleChatController:
         )
         if machine_input is not None:
             clean_draft, validation_error = str(machine_input), None
-        elif origin in {
-            ConsoleSubmissionOrigin.AGENT_WAKE,
-            ConsoleSubmissionOrigin.AGENT_CHAT_START,
-        }:
+        elif origin.automatic:
             # The notice is machine-composed from DB text and bounded by
             # `compose_wake_notice`'s own result budget; `_validated_draft`
             # exists to validate USER drafts (its length cap and markup
@@ -10185,11 +10123,7 @@ class ConsoleChatController:
         # it would inject every referenced file a second time. Expand only on
         # the first pass.
         if (
-            origin
-            not in {
-                ConsoleSubmissionOrigin.AGENT_WAKE,
-                ConsoleSubmissionOrigin.AGENT_CHAT_START,
-            }
+            not origin.automatic
             and machine_input is None
             and resumed_preparation is None
         ):
@@ -10343,11 +10277,7 @@ class ConsoleChatController:
             )
         staged_title = session.title
         if (
-            origin
-            not in {
-                ConsoleSubmissionOrigin.AGENT_WAKE,
-                ConsoleSubmissionOrigin.AGENT_CHAT_START,
-            }
+            not origin.automatic
             and resumed_preparation is None
         ):
             derived_title = (
@@ -10412,7 +10342,11 @@ class ConsoleChatController:
                     attachments=staged_attachments,
                     persist=False,
                 )
-                if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+                if origin
+                not in (
+                    ConsoleSubmissionOrigin.AGENT_WAKE,
+                    ConsoleSubmissionOrigin.GOAL_ITERATION,
+                )
                 else None
             )
         )
@@ -10466,7 +10400,11 @@ class ConsoleChatController:
             # Wakes own a separate retry loop; releasing their slot here would
             # immediately retry the same failed wake ahead of other pending wakes.
             if (
-                origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+                origin
+                not in (
+                    ConsoleSubmissionOrigin.AGENT_WAKE,
+                    ConsoleSubmissionOrigin.GOAL_ITERATION,
+                )
                 and self.run_state_for(session.id).status is ConsoleRunStatus.VALIDATING
                 and any(item.id == session.id for item in self.store.sessions())
             ):
@@ -10852,11 +10790,18 @@ class ConsoleChatController:
                         queue_entry_id=queue_entry_id,
                     )
 
-        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+        if origin is ConsoleSubmissionOrigin.GOAL_ITERATION:
+            coordinator.validate_resolution(
+                goal_authorization, resolution, turn_context
+            )
+        if origin in (
+            ConsoleSubmissionOrigin.AGENT_WAKE,
+            ConsoleSubmissionOrigin.GOAL_ITERATION,
+        ):
             from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
 
             try:
-                accepted = await self._fleet_wake.accept(wake_authorization, session.id)
+                accepted = await coordinator.accept(wake_authorization, session.id)
             except (SQLiteError, OSError, AutomaticWorkRefused):
                 return self._block(
                     session.id,
@@ -10873,8 +10818,12 @@ class ConsoleChatController:
         citation_repair_contract: CitationRepairContract | None = None
         terminal_citation_finalizer: TerminalCitationFinalizer | None = None
         try:
-            provider_messages = self._provider_messages_for_session(
-                session.id, annotate_ids=True, turn_context=turn_context
+            provider_messages = (
+                []
+                if origin is ConsoleSubmissionOrigin.GOAL_ITERATION
+                else self._provider_messages_for_session(
+                    session.id, annotate_ids=True, turn_context=turn_context
+                )
             )
             if machine_input is not None:
                 # Bind the current machine row before any whole-block transforms.
@@ -10967,7 +10916,10 @@ class ConsoleChatController:
                 citation_context = format_evidence_for_cited_answer(
                     preparation_outcome.evidence_bundle
                 )
-            elif origin is not ConsoleSubmissionOrigin.AGENT_WAKE and (
+            elif origin not in (
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
+            ) and (
                 # TASK-33940.4: a turn admitted WITH a frozen capture seam
                 # froze its evidence decision then (its staged launch, or
                 # none), so it never asks the live seam for newer staged state.
@@ -10995,7 +10947,10 @@ class ConsoleChatController:
                         else custody_evidence_lease
                     ),
                 )
-            elif origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
+            elif origin not in (
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
+            ):
                 # PR3a-2 Task 5: a wake notice is a delivery, not a query
                 # -- retrieving evidence "about" a machine notice would
                 # inject RAG context the user never asked for. The
@@ -11076,10 +11031,7 @@ class ConsoleChatController:
                     source_event_id=attached_event_id,
                     sensitivity="system_context",
                 )
-            if origin in {
-                ConsoleSubmissionOrigin.AGENT_WAKE,
-                ConsoleSubmissionOrigin.AGENT_CHAT_START,
-            }:
+            if origin.automatic:
                 # The one-shot prefill is USER-staged state; a wake must
                 # not consume (and thereby destroy) it.
                 prefill, prefill_from_one_shot, one_shot_prefill_revision = (
@@ -11160,7 +11112,10 @@ class ConsoleChatController:
         # a prefill to strict providers -- see console_fleet_wake's
         # delivery-path decision record for why neither turn_bundle_block
         # nor the system fold can carry this.
-        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+        if origin in (
+            ConsoleSubmissionOrigin.AGENT_WAKE,
+            ConsoleSubmissionOrigin.GOAL_ITERATION,
+        ):
             provider_messages = [
                 *provider_messages,
                 {
@@ -11308,7 +11263,14 @@ class ConsoleChatController:
         # returns before this point, and `_record_prompt_history` itself
         # skips empty (attachment-only) drafts. A wake notice is not a
         # prompt the user typed and never enters their prompt history.
-        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE and machine_input is None:
+        if (
+            origin
+            not in (
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
+            )
+            and machine_input is None
+        ):
             try:
                 await self._record_prompt_history(clean_draft)
             except BaseException:
@@ -11317,7 +11279,11 @@ class ConsoleChatController:
                 raise
         if self._disposed or (
             self._shutdown_requested.is_set()
-            and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            and origin
+            not in (
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
+            )
         ):
             if echoed_user is not None:
                 try:
@@ -11355,13 +11321,16 @@ class ConsoleChatController:
         # wake leaves no orphaned notice -- ahead of the assistant row,
         # persisted, and carrying the machine-origin metadata that marks
         # it as not-user-input for every machine consumer.
-        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+        if origin in (
+            ConsoleSubmissionOrigin.AGENT_WAKE,
+            ConsoleSubmissionOrigin.GOAL_ITERATION,
+        ):
             echoed_user = self.store.append_message(
                 session.id,
                 role=ConsoleMessageRole.SYSTEM,
                 content=clean_draft,
                 persist=self.store.persistence is not None,
-                metadata=MessageMetadata(origin=MESSAGE_ORIGIN_AGENT_WAKE),
+                metadata=MessageMetadata(origin=origin.value),
             )
         else:
             try:
@@ -11396,7 +11365,10 @@ class ConsoleChatController:
         # task-15860: a wake turn in flight is exempt from `leave_console()`
         # (owner ruling -- see that method). Registered here, released in
         # the `finally` below, so the exemption cannot outlive the turn.
-        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+        if origin in (
+            ConsoleSubmissionOrigin.AGENT_WAKE,
+            ConsoleSubmissionOrigin.GOAL_ITERATION,
+        ):
             self._agent_wake_turn_sessions.add(session.id)
         try:
             assistant = self.store.append_message(
@@ -11537,17 +11509,29 @@ class ConsoleChatController:
                 resolution=resolution,
                 work_origin=(
                     WorkOrigin.AUTOMATIC
-                    if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                    if origin
+                    in (
+                        ConsoleSubmissionOrigin.AGENT_WAKE,
+                        ConsoleSubmissionOrigin.GOAL_ITERATION,
+                    )
                     else WorkOrigin.MANUAL
                 ),
                 work_chain_id=(
                     wake_authorization.work_chain_id
-                    if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                    if origin
+                    in (
+                        ConsoleSubmissionOrigin.AGENT_WAKE,
+                        ConsoleSubmissionOrigin.GOAL_ITERATION,
+                    )
                     else None
                 ),
                 wake_authorization=(
                     wake_authorization
-                    if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                    if origin
+                    in (
+                        ConsoleSubmissionOrigin.AGENT_WAKE,
+                        ConsoleSubmissionOrigin.GOAL_ITERATION,
+                    )
                     else None
                 ),
                 provider_messages=provider_messages,
@@ -11577,9 +11561,9 @@ class ConsoleChatController:
                     else None
                 ),
             )
-            if (
-                not stream_result.accepted
-                and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            if not stream_result.accepted and origin not in (
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
             ):
                 self._mark_transient_echo_blocked(echoed_user.id)
             result = replace(
@@ -11705,7 +11689,10 @@ class ConsoleChatController:
                 )
             raise
         finally:
-            if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            if origin in (
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.GOAL_ITERATION,
+            ):
                 self._agent_wake_turn_sessions.discard(session.id)
             if assistant is not None:
                 self.store.clear_terminal_citation_state(assistant.id)
@@ -23174,18 +23161,9 @@ class ConsoleChatController:
         return self._interrupt_host._notify_run_hook_approval(kind, payload, state)
 
     def _run_hooks_engine(self):
-        """Resolve the app-owned run-hooks engine for this send, or ``None``.
+        from .console_automatic_submission import run_hooks_engine
 
-        Spec 2026-09-11 (Task 7): the submit path reaches the engine through
-        the optional ``ensure_run_hooks`` accessor (the Task 5 bridge seam --
-        a bound ``ConsoleRuntime.ensure_run_hooks``, or a test double).
-        ``None`` -- no accessor wired, or no ``[hooks]`` configured -- means
-        the fire site skips entirely; the accessor is consulted per send, so
-        an engine built after the first-ever ``[hooks]`` entry appears is
-        picked up without rebuilding this controller.
-        """
-        accessor = self._ensure_run_hooks
-        return accessor() if accessor is not None else None
+        return run_hooks_engine(self)
 
     async def _record_prompt_history(self, text: str) -> None:
         """Append an accepted send's draft to the shared prompt history.
@@ -24700,9 +24678,16 @@ class ConsoleChatController:
         turn_context = self._require_complete_turn_execution_context(turn_context)
         if turn_context.session_id != owner_id:
             raise ValueError("Console turn context does not own the assistant row.")
+        from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+        automatic = current_automatic_work()
         try:
             continuation_sidecar, continuation_target = (
-                self._provider_continuation_history_for_resolution(owner_id, resolution)
+                ((), None)
+                if automatic is not None and automatic.goal is not None
+                else self._provider_continuation_history_for_resolution(
+                    owner_id, resolution
+                )
             )
         except ContinuationConflictError:
             return self._block_context_preflight(
@@ -25050,6 +25035,12 @@ class ConsoleChatController:
                     ),
                     trusted_profile_user_message_id=(trusted_profile_user_message_id),
                 )
+            if automatic is not None and automatic.goal is not None:
+                from tldw_chatbook.Agents.automatic_work_budget import (
+                    AutomaticWorkRefused,
+                )
+
+                raise AutomaticWorkRefused("native_goal_required")
             return await self._run_direct_provider_reply(
                 resolution=resolution,
                 provider_messages=provider_messages,
@@ -27028,15 +27019,16 @@ class ConsoleChatController:
             # outside this task's file scope, so keeping that function
             # byte-identical and building the run-level hook separately here
             # is the lower-blast-radius choice.
-            run_admitted_roots = capture_run_admitted_workspace_roots(
-                session=next(
-                    (item for item in self.store.sessions() if item.id == session_id),
-                    None,
-                ),
-                registry=getattr(self.app, "workspace_registry_service", None),
-                project_selection=project_selection,
-                project_authority_guard=project_authority_guard,
-                remote_session_key=_remote_session_key,
+            from .console_automatic_submission import capture_execution_roots
+
+            run_admitted_roots, project_selection, project_authority_guard = (
+                capture_execution_roots(
+                    self,
+                    session_id,
+                    project_selection,
+                    project_authority_guard,
+                    _remote_session_key,
+                )
             )
             worktree_repo_authority = None
             if (
@@ -27519,6 +27511,13 @@ class ConsoleChatController:
             run_id, outcome = await self._chat_start.run_provider_worker(
                 session_id, provider_worker
             )
+            from tldw_chatbook.Agents.automatic_work_runtime import (
+                current_automatic_work,
+            )
+
+            automatic = current_automatic_work()
+            if automatic is not None and automatic.goal is not None:
+                automatic.goal.record_outcome(run_id, outcome)
         except asyncio.CancelledError:
             if work_origin is WorkOrigin.AUTOMATIC:
                 cancel_event.set()
@@ -27583,9 +27582,7 @@ class ConsoleChatController:
             # the pre-regenerate base + status for a failed regenerate;
             # preserves whatever partial content already streamed
             # otherwise).
-            visible_copy = (
-                f"Agent run failed: {describe_console_stream_failure(exc)}"
-            )
+            visible_copy = f"Agent run failed: {describe_console_stream_failure(exc)}"
             if getattr(
                 getattr(exc, "response", None), "status_code", None
             ) is not None and self._session_history_carries_images(session_id):
@@ -27647,42 +27644,21 @@ class ConsoleChatController:
         chat_start_authorization: AgentChatStartAuthorization | None,
     ) -> str:
         """Resolve a live automatic owner; stored provenance grants no authority."""
-        if chat_start_authorization is not None:
-            start = chat_start_authorization
-            if (
-                wake_authorization is not None
-                or not self._chat_start.authorizes(start, session_id)
-                or not start.accepted
-                or not start.receipted
-                or start.bridge is not self._agent_bridge
-                or start.database is not getattr(self._agent_bridge, "runs_db", None)
-                or start.capacity_owner is not self._fleet_wake
-                or start.runtime_owner_id != self._fleet_wake.runtime_owner_id
-                or start.context.chain_id != work_chain_id
-            ):
-                raise PermissionError(
-                    "Automatic source requires live chat start authority."
-                )
-            return start.request.conversation_id
-        if (
-            not self._fleet_wake.authorizes(wake_authorization, session_id)
-            or not wake_authorization.accepted
-            or wake_authorization.work_chain_id != work_chain_id
-        ):
-            raise PermissionError("Automatic source requires live wake authority.")
-        return wake_authorization.conversation_id
+        from .console_automatic_submission import automatic_source_conversation
+
+        return automatic_source_conversation(
+            self,
+            session_id,
+            work_chain_id,
+            wake_authorization=wake_authorization,
+            chat_start_authorization=chat_start_authorization,
+        )
 
     def _agent_conversation_id(self, session_id: str) -> str:
         """Return the durable id the run store is keyed by (persisted id when set)."""
-        for session in self.store.sessions():
-            if session.id == session_id:
-                conversation_id = session.persisted_conversation_id or session_id
-                with self._lifecycle_revision_lock:
-                    self._lifecycle_session_by_conversation[str(conversation_id)] = (
-                        session_id
-                    )
-                return conversation_id
-        return session_id
+        from .console_automatic_submission import agent_conversation_id
+
+        return agent_conversation_id(self, session_id)
 
     async def _finalize_agent_reply(
         self,
