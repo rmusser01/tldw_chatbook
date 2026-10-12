@@ -83,6 +83,7 @@ async def test_provenance_renewal_preserves_proposal_editor_and_acceptance(
             scope_label="Global",
             provenance_subject=subject,
             provenance_service_loader=lambda: inspector,
+            provenance_current_service_getter=lambda: inspector,
         )
         await host.push_screen(modal, callback=host.results.append)
         detail = modal.query_one(PersonalContextProvenanceDetails)
@@ -239,7 +240,10 @@ class _Host(ConsolidatedCSSApp):
 
 
 class _ProvenanceHost(_Host):
-    CSS_PATH = [CSS_DIR / "tldw_cli_modular.tcss", CSS_DIR / "screen_agentic_settings.tcss"]
+    CSS_PATH = [
+        CSS_DIR / "tldw_cli_modular.tcss",
+        CSS_DIR / "screen_agentic_settings.tcss",
+    ]
 
 
 @pytest.mark.asyncio

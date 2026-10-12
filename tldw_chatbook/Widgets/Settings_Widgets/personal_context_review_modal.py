@@ -81,6 +81,8 @@ class PersonalContextProposalReviewModal(
         target_record: ProfileRecord | None = None,
         provenance_subject: SettingsProvenanceSubject | None = None,
         provenance_service_loader: Callable[[], PersonalContextService] | None = None,
+        provenance_current_service_getter: Callable[[], PersonalContextService | None]
+        | None = None,
     ) -> None:
         super().__init__()
         self._proposal_service = proposal_service
@@ -92,9 +94,13 @@ class PersonalContextProposalReviewModal(
         self._control_state: dict[int, bool] = {}
         self._provenance_details = (
             PersonalContextProvenanceDetails(
-                provenance_subject, provenance_service_loader
+                provenance_subject,
+                provenance_service_loader,
+                current_service_getter=provenance_current_service_getter,
             )
-            if provenance_subject is not None and provenance_service_loader is not None
+            if provenance_subject is not None
+            and provenance_service_loader is not None
+            and provenance_current_service_getter is not None
             else None
         )
 
@@ -404,7 +410,9 @@ class PersonalContextProposalReviewModal(
 
     def _set_status(self, copy: str) -> None:
         if self.is_mounted:
-            set_status_line(self, "#personal-context-proposal-status", copy, missing_ok=False)
+            set_status_line(
+                self, "#personal-context-proposal-status", copy, missing_ok=False
+            )
 
     def _set_busy(self, value: bool) -> None:
         self._busy = value

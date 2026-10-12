@@ -14,6 +14,10 @@ This document describes the user-owned memory systems that cross agent sessions:
 | Proposals | `Personal_Context/proposal_service.py` | agent-proposed facts are **proposals** — pending proposals never enter agent context |
 | Interviews | `Personal_Context/interview_*.py` | onboarding/interview flow producing reviewable profile commits |
 | Sync | `Personal_Context/link_service.py`, `sync_outbox.py`, `reconciliation.py` | first-link (device pairing) with resumable reconciliation; encrypted outbox for companion-server sync |
+| Retrieval | `Personal_Context/lexical_match.py`, `context_service.py` | bounded field-aware lexical ranking of eligible records; whole-record packing and reasons from one selection pass |
+| Provenance | `Personal_Context/settings_provenance.py`, `Widgets/Settings_Widgets/personal_context_provenance.py` | disposable selected-version metadata, explicit unverified source references; worker reads and cheap current-owner publication fence |
+| Next Send explanation | `Chat/console_personal_context.py`, `UI/Console_Modules/inspector_data.py` | Inspector-only selection reasons with request/service/draft/expiry/Canvas fences; passive Canvas schemas use the first-request planner and Goal narrowing |
+| Native compatibility | `Personal_Context/native_codec.py`, `native_compatibility.py` | schema8/AAD1/V1 only; profile-wide V2 deny barrier before ordinary body reads or writes |
 | Core models | `packages/tldw_profile_core` | shared record models — version negotiation required for changes |
 | Lessons | `Notes/agent_lessons.py` | `Agent_Lessons` folder convention, 11-section template validation, credential scan, runtime guidance builder |
 | Promotion | `Agents/agent_lesson_promotion.py` | `PromotionEvidence` assessment; repository proposals (fs_write CAS) and **read-only** managed-skill proposals; `ManagedSkillProposalGate` |
@@ -23,7 +27,7 @@ This document describes the user-owned memory systems that cross agent sessions:
 ## Snapshot injection (dataflow)
 
 1. **Capture**: interviews, Settings edits, or reviewed agent proposals write encrypted, versioned records via the repository.
-2. **Snapshot per send**: the controller/bridge builds a `ProfileContextRequest(user text, available tokens, model, provider, workspace)` → the service's authorized view (workspace-scoped eligibility) filters conflicted / non-ACTIVE / non-agent-visible / expired records → priority groups (workspace correction/constraint > workspace semantic > corrections/constraints > query-relevant preference/working context > rest) → greedy whole-record packing under the 12 KiB and 10 %-token budgets → an immutable, cache-keyed `ProfileContextSnapshot`.
+2. **Snapshot per send**: the controller/bridge builds a `ProfileContextRequest(user text, available tokens, model, provider, workspace)` → the service's authorized view (workspace-scoped eligibility; the same syncable-only boundary applies to agent get/search) filters conflicted / non-ACTIVE / non-agent-visible / non-SYNCABLE / expired records → priority groups (workspace correction/constraint > workspace semantic > corrections/constraints > field-aware lexical query-relevant preference/working context > rest) → greedy whole-record packing under the 12 KiB and 10 %-token budgets → an immutable, cache-keyed `ProfileContextSnapshot`.
 3. **Injection**: the block is appended to the leading system message (or a new system row) and **pinned into the run config** (`personal_context_block`) — the same snapshot serves the entire agent run tree, children included. Any doubt or budget failure returns the empty snapshot (fail-closed, never partial). Uncertain token budgets fail closed.
 4. **Sync**: mutations journal into the encrypted outbox; entries dispatch to the companion server only after a reviewed first link.
 
@@ -45,7 +49,9 @@ This document describes the user-owned memory systems that cross agent sessions:
 
 **Implemented**: the encrypted store and key protectors, locked-facade degradation, interviews, reviewed proposals, workspace scopes + runtime policy, the bounded snapshot with priority groups and fail-closed injection, run-tree pinning, lessons-as-Notes with seeding/validation/credential scan/approve-once, promotion contracts and the managed-skill gate, and the sync outbox/first-link machinery.
 
-**In flight / not implemented** (design-stage items on the cross-session memory arc, `backlog/tasks/task-25907`): independent provider-disclosure controls (today agent-visibility is the only filter the snapshot applies), evidence/versioned citations, temporal claims, dependency-aware forgetting, consolidation, provenance/selection explanation surfaces, and improved retrieval. The injected block's `unsupported_records_present` flag is an unscoped quarantine signal — a known pre-existing gap deliberately kept until the model-block contract changes.
+The current release also implements eligible syncable-only agent get/search/context, bounded lexical retrieval, per-record selection/budget reasons, Settings provenance/deleted metadata inspection, and the disposable Context **Next Send** explanation with Canvas/Goal budget parity. Quarantined and device-only records do not change the model block or expose an unscoped existence/omission signal. Selection diagnostics stay outside provider messages, ConsoleContextSnapshot, logs, exports and Sync. Recorded references remain explicitly unverified; inspection does not resolve a source or infer historical support.
+
+**Inactive contracts / closed runtime gates**: explicit shared evidence-binding, meaning and V2 aggregate modules validate strict data and digest identities without becoming native runtime authority. Public V1 dispatch and native schema8/AAD1 remain. V2 admission/migration, Forget/dependency-aware removal, source resolution, independent provider-disclosure controls and companion-server activation stay closed. Temporal claims and consolidation remain outside this runtime release. Shipping validation schemas or fixtures does not activate any of these designs.
 
 ## Failure behaviors
 

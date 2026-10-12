@@ -1798,8 +1798,10 @@ async def test_partial_local_removal_failure_redacts_stale_snapshot_and_reloads_
         panel._confirm_remove_local()
         await until(
             pilot,
-            lambda: isinstance(host.screen, ConfirmationDialog)
-            and bool(host.screen.query("#confirm-button")),
+            lambda: (
+                isinstance(host.screen, ConfirmationDialog)
+                and bool(host.screen.query("#confirm-button"))
+            ),
         )
         host.screen.query_one("#confirm-button", Button).focus()
         await pilot.press("enter")
@@ -2028,19 +2030,21 @@ async def test_production_settings_inspects_private_and_deleted_metadata(
         )
         await until(
             pilot,
-            lambda: bool(panel.query("#personal-context-deleted-metadata CollapsibleTitle")),
+            lambda: bool(
+                panel.query("#personal-context-deleted-metadata CollapsibleTitle")
+            ),
         )
         deleted = panel.query_one("#personal-context-deleted-metadata")
         deleted.query_one("CollapsibleTitle").focus()
         await pilot.press("enter")
         panel.query_one("#personal-context-deleted-0", Button).focus()
         await pilot.press("enter")
-        await until(
-            pilot, lambda: panel.selected_deleted_record_id == record.record_id
-        )
+        await until(pilot, lambda: panel.selected_deleted_record_id == record.record_id)
         await until(
             pilot,
-            lambda: bool(panel.query("PersonalContextProvenanceDetails CollapsibleTitle")),
+            lambda: bool(
+                panel.query("PersonalContextProvenanceDetails CollapsibleTitle")
+            ),
         )
         detail = panel.query_one(PersonalContextProvenanceDetails)
         await until(pilot, lambda: detail.is_mounted and not detail._latched)
@@ -2074,3 +2078,151 @@ def test_profile_reload_resolves_replacement_without_stale_worker_overwriting_ow
     panel._apply_snapshot(2, replacement.snapshot, replacement)
     panel._apply_snapshot(1, first.snapshot, first)
     assert panel._service is replacement
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["current", "replacement", "absent", "injected"])
+@pytest.mark.parametrize("object_type", ["record", "proposal"])
+async def test_canonical_settings_pending_provenance_uses_cheap_current_owner(
+    change, object_type
+):
+    from threading import Event, get_ident
+
+    from Tests.UI.test_personal_context_provenance import Reader, rendered, until
+    from tldw_chatbook.Personal_Context.settings_provenance import (
+        SettingsProfileIdentity,
+        provenance_subject,
+    )
+    from tldw_chatbook.Widgets.Settings_Widgets.personal_context_provenance import (
+        PersonalContextProvenanceDetails,
+    )
+
+    ui_thread = get_ident()
+    snapshot = _ready_snapshot()
+    identity = SettingsProfileIdentity(snapshot.records[0].profile_id, 0)
+    from Tests.UI.test_personal_context_proposal_review import (
+        _proposal,
+        _ProposalService,
+    )
+
+    proposal = _proposal()
+    selected = proposal if object_type == "proposal" else snapshot.records[0]
+    subject = provenance_subject(identity, selected)
+    snapshot = replace(
+        snapshot,
+        profile_identity=identity,
+        provenance_subjects=(subject,),
+        proposals=(proposal,) if object_type == "proposal" else (),
+    )
+
+    class CurrentReader(Reader):
+        def proposal_service(self):
+            return _ProposalService(proposal)
+
+        def settings_snapshot(self):
+            assert get_ident() != ui_thread
+            return snapshot
+
+        def status(self):
+            raise AssertionError("The UI identity check must not read service status")
+
+        def settings_provenance(self, requested):
+            assert get_ident() != ui_thread
+            return super().settings_provenance(requested)
+
+    original = CurrentReader()
+    original.gate = Event()
+    app = _build_test_app()
+    app._personal_context_service = original
+    resolutions = []
+
+    def resolve(**_kwargs):
+        assert get_ident() != ui_thread
+        resolutions.append(app._personal_context_service)
+        return app._personal_context_service
+
+    app.get_personal_context_service = resolve
+    screen = SettingsScreen(
+        app, personal_context_service=original if change == "injected" else None
+    )
+    screen.active_category = SettingsCategoryId.PERSONAL_CONTEXT.value
+    # Use the actual canonical host's composition, then mount its exact panel.
+    panel = next(screen._render_detail_pane())
+    assert resolutions == []
+
+    class PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    host = PanelHost()
+    async with host.run_test(size=(100, 35)) as pilot:
+        await until(pilot, lambda: panel.snapshot is not None)
+        if object_type == "proposal":
+            panel._review_proposal_index("personal-context-proposal-0")
+            await until(
+                pilot, lambda: bool(host.screen.query(PersonalContextProvenanceDetails))
+            )
+            detail = host.screen.query_one(PersonalContextProvenanceDetails)
+        else:
+            await until(
+                pilot, lambda: bool(panel.query(PersonalContextProvenanceDetails))
+            )
+            detail = panel.query_one(PersonalContextProvenanceDetails)
+        detail.collapsed = False
+        await until(pilot, original.entered.is_set)
+        assert detail._owner is None
+        resolved_before_finish = len(resolutions)
+        try:
+            if change in {"replacement", "injected"}:
+                app._personal_context_service = CurrentReader()
+            elif change == "absent":
+                app._personal_context_service = None
+        finally:
+            original.gate.set()
+        await until(pilot, lambda: not detail._pending)
+        assert ("SOURCE_MARKER" in rendered(detail)) is (
+            change in {"current", "injected"}
+        )
+        assert len(resolutions) == resolved_before_finish
+        if change == "injected":
+            assert not resolutions
+
+
+@pytest.mark.asyncio
+async def test_export_and_deleted_labels_keep_literal_metadata(monkeypatch):
+    from tldw_chatbook.Personal_Context.settings_provenance import (
+        SettingsDeletedRecord,
+        SettingsProfileIdentity,
+        SettingsProvenanceSubject,
+    )
+
+    snapshot = _ready_snapshot()
+    identity = SettingsProfileIdentity(snapshot.records[0].profile_id, 0)
+    object_id = "[bold]retired[/bold]\x1b\u202e"
+    subject = SettingsProvenanceSubject(identity, "record", object_id, "deleted-v1")
+    snapshot = replace(
+        snapshot,
+        profile_identity=identity,
+        deleted_records=(
+            SettingsDeletedRecord(subject, snapshot.scopes[0].scope.scope_id, NOW),
+        ),
+    )
+    panel = PersonalContextSettingsPanel(_ProfileServiceStub(snapshot))
+    scope_label = "[bold]workspace[/bold]"
+    monkeypatch.setattr(panel, "_selected_export_scope", lambda: (None, scope_label))
+
+    class PanelHost(ConsolidatedCSSApp):
+        def compose(self):
+            yield panel
+
+    async with PanelHost().run_test(size=(100, 35)) as pilot:
+        await _until(pilot, lambda: bool(panel.query("#personal-context-deleted-0")))
+        export = panel.query_one("#personal-context-export-plaintext", Button).label
+        deleted = panel.query_one("#personal-context-deleted-0", Button).label
+        assert not export.spans
+        assert export.plain == "Export plaintext: " + scope_label
+        assert not deleted.spans
+        assert (
+            deleted.plain
+            == f"Deleted · [bold]retired[/bold]   · Updated {NOW.isoformat()}"
+        )

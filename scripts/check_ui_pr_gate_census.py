@@ -207,7 +207,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-34786 (2026-10-10) adds the actual native-owner retirement regression
 # as one node, preserving all earlier shard placements.
 # TASK-34797 adds the native Notes status context/shutdown module after green qualification.
-MINIMUM_FILES = 180
+# TASK-25907.23 / 34800 adds seven bounded privacy/currentness entries.
+MINIMUM_FILES = 187
 
 
 def read_census(path: Path) -> list[str]:

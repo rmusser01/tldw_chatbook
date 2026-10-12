@@ -65,11 +65,13 @@ class PersonalContextProvenanceDetails(Collapsible):
         subject: SettingsProvenanceSubject,
         service_loader: Callable[[], PersonalContextService],
         *,
+        current_service_getter: Callable[[], PersonalContextService | None],
         reload_details: Callable[[], None] | None = None,
         **kwargs: Any,
     ) -> None:
         self._subject = subject
         self._service_loader = service_loader
+        self._current_service_getter = current_service_getter
         self._reload_details = reload_details
         self._content = Static(
             Text("Expand to inspect recorded metadata."),
@@ -190,7 +192,17 @@ class PersonalContextProvenanceDetails(Collapsible):
             or not self._eligible()
         ):
             return
-        if self._owner is not None and owner is not self._owner:
+        # The host reads its raw cached identity only: no bootstrap/status/DB
+        # work on the UI thread, including the very first pending publication.
+        try:
+            current_owner = self._current_service_getter()
+        except Exception:  # noqa: BLE001 — optional metadata fails closed without personal logs.
+            current_owner = None
+        if (
+            owner is None
+            or owner is not current_owner
+            or (self._owner is not None and owner is not self._owner)
+        ):
             result = SettingsProvenanceResult("changed")
         if owner is not None:
             self._owner = owner
