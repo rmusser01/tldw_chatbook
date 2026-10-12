@@ -223,6 +223,12 @@ class DreamsProjection:
         self._cadence_hours = cadence_hours
 
     def tasks(self, now: datetime) -> list[ScheduledTask]:
+        """Own only new native worker acquisitions, including lazy construction."""
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+        return run_finite_local_worker(self._tasks, now)
+
+    def _tasks(self, now: datetime) -> list[ScheduledTask]:
         """Project the cycle task plus one task per active tracked item.
 
         Args:
@@ -244,49 +250,54 @@ class DreamsProjection:
         db = self._db_getter()
         if db is None:
             return []
-        current = now if now.tzinfo is not None else now.replace(
-            tzinfo=timezone.utc
-        )
-        current = current.astimezone(timezone.utc)
-        completed, attempted = _read_watermarks(db)
-        last_activity = max(
-            (
-                value
-                for value in (completed, attempted)
-                if value is not None
-            ),
-            default=None,
-        )
-        if last_activity is None:
-            next_run_at = current
-        else:
-            next_run_at = last_activity + timedelta(
-                hours=int(
-                    self._cadence_hours
-                    if self._cadence_hours is not None
-                    else dreams_setting("cadence_hours")
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+        with execution_scope(("db.dreams",), getattr(db, "db_path", None)) as allowed:
+            if not allowed:
+                return []
+            current = now if now.tzinfo is not None else now.replace(
+                tzinfo=timezone.utc
+            )
+            current = current.astimezone(timezone.utc)
+            completed, attempted = _read_watermarks(db)
+            last_activity = max(
+                (
+                    value
+                    for value in (completed, attempted)
+                    if value is not None
+                ),
+                default=None,
+            )
+            if last_activity is None:
+                next_run_at = current
+            else:
+                next_run_at = last_activity + timedelta(
+                    hours=int(
+                        self._cadence_hours
+                        if self._cadence_hours is not None
+                        else dreams_setting("cadence_hours")
+                    )
                 )
-            )
-        projected = [
-            ScheduledTask(
-                id=DREAMS_CYCLE_TASK_ID,
-                title="Dreams discovery cycle",
-                type=DREAMS_CYCLE_TASK_TYPE,
-                status=TaskStatus.WAITING,
-                next_run_at=next_run_at,
-                owner_id="local",
-            )
-        ]
-        # Phase 2 (Track): one task per ACTIVE QUESTION item (Qodo #7:
-        # page items are watched by their subscription's own projection).
-        # The list read runs on whatever thread the caller is on -- the
-        # queue's reload path already executes ``load()`` under
-        # ``asyncio.to_thread``.
-        for row in db.list_tracked_items("active"):
-            if str(row.get("mechanism") or "") != "question":
-                continue
-            projected.append(self._track_task(row, current))
-        return projected
+            projected = [
+                ScheduledTask(
+                    id=DREAMS_CYCLE_TASK_ID,
+                    title="Dreams discovery cycle",
+                    type=DREAMS_CYCLE_TASK_TYPE,
+                    status=TaskStatus.WAITING,
+                    next_run_at=next_run_at,
+                    owner_id="local",
+                )
+            ]
+            # Phase 2 (Track): one task per ACTIVE QUESTION item (Qodo #7:
+            # page items are watched by their subscription's own projection).
+            # The list read runs on whatever thread the caller is on -- the
+            # queue's reload path already executes ``load()`` under
+            # ``asyncio.to_thread``.
+            for row in db.list_tracked_items("active"):
+                if str(row.get("mechanism") or "") != "question":
+                    continue
+                projected.append(self._track_task(row, current))
+            return projected
 
     @staticmethod
     def _track_task(row: dict, now: datetime) -> ScheduledTask:

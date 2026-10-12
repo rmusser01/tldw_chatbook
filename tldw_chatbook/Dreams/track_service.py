@@ -108,7 +108,7 @@ from tldw_chatbook.Utils.timestamps import to_utc_iso
 
 from . import discovery
 from .discovery import Candidate
-from .settings import DREAMS_DEFAULTS, dreams_region, dreams_setting
+from .settings import DREAMS_DEFAULTS, dreams_region, dreams_execution_allowed, dreams_setting
 from .track_reconcile import SETTLED_OFF, SETTLED_ON, settled_state
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -2908,7 +2908,8 @@ async def _dispatch_changed(
         except Exception as exc:  # noqa: BLE001 - notification degrades
             logger.warning(
                 "Dreams track dispatch getter failed: {}", type(exc).__name__)
-    if dispatcher is None or not dreams_setting("enabled"):
+    if (dispatcher is None or not dreams_setting("enabled")
+            or not dreams_execution_allowed(deps.dreams_db)):
         return False
     payload = {
         "category": "dreams_track",
@@ -2923,7 +2924,7 @@ async def _dispatch_changed(
     try:
         if file_backed:
             await asyncio.to_thread(
-                discovery.guard_invocation(dispatcher.dispatch, lambda: bool(dreams_setting("enabled"))),
+                discovery.guard_invocation(dispatcher.dispatch, lambda: bool(dreams_setting("enabled")) and dreams_execution_allowed(deps.dreams_db)),
                 **payload)
         else:
             dispatcher.dispatch(**payload)
@@ -2967,7 +2968,7 @@ async def run_track_check(deps: "CycleDeps", tracked_item_id: int) -> dict:
     # The master switch binds the check itself (review of #2921, item
     # 3a): the projection emits no check while Dreams is off, but a check
     # already dispatched would otherwise still search, judge and notify.
-    if not dreams_setting("enabled"):
+    if not dreams_setting("enabled") or not dreams_execution_allowed(deps.dreams_db):
         return {"status": "disabled", "notified": False}
     # No await between the check and the add: a second dispatch of the
     # same item running on the same event loop cannot interleave here.
@@ -3085,7 +3086,7 @@ async def _run_track_check_claimed(
 
     def switched_off() -> bool:
         nonlocal halted
-        halted = halted or not dreams_setting("enabled")
+        halted = halted or not dreams_setting("enabled") or not dreams_execution_allowed(deps.dreams_db)
         return halted
 
     if switched_off():

@@ -19670,3 +19670,18 @@ lease inventory. Passing bodies or a clean partial owner list cannot establish
 whole-population retirement. The same audit found native raw-command and test
 worker acquisitions: scopes must cover the complete callback, including its
 pre-run work-chain write, while borrowed connections remain caller-owned.
+
+
+### Runtime fixture imports can invalidate a pre-bootstrap restore test (PR2921)
+
+The first isolated restored-fetch test constructed SubscriptionsDB inside the
+restore coordinator. That module imports config; the resulting live config
+admission lease made all four fixtures time out in restore maintenance before
+any fetch assertion. Closing the database did not release a distinct profile
+lifetime lease. The corrected fixture constructs and explicitly closes/probes
+the native source in a private producer process, then the untouched pre-bootstrap
+coordinator creates the real archive and executes restoration. A fresh selected
+process performs the actual first URLMonitor check. Do not reset admission or
+participants, increase the timeout, or call the setup timeout a product privacy
+failure. Retained evidence: restored-first-fetch-1 four admission timeouts;
+restored-first-fetch-4 four passing native restored-fetch cases with Dreams off.

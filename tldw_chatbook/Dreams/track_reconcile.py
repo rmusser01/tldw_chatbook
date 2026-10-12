@@ -210,7 +210,7 @@ def first_dispatch_gate(scheduler_loop: Any) -> asyncio.Event:
     return gate
 
 
-def _stores_may_run(app: Any) -> bool:
+def _stores_may_run(app: Any, dreams_db: Any) -> bool:
     """Whether every store the reconcile writes is cleared for it (sync).
 
     The reconcile disables and re-arms reminders (the scheduled-tasks
@@ -239,6 +239,8 @@ def _stores_may_run(app: Any) -> bool:
     """
     from tldw_chatbook.Backup_Recovery import activation
 
+    # Preserve the existing scheduler/Subscriptions checks and their order;
+    # the captured Dreams store also owns durable suspension/provenance writes.
     stores: list[tuple[str, Any]] = []
     scheduler_db_path = getattr(
         getattr(getattr(app, "scheduler_loop", None), "db", None),
@@ -247,6 +249,7 @@ def _stores_may_run(app: Any) -> bool:
         stores.append(("db.scheduled_tasks", scheduler_db_path))
     if getattr(app, "local_watchlists_service", None) is not None:
         stores.append(("db.subscriptions", get_subscriptions_db_path()))
+    stores.append(("db.dreams", getattr(dreams_db, "db_path", None)))
     return all(
         activation.execution_allowed((owner,), path) for owner, path in stores)
 
@@ -347,7 +350,7 @@ async def _boot_pass(
                     "Dreams startup reconcile held: storage maintenance "
                     "was still under way when the scheduler stopped")
                 return
-            if not await asyncio.to_thread(_stores_may_run, app):
+            if not await asyncio.to_thread(_stores_may_run, app, dreams_db):
                 logger.info(
                     "Dreams startup reconcile held: a store it writes is "
                     "not cleared for execution")

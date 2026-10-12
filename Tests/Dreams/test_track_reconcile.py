@@ -655,7 +655,7 @@ async def test_boot_reconcile_holds_while_execution_is_not_allowed(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("refused", ["db.scheduled_tasks", "db.subscriptions"])
+@pytest.mark.parametrize("refused", ["db.scheduled_tasks", "db.subscriptions", "db.dreams"])
 async def test_boot_reconcile_asks_about_every_store_it_is_about_to_write(
         tmp_path, settings, monkeypatch, refused):
     """Review round 4, B5. The reconcile asked only about the scheduled-
@@ -684,6 +684,8 @@ async def test_boot_reconcile_asks_about_every_store_it_is_about_to_write(
     assert (("db.subscriptions",), tmp_path / "subscriptions.db") in asked or (
         refused == "db.scheduled_tasks"), "the subscriptions store is asked about"
     assert (("db.scheduled_tasks",), tmp_path / "scheduled.db") in asked
+    if refused == "db.dreams":
+        assert (("db.dreams",), path) in asked
     assert sources.updates == [] and sources.marked == [] and sources.reads == 0
     assert _suspension(path, item_id) is None
 
