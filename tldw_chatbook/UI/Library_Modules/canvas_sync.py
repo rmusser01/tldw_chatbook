@@ -52,7 +52,10 @@ from ...Widgets.Library import (
     LibraryStudyHandoffCanvas,
 )
 from ...Widgets.Library.library_canvas_sync import PostRecomposeCallback
-from .screen_constants import _LIBRARY_LIST_ROW_CLASSES
+from .screen_constants import (
+    LIBRARY_NOTES_SOURCE_FILES,
+    _LIBRARY_LIST_ROW_CLASSES,
+)
 
 if TYPE_CHECKING:
     from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
@@ -641,6 +644,29 @@ def _sync_library_canvas(
             sync_args = (new_state,)
             sync_kwargs = screen._library_media_trash_canvas_presentation()
         elif kind == "notes":
+            # TASK-21242 gap 2 (the latent notes-files arm): the Files
+            # source must refuse here regardless of which arm fired first.
+            # Under Files the route's canvas owner is the file-notes
+            # workspace (``#library-file-notes-reader-shell``), never
+            # ``#library-notes-canvas`` -- historically this arm survived
+            # only because the open-surface boundary arm caught a
+            # Files-mounted DOM first and took the structural recompose
+            # before any ``kind == "notes"`` sync could be asked to paint
+            # it. Refusing (and NOT taking the whole-screen fallback) is
+            # safe for the same reason the route-ownership refusal above
+            # is: there is nothing on this route for a database-notes
+            # canvas sync to recover -- a Files DOM is repainted by the
+            # route that owns it (the source flip's own recompose, or the
+            # open-item structural arm).
+            if (
+                getattr(getattr(screen, "_notes_state", None), "source", None)
+                == LIBRARY_NOTES_SOURCE_FILES
+            ):
+                logger.debug(
+                    "Library notes canvas sync refused: the files source "
+                    "owns the route (no database-notes canvas is mounted)."
+                )
+                return False
             canvas = screen.query_one("#library-notes-canvas", LibraryNotesCanvas)
             if _library_resident_canvas_awaits_display(canvas):
                 return False
@@ -966,6 +992,54 @@ def _sync_library_canvas(
                 follow_up_canvas.queue_default_after_recompose(follow_up)
             else:
                 follow_up_canvas.queue_after_recompose(follow_up)
+        # TASK-21242 gap 4: reproduce the armed list-entry-focus re-request
+        # ``compose_content`` performs on every whole-screen recompose. A
+        # canvas-scoped sync rebuilds a list canvas's rows WITHOUT passing
+        # through ``compose_content``, so an armed channel (task-2856 AC1)
+        # whose rows arrive on a canvas-level recompose had nothing
+        # re-firing it -- the same hole task-32228 found for Conversations
+        # and closed with ``_retry_library_list_entry_focus_while_armed``
+        # at the SCREEN-recompose sites. Queued as a DEFAULT (runs first,
+        # before any pending action intent) so an explicit ``then`` that
+        # chooses focus still wins, matching the compose-time ordering
+        # where the re-request is fired before the follow-ups that land
+        # focus. The guarded continuation drops ticks whose arm generation
+        # a disarm has superseded, exactly as the compose-time call does.
+        armed_re_request: Callable[[], None] | None = None
+        if kind in {
+            "conversations",
+            "media",
+            "media-trash",
+            "notes",
+            "prompts",
+            "skills",
+        } and getattr(screen, "_library_pending_list_entry_focus", False):
+            _armed_generation = getattr(
+                screen, "_library_list_entry_focus_generation", 0
+            )
+
+            def _re_request_armed_list_entry_focus(
+                _screen: LibraryScreen = screen,
+                _generation: int = _armed_generation,
+            ) -> None:
+                # Resolved at fire time, not queue time: the receiver here
+                # can be one of the seven forwarding controllers (a bare
+                # ``self``), and only the notes/prompts controllers expose
+                # the guarded continuation -- an armed channel on a
+                # receiver without it simply does not re-request from this
+                # seam (the screen-level retry chain still covers it).
+                focus_if_current = getattr(
+                    _screen, "_focus_library_list_entry_if_current", None
+                )
+                if callable(focus_if_current):
+                    focus_if_current(_generation)
+
+            armed_re_request = _re_request_armed_list_entry_focus
+        if armed_re_request is not None:
+            if follow_up is None and then is None:
+                follow_up_canvas.queue_after_recompose(armed_re_request)
+            else:
+                follow_up_canvas.queue_default_after_recompose(armed_re_request)
         canvas.sync_state(*sync_args, **sync_kwargs)
         if prompt_work is not None:
             try:

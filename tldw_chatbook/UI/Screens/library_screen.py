@@ -12551,11 +12551,18 @@ class LibraryScreen(BaseAppScreen):
                 projection_owned=True,
             ):
                 return LibraryEntryReconcileResult.FAILED
-        elif then is not None:
+        elif follow_up is not None:
             # No owner-driven sync recompose to order against (loading
             # Static, media viewer, collections): after-refresh is the
-            # settled point.
-            self.call_after_refresh(then)
+            # settled point. TASK-21242 gap 3: this branch used to run bare
+            # ``then``, discarding the ``follow_up`` composed above -- so a
+            # projection with a captured focus identity DROPPED
+            # ``restore_focus`` on this path (and when ``then`` was None
+            # the computed restore was discarded outright), leaving focus
+            # unreturned after the swap. The composed follow-up runs here:
+            # restore first, the caller's ``then`` after, preserving the
+            # restore's veto-relevant return for the seam contract.
+            self.call_after_refresh(follow_up)
         self._apply_library_notes_stage_visibility()
         self._apply_library_notes_footer_context()
         return LibraryEntryReconcileResult.APPLIED
