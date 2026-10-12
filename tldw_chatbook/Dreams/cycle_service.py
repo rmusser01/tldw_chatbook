@@ -419,12 +419,12 @@ def _stored_topic_text(text: str) -> str:
     Exactly the path the signal refresh takes a label along:
     :func:`_stored_form_signals` puts it into the profile text rule's
     stored form, ``interest_profile.merge_signals`` strips and lowercases
-    it, and :func:`_upsert_profile_signals` applies the rule once more
-    before it stores the row. Anything that compares a raw label with a
-    stored topic must go through here (follow-up to #2921: the Guardian
+    it, and :func:`_upsert_profile_signals` builds the key it stores the
+    row under with THIS function. Anything that compares a raw label with
+    a stored topic must go through here (follow-up to #2921: the Guardian
     consent check compared raw labels and halted every cycle whose
-    Guardian topic the stored form had changed). Pinned against the
-    refresh itself by a test.
+    Guardian topic the stored form had changed). Pinned by a test that
+    runs the real refresh steps into a database and reads the row back.
 
     Raises:
         ValueError: The label fails the text rule; it is never stored.
@@ -518,8 +518,12 @@ def _upsert_profile_signals(
             # item 9): these keywords come from notes, media, Personal
             # Context and Guardian -- some from ingested third-party
             # content -- and enter the same synthesis prompt and fallback
-            # search queries. The validated (NFC) form is what is stored.
-            key = (merged_key[0], validate_dreams_profile_text(merged_key[1]))
+            # search queries. The validated (NFC) form is what is stored --
+            # through _stored_topic_text, the ONE function that also puts
+            # Guardian's labels into this form for the consent check, so
+            # the two cannot drift apart (review of #3097). On merged text
+            # it gives exactly what the rule alone gave here before.
+            key = (merged_key[0], _stored_topic_text(merged_key[1]))
         except ValueError:
             dropped += 1
             continue
