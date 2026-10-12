@@ -9,6 +9,7 @@ on, which once stopped before a slow runner's turn had started.
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
 from textual.app import ComposeResult
@@ -399,6 +400,47 @@ async def test_console_poll_paints_again_after_work_that_ended_during_a_paint(
 
     assert stopped
     assert painted_after_the_end
+
+
+@pytest.mark.asyncio
+async def test_console_poll_paints_again_after_work_that_started_and_ended_during_a_paint(
+    monkeypatch,
+):
+    """The poll's last tick began with no live work, and a send was admitted
+    and its turn ended while that tick painted (review of #3091). The send's
+    request for the poll was a no-op, the timer still existing; the tick found
+    no live work and stopped, and the turn's last rows were never painted."""
+    host = _console_app(FailThenRecoverGateway())
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console._ensure_console_chat_controller()
+        live = False
+        poll_paints = []
+
+        async def paint() -> None:
+            nonlocal live
+            if sys._getframe(1).f_code.co_name != "_poll_transcript":
+                return  # only the poll's own paints are counted
+            poll_paints.append(not poll_paints)
+            if len(poll_paints) == 1:
+                live = True  # a send is admitted...
+                console._start_console_transcript_sync_timer()  # ...asks...
+                await asyncio.sleep(0)
+                live = False  # ...and its turn ends, all inside this paint
+
+        monkeypatch.setattr(console, "_console_transcript_poll_needed", lambda: live)
+        monkeypatch.setattr(console, "_sync_native_console_chat_ui", paint)
+        console._start_console_transcript_sync_timer()
+        for _ in range(100):
+            if console._console_transcript_sync_timer is None:
+                break
+            await pilot.pause(0.05)
+        stopped = console._console_transcript_sync_timer is None
+
+    assert stopped
+    assert poll_paints[:2] == [True, False]
 
 
 class _BlockThenStreamGateway(_ReadyResolutionGateway):
