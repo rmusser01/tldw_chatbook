@@ -31,22 +31,54 @@ from textual.widget import Widget
 from textual.widgets import Button, Collapsible, Input, Select, Static, Switch, TextArea
 from textual.worker import NoActiveWorker, get_current_worker
 
-from tldw_chatbook.Chat.console_voice_input import (
-    DEFAULT_HANDSFREE_SEND_DELAY_SECONDS,
-    DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES,
-    DEFAULT_REALTIME_MODEL,
-    DEFAULT_REALTIME_PROVIDER,
-    acoustic_barge_in_enabled as _read_acoustic_barge_in,
-    handsfree_engine as _read_handsfree_engine,
-    realtime_enabled as _read_realtime_enabled,
-    realtime_model as _read_realtime_model,
-    realtime_provider as _read_realtime_provider,
-    realtime_turn_detection as _read_realtime_turn_detection,
-    realtime_vad_silence_ms as _read_realtime_vad_silence_ms,
-    realtime_vad_threshold as _read_realtime_vad_threshold,
-    realtime_voice as _read_realtime_voice,
-    _realtime_read,
-)
+# TASK-22504 follow-up (PR #3089): `console_voice_input` pulls the STT
+# coordinator stack (with local_stt_providers) into the settings
+# pre-import pass -- +2 pass modules over the 558 ratchet. This panel
+# reads live speech settings at interaction time; the import is deferred
+# to first use with call-time shims that resolve the LIVE module
+# attribute, so tests monkeypatching `console_voice_input.<name>` keep
+# working.
+import importlib as _cv_importlib
+
+_cv_module = None
+
+
+def _voice():
+    global _cv_module
+    if _cv_module is None:
+        _cv_module = _cv_importlib.import_module(
+            "tldw_chatbook.Chat.console_voice_input"
+        )
+    return _cv_module
+
+
+def _make_voice_shim(_attr: str):
+    def _shim(*args, **kwargs):
+        return getattr(_voice(), _attr)(*args, **kwargs)
+
+    _shim.__name__ = _attr
+    return _shim
+
+
+# Compose-time placeholder constants, mirrored from
+# `console_voice_input` (verified 2026-10-12 at PR #3089; values are
+# stable literals there -- 1.5 / 5 / "gpt-realtime" / "openai"). Kept
+# local so NO module-scope resolution of the voice stack remains.
+DEFAULT_HANDSFREE_SEND_DELAY_SECONDS = 1.5
+DEFAULT_REALTIME_IDLE_TIMEOUT_MINUTES = 5
+DEFAULT_REALTIME_MODEL = "gpt-realtime"
+DEFAULT_REALTIME_PROVIDER = "openai"
+_realtime_read = _make_voice_shim("_realtime_read")
+
+_read_acoustic_barge_in = _make_voice_shim('acoustic_barge_in_enabled')
+_read_handsfree_engine = _make_voice_shim('handsfree_engine')
+_read_realtime_enabled = _make_voice_shim('realtime_enabled')
+_read_realtime_model = _make_voice_shim('realtime_model')
+_read_realtime_provider = _make_voice_shim('realtime_provider')
+_read_realtime_turn_detection = _make_voice_shim('realtime_turn_detection')
+_read_realtime_vad_silence_ms = _make_voice_shim('realtime_vad_silence_ms')
+_read_realtime_vad_threshold = _make_voice_shim('realtime_vad_threshold')
+_read_realtime_voice = _make_voice_shim('realtime_voice')
 from tldw_chatbook.Chat.console_voice_settings import (
     RESPONSE_EAGERNESS_DEFAULT_MS,
     RESPONSE_EAGERNESS_MAX_MS,

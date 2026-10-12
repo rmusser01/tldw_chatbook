@@ -33,7 +33,6 @@ from ..config import (
 )
 from ..Audio.dictation_service_lazy import LazyLiveDictationService, DictationState
 from ..Event_Handlers.Audio_Events import VoiceCommandEvent
-from ..Utils.local_stt_providers import normalize_provider_id
 from ..Widgets.audio_troubleshooting_dialog import AudioTroubleshootingDialog
 
 
@@ -838,6 +837,13 @@ Performance Tips:
         to a real dispatch id. This is read-side only -- it does not write
         the normalized value back to config.
         """
+        # TASK-22504 follow-up (PR #3089): deferred to this single call site
+        # so the stts pre-import route does not pull local_stt_providers at
+        # boot (pass ratchet 558); it only runs on a settings read.
+        from tldw_chatbook.Utils.local_stt_providers import (  # noqa: PLC0415
+            normalize_provider_id,
+        )
+
         settings = {
             "provider": normalize_provider_id(
                 get_cli_setting("dictation.provider", "auto") or "auto"
