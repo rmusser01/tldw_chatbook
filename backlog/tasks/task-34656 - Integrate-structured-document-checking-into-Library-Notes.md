@@ -1,7 +1,7 @@
 ---
 id: TASK-34656
 title: Integrate structured document checking into Library Notes
-status: In Progress
+status: Done
 created_date: 2026-10-07 03:18
 dependencies:
 - TASK-34571
@@ -17,7 +17,7 @@ labels:
 - structured-editing
 documentation:
 - Docs/superpowers/reviews/2026-10-11-structured-note-editor-integration.md
-updated_date: 2026-10-12 02:00
+updated_date: 2026-10-12 02:10
 ---
 
 ## Description
@@ -28,12 +28,12 @@ Help users detect source errors and explicitly format whole Notes without losing
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Known source modes select whole-document checking; database mode is durable and file overrides remain per-open without renaming or metadata injection.
-- [ ] #2 Typing retires old results immediately and checks after400ms or open/mode change, with separate save status and navigable Problems in logical coordinates.
-- [ ] #3 Qualified explicit formatting is one native undoable edit with captured-source/full-key/editability guards; errors do not veto saves.
-- [ ] #4 Structured/future modes render source safely and read-only excerpts never report complete checks or accept formatting.
-- [ ] #5 Actual Database Notes and File Notes flows plus targeted tests/token governance qualify compact60x20 and normal layouts.
-- [ ] #6 Relevant ADR assessment, scoped static/security evidence and completion documentation are recorded without hiding unfinished release gates.
+- [x] #1 Known source modes select whole-document checking; database mode is durable and file overrides remain per-open without renaming or metadata injection.
+- [x] #2 Typing retires old results immediately and checks after400ms or open/mode change, with separate save status and navigable Problems in logical coordinates.
+- [x] #3 Qualified explicit formatting is one native undoable edit with captured-source/full-key/editability guards; errors do not veto saves.
+- [x] #4 Structured/future modes render source safely and read-only excerpts never report complete checks or accept formatting.
+- [x] #5 Actual Database Notes and File Notes flows plus targeted tests/token governance qualify compact60x20 and normal layouts.
+- [x] #6 Relevant ADR assessment, scoped static/security evidence and completion documentation are recorded without hiding unfinished release gates.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -60,13 +60,16 @@ Fix round1/5 implements original review Important I1 under ADR194/Ruling46. Quic
 
 New mounted RED reproduced mixed JSON/Markdown preview loss and normalized title-only save request (stopped before any write). Current Tests/UI/test_research_quick_notes.py + Tests/Research_Workspace/test_quick_notes.py:85 passed exit0, including actual Save/controller/local adapter/Notes scope/interop/temporary SQLite title-only and navigation-flush retention of exact body and known json mode, supported native typing/edited-preview/actual save, queued/native-delete/navigation controls, supported CRLF/lone-CR source preview. Scoped immutable cb6e6e5 Ruff/mypy/formatter comparisons add no debt; security exits0. Durable separate task-12-evidence/fix1 retains exact invocations/outputs/source hashes and preserves the original522-artifact index. Report is appended at task-12-report.md end; qualification doc and ADR updated. M1/M2/M3 are deferred Minor findings for final whole-branch triage, CV1/CV2/CV3 and physical OSIME/TTY/screen-reader/platform/FD/clean-parent limits stay explicit. Leave status In Progress and all AC unchecked for scoped independent re-review; no full suite/build/engine replay, push or merge.
 Final fix1 fixture self-review closes only the new temporary SQLite fixture's own cached NotesInteropService connection using its existing public close_all_user_connections API. Amended SQLite control:1 passed,25 deselected,exit0; production bytes are unchanged from the85-test covering run. Final scoped Ruff/mypy/formatter comparators and security/changed-line format checks all exit0. No existing FD harness repair/suppression or deferred Minor finding change. Preserve In Progress and unchecked AC for fresh independent review.
+Canonical Database Notes and retained File Notes expose persisted/temporary language, bounded local Check/Format, independent status and keyboard Problems. Explicit formatting uses the qualified native history bridge while existing draft/autosave/recovery/hash/save owners retain authority. Syntax errors remain saveable. Source previews are escaped; lossy Database and secondary Quick Notes bodies preserve exact canonical source for metadata/title/save/copy/export snapshots while body editing is fenced. File-only proposal mapping preserves original BOM/CRLF serialization and truthful no-op. Four tokens/source CSS/generated bundles and actual compact rendering are qualified.
+ADR194 governs and records Rulings43/44/45/46; ADR150/031 govern UI/tokens/key conventions. Original ASTRA task review identified one Important Quick Notes preview defect; fix33c356d and fresh scoped standard review close it with no new breakage. Full original and scoped reports plus all3 Cannot Verify dispositions were read before closure.
+Verification:213 affected tests at recorded pre-ancestor source;34 amended native-host tests;16 final composited-body/token/bundle controls;85 affected secondary tests after fix;1 later fixture-cleanup control. Counts describe separate source revisions, not additive unique tests. New production static/security checks pass; immutable legacy comparisons add no debt. Original522+fix105 artifacts and current source hashes verify with zero mismatches. Actual module-entry mounted probe confirms app-owned worker/lease/process shutdown.
+Precise limits remain: M1 pending read-only wording, M2 no-op feedback presentation and M3 +323/+328 test-host FD warnings/partial allocation attribution are deferred for final whole-branch triage. Expanded test-import mypy retains unchanged Screen comment parse barrier; no all-test/full-module clean claim. Textual8.2.8 public input API has no composition hooks; physical OSIME/TTY/accessibility/platform/clean-installed-parent/resource profiles remain explicit I5 gates, and overall I1 stays open. No full sweep, server/UI-export-label expansion, shared environment mutation, push or merge. Durable qualifications: Docs/superpowers/reviews/2026-10-11-structured-note-editor-integration.md.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+I2 complete after independent whole-task review, scoped fix/re-review and all CV dispositions. Source, save ownership, native history, worker retirement and compact rendering are qualified for the recorded mounted/native profiles. Deferred minor/static/resource/physical release limits remain documented; I3/I4/I5 and final whole-branch review are still required.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
