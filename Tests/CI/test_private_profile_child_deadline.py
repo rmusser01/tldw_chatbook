@@ -300,3 +300,65 @@ async def test_a_dump_that_fails_when_asked_does_not_end_the_child(
     text = str(failure.value)
     assert "(killed: still running after" in text
     assert "IsADirectoryError" not in text
+
+
+@pytest.mark.skipif(not hasattr(signal, "setitimer"), reason="POSIX itimers")
+async def test_the_child_gets_the_armed_budget_and_the_parent_moves_its_own_limit(
+    request, tmp_path, monkeypatch
+):
+    """Review of #3091, items 5a and 5c, with a real ITIMER_REAL: the child's
+    --timeout is what is left of the parent's armed timer, and the parent's
+    own timer is moved later by the lead before the child starts."""
+    seen = {}
+    spawn = asyncio.create_subprocess_exec
+
+    async def record(*command, **options):
+        seen["command"] = command
+        seen["alarm"] = signal.getitimer(signal.ITIMER_REAL)[0]
+        return await spawn(sys.executable, "-c", "raise SystemExit(3)", **options)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", record)
+    child = test_child_whose_worker_never_answers
+    handler = signal.getsignal(signal.SIGALRM)
+    left = signal.getitimer(signal.ITIMER_REAL)[0]
+    signal.signal(signal.SIGALRM, lambda *_: None)  # stands in for pytest-timeout's
+    signal.setitimer(signal.ITIMER_REAL, 100.0)
+    try:
+        with pytest.raises(pytest.fail.Exception):
+            await child(request=_as_parent(request, tmp_path, child))
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, left)
+        signal.signal(signal.SIGALRM, signal.SIG_DFL if handler is None else handler)
+
+    flags = [arg for arg in seen["command"] if arg.startswith("--timeout=")]
+    assert len(flags) == 1
+    assert 95.0 < float(flags[0].removeprefix("--timeout=")) <= 100.0
+    assert 125.0 < seen["alarm"] <= 130.0
+
+
+@pytest.mark.skipif(_CHILD_NODE not in os.environ, reason="the child of the next test")
+@private_profile_test
+async def test_child_without_a_timeout_marker(request):
+    Path(os.environ[_READY]).touch()
+    await _waits_on_the_worker()
+
+
+@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signals")
+async def test_an_unmarked_child_asked_with_a_real_signal_writes_its_stacks(
+    request, tmp_path, monkeypatch
+):
+    """Review of #3091, item 5b: the parent's real SIGUSR1 reaches the
+    child's own handler, whose dump names the main thread and the await."""
+    _ask_once_the_child_is_ready(monkeypatch, tmp_path)
+    child = test_child_without_a_timeout_marker
+
+    with pytest.raises(pytest.fail.Exception) as failure:
+        await child(request=_as_parent(request, tmp_path, child))
+
+    text = str(failure.value)
+    assert "(killed: still running after" in text
+    assert "--- stacks when the parent asked" in text
+    asked = text.split("--- stacks when the parent asked")[1]
+    assert "--- thread MainThread" in asked
+    awaits = asked.split("--- the test, outermost await first")[1]
+    assert "await _waits_on_the_worker()" in awaits
