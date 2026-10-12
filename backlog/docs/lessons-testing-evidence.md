@@ -19704,12 +19704,13 @@ On 2026-10-12, all three hosted Eval recovery jobs failed the complete retained-
 
 TASK-34415 made `ChatScreen._sync_console_control_bar` defer when another thread holds a config lock: it schedules
 the same sync on a 0.2 s timer and returns False. Fifteen test call sites called it, ignored the result, and then
-pressed a control or read the rendered control bar with no await long enough for that timer. On a loaded UI Fast Lane
-runner a background config write held the lock at that moment: Send was still in its mount-time disabled state,
-`Button.press()` on a disabled button silently does nothing, and
-`test_console_poll_outlives_a_turn_the_controller_has_not_started` failed 10 s later at
+pressed a control or read the rendered control bar with no await long enough for that timer. CI showed only the
+symptom: `test_console_poll_outlives_a_turn_the_controller_has_not_started` failed 10 s after Send at
 `asyncio.wait_for(entered.wait(), 10)` (runs 38064483856 and 38068440232) with a bare TimeoutError that named
-neither the lock nor the button.
+neither a lock nor a button. The lock as the cause was shown locally: with another thread holding a config lock for
+50 ms across the helper's sync, the unfixed test failed 10 of 10 runs (Send still in its mount-time disabled state,
+and `Button.press()` on a disabled button silently does nothing) and the fixed one passed 17 of 17. Which writer
+held the lock on the runner is not known.
 
 **What to do.** When a method returns whether it did its work, a test that relies on the work asserts the result, or
 makes the condition impossible (here: a shared helper that holds both config locks, which are reentrant, and asserts
