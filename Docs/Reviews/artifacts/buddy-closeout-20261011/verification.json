@@ -20,7 +20,9 @@
     "Tests/Character_Chat/test_buddy_conversion.py": "00df204f024beecfd330e23e4ee7097ebef28fe26a74b8e502ecedf3de23ae53",
     "tldw_chatbook/UI/Screens/personas_screen.py": "986e84e8e8421f7aaa03dc37d4ee19abd0962fd94191adcc797dad6a7e6ebbcd",
     "Tests/Character_Chat/test_character_generation_controller.py": "bceb08246a402991613aae68c0ac22ca324959b59c6e793181e2d73ac98b8021",
-    "Tests/UI/test_personas_generation_wiring.py": "09805dd9660e74e6074a6b78a0ac46d728562094fbe7e5afa34a4641e34f67f3"
+    "Tests/UI/test_personas_generation_wiring.py": "09805dd9660e74e6074a6b78a0ac46d728562094fbe7e5afa34a4641e34f67f3",
+    "Tests/UI/test_console_runtime_ownership.py": "254a05f2b09630956388f2afe8202c0392d83c097640d2b5f4929aa4f53ba0d0",
+    "Tests/UI/test_actor_pack_export_ownership.py": "cc6315506b48fdd4bfd476deb5cd4a7778b953950d30e4250dfe9e7ab87547ee"
   },
   "runs": [
     {
@@ -263,9 +265,35 @@
       ],
       "junit_sha256": "eab1e6dbaffa9e918b919d50f396f1da790232108f0d0056a9c8fee62dd91831",
       "log_sha256": "00f88f750ccc90dc148877d3b53a5ab3055bb7b8a54d750d0605ec43b566ee02"
+    },
+    {
+      "name": "setter-fixture-followup",
+      "command_cwd": "/Users/macbook-dev/.codex/worktrees/buddy-task-burndown/tldw_chatbook",
+      "python_binary": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "command": "python -m pytest Tests/UI/test_console_runtime_ownership.py::test_app_fences_console_then_drains_buddy_before_profile_teardown Tests/UI/test_console_runtime_ownership.py::test_lazy_persona_buddy_property_defers_and_ensure_constructs Tests/UI/test_actor_pack_export_ownership.py Tests/Persona_Buddy/test_buddy_controller_publication.py Tests/Persona_Buddy/test_buddy_startup.py -q --tb=short --junitxml=/private/tmp/buddy-setter-fixtures-green-20261011.xml",
+      "exit": 0,
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 3.108,
+      "test_identities": [
+        "Tests.UI.test_console_runtime_ownership::test_app_fences_console_then_drains_buddy_before_profile_teardown",
+        "Tests.UI.test_console_runtime_ownership::test_lazy_persona_buddy_property_defers_and_ensure_constructs",
+        "Tests.UI.test_actor_pack_export_ownership::test_app_constructs_one_export_controller_after_profile_services",
+        "Tests.UI.test_actor_pack_export_ownership::test_app_constructs_import_pipeline_after_profile_services",
+        "Tests.UI.test_actor_pack_export_ownership::test_persona_import_fences_mounted_buddy_state",
+        "Tests.UI.test_actor_pack_export_ownership::test_export_controller_is_in_app_owned_shutdown_before_profile_teardown",
+        "Tests.UI.test_actor_pack_export_ownership::test_export_shutdown_finishes_before_later_app_owners",
+        "Tests.Persona_Buddy.test_buddy_controller_publication::test_controller_setter_waits_for_construction_lock",
+        "Tests.Persona_Buddy.test_buddy_startup::test_unclaimed_migration_commits_before_first_controller_can_read",
+        "Tests.Persona_Buddy.test_buddy_startup::test_controller_claim_during_copy_hands_off_without_overwriting"
+      ],
+      "junit_sha256": "dd489940dd727b700452075e133770b5ecd8214ec1bf71b05569ffddb13835a0",
+      "log_sha256": "76da46bb55fe260aba1348f3e8a8e760256ec749c35acc5645c90ef6367fed38"
     }
   ],
-  "unique_passing_test_identities": 152,
+  "unique_passing_test_identities": 159,
   "controls": [
     {
       "name": "controller-red",
@@ -411,7 +439,7 @@
     "Tests/Character_Chat/test_character_generation_controller.py": "bceb08246a402991613aae68c0ac22ca324959b59c6e793181e2d73ac98b8021",
     "Tests/UI/test_personas_generation_wiring.py": "09805dd9660e74e6074a6b78a0ac46d728562094fbe7e5afa34a4641e34f67f3"
   },
-  "unique_passing_repository_test_identities": 151,
+  "unique_passing_repository_test_identities": 158,
   "default_factory_selfcheck": {
     "source": "from types import SimpleNamespace\nimport pytest\n\npytestmark = pytest.mark.bootstrap_profile\n\ndef test_deferred_default_controller_constructs():\n    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen\n    from tldw_chatbook.Character_Chat.character_generation_controller import CharacterGenerationController\n    host = SimpleNamespace(preview=SimpleNamespace(ensure_gateway=lambda: None), app_instance=SimpleNamespace(app_config={}))\n    controller = PersonasScreen._character_generation_controller(host)\n    assert isinstance(controller, CharacterGenerationController)\n    assert callable(controller._runner)\n    injected = object()\n    host._generation_controller_override = injected\n    assert PersonasScreen._character_generation_controller(host) is injected\n",
     "source_sha256": "7ab5efcfb483744797c3fb08e8e5ecbe3de925abbf811d3181169b539769bfaa",
@@ -467,5 +495,147 @@
       "log_sha256": "6734748296cd6a6637c51189305ef1c124e6cb7af89ac6086f076ff8a5b5cb45",
       "resolution": "Existing collection-bound prompt/config suites retain their admitted private bootstrap profile, without assertion or runtime-guard changes."
     }
+  },
+  "ci_fixture_followup": {
+    "verified_at_utc": "2026-10-12T00:29:24.677189+00:00",
+    "tested_base": "66065147258f2da0223dee118063e465835aab24",
+    "production_unchanged": true,
+    "repair": "Supply constructor-owned lock prerequisites in both skeletal setter callers; preserve the existing Actor Pack teardown skeleton with a synchronous no-op raw CLI owner/task and empty meeting owner. Every original assertion and lifecycle method is unchanged.",
+    "source_sha256": {
+      "Tests/UI/test_console_runtime_ownership.py": "254a05f2b09630956388f2afe8202c0392d83c097640d2b5f4929aa4f53ba0d0",
+      "Tests/UI/test_actor_pack_export_ownership.py": "cc6315506b48fdd4bfd476deb5cd4a7778b953950d30e4250dfe9e7ab87547ee"
+    },
+    "static": {
+      "Tests/UI/test_console_runtime_ownership.py": {
+        "source_sha256": "254a05f2b09630956388f2afe8202c0392d83c097640d2b5f4929aa4f53ba0d0",
+        "original_ast_preserved_except_constructor_prerequisites": true,
+        "ruff_baseline": 12,
+        "ruff_current": 12,
+        "introduced_ruff": 0,
+        "bandit_baseline": 462,
+        "bandit_current": 462,
+        "introduced_bandit": 0,
+        "formatter_base_exit": 1,
+        "formatter_current_exit": 1,
+        "compile": "passed"
+      },
+      "Tests/UI/test_actor_pack_export_ownership.py": {
+        "source_sha256": "cc6315506b48fdd4bfd476deb5cd4a7778b953950d30e4250dfe9e7ab87547ee",
+        "original_ast_preserved_except_constructor_prerequisites": true,
+        "ruff_baseline": 0,
+        "ruff_current": 0,
+        "introduced_ruff": 0,
+        "bandit_baseline": 12,
+        "bandit_current": 12,
+        "introduced_bandit": 0,
+        "formatter_base_exit": 0,
+        "formatter_current_exit": 0,
+        "compile": "passed"
+      }
+    },
+    "static_receipt_sha256": "98937cb26ccb7653d3679ec61ddf80ad310e3f1f4a5a19eb646ac97b618b9380",
+    "pr_fast_lane_failure": {
+      "run_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/38183913644",
+      "log_sha256": "f05e4f3ab3c826476da8f28ef05c25af439f0b43b7af32582e751e8c7f2efb29",
+      "failure": "Missing constructor lock at Console teardown fixture setter injection."
+    },
+    "controls": {
+      "missing_lock_red": {
+        "tests": 2,
+        "failures": 2,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 4.273,
+        "test_identities": [
+          "Tests.UI.test_console_runtime_ownership::test_app_fences_console_then_drains_buddy_before_profile_teardown",
+          "Tests.UI.test_actor_pack_export_ownership::test_persona_import_fences_mounted_buddy_state"
+        ],
+        "junit_sha256": "8c105cd5bba7b9cb64415d67801e69d30f842c69c5da0a50a5a1e3f50e5f53db",
+        "log_sha256": "1f5f510d22849aeb895ddf3ef6e389c18e90c89a4b66cdb2168fd7f1bb584db5"
+      },
+      "unchanged_raw_cli_fixture_in_admitted_cohort": {
+        "tests": 10,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 3.728,
+        "test_identities": [
+          "Tests.UI.test_console_runtime_ownership::test_app_fences_console_then_drains_buddy_before_profile_teardown",
+          "Tests.UI.test_console_runtime_ownership::test_lazy_persona_buddy_property_defers_and_ensure_constructs",
+          "Tests.UI.test_actor_pack_export_ownership::test_app_constructs_one_export_controller_after_profile_services",
+          "Tests.UI.test_actor_pack_export_ownership::test_app_constructs_import_pipeline_after_profile_services",
+          "Tests.UI.test_actor_pack_export_ownership::test_persona_import_fences_mounted_buddy_state",
+          "Tests.UI.test_actor_pack_export_ownership::test_export_controller_is_in_app_owned_shutdown_before_profile_teardown",
+          "Tests.UI.test_actor_pack_export_ownership::test_export_shutdown_finishes_before_later_app_owners",
+          "Tests.Persona_Buddy.test_buddy_controller_publication::test_controller_setter_waits_for_construction_lock",
+          "Tests.Persona_Buddy.test_buddy_startup::test_unclaimed_migration_commits_before_first_controller_can_read",
+          "Tests.Persona_Buddy.test_buddy_startup::test_controller_claim_during_copy_hands_off_without_overwriting"
+        ],
+        "junit_sha256": "99fe9be6688d2125071ac8d12443f48b621939a6963b5d6b75aef400625cb853",
+        "log_sha256": "2ac0367a8aebdc6190c692218e3c89f03d9325209d59bcc010990c5f7b125050"
+      },
+      "missing_meeting_slot_intermediate": {
+        "tests": 10,
+        "failures": 1,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 3.031,
+        "test_identities": [
+          "Tests.UI.test_console_runtime_ownership::test_app_fences_console_then_drains_buddy_before_profile_teardown",
+          "Tests.UI.test_console_runtime_ownership::test_lazy_persona_buddy_property_defers_and_ensure_constructs",
+          "Tests.UI.test_actor_pack_export_ownership::test_app_constructs_one_export_controller_after_profile_services",
+          "Tests.UI.test_actor_pack_export_ownership::test_app_constructs_import_pipeline_after_profile_services",
+          "Tests.UI.test_actor_pack_export_ownership::test_persona_import_fences_mounted_buddy_state",
+          "Tests.UI.test_actor_pack_export_ownership::test_export_controller_is_in_app_owned_shutdown_before_profile_teardown",
+          "Tests.UI.test_actor_pack_export_ownership::test_export_shutdown_finishes_before_later_app_owners",
+          "Tests.Persona_Buddy.test_buddy_controller_publication::test_controller_setter_waits_for_construction_lock",
+          "Tests.Persona_Buddy.test_buddy_startup::test_unclaimed_migration_commits_before_first_controller_can_read",
+          "Tests.Persona_Buddy.test_buddy_startup::test_controller_claim_during_copy_hands_off_without_overwriting"
+        ],
+        "junit_sha256": "d80f9b2d1430e17b2ff069161d1e65ff8ad62015ed3b816d47ba6fa8ccd7eb44",
+        "log_sha256": "980542b17b9c193bdf5ec9e7d36df00c64bf8fb10cab1e043615b5b2e7d5fde8"
+      },
+      "standalone_setup_refusal_excluded_from_defect_attribution": {
+        "tests": 1,
+        "failures": 0,
+        "errors": 1,
+        "skipped": 0,
+        "duration_seconds": 1.65,
+        "test_identities": [
+          "Tests.UI.test_actor_pack_export_ownership::test_export_shutdown_finishes_before_later_app_owners"
+        ],
+        "junit_sha256": "1de6dc40400adea22bee8e91d82bdf4349c354364f4c1e2f324b5275a55f7e78",
+        "log_sha256": "a6ea4b6afc564820018781ed37791cf0aedba6f5cc01ba69905886b5f8acc787"
+      }
+    },
+    "standalone_control_limit": "The standalone attempt was refused during setup with raw_source_selection_changed; it never reached teardown. Defect attribution uses the admitted cohort failure and unchanged function/lifecycle source.",
+    "library_ci_failure": {
+      "log_sha256": "867f45ea859339a69869d11e1b5339af4ca873f7911663613e9dbb2df110031b",
+      "path_unchanged_from_base": true,
+      "focused_run": {
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 41.549,
+        "test_identities": [
+          "Tests.UI.test_library_notes_sync_delete_restore::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[False]",
+          "Tests.UI.test_library_notes_sync_delete_restore::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[True]"
+        ],
+        "junit_sha256": "1e9f07cc5b3e6abd89b4dc73fba57314007aeba8c46b628bc614a2a03c2446e7",
+        "log_sha256": "ee759e81b7238e9e8151e49ab49e12c0d349f8daf0aaa701168e6810c7218adb"
+      },
+      "root_cause": "Unproven; the same unchanged head passes the full shard of 235 tests on retry. No Library source or assertion changed.",
+      "unchanged_head_retry": {
+        "head": "66065147258f2da0223dee118063e465835aab24",
+        "job_id": 114611245945,
+        "job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/38183913644/job/114611245945",
+        "passed": 235,
+        "failed": 0,
+        "duration_seconds": 349.51,
+        "log_sha256": "5b5b793be3549fed22b7baabbc755ad669e4c11ae482cbe1051eabdb22e22b8a"
+      }
+    },
+    "independent_review": "Independent code/protocol and final receipt review completed with no findings. Source/result hashes, original assertions, controls and aggregate counts verified."
   }
 }

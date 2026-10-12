@@ -4,7 +4,7 @@ title: Persona Buddy lazy-controller residue - unlocked setter and an untested e
 status: Done
 assignee: []
 created_date: '2026-08-23'
-updated_date: 2026-10-11 23:14
+updated_date: 2026-10-12 00:34
 labels:
 - personas
 - concurrency
@@ -63,6 +63,10 @@ Reason: retain the existing lazy controller, lock, independent management and st
 
 5. Repair the CI pre-import ratchet under existing ADR-097 by moving the same generation controller/runner imports into the existing explicit-action helper after its test override. Preserve all budget constants. Verify unchanged census, existing generation behavior and a real default-controller self-check; retain actual CI RED and updated source hashes.
 The selected legacy generation suites use collection-bound config/internal prompts and fail raw_source_selection_changed under per-test profile replacement; both representative failures reproduce before the screen import move. Keep these two modules on their admitted private bootstrap profile, preserve original bodies/assertions, and rerun all affected generation checks.
+
+6. Current-head CI follow-up: supply the existing constructor-owned threading.Lock in the two skeletal TldwCli injection fixtures (Console shutdown and Actor Pack refresh). Preserve the locked public setter and every original lifecycle assertion. Capture both missing-lock REDs, verify corrected tests plus setter/startup controls, compare scoped static diagnostics with the previous head, review independently and retain evidence. Existing ADRs apply; fixture repair only.
+The adjacent Actor Pack shutdown test also omits its existing synchronous raw CLI owner and shared shutdown-task slot. Its function body and production lifecycle match the previous head, and the admitted cohort control reaches the missing slot. A standalone attempt was refused during profile setup and is excluded from defect attribution. Provide a no-op synchronous owner and the task slot while preserving the original Actor Pack teardown order assertion; retain the intermediate failure and baseline control.
+Once the raw CLI drain runs, the same baseline skeleton also lacks the constructor-owned empty meeting slot. Retain that intermediate result and initialize _meeting_session_owner to None, matching the unstarted production owner. No lifecycle method or ordering assertion changes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -73,13 +77,14 @@ Completed controller setter locking and mounted disabled-profile Manage Buddy co
 Recorded the traced stale-review/storage-scope incident and its verified boundary repair in backlog/docs/lessons-testing-evidence.md.
 Current-head CI exposed the adjacent pre-import ratchet: 559 modules against558 because Persona_Visual moved from eager boot into the screen pass. Under existing ADR097, defer the existing CharacterGenerationController/build_gateway_runner import until its explicit action (all runtime callers are the same screen helper; its test override remains first). Keep module/LOC limits unchanged. Verify the exact budget and existing character-generation controller/UI checks, then retain updated source attribution and fresh independent review. Disarmed normal auto-merge before modifying this PR.
 The CI pre-import failure is repaired under ADR-097 by deferring the existing generation controller imports until requested. All 22 budget, controller and UI cases pass at 558/558 modules and 417835/425347 lines of code; the headroom warning is recorded. Two profile-admission failures reproduce before the import move. Keeping those modules on their admitted private bootstrap profile preserves all original function/class bodies. The final six-case gate passes both mounted Buddy journeys, three startup guards and the actual default constructor/override check. Across the retained runs, 151 unique repository tests and the constructor check pass. Follow-up static checks introduce no Ruff or Bandit findings; compilation and whitespace pass, with existing formatting debt preserved. Independent review found no import or caller issue. The October 11 report and receipt retain final source sets, the CI failure and controls. Protected current-head CI remains required before merge.
+CI fixture follow-up: both skeletal Buddy setter callers now supply the constructor-owned lock. The unchanged Actor Pack teardown skeleton receives its synchronous no-op raw CLI owner/task and empty meeting slot. All original assertions and production lifecycle methods remain intact. Both missing-lock RED failures and admitted cohort missing-owner failures are retained; the standalone profile setup refusal is explicitly excluded from defect attribution. Final targeted gate 10/10 passes, with no introduced scoped Ruff/Bandit findings and preserved Console formatting debt. Whole-module AST proof excludes only the exact constructor prerequisites/import. Across retained successful runs, 158 unique repository tests plus the constructor check pass. Independent code and final receipt reviews have no remaining findings. Fresh protected CI remains required before merge.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Controller publication and disabled-profile management are verified. Atomic Actor Pack, Persona and conversion guards and policy portability remain intact. Startup and pre-import budgets pass unchanged. Across the retained runs, 151 unique repository tests and the constructor check pass; accepted historical UAT is preserved.
+Controller publication and disabled-profile management are verified. Atomic Actor Pack, Persona and conversion guards and policy portability remain intact. Startup and pre-import budgets pass unchanged. Across the retained runs, 158 unique repository tests and the constructor check pass; accepted historical UAT is preserved.
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 ## Definition of Done

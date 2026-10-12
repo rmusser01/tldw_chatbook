@@ -3015,6 +3015,7 @@ async def test_app_fences_console_then_drains_buddy_before_profile_teardown(
         await asyncio.shield(console_task)
 
     app = object.__new__(TldwCli)
+    app._persona_buddy_controller_lock = threading.Lock()
     app.persona_buddy_controller = Buddy()
     app._persona_buddy_shutdown_task = None
     app._audio_cpp_artifact_lease_coordinator = None
