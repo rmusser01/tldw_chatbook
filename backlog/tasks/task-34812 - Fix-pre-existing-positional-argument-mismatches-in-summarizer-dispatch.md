@@ -22,9 +22,9 @@ Found during the TASK-33245 dispatch-table review (verified mechanically against
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All three routes pass every argument by its correct parameter (keyword or correctly-ordered positional), verified against each function's signature.
-- [ ] #2 Regression tests pin the corrected routing for all three providers through `_dispatch_to_api`/`analyze`.
-- [ ] #3 Targeted local-summarizer suites pass (kobold/tabby config tests included).
+- [x] #1 All three routes pass every argument by its correct parameter (keyword or correctly-ordered positional), verified against each function's signature.
+- [x] #2 Regression tests pin the corrected routing for all three providers through `_dispatch_to_api`/`analyze`.
+- [x] #3 Targeted local-summarizer suites pass (kobold/tabby config tests included).
 <!-- AC:END -->
 
 
@@ -40,3 +40,10 @@ Discovered by the PR-3092 review (mechanically verified against the pre-refactor
 ADR required: no
 ADR path: N/A
 Reason: bug fix at an existing dispatch site; no architectural decision.
+
+
+## Implementation Notes
+
+PR #3094 (stacked on #3092's table). All three adapters corrected and pinned by exact-(args, kwargs) regression tests through the real _dispatch_to_api entry. Review-verified downstream behavior: ollama now resolves model from config instead of receiving the streaming bool; kobold's streaming path is now actually reachable (its temp/system_message swap was behaviorally inert — the function never reads them; filed as follow-up); tabbyapi's api_key/system_message/temp now land where the payload reads them. No in-repo analyze() caller streams, so the newly-live streaming routes have no existing consumers. Two follow-ups filed from the review: kobold's dead parameters, and summarize_chunk's same-species argument rotation into analyze() (FIXME-marked, test-only caller).
+
+ADR: not required (bug fix at an existing site; no architectural decision).

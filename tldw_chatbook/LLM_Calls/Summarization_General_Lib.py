@@ -2767,8 +2767,8 @@ _SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
     ),
     # TASK-34812: ollama's signature is (input_data, custom_prompt,
     # api_url, api_key, temp, system_message, model, ...); the old
-    # positional call landed the streaming flag on model and api_url on
-    # the slot meant for model.
+    # positional call landed the streaming flag on model (api_url
+    # correctly received None and resolves from config).
     "ollama": lambda ak, text, cp, temp, sm, st: summarize_with_ollama(
         text, cp, api_key=ak, temp=temp, system_message=sm, streaming=st
     ),
