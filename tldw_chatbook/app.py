@@ -3242,13 +3242,24 @@ class TldwCli(
         except Exception:
             _notes_sync_start_evidence = True
         if _notes_sync_start_evidence:
-            self._notes_sync_runtime_start_task = asyncio.create_task(
-                self.notes_sync_runtime_owner.start(),
-                name="start_notes_sync_runtime",
-            )
-            self._notes_sync_runtime_start_task.add_done_callback(
-                self._observe_notes_sync_runtime_start
-            )
+            # PR #3084 review fix: a notes-sync BUILD failure on a
+            # configured profile must not escape on_mount (Textual's
+            # default crash) before the Library screen's safe reader can
+            # present it. Construct through the guarded reader; a failed
+            # build records `_notes_sync_runtime_build_failure` and skips
+            # start() entirely.
+            try:
+                _notes_sync_owner = self._read_notes_sync_runtime_owner_safe()
+            except Exception:
+                _notes_sync_owner = None
+            if _notes_sync_owner is not None:
+                self._notes_sync_runtime_start_task = asyncio.create_task(
+                    _notes_sync_owner.start(),
+                    name="start_notes_sync_runtime",
+                )
+                self._notes_sync_runtime_start_task.add_done_callback(
+                    self._observe_notes_sync_runtime_start
+                )
         else:
             # First-time setup force-starts the runtime on demand
             # (`review_setup`), constructing it lazily at that point.
