@@ -29,6 +29,7 @@ from tldw_chatbook.LLM_Calls.qwencloud_url import (
     normalize_qwencloud_base_url,
 )
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+    CAPABILITY_HINT_KEYS,
     DiscoveredModel,
     DiscoveryErrorKind,
     ModelDiscoveryError,
@@ -606,10 +607,12 @@ def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
     Vercel's tiered pricing (270 items against a 256-item bound) listed none
     of its 407 models (TASK-34363). A top-level field that breaks a bound on
     its own is dropped first; if the rest together still exceed a bound, the
-    largest fields go, biggest first, until they fit. Nothing unbounded is
+    largest fields go, biggest first, until they fit, and a field the
+    capability inference reads goes only after every other. Nothing unbounded is
     ever kept. The work is bounded: a model with more top-level fields than
-    the item bound cannot fit and gets no metadata, and each surviving field
-    is measured once.
+    the item bound cannot fit and gets no metadata, each field is measured
+    once on its own, and the number to drop is found by bisection (about
+    nine measurements of the record, however many fields it has).
 
     Args:
         model_payload: One model object from a ``/models`` response.
@@ -630,13 +633,42 @@ def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
         except ValueError:
             continue
         kept[key] = value
-    largest_first = sorted(kept, key=lambda name: len(json.dumps(kept[name])), reverse=True)
-    for name in largest_first:
-        try:
-            return _safe_model_metadata(kept)
-        except ValueError:
-            del kept[name]
-    return {}
+    # Largest first, but the fields capability inference reads go last
+    # (TASK-34402): shrinking a listing should not cost the model its hint.
+    largest_first = sorted(
+        kept,
+        key=lambda name: (
+            name not in CAPABILITY_HINT_KEYS,
+            len(json.dumps(kept[name])),
+        ),
+        reverse=True,
+    )
+    # Every kept field passed on its own, so what remains can only break a
+    # total (items or serialized bytes), and removing a field never raises
+    # either: whether the record fits is monotone in how many fields are gone.
+    # Bisect for the fewest evictions. Re-measuring after each one scrubbed a
+    # record of 255 small fields 255 times, minutes of CPU for a large listing.
+    measured: dict[int, dict[str, Any] | None] = {}
+
+    def without(evicted: int) -> dict[str, Any] | None:
+        if evicted not in measured:
+            gone = set(largest_first[:evicted])
+            try:
+                measured[evicted] = _safe_model_metadata(
+                    {name: value for name, value in kept.items() if name not in gone}
+                )
+            except ValueError:
+                measured[evicted] = None
+        return measured[evicted]
+
+    fewest, most = 0, len(largest_first)
+    while fewest < most:
+        middle = (fewest + most) // 2
+        if without(middle) is None:
+            fewest = middle + 1
+        else:
+            most = middle
+    return without(fewest) or {}
 
 
 def normalize_models_response(
@@ -998,7 +1030,11 @@ async def discover_openai_compatible_models(
         datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     )
     try:
-        models = normalize_models_response(
+        # Off the event loop, like the JSON decode above: bounding a listing's
+        # metadata is CPU work that grows with the response (a record whose
+        # fields only overflow together is re-measured once per dropped field).
+        models = await asyncio.to_thread(
+            normalize_models_response,
             {"data": combined_data},
             provider=provider,
             provider_list_key=provider_list_key,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
+import threading
 import time
 from unittest.mock import Mock
 
@@ -11,6 +13,9 @@ import pytest
 from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError
 from tldw_chatbook.LLM_Calls.qwencloud import normalize_qwencloud_base_url
 from tldw_chatbook.LLM_Provider_Catalog import openai_compatible_model_discovery
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_merge import (
+    resolve_discovered_model_capability_status,
+)
 from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
     build_models_url,
     discover_openai_compatible_models,
@@ -1220,7 +1225,7 @@ def test_fields_that_only_overflow_together_lose_the_largest_and_keep_the_vision
     """Vercel's shape: each field fits alone, tiered pricing pushes the total over 256 items."""
     model = {
         "id": "openai/gpt-5.6-sol",
-        "architecture": {"input_modalities": ["text", "image"]},
+        "modalities": {"input": ["text", "image"], "output": ["text"]},
         "extras": list(range(60)),
         "pricing": {f"tier_{n}": {"input": n, "output": n} for n in range(68)},
     }
@@ -1232,8 +1237,225 @@ def test_fields_that_only_overflow_together_lose_the_largest_and_keep_the_vision
         now_iso="2026-08-12T00:00:00Z",
     )
 
-    assert set(discovered.metadata_raw_safe) == {"id", "architecture", "extras"}
-    assert tuple(discovered.metadata_raw_safe["architecture"]["input_modalities"]) == ("text", "image")
+    assert set(discovered.metadata_raw_safe) == {"id", "modalities", "extras"}
+    assert tuple(discovered.metadata_raw_safe["modalities"]["input"]) == (
+        "text",
+        "image",
+    )
+    # Kept AND read: the hint still marks the model as vision-capable (TASK-34402).
+    assert (
+        resolve_discovered_model_capability_status(
+            "Custom", discovered.model_id, discovered.metadata_raw_safe
+        )
+        == "inferred"
+    )
+
+
+def test_shrinking_a_listing_drops_the_capability_hint_last():
+    """TASK-34402: the hint can be one of the largest fields and must outlive the rest.
+
+    200 two-item lists and a ``capabilities`` block overflow the item bound
+    together. Largest-first eviction used to take the block before any list.
+    """
+    model = {
+        "id": "vendor/many-small-fields",
+        "capabilities": {
+            "completion_chat": True,
+            "function_calling": True,
+            "fine_tuning": False,
+            "vision": True,
+        },
+        **{f"field_{n:03d}": [n, n] for n in range(200)},
+    }
+    (discovered,) = normalize_models_response(
+        {"data": [model]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    kept = discovered.metadata_raw_safe
+    assert "capabilities" in kept and 1 < len(kept) < len(model)
+    assert (
+        resolve_discovered_model_capability_status(
+            "Custom", discovered.model_id, kept
+        )
+        == "inferred"
+    )
+
+
+def test_hint_fields_that_overflow_by_themselves_lose_the_largest_first():
+    """Two hint fields that each fit, but not together: the bound still holds."""
+    model = {
+        "id": "vendor/two-large-hints",
+        "architecture": {f"detail_{n:03d}": n for n in range(200)},
+        "capabilities": {
+            "vision": True,
+            **{f"flag_{n:03d}": False for n in range(100)},
+        },
+    }
+    (discovered,) = normalize_models_response(
+        {"data": [model]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    kept = discovered.metadata_raw_safe
+    assert "capabilities" in kept and "architecture" not in kept
+    assert (
+        resolve_discovered_model_capability_status(
+            "Custom", discovered.model_id, kept
+        )
+        == "inferred"
+    )
+
+
+def _linear_reference(model: dict) -> dict:
+    """The eviction as it was first written: re-measure after every dropped field."""
+    discovery = openai_compatible_model_discovery
+    try:
+        return discovery._safe_model_metadata(model)
+    except ValueError:
+        pass
+    if len(model) > discovery.MODEL_METADATA_MAX_ITEMS:
+        return {}
+    kept = {}
+    for key, value in model.items():
+        try:
+            discovery._safe_model_metadata({key: value})
+        except ValueError:
+            continue
+        kept[key] = value
+    order = sorted(
+        kept,
+        key=lambda name: (
+            name not in discovery.CAPABILITY_HINT_KEYS,
+            len(json.dumps(kept[name])),
+        ),
+        reverse=True,
+    )
+    for name in order:
+        try:
+            return discovery._safe_model_metadata(kept)
+        except ValueError:
+            del kept[name]
+    return {}
+
+
+def test_bisected_eviction_keeps_exactly_what_dropping_one_field_at_a_time_kept():
+    """The bisection is a faster way to the same answer, never a different one."""
+    rng = random.Random(34402)
+    hint_names = sorted(openai_compatible_model_discovery.CAPABILITY_HINT_KEYS)
+
+    def value(depth: int = 0):
+        kind = rng.randrange(7 if depth < 2 else 4)
+        if kind == 0:
+            return rng.randrange(10**6)
+        if kind == 1:
+            return "x" * rng.choice([1, 8, 80, 900, 5000])
+        if kind == 2:
+            return rng.choice([True, False, None, 1.5, float("nan")])
+        if kind == 3:
+            return [rng.randrange(9) for _ in range(rng.choice([1, 3, 40, 130, 300]))]
+        if kind == 4:
+            return [value(depth + 1) for _ in range(rng.randrange(6))]
+        return {
+            f"k{n}": value(depth + 1) for n in range(rng.choice([1, 2, 6, 30, 120]))
+        }
+
+    discovery = openai_compatible_model_discovery
+
+    def fits_alone(name: str, field) -> bool:
+        """Whether the field survives on its own (an over-long string scrubs to nothing)."""
+        try:
+            return bool(discovery._safe_model_metadata({name: field}))
+        except ValueError:
+            return False
+
+    records = []
+    for _ in range(90):
+        names = [f"field_{n:03d}" for n in range(rng.choice([2, 9, 20, 40, 70]))]
+        names += rng.sample(hint_names, rng.randrange(len(hint_names) + 1))
+        rng.shuffle(names)
+        records.append({name: value() for name in names})
+    # Few items, many bytes: these can only overflow the serialized-size bound.
+    byte_heavy = [
+        {f"text_{n:02d}": "x" * 900 for n in range(30)},
+        {"capabilities": {"vision": True}, **{f"t{n}": "y" * 2000 for n in range(12)}},
+        {f"text_{n:02d}": "z" * rng.choice([600, 900, 1500]) for n in range(40)},
+    ]
+
+    differing = together = 0
+    for model in records + byte_heavy:
+        expected = _linear_reference(model)
+        got = discovery._bounded_model_metadata(model)
+        differing += got != expected or list(got) != list(expected)
+        alone = sum(fits_alone(name, field) for name, field in model.items())
+        # Lost a field that was fine on its own: the together stage, the bisect.
+        together += len(expected) < alone
+
+    assert differing == 0
+    assert together > 20, "the generator stopped producing records the bisect has to trim"
+    for model in byte_heavy:
+        kept = discovery._bounded_model_metadata(model)
+        assert 0 < len(kept) < len(model), "a byte-heavy record was not trimmed by size"
+
+
+def test_trimming_a_record_of_many_small_fields_takes_a_handful_of_measurements(
+    monkeypatch,
+):
+    """255 two-item lists overflow together; they used to cost 255 full re-measurements."""
+    model = {f"field_{n:03d}": [n, n] for n in range(255)}
+    real = openai_compatible_model_discovery._safe_model_metadata
+    whole_record: list[int] = []
+
+    def counting(payload):
+        if len(payload) > 1:
+            whole_record.append(len(payload))
+        return real(payload)
+
+    monkeypatch.setattr(
+        openai_compatible_model_discovery, "_safe_model_metadata", counting
+    )
+
+    kept = openai_compatible_model_discovery._bounded_model_metadata(model)
+
+    assert 0 < len(kept) < len(model)
+    assert len(whole_record) <= 12, whole_record
+
+
+@pytest.mark.asyncio
+async def test_a_listing_is_normalised_off_the_event_loop(monkeypatch):
+    """Bounding a large listing is CPU work; on the loop it froze the UI (TASK-34402)."""
+    loop_thread = threading.get_ident()
+    real = openai_compatible_model_discovery.normalize_models_response
+    ran_on: list[int] = []
+
+    def recording(*args, **kwargs):
+        ran_on.append(threading.get_ident())
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(
+        openai_compatible_model_discovery, "normalize_models_response", recording
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"id": "runtime-a"}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await discover_openai_compatible_models(
+            provider="Custom",
+            provider_list_key="Custom",
+            endpoint="https://api.example.test/v1/chat/completions",
+            api_key="test-key",
+            client=client,
+        )
+
+    assert result.status == "success"
+    assert ran_on and loop_thread not in ran_on
 
 
 def test_normalize_models_drops_an_oversized_field_but_keeps_the_model():
