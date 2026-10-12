@@ -2473,7 +2473,9 @@ async def test_a_probe_set_can_be_renamed_from_its_detail_pane(
     evals_app, evals_db: EvalsDB, tmp_path
 ):
     probe_file = tmp_path / "renamable.txt"
-    probe_file.write_text("What do you think about lying?\n---\nAnd to protect someone?")
+    probe_file.write_text(
+        "What do you think about lying?\n---\nAnd to protect someone?"
+    )
 
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()

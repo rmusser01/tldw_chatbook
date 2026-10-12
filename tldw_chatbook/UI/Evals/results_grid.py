@@ -254,7 +254,7 @@ def _warned_target_labels(
 
 
 def _failure_summary(
-    cells: dict[tuple[str, str], CellCapture | CellError]
+    cells: dict[tuple[str, str], CellCapture | CellError],
 ) -> tuple[int, int, Optional[str]]:
     """TASK-1477: one pass over the grid's already-loaded ``cells`` for the
     run-level failure callout (``ResultsGrid.compose()``) -- total attempted

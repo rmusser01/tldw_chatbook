@@ -63,9 +63,7 @@ def _character_bench_id(db: EvalsDB, name: str) -> str:
 def _probe_set_id(db: EvalsDB, name: str) -> str:
     from tldw_chatbook.Evals.character_probe.storage import save_probe_set
 
-    return save_probe_set(
-        db, name, ProbeSet(probes=(Probe(turns=("hello?",)),))
-    )
+    return save_probe_set(db, name, ProbeSet(probes=(Probe(turns=("hello?",)),)))
 
 
 # ---------------------------------------------------------------------------
@@ -146,9 +144,7 @@ def test_probe_sets_and_word_bench_datasets_partition_datasets(db):
     set (``probe_sets()``) or a snippet dataset (``word_bench_datasets()``).
     The "+ New bench" / "+ New character bench" gates each read one half,
     so a row landing in both (or neither) is a silent gate bug."""
-    db.create_dataset(
-        name="snippet dataset", format="custom", source_path="inline:s"
-    )
+    db.create_dataset(name="snippet dataset", format="custom", source_path="inline:s")
     _probe_set_id(db, "probe set")
 
     vm = EvalsViewModel(db)

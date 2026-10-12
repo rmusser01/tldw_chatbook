@@ -609,7 +609,9 @@ class CharacterBenchEstimate(Vertical):
         # `max(config.max_tokens, 1)`: `max_tokens` is floored at 1 by the
         # editor and the engine, so this guard is defensive only (a
         # hand-edited 0 must not zero the whole duration).
-        per_call_seconds = max(config.max_tokens, 1) * _CHARACTER_ASSUMED_SECONDS_PER_TOKEN
+        per_call_seconds = (
+            max(config.max_tokens, 1) * _CHARACTER_ASSUMED_SECONDS_PER_TOKEN
+        )
         duration = _format_estimate_duration(call_count * per_call_seconds)
         yield Static(
             f"{call_count} calls · {duration}",

@@ -2643,7 +2643,10 @@ async def test_an_in_flight_run_never_renders_the_all_cells_failed_next_step(
         grid = await _select_run_group(pilot, group_id)
         callout = grid.query_one("#evals-grid-failure-callout", Static)
         text = callout.visual.plain
-        assert text == "Run in flight — 2 of 2 attempted cells failed so far — unreachable."
+        assert (
+            text
+            == "Run in flight — 2 of 2 attempted cells failed so far — unreachable."
+        )
         assert "All" not in text
         assert "run the bench again" not in text
 
@@ -2706,7 +2709,9 @@ async def test_a_cancelled_run_with_zero_failures_still_explains_its_partial_gri
         await pilot.pause()
         grid = await _select_run_group(pilot, group_id)
         callout = grid.query_one("#evals-grid-failure-callout", Static)
-        assert callout.visual.plain == "Run cancelled — 1 of 4 cells attempted, 0 failed."
+        assert (
+            callout.visual.plain == "Run cancelled — 1 of 4 cells attempted, 0 failed."
+        )
 
 
 @pytest.mark.asyncio
@@ -2730,9 +2735,7 @@ async def test_a_completed_all_failed_run_keeps_its_existing_callout(
             run_group_id=all_cells_failed_run_group["group_id"], limit=10
         ):
             pilot.app.screen._view_model.db.update_run_status(run["id"], "completed")
-        grid = await _select_run_group(
-            pilot, all_cells_failed_run_group["group_id"]
-        )
+        grid = await _select_run_group(pilot, all_cells_failed_run_group["group_id"])
         callout = grid.query_one("#evals-grid-failure-callout", Static)
         assert callout.visual.plain == (
             "All 4 cells failed — unreachable. Check that the target's "

@@ -1735,9 +1735,7 @@ class EvalsScreen(LabScreen):
                 # pair consistent if it ever starts interpolating the
                 # bench name.
                 self.app_instance.notify(
-                    "Bench run cancelled."
-                    if was_cancelled
-                    else "Bench run finished.",
+                    "Bench run cancelled." if was_cancelled else "Bench run finished.",
                     severity="information",
                     markup=False,
                 )
@@ -2079,9 +2077,7 @@ class EvalsScreen(LabScreen):
             launch_selection = EvalsSelection(kind="character_bench", id=task_id)
             if self._selection_unmoved_since_launch(launch_selection, task_id):
                 self.app_instance.notify(
-                    "Bench run cancelled."
-                    if was_cancelled
-                    else "Bench run finished.",
+                    "Bench run cancelled." if was_cancelled else "Bench run finished.",
                     severity="information",
                     markup=False,
                 )

@@ -3600,9 +3600,7 @@ async def test_pressing_duplicate_on_a_character_bench_copies_it_and_selects_the
         screen: EvalsScreen = pilot.app.screen
         screen.select(kind="character_bench", id=character_bench_id)
         await pilot.pause()
-        source_before = load_character_bench(
-            screen._view_model.db, character_bench_id
-        )
+        source_before = load_character_bench(screen._view_model.db, character_bench_id)
 
         await pilot.click("#evals-duplicate-bench")
         await pilot.pause()
@@ -3653,9 +3651,7 @@ async def test_a_character_bench_renders_under_its_own_subgroup_not_classic(
         ]
         assert "─ character ─" in separators, separators
 
-        character_row = rail.query_one(
-            "#evals-rail-row-benches-character-0", Button
-        )
+        character_row = rail.query_one("#evals-rail-row-benches-character-0", Button)
         assert "villain bench" in str(character_row.label)
         # The diamond marker stays on the row (belt to the label's braces).
         assert str(character_row.label).startswith("◆ ")
@@ -3962,8 +3958,8 @@ async def test_a_failed_run_restores_the_full_primary_action_block(
         screen.select(kind="bench", id=runnable_bench)
         await pilot.pause()
         gate = asyncio.Event()
-        screen._sample_bench_client_factory = lambda t: (
-            _GatedThenFailingCaptureClient(gate)
+        screen._sample_bench_client_factory = lambda t: _GatedThenFailingCaptureClient(
+            gate
         )
 
         await pilot.click("#evals-primary-action")
@@ -4004,8 +4000,8 @@ async def test_a_failed_sample_run_restores_the_primary_actions_true_state(
         screen.select(kind="bench", id=runnable_bench)
         await pilot.pause()
         gate = asyncio.Event()
-        screen._sample_bench_client_factory = lambda t: (
-            _GatedThenFailingCaptureClient(gate)
+        screen._sample_bench_client_factory = lambda t: _GatedThenFailingCaptureClient(
+            gate
         )
 
         # Start the SAMPLE run (the rail's one-click flow) while the
