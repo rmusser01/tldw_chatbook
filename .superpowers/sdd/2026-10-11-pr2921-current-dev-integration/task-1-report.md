@@ -172,3 +172,53 @@ no repeated unaffected inventory failures. Full argv/interpreter/environment/
 before-after source hashes and raw/JUnit retained. New adapter/test Ruff clean;
 Dreams_DB retains previously authored filename/type/constant lint diagnostics
 for final scoped lint, with new import order corrected. No full-suite claim.
+
+
+## Checkpoint: inert restored Dreams and actual first restored fetch
+
+Real archive restoration and fresh selected-process execution reproduced five
+unauthorized Dreams paths: cycle/model callback, track/search callback, projected
+queue tasks, cached runtime getter and boot suspension-history writes. Stored
+enabled=true did not represent current owner approval. These paths now check
+actual db.dreams execution authority; sticky cycle/track checks include that
+authority at actual queued invocation boundaries. Boot checks the captured
+Dreams handle's path after preserving scheduler/Subscriptions gate order.
+Projection owns lazy constructor acquisition plus reads through the existing
+finite worker helper. A separate actual ServiceWiringMixin getter/projection
+probe proves new native handle closure before originating worker exit while
+preserving the same-worker borrowed handle. Explicit db.dreams approval permits
+projection without approving config. Native history remains unchanged while
+unapproved; original archive/source bytes and custom path survive restoration.
+
+Actual first restored URLMonitor.check_url runs on a native Subscriptions v2
+source restored by the installed planner/executor, in a fresh process, after
+explicit Subscriptions owner approval. Missing/empty/malformed options migrate
+to UNKNOWN and cannot fetch a private-resolving host. Recorded user_entered
+retains the authorized private-host positive. Dreams remains disabled and its
+optional database stays absent throughout. Only DNS and HTTP transport are
+controlled; actual URLMonitor extraction/fetch policy runs. Native source/child
+connection closure is probed before process exit. The v2 fixture is checked
+against the installed measured native v2 catalog, not inferred from its version
+label. No shared DNS address-pinning/TOCTOU guarantee is claimed.
+
+Evidence: dreams-activation-red-1 five real behavior failures/one approved
+positive9.05s. Green-1 was an owned projection decorator indentation collection
+error, retained and repaired. Green-2 139pass/2fail49.23s: boot initially asked
+about a config-derived path instead of its captured DB and moved an existing
+gate's first question. Captured-path and original gate order repaired; only
+invalidated isolated activation/boot nodes rerun15pass13.75s. Actual lazy
+projection native proof2pass0.88s. First restored-fetch-1 four setup admission
+timeouts124.75s: the fixture imported config inside its required pre-bootstrap
+restore coordinator. First-fetch-2 wrong native accessor and3 raw JSON shape
+assertion were separate setup failures. Corrected fixture has an isolated
+producer with explicit native close and leaves the coordinator pre-bootstrap;
+no admission reset, guard weakening or deadline increase. First-fetch-4 all4
+actual restored first-fetch cases pass7.95s. The incident is recorded in
+lessons-testing-evidence. New/touched phase files selected for Ruff pass; known
+older projection/track style diagnostics remain for final scoped lint.
+
+Whole Task1 still requires source-preview native/drain, remaining captured blank
+chat/Guardian boundaries, mixed selection, production Library routing/actions/
+degradation, unsafe literal sinks, modal/F4/token/docs/live checks and bounded
+required-lane membership/final source binding. No complete-product/task/merge
+claim. No broad rerun of unaffected prior phases.

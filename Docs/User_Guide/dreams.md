@@ -129,8 +129,13 @@ watchlist checks remain held too; an error does not authorize a fetch. The one
 thing a start does not
 retry is a tracked page that was left off because its address is not
 public (see [Tracking](#tracking)). On a profile restored from a backup
-and still waiting for your review, the scheduler does not run and
-neither does this check; it runs at the first start after the review.
+and still waiting for your review, Dreams cycles, tracked checks and this startup
+reconciliation remain inactive until the Dreams owner is approved. Reconciliation
+also requires approval for the Watchlists and scheduler stores it changes.
+Stored enabled settings do not provide that approval. Legacy Watchlists URLs
+without recorded user-entered provenance remain untrusted on their first fetch,
+even when Dreams is disabled; explicitly recorded user-entered URLs retain their
+existing access.
 
 ### The config.toml escape hatch
 

@@ -220,3 +220,52 @@ def test_finite_dreams_worker_retires_only_new_native_acquisition(tmp_path, borr
     with ThreadPoolExecutor(max_workers=1) as executor:
         executor.submit(probe).result(timeout=5)
         assert executor.submit(lambda: "origin worker still alive").result(timeout=5)
+
+
+@pytest.mark.parametrize("borrowed", [False, True])
+def test_actual_dreams_projection_lazy_getter_has_finite_native_ownership(tmp_path, monkeypatch, borrowed):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from tldw_chatbook import app_service_wiring
+    from tldw_chatbook.DB.base_db import BaseDB
+    from tldw_chatbook.Dreams import settings
+    from tldw_chatbook.Scheduling.services import dreams_projection
+
+    path = tmp_path / "dreams.sqlite"
+    monkeypatch.setattr(app_service_wiring, "get_dreams_db_path", lambda: path)
+    original_setting = settings.dreams_setting
+    def enabled(key, default=None):
+        return True if key == "enabled" else original_setting(key, default)
+    monkeypatch.setattr(settings, "dreams_setting", enabled)
+    monkeypatch.setattr(dreams_projection, "dreams_setting", enabled)
+    captured = []
+    acquire = BaseDB._get_connection
+    def capture(self, *args, **kwargs):
+        conn = acquire(self, *args, **kwargs)
+        if type(self) is DreamsDB:
+            captured.append(conn)
+        return conn
+    monkeypatch.setattr(BaseDB, "_get_connection", capture)
+    def probe():
+        app = SimpleNamespace(dreams_db=DreamsDB(path) if borrowed else None,
+                              _dreams_db_lock=threading.Lock())
+        projection = dreams_projection.DreamsProjection(
+            lambda: app_service_wiring.ServiceWiringMixin.get_dreams_db(app))
+        try:
+            tasks = projection.tasks(datetime.now(UTC))
+            assert [task.id for task in tasks] == ["dreams:cycle"]
+            assert len(captured) == 1
+            if borrowed:
+                assert captured[0].execute("SELECT 1").fetchone()[0] == 1
+            else:
+                with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                    captured[0].execute("SELECT 1")
+        finally:
+            if app.dreams_db is not None:
+                app.dreams_db.close_all()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(probe).result(timeout=5)
+        assert executor.submit(lambda: "origin worker alive").result(timeout=5)

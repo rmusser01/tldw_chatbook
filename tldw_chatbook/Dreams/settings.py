@@ -67,3 +67,10 @@ def dreams_region() -> str:
         return validate_dreams_profile_text(dreams_setting("region", ""))
     except ValueError:
         return ""
+
+
+def dreams_execution_allowed(database: Any) -> bool:
+    """Require current recovery authority for this selected runtime store."""
+    from tldw_chatbook.Backup_Recovery.activation import execution_allowed
+
+    return execution_allowed(("db.dreams",), getattr(database, "db_path", None))

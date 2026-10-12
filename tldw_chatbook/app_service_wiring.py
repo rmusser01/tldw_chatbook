@@ -3423,6 +3423,10 @@ class ServiceWiringMixin:
         """
         from .Dreams.settings import dreams_setting
 
+        from .Backup_Recovery.activation import execution_allowed
+
+        if not execution_allowed(("db.dreams",), get_dreams_db_path()):
+            return None
         if not dreams_setting("enabled"):
             return getattr(self, "dreams_db", None)
         with self._dreams_db_lock:

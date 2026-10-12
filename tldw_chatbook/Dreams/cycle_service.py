@@ -51,7 +51,7 @@ from tldw_chatbook.Dreams import (
     track_service,
 )
 from tldw_chatbook.Dreams.discovery import Candidate
-from tldw_chatbook.Dreams.settings import dreams_setting
+from tldw_chatbook.Dreams.settings import dreams_execution_allowed, dreams_setting
 from tldw_chatbook.Dreams.story_service import StoryResult
 from tldw_chatbook.Utils.input_validation import validate_dreams_profile_text
 from tldw_chatbook.Utils.timestamps import to_utc_iso
@@ -862,7 +862,7 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
     # minutes and the Settings toggle only writes the flag, so one already
     # in flight kept searching and calling the model after Dreams was
     # switched off.
-    if not dreams_setting("enabled"):
+    if not dreams_setting("enabled") or not dreams_execution_allowed(deps.dreams_db):
         return {"collection_id": None, "status": "disabled", "stories": 0}
     now = deps.now()
     local_date = _local_date(now)
@@ -885,7 +885,7 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
         thread cannot be recalled -- and what it produced is kept.
         """
         nonlocal halted
-        halted = halted or not dreams_setting("enabled")
+        halted = halted or not dreams_setting("enabled") or not dreams_execution_allowed(deps.dreams_db)
         return halted
 
     try:
@@ -1346,7 +1346,8 @@ async def run_catchup_if_due(deps: CycleDeps) -> bool:
     Returns:
         Whether a catch-up cycle was started.
     """
-    if not dreams_setting("enabled") or not dreams_setting("catchup_enabled"):
+    if (not dreams_setting("enabled") or not dreams_setting("catchup_enabled")
+            or not dreams_execution_allowed(deps.dreams_db)):
         return False
     now = deps.now()
     local_date = _local_date(now)
