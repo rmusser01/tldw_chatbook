@@ -698,7 +698,6 @@ def analyze(
 # API Calls
 
 
-
 @_provider_recovery.unqualified
 def summarize_with_openai(
     api_key,
@@ -2696,7 +2695,10 @@ def format_input_with_metadata(metadata, content):
 
 
 # --- TASK-33245: dispatch table replacing the per-provider elif chain ---
-_SUMMARIZER_DISPATCH: dict = {
+# Late-binding on purpose: the analyze/privacy suites monkeypatch the
+# module-level provider names, so entries must be lambdas resolving
+# globals at call time -- direct function references would bypass them.
+_SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
     "openai": lambda ak, text, cp, temp, sm, st: summarize_with_openai(
         ak, text, cp, temp, sm, st
     ),
@@ -2724,6 +2726,7 @@ _SUMMARIZER_DISPATCH: dict = {
     "mistral": lambda ak, text, cp, temp, sm, st: summarize_with_mistral(
         ak, text, cp, temp, sm, st
     ),
+    # --- Mocking test LLM calls ---
     "mock-llm": lambda ak, text, cp, temp, sm, st: summarize_with_mock_llm(
         text, cp, ak, temp, sm, st
     ),

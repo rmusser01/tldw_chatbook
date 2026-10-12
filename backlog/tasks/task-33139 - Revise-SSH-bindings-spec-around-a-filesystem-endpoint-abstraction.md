@@ -17,10 +17,10 @@ The SSH remote workspace bindings spec and 21-task plan (Docs/superpowers/specs 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Spec and plan are revised so authority operations (stat, hash, exclusion, identity capture, admission) are FilesystemEndpoint methods with local and remote implementations.
-- [ ] #2 Laptop-side CAS and file hashing are replaced by fs_read sha256 plus size for both endpoints.
-- [ ] #3 The split-authority posture (client fingerprint check versus server pin) is preserved and documented as an endpoint contract.
-- [ ] #4 The plan's task count and file structure are updated to match the revised design before any phase 3 task executes.
+- [x] #1 Spec and plan are revised so authority operations (stat, hash, exclusion, identity capture, admission) are FilesystemEndpoint methods with local and remote implementations.
+- [x] #2 Laptop-side CAS and file hashing are replaced by fs_read sha256 plus size for both endpoints.
+- [x] #3 The split-authority posture (client fingerprint check versus server pin) is preserved and documented as an endpoint contract.
+- [x] #4 The plan's task count and file structure are updated to match the revised design before any phase 3 task executes.
 <!-- AC:END -->
 
 ## Implementation Notes
