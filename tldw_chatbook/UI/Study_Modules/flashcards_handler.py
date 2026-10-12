@@ -698,7 +698,8 @@ class StudyFlashcardsController:
         for index, card in enumerate(cards):
             queue_state = str(card.get("queue_state") or "unknown")
             label = f"{card.get('front', '')} [{queue_state}]"
-            list_item = ListItem(Label(label))
+            # Literal: as markup "[new]" is a style tag and "[/]" raises.
+            list_item = ListItem(Label(label, markup=False))
             list_item.study_card_record = card
             list_item.study_card_index = index
             await list_view.append(list_item)

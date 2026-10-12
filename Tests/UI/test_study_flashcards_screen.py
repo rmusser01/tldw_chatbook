@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input, ListView, Select, Static, TextArea
+from textual.widgets import Button, Input, Label, ListView, Select, Static, TextArea
 
 from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
@@ -1672,6 +1672,28 @@ async def test_a_held_card_list_rebuild_ends_quietly_when_the_sub_view_is_swappe
         await rebuild  # NoMatches before the fix
         await pilot.pause()
         assert window.current_view == "quizzes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_card_front_with_brackets_is_listed_as_typed():
+    """A card's text is literal in the card list (fix round 1, finding 21).
+
+    The row was built as markup: "[new]", the queue state every row ends
+    with, was read as a style tag and never painted, and a front holding
+    "[/]" raised `MarkupError` inside the rebuild.
+    """
+    scope = GatedCardListStudyScopeService()
+    scope.cards[0]["front"] = "arr[0] vs arr[/]"
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        _window, _deck_select, card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+
+        rows = [str(item.query_one(Label).render()) for item in card_list.children]
+        assert rows == ["arr[0] vs arr[/] [new]", "Second Question [new]"]
 
 
 @pytest.mark.asyncio
