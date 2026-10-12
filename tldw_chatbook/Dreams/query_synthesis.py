@@ -167,14 +167,23 @@ _WRAP_TOKEN_RE = re.compile(
 #: other "label" is the query's own subject and keeps its words, minus
 #: the colon (round 6, G1: "Kyoto: [g1] temples in autumn" was searched
 #: as "temples in autumn").
+#:
+#: A label word may be plural ("Queries:", "Goals:"), numbered ("Goal 1:",
+#: "Goal #1:", "Goal (1):"), and followed by a description in brackets
+#: ("Goal 1 (visit tokyo):"), which is dropped when it repeats the text of
+#: the goal the mark names and kept as subject words otherwise (round 7,
+#: H2). A closing ``**``/``__`` may stand between the label and its colon.
 _LABEL_WORDS = (
-    r"(?:goal|topic|search|query|idea|exploration|line|q)")
+    r"(?:goals?|topics?|search(?:es)?|quer(?:y|ies)|ideas?|explorations?"
+    r"|lines?|q)")
 _PREFIX_PIECE_RE = re.compile(
     r"\s+"
     r"|\(?\d{1,3}[*_]{0,2}[.)]"
-    rf"|(?i:{_LABEL_WORDS}(?: (?:query|queries|search|searches|idea|ideas"
-    r"|line))? ?\d{0,3} ?:)"
-    r"|(?P<subject>[^\W\d_][^\W_]*(?: [^\W_]+){0,3}) ?:(?!:)"
+    rf"|(?i:{_LABEL_WORDS}(?: (?:quer(?:y|ies)|search(?:es)?|ideas?"
+    r"|lines?))?"
+    r" ?(?:#\s?\d{1,3}|\(\d{1,3}\)|\d{1,3})?"
+    r"(?: ?\((?P<described>[^()]{1,60})\))? ?[*_]{0,2} ?:)"
+    r"|(?P<subject>[^\W\d_][^\W_]*(?: [^\W_]+){0,3})[*_]{0,2} ?:(?!:)"
     r"|[>\-*+\u2022_\"'`\u201c\u2018(]"
     r"|[)\u201d\u2019]"
 )
@@ -394,7 +403,14 @@ def _unclosed_wrappers(prefix: str) -> list[str]:
     return owed
 
 
-def _without_marks(text: str) -> tuple[str, set[int]] | None:
+def _same_text(left: str, right: str) -> bool:
+    """Whether two phrases are the same, case and spacing aside."""
+    return " ".join(left.casefold().split()) == " ".join(right.casefold().split())
+
+
+def _without_marks(
+    text: str, goal_texts: tuple[str, ...] = (),
+) -> tuple[str, set[int]] | None:
     """A peeled line with its goal marks removed, and the positions they name.
 
     ``None`` when the line carries no mark. A ``[gN]`` is a mark wherever
@@ -409,7 +425,10 @@ def _without_marks(text: str) -> tuple[str, set[int]] | None:
     wrapping opened there is closed at the end of the line, and that goes
     too. A label of any other words is the query's subject and keeps its
     words without the colon (``Kyoto: [g1] temples`` -> ``Kyoto
-    temples``; round 6, G1). Anything else in front of the mark is the
+    temples``; round 6, G1). A label word's bracketed description is
+    dropped when it repeats the text of the goal the marks name (one of
+    ``goal_texts``, case and spacing aside) and kept as subject words
+    otherwise (round 7, H2). Anything else in front of the mark is the
     query's.
     """
     if all(_is_subscript(text, match.start())
@@ -440,9 +459,21 @@ def _without_marks(text: str) -> tuple[str, set[int]] | None:
     in_front = not _PREFIX_PIECE_RE.sub("", prefix)
     at_end = not behind[-1].strip()
     if in_front:
-        subject = " ".join(
-            match.group("subject") for match in _PREFIX_PIECE_RE.finditer(prefix)
-            if match.group("subject"))
+        # The goal the line's marks name, if exactly one: a label's
+        # description that repeats ITS text is the model naming the goal.
+        named = ""
+        if len(positions) == 1:
+            (position,) = positions
+            if 1 <= position <= len(goal_texts):
+                named = goal_texts[position - 1]
+        words: list[str] = []
+        for match in _PREFIX_PIECE_RE.finditer(prefix):
+            if match.group("subject"):
+                words.append(match.group("subject"))
+            elif match.group("described") and not _same_text(
+                    match.group("described"), named):
+                words.append(match.group("described").strip())
+        subject = " ".join(words)
         body = " ".join(behind).strip()
         for closer in _unclosed_wrappers(prefix):
             if body.endswith(closer):
@@ -519,7 +550,7 @@ def _query_row(
     if number and (numbered or number.end() == len(text)):
         text = _peel(text[number.end():])  # a list number, or nothing but one
     positions: set[int] = set()
-    unmarked = _without_marks(text)
+    unmarked = _without_marks(text, tuple(goal for goal, _angle in goals))
     if unmarked is not None:
         text, positions = unmarked
     elif followed and text.endswith(":") and not text.endswith("::"):

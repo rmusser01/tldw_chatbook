@@ -847,7 +847,10 @@ _LINE_WRAPPERS = ["**{}**", "*{}*", '"{}"', "`{}`", "\u201c{}\u201d",
 #: directly: a number on a single line may be an ordinal, a "word:" may be
 #: the query's own. In front of a mark they are neither.
 _BEFORE_MARK_ONLY = ["{n}. {}", "{n}) {}", "({n}) {}", "**{n}.** {}",
-                     "Query: {}", "Goal query {n}: {}", "Q{n}: {}"]
+                     "Query: {}", "Goal query {n}: {}", "Q{n}: {}",
+                     # Round 7, H2: plural and numbered label words.
+                     "Queries: {}", "Goal #{n}: {}", "Goal ({n}): {}",
+                     "**Ideas**: {}"]
 
 _MARK_ANYWHERE_RE = re.compile(r"\\?\[+\s*/?\s*g\s*-?\d+\s*\\?\]+", re.I)
 
@@ -1293,3 +1296,45 @@ def test_a_wrapper_glued_to_the_next_word_is_removed_with_the_mark(line, query):
 
     assert _query_row(line, [(_G1, None)]) == {
         "query": query, "goal_derived": True, "goal": _G1}
+
+
+# --- H2: plural and numbered label words are labels too --------------------------
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["Queries", "Goals", "Ideas", "Topics", "Lines", "Searches",
+     "Explorations", "Search queries", "Goal #1", "Goal (1)", "Goal 1",
+     "Goals 2", "Topic #12", "Query (3)", "Goal queries", "Idea 2",
+     "**Queries**", "Q #1"],
+)
+def test_a_plural_or_numbered_label_word_is_formatting(label):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(f"{label}: [g1] cheap flights", [(_G1, None)]) == {
+        "query": "cheap flights", "goal_derived": True, "goal": _G1}
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        # The description repeats the goal the mark names: the model naming
+        # the goal, not part of the search.
+        ("Goal 1 (visit tokyo): [g1] cheap flights", "cheap flights"),
+        ("Goal 1 (Visit  Tokyo): [g1] cheap flights", "cheap flights"),
+        ("Goal #1 (visit tokyo): [g1] cheap flights", "cheap flights"),
+        # Anything else is the subject, like any other label's words.
+        ("Goal 1 (Tokyo trip): [g1] cheap flights", "Tokyo trip cheap flights"),
+        ("Goal (budget): [g1] cheap flights", "budget cheap flights"),
+        # It is goal 2's text, but the mark names goal 1: not a repeat.
+        ("Goal 1 (learn the cello): [g1] cheap flights",
+         "learn the cello cheap flights"),
+    ],
+)
+def test_a_goal_label_drops_its_description_only_when_it_repeats_the_goal(
+        line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    goals = [("visit tokyo", None), ("learn the cello", None)]
+    assert _query_row(line, goals) == {
+        "query": query, "goal_derived": True, "goal": "visit tokyo"}
