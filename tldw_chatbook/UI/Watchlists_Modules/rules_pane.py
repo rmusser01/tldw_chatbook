@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.text import Text
 from textual.containers import Grid, Horizontal, Vertical
 from textual.message import Message
 from textual.reactive import reactive
@@ -190,7 +191,7 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
         table.add_columns("Name", "Condition", "Severity", "Enabled")
         for rule in self.rules:
             table.add_row(
-                str(rule.get("name") or "Untitled"),
+                Text(str(rule.get("name") or "Untitled")),
                 str(rule.get("condition_type") or "-"),
                 str(rule.get("severity") or "-"),
                 "Yes" if rule.get("enabled") else "No",

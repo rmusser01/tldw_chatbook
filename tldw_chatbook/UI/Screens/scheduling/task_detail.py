@@ -1563,7 +1563,7 @@ class TaskDetail(Vertical):
 
         follow_button = self.query_one("#schedules-follow-in-console", Button)
         short_title = task.title if len(task.title) <= 24 else f"{task.title[:23]}…"
-        follow_button.label = f"Follow '{short_title}' in Console"
+        follow_button.label = Text(f"Follow '{short_title}' in Console")
 
         # Only the action that would change the current state stays enabled;
         # the other is visibly disabled instead of silently no-oping (UX-059).
@@ -1589,7 +1589,7 @@ class TaskDetail(Vertical):
             else:
                 run_now_button.label = "Run now"
 
-        self._update_static("scheduling-task-detail-title", task.title)
+        self._update_static("scheduling-task-detail-title", Text(task.title))
         self._update_static("scheduling-task-detail-next-run", _format_next_run(task))
         self._update_missed_notice(task)
         self._update_static(
@@ -1748,7 +1748,7 @@ class TaskDetail(Vertical):
         why = self.query_one("#scheduling-transfer-why", Static)
         why.update(f"Edit/Duplicate/Enable/Disable/Delete: {reason}" if reason else "")
 
-    def _update_static(self, widget_id: str, content: str) -> None:
+    def _update_static(self, widget_id: str, content: str | Text) -> None:
         """Update a child Static widget by id."""
         static = self.query_one(f"#{widget_id}", Static)
         static.update(content)
@@ -1835,7 +1835,7 @@ class TaskInspector(Vertical):
         card = self.query_one("#scheduling-conflict-card", Vertical)
         text = self.query_one("#scheduling-conflict-text", Static)
         if task is not None and _underlying_status(task) == TaskStatus.CONFLICT:
-            text.update(f"Conflict detected\n{task.title}")
+            text.update(Text(f"Conflict detected\n{task.title}"))
             card.add_class("conflict")
         else:
             text.update("No conflict")
