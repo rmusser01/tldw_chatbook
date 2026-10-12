@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from unittest.mock import patch
 from textual.app import ComposeResult
 from textual.widgets import Button, DataTable, Input, Select, Static
 
@@ -451,11 +452,13 @@ async def test_filter_by_text_narrows_rows_without_touching_empty_state():
             ],
             empty_diagnosis=None,
         )
-        await pilot.pause()
+        # TASK-34394: the text filter is debounced; wait out the timer.
+        await pilot.pause(0.5)
 
         text_input = app.query_one("#mcp-tools-filter-text", Input)
         text_input.value = "sea"
-        await pilot.pause()
+        # TASK-34394: the text filter is debounced; wait out the timer.
+        await pilot.pause(0.5)
 
         table = app.query_one("#mcp-tools-table", DataTable)
         assert table.row_count == 1
@@ -701,10 +704,12 @@ async def test_select_tool_row_clears_an_active_filter_hiding_the_target():
             ],
             empty_diagnosis=None,
         )
-        await pilot.pause()
+        # TASK-34394: the text filter is debounced; wait out the timer.
+        await pilot.pause(0.5)
         text_input = app.query_one("#mcp-tools-filter-text", Input)
         text_input.value = "bare"
-        await pilot.pause()
+        # TASK-34394: the text filter is debounced; wait out the timer.
+        await pilot.pause(0.5)
         table = app.query_one("#mcp-tools-table", DataTable)
         assert table.row_count == 1  # "search" is currently filtered out
 
@@ -782,11 +787,13 @@ async def test_tags_column_stays_stable_while_filtering_to_a_tagless_subset():
             ],
             empty_diagnosis=None,
         )
-        await pilot.pause()
+        # TASK-34394: the text filter is debounced; wait out the timer.
+        await pilot.pause(0.5)
 
         text_input = app.query_one("#mcp-tools-filter-text", Input)
         text_input.value = "bare"
-        await pilot.pause()
+        # TASK-34394: the text filter is debounced; wait out the timer.
+        await pilot.pause(0.5)
 
         table = app.query_one("#mcp-tools-table", DataTable)
         assert table.row_count == 1
@@ -1501,7 +1508,7 @@ async def test_text_refilter_does_not_reparse_tool_schemas():
             text_input = app.query_one("#mcp-tools-filter-text", Input)
             text_input.value = "sea"
             # TASK-34394: the text filter is debounced; wait out the timer.
-            await pilot.pause(0.3)
+            await pilot.pause(0.5)
 
             # One parse per tool (the initial rebuild), not one per
             # re-filter: the verdict cache absorbed the keystroke.
