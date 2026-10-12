@@ -18,6 +18,7 @@ from .automatic_work_budget import (
 from .run_log import _setting
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_goal_runs import GoalIterationAuthorization
     from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
 
 
@@ -53,7 +54,10 @@ class AutomaticWorkContext:
     chain_id: str
     owner_id: str
     attempt_id: str
-    attempt_kind: Literal["wake", "chat_start"] = "wake"
+    attempt_kind: Literal["wake", "chat_start", "goal_iteration"] = "wake"
+    goal: GoalIterationAuthorization | None = field(
+        default=None, repr=False, compare=False
+    )
     _accepted: threading.Event = field(
         default_factory=threading.Event, init=False, repr=False, compare=False
     )
@@ -67,49 +71,63 @@ class AutomaticWorkContext:
         finally:
             _CURRENT.reset(token)
 
+    def _read_attempt(self):
+        readers = {
+            "wake": self.ledger.read_attempt,
+            "chat_start": self.ledger.read_chat_start_attempt,
+            "goal_iteration": self.ledger.read_goal_attempt,
+        }
+        if self.attempt_kind not in readers:
+            raise AutomaticWorkRefused("acceptance_required")
+        return readers[self.attempt_kind](self.attempt_id, owner_id=self.owner_id)
+
+    def _accepted_states(self):
+        return (
+            {"accepted"}
+            if self.attempt_kind == "goal_iteration"
+            else {"accepted", "completed"}
+        )
+
+    def policy_kind(self) -> str:
+        """Policy follows the immutable allowance root, including child chats."""
+        return self.ledger.policy_kind(self.chain_id)
+
     def mark_accepted(self) -> None:
         """Latch acceptance only after the required durable fence succeeded."""
-        reader = (
-            self.ledger.read_chat_start_attempt
-            if self.attempt_kind == "chat_start"
-            else self.ledger.read_attempt
-        )
-        if self.attempt_kind not in {"wake", "chat_start"}:
-            raise AutomaticWorkRefused("acceptance_required")
-        attempt = reader(self.attempt_id, owner_id=self.owner_id)
-        if attempt.chain_id != self.chain_id or attempt.state not in {
-            "accepted",
-            "completed",
-        }:
+        attempt = self._read_attempt()
+        if (
+            attempt.chain_id != self.chain_id
+            or attempt.state not in self._accepted_states()
+        ):
             raise AutomaticWorkRefused("acceptance_required")
         self._accepted.set()
 
     def check(self) -> AutomaticWorkSnapshot:
-        """Enforce accepted authority, the kill switch, and live finite limits."""
+        """Enforce accepted authority, the root kill switch, and live limits."""
         from .agent_service import _coerce_autowake_enabled
 
         if not self._accepted.is_set():
             raise AutomaticWorkRefused("acceptance_required")
-        reader = (
-            self.ledger.read_chat_start_attempt
-            if self.attempt_kind == "chat_start"
-            else self.ledger.read_attempt
-        )
-        if self.attempt_kind not in {"wake", "chat_start"}:
-            raise AutomaticWorkRefused("acceptance_required")
-        attempt = reader(self.attempt_id, owner_id=self.owner_id)
-        if attempt.chain_id != self.chain_id or attempt.state not in {
-            "accepted",
-            "completed",
-        }:
+        attempt = self._read_attempt()
+        if (
+            attempt.chain_id != self.chain_id
+            or attempt.state not in self._accepted_states()
+        ):
             raise AutomaticWorkRefused("review_required")
-        if not _coerce_autowake_enabled(_setting("autowake_enabled", True)):
-            self.ledger.pause(self.chain_id, "autowake_disabled")
-            raise AutomaticWorkRefused("autowake_disabled")
+        is_goal = self.policy_kind() == "goal_iteration"
+        setting = "goal_runs_enabled" if is_goal else "autowake_enabled"
+        reason = "goal_runs_disabled" if is_goal else "autowake_disabled"
+        if not _coerce_autowake_enabled(_setting(setting, not is_goal)):
+            self.ledger.pause(self.chain_id, reason)
+            raise AutomaticWorkRefused(reason)
+        if self.goal is not None:
+            self.goal.check_binding()
+        limits = AutomaticWorkLimits.from_settings(self.policy_kind())
+        if is_goal and limits.output_tokens <= 0:
+            self.ledger.pause(self.chain_id, "output_tokens_budget")
+            raise AutomaticWorkRefused("output_tokens_budget")
         return self.ledger.check_active(
-            self.chain_id,
-            owner_id=self.owner_id,
-            limits=AutomaticWorkLimits.from_settings(),
+            self.chain_id, owner_id=self.owner_id, limits=limits
         )
 
     def should_cancel(self) -> bool:
@@ -125,7 +143,7 @@ class AutomaticWorkContext:
         snapshot = self.check()
         cap = min(
             snapshot.limits.output_tokens,
-            AutomaticWorkLimits.from_settings().output_tokens,
+            AutomaticWorkLimits.from_settings(self.policy_kind()).output_tokens,
         )
         if type(requested) is int and requested > 0:
             cap = min(cap, requested)
@@ -143,7 +161,7 @@ class AutomaticWorkContext:
             owner_id=self.owner_id,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            limits=AutomaticWorkLimits.from_settings(),
+            limits=AutomaticWorkLimits.from_settings(self.policy_kind()),
         )
         if reservation is None:
             raise AutomaticWorkRefused("call_already_dispatched")

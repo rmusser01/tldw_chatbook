@@ -656,8 +656,8 @@ def _canvas_schema_access(connection, schema, restrictions=None):
     )
     from tldw_chatbook.DB.recovery_core_schema import (
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
-        CHACHANOTES_V76_SHIPPED_SCHEMAS,
         CHACHANOTES_V76_NATIVE_SCHEMAS,
+        CHACHANOTES_V76_SHIPPED_SCHEMAS,
         CHACHANOTES_V77_SCHEMAS,
         CHACHANOTES_V78_SCHEMAS,
         CHACHANOTES_V79_SCHEMAS,

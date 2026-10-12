@@ -140,6 +140,7 @@ MESSAGE_ORIGINS: frozenset[str] = frozenset(
     {
         "",
         MESSAGE_ORIGIN_AGENT_WAKE,
+        "goal_iteration",
         MESSAGE_ORIGIN_HOOK,
         MESSAGE_ORIGIN_AGENT_CHAT_START,
         MESSAGE_ORIGIN_UNTRUSTED,

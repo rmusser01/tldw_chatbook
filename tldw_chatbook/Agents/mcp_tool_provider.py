@@ -1728,7 +1728,10 @@ class MCPToolProvider:
         exception along this path (the submit itself on a dead/closed loop,
         `concurrent.futures.TimeoutError`, or any exception the coroutine
         raised) is caught here and converted to a truncated error
-        `ToolResult` -- this method must never propagate.
+        `ToolResult` -- this method must never propagate. For goals, a timed-out
+        call retains its worker until the actual client coroutine settles;
+        transport cleanup does not establish the outcome of remote effects.
+        Ordinary Console and fleet calls keep their bounded cancellation path.
 
         Args:
             tool: The resolved `HubTool` to execute.
@@ -1751,6 +1754,7 @@ class MCPToolProvider:
             return ToolResult.blocked(refusal)
         future: concurrent.futures.Future | None = None
         execution_coroutine = None
+        automatic_work = None
         observation = MCPDispatchObservation()
         execution_completed = threading.Event()
         result_currentness = None
@@ -1805,6 +1809,30 @@ class MCPToolProvider:
                     try:
                         with automatic_work.scope():
                             automatic_work.check()
+                            if automatic_work.goal is not None:
+                                from tldw_chatbook.MCP.permission_store import (
+                                    definition_hash,
+                                )
+
+                                from .automatic_work_budget import AutomaticWorkRefused
+
+                                binding = next(
+                                    (
+                                        item
+                                        for item in automatic_work.goal.goal.request.tool_scope.mcp_bindings
+                                        if item.server_key == tool.server_key
+                                        and item.tool_name == tool.name
+                                    ),
+                                    None,
+                                )
+                                if (
+                                    binding is None
+                                    or binding.definition_sha256
+                                    != definition_hash(
+                                        tool.description, tool.input_schema
+                                    )
+                                ):
+                                    raise AutomaticWorkRefused("mcp_binding_changed")
                             return await execution_factory()
                     finally:
                         execution_completed.set()
@@ -1835,10 +1863,18 @@ class MCPToolProvider:
             # submit succeeded.
             if future is not None:
                 # Finding 2: best-effort cancel lingering future on timeout/cancellation.
-                try:
-                    future.cancel()
-                except Exception:
-                    pass
+                if automatic_work is not None and automatic_work.goal is not None:
+                    # Keep the native worker until the actual coroutine finally settles.
+                    try:
+                        future.result()
+                    except BaseException:  # noqa: BLE001,S110 - original failure is reported after actual cleanup
+                        pass
+                    execution_completed.wait()
+                else:
+                    try:
+                        future.cancel()
+                    except Exception:
+                        pass
             # Fixed diagnostics cannot disclose arbitrary remote exception text.
             error = "mcp_execution_failed"
             if future is None:
@@ -1887,7 +1923,24 @@ class MCPToolProvider:
                         decision=decision,
                         error="bridge execution failed: mcp_execution_failed",
                     )
-            return ToolResult(ok=False, error=error, dispatch_state=dispatch_state)
+            from .agent_models import RunTerminationReason
+            from .automatic_work_budget import AutomaticWorkRefused
+
+            reason = None
+            if automatic_work is not None and automatic_work.goal is not None:
+                reason = (
+                    exc.termination_reason
+                    if isinstance(exc, AutomaticWorkRefused)
+                    else RunTerminationReason.PREFLIGHT_REFUSED
+                    if future is None
+                    else RunTerminationReason.UNKNOWN_EFFECT
+                )
+            return ToolResult(
+                ok=False,
+                error=error,
+                dispatch_state=dispatch_state,
+                termination_reason=reason,
+            )
         return self._format_result(raw_result, current=result_currentness)
 
     def _format_result(self, raw_result: Any, *, current=None) -> ToolResult:

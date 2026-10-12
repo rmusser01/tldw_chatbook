@@ -33,6 +33,8 @@ from .skill_trust_models import SkillTrustBlockedError
 from .skill_trust_service import _activation_blocked, _execution_scope, _skill_use
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.goal_models import VerificationSpec
+
     # Deferred at runtime (see run_skill_script) to avoid a module-scope
     # import of the subprocess sandbox for every LocalSkillsService caller;
     # imported here only so the type hints below resolve for static analysis.
@@ -2681,6 +2683,68 @@ class LocalSkillsService:
         )
 
     @content_call(_content_sources, detached=True)
+    async def goal_verifier_invocation(self, verifier: VerificationSpec) -> dict:
+        """Project an exact current trusted verifier into executable tool arguments."""
+        relative = Path(verifier.verifier_path).relative_to(self.skills_dir.resolve())
+        if len(relative.parts) < 2:
+            raise ValueError("goal_verifier_mapping_missing")
+        skill_name = relative.parts[0]
+        script_path = relative.relative_to(skill_name).as_posix()
+        current = await self.goal_verifier_reference(
+            skill_name,
+            script_path,
+            arguments=verifier.arguments,
+            input_paths=verifier.input_paths,
+        )
+        if current.invocation_key != verifier.invocation_key:
+            raise ValueError("goal_verifier_mapping_changed")
+        return {
+            "tool_name": "run_skill_script",
+            "arguments": {
+                "skill_name": skill_name,
+                "script_path": script_path,
+                "args": list(verifier.arguments),
+            },
+        }
+
+    @content_call(_content_sources, detached=True)
+    async def goal_verifier_reference(
+        self,
+        skill_name: str,
+        script_path: str,
+        *,
+        arguments: tuple[str, ...],
+        input_paths: tuple[str, ...],
+    ) -> VerificationSpec:
+        """Resolve immutable verifier identity through the current local trust owner."""
+        from tldw_chatbook.Agents.goal_models import VerificationSpec
+
+        def resolve() -> VerificationSpec:
+            self._enforce("skills.run_script.launch.local")
+            self._require_trusted_skill(skill_name)
+            _root, path = self._resolve_script(skill_name, script_path)
+            plan = self._plan_for_script(
+                self._canonical_skill_name(skill_name), script_path, path
+            )
+            if self.trust_service is None:
+                raise ValueError("A trusted local verifier is required")
+            return VerificationSpec(
+                id=plan.skill_name + ":" + script_path,
+                executor_tool_id="run_skill_script",
+                verifier_path=str(path.resolve()),
+                verifier_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                skill_trust_ref=self.trust_service.current_fingerprint_digest(
+                    plan.skill_name
+                ),
+                arguments=arguments,
+                input_paths=input_paths,
+            )
+
+        from tldw_chatbook.Backup_Recovery.local_content_lifetime import native_worker
+
+        return await asyncio.to_thread(native_worker(resolve))
+
+    @content_call(_content_sources, detached=True)
     async def run_skill_script(
         self,
         skill_name: str,
@@ -2749,6 +2813,11 @@ class LocalSkillsService:
             self._canonical_skill_name(skill_name), script_path, path
         )
         effective_limits = limits or resolve_script_run_limits()
+        from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+
+        automatic = current_automatic_work()
+        goal = automatic.goal if automatic is not None else None
+
         explicit_output_root = (
             Path(output_root).expanduser().resolve()
             if output_root is not None
@@ -2791,21 +2860,43 @@ class LocalSkillsService:
                     dir=retained_output_root,
                 )
             )
+            invocation = None
+            dispatch_limits = effective_limits
+            if goal is not None:
+                automatic.check()
+                self._require_trusted_skill(skill_name)
+                invocation = goal.begin_script(
+                    path,
+                    args,
+                    plan.skill_name,
+                    self.trust_service.current_fingerprint_digest(plan.skill_name),
+                )
+                dispatch_limits = replace(
+                    effective_limits,
+                    wall_clock_seconds=min(
+                        effective_limits.wall_clock_seconds, goal.remaining_seconds()
+                    ),
+                )
             result = run_script_subprocess(
-                target_argv, cwd=run_dir, limits=effective_limits
+                target_argv, cwd=run_dir, limits=dispatch_limits
             )
             produced = self._list_output_files(run_dir)
             if not produced:
                 # Nothing to keep: do not leave an empty directory behind to be
                 # pruned later, and do not count it against the retention slots.
                 _shutil.rmtree(run_dir, ignore_errors=True)
-                return replace(result, output_dir=None, output_files=())
-            self._prune_output_runs(
-                retained_output_root,
-                SCRIPT_OUTPUT_KEEP_RUNS,
-                protect=run_dir,
-            )
-            return replace(result, output_dir=str(run_dir), output_files=produced)
+                result = replace(result, output_dir=None, output_files=())
+            else:
+                self._prune_output_runs(
+                    retained_output_root,
+                    SCRIPT_OUTPUT_KEEP_RUNS,
+                    protect=run_dir,
+                )
+                result = replace(result, output_dir=str(run_dir), output_files=produced)
+            if goal is not None:
+                result = replace(result, goal_evidence_id=invocation.id)
+                goal.finish_script(invocation, result)
+            return result
 
         # Offloaded to a thread: run_script_subprocess is a blocking call
         # (up to limits.wall_clock_seconds + 6.0s worst case) and this
@@ -2819,12 +2910,25 @@ class LocalSkillsService:
                     raise _activation_blocked(skill_name)
                 self._require_trusted_skill(skill_name)
                 self._resolve_script(skill_name, script_path)
+                from tldw_chatbook.Agents.execution_capacity import (
+                    current_execution_owner,
+                )
                 from tldw_chatbook.Backup_Recovery.local_content_lifetime import (
                     operation,
                 )
 
-                with operation((self._script_output_root(),)):
-                    return _run_in_scratch_dir()
+                owner = current_execution_owner()
+                held = (
+                    owner.reserve_tool()
+                    if goal is not None and owner is not None
+                    else None
+                )
+                try:
+                    with operation((self._script_output_root(),)):
+                        return _run_in_scratch_dir()
+                finally:
+                    if held is not None:
+                        held.finish()
 
         from tldw_chatbook.Backup_Recovery.local_content_lifetime import native_worker
         from tldw_chatbook.TTS._async_lifecycle import join_retained_task

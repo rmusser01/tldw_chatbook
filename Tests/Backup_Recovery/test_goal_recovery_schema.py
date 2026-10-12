@@ -172,3 +172,46 @@ def test_goal_archive_rejects_foreign_payload_identity(tmp_path, field):
                 reopened.goal_runs.evidence(goal.id)
     finally:
         reopened.close()
+
+
+@pytest.mark.parametrize("corruption", ["report_owner", "iteration_run_owner"])
+def test_goal_archive_rejects_cross_owner_report_or_native_run(tmp_path, corruption):
+    from tldw_chatbook.Agents.goal_models import GoalReport
+
+    path = tmp_path / "cross-owner.db"
+    db = AgentRunsDB(path)
+    goal = db.goal_runs.create(request(), launch_id="first")
+    goal = db.goal_runs.set_provisioning(goal, status="ready")
+    attempt = db.automatic_work.prepare_goal_iteration(goal.id, owner_id="owner")
+    other = db.goal_runs.create(request(), launch_id="second")
+    foreign_run = db.create_run(
+        conversation_id=other.conversation_id,
+        agent_kind="primary",
+        work_chain_id=other.chain_id,
+    )
+    with db.transaction() as conn:
+        if corruption == "report_owner":
+            iteration_id = conn.execute(
+                "SELECT id FROM goal_iterations WHERE attempt_id=?", (attempt.id,)
+            ).fetchone()[0]
+            conn.execute(
+                "INSERT INTO goal_reports VALUES (?,?,?,?)",
+                (
+                    "foreign-report",
+                    other.id,
+                    iteration_id,
+                    GoalReport().model_dump_json(),
+                ),
+            )
+        else:
+            conn.execute(
+                "UPDATE goal_iterations SET run_id=? WHERE attempt_id=?",
+                (foreign_run, attempt.id),
+            )
+    if corruption == "report_owner":
+        with pytest.raises(ValueError, match="invalid_goal_ownership"):
+            db.goal_runs.get(other.id)
+    db.close()
+    before = path.read_bytes()
+    assert validate_candidate(owner(), path, Event(), migrate=False)
+    assert path.read_bytes() == before

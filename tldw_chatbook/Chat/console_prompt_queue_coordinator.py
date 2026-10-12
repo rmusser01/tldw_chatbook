@@ -1019,6 +1019,7 @@ class ConsolePromptQueueCoordinator:
 
         if origin in {
             ConsoleSubmissionOrigin.AGENT_WAKE,
+            ConsoleSubmissionOrigin.GOAL_ITERATION,
             ConsoleSubmissionOrigin.AGENT_CHAT_START,
         }:
             return

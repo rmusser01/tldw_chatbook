@@ -106,6 +106,7 @@ from .agent_models import (
     ModelTurn,
     ProviderContinuationEvent,
     RunOutcome,
+    RunTerminationReason,
     SpawnAdmissionRefusal,
     ToolBatchReady,
     ToolCall,
@@ -1438,6 +1439,15 @@ def run_agent_loop(
                 if assistant_message is not None
                 else {"role": "assistant", "content": kw.get("final_text", "")}
             ]
+        kw.setdefault(
+            "termination_reason",
+            {
+                RUN_DONE: RunTerminationReason.DONE,
+                RUN_CANCELLED: RunTerminationReason.CANCELLED,
+                RUN_STUCK: RunTerminationReason.STUCK,
+                RUN_ERROR: RunTerminationReason.UNKNOWN_EFFECT,
+            }.get(status),
+        )
         return RunOutcome(
             status,
             steps,
@@ -1624,10 +1634,21 @@ def run_agent_loop(
         Skipped mid-continuation: a wrap-up request without the in-flight
         checkpoint would trip provider-continuation validation.
         """
+        reason = {
+            "step": RunTerminationReason.STEP_LIMIT,
+            "model-turn": RunTerminationReason.MODEL_TURN_LIMIT,
+            "wall-clock": RunTerminationReason.WALL_LIMIT,
+            "token": RunTerminationReason.TOKEN_LIMIT,
+        }[kind]
         nonlocal total_tokens
         add(STEP_ERROR, summary=f"{kind} budget exhausted")
+        from .automatic_work_runtime import current_automatic_work
+
+        automatic = current_automatic_work()
+        if automatic is not None and automatic.goal is not None:
+            return _outcome(RUN_STUCK, termination_reason=reason)
         if continuation_checkpoint is not None or deps.should_cancel():
-            return _outcome(RUN_STUCK)
+            return _outcome(RUN_STUCK, termination_reason=reason)
         try:
             # The COHERENT prefix, not raw `messages`: a step-budget
             # exhaustion can land mid-batch, where raw history ends inside a
@@ -1656,7 +1677,9 @@ def run_agent_loop(
             total_tokens += getattr(wrap_turn, "tokens", 0) or 0
             summary_text = str(getattr(wrap_turn, "text", "") or "").strip()
             if summary_text:
-                return _outcome(RUN_STUCK, final_text=summary_text)
+                return _outcome(
+                    RUN_STUCK, termination_reason=reason, final_text=summary_text
+                )
         except Exception:  # noqa: BLE001 -- the summary is best-effort
             trace(
                 STEP_MODEL_ERROR,
@@ -1665,7 +1688,7 @@ def run_agent_loop(
                 field_states={"payload": "omitted"},
                 sensitivity="diagnostic",
             )
-        return _outcome(RUN_STUCK)
+        return _outcome(RUN_STUCK, termination_reason=reason)
 
     def _maybe_deliver_budget_warning() -> None:
         """Tell the model ONCE, cache-safely, that the budget is running out.
@@ -2720,6 +2743,13 @@ def run_agent_loop(
             # verdicts, and the fence path builds ToolCalls with NO call_id
             # at all (`parse_tool_call`), so a name-keyed verdict must still stop
             # every matching call or the MCP gate silently opens.
+            from .automatic_work_runtime import current_automatic_work
+
+            automatic = current_automatic_work()
+            if automatic is not None and automatic.goal is not None:
+                automatic.check()
+                if not automatic.goal.permits_call(call.name):
+                    verdict = "Tool outside goal scope."
             if restoring_batch and call.name in MESSAGE_TOOL_NAMES:
                 verdict = "ERROR: restored_pending"
             if continuation_checkpoint is not None and verdict != "proceed":
@@ -2782,6 +2812,11 @@ def run_agent_loop(
                 )
                 if reader_cycle_stuck(call, None):
                     return _outcome(RUN_STUCK)
+                if automatic is not None and automatic.goal is not None:
+                    return _outcome(
+                        RUN_STUCK,
+                        termination_reason=RunTerminationReason.PERMISSION_REFUSED,
+                    )
                 continue
             if continuation_checkpoint is not None and not transition_call(
                 call, "executing"
@@ -3284,6 +3319,15 @@ def run_agent_loop(
             record_result = (
                 result if verdict == "proceed" else ToolResult.blocked(verdict)
             )
+            if (
+                automatic is not None
+                and automatic.goal is not None
+                and verdict == "proceed"
+            ):
+                content = automatic.goal.observe_tool_result(
+                    call.name, call.args, content
+                )
+
             display_projection = project_record("display", call, record_result)
             display_result_content = projection_result_content(
                 display_projection, record_result
@@ -3423,6 +3467,15 @@ def run_agent_loop(
                     return continuation_error()
             else:
                 _append_tool_result(messages, call, content)
+            if automatic is not None and automatic.goal is not None:
+                reason = record_result.termination_reason
+                if record_result.dispatch_state == "uncertain":
+                    reason = RunTerminationReason.UNKNOWN_EFFECT
+                elif verdict != "proceed" or record_result.outcome == "blocked":
+                    reason = RunTerminationReason.PERMISSION_REFUSED
+                if reason is not None:
+                    return _outcome(RUN_STUCK, termination_reason=reason)
+
             account_denial(
                 review=review_decision,
                 result=result if verdict == "proceed" else None,

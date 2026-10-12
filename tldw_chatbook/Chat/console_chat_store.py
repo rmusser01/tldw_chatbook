@@ -178,7 +178,6 @@ from tldw_chatbook.Chat.console_library_policy_coordinator import (
 from tldw_chatbook.Chat.console_prefill import PINNED_PREFILL_METADATA_KEY
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
-    decode_project_context_json,
     encode_project_context_json,
     sanitize_fork_project_instruction_state,
 )
@@ -2901,6 +2900,7 @@ class ConsoleChatStore:
         self,
         *,
         title: str,
+        session_id: str | None = None,
         workspace_id: str | None,
         persisted_conversation_id: str,
         all_nodes: Iterable[ConsoleChatMessage],
@@ -2997,25 +2997,16 @@ class ConsoleChatStore:
                 "Cannot restore a persisted session as temporary: a temporary "
                 "session has no persisted conversation."
             )
-        project_instruction_state = ProjectInstructionControlState.legacy_disabled()
-        getter = getattr(
-            self.persistence, "get_conversation_console_project_context", None
+        from .console_conversation_hydration import restored_project_instruction_state
+
+        project_instruction_state = restored_project_instruction_state(
+            self.persistence,
+            persisted_conversation_id,
+            initial_project_instruction_state,
         )
-        if callable(getter):
-            try:
-                raw_project_context = getter(
-                    conversation_id=str(persisted_conversation_id)
-                )
-            except Exception:
-                logger.warning("project_instruction_state_read_failed")
-            else:
-                project_instruction_state = decode_project_context_json(
-                    raw_project_context
-                )
-        if initial_project_instruction_state is not None:
-            project_instruction_state = initial_project_instruction_state
         prior_active_session_id = self.active_session_id
         session = self.create_session(
+            session_id=session_id,
             title=title,
             workspace_id=workspace_id,
             settings=settings,
