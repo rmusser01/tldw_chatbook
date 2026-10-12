@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-06 06:42'
-updated_date: '2026-10-12 03:56'
+updated_date: '2026-10-12 05:35'
 labels: []
 dependencies:
   - TASK-34564
@@ -34,6 +34,7 @@ Verify the reviewed permission interaction and measure the resulting native and 
 - [ ] #2 Actions, warnings, focus and disclosures remain usable at 80x24, 120x40 and 170x48 with Inspect open and closed in dark and light themes.
 - [ ] #3 Qualified native and browser measurements compare identical boundaries and check the 100 ms feedback and 200 ms actionable-card p95 targets on recorded hardware.
 - [ ] #4 Targeted checks, generated artifacts, documentation and evidence reflect the shipped behavior; unqualified metrics and any remaining measured gaps are explicitly reported.
+- [ ] #5 The refreshed required UI/PR lanes preserve existing executable membership and limits while enrolling bounded new Details-privacy, currentness and real-invocation regressions, with nonvacuous membership controls and exact final-head hosted results.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,6 +62,9 @@ Reason: Existing ADR229 with ADR150/161/195/210 governs verification/documentati
 Execution clarification: author independent user-guide/artwork and integration tests while Task5 final commit/review completes; run final integration/qualification only against its reviewed commit. Native/browser presented-frame gate remains open under the recorded capability limitation.
 
 Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
+
+Scoped dispatch-plan preflight correction: Ruling: preserve approved pre-edit launch/control/measurement prerequisites and finalize artifacts before final guards/paint timing — product changes cannot follow purported final qualification — costs baseline setup and only affected requalification after later repairs; unavailable actual paint stays open.
+Ruling: require bounded executable approval safety coverage in qualification-task acceptance and refreshed required lanes — local passes cannot protect omitted privacy/currentness/invocation contracts — costs recurring bounded CI within unchanged limits. Follow the revised current integration Task1 before product edits; preserve source-approved scopes and every historical receipt/acceptance record. No new ADR/ID or product boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -69,6 +73,8 @@ Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-
 Implemented captured-card guides and reproducible artwork with production theme fallback, destination-validation/bare-theme regressions, finite targeted launcher additions and final content-free receipts under Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/. New journeys connect painted consent/controller arbitration to real permission/cache owners and private SQLite using harmless external transport doubles (scope9/UI4). Existing stale-generation, disclosure, Details, FIFO/deadline and Alt+A composer cases are credited separately. Final targeted presentation18/feedback29/Details18/interaction21/artwork5/recorder16/bundle5 pass. Tokens7pass1existingfail, component13pass5existingfails with matching BASE messages; startup lazy imports2pass, optional-work wait fails identically on BASE. Owned root Ruff/format pass. Native/browser presented-frame observers unavailable, zero qualified samples, actual Windows local/virtual dispatch root-pin failures and complete transport visual matrix remain open. No freeze/speed claim or full sweep. ADR-229; all13 rulings/costs preserved; final independent review pending; In Progress, not Done.
 
 Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More options, neutral Review individually route, bounded complete-identifier preview with explicit omissions and complete captured target Details. Actual80x24 Console clipping reproduction repaired with existing batch-only4/2 viewport tokens and three-action toolbar. Interaction25/Details19/ownership25/compact1/journeys4/budget28/CSS5/token1/refinement1 passed. Independent scoped review all3 addressed, no new material issue; hashes verified. Evidence Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/final-review.md and final-fix/. Native/browser timing/fullmatrix, actual Windows dispatch and broader baseline failures remain open; In Progress, not Done. ADR-229.
+
+Independent bounded plan preflight preserves original scope but found missing recurring required-CI acceptance/verification argument. Current plan and this acceptance now make final executable critical coverage explicit. Applicable original measurement/prerequisite/consumer obligations are clarified without relaxing limits or claiming implementation/UAT.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
