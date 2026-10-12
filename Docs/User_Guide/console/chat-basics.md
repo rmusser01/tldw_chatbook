@@ -231,6 +231,14 @@ tool, code, and link styling keeps priority over immersive coloring.
   move the caret between wrapped lines. While you type, a dim ghost
   completion of the most recent matching past prompt may appear after the
   caret — press **Right** at the end of the draft to accept it.
+- **The slash-command popup leads with what you use.** Typing `/` opens the
+  completion popup; within whatever you've typed so far, the commands and
+  skills you use most often are offered first (ties stay alphabetical). The
+  counts come only from this app's local prompt history — dispatched
+  commands and `$skill` mentions you've sent before — and never leave the
+  machine. With no history yet the popup keeps its default order, and
+  filtering works exactly as before: ranking reorders the filtered list, it
+  never adds or drops rows.
 - **Ctrl+C** clears the draft while the composer owns the cursor. If you first
   use **Ctrl+A** to select the whole draft, **Ctrl+C** copies it instead.
   **Ctrl+U** also clears the draft; **Ctrl+Z** restores an accidental clear;
