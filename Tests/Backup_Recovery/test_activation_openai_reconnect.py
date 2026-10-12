@@ -51,6 +51,8 @@ class Session:
  def mount(self,*args):pass
  def post(self,url,**kwargs):effects.append(('post',url,kwargs));return Response()
 calls.create_default_session=Session
+calls.create_owned_default_session=Session
+calls.create_pooled_default_session=Session
 message=[{'role':'user','content':'hello'}]
 """
 
@@ -302,6 +304,7 @@ _HOSTED = (
 from tldw_chatbook.LLM_Calls.hosted_chat import owned_json_post,HostedHTTPTransportConfig
 from tldw_chatbook.LLM_Calls import hosted_chat
 hosted_chat.create_default_session=Session
+hosted_chat.create_pooled_default_session=lambda *args,**kwargs:Session()
 from tldw_chatbook.Backup_Recovery.control_records import bind_profile
 bind_profile(root,selector,('profile',),root/'admission')
 result=owned_json_post(config=HostedHTTPTransportConfig(provider='moonshot',base_url='https://api.moonshot.ai/v1',api_key='test-owned',timeout=1,retries=0,retry_delay=0),route='chat/completions',payload={},streaming=True)
@@ -823,6 +826,7 @@ class NativeSession(requests.sessions.Session):
 def unreviewed_netrc(*args,**kwargs):raise AssertionError('ambient netrc auth resolution')
 requests.sessions.get_netrc_auth=unreviewed_netrc
 calls.create_default_session=NativeSession
+calls.create_owned_default_session=NativeSession
 result=calls.chat_with_openai(message,model='gpt-4o-mini')
 assert result['choices'][0]['message']['content']=='answer'
 assert len(prepared)==1 and prepared[0].headers['Authorization']=='Bearer owned-test-key'

@@ -68,8 +68,12 @@ def test_vllm_explicit_key_returns_a_summary(monkeypatch):
     }
     monkeypatch.setattr(lsl, "load_settings", lambda *a, **k: cfg)
     resp = FakeResponse(json_data={"choices": [{"message": {"content": " THE SUMMARY "}}]})
-    monkeypatch.setattr(lsl, "create_default_session", lambda *a, **k: FakeSession(resp), raising=False)
-    monkeypatch.setattr(lsl, "create_pooled_default_session", lambda *a, **k: FakeSession(resp), raising=False)
+    # The vllm summarizer posts through Summarization_General_Lib's shared
+    # _post_with_retry transport, which resolves its session factory from
+    # sgl's module globals at call time (same seam as
+    # test_anthropic_posts_through_the_session below).
+    monkeypatch.setattr(sgl, "create_default_session", lambda *a, **k: FakeSession(resp), raising=False)
+    monkeypatch.setattr(sgl, "create_pooled_default_session", lambda *a, **k: FakeSession(resp), raising=False)
 
     result = lsl.summarize_with_vllm("explicit-key", "some text", "Summarize.")
 
@@ -99,8 +103,11 @@ def test_custom_openai_stream_yields_the_summary_once(monkeypatch):
         b'data: {"choices":[{"delta":{"content":"world"}}]}',
         b"data: [DONE]",
     ]
-    monkeypatch.setattr(lsl, "create_default_session", lambda *a, **k: FakeSession(FakeResponse(lines=lines)), raising=False)
-    monkeypatch.setattr(lsl, "create_pooled_default_session", lambda *a, **k: FakeSession(FakeResponse(lines=lines)), raising=False)
+    # Same shared-transport seam as test_vllm_explicit_key_returns_a_summary
+    # above: the custom-openai streamer resolves its session factory from
+    # sgl's module globals inside _post_with_retry.
+    monkeypatch.setattr(sgl, "create_default_session", lambda *a, **k: FakeSession(FakeResponse(lines=lines)), raising=False)
+    monkeypatch.setattr(sgl, "create_pooled_default_session", lambda *a, **k: FakeSession(FakeResponse(lines=lines)), raising=False)
 
     result = lsl.summarize_with_custom_openai(
         "k", "some text", "Summarize.", streaming=True

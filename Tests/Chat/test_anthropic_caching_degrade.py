@@ -303,7 +303,7 @@ def test_openai_cache_key_is_a_stable_digest_of_the_prefix():
     assert len(key1) <= 64
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_pooled_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_owned_default_session")
 def test_openai_cache_key_flows_into_payload_when_enabled(mock_session):
     posted = {}
 
@@ -337,7 +337,7 @@ def test_openai_cache_key_flows_into_payload_when_enabled(mock_session):
     assert "stable prefix" not in posted["json"]["prompt_cache_key"]
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_pooled_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_owned_default_session")
 def test_openai_cache_key_absent_by_default(mock_session):
     posted = {}
 
@@ -366,7 +366,7 @@ def test_openai_cache_key_absent_by_default(mock_session):
     assert "prompt_cache_key" not in posted["json"], "AC#6: off by default"
 
 
-@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_pooled_default_session")
+@patch("tldw_chatbook.LLM_Calls.LLM_API_Calls.create_owned_default_session")
 def test_openai_cache_key_skipped_for_custom_base_url(mock_session):
     """Review finding 1: a strict OpenAI-compatible server (custom base_url)
     can 400 on an unknown body field and there is no degrade path, so the

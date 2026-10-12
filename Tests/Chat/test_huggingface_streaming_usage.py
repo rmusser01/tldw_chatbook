@@ -27,8 +27,9 @@ def hermetic_hf_config():
 
     The provider handlers read config through load_settings()/
     get_runtime_config_snapshot() and build transport sessions via
-    create_default_session()/requests_verify(); on a developer machine with
-    pending backup-recovery state those raise RecoveryRequired before the
+    create_default_session()/create_owned_default_session()/
+    create_pooled_default_session()/requests_verify(); on a developer machine
+    with pending backup-recovery state those raise RecoveryRequired before the
     handler reaches the (mocked) transport. Empty config + a plain Session
     keeps these tests on the request/stream contract only.
     """
@@ -41,6 +42,14 @@ def hermetic_hf_config():
         ("tldw_chatbook.LLM_Calls.LLM_API_Calls.load_settings", {"return_value": {}}),
         (
             "tldw_chatbook.LLM_Calls.LLM_API_Calls.create_default_session",
+            {"side_effect": lambda *a, **k: requests.Session()},
+        ),
+        (
+            "tldw_chatbook.LLM_Calls.LLM_API_Calls.create_owned_default_session",
+            {"side_effect": lambda *a, **k: requests.Session()},
+        ),
+        (
+            "tldw_chatbook.LLM_Calls.LLM_API_Calls.create_pooled_default_session",
             {"side_effect": lambda *a, **k: requests.Session()},
         ),
         (

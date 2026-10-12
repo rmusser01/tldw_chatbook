@@ -1426,6 +1426,10 @@ def create_owned_default_session(
 
     session = DefaultTimeoutSession(default_timeout=timeout)
     session.verify = requests_verify()
+    # TASK-28229: owned sessions are private, so attach the rate-limit
+    # telemetry hook directly -- the pool's once-per-entry guard exists only
+    # to keep shared sessions from accumulating duplicate hooks.
+    session.hooks["response"].append(_record_rate_limit_headers)
     return session
 
 

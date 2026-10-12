@@ -1639,6 +1639,19 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_library_notes_riders_r_file_notes.py",
             "test_library_notes_wave_file_notes.py",
 
+            # task-34387 review: the provider call-defect and mocked-API
+            # suites fake the transport (requests.Session.post / the session
+            # factories), but the real handler prelude around those fakes
+            # builds sessions via create_owned_default_session/
+            # create_pooled_default_session, whose timeout/TLS reads go
+            # through the guarded config loader under the per-test redirect
+            # (same admission signature as test_hosted_chat.py above:
+            # RecoveryRequired("raw_source_selection_changed") before any
+            # assertion runs). None of the three re-selects a config itself,
+            # so they keep the bootstrap profile.
+            "test_anthropic_caching_degrade.py",
+            "test_chat_mocked_apis.py",
+            "test_provider_call_defects.py",
             # TASK-2760..2765 (Home dashboard cluster, 2026-10-11): the
             # three Home suites that mount the production app through
             # _build_test_app -> load_settings hit the same ADR-126
