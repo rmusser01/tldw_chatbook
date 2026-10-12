@@ -359,175 +359,21 @@ def _dispatch_to_api(
         # the provided api_key is None. They also handle loading models, etc.
         # We just pass the parameters along.
 
-        if api_name_lower == "openai":
-            return summarize_with_openai(
-                api_key,
-                text_to_summarize,
-                custom_prompt_arg,
-                temp,
-                system_message,
-                streaming,
-            )
-        elif api_name_lower == "anthropic":
-            # Anthropic might need model passed explicitly or loaded in its func
-            return summarize_with_anthropic(
-                api_key,
-                text_to_summarize,
-                custom_prompt_arg,
-                temp,
-                system_message,
-                streaming,
-            )
-        elif api_name_lower == "cohere":
-            return summarize_with_cohere(
-                api_key,
-                text_to_summarize,
-                custom_prompt_arg,
-                temp,
-                system_message,
-                streaming,
-            )
-        elif api_name_lower == "google":
-            return summarize_with_google(
-                api_key,
-                text_to_summarize,
-                custom_prompt_arg,
-                temp,
-                system_message,
-                streaming,
-            )
-        elif api_name_lower == "groq":
-            return summarize_with_groq(
-                api_key,
-                text_to_summarize,
-                custom_prompt_arg,
-                temp,
-                system_message,
-                streaming,
-            )
-        elif api_name_lower == "huggingface":
-            # HuggingFace might need specific handling for system_message if not directly supported
-            return summarize_with_huggingface(
-                api_key, text_to_summarize, custom_prompt_arg, temp, streaming
-            )  # system_message not directly passed? Check func def.
-        elif api_name_lower == "openrouter":
-            return summarize_with_openrouter(
-                api_key,
-                text_to_summarize,
-                custom_prompt_arg,
-                temp,
-                system_message,
-                streaming,
-            )
-        elif api_name_lower == "deepseek":
-            return summarize_with_deepseek(
-                api_key,
-                text_to_summarize,
-                custom_prompt_arg,
-                temp,
-                system_message,
-                streaming,
-            )
-        elif api_name_lower == "mistral":
-            return summarize_with_mistral(
-                api_key,
-                text_to_summarize,
-                custom_prompt_arg,
-                temp,
-                system_message,
-                streaming,
-            )
-        # --- Local LLM Calls ---
-        elif api_name_lower == "llama.cpp":
-            return summarize_with_llama(
-                text_to_summarize,
-                custom_prompt_arg,
-                api_key,
-                temp,
-                system_message,
-                streaming,
-            )
-        elif api_name_lower == "kobold":
-            return summarize_with_kobold(
-                text_to_summarize,
-                api_key,
-                custom_prompt_arg,
-                temp,
-                system_message,
-                streaming,
-            )
-        elif api_name_lower == "ooba":
-            # Ooba might need api_url from config inside its function
-            return summarize_with_oobabooga(
-                text_to_summarize,
-                api_key,
-                custom_prompt_arg,
-                system_message,
-                temp=temp,
-                streaming=streaming,
-            )
-        elif api_name_lower == "tabbyapi":
-            return summarize_with_tabbyapi(
-                text_to_summarize, custom_prompt_arg, temp, system_message, streaming
-            )
-        elif api_name_lower == "vllm":
-            return summarize_with_vllm(
-                api_key,
-                text_to_summarize,
-                custom_prompt_arg,
-                temp,
-                system_message,
-                streaming,
-            )
-        elif api_name_lower == "local-llm":
-            return summarize_with_local_llm(
-                text_to_summarize, custom_prompt_arg, temp, system_message, streaming
-            )
-        elif api_name_lower == "custom-openai-api":
-            # Custom OpenAI likely needs base_url from config inside its function
-            return summarize_with_custom_openai(
-                api_key,
-                text_to_summarize,
-                custom_prompt_arg,
-                temp,
-                system_message,
-                streaming,
-            )
-        elif api_name_lower == "custom-openai-api-2":
-            # Custom OpenAI likely needs base_url from config inside its function
-            return summarize_with_custom_openai_2(
-                api_key,
-                text_to_summarize,
-                custom_prompt_arg,
-                temp,
-                system_message,
-                streaming,
-            )  # Assuming this exists
-        elif api_name_lower == "ollama":
-            # Ollama might need model param or load from config
-            return summarize_with_ollama(
-                text_to_summarize,
-                custom_prompt_arg,
-                None,
-                api_key,
-                temp,
-                system_message,
-                streaming,
-            )  # Passing None for model, assuming func handles it
-        # --- MOCKING TEST LLM Calls ---
-        elif api_name_lower == "mock-llm":
-            return summarize_with_mock_llm(
-                text_to_summarize,
-                custom_prompt_arg,
-                api_key,
-                temp,
-                system_message,
-                streaming,
-            )
-        else:
+        handler = _SUMMARIZER_DISPATCH.get(api_name_lower)
+        if handler is None:
             error_msg = f"Error: Invalid API Name '{api_name}'"
             logging.error(error_msg)
             return error_msg
+        # NOTE: the handler functions load API keys, models, etc. from
+        # config themselves when the provided arguments are None.
+        return handler(
+            api_key,
+            text_to_summarize,
+            custom_prompt_arg,
+            temp,
+            system_message,
+            streaming,
+        )
 
     except Exception as e:
         logging.error(
@@ -850,6 +696,7 @@ def analyze(
 ###################################################################################
 #
 # API Calls
+
 
 
 @_provider_recovery.unqualified
@@ -2846,3 +2693,67 @@ def format_input_with_metadata(metadata, content):
 #
 #
 ############################################################################################################################################
+
+
+# --- TASK-33245: dispatch table replacing the per-provider elif chain ---
+_SUMMARIZER_DISPATCH: dict = {
+    "openai": lambda ak, text, cp, temp, sm, st: summarize_with_openai(
+        ak, text, cp, temp, sm, st
+    ),
+    "anthropic": lambda ak, text, cp, temp, sm, st: summarize_with_anthropic(
+        ak, text, cp, temp, sm, st
+    ),
+    "cohere": lambda ak, text, cp, temp, sm, st: summarize_with_cohere(
+        ak, text, cp, temp, sm, st
+    ),
+    "google": lambda ak, text, cp, temp, sm, st: summarize_with_google(
+        ak, text, cp, temp, sm, st
+    ),
+    "groq": lambda ak, text, cp, temp, sm, st: summarize_with_groq(
+        ak, text, cp, temp, sm, st
+    ),
+    "huggingface": lambda ak, text, cp, temp, sm, st: summarize_with_huggingface(
+        ak, text, cp, temp, st
+    ),
+    "openrouter": lambda ak, text, cp, temp, sm, st: summarize_with_openrouter(
+        ak, text, cp, temp, sm, st
+    ),
+    "deepseek": lambda ak, text, cp, temp, sm, st: summarize_with_deepseek(
+        ak, text, cp, temp, sm, st
+    ),
+    "mistral": lambda ak, text, cp, temp, sm, st: summarize_with_mistral(
+        ak, text, cp, temp, sm, st
+    ),
+    "mock-llm": lambda ak, text, cp, temp, sm, st: summarize_with_mock_llm(
+        text, cp, ak, temp, sm, st
+    ),
+    # --- Local LLM Calls (adapters preserve each function's original
+    # argument order) ---
+    "llama.cpp": lambda ak, text, cp, temp, sm, st: summarize_with_llama(
+        text, cp, ak, temp, sm, st
+    ),
+    "kobold": lambda ak, text, cp, temp, sm, st: summarize_with_kobold(
+        text, ak, cp, temp, sm, st
+    ),
+    "ooba": lambda ak, text, cp, temp, sm, st: summarize_with_oobabooga(
+        text, ak, cp, sm, temp=temp, streaming=st
+    ),
+    "tabbyapi": lambda ak, text, cp, temp, sm, st: summarize_with_tabbyapi(
+        text, cp, temp, sm, st
+    ),
+    "vllm": lambda ak, text, cp, temp, sm, st: summarize_with_vllm(
+        ak, text, cp, temp, sm, st
+    ),
+    "local-llm": lambda ak, text, cp, temp, sm, st: summarize_with_local_llm(
+        text, cp, temp, sm, st
+    ),
+    "custom-openai-api": lambda ak, text, cp, temp, sm, st: summarize_with_custom_openai(
+        ak, text, cp, temp, sm, st
+    ),
+    "custom-openai-api-2": lambda ak, text, cp, temp, sm, st: summarize_with_custom_openai_2(
+        ak, text, cp, temp, sm, st
+    ),
+    "ollama": lambda ak, text, cp, temp, sm, st: summarize_with_ollama(
+        text, cp, None, ak, temp, sm, st
+    ),
+}
