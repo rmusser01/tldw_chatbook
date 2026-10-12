@@ -2480,9 +2480,7 @@ async def test_home_auto_refresh_updates_running_ingest_without_clicks(monkeypat
         LibraryIngestJob,
     )
 
-    monkeypatch.setattr(
-        home_screen_module, "_HOME_AUTO_REFRESH_INTERVAL_SECONDS", 0.2
-    )
+    monkeypatch.setattr(home_screen_module, "_HOME_AUTO_REFRESH_INTERVAL_SECONDS", 0.2)
 
     def _job(state: IngestJobState) -> LibraryIngestJob:
         return LibraryIngestJob(
@@ -2503,7 +2501,9 @@ async def test_home_auto_refresh_updates_running_ingest_without_clicks(monkeypat
         home = _active_home_screen(host)
 
         # The auto-selected job's canvas status line carries the state.
-        canvas_lines = lambda: str(home.query_one("#home-canvas-lines").renderable)  # noqa: E731
+        def canvas_lines() -> str:
+            return str(home.query_one("#home-canvas-lines").renderable)
+
         assert _find_rail_row(home, "local:ingest:ingest-job-1") is not None
         assert "queued" in canvas_lines()
 
@@ -2535,9 +2535,7 @@ async def test_home_auto_refresh_pauses_while_another_screen_is_on_top(monkeypat
         LibraryIngestJob,
     )
 
-    monkeypatch.setattr(
-        home_screen_module, "_HOME_AUTO_REFRESH_INTERVAL_SECONDS", 0.2
-    )
+    monkeypatch.setattr(home_screen_module, "_HOME_AUTO_REFRESH_INTERVAL_SECONDS", 0.2)
 
     def _job(state: IngestJobState) -> LibraryIngestJob:
         return LibraryIngestJob(
@@ -2565,7 +2563,10 @@ async def test_home_auto_refresh_pauses_while_another_screen_is_on_top(monkeypat
         # Home is suspended: the rail (read straight off the live widget
         # tree) must not have re-synced while covered.
         assert host.screen is not home
-        canvas_lines = lambda: str(home.query_one("#home-canvas-lines").renderable)  # noqa: E731
+
+        def canvas_lines() -> str:
+            return str(home.query_one("#home-canvas-lines").renderable)
+
         assert _find_rail_row(home, "local:ingest:ingest-job-2") is not None
         assert "queued" in canvas_lines(), (
             "auto-refresh must not run while Home is suspended"

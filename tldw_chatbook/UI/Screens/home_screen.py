@@ -38,6 +38,7 @@ from tldw_chatbook.Constants import (
     WATCHLISTS_SECTION_NOTIFICATIONS,
     WATCHLISTS_SECTION_RUNS,
 )
+from tldw_chatbook.Home.active_work_adapter import ACTIVE_WORK_CACHE_TTL_SECONDS
 from tldw_chatbook.Home.dashboard_state import (
     HOME_OPEN_ITEM_CONTROL_ID,
     HOME_PRIMARY_ACTION_ID,
@@ -67,7 +68,6 @@ from tldw_chatbook.Home.home_rail_state import (
     coerce_home_rail_preferences,
     serialize_home_rail_preferences,
 )
-from tldw_chatbook.Home.active_work_adapter import ACTIVE_WORK_CACHE_TTL_SECONDS
 from tldw_chatbook.Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
@@ -453,13 +453,10 @@ class HomeScreen(BaseAppScreen):
         try:
             if not self.is_mounted or self.app.screen is not self:
                 return
-        except Exception:
+        except Exception:  # noqa: BLE001 -- a timer tick is never fatal
             return
         signature = self._home_live_active_work_signature_read()
-        if (
-            signature is not None
-            and signature != self._home_live_active_work_signature
-        ):
+        if signature is not None and signature != self._home_live_active_work_signature:
             self._home_live_active_work_signature = signature
             self._home_pending_live_active_work_sync = True
         self._refresh_home_active_work_cache()
@@ -472,7 +469,7 @@ class HomeScreen(BaseAppScreen):
             return None
         try:
             return tuple(signature() or ())
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- optional seam, degrade quiet
             logger.debug(f"Home live-work signature read failed: {exc}")
             return None
 

@@ -1630,17 +1630,21 @@ def test_status_summary_reports_only_fields_with_a_producer():
     as a lie. The surviving readiness fields (model, ACP) report both
     polarities, and ACP keeps its real producer (the ACP runtime manager
     snapshot in HomeScreen)."""
-    ready_line = summarize_home_dashboard(
-        HomeDashboardInput(model_ready=True, acp_ready=True)
-    ).sections[0].lines[0]
+    ready_line = (
+        summarize_home_dashboard(HomeDashboardInput(model_ready=True, acp_ready=True))
+        .sections[0]
+        .lines[0]
+    )
     assert "Model: Ready" in ready_line
     assert "ACP: Ready" in ready_line
     assert "RAG" not in ready_line
     assert "MCP" not in ready_line
 
-    blocked_line = summarize_home_dashboard(
-        HomeDashboardInput(model_ready=False, acp_ready=False)
-    ).sections[0].lines[0]
+    blocked_line = (
+        summarize_home_dashboard(HomeDashboardInput(model_ready=False, acp_ready=False))
+        .sections[0]
+        .lines[0]
+    )
     assert "Model: Not set up" in blocked_line
     assert "ACP: Blocked" in blocked_line
     assert "RAG" not in blocked_line
