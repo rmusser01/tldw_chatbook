@@ -36,12 +36,13 @@ _READY = "TLDW_TEST_PRIVATE_PROFILE_CHILD_READY"
 
 
 def test_the_child_keeps_its_budget_and_the_parent_waits_for_it():
-    # The UI Fast Lane limit, with the parent's own limit moved 30 s later:
-    # the child keeps all 180 s, the parent waits until 5 s before 210 s.
-    assert _child_deadlines(180.0, 30.0) == (180.0, 205.0)
+    # The UI Fast Lane limit, with the parent's own limit moved 20 s later:
+    # the child keeps all 180 s, the parent waits until 5 s before 200 s.
+    assert private_profile._CHILD_LEAD_SECONDS == 20.0
+    assert _child_deadlines(180.0, 20.0) == (180.0, 195.0)
     # A limit that could not move (thread method, Windows): as before.
     assert _child_deadlines(180.0, 0.0) == (180.0, 180.0)
-    assert _child_deadlines(0.0, 30.0) == (0.0, None)
+    assert _child_deadlines(0.0, 20.0) == (0.0, None)
     # Nothing armed: the parent's limit is not touched.
     assert private_profile._extend_own_alarm(0.0) == 0.0
 
