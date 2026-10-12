@@ -81,9 +81,21 @@ _GOAL_MARK = (
     r"(?:\\?\[){1,3}\s{0,3}(?:/\s{0,3})?g\s{0,3}(-?\d+)\s{0,3}(?:\\?\]){1,3}")
 _GOAL_MARK_RE = re.compile(_GOAL_MARK, re.IGNORECASE)
 
-#: A mark as it is REMOVED from a line: with the ``:`` a model sets after
-#: it (``[g1]: cheap flights``).
-_MARK_TOKEN_RE = re.compile(_GOAL_MARK + r":?", re.IGNORECASE)
+#: A mark as it is REMOVED from a line: with the punctuation a model
+#: sets directly after it -- ``[g1]: cheap``, ``[g1]. cheap``, ``[g1],
+#: cheap`` (round 5, N2). A ``.``/``,``/``;`` only when a space or the
+#: end of the line follows, so ``[g1].5 inch`` keeps its dot.
+_MARK_TOKEN_RE = re.compile(
+    _GOAL_MARK + r"(?::|[.,;](?=\s|$))?", re.IGNORECASE)
+
+#: Separators a removed mark leaves at the FRONT of what remains (``[g1]
+#: - cheap``, ``[g1]) cheap``) and in front of a mark at the END (``cheap
+#: flights - [g1]``). A dash, a bracket or a dot only when it stands by
+#: itself: ``-5 C tokyo`` keeps its minus and ``...and justice`` its dots.
+_LEADING_LEFTOVER_RE = re.compile(
+    r"^(?:(?::|[.,;)\]\-\u2013\u2014](?=\s|$))\s*)+")
+_TRAILING_LEFTOVER_RE = re.compile(
+    r"(?:\s+[:,;(\[\-\u2013\u2014]|:)+$")
 
 #: Longest line that can be a search query. A longer one is prose, is
 #: dropped, and so never reaches the patterns below (N1: whatever a
@@ -370,19 +382,25 @@ def _without_marks(text: str) -> tuple[str, set[int]] | None:
         for _, _, digits in spans
     }
     prefix = text[:spans[0][0]]
-    in_front = not _PREFIX_PIECE_RE.sub("", prefix)
-    pieces = [] if in_front else [prefix]
-    for index, (_, end, _digits) in enumerate(spans):
-        following = spans[index + 1][0] if index + 1 < len(spans) else len(text)
-        pieces.append(text[end:following])
+    behind = [
+        text[end:spans[index + 1][0] if index + 1 < len(spans) else len(text)]
+        for index, (_, end, _digits) in enumerate(spans)]
+    # Formatting in front of the mark -- unless nothing stands behind the
+    # mark and the "label" has words in it: then it IS the query, with the
+    # mark set after it ("cheap flights: [g1]").
+    in_front = not _PREFIX_PIECE_RE.sub("", prefix) and (
+        any(char.isalnum() for char in "".join(behind))
+        or not any(char.isalpha() for char in prefix))
+    pieces = behind if in_front else [prefix, *behind]
+    at_end = not behind[-1].strip()
     body = " ".join(pieces).strip()
     if in_front:
         for closer in _unclosed_wrappers(prefix):
             if body.endswith(closer):
                 body = body[:-len(closer)].rstrip()
-        # What a removed leading mark leaves in front: "[g1] - x". A dash
-        # only when a space follows it: "-5 C tokyo" keeps its minus.
-        body = re.sub(r"^(?::|[-\u2013\u2014](?=\s|$))\s*", "", body)
+        body = _LEADING_LEFTOVER_RE.sub("", body)
+    if at_end:
+        body = _TRAILING_LEFTOVER_RE.sub("", body)
     return body, positions
 
 

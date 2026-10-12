@@ -932,3 +932,44 @@ def test_no_response_lets_a_mark_through_whatever_its_numbering(
     for row, (line, _base, number, _exact) in zip(rows, cases):
         assert not _MARK_ANYWHERE_RE.search(row["query"]), (line, row["query"])
         assert row["goal"] == goals[number - 1][0], (line, row)
+
+
+# --- Review round 5, N2: what a removed mark leaves next to it -------------------
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        # Punctuation the model set after a leading mark is the mark's.
+        ("[g1]. cheap flights", "cheap flights"),
+        ("[g1], cheap flights", "cheap flights"),
+        ("[g1]; cheap flights", "cheap flights"),
+        ("[g1]) cheap flights", "cheap flights"),
+        ("[g1] - cheap flights", "cheap flights"),
+        ("[g1] \u2014 cheap flights", "cheap flights"),
+        ("[g1]: - cheap flights", "cheap flights"),
+        # ...but a sign or a dot that belongs to the query stays.
+        ("[g1] -5\u00b0C tokyo", "-5\u00b0C tokyo"),
+        ("[g1] .5 inch drives", ".5 inch drives"),
+        ("[g1] ...and justice for all", "...and justice for all"),
+        # A second mark glued to the query goes with the first.
+        ("[g1]x[g1]", "x"),
+        ("[g1]tour dates[/g1]", "tour dates"),
+        # The same in front of a mark at the END of the line.
+        ("cheap flights - [g1]", "cheap flights"),
+        ("cheap flights: [g1]", "cheap flights"),
+        ("cheap flights ([g1])", "cheap flights"),
+        ("[g1] cheap flights [/g1].", "cheap flights"),
+        ("cheap flights [g1].", "cheap flights"),
+        # ...where a hyphenated word and a real full stop stay.
+        ("state-of-the-art tui [g1]", "state-of-the-art tui"),
+        ("what is a T.U.I. [g1]", "what is a T.U.I."),
+        # In the middle the query's own punctuation is untouched.
+        ("tokyo, osaka [g1] and kyoto", "tokyo, osaka and kyoto"),
+    ],
+)
+def test_a_removed_mark_leaves_no_punctuation_of_its_own_behind(line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None), (_G2, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}
