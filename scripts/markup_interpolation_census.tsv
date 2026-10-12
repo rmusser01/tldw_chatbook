@@ -182,7 +182,6 @@ tldw_chatbook/UI/Screens/scheduling/schedules_workbench	SchedulesWorkbench._sync
 tldw_chatbook/UI/Screens/scheduling/schedules_workbench	SchedulesWorkbench._toggle_definition_lifecycle._toggle_and_refresh	notify_interp	2
 tldw_chatbook/UI/Screens/scheduling/schedules_workbench	SchedulesWorkbench.action_pause_resume	notify_interp	1
 tldw_chatbook/UI/Screens/scheduling/sync_status_widget	SyncStatusWidget.set_owner_state	button_label_interp	1
-tldw_chatbook/UI/Screens/scheduling/task_detail	TaskDetail.set_task	button_label_interp	1
 tldw_chatbook/UI/Screens/settings_hooks	HooksSettingsPanel.compose	button_label_interp	1
 tldw_chatbook/UI/Screens/settings_screen	SettingsScreen._apply_rag_test_category_result	notify_interp	1
 tldw_chatbook/UI/Screens/settings_screen	SettingsScreen._apply_raw_cli_save_result	notify_interp	2

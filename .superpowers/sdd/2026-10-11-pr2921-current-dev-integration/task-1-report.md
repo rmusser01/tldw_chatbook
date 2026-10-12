@@ -276,3 +276,25 @@ shutdown/recovery drain/notification affinity (plan step7/source finding7).
 Whole Task1 remains InProgress: remaining Guardian proof audit, literal sinks,
 modal tokens/F4, narrow lint, actual required-lane binding, complete final
 source/function/caller matrix and independent final-head review are pending.
+
+## Checkpoint: actual literal runtime-name sinks (TASK34817)
+
+Four unsafe consumers repaired narrowly: reminder detail title, its Follow
+button, inspector conflict title, and alert-rule DataTable name. All now receive
+literal Text. Existing queue-row Text, conflict-table Text, source-pane Text/
+control-character handling, and escaped WatchlistTree source labels retain
+their original implementations. The unchanged source tree is measured positive
+with ordinary, unmatched-closing and action-looking names. Its census entries
+are lexical false positives already protected by escape_markup; no blanket
+rewrite or false claim that it needed repair. The actual unsafe Follow label's
+single census entry is retired; rule/table/static sites were not in that
+interpolation-only census. Shared Toast implementation remains unchanged.
+
+Names-literal-red:12 owned setup failures from reserved App.name. Red-2:6 real
+markup failures plus4 overly narrow test type assertions (Textual8 Button uses
+Content),2pass. Corrected assertion inspects Text AND native Content spans;
+red-3:6 real failures/6positive controls2.79s. After repairs, green:24pass4.27s,
+including original rule-pane behavior. Unmatched closers no longer crash and
+all tested names have no style/action spans. Markup census checker passes with
+its original ratchet, one fewer pinned site. Test/RulesPane scoped Ruff clean.
+No durable names are changed; no new ADR/schema/task is needed.
