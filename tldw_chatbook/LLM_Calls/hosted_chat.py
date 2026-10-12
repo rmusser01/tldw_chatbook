@@ -19,7 +19,6 @@ from typing import Any, Literal, Never, Protocol, cast
 from urllib.parse import unquote, urlsplit
 
 import requests
-from requests.adapters import HTTPAdapter
 from requests.exceptions import RequestException, Timeout as RequestsTimeout
 from urllib3.util import Retry
 
@@ -32,7 +31,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat_streaming import OwnedSSEStream, SSERecord
-from tldw_chatbook.Utils.egress import create_default_session
+from tldw_chatbook.Utils.egress import create_pooled_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
 
 
@@ -697,14 +696,16 @@ def hosted_chat_request(
 def _new_zero_retry_session() -> requests.Session:
     """Build one zero-transport-retry session for the per-thread registry.
 
-    ADR-222 (TASK-34418): identical to the session ``owned_json_post``
-    used to build per call -- ``create_default_session()`` plus the
-    transport-level Retry(total=0) mount that keeps every retry decision
-    in the engine's own bounded loop. Resolved through this module's
-    ``create_default_session`` global at call time so the existing test
-    seam (monkeypatching it) keeps working.
+    ADR-222 (TASK-34418) + task-34387: identical wire semantics to the
+    session ``owned_json_post`` used to build per call -- a default session
+    with the transport-level Retry(total=0) mount that keeps every retry
+    decision in the engine's own bounded loop. The adapter is mounted by
+    :func:`create_pooled_default_session` at pooled-session creation (its
+    configuration is part of the pool key), so the shared session is never
+    mutated after creation. Resolved through this module's
+    ``create_pooled_default_session`` global at call time so the existing
+    test seam (monkeypatching it) keeps working.
     """
-    session = create_default_session()
     retry_policy = Retry(
         total=0,
         connect=0,
@@ -715,10 +716,10 @@ def _new_zero_retry_session() -> requests.Session:
         allowed_methods=frozenset({"POST"}),
         raise_on_status=False,
     )
-    adapter = HTTPAdapter(max_retries=retry_policy)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
+    return create_pooled_default_session(
+        mount_retry=retry_policy,
+        mount_prefixes=("https://", "http://"),
+    )
 
 
 @_provider_recovery.unqualified

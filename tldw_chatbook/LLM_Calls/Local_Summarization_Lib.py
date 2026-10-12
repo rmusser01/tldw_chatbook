@@ -25,7 +25,6 @@ import os
 
 # Import 3rd-party Libraries
 import requests
-from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
 #

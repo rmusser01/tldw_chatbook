@@ -217,7 +217,9 @@ def _track_transport_sessions(
         sessions.append(session)
         return session
 
-    monkeypatch.setattr(hosted_chat, "create_default_session", create_session)
+    monkeypatch.setattr(
+        hosted_chat, "create_pooled_default_session", lambda **kwargs: create_session()
+    )
     return sessions
 
 

@@ -1942,7 +1942,7 @@ def test_nonstream_transport_uses_exact_mode_url_headers_and_timeout(
     response = _TransportResponse(response_payload)
     session = _RecordingSession(response)
     monkeypatch.setattr(
-        qwencloud, "create_default_session", lambda: session, raising=False
+        qwencloud, "create_pooled_default_session", lambda **kwargs: session, raising=False
     )
     monkeypatch.setattr(
         qwencloud,
@@ -2007,7 +2007,7 @@ def test_nonstream_cleanup_failures_never_mask_result_or_provider_error(
         response,
         close_error=RuntimeError("RAW-SESSION-CLOSE-CANARY"),
     )
-    monkeypatch.setattr(qwencloud, "create_default_session", lambda: session)
+    monkeypatch.setattr(qwencloud, "create_pooled_default_session", lambda **kwargs: session)
     monkeypatch.setattr(
         qwencloud,
         "get_runtime_config_snapshot",
@@ -2069,8 +2069,8 @@ def test_streaming_transport_transfers_response_and_session_ownership(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setattr(
         qwencloud,
@@ -2119,7 +2119,7 @@ def test_direct_adapter_loads_only_qwencloud_config_when_arguments_are_none(
     )
     session = _RecordingSession(response)
     monkeypatch.setattr(
-        qwencloud, "create_default_session", lambda: session, raising=False
+        qwencloud, "create_pooled_default_session", lambda **kwargs: session, raising=False
     )
     monkeypatch.setenv("DASHSCOPE_API_KEY", "qwen-env-lower-priority")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-env-canary")
@@ -2198,8 +2198,8 @@ def test_direct_adapter_loads_alias_only_qwencloud_config_without_mutation_or_le
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setenv("QWEN_ALIAS_KEY", "alias-key-canary")
     source = {
@@ -2273,8 +2273,8 @@ def test_direct_adapter_canonical_qwencloud_config_overrides_alias_in_any_order(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setenv("QWEN_ALIAS_KEY", "alias-key-canary")
     monkeypatch.setenv("QWEN_CANONICAL_KEY", "canonical-key-canary")
@@ -2364,8 +2364,8 @@ def test_direct_adapter_rejects_malformed_canonical_table_without_alias_leakage(
     )
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: pytest.fail("malformed Qwen config must fail before network"),
+        "create_pooled_default_session",
+        lambda **kwargs: pytest.fail("malformed Qwen config must fail before network"),
     )
 
     with _captured_qwencloud_logs() as logs:
@@ -2396,8 +2396,8 @@ def test_direct_adapter_rejects_alias_only_malformed_table_before_network(
     )
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: pytest.fail("malformed Qwen config must fail before network"),
+        "create_pooled_default_session",
+        lambda **kwargs: pytest.fail("malformed Qwen config must fail before network"),
     )
 
     with _captured_qwencloud_logs() as logs:
@@ -2433,8 +2433,8 @@ def test_direct_adapter_ignores_malformed_alias_when_canonical_is_valid(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     canonical = {
         "api_key": "canonical-key",
@@ -2500,7 +2500,7 @@ def test_direct_adapter_rejects_malformed_provider_config_before_network(
 
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
+        "create_pooled_default_session",
         unexpected_session,
     )
     monkeypatch.setattr(
@@ -2537,8 +2537,8 @@ def test_direct_adapter_uses_stripped_lower_key_and_explicit_base_override(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setenv("QWEN_KEY", "  env-fallback-key  ")
     monkeypatch.setattr(
@@ -2582,7 +2582,7 @@ def test_direct_adapter_rejects_unresolved_placeholders_before_network(
 
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
+        "create_pooled_default_session",
         unexpected_session,
     )
     monkeypatch.setenv("DASHSCOPE_API_KEY", " your_key ")
@@ -2901,14 +2901,15 @@ def test_nontransient_4xx_and_mode_model_mismatch_are_not_retried(
         ),
     )
     for index, response in enumerate(responses):
+        session = _RecordingSession(response)
         # ADR-222: same base_url across iterations would keep the previous
         # iteration's registry session; drop it so the patched factory runs.
         close_all_for_current_thread()
-        session = _RecordingSession(response)
         monkeypatch.setattr(
             qwencloud,
-            "create_default_session",
-            lambda: session,
+            "create_pooled_default_session",
+            lambda **kwargs: session,
+            raising=False,
         )
         monkeypatch.setattr(
             qwencloud,
@@ -2995,8 +2996,8 @@ def test_qwencloud_errors_and_logs_redact_private_values(
     session = _RecordingSession(response)
     monkeypatch.setattr(
         qwencloud,
-        "create_default_session",
-        lambda: session,
+        "create_pooled_default_session",
+        lambda **kwargs: session,
     )
     monkeypatch.setattr(
         qwencloud,
@@ -3087,14 +3088,15 @@ def test_qwencloud_errors_and_logs_redact_private_values(
             status_code=status_code,
             text="RAW-BODY-CANARY",
         )
+        status_session = _RecordingSession(status_response)
         # ADR-222: same base_url across loop iterations would keep the
         # previous iteration's registry session; drop it per iteration.
         close_all_for_current_thread()
-        status_session = _RecordingSession(status_response)
         monkeypatch.setattr(
             qwencloud,
-            "create_default_session",
-            lambda: status_session,
+            "create_pooled_default_session",
+            lambda **kwargs: status_session,
+            raising=False,
         )
         with (
             _captured_qwencloud_logs() as status_logs,
@@ -3120,13 +3122,15 @@ def test_qwencloud_errors_and_logs_redact_private_values(
         requests.exceptions.ConnectionError("RAW-BODY-CANARY"),
         requests.exceptions.Timeout("RAW-BODY-CANARY"),
     ):
-        # ADR-222: same-key registry reset per iteration (see above).
-        close_all_for_current_thread()
         network_session = _RecordingSession(_TransportResponse({}), error=network_error)
+        # ADR-222: same base_url across loop iterations would keep the
+        # previous iteration's registry session; drop it per iteration.
+        close_all_for_current_thread()
         monkeypatch.setattr(
             qwencloud,
-            "create_default_session",
-            lambda: network_session,
+            "create_pooled_default_session",
+            lambda **kwargs: network_session,
+            raising=False,
         )
         with (
             _captured_qwencloud_logs() as network_logs,

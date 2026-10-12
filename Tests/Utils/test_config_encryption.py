@@ -541,5 +541,99 @@ class TestDetectApiKeysRealProviderNames:
         assert encryptor.detect_api_keys(config) is False
 
 
+class TestDerivedKeyMemoization:
+    """TASK-34386: scrypt re-derivation per value made every config load/save
+    pay N full KDF runs. The memo on (password, salt, N) must collapse repeats
+    of the same derivation without changing any ciphertext."""
+
+    @pytest.fixture
+    def encryptor(self):
+        return ConfigEncryption()
+
+    @pytest.fixture
+    def test_password(self):
+        return "test_password_123!@#"
+
+    @pytest.fixture(autouse=True)
+    def _isolated_cache(self):
+        from tldw_chatbook.Utils import config_encryption as enc_module
+
+        enc_module._derive_key_cached.cache_clear()
+        yield
+        enc_module._derive_key_cached.cache_clear()
+
+    @pytest.fixture
+    def derivation_call_count(self):
+        from tldw_chatbook.Utils import config_encryption as enc_module
+
+        calls = []
+        original = enc_module.scrypt
+
+        def counting_scrypt(password, salt, *, key_len, N, r, p):
+            calls.append((password, salt, N))
+            return original(password, salt, key_len=key_len, N=N, r=r, p=p)
+
+        with patch.object(enc_module, "scrypt", counting_scrypt):
+            yield lambda: len(calls)
+
+    def test_decrypt_reuses_key_from_encrypt_and_repeat_decryptions(
+        self, encryptor, test_password, derivation_call_count
+    ):
+        first = encryptor.encrypt_value("secret-one", test_password)
+        second = encryptor.encrypt_value("secret-two", test_password)
+
+        # Two encrypts, two fresh random salts -> two derivations.
+        assert derivation_call_count() == 2
+
+        # Decrypting each ciphertext reuses the key its encrypt derived;
+        # re-decrypting adds nothing.
+        assert encryptor.decrypt_value(first, test_password) == "secret-one"
+        assert encryptor.decrypt_value(second, test_password) == "secret-two"
+        assert encryptor.decrypt_value(first, test_password) == "secret-one"
+        assert derivation_call_count() == 2
+
+    def test_repeated_config_roundtrip_derives_each_value_key_once(
+        self, encryptor, test_password, derivation_call_count
+    ):
+        config = {f"api_key_{i}": f"sk-value-{i}" for i in range(5)}
+        encrypted = encryptor.encrypt_config(config, test_password)
+        assert derivation_call_count() == 5
+
+        # A save/load cycle decrypts and re-walks the same ciphertexts.
+        for _ in range(3):
+            assert encryptor.decrypt_config(encrypted, test_password) == config
+        assert derivation_call_count() == 5
+
+    def test_clear_derived_key_cache_forces_rederivation(
+        self, encryptor, test_password, derivation_call_count
+    ):
+        encrypted = encryptor.encrypt_value("secret", test_password)
+        assert encryptor.decrypt_value(encrypted, test_password) == "secret"
+        assert derivation_call_count() == 1
+
+        encryptor.clear_derived_key_cache()
+        assert encryptor.decrypt_value(encrypted, test_password) == "secret"
+        assert derivation_call_count() == 2
+
+    def test_memoization_does_not_change_ciphertext_or_auth(
+        self, encryptor, test_password
+    ):
+        encrypted = encryptor.encrypt_value("secret", test_password)
+        first = encryptor.decrypt_value(encrypted, test_password)
+        second = encryptor.decrypt_value(encrypted, test_password)
+        assert first == second == "secret"
+        with pytest.raises(ValueError):
+            encryptor.decrypt_value(encrypted, "wrong-password")
+
+    def test_v1_and_v2_versions_occupy_distinct_cache_keys(
+        self, encryptor, test_password
+    ):
+        v2 = encryptor.encrypt_value("modern", test_password)
+        assert encryptor.decrypt_value(v2, test_password) == "modern"
+        assert (
+            ConfigEncryption.LEGACY_SCRYPT_N != ConfigEncryption.SCRYPT_N
+        ), "versions must occupy distinct cache keys"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

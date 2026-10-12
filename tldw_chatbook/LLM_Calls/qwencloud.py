@@ -11,7 +11,6 @@ from typing import Any, Literal, Never, cast
 
 import requests
 from loguru import logger
-from requests.adapters import HTTPAdapter
 from requests.exceptions import (
     ChunkedEncodingError,
     ConnectionError as RequestsConnectionError,
@@ -45,7 +44,7 @@ from tldw_chatbook.config import (
     provider_settings_for_key,
     resolve_provider_api_key,
 )
-from tldw_chatbook.Utils.egress import create_default_session
+from tldw_chatbook.Utils.egress import create_pooled_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import llm_retry_count
 
 logger = logger.bind(module="qwencloud")
@@ -166,8 +165,8 @@ def _advance_retry_policy(
     return next_policy, delay
 
 
-def _transport_without_hidden_retries() -> HTTPAdapter:
-    retry_policy = Retry(
+def _zero_hidden_retry_policy() -> Retry:
+    return Retry(
         total=0,
         connect=0,
         read=0,
@@ -177,7 +176,6 @@ def _transport_without_hidden_retries() -> HTTPAdapter:
         allowed_methods=frozenset({"POST"}),
         raise_on_status=False,
     )
-    return HTTPAdapter(max_retries=retry_policy)
 
 
 def _is_mode_model_mismatch(response: requests.Response) -> bool:
@@ -1075,18 +1073,20 @@ def normalize_qwencloud_response(
 def _new_transport_session() -> requests.Session:
     """Build one zero-retry transport session for the per-thread registry.
 
-    ADR-222 (TASK-34418): identical to the session ``chat_with_qwencloud``
-    built per call -- ``create_default_session()`` plus the
-    ``_transport_without_hidden_retries()`` mount that keeps every retry
-    decision in this module's own bounded loop. Resolved through this
-    module's ``create_default_session`` global at call time so the
-    existing test seam keeps working.
+    ADR-222 (TASK-34418) + task-34387: identical wire semantics to the
+    session ``chat_with_qwencloud`` built per call -- a default session with
+    the ``_zero_hidden_retry_policy()`` mount that keeps every retry
+    decision in this module's own bounded loop. The adapter is mounted by
+    :func:`create_pooled_default_session` at pooled-session creation (its
+    configuration is part of the pool key), so the shared session is never
+    mutated after creation. Resolved through this module's
+    ``create_pooled_default_session`` global at call time so the existing
+    test seam keeps working.
     """
-    session = create_default_session()
-    adapter = _transport_without_hidden_retries()
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
+    return create_pooled_default_session(
+        mount_retry=_zero_hidden_retry_policy(),
+        mount_prefixes=("https://", "http://"),
+    )
 
 
 @_provider_recovery.unqualified

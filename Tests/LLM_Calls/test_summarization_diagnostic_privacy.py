@@ -508,7 +508,18 @@ def _invoke_local_input(monkeypatch: pytest.MonkeyPatch) -> object:
     # `create_default_session()` now, not a bare `requests.post` call -- the
     # factory (imported into this module's namespace) is the seam to fake.
     monkeypatch.setattr(
-        local_summarization, "create_default_session", lambda: _FakeSession(response)
+        local_summarization,
+        "create_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
+    )
+    # Pooled seam (task-34387): patch BOTH names so either production
+    # session seam is intercepted.
+    monkeypatch.setattr(
+        local_summarization,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
     return local_summarization.summarize_with_local_llm(
         LOCAL_INPUT_CANARY,
@@ -523,12 +534,25 @@ def _invoke_local_prompt(monkeypatch: pytest.MonkeyPatch) -> object:
     monkeypatch.setattr(
         local_summarization,
         "create_default_session",
-        lambda: _FakeSession(response),
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_summarization,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
     import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
 
     monkeypatch.setattr(
-        _general, "create_default_session", lambda: _FakeSession(response)
+        _general, "create_default_session", lambda *a, **k: _FakeSession(response)
+    )
+    monkeypatch.setattr(
+        _general,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
     # TASK-32854: llama posts through the shared _post_with_retry transport
     # in Summarization_General_Lib, so the session seam moves there too
@@ -536,7 +560,13 @@ def _invoke_local_prompt(monkeypatch: pytest.MonkeyPatch) -> object:
     import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
 
     monkeypatch.setattr(
-        _general, "create_default_session", lambda: _FakeSession(response)
+        _general, "create_default_session", lambda *a, **k: _FakeSession(response)
+    )
+    monkeypatch.setattr(
+        _general,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
     return local_summarization.summarize_with_llama(
         "fixed input",
@@ -575,7 +605,16 @@ def _invoke_local_response(monkeypatch: pytest.MonkeyPatch) -> object:
         lines=(f"data: {{{LOCAL_RESPONSE_CANARY}".encode(), b"data: [DONE]")
     )
     monkeypatch.setattr(
-        local_summarization, "create_default_session", lambda: _FakeSession(response)
+        local_summarization,
+        "create_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_summarization,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
     generator = local_summarization.summarize_with_local_llm(
         "fixed input",
@@ -597,7 +636,16 @@ def _invoke_local_exception(monkeypatch: pytest.MonkeyPatch) -> object:
     # from `.post()` would, with the same observable (hidden-exception)
     # outcome.
     monkeypatch.setattr(
-        local_summarization, "create_default_session", raise_private_exception
+        local_summarization,
+        "create_default_session",
+        lambda *a, **k: raise_private_exception(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_summarization,
+        "create_pooled_default_session",
+        lambda *a, **k: raise_private_exception(),
+        raising=False,
     )
     return local_summarization.summarize_with_local_llm(
         "fixed input",
@@ -2713,12 +2761,25 @@ def test_local_core_llama_malformed_stream_logs_only_safe_length(
     monkeypatch.setattr(
         local_summarization,
         "create_default_session",
-        lambda: _FakeSession(response),
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_summarization,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
     import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
 
     monkeypatch.setattr(
-        _general, "create_default_session", lambda: _FakeSession(response)
+        _general, "create_default_session", lambda *a, **k: _FakeSession(response)
+    )
+    monkeypatch.setattr(
+        _general,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
 
     with _capture_stdlib_and_loguru(caplog) as captured:
@@ -2760,12 +2821,25 @@ def test_local_core_llama_success_hides_prompt_and_endpoint_canaries(
     monkeypatch.setattr(
         local_summarization,
         "create_default_session",
-        lambda: _FakeSession(response),
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_summarization,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
     import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
 
     monkeypatch.setattr(
-        _general, "create_default_session", lambda: _FakeSession(response)
+        _general, "create_default_session", lambda *a, **k: _FakeSession(response)
+    )
+    monkeypatch.setattr(
+        _general,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
 
     with _capture_stdlib_and_loguru(caplog) as captured:
@@ -2789,12 +2863,25 @@ def test_local_core_llama_accepts_non_string_system_message_as_before(
     monkeypatch.setattr(
         local_summarization,
         "create_default_session",
-        lambda: _FakeSession(response),
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_summarization,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
     import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
 
     monkeypatch.setattr(
-        _general, "create_default_session", lambda: _FakeSession(response)
+        _general, "create_default_session", lambda *a, **k: _FakeSession(response)
+    )
+    monkeypatch.setattr(
+        _general,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
 
     result = local_summarization.summarize_with_llama(
@@ -2822,7 +2909,14 @@ def test_local_core_kobold_missing_key_error_contract_is_unchanged(
     monkeypatch.setattr(
         local_summarization,
         "create_default_session",
-        transport_must_not_run,
+        lambda *a, **k: transport_must_not_run(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_summarization,
+        "create_pooled_default_session",
+        lambda *a, **k: transport_must_not_run(),
+        raising=False,
     )
 
     result = local_summarization.summarize_with_kobold(
@@ -2848,12 +2942,25 @@ def test_local_core_kobold_stream_fully_consumed_without_private_diagnostics(
     monkeypatch.setattr(
         local_summarization,
         "create_default_session",
-        lambda: _FakeSession(response),
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_summarization,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
     import tldw_chatbook.LLM_Calls.Summarization_General_Lib as _general
 
     monkeypatch.setattr(
-        _general, "create_default_session", lambda: _FakeSession(response)
+        _general, "create_default_session", lambda *a, **k: _FakeSession(response)
+    )
+    monkeypatch.setattr(
+        _general,
+        "create_pooled_default_session",
+        lambda *a, **k: _FakeSession(response),
+        raising=False,
     )
 
     with _capture_stdlib_and_loguru(caplog) as captured:
@@ -3070,7 +3177,14 @@ def test_tabby_missing_credential_error_contract_is_unchanged(
     monkeypatch.setattr(
         local_summarization,
         "create_default_session",
-        transport_must_not_run,
+        lambda *a, **k: transport_must_not_run(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_summarization,
+        "create_pooled_default_session",
+        lambda *a, **k: transport_must_not_run(),
+        raising=False,
     )
 
     # task-32805.3: tabby is no longer a generator function -- the
@@ -3775,7 +3889,14 @@ def test_local_custom_openai_missing_config_credential_contract_is_unchanged(
     monkeypatch.setattr(
         local_summarization,
         "create_default_session",
-        transport_must_not_run,
+        lambda *a, **k: transport_must_not_run(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        local_summarization,
+        "create_pooled_default_session",
+        lambda *a, **k: transport_must_not_run(),
+        raising=False,
     )
 
     result = variant.summarizer(

@@ -12,7 +12,6 @@ import time
 from typing import Any, Generator, Union, Dict, Optional, List
 
 import requests
-from requests.adapters import HTTPAdapter
 from urllib3 import Retry
 
 from tldw_chatbook.Chat.Chat_Deps import (
@@ -30,7 +29,7 @@ from tldw_chatbook.config import (
     resolve_provider_api_key,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
-from tldw_chatbook.Utils.egress import create_default_session
+from tldw_chatbook.Utils.egress import create_pooled_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
     llm_content_byte_count,
@@ -283,7 +282,6 @@ def _chat_with_openai_compatible_local_server(
         )
 
     try:
-        session = create_default_session()
         # Configure retries
         retry_strategy = Retry(
             total=llm_retry_count(api_retries),
@@ -306,9 +304,10 @@ def _chat_with_openai_compatible_local_server(
 
         # The first-token watchdog, not this read timeout, ends a cold wait.
         timeout = self_hosted_read_timeout(timeout)
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
+        session = create_pooled_default_session(
+            mount_retry=retry_strategy,
+            mount_prefixes=("http://", "https://"),
+        )
 
         if streaming:
             # Add a bit more timeout for the initial connection for streaming
@@ -1105,16 +1104,16 @@ def chat_with_kobold(
     )
 
     try:
-        session = create_default_session()
         retry_strategy = Retry(
             total=llm_retry_count(api_retries),
             backoff_factor=api_retry_delay,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["POST"],
         )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
+        session = create_pooled_default_session(
+            mount_retry=retry_strategy,
+            mount_prefixes=("http://", "https://"),
+        )
 
         # TASK-19862: refuse redirects rather than follow them. This POST
         # carries the API key in the custom ``X-Api-Key`` header, which

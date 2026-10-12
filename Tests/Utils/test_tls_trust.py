@@ -311,9 +311,8 @@ def test_get_openai_embeddings_passes_tls_policy(_set_ssl_config, monkeypatch):
         def __exit__(self, *exc):
             return False
 
-    monkeypatch.setattr(
-        llm_calls, "create_default_session", lambda **kw: _FakeSession()
-    )
+    monkeypatch.setattr(llm_calls, "create_default_session", lambda **kw: _FakeSession(), raising=False)
+    monkeypatch.setattr(llm_calls, "create_pooled_default_session", lambda **kw: _FakeSession(), raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     _set_ssl_config(False)
     llm_calls.get_openai_embeddings("hello", "text-embedding-3-small")

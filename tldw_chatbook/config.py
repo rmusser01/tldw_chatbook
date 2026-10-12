@@ -1046,6 +1046,7 @@ def set_encryption_password(password: str):
     _STARTUP_UNLOCK_PENDING = False
     _SETTINGS_CACHE = None
     _CONFIG_CACHE = None
+    get_encryption_module().clear_derived_key_cache()
     logger.info("Encryption password set for current session")
 
 
@@ -1059,6 +1060,7 @@ def clear_encryption_password():
     global _ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = None
     _STARTUP_UNLOCK_PENDING = False
+    get_encryption_module().clear_derived_key_cache()
     logger.info("Encryption password cleared from memory")
 
 

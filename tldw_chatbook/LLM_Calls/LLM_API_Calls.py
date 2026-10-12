@@ -63,7 +63,10 @@ from tldw_chatbook.config import (
     resolve_provider_api_key,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
-from tldw_chatbook.Utils.egress import create_default_session
+from tldw_chatbook.Utils.egress import (
+    create_default_session,
+    create_pooled_default_session,
+)
 from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.LLM_Calls.moonshot import (
     chat_with_moonshot as _strict_chat_with_moonshot,
@@ -995,13 +998,13 @@ def chat_with_openai(
                 status_forcelist=[429, 500, 502, 503, 504],
                 allowed_methods=["POST"],  # Changed from method_whitelist
             )
-            adapter = HTTPAdapter(max_retries=retry_strategy)
             # ADR-222 (TASK-34418): deliberately NOT registry-backed --
             # openai_post() owns and closes the session via the guarded
             # recovery _Operation; see ADR-222 §5.
-            with create_default_session() as session:
-                session.mount("https://", adapter)
-                session.mount("http://", adapter)  # Though OpenAI is https
+            with create_pooled_default_session(
+                mount_retry=retry_strategy,
+                mount_prefixes=("https://", "http://"),
+            ) as session:
                 response = _provider_recovery.openai_post(
                     session,
                     api_url,
