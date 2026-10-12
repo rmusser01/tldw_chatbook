@@ -24,7 +24,7 @@ recorded — and no Guardian database file even exists on disk.
 
 ## Enabling Guardian
 
-Open **Settings** (**F9**) ▸ **Domain Defaults** ▸ **Guardian** and press
+Open **Settings** (**F4**) ▸ **Domain Defaults** ▸ **Guardian** and press
 **Enable Guardian**. Checks start with your next Console message. The same
 page shows your rules and edits them. Disabling Guardian there stops all
 checks and recording; your rules and history stay on disk and survive a

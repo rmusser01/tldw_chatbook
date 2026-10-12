@@ -62,6 +62,8 @@ from tldw_chatbook.UI.focus_ownership import (
 # is imported where it is rendered rather than at module scope -- this
 # module is reached by the screen pre-importer.
 
+from ...Widgets.modal_dismissal import SafeModalDismissMixin
+
 from ...Chat.console_runtime import ensure_console_runtime
 from ...Agents.agent_models import LOOP_DETECTION_N
 from ...Chat.Chat_Deps import ChatConfigurationError
@@ -2022,18 +2024,18 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
         rows=(
             (
                 "Awareness rules",
-                "this page owns the enable toggle and the full rules editor "
-                "(pattern, action, escalation, crisis flag)",
+                ("this page owns the enable toggle and the full rules editor "
+                "(pattern, action, escalation, crisis flag)"),
             ),
             (
                 "Notices",
-                "the Console surfaces inline notices, redactions, and the "
-                "post-visit summary; crisis rules always notify",
+                ("the Console surfaces inline notices, redactions, and the "
+                "post-visit summary; crisis rules always notify"),
             ),
             (
                 "Dreams gate",
-                "only rules opted in with feeds_discovery feed Dreams "
-                "aggregates; crisis rules never can",
+                ("only rules opted in with feeds_discovery feed Dreams "
+                "aggregates; crisis rules never can"),
             ),
         ),
         follow_up=(
@@ -3232,12 +3234,12 @@ def _settings_ssh_advisory_probe(
             _record_unreached(f"probe failed ({code})")
 
 
-class GuardianRuleEditModal(ModalScreen[None]):
+class GuardianRuleEditModal(SafeModalDismissMixin, ModalScreen[None]):
     """Create, edit, or delete ONE Guardian awareness rule; dismisses None.
 
     Follows the DreamsGoalsModal idioms (``artifacts_dreams_goals_modal``):
-    a small ``DEFAULT_CSS`` of existing theme variables only (ADR-150:
-    nothing new to govern), single-row instant SQLite writes made directly
+    central-token ``BUNDLED_CSS`` through the existing builder (ADR-150),
+    standard safe modal dismissal (ADR-161), single-row SQLite writes made directly
     in the action handlers, failures surfaced as notices in the modal's
     own status line -- never crashes -- and ``on_changed()`` fired after
     every mutating action so the section re-reads its rows.
@@ -3254,15 +3256,18 @@ class GuardianRuleEditModal(ModalScreen[None]):
     whose cooldown is still active is refused with the remaining minutes.
     """
 
-    DEFAULT_CSS = """
-    GuardianRuleEditModal { align: center middle; background: $background 70%; }
+    SAFE_MODAL_CONTENT = "#grm-dialog"
+    BINDINGS = (Binding("escape", "close", "Close", show=False),)
+
+    BUNDLED_CSS = """
+    GuardianRuleEditModal { align: center middle; background: $background $ds-opacity-dim; }
     GuardianRuleEditModal > VerticalScroll {
-        width: 76; max-width: 96%; height: auto; max-height: 90%;
-        background: $surface; border: solid $primary; padding: 1 2;
+        width: $ds-size-76; max-width: $ds-percent-96; height: auto; max-height: $ds-percent-90;
+        background: $ds-surface-raised; border: solid $ds-action-focus; padding: $ds-space-1 $ds-space-2;
     }
-    GuardianRuleEditModal #grm-crisis-copy { color: $warning; margin-top: 1; }
-    GuardianRuleEditModal #grm-status { color: $warning; margin-top: 1; }
-    GuardianRuleEditModal #grm-buttons { margin-top: 1; height: auto; }
+    GuardianRuleEditModal #grm-crisis-copy { color: $ds-status-warning; margin-top: $ds-space-1; }
+    GuardianRuleEditModal #grm-status { color: $ds-status-warning; margin-top: $ds-space-1; }
+    GuardianRuleEditModal #grm-buttons { margin-top: $ds-space-1; height: auto; }
     """
 
     def __init__(
@@ -3356,7 +3361,7 @@ class GuardianRuleEditModal(ModalScreen[None]):
             return None
 
     def _load(self) -> None:
-        """Populate every field from the stored rule (defaults when new)."""
+        """Populate every control_field from the stored rule (defaults when new)."""
         rule: dict | None = None
         if self._rule_id is not None:
             db = self._db()
@@ -3406,13 +3411,13 @@ class GuardianRuleEditModal(ModalScreen[None]):
         self.query_one("#grm-display", Select).value = str(
             rule.get("display_mode") or "inline_banner"
         )
-        for field, node_id in (
+        for control_field, node_id in (
             ("escalate_session_threshold", "grm-esc-session"),
             ("escalate_window_threshold", "grm-esc-window"),
             ("escalate_window_days", "grm-esc-days"),
             ("cooldown_minutes", "grm-cooldown"),
         ):
-            value = rule.get(field)
+            value = rule.get(control_field)
             self.query_one(f"#{node_id}", Input).value = (
                 "" if value is None else str(value)
             )
@@ -3527,7 +3532,7 @@ class GuardianRuleEditModal(ModalScreen[None]):
             ),
             "enabled": 1 if enabled else 0,
         }
-        for field, node_id in (
+        for control_field, node_id in (
             ("escalate_session_threshold", "grm-esc-session"),
             ("escalate_window_threshold", "grm-esc-window"),
             ("escalate_window_days", "grm-esc-days"),
@@ -3536,12 +3541,12 @@ class GuardianRuleEditModal(ModalScreen[None]):
             raw = self.query_one(f"#{node_id}", Input).value.strip()
             if raw:
                 try:
-                    fields[field] = int(raw)  # type: ignore[assignment]
+                    fields[control_field] = int(raw)  # type: ignore[assignment]
                 except ValueError:
-                    self._status(f"{field.replace('_', ' ')} must be a whole number.")
+                    self._status(f"{control_field.replace('_', ' ')} must be a whole number.")
                     return
             else:
-                fields[field] = None
+                fields[control_field] = None
         if not str(fields["name"]) or not str(fields["topic"]) or not str(
             fields["pattern"]
         ):
@@ -18322,18 +18327,18 @@ class SettingsScreen(BaseAppScreen):
             return (
                 (
                     "Affected config",
-                    "[dreams] enabled, provider, model, region; topic rows in the "
-                    "Dreams interest profile (source=user)",
+                    ("[dreams] enabled, provider, model, region; topic rows in the "
+                    "Dreams interest profile (source=user)"),
                 ),
                 (
                     "Recovery",
-                    "disable Dreams here to stop cycles; unset provider/model to "
-                    "follow chat defaults again",
+                    ("disable Dreams here to stop cycles; unset provider/model to "
+                    "follow chat defaults again"),
                 ),
                 (
                     "Boundary",
-                    "Settings owns the enable gate, overrides, and user topics; "
-                    "cycles own derived rows; budgets stay config.toml-only (v1)",
+                    ("Settings owns the enable gate, overrides, and user topics; "
+                    "cycles own derived rows; budgets stay config.toml-only (v1)"),
                 ),
             )
         if category is SettingsCategoryId.GUARDIAN:
@@ -18342,18 +18347,18 @@ class SettingsScreen(BaseAppScreen):
             return (
                 (
                     "Affected config",
-                    "[guardian] enabled; rule rows in the Guardian store "
-                    "(patterns, actions, escalation, crisis flags)",
+                    ("[guardian] enabled; rule rows in the Guardian store "
+                    "(patterns, actions, escalation, crisis flags)"),
                 ),
                 (
                     "Recovery",
-                    "disable Guardian here to stop checks; rules and history "
-                    "stay on disk and survive re-enable",
+                    ("disable Guardian here to stop checks; rules and history "
+                    "stay on disk and survive re-enable"),
                 ),
                 (
                     "Boundary",
-                    "Settings owns the gate and rules; crisis rules are capped "
-                    "to notify and can never feed Dreams discovery",
+                    ("Settings owns the gate and rules; crisis rules are capped "
+                    "to notify and can never feed Dreams discovery"),
                 ),
             )
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:

@@ -306,3 +306,34 @@ No durable names are changed; no new ADR/schema/task is needed.
 START9ab source hashes and identical five diagnostic code/message families
 (threeRUF012, ISC004, BLE001). New test now Ruff clean. No broad exemption or
 unrelated cleanup; the shared file's inherited diagnostics remain explicit.
+
+## Checkpoint: modal patterns, central tokens, F4 and feature lint
+
+The two Dreams dialogs and Guardian rule editor now use existing central tokens
+through BUNDLED_CSS and the source builder (only generated widget_defaults_self
+changes). No token values, stylesheet count caps or performance limits changed.
+SafeModalDismissMixin binds each content frame and retains top-screen/focus
+ownership; Guardian now has its missing hidden Escape binding. Story actions
+use a compact two-column grid after a real80x24 failure: Track's native region
+ended at86 outside the panel's75 boundary. All six story/goals/Guardian layouts
+at80x24 and120x40 now keep every displayed button inside the scroll viewport,
+with Escape returning correctly. Six native Textual SVGs retained in
+qualified-modal-svg. These are actual mounted widgets with production CSS in
+isolated local test apps, not a claim of a provider-connected end-to-end run.
+
+Modal-layout-red1 genuine clipping failure3.81s. Green1 four passing layouts,
+two Guardian failures exposed missing Escape plus an owned wrong cleanup method
+in the test (close_connection vs real close), both repaired. Guardian/budget/
+token/source-sync selected run16pass27.96s; unchanged boot byte budget passes.
+Existing story actions/goal writes/Guardian editor and unchanged real Textual
+Toast controls24pass13.83s. Final production Library, native ownership and six
+modal-layout cases9pass26.70s. Guardian guide now points to canonicalF4 Settings.
+
+Guardian package/DB/handler/projection Ruff now passes (the last Callable/
+Iterable import repaired). Source Settings had130 diagnostics: exact comparison
+to privateSTART119 isolated eleven feature additions (nine ISC004 strings and
+two field-loop shadows in Guardian). Those eleven alone are fixed. Final
+settings-final-start-119-lint.json binds the exact unchanged119 diagnostic
+families; no inherited cleanup/exemption. Focused editor/rules-engine controls
+8pass2.40s; Dreams modal/new UI test Ruff clean. Pending complete affected source
+inventory and required lanes still gate whole Task1 completion.
