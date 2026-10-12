@@ -162,3 +162,10 @@ Runtime versions are captured in `versions`; CPY3.12.11/Textual8.2.8 and SPY3.12
 Original535 artifacts and historical108 copied artifacts/2 private exclusions are hash-verified unchanged. Original report SHA256 `1e2d82b0308bfdc9092b1a672c47df4e2f5472d089efc703afd63bbed726ef9d` remains an exact prefix and separate immutable copy. New command records retain argv/cwd/env patches/exit/raw stdout+stderr hashes (including empty streams), actual nested helpers and owner hashes; the additive manifest records original/redacted-copy hashes. Private configs/DBs/full environments are not copied. No original evidence is replaced.
 
 IME composition deferral and spoken screen-reader announcement remain binding unqualified physical profiles; synthetic events/AX attributes do not resolve them. System clipboard, physical TTY/hardware, other OS/browser/clean installation and unexercised extension UX remain bounded coverage limitations, not invented extra release gates. The pending human question has no reply or scope waiver. No full sweep, unrelated repair, physical probe replay, global preference change, publication or task closure occurred.
+
+
+## Scope disposition — 2026-10-12
+
+The user approved keeping missing durable server-readable Notes sync outside this linter/formatter implementation and tracking it separately in [TASK-34818 — Enable durable server-readable Notes sync in Chatbook](<../../../backlog/tasks/task-34818 - Enable-durable-server-readable-Notes-sync-in-Chatbook.md>). The follow-up is To Do and depends on TASK-1602's production data-ownership design. Its acceptance criteria require a real same-note publish, web edit, pull and durable restart trace, exact source/language, scoped mirror/cursor/pending handling and truthful security/prerequisite refusal.
+
+This disposition does not qualify or implement the unavailable clear-sync journey. The current missing durable receiver/mirror and enrollment refusal remain the observed outcomes. The user also confirmed that no existing IME/screen-reader test setup is available; actual OS IME and spoken announcements remain unverified, with no release-qualification waiver.
