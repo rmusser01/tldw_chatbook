@@ -1477,3 +1477,32 @@ async def test_pointer_filter_choice_survives_queued_click_and_catalog_refresh(
         await pilot.pause()
         assert select.value == (Select.NULL if change == "remove" else "local:b")
         assert canvas.query_one(DataTable).row_count == (2 if change == "remove" else 1)
+
+async def test_text_refilter_does_not_reparse_tool_schemas():
+    """TASK-34394: the form/raw schema verdict is computed once per tool
+    per catalog -- a debounced re-filter must not re-parse JSON schemas
+    per keystroke."""
+    app = ToolsModeApp()
+    async with app.run_test() as pilot:
+        canvas = app.query_one(MCPToolsMode)
+        with patch(
+            "tldw_chatbook.UI.MCP_Modules.mcp_tools_mode.parse_schema",
+            wraps=parse_schema,
+        ) as spy:
+            await canvas.update_tools(
+                [
+                    _tool(server_key="local:docs", server_label="docs", name="search"),
+                    _tool(server_key="local:docs", server_label="docs", name="bare"),
+                ],
+                empty_diagnosis=None,
+            )
+            await pilot.pause()
+
+            text_input = app.query_one("#mcp-tools-filter-text", Input)
+            text_input.value = "sea"
+            # TASK-34394: the text filter is debounced; wait out the timer.
+            await pilot.pause(0.3)
+
+            # One parse per tool (the initial rebuild), not one per
+            # re-filter: the verdict cache absorbed the keystroke.
+            assert spy.call_count == 2

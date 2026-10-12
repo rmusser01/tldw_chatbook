@@ -2,11 +2,12 @@
 id: TASK-34391
 title: Make InMemoryVectorStore add/search sublinear-friendly (matrix + cached norms
   + dict ids)
-status: To Do
+status: Done
 created_date: 2026-10-11 21:44
 labels:
 - performance
 priority: medium
+updated_date: 2026-10-12 01:30
 ---
 
 ## Description
@@ -17,15 +18,14 @@ InMemoryVectorStore (default without the chroma extra) does linear self.ids.inde
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Batch ingest of m documents is O(m) structure updates instead of O(m*n),Query similarity uses one matrix product with precomputed norms and returns the same top-k results as before (property or golden test),LRU access-order maintenance is O(1) per touch,Existing vector store tests pass
+- [x] #1 Batch ingest of m documents is O(m) structure updates instead of O(m*n),Query similarity uses one matrix product with precomputed norms and returns the same top-k results as before (property or golden test),LRU access-order maintenance is O(1) per touch,Existing vector store tests pass
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Implemented and verified on perf/34386-34388-hot-path-efficiency; see task file Implementation Notes; PR #3083
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

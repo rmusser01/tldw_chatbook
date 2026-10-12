@@ -552,15 +552,25 @@ class AudioBookGenerationWidget(Widget):
                 severity="warning",
             )
 
-    def _handle_file_selection(self, path: Optional[str]) -> None:
-        """Handle file selection for audiobook content"""
+    async def _handle_file_selection(self, path: Optional[str]) -> None:
+        """Handle file selection for audiobook content.
+
+        TASK-34394: the file read runs via `asyncio.to_thread` (same
+        pattern as `_load_studio_preferences`) -- audiobook source files
+        can be whole books, and reading them synchronously here stalls
+        the event loop mid-callback.
+        """
         if not path:
             return
 
         try:
-            # Read the file content
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            # Read the file content off the event loop.
+
+            def _read_audiobook_text() -> str:
+                with open(path, "r", encoding="utf-8") as f:
+                    return f.read()
+
+            content = await asyncio.to_thread(_read_audiobook_text)
 
             # Update content preview
             self.content_text = content

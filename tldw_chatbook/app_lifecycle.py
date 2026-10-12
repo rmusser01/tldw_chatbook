@@ -1617,6 +1617,22 @@ class LifecycleMixin:
             self.loguru_logger.opt(exception=True).warning(
                 "Could not schedule change-review retention"
             )
+        # TASK-34389: sync-journal retention rides the same maintenance path
+        # but has its OWN knob ([sync] sync_log_retention_days; <=0 disables
+        # inside the pass) -- disabling the other passes must not silently
+        # disable sync-log retention.
+        try:
+            self._sync_log_retention_startup_timer = self.set_timer(
+                DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS + 60,
+                self._perform_sync_log_retention,
+            )
+            self._sync_log_retention_timer = self.set_interval(
+                24 * 3600, self._perform_sync_log_retention
+            )
+        except Exception:  # noqa: BLE001 -- maintenance must never block boot
+            self.loguru_logger.opt(exception=True).warning(
+                "Could not schedule sync-log retention"
+            )
         try:
             if not execution_allowed(("db.media.primary",)):
                 return
@@ -1681,6 +1697,50 @@ class LifecycleMixin:
         except Exception:  # noqa: BLE001 -- retention must never surface to the UI
             self.loguru_logger.opt(exception=True).warning(
                 "Change-review retention pass failed"
+            )
+
+    async def _perform_sync_log_retention(self) -> None:
+        """Run one sync-journal retention pass off the UI thread (TASK-34389).
+
+        Deletes ``sync_log`` rows older than ``[sync]
+        sync_log_retention_days`` from both stores that keep a sync journal
+        (ChaChaNotes and media). ``<=0`` disables the pass entirely. Rides
+        the same post-startup maintenance path as change-review retention
+        and media cleanup; all DB work happens in a thread so it can never
+        block the UI.
+        """
+        try:
+            raw_days = get_cli_setting("sync", "sync_log_retention_days", 90)
+            try:
+                retention_days = int(raw_days)
+            except (TypeError, ValueError):
+                self.loguru_logger.warning(
+                    f"Invalid [sync] sync_log_retention_days value "
+                    f"{raw_days!r}; skipping sync-log retention pass"
+                )
+                return
+            if retention_days <= 0:
+                return  # Documented off-switch (ADR-213).
+            from datetime import datetime, timedelta, timezone
+
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(days=retention_days)
+            ).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+            for attr in ("chachanotes_db", "media_db"):
+                db = getattr(self, attr, None)
+                if db is None:
+                    continue
+                pruned = await asyncio.to_thread(
+                    db.delete_sync_log_entries_older_than, cutoff
+                )
+                if pruned:
+                    self.loguru_logger.info(
+                        f"Sync-log retention pruned {pruned} rows older than "
+                        f"{retention_days} days from {attr}"
+                    )
+        except Exception:  # noqa: BLE001 -- retention must never surface to the UI
+            self.loguru_logger.opt(exception=True).warning(
+                "Sync-log retention pass failed"
             )
 
     async def perform_media_cleanup(self) -> None:

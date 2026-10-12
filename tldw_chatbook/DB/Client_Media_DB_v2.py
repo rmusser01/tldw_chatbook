@@ -3723,6 +3723,60 @@ class MediaDatabase:
                 f"Unexpected error deleting sync log entries before threshold: {e}"
             ) from e
 
+    def delete_sync_log_entries_older_than(self, cutoff_timestamp: str) -> int:
+        """
+        Deletes sync log entries whose timestamp predates a cutoff.
+
+        Time-based retention (task-34389, ADR-213): parity with
+        ``ChaChaNotes_DB.delete_sync_log_entries_older_than``. One
+        parameterized ``DELETE`` over the indexed ``timestamp`` column, so a
+        media/chunk sync event older than the configured window leaves the
+        database regardless of reachability.
+
+        ``sync_log.timestamp`` rows are ISO-8601 UTC strings in the
+        ``YYYY-MM-DDTHH:MM:SS.mmmZ`` shape ``_log_sync_event`` emits, so the
+        comparison is a plain lexicographic string compare and the caller
+        passes the cutoff in that same shape. Rows at or after the cutoff are
+        never touched, which keeps change_id-cursor readers (the only
+        production reader) seeing every unpruned change.
+
+        Args:
+            cutoff_timestamp: Cutoff in the ``YYYY-MM-DDTHH:MM:SS.mmmZ`` form;
+                rows strictly older are deleted.
+
+        Returns:
+            int: The number of sync log entries actually deleted.
+
+        Raises:
+            ValueError: If `cutoff_timestamp` is not a non-empty string.
+            DatabaseError: If the deletion fails.
+        """
+        if not isinstance(cutoff_timestamp, str) or not cutoff_timestamp:
+            raise ValueError("cutoff_timestamp must be a non-empty string.")
+        query = "DELETE FROM sync_log WHERE timestamp < ?"
+        try:
+            with self.transaction():
+                cursor = self.execute_query(query, (cutoff_timestamp,), commit=False)
+                deleted_count = cursor.rowcount
+                logger.info(
+                    f"Deleted {deleted_count} sync log entries older than {cutoff_timestamp} from DB '{self.db_path_str}'."
+                )
+                return deleted_count
+        except (DatabaseError, sqlite3.Error) as e:
+            logger.error(
+                f"Error deleting sync log entries older than cutoff from DB '{self.db_path_str}': {e}"
+            )
+            raise DatabaseError(
+                "Failed to delete sync log entries older than cutoff"
+            ) from e
+        except Exception as e:
+            logger.error(
+                f"Unexpected error deleting sync log entries older than cutoff from DB '{self.db_path_str}': {e}"
+            )
+            raise DatabaseError(
+                f"Unexpected error deleting sync log entries older than cutoff: {e}"
+            ) from e
+
     def get_reading_progress(self, media_id: int) -> Optional[Dict[str, Any]]:
         """Fetch the local-only reading progress row for a media item."""
         try:

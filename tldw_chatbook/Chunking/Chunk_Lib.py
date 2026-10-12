@@ -354,7 +354,9 @@ def _normalize_legacy_method(method: Any) -> str:
         "propositions",
     }:
         return name
-    raise InvalidChunkingMethodError(f"Unsupported chunking method: '{method}'")
+    raise InvalidChunkingMethodError(
+        f"Unsupported chunking method: '{method}'"
+    )
 
 
 def _coerce_int_option(options: Dict[str, Any], key: str, default: int) -> int:
@@ -376,7 +378,10 @@ def _coerce_int_option(options: Dict[str, Any], key: str, default: int) -> int:
 
 
 def _build_engine_config(
-    options: Dict[str, Any], tokenizer_name_or_path: Optional[str] = None
+    options: Dict[str, Any],
+    tokenizer_name_or_path: Optional[str] = None,
+    *,
+    enable_cache: bool = True,
 ) -> ChunkerConfig:
     """Build an engine ChunkerConfig from legacy options.
 
@@ -385,6 +390,10 @@ def _build_engine_config(
         tokenizer_name_or_path: Legacy tokenizer name (passed through to the
             token strategy via options; the config itself only needs the
             language default).
+        enable_cache: Whether the engine may keep its result LRU. Callers
+            building a throwaway Chunker (one call, then discarded) pass
+            ``False``: that cache can never be hit, so every write would
+            deepcopy the full chunk corpus for nothing (task-34392).
 
     Returns:
         A configured ChunkerConfig.
@@ -396,6 +405,7 @@ def _build_engine_config(
         default_max_size=_coerce_int_option(options, "max_size", 400),
         default_overlap=max(0, _coerce_int_option(options, "overlap", 200)),
         language=language,
+        enable_cache=enable_cache,
         max_text_size=MAX_DOCUMENT_SIZE_BYTES,
     )
 
@@ -605,7 +615,38 @@ def _guard_tokens_overlap(max_size: Any, overlap: Any) -> None:
         )
 
 
-def _synthesize_flat_offsets(text: str, chunk_texts: List[str]) -> List[Dict[str, int]]:
+def _has_consistent_flat_offsets(item: Dict[str, Any], text_len: int) -> bool:
+    """Whether a normalized chunk carries its own consistent char offsets.
+
+    Mirrors the consumption precedence used by ``improved_chunking_process``
+    (metadata ``start_char``/``end_char`` first, then
+    ``start_offset``/``end_offset``): the synthesized-span fallback is only
+    consulted when THIS precedence fails to yield a pair of ints, so the
+    offsets synthesis may be skipped (task-34392) exactly when this holds
+    for every chunk. "Consistent" means ``0 <= start < end <= text_len``;
+    anything else falls back to synthesis, unchanged.
+
+    Args:
+        item: A normalized chunk dict (``{"text": ..., "metadata": dict}``).
+        text_len: Length of the source text the chunk came from.
+
+    Returns:
+        True when the chunk's own offsets are usable without synthesis.
+    """
+    metadata = item.get("metadata") or {}
+    start_char = metadata.get("start_char")
+    end_char = metadata.get("end_char")
+    if not isinstance(start_char, int) or not isinstance(end_char, int):
+        start_char = metadata.get("start_offset")
+        end_char = metadata.get("end_offset")
+    if not isinstance(start_char, int) or not isinstance(end_char, int):
+        return False
+    return 0 <= start_char < end_char <= text_len
+
+
+def _synthesize_flat_offsets(
+    text: str, chunk_texts: List[str]
+) -> List[Dict[str, int]]:
     """Compute (start_char, end_char) spans for chunks lacking offsets.
 
     Primary strategy: word-position mapping. Text-method chunks (words,
@@ -771,6 +812,7 @@ class Chunker:
         tokenizer_name_or_path: str = "gpt2",
         template: Optional[Any] = None,
         template_manager: Optional[Any] = None,
+        enable_cache: bool = True,
     ):
         """Initializes the Chunker adapter.
 
@@ -792,6 +834,12 @@ class Chunker:
             template_manager (Optional[Any]): Accepted and ignored (spec
                 §8.2). Retained solely for signature compatibility with
                 legacy callers; the file-store manager it named is deleted.
+            enable_cache (bool): Whether the wrapped engine may keep its
+                per-instance result LRU (task-34392). Default ``True`` keeps
+                every existing caller unchanged; pass ``False`` when the
+                instance is throwaway (constructed for one ``chunk_text``
+                call and then discarded) so it skips the guaranteed-miss
+                cache get and the full-corpus deepcopy cache put.
 
         Raises:
             TemplateError: If ``template`` is a bare name string (use
@@ -834,7 +882,9 @@ class Chunker:
         )
 
         self._engine = _EngineChunker(
-            _build_engine_config(self.options, self._tokenizer_path)
+            _build_engine_config(
+                self.options, self._tokenizer_path, enable_cache=enable_cache
+            )
         )
         # TokenBasedChunker retained for legacy attribute compatibility.
         self._token_chunker: Optional[TokenBasedChunker] = None
@@ -915,7 +965,9 @@ class Chunker:
         self,
         text: str,
         method: Optional[str] = None,
-        llm_call_function: Optional[Callable[[Dict[str, Any]], Any]] = None,
+        llm_call_function: Optional[
+            Callable[[Dict[str, Any]], Any]
+        ] = None,
         llm_api_config: Optional[Dict[str, Any]] = None,
         use_template: Optional[bool] = None,
     ) -> List[Union[str, Dict[str, Any]]]:
@@ -947,7 +999,9 @@ class Chunker:
         try:
             text_size_bytes = len(text.encode("utf-8"))
         except AttributeError:
-            raise InvalidInputError(f"Expected string input, got {type(text).__name__}")
+            raise InvalidInputError(
+                f"Expected string input, got {type(text).__name__}"
+            )
         if text_size_bytes > MAX_DOCUMENT_SIZE_BYTES:
             text_size_mb = text_size_bytes / (1024 * 1024)
             raise MemoryLimitError(
@@ -1025,7 +1079,8 @@ class Chunker:
                 llm_config=llm_api_config,
             )
             return [
-                {"text": item["text"], "metadata": item["metadata"]} for item in results
+                {"text": item["text"], "metadata": item["metadata"]}
+                for item in results
             ]
 
         if resolved_method == "propositions" and llm_call_function is not None:
@@ -1392,10 +1447,7 @@ class Chunker:
         """
         return improved_chunking_process(
             text,
-            chunk_options_dict={
-                **self.options,
-                **({"method": method} if method else {}),
-            },
+            chunk_options_dict={**self.options, **({"method": method} if method else {})},
             tokenizer_name_or_path=self._tokenizer_path,
         )
 
@@ -1604,11 +1656,20 @@ def improved_chunking_process(
         )
         logger.debug(f"Using pre-resolved template: {template_label}")
 
+    # enable_cache=False (task-34392): this instance is throwaway -- it dies
+    # at the end of this call -- so its engine result LRU could never be hit
+    # again; keeping it meant a guaranteed-miss cache get plus a full
+    # deepcopy of the chunk corpus into the cache on every ingest. The
+    # constructor default (True) leaves every other caller unchanged. The
+    # cache stays per-instance by design; making it process-global would
+    # change semantics (shared entries across option sets) and is future
+    # work, not part of this task.
     chunker_instance = Chunker(
         options=chunk_options_dict,
         tokenizer_name_or_path=tokenizer_name_or_path,
         template=template,
         template_manager=template_manager,
+        enable_cache=False,
     )
     effective_options = chunker_instance.options.copy()
     resolved_method = _normalize_legacy_method(
@@ -1645,30 +1706,32 @@ def improved_chunking_process(
             and "metadata" in chunk_item
         ):
             normalized.append(
-                {
-                    "text": json.dumps(chunk_item["json"], ensure_ascii=False),
-                    "metadata": chunk_item["metadata"],
-                }
+                {"text": json.dumps(chunk_item["json"], ensure_ascii=False), "metadata": chunk_item["metadata"]}
             )
-        elif (
-            isinstance(chunk_item, dict)
-            and "text" in chunk_item
-            and "metadata" in chunk_item
-        ):
+        elif isinstance(chunk_item, dict) and "text" in chunk_item and "metadata" in chunk_item:
             normalized.append(
                 {"text": chunk_item["text"], "metadata": chunk_item["metadata"]}
             )
         elif isinstance(chunk_item, str):
             normalized.append({"text": chunk_item, "metadata": {}})
         else:
-            logger.warning(f"Unexpected chunk item type: {type(chunk_item)}. Skipping.")
+            logger.warning(
+                f"Unexpected chunk item type: {type(chunk_item)}. Skipping."
+            )
 
     # Flat-contract conversion (§6.3.2): legacy metadata enrichment plus
-    # top-level start_char/end_char/word_count, synthesizing offsets when
-    # the chunker did not attach any.
-    span_overrides = _synthesize_flat_offsets(
-        text, [item["text"] for item in normalized]
-    )
+    # top-level start_char/end_char/word_count, synthesizing offsets ONLY
+    # when some chunk lacks usable ones (task-34392): the span overrides are
+    # read exclusively in the fallback branch below, so when every chunk
+    # already carries consistent offsets the synthesis -- a word-span scan
+    # of the whole document plus per-chunk matching -- is redundant work and
+    # is skipped. Output is identical either way.
+    if all(_has_consistent_flat_offsets(item, len(text)) for item in normalized):
+        span_overrides: List[Dict[str, int]] = []
+    else:
+        span_overrides = _synthesize_flat_offsets(
+            text, [item["text"] for item in normalized]
+        )
 
     out: List[Dict[str, Any]] = []
     for i, item in enumerate(normalized):
@@ -1682,9 +1745,7 @@ def improved_chunking_process(
             "max_size_setting": effective_options["max_size"],
             "overlap_setting": effective_options["overlap"],
             "language": effective_options.get("language", "unknown"),
-            "relative_position": float((i + 1) / len(normalized))
-            if normalized
-            else 0.0,
+            "relative_position": float((i + 1) / len(normalized)) if normalized else 0.0,
             "adaptive_chunking_used": effective_options.get("adaptive", False),
         }
         current_chunk_metadata.update(chunk_specific_metadata)

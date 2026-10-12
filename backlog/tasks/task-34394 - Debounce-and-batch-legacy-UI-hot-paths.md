@@ -1,11 +1,12 @@
 ---
 id: TASK-34394
 title: Debounce and batch legacy UI hot paths
-status: To Do
+status: Done
 created_date: 2026-10-11 21:44
 labels:
 - performance
 priority: medium
+updated_date: 2026-10-12 01:31
 ---
 
 ## Description
@@ -16,15 +17,14 @@ Legacy surfaces still rebuild everything per keystroke or per event where the re
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Settings config search debounces and builds its index once per pane activation,CodeRepo tree filter debounces and precomputes lowercased paths,MCP tools/audit filters debounce and do not re-parse tool JSON schemas per keystroke,CCP message display batches mounts in a single call,Filename-hint search scans only lines near each code block instead of the whole prefix,media_details chunking-config fetch and STTS audiobook file read run via asyncio.to_thread
+- [x] #1 Settings config search debounces and builds its index once per pane activation,CodeRepo tree filter debounces and precomputes lowercased paths,MCP tools/audit filters debounce and do not re-parse tool JSON schemas per keystroke,CCP message display batches mounts in a single call,Filename-hint search scans only lines near each code block instead of the whole prefix,media_details chunking-config fetch and STTS audiobook file read run via asyncio.to_thread
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Implemented and verified on perf/34386-34388-hot-path-efficiency; see task file Implementation Notes; PR #3083
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

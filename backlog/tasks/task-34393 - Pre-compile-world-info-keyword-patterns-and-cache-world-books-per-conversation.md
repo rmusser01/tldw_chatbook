@@ -1,11 +1,12 @@
 ---
 id: TASK-34393
 title: Pre-compile world-info keyword patterns and cache world books per conversation
-status: To Do
+status: Done
 created_date: 2026-10-11 21:44
 labels:
 - performance
 priority: medium
+updated_date: 2026-10-12 01:30
 ---
 
 ## Description
@@ -16,15 +17,14 @@ Per character-chat send: _collect_active_world_books re-queries the DB, get_worl
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Keyword patterns are compiled once per entry/key, not per message,World-book entries are not re-queried from the DB on every send when nothing changed,Activation/matching behavior identical to the regex-per-call implementation (word boundaries, secondary keys),Existing world-info tests pass
+- [x] #1 Keyword patterns are compiled once per entry/key, not per message,World-book entries are not re-queried from the DB on every send when nothing changed,Activation/matching behavior identical to the regex-per-call implementation (word boundaries, secondary keys),Existing world-info tests pass
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Implemented and verified on perf/34386-34388-hot-path-efficiency; see task file Implementation Notes; PR #3083
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

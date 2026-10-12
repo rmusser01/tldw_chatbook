@@ -21573,6 +21573,57 @@ DELETE FROM keywords
                 "Failed to delete sync log entries before threshold"
             ) from e
 
+    def delete_sync_log_entries_older_than(self, cutoff_timestamp: str) -> int:
+        """Delete ``sync_log`` rows whose ``timestamp`` predates a cutoff.
+
+        Time-based retention (task-34389, ADR-213): the companion to
+        :meth:`prune_sync_log`, which bounds the log by REACHABILITY. This
+        method bounds it by AGE -- one parameterized ``DELETE`` over the
+        indexed ``timestamp`` column, so a journal row older than the
+        configured window leaves the database even when it is still the
+        frontier row of a live entity.
+
+        ``sync_log.timestamp`` stores ISO-8601 UTC strings in the
+        ``YYYY-MM-DDTHH:MM:SS.mmmZ`` shape every writer emits (the triggers
+        via ``strftime('%Y-%m-%dT%H:%M:%fZ', 'now')``), so the comparison is
+        a plain lexicographic string compare and the caller passes the cutoff
+        in that same shape. Rows at or after the cutoff are never touched,
+        which is what keeps change_id-cursor readers (the only production
+        reader) seeing every unpruned change.
+
+        Args:
+            cutoff_timestamp: Inclusive-exclusive cutoff in the
+                ``YYYY-MM-DDTHH:MM:SS.mmmZ`` form; rows strictly older are
+                deleted.
+
+        Returns:
+            The number of rows actually deleted.
+
+        Raises:
+            ValueError: If ``cutoff_timestamp`` is not a non-empty string.
+            CharactersRAGDBError: If the deletion fails.
+        """
+        if not isinstance(cutoff_timestamp, str) or not cutoff_timestamp:
+            raise ValueError("cutoff_timestamp must be a non-empty string.")
+        try:
+            with self.transaction() as conn:
+                deleted = conn.execute(
+                    "DELETE FROM sync_log WHERE timestamp < ?",
+                    (cutoff_timestamp,),
+                ).rowcount
+            logger.info(
+                f"Deleted {deleted} sync_log entries older than {cutoff_timestamp} "
+                f"from db_sha256={self._db_diagnostic_ref}."
+            )
+            return deleted
+        except (CharactersRAGDBError, sqlite3.Error) as e:
+            logger.error(
+                f"Error deleting sync_log entries older than cutoff: exception_type={type(e).__name__}"
+            )
+            raise CharactersRAGDBError(
+                "Failed to delete sync log entries older than cutoff"
+            ) from e
+
     def prune_sync_log(self) -> int:
         """Delete every ``sync_log`` row no reader can reach, for all nine writers.
 
