@@ -850,8 +850,8 @@ def key_check_verdict(screen: SettingsScreen) -> str:
             provider, staged, background_credentials=True
         )
     except ValueError:
-        # A draft env var name readiness rejects is the Env var row's error
-        # to show; the verdict falls back to the saved settings meanwhile.
+        # A draft readiness cannot read falls back to the saved settings. An
+        # Env var that is no name does not come here: it reads "Not ready".
         readiness = get_provider_readiness(
             provider,
             screen._provider_readiness_app_config(),
