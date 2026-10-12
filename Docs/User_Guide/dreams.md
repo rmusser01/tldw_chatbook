@@ -122,8 +122,10 @@ turning Dreams off or on by editing `config.toml` (or removing the
 and a pause or resume that could not finish — a write failed, or the app
 was closed part-way — is completed then. At that launch the scheduler
 waits for the pause to land before it runs anything, for up to ten
-seconds; if the pause takes longer than that, one tracked-page check or
-event reminder that was already overdue can still run once. The one
+seconds. After that, unrelated scheduled work can continue, but pending
+Dreams-created page checks and linked event reminders stay held until their
+saved pause and provenance work is verified. If ownership cannot be read,
+watchlist checks remain held too; an error does not authorize a fetch. The one
 thing a start does not
 retry is a tracked page that was left off because its address is not
 public (see [Tracking](#tracking)). On a profile restored from a backup

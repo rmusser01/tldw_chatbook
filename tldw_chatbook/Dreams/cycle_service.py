@@ -604,6 +604,15 @@ async def _guardian_snapshot_authorized(deps: CycleDeps, snap: dict) -> bool:
 
 
 def _guardian_snapshot_authorized_sync(deps: CycleDeps, snap: dict) -> bool:
+    """Own lazy construction and reading together on the current worker."""
+    if not any(row.get("source") == "guardian" for row in snap.get("topics", [])):
+        return True
+    from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+    return run_finite_local_worker(_read_guardian_snapshot_authority, deps, snap)
+
+
+def _read_guardian_snapshot_authority(deps: CycleDeps, snap: dict) -> bool:
     """Refuse an outbound snapshot whose Guardian consent was revoked."""
     topics = {
         str(row["text"]).strip().lower()
@@ -626,7 +635,7 @@ def _guardian_snapshot_authorized_sync(deps: CycleDeps, snap: dict) -> bool:
         return bool(guardian_setting("enabled")) and topics <= {
             str(row["text"]).strip().lower() for row in current
         }
-    except Exception:  # Consent uncertainty never grants outbound authority.
+    except Exception:  # noqa: BLE001 - uncertain consent never grants authority
         return False
 
 

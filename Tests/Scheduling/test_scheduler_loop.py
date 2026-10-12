@@ -17,6 +17,10 @@ from tldw_chatbook.Scheduling.scheduler.queue import PriorityQueue
 from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjection
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
+# The real emergency-stop reader uses the guarded config imported at collection.
+# Retain that already-selected private source; per-test rebinding fails closed.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
 def db(tmp_path):
@@ -139,7 +143,8 @@ async def test_scheduler_missing_handler_is_no_op(db):
 @pytest.mark.asyncio
 async def test_scheduler_run_stop_lifecycle(db):
     _create_reminder(db, "Lifecycle", "2026-01-01T00:00:00+00:00")
-    handler = AsyncMock()
+    entered = asyncio.Event()
+    handler = AsyncMock(side_effect=lambda _task: entered.set())
     loop = SchedulerLoop(
         db,
         handlers={"reminder": handler},
@@ -148,9 +153,18 @@ async def test_scheduler_run_stop_lifecycle(db):
     )
 
     task = asyncio.create_task(loop.run())
-    await asyncio.sleep(0.01)
-    loop.stop()
-    await asyncio.wait_for(task, timeout=1.0)
+    try:
+        # Observe the lifecycle event under the existing one-second deadline;
+        # a ten-millisecond sleep can stop native startup before its first tick.
+        async with asyncio.timeout(1.0):
+            await entered.wait()
+            loop.stop()
+            await task
+    finally:
+        loop.stop()
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
     handler.assert_awaited()
 
 

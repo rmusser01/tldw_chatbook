@@ -106,3 +106,13 @@ unrelated task progress and occurrence state, and conservatively holds
 unclassified watchlists when ownership could not be established. Qualify real
 scheduler dispatch, error/timeout, known unrelated work, and successful later
 settlement; do not weaken scheduler timeout or existing suspension ownership.
+
+
+The actual SchedulerLoop regression family also reads its guarded emergency-stop
+source imported at collection. Its original due-reminder node fails in isolation
+on both current source and frozen private START9ab, reporting emergency-stop
+active before dispatch. A module-local bootstrap_profile marker preserves that
+existing selected private source under the conftest contract; original dispatch,
+ordering, exception, timeout and owner assertions remain. No emergency-stop or
+config admission gate is changed. Bind the affected scheduler nodes to the final
+required-lane inventory alongside the new Dreams startup controls.
