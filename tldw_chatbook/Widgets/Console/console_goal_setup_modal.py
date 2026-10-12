@@ -213,6 +213,8 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
             if (
                 self.is_current
                 and self.query("#goal-start")
+                and self.query("#goal-tools")
+                and self.query("#goal-setup-error")
                 and version == self._binding_version
             ):
                 self._refreshing_tools = False
