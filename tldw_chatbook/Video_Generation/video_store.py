@@ -926,7 +926,20 @@ class VideoStore:
         ``session`` mode removes everything (call on app start). ``ttl``
         mode removes files older than ``retention_ttl_hours``. Both modes
         then enforce ``max_store_mb`` oldest-first.
+
+        TASK-21109: a store root that has NEVER existed means there is
+        nothing to retain and no orphan staging to sweep, so the pass
+        returns before taking the interprocess lease -- a user who has
+        never generated a video no longer gets a
+        ``.generated_videos.capacity.lock`` (and a lease-cycle's worth of
+        file churn) created in their data dir at every boot. Retention
+        semantics for any profile that HAS a store are unchanged, and the
+        save path creates the root on demand.
         """
+        if self._ensure_safe_root() is None:
+            return RetentionReport(
+                removed_files=0, removed_bytes=0, evicted=()
+            )
         config = self._get_config()
         now = time.time() if now is None else now
         removed_files = 0
