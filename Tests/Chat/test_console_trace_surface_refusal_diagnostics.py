@@ -31,6 +31,7 @@ from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("span_limit", [False, True])
+@pytest.mark.bootstrap_profile
 async def test_surface_refusal_count_and_span_reach_support_exports(
     db, repository, sinks, monkeypatch, span_limit
 ):
@@ -93,6 +94,7 @@ async def test_surface_refusal_count_and_span_reach_support_exports(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_surface_refusal_sequence_gap_reaches_support_exports(
     db, repository, sinks
 ):

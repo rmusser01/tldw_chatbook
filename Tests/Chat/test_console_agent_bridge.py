@@ -202,6 +202,32 @@ class _InProcessWorkspaceExecutor:
 
 
 @pytest.fixture(autouse=True)
+def _retire_original_run_databases(monkeypatch, request):
+    """The bridge test owns each database it constructs, including inline ones."""
+    import sqlite3
+
+    database_type = request.module.AgentRunsDB
+    originals = []
+
+    def create(*args, **kwargs):
+        database = database_type(*args, **kwargs)
+        originals.append((database, tuple(database._maintenance_participant.connections)))
+        return database
+
+    monkeypatch.setattr(request.module, "AgentRunsDB", create)
+    try:
+        yield
+    finally:
+        for database, connections in reversed(originals):
+            database.close()
+            # Main-thread original close must not hide a live worker owner.
+            assert not database._maintenance_participant.connections
+            for connection in connections:
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    connection.execute("SELECT 1")
+
+
+@pytest.fixture(autouse=True)
 def _reset_shadowed_mcp_warning_dedup():
     """Reset the shadowed-MCP-name log-once set so tests are order-independent.
 
@@ -462,6 +488,7 @@ def _join_fleet_threads(timeout=5.0):
         ("continue", [{"role": "user", "content": "continue"}], True),
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_all_agent_dispatch_shapes_receive_one_startup_rider(
     tmp_path, case, agent_messages, supersede
 ):
@@ -714,14 +741,19 @@ def _run(bridge, store, session, assistant_id, **over):
         should_cancel=lambda: False,
     )
     kwargs.update(over)
-    if "work_chain_id" not in kwargs:
-        from uuid import uuid4
-        kwargs["work_chain_id"] = bridge._db.automatic_work.create_chain(
-            kwargs["conversation_id"], root_submission_id=uuid4().hex
-        )
-    # run_reply returns (run_id, outcome); these tests assert on the outcome.
-    _run_id, outcome = bridge.run_reply(**kwargs)
-    return outcome
+    from tldw_chatbook.DB.base_db import operation_owned_connection
+
+    # This helper is also invoked on test-owned native workers. Own the
+    # complete callback, including its pre-run work-chain write.
+    with operation_owned_connection(bridge._db):
+        if "work_chain_id" not in kwargs:
+            from uuid import uuid4
+            kwargs["work_chain_id"] = bridge._db.automatic_work.create_chain(
+                kwargs["conversation_id"], root_submission_id=uuid4().hex
+            )
+        # run_reply returns (run_id, outcome); these tests assert on the outcome.
+        _run_id, outcome = bridge.run_reply(**kwargs)
+        return outcome
 
 
 def _tool_messages(store, session_id: str) -> list[ConsoleChatMessage]:
@@ -732,6 +764,7 @@ def _tool_messages(store, session_id: str) -> list[ConsoleChatMessage]:
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_canvas_lifecycle_finalizer_receives_actual_terminal_run_identity(
     tmp_path,
 ) -> None:
@@ -831,6 +864,7 @@ def _activity_marker_signature(
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_nested_project_instructions_defer_whole_batch_before_review_and_execution(
     tmp_path,
 ):
@@ -921,6 +955,7 @@ def test_nested_project_instructions_defer_whole_batch_before_review_and_executi
     ("transformed_tokens", "expected_status", "expected_calls"),
     [(90, "done", 3), (91, "error", 1)],
 )
+@pytest.mark.bootstrap_profile
 def test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark(
     tmp_path, monkeypatch, transformed_tokens, expected_status, expected_calls
 ):
@@ -1006,6 +1041,7 @@ def test_fenced_nested_delivery_counts_exact_transformed_payload_before_mark(
         assert marks == []
 
 
+@pytest.mark.bootstrap_profile
 def test_opaque_tool_arguments_do_not_activate_nested_project_instructions(tmp_path):
     root = tmp_path / "workspace"
     nested = root / "pkg"
@@ -1041,6 +1077,7 @@ def test_opaque_tool_arguments_do_not_activate_nested_project_instructions(tmp_p
     assert all("NESTED_GUIDANCE" not in repr(rows) for rows in gateway.messages_seen)
 
 
+@pytest.mark.bootstrap_profile
 def test_nested_resolution_rejects_backdated_root_replacement_after_consent(tmp_path):
     root = tmp_path / "workspace"
     nested = root / "pkg"
@@ -1103,6 +1140,7 @@ def test_nested_resolution_rejects_backdated_root_replacement_after_consent(tmp_
     assert any("resolution_failed" in repr(rows) for rows in gateway.messages_seen)
 
 
+@pytest.mark.bootstrap_profile
 def test_parent_and_child_share_activation_but_each_receive_nested_revision(
     tmp_path, monkeypatch
 ):
@@ -1189,6 +1227,7 @@ def test_parent_and_child_share_activation_but_each_receive_nested_revision(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("force_character", [False, True])
+@pytest.mark.bootstrap_profile
 async def test_plain_and_character_forced_plain_never_resolve_project_instructions(
     monkeypatch, force_character
 ):
@@ -1256,6 +1295,7 @@ async def test_plain_and_character_forced_plain_never_resolve_project_instructio
     assert gateway.calls == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_prepends_session_prompt_then_agent_prompt():
     composed = compose_agent_system_prompt("You are Ada.")
     assert composed.startswith("You are Ada.")
@@ -1263,6 +1303,7 @@ def test_compose_prepends_session_prompt_then_agent_prompt():
     assert compose_agent_system_prompt("") == CONSOLE_AGENT_OPERATING_PROMPT
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_appends_discovery_hint_only_when_find_load_offered():
     # Default (direct disclosure): no hint — find/load is not the live mode.
     assert FIND_LOAD_DISCOVERY_HINT not in compose_agent_system_prompt("You are Ada.")
@@ -1316,6 +1357,7 @@ def test_canvas_discovery_does_not_read_packaged_guides(monkeypatch):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_no_tool_message_streams_final_answer_like_today(tmp_path):
     bridge, _db, store, session, aid = _bridge(tmp_path, [["Tok", "yo."]])
     outcome = _run(bridge, store, session, aid)
@@ -1326,6 +1368,7 @@ def test_no_tool_message_streams_final_answer_like_today(tmp_path):
     assert ConsoleMessageRole.TOOL not in roles
 
 
+@pytest.mark.bootstrap_profile
 def test_usage_accounting_failure_never_flips_a_streamed_run_to_error(
     tmp_path, monkeypatch
 ):
@@ -1368,6 +1411,7 @@ def test_usage_accounting_failure_never_flips_a_streamed_run_to_error(
     assert any("usage accounting failed" in m for m in warnings)
 
 
+@pytest.mark.bootstrap_profile
 def test_a_genuine_provider_failure_still_classifies_as_error(tmp_path):
     """The TASK-16270 wrap covers ONLY usage accounting: a failure in the
     model call / stream itself must still land ``status='error'``."""
@@ -1398,6 +1442,7 @@ def test_a_genuine_provider_failure_still_classifies_as_error(tmp_path):
     assert any(step.kind == "error" for step in outcome.steps)
 
 
+@pytest.mark.bootstrap_profile
 def test_tool_turn_renders_a_tool_marker_not_prose(tmp_path):
     scripts = [
         [_fence("calculator", {"expression": "6*7"})],  # turn 1: leading fence
@@ -1418,6 +1463,7 @@ def test_tool_turn_renders_a_tool_marker_not_prose(tmp_path):
     assert store.get_message(aid).content == "It is 42."
 
 
+@pytest.mark.bootstrap_profile
 def test_joined_continuation_never_logs_private_tool_arguments_or_results(
     tmp_path, monkeypatch
 ):
@@ -1522,6 +1568,7 @@ class _RefusingBuiltinGate:
         return f"disabled for test: {tool.name}"
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_threads_builtin_gate_end_to_end(tmp_path):
     """task-545/T6: a `builtin_gate` handed to `run_reply` must be the
     exact instance the run's own `BuiltinToolProvider.invoke()` consults --
@@ -1549,6 +1596,7 @@ def test_run_reply_threads_builtin_gate_end_to_end(tmp_path):
     assert store.get_message(aid).content == "it was refused."
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_threads_session_workspace_id_end_to_end(tmp_path, monkeypatch):
     """task-6 (settings-workspaces-folder-roots spec Sec3): the RUNNING
     session's own ``workspace_id`` must reach the run's
@@ -1602,6 +1650,7 @@ def test_run_reply_threads_session_workspace_id_end_to_end(tmp_path, monkeypatch
     assert wfr.current_run_workspace_id() is None  # cleared after the run
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_threads_captured_scratch_end_to_end(tmp_path, monkeypatch):
     """The live run's file dispatch observes its captured private sandbox."""
     import tldw_chatbook.config as config
@@ -1658,6 +1707,7 @@ class _RecordingGateway:
         yield "ok"
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_appends_workspace_note_for_a_non_default_workspace(
     tmp_path, monkeypatch
 ):
@@ -1698,6 +1748,7 @@ def test_run_reply_appends_workspace_note_for_a_non_default_workspace(
     assert "Notes Workspace" in primary
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_adds_no_workspace_note_for_the_default_workspace(
     tmp_path, monkeypatch
 ):
@@ -1813,6 +1864,7 @@ def test_run_reply_refuses_write_file_in_an_ephemeral_session_end_to_end(
     assert called["n"] == 1, "write_file must execute normally outside a temporary chat"
 
 
+@pytest.mark.bootstrap_profile
 def test_leaked_prose_before_disobedient_fence_is_reset_not_garbled(tmp_path):
     # Finding A repro: a disobedient turn streams prose live, THEN a tool
     # fence, in the same response. The gate has already forwarded the prose
@@ -1838,6 +1890,7 @@ def test_leaked_prose_before_disobedient_fence_is_reset_not_garbled(tmp_path):
 # plus the [console] native_tool_calls kill-switch. --
 
 
+@pytest.mark.bootstrap_profile
 def test_native_tool_call_round_trip_streams_final_answer(tmp_path):
     bridge, db, store, session, aid = _bridge(
         tmp_path, [[_native_calls("get_current_datetime", {})], ["It is ", "now."]]
@@ -1860,6 +1913,7 @@ def test_native_tool_call_round_trip_streams_final_answer(tmp_path):
     assert any("get_current_datetime" in marker.content for marker in tool_rows)
 
 
+@pytest.mark.bootstrap_profile
 def test_native_multi_call_round_without_summary_emits_no_planning(
     tmp_path,
 ) -> None:
@@ -1901,6 +1955,7 @@ def test_native_multi_call_round_without_summary_emits_no_planning(
     assert _activity_marker_signature(resumed) == _activity_marker_signature(live)
 
 
+@pytest.mark.bootstrap_profile
 def test_unsafe_model_summary_emits_no_planning_with_resume_parity(
     tmp_path,
 ) -> None:
@@ -1924,6 +1979,7 @@ def test_unsafe_model_summary_emits_no_planning_with_resume_parity(
     assert "PRIVATE_REASONING_CANARY" not in repr(_activity_marker_signature(resumed))
 
 
+@pytest.mark.bootstrap_profile
 def test_persona_buddy_tool_step_uses_real_on_step_and_releases_result(tmp_path):
     """The bridge's real step callback brackets tool execution exactly."""
     buddy = PersonaBuddyController()
@@ -1972,6 +2028,7 @@ def test_persona_buddy_tool_step_uses_real_on_step_and_releases_result(tmp_path)
     assert sink.active_owner_count("tool") == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_native_leaked_prose_is_reset_before_final_answer(tmp_path):
     """Prose streamed before the ProviderToolCalls arrives must not survive
     (Finding-A parity with the fence path)."""
@@ -1984,6 +2041,7 @@ def test_native_leaked_prose_is_reset_before_final_answer(tmp_path):
     assert store.get_message(aid).content == "Done."
 
 
+@pytest.mark.bootstrap_profile
 def test_native_kill_switch_off_stays_on_fence_path(tmp_path):
     bridge, db, store, session, aid = _bridge(
         tmp_path,
@@ -1997,6 +2055,7 @@ def test_native_kill_switch_off_stays_on_fence_path(tmp_path):
 
 @pytest.mark.parametrize("captured", (False, True))
 @pytest.mark.parametrize("supported", (False, True))
+@pytest.mark.bootstrap_profile
 def test_captured_native_tools_override_beats_later_callback_change(
     tmp_path, captured, supported
 ):
@@ -2028,6 +2087,7 @@ def test_captured_native_tools_override_beats_later_callback_change(
     assert (bridge._gateway.tools_seen[0] is not None) is (captured and supported)
 
 
+@pytest.mark.bootstrap_profile
 def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     """PR #629 Fix 1(c) (Gemini HIGH x2 + Qodo-8): ``_StreamingModelAdapter.
     chat_call`` used to bridge every turn via its own ``asyncio.run()`` --
@@ -2072,6 +2132,7 @@ def test_multi_turn_run_reuses_one_event_loop_across_chat_call_turns(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_concurrent_child_runs_alongside_the_parent_on_its_own_loop(tmp_path):
     """PR2a Task 6.5: a fleet child's turn must survive overlapping the
     parent's. PR3a-1 Task 1: on a lifeline of its OWN, not the turn's.
@@ -2227,6 +2288,7 @@ class _CrossTurnGateway:
             yield chunk
 
 
+@pytest.mark.bootstrap_profile
 def test_a_fleet_child_completes_its_model_call_after_the_turn_loop_is_gone(
     tmp_path, monkeypatch
 ):
@@ -2290,6 +2352,7 @@ def test_a_fleet_child_completes_its_model_call_after_the_turn_loop_is_gone(
     assert child_runs[0]["result"] == "child answer after the turn"
 
 
+@pytest.mark.bootstrap_profile
 def test_provider_stream_signal_survives_primary_tool_and_final_turns(tmp_path):
     signals = ConsoleProviderStreamSignals()
     gateway = _SignalChunkGateway(
@@ -2325,6 +2388,7 @@ def test_provider_stream_signal_survives_primary_tool_and_final_turns(tmp_path):
         ConsoleTraceCaptureMode.CAPTURE_OFF,
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_agent_run_freezes_capture_mode_across_first_and_tool_loop_calls(
     tmp_path,
     capture_mode,
@@ -2396,6 +2460,7 @@ def test_agent_run_freezes_capture_mode_across_first_and_tool_loop_calls(
     assert seen_modes == [capture_mode, capture_mode]
 
 
+@pytest.mark.bootstrap_profile
 def test_capture_on_agent_run_reserves_each_real_gateway_call_in_stable_order(
     tmp_path,
 ):
@@ -2571,6 +2636,7 @@ def test_capture_on_agent_run_reserves_each_real_gateway_call_in_stable_order(
         trace_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 def test_interactive_tool_loop_trace_failure_reaches_controller_boundary(tmp_path):
     gateway = _ToolLoopReservationFailureGateway()
     bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
@@ -2593,6 +2659,7 @@ def test_interactive_tool_loop_trace_failure_reaches_controller_boundary(tmp_pat
     assert db.list_runs("conv-1")[0]["status"] == RUN_ERROR
 
 
+@pytest.mark.bootstrap_profile
 def test_autonomous_tool_loop_trace_failure_remains_terminal_error(tmp_path):
     gateway = _ToolLoopReservationFailureGateway()
     bridge, db, store, session, aid = _bridge_with_gateway(tmp_path, gateway)
@@ -2614,6 +2681,7 @@ def test_autonomous_tool_loop_trace_failure_remains_terminal_error(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_manual_tool_loop_trace_failure_pauses_across_real_bridge_and_controller(
     tmp_path,
 ):
@@ -2679,6 +2747,7 @@ async def test_manual_tool_loop_trace_failure_pauses_across_real_bridge_and_cont
         chat_db.close_connection()
 
 
+@pytest.mark.bootstrap_profile
 def test_provider_stream_signal_survives_subagent_turns(tmp_path):
     signals = ConsoleProviderStreamSignals()
     gateway = _SignalChunkGateway(
@@ -2708,6 +2777,7 @@ def test_provider_stream_signal_survives_subagent_turns(tmp_path):
     assert all(item is signals for item in gateway.signals_seen)
 
 
+@pytest.mark.bootstrap_profile
 def test_provider_stream_signal_is_never_reset_by_bridge(tmp_path):
     signals = ConsoleProviderStreamSignals()
     signals.mark_synthetic_fallback()
@@ -2728,6 +2798,7 @@ def test_provider_stream_signal_is_never_reset_by_bridge(tmp_path):
     assert signals.synthetic_fallback_emitted is True
 
 
+@pytest.mark.bootstrap_profile
 def test_qwencloud_terminal_usage_reaches_agent_native_budget_without_fallback(
     tmp_path,
 ):
@@ -2804,6 +2875,7 @@ def test_qwencloud_terminal_usage_reaches_agent_native_budget_without_fallback(
     [(0, 4_964), (111, 5_103)],
     ids=("cache-read", "cache-read-and-creation"),
 )
+@pytest.mark.bootstrap_profile
 def test_anthropic_split_usage_reaches_agent_budget_with_cache_buckets(
     tmp_path,
     monkeypatch,
@@ -3144,6 +3216,7 @@ def test_normalized_usage_round_trips_cache_write_bucket():
         "boolean-rejected-prediction",
     ),
 )
+@pytest.mark.bootstrap_profile
 def test_malformed_streamed_usage_uses_agent_estimator_instead_of_coercion(
     tmp_path,
     monkeypatch,
@@ -3210,6 +3283,7 @@ def test_malformed_streamed_usage_uses_agent_estimator_instead_of_coercion(
     assert signals.usage_payloads() == [usage]
 
 
+@pytest.mark.bootstrap_profile
 def test_exact_zero_streamed_usage_counts_remain_authoritative(
     tmp_path,
     monkeypatch,
@@ -3304,6 +3378,7 @@ def test_exact_zero_streamed_usage_counts_remain_authoritative(
     assert outcome.total_tokens == 3
 
 
+@pytest.mark.bootstrap_profile
 def test_concurrent_subagent_adapter_calls_keep_terminal_usage_call_scoped(tmp_path):
     terminal_seen = threading.Barrier(3)
     release_terminal = threading.Event()
@@ -3417,6 +3492,7 @@ def test_concurrent_subagent_adapter_calls_keep_terminal_usage_call_scoped(tmp_p
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_provider_stream_signal_omission_preserves_legacy_gateway_signature(tmp_path):
     bridge, _db, store, session, aid = _bridge(tmp_path, [["Unchanged."]])
 
@@ -3476,6 +3552,7 @@ def test_spawn_renders_marker_and_persists_linked_subagent(tmp_path):
     assert any(s.text for s in snap.subagents)
 
 
+@pytest.mark.bootstrap_profile
 def test_tool_marker_with_brackets_renders_literally_not_escaped(tmp_path):
     # Both TOOL-marker consumers (console_transcript.py's Content.assemble
     # and chat_screen.py's legacy Text(...) fallback) render markup-off, so
@@ -3500,6 +3577,7 @@ def test_tool_marker_with_brackets_renders_literally_not_escaped(tmp_path):
     assert "\\[docs]" not in spawn_markers[0].content
 
 
+@pytest.mark.bootstrap_profile
 def test_supersede_marks_previous_primary_and_tree(tmp_path):
     bridge, db, store, session, aid = _bridge(tmp_path, [["one."], ["two."]])
     _run(bridge, store, session, aid)  # first run
@@ -3514,6 +3592,7 @@ def test_supersede_marks_previous_primary_and_tree(tmp_path):
     assert prior["status"] == "superseded"
 
 
+@pytest.mark.bootstrap_profile
 def test_stop_persists_cancelled(tmp_path):
     # A long tool loop; cancel flips after the first step.
     scripts = [[_fence("calculator", {"expression": "1"})], ["never reached"]]
@@ -3524,6 +3603,7 @@ def test_stop_persists_cancelled(tmp_path):
     assert db.list_runs("conv-1")[0]["status"] == "cancelled"
 
 
+@pytest.mark.bootstrap_profile
 def test_stop_before_first_chunk_persists_cancelled_not_error(tmp_path):
     """Plan-B agent-runtime gate Finding 1: reproduces the live-repro'd race
     where Stop is clicked before the (slow) provider has streamed a single
@@ -3558,6 +3638,7 @@ def test_stop_before_first_chunk_persists_cancelled_not_error(tmp_path):
     assert stored.content == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_stop_mid_final_answer_persists_cancelled_and_store_agrees(tmp_path):
     # Finding B: a Stop that lands mid a plain final-answer stream (no tool
     # call to dispatch) must not be downgraded to "done" -- the outcome
@@ -4114,6 +4195,7 @@ def test_successful_tool_payload_collisions_stay_success_live_and_resumed(
         ),
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_structured_tool_failure_status_has_live_resume_parity(
     tmp_path, result: ToolResult, tool_outcome: str, activity_status: str
 ) -> None:
@@ -4270,6 +4352,7 @@ def test_actual_thinking_suppresses_only_its_owned_planning_round() -> None:
     ],
     ids=["displayable", "proprietary"],
 )
+@pytest.mark.bootstrap_profile
 def test_live_actual_thinking_suppresses_only_its_model_round(
     tmp_path,
     evidence: ProviderThinkingDelta | ProviderProprietaryThinkingEvidence,
@@ -4356,6 +4439,7 @@ def test_subagent_steps_do_not_flush_or_clear_pending_primary_planning() -> None
     assert [marker.content for marker in markers] == ["Primary preamble."]
 
 
+@pytest.mark.bootstrap_profile
 def test_live_callback_interleaving_preserves_primary_planning_and_resume_sequence(
     tmp_path,
     monkeypatch,
@@ -4613,6 +4697,7 @@ def test_live_and_resume_change_marker_inventory_has_content_and_metadata_parity
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_live_and_resume_diff_feedback_disclosure_has_metadata_parity(tmp_path):
     bridge, db, store, session, assistant_id = _bridge(tmp_path, [["answer"]])
     annotated_run = db.create_run(conversation_id="conv-1", agent_kind="primary")
@@ -5175,7 +5260,7 @@ def test_resume_marker_messages_survives_delivered_notes_read_failure(
     def _boom(self, conversation_id):
         raise RuntimeError("change_notes DB is on fire")
 
-    monkeypatch.setattr(AgentRunsDB, "delivered_notes_for_conversation", _boom)
+    monkeypatch.setattr(type(db), "delivered_notes_for_conversation", _boom)
 
     bridge = ConsoleAgentBridge(agent_runs_db=db, store=None, provider_gateway=None)
     blocks = bridge.resume_marker_messages("conv-1")
@@ -5399,6 +5484,7 @@ def test_inject_resume_agent_markers_leaves_live_session_with_markers_untouched(
     assert result == messages
 
 
+@pytest.mark.bootstrap_profile
 def test_resume_injects_markers_matching_live_format_end_to_end(tmp_path):
     """Fresh store + populated AgentRunsDB -> resuming reconstructs a
     transcript whose TOOL markers match live-format byte-for-byte, placed
@@ -5501,6 +5587,7 @@ class _FakeSkillsService:
         return {"content": self.bundle_body, "size": len(self.bundle_body)}
 
 
+@pytest.mark.bootstrap_profile
 def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
     """A model-invoked skill tool runs as a budget-counted sub-agent of THIS
     run -- not SkillToolProvider.invoke (which raises by design), and not an
@@ -5577,6 +5664,7 @@ def test_skill_tool_call_routes_through_run_scoped_spawn(tmp_path):
     reopened.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_skill_trust_blocked_refuses_without_spawning(tmp_path):
     """A skill whose trust was revoked between catalog build and model call
     refuses (re-verified at render time by execute_skill) -- no sub-agent is
@@ -5851,6 +5939,7 @@ def test_bridge_skill_file_grant_stays_pinned_after_retrusted_mutation():
     assert skills.read_calls == ["bundle-b"]
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_wires_one_skill_file_bindings_to_both_service_and_runner(
     tmp_path,
 ):
@@ -5903,6 +5992,7 @@ def test_run_reply_wires_one_skill_file_bindings_to_both_service_and_runner(
     assert captured["runner_bindings"] is captured["service_bindings"]
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_seeds_turn_bindings_into_shared_object(tmp_path):
     """Task 5: the turn's already-resolved `$skill` binding names (splice
     output the CONTROLLER computed for the triggering turn) must be seeded
@@ -6120,6 +6210,7 @@ def test_append_to_last_user_message_stacks_two_sequential_calls_in_order():
     assert original_message["content"] == "hi"
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_appends_bundle_block_copy_safely(tmp_path):
     """Task 5: the turn's pre-rendered "Bundled files" block is appended to
     a NEW list + NEW dict for the last role=="user" entry -- the caller's
@@ -6197,6 +6288,7 @@ def test_run_reply_appends_bundle_block_copy_safely(tmp_path):
     assert agent_messages2 == [{"role": "user", "content": "hi"}]
 
 
+@pytest.mark.bootstrap_profile
 def test_no_skills_service_leaves_shared_registry_path_untouched(tmp_path):
     """The no-skills-service path (skills_service=None, the default) must
     stay byte-identical to the pre-Task-12 behavior: no get_context call, no
@@ -6244,6 +6336,7 @@ def test_compose_run_allowed_tools_empty_context_is_builtins_plus_spawn():
     assert allowed == ("calculator", SPAWN_TOOL_NAME)
 
 
+@pytest.mark.bootstrap_profile
 def test_bridge_uses_captured_local_empty_until_a_later_successful_snapshot(
     tmp_path,
     monkeypatch,
@@ -7054,6 +7147,7 @@ def test_compose_run_registry_and_allowed_warns_once_per_distinct_shadowed_name(
     assert any("get_current_datetime" in m for m in messages)
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_routes_fence_call_to_mcp_provider(tmp_path):
     """End-to-end: a run with no skills service still registers an eligible
     MCP provider fresh (not the shared, construction-time registry) and
@@ -7128,6 +7222,7 @@ def test_run_reply_forwards_review_tool_calls_hook_to_agent_service(tmp_path):
     assert resumed[1].tool_output_full is None
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_still_wires_stamp_scope_for_the_inline_kill_switch_path(
     tmp_path, monkeypatch
 ):
@@ -7220,6 +7315,7 @@ class _StampingMCPProvider(_FakeMCPProvider):
             self.stamps.update(snapshot)
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_keeps_the_parents_mcp_verdict_across_a_concurrent_child(tmp_path):
     """The parent's own approval SURVIVES a concurrently-running child.
 
@@ -7310,6 +7406,7 @@ def test_run_reply_keeps_the_parents_mcp_verdict_across_a_concurrent_child(tmp_p
     assert mcp_provider.stamp_scope_calls == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_skill_named_like_a_runtime_tool_never_shadows_it_at_invocation(tmp_path):
     """End-to-end: a skill front-matter'd as "find_tools" must not hijack
     the runtime's own find_tools meta-tool -- the real runtime dispatch
@@ -7344,6 +7441,7 @@ def test_skill_named_like_a_runtime_tool_never_shadows_it_at_invocation(tmp_path
     assert db.count_subagent_runs("conv-runtime-collide") == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_skill_named_like_a_builtin_never_shadows_it_at_invocation(tmp_path):
     """End-to-end: a skill front-matter'd as "calculator" must not hijack
     calculator calls -- the real builtin still answers, and no sub-agent
@@ -7445,6 +7543,7 @@ def _discovery_heavy_shout_scripts():
     return parent, child
 
 
+@pytest.mark.bootstrap_profile
 def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path, monkeypatch):
     """Task-14 gate finding 1 repro: find_tools -> load_tools -> a skill
     call -> final answer needs exactly 10 primary-loop steps at minimum (3
@@ -7498,6 +7597,7 @@ def test_discovery_heavy_skill_run_completes_done_not_stuck(tmp_path, monkeypatc
     assert any("shout" in row.content for row in tool_rows)
 
 
+@pytest.mark.bootstrap_profile
 def test_console_run_budget_is_raised_above_the_bare_engine_default(tmp_path):
     """Pins the config-assembly override directly: a primary Console run's
     PERSISTED budget must sit strictly above the engine's own pure default
@@ -7559,6 +7659,8 @@ def _make_bridge() -> ConsoleAgentBridge:
     identity_store = ConsoleChatStore()
     identity_store.create_session(session_id="s1")
     store.progress_owner_scope = identity_store.progress_owner_scope
+    store.prepare_progress_inbox = identity_store.prepare_progress_inbox
+    store.session_workspace_id = identity_store.session_workspace_id
     store.register_progress_message_store = (
         identity_store.register_progress_message_store
     )
@@ -7569,6 +7671,7 @@ def _make_bridge() -> ConsoleAgentBridge:
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_returns_runoutcome_done():
     bridge = _make_bridge()
     outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
@@ -7590,6 +7693,7 @@ def test_run_reply_returns_runoutcome_done():
     assert result.final_text == "done"
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_rounds_keep_thinking_paired_across_native_tool_calls(tmp_path) -> None:
     gateway = _ChunkGateway(
         [
@@ -7621,12 +7725,13 @@ def test_agent_rounds_keep_thinking_paired_across_native_tool_calls(tmp_path) ->
     original_replace = store.replace_message_thinking
     original_settle = store.settle_message_thinking
 
-    def record_replace(message_id, envelope, *, generation_token=None):
+    def record_replace(message_id, envelope, *, generation_token=None, validated=False):
         live_tokens.append(generation_token)
         return original_replace(
             message_id,
             envelope,
             generation_token=generation_token,
+            validated=validated,
         )
 
     def record_settle(message_id, envelope, *, generation_token=None):
@@ -7649,7 +7754,7 @@ def test_agent_rounds_keep_thinking_paired_across_native_tool_calls(tmp_path) ->
     )
 
     assistant = store.get_message(assistant_id)
-    assert outcome.status == RUN_DONE
+    assert outcome.status == RUN_DONE, outcome
     assert assistant.content == "The answer is 2."
     assert assistant.thinking is not None
     assert [block.round_ordinal for block in assistant.thinking.blocks] == [0, 1]
@@ -7666,6 +7771,7 @@ def test_agent_rounds_keep_thinking_paired_across_native_tool_calls(tmp_path) ->
     assert type(live_tokens[0]) is int
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_rounds_advance_for_fence_first_tool_calls(tmp_path) -> None:
     gateway = _ChunkGateway(
         [
@@ -7705,6 +7811,7 @@ def test_agent_rounds_advance_for_fence_first_tool_calls(tmp_path) -> None:
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_terminal_proprietary_evidence_never_enters_answer_text(tmp_path) -> None:
     gateway = _ChunkGateway(
         [
@@ -7731,6 +7838,7 @@ def test_agent_terminal_proprietary_evidence_never_enters_answer_text(tmp_path) 
     assert not hasattr(assistant.thinking.blocks[0], "text")
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_answer_without_evidence_leaves_thinking_null(tmp_path) -> None:
     bridge, _db, store, session, assistant_id = _bridge(tmp_path, [["answer"]])
 
@@ -7740,6 +7848,7 @@ def test_agent_answer_without_evidence_leaves_thinking_null(tmp_path) -> None:
     assert store.get_message(assistant_id).thinking is None
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_provider_failure_settles_open_thinking_as_failed(tmp_path) -> None:
     class RaisingGateway(_ChunkGateway):
         async def stream_chat(self, resolution, messages, tools=None, **kwargs):
@@ -7763,6 +7872,7 @@ def test_agent_provider_failure_settles_open_thinking_as_failed(tmp_path) -> Non
     assert assistant.thinking.blocks[0].status == "failed"
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_stop_after_thinking_does_not_pull_the_next_answer_chunk(
     tmp_path,
 ) -> None:
@@ -7798,6 +7908,7 @@ def test_agent_stop_after_thinking_does_not_pull_the_next_answer_chunk(
     assert assistant.thinking.blocks[0].status == "stopped"
 
 
+@pytest.mark.bootstrap_profile
 def test_agent_late_thinking_after_controller_stop_is_durably_settled(
     tmp_path,
 ) -> None:
@@ -7890,20 +8001,23 @@ def test_agent_late_thinking_after_controller_stop_is_durably_settled(
 
         def run_bridge() -> None:
             try:
-                result["reply"] = bridge.run_reply(
-                    conversation_id=session.persisted_conversation_id,
-                    session_id=session.id,
-                    resolution=_test_resolution(
+                from tldw_chatbook.DB.base_db import operation_owned_connection
+
+                with operation_owned_connection(runs_db):
+                    result["reply"] = bridge.run_reply(
+                        conversation_id=session.persisted_conversation_id,
+                        session_id=session.id,
+                        resolution=_test_resolution(
+                            model="reasoner",
+                            thinking_stream_disposition="displayable",
+                            thinking_round_trip_version=1,
+                        ),
+                        assistant_message_id=assistant.id,
                         model="reasoner",
-                        thinking_stream_disposition="displayable",
-                        thinking_round_trip_version=1,
-                    ),
-                    assistant_message_id=assistant.id,
-                    model="reasoner",
-                    session_system_prompt="",
-                    agent_messages=[{"role": "user", "content": "question"}],
-                    should_cancel=cancel_event.is_set,
-                )
+                        session_system_prompt="",
+                        agent_messages=[{"role": "user", "content": "question"}],
+                        should_cancel=cancel_event.is_set,
+                    )
             except BaseException as exc:  # pragma: no cover - asserted below
                 result["error"] = exc
 
@@ -8031,6 +8145,7 @@ def test_agent_adapter_preflights_backend_before_provider_contact() -> None:
     assert gateway.calls == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_passes_private_continuation_sidecar_to_agent_service():
     bridge = _make_bridge()
     outcome = RunOutcome(status=RUN_DONE, steps=[], final_text="done")
@@ -8087,6 +8202,7 @@ def test_run_reply_passes_private_continuation_sidecar_to_agent_service():
     assert run_turn.call_args.kwargs["continuation_owner_key"] == "_owner"
 
 
+@pytest.mark.bootstrap_profile
 def test_resumed_sidecars_reach_normal_prepared_gateway_once(tmp_path) -> None:
     class CapturingGateway(ConsoleProviderGateway):
         def __init__(self) -> None:
@@ -8263,6 +8379,7 @@ def test_resumed_sidecars_reach_normal_prepared_gateway_once(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_controller_agent_transport_preserves_vision_filtering_and_privacy(
     tmp_path,
 ) -> None:
@@ -8399,6 +8516,7 @@ async def test_controller_agent_transport_preserves_vision_filtering_and_privacy
     assert_private_ids_absent(nonvision_request)
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_returns_runoutcome_error():
     bridge = _make_bridge()
     outcome = RunOutcome(status=RUN_ERROR, steps=[], final_text="")
@@ -8419,6 +8537,7 @@ def test_run_reply_returns_runoutcome_error():
     assert result.status == RUN_ERROR
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_returns_run_id_and_does_not_store_native_assistant_id():
     """run_reply exposes the primary run id to its caller but must NOT forward
     the native in-memory assistant_message_id into run_turn: create_run would
@@ -8487,6 +8606,7 @@ def _install_skills_service():
     return svc
 
 
+@pytest.mark.bootstrap_profile
 def test_install_skill_confirm_allow_installs(tmp_path, monkeypatch):
     import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
 
@@ -8540,6 +8660,7 @@ def test_install_skill_confirm_allow_installs(tmp_path, monkeypatch):
     assert any("demo" in c and "pending" in c.lower() for c in tool_msgs)
 
 
+@pytest.mark.bootstrap_profile
 def test_install_skill_confirm_deny_does_not_install(tmp_path, monkeypatch):
     import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
 
@@ -8582,6 +8703,7 @@ def test_install_skill_confirm_deny_does_not_install(tmp_path, monkeypatch):
     assert any("declined" in c.lower() for c in tool_msgs)
 
 
+@pytest.mark.bootstrap_profile
 def test_install_skill_malformed_url_never_prompts(tmp_path):
     """A URL that fails classification returns an error WITHOUT prompting."""
     prompted = []
@@ -8614,6 +8736,7 @@ def test_install_skill_malformed_url_never_prompts(tmp_path):
     assert prompted == []  # classification failed before any prompt
 
 
+@pytest.mark.bootstrap_profile
 def test_install_skill_collision_error_survives_turn(tmp_path, monkeypatch):
     """A bare ValueError('local_skill_exists:...') is wrapped, not fatal."""
     import tldw_chatbook.Skills_Interop.skill_remote_fetch as srf
@@ -8656,6 +8779,7 @@ def test_install_skill_collision_error_survives_turn(tmp_path, monkeypatch):
     assert any("local_skill_exists" in c for c in tool_msgs)
 
 
+@pytest.mark.bootstrap_profile
 def test_install_skill_absent_without_confirm_callback(tmp_path):
     """No request_skill_install_confirm wired -> the tool is ABSENT, not auto-denied.
 
@@ -8772,6 +8896,7 @@ def test_combine_state_scopes_restores_both_when_the_nested_run_raises():
     assert exited == ["builtin", "mcp"]
 
 
+@pytest.mark.bootstrap_profile
 def test_resumed_markers_carry_the_same_full_output_as_live_ones(tmp_path, monkeypatch):
     """TASK-1860 AC#5: resume is a second door, and it has been missed before.
 
@@ -8991,6 +9116,7 @@ def test_compose_run_registry_without_library_provider_is_unchanged():
     assert len(registry.list_catalog()) == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_rebuilds_registry_when_a_library_provider_is_present(
     tmp_path, monkeypatch
 ):
@@ -9031,6 +9157,7 @@ def test_run_reply_rebuilds_registry_when_a_library_provider_is_present(
     assert compose_calls[0]["library_authority"] is authority
 
 
+@pytest.mark.bootstrap_profile
 def test_blocked_followup_run_cannot_reuse_library_schema_registry_or_callable(
     tmp_path,
 ):
@@ -9080,6 +9207,7 @@ def test_blocked_followup_run_cannot_reuse_library_schema_registry_or_callable(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_parent_and_child_share_one_library_provider_and_child_can_only_narrow(
     tmp_path,
     monkeypatch,
@@ -9235,6 +9363,7 @@ def test_fleet_snapshot_returns_empty_for_unknown_conversation(tmp_path):
     assert bridge.fleet_snapshot("never-seen-conversation") == []
 
 
+@pytest.mark.bootstrap_profile
 def test_fleet_snapshot_reflects_two_live_handles_in_flight_then_empty_after_run_completes(
     tmp_path,
 ):
@@ -9451,6 +9580,7 @@ def test_cancel_subagent_returns_false_for_an_unknown_conversation(tmp_path):
     assert bridge.cancel_subagent("never-seen-conversation", "whatever") is False
 
 
+@pytest.mark.bootstrap_profile
 def test_cancel_subagent_delegates_to_the_published_services_live_handle(
     tmp_path,
 ):
@@ -9532,6 +9662,7 @@ def test_cancel_subagent_delegates_to_the_published_services_live_handle(
 # -- PR2b Task 2: real per-child status on the live `subagents` rows -----
 
 
+@pytest.mark.bootstrap_profile
 def test_live_snapshot_subagent_status_reaches_done_on_the_live_path(tmp_path):
     """PR2b Task 2 headline fix: before this task, a live row's status was
     the `SubAgentSummary` dataclass default ("running") FOREVER -- the
@@ -9578,6 +9709,7 @@ def test_live_snapshot_subagent_status_reaches_done_on_the_live_path(tmp_path):
     assert child_run["status"] == "done"
 
 
+@pytest.mark.bootstrap_profile
 def test_live_snapshot_subagent_status_reaches_error_when_child_run_fails(tmp_path):
     """PR2b Task 2: an errored child must show `status == "error"` on the
     live path, not the permanently-stuck "running" the pre-task code
@@ -9631,6 +9763,7 @@ def test_live_snapshot_subagent_status_reaches_error_when_child_run_fails(tmp_pa
     assert subagents[0].handle_id
 
 
+@pytest.mark.bootstrap_profile
 def test_live_snapshot_two_concurrent_subagents_get_distinct_run_ids_that_dont_cross(
     tmp_path,
 ):
@@ -9876,6 +10009,7 @@ def _second_turn_message(store, session):
     ).id
 
 
+@pytest.mark.bootstrap_profile
 def test_a_survivor_is_visible_and_stoppable_after_its_turn_returns(tmp_path):
     """PR3a-1 Task 6a, the headline: `run_reply` returns while a child is
     still working (Task 2), and that child must remain on every
@@ -9946,6 +10080,7 @@ def test_a_survivor_is_visible_and_stoppable_after_its_turn_returns(tmp_path):
     assert bridge._fleet_survivor_services.get("conv-survivor") is None
 
 
+@pytest.mark.bootstrap_profile
 def test_a_survivor_stays_visible_and_stoppable_through_the_next_turn(tmp_path):
     """PR3a-1 Task 6a: the NEXT message must not blind or disarm the
     panel.
@@ -10054,6 +10189,7 @@ def _release_gates_and_assert_fleet_stopped(*gates, timeout: float = 5.0) -> Non
     assert not [thread.name for thread in fleet_threads if thread.is_alive()]
 
 
+@pytest.mark.bootstrap_profile
 def test_headless_next_turn_prunes_settled_owners_but_keeps_live_owner(tmp_path):
     first_gate = threading.Event()
     first_gateway = _FleetTwoChildGateway(
@@ -10107,6 +10243,7 @@ def test_headless_next_turn_prunes_settled_owners_but_keeps_live_owner(tmp_path)
     assert bridge._retained_fleet_owners(session.id) == []
 
 
+@pytest.mark.bootstrap_profile
 def test_fleet_disabled_next_turn_keeps_a_live_survivor_owner(tmp_path, monkeypatch):
     settled_gate = threading.Event()
     settled_gateway = _FleetTwoChildGateway(
@@ -10167,6 +10304,7 @@ def test_fleet_disabled_next_turn_keeps_a_live_survivor_owner(tmp_path, monkeypa
         _release_gates_and_assert_fleet_stopped(settled_gate, live_gate)
 
 
+@pytest.mark.bootstrap_profile
 def test_a_finished_childs_row_does_not_follow_the_conversation_forever(
     tmp_path,
 ):
@@ -10209,6 +10347,7 @@ def test_a_finished_childs_row_does_not_follow_the_conversation_forever(
     assert len(bridge._fleet_coordinators["conv-prune"].snapshot()) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_live_children_are_capped_across_run_reply_calls(tmp_path, monkeypatch):
     """PR3a-1 Task 6a: `[agents] max_live_subagents` is a bound on the
     CONVERSATION, not on one message.
@@ -10377,6 +10516,7 @@ def test_subagent_summaries_from_fleet_inline_path_renders_fallback_unchanged():
 # explicitly ignored it; these tests are why it may not.
 
 
+@pytest.mark.bootstrap_profile
 def test_a_survivors_steps_do_not_overwrite_the_next_turns_rail(tmp_path):
     """Turn 1's surviving child must not repaint turn 2's rail summary.
 
@@ -10430,6 +10570,7 @@ def test_a_survivors_steps_do_not_overwrite_the_next_turns_rail(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_a_survivors_own_steps_are_kept_under_its_own_run_id(tmp_path):
     """... and are not merely suppressed: dropping them would be the same
     silent loss, one turn later.
@@ -10473,6 +10614,7 @@ def test_a_survivors_own_steps_are_kept_under_its_own_run_id(tmp_path):
     assert child_live.steps, child_live
 
 
+@pytest.mark.bootstrap_profile
 def test_a_finished_childs_live_slot_does_not_follow_the_conversation_forever(
     tmp_path,
 ):
@@ -10524,6 +10666,7 @@ def test_a_finished_childs_live_slot_does_not_follow_the_conversation_forever(
 # than no dialog.
 
 
+@pytest.mark.bootstrap_profile
 def test_busy_fleet_session_count_sees_a_session_whose_only_work_is_a_survivor(
     tmp_path,
 ):
@@ -10628,6 +10771,7 @@ def test_busy_fleet_session_count_degrades_when_the_bridge_raises():
     assert controller.busy_fleet_session_count() == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_inline_child_live_slots_are_bounded_with_the_fleet_switched_off(
     tmp_path, monkeypatch
 ):
@@ -10729,6 +10873,7 @@ def test_fleet_coordinator_factory_resizes_retention_caps_in_place(
 
 # --- TASK-26003: stream stall watchdog is wired into the live chat_call path ---
 
+@pytest.mark.bootstrap_profile
 def test_content_stall_surfaces_through_chat_call(tmp_path, monkeypatch):
     """AC#1/#3: a stream that yields then produces no further content is caught
     by the watchdog through the real chat_call path and reported distinctly (a
@@ -10912,6 +11057,7 @@ def test_live_usage_scalar_arbitration_sequence_and_cleanup():
     assert bridge._live_turn_usage == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_live_usage_crosses_primary_and_inline_child_before_first_step(
     tmp_path, monkeypatch
 ):
@@ -11161,6 +11307,7 @@ def test_live_usage_prune_invalidates_pre_step_owner_and_late_start():
         ({"output_tokens": -1}, []),
     ],
 )
+@pytest.mark.bootstrap_profile
 def test_live_usage_adapter_requires_explicit_raw_provider_output(usage, expected):
     terminal = ProviderToolCalls((), ProviderTurnMetadata("stop", usage=usage))
     gateway = _ChunkGateway([[terminal]])
@@ -11199,6 +11346,7 @@ def test_live_usage_adapter_requires_explicit_raw_provider_output(usage, expecte
     ] == expected
 
 
+@pytest.mark.bootstrap_profile
 def test_terminal_usage_snapshot_failure_is_observational_and_finishes(
     monkeypatch,
 ):
@@ -11260,6 +11408,7 @@ def test_terminal_usage_snapshot_failure_is_observational_and_finishes(
 
 
 @pytest.mark.parametrize("fault", ["snapshot", "extractor"])
+@pytest.mark.bootstrap_profile
 def test_live_usage_chunk_observation_failure_does_not_truncate_provider_text(
     monkeypatch,
     fault,
@@ -11331,6 +11480,7 @@ def test_live_usage_chunk_observation_failure_does_not_truncate_provider_text(
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_terminal_usage_signal_fallback_preserves_explicit_output(monkeypatch):
     class MetadataGateway(ConsoleProviderGateway):
         async def stream_chat(self, *_args, **_kwargs):
@@ -11379,6 +11529,7 @@ def test_terminal_usage_signal_fallback_preserves_explicit_output(monkeypatch):
     assert events[-1].kind == "finished"
 
 
+@pytest.mark.bootstrap_profile
 def test_live_usage_two_fleet_streams_publish_pre_step_through_adapter(
     tmp_path,
 ):
@@ -11557,6 +11708,7 @@ def _routed_child_messages():
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_per_call_routing_kwargs_re_resolve_and_forward(monkeypatch):
     """A routed child re-resolves through the gateway's send-resolution seam:
     the child's provider/model/base_url and sampling params reach
@@ -11643,6 +11795,7 @@ def test_no_routing_kwargs_uses_parent_resolution_unchanged():
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_per_call_routing_sampling_only_reroutes_params_not_provider():
     """Sampling kwargs with the PARENT's endpoint (the inherit-with-own-params
     case) keep the parent's provider identity and overlay only what the call
@@ -11688,6 +11841,7 @@ def test_per_call_routing_sampling_only_reroutes_params_not_provider():
     assert parent.temperature is None
 
 
+@pytest.mark.bootstrap_profile
 def test_unknown_per_call_provider_routing_is_a_loud_error_not_silent_fallback():
     """An unready/unknown per-call provider raises through chat_call's error
     channel (the same one stream failures use); the parent's resolution is
@@ -11723,6 +11877,7 @@ def test_unknown_per_call_provider_routing_is_a_loud_error_not_silent_fallback()
     assert gateway.stream_calls == []
 
 
+@pytest.mark.bootstrap_profile
 def test_routed_call_on_continuation_pinned_turn_raises_typed_conflict():
     """A routed call carrying continuation groups cannot be prepared against
     the parent's pinned restore target: the typed ``ContinuationConflictError``
@@ -11952,6 +12107,7 @@ def test_bare_custom_hosted_as_an_actual_selection_still_fails_cleanly():
     assert gateway.stream_calls == []
 
 
+@pytest.mark.bootstrap_profile
 def test_routed_child_keeps_live_usage_scope_and_provider_counts():
     events = []
     terminal = ProviderToolCalls((), ProviderTurnMetadata(
@@ -11977,6 +12133,7 @@ def test_routed_child_keeps_live_usage_scope_and_provider_counts():
     assert gateway.stream_calls[0][0].temperature == 0.2
 
 
+@pytest.mark.bootstrap_profile
 def test_same_provider_child_clears_parent_only_sampling_values():
     parent = replace(
         _routing_parent_resolution(), seed=123, reasoning_effort="high", top_k=70,

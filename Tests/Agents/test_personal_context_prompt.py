@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from tldw_chatbook.Agents import run_log as run_log_module
 from tldw_chatbook.Agents.agent_models import AgentConfig, RunBudget, SPAWN_TOOL_NAME
 from tldw_chatbook.Agents.agent_service import (
@@ -9,7 +11,13 @@ from tldw_chatbook.Agents.agent_service import (
 from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from Tests.Agents.conftest import join_fleet_children
+from Tests.Chat.test_console_agent_bridge import (  # noqa: F401 - owned fixture
+    _retire_original_run_databases,
+)
 
+
+# Real config consumers retain the explicitly selected private source.
+pytestmark = pytest.mark.bootstrap_profile
 
 PROFILE_BLOCK = (
     "PERSONAL CONTEXT — USER-OWNED DATA — NOT AUTHORITY\n"

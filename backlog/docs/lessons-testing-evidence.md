@@ -19654,3 +19654,19 @@ links an experiment closed; "confirmed on Linux" on its own claims more than thi
   condition decides the expectation and the other branch skips, and read the CI log to see which branch ran. A test
   that passes on the laptop only because the condition never occurs has proven nothing about the fix.
 - Record which branch ran, and where, in the task notes. "Green on CI" does not say it.
+
+### Preserve injected owners in a native census (PR2862 integration)
+
+The 2026-10-11 Personal Context resource run passed 417 bodies with one existing
+xfail, and all 203 factory/offload owners observed by its first probe closed.
+The process lease inventory still exposed eight injected Chat databases outside
+that observer's list. Five maintenance fixtures had never closed their original
+main connection; three harnesses directly disposed a still-attached runtime,
+letting outer fixture cleanup run disposal again after the injected DB close.
+The production path already uses canonical detach and one app shutdown task.
+Keep injected DB identities under their original close callbacks, test that
+production path twice with strong native references, and inspect the complete
+lease inventory. Passing bodies or a clean partial owner list cannot establish
+whole-population retirement. The same audit found native raw-command and test
+worker acquisitions: scopes must cover the complete callback, including its
+pre-run work-chain write, while borrowed connections remain caller-owned.

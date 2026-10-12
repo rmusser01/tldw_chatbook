@@ -16,6 +16,7 @@ from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     RunOutcome,
     RunTerminationReason,
+    ToolCatalogEntry,
 )
 from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused, GoalAttempt
 from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
@@ -251,14 +252,20 @@ class GoalIterationAuthorization:
         return max(0.0, min(iteration, chain))
 
     def narrow_config(
-        self, config: AgentConfig, registry: ToolCatalogRegistry
+        self,
+        config: AgentConfig,
+        registry: ToolCatalogRegistry,
+        *,
+        catalog_entries: Sequence[ToolCatalogEntry] | None = None,
     ) -> AgentConfig:
         self.registry = registry
         scope = self.goal.request.tool_scope
         mcp_ids = {binding.tool_id for binding in scope.mcp_bindings}
         allowed = tuple(
             entry.name
-            for entry in registry.list_catalog()
+            for entry in (
+                registry.list_catalog() if catalog_entries is None else catalog_entries
+            )
             if entry.id in scope.catalog_tools
             and (entry.source != "mcp" or entry.id in mcp_ids)
         )

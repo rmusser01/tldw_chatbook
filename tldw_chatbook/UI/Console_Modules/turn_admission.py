@@ -149,32 +149,38 @@ def capture_authority(controller: Any, inputs: AuthorityInputs) -> TurnAuthority
     Touches no store and no widget, so it may run on a worker thread.
     """
     app = getattr(controller, "app_instance", None)
-    session = inputs.session
-    roots, aliases, skipped = capture_change_review_admission(app, inputs.workspace_id)
-    mcp_definition_maximum = capture_mcp_definition_maximum(app)
-    return TurnAuthority(
-        key=inputs.key,
-        project_authority=capture_project_instruction_authority(
-            session,
-            getattr(app, "workspace_registry_service", None),
-            include_bindings=inputs.include_bindings,
-        ),
-        workspace_roots=roots,
-        change_review_root_aliases=aliases,
-        change_review_skipped_roots=skipped,
-        tool_policy_profile_id=resolve_turn_tool_policy_profile_id(
+    from tldw_chatbook.DB.base_db import operation_owned_connection
+
+    registry = getattr(app, "workspace_registry_service", None)
+    with operation_owned_connection(getattr(registry, "db", None)):
+        session = inputs.session
+        roots, aliases, skipped = capture_change_review_admission(
             app, inputs.workspace_id
-        ),
-        persona_policy_rules=resolve_turn_persona_policy_rules(app, session),
-        mcp_definition_maximum=mcp_definition_maximum,
-        scratch_space=controller._scratch_snapshot_provider(inputs.session_id),
-        character_authority=capture_character_authority(
-            session, inputs.character_repository
-        ),
-        prompt_transform_inputs=capture_prompt_transform_inputs(app, session),
-        skill_context_maximum=capture_skill_context_maximum(app),
-        rag_top_k=controller._rag_top_k_accessor(),
-    )
+        )
+        mcp_definition_maximum = capture_mcp_definition_maximum(app)
+        return TurnAuthority(
+            key=inputs.key,
+            project_authority=capture_project_instruction_authority(
+                session,
+                getattr(app, "workspace_registry_service", None),
+                include_bindings=inputs.include_bindings,
+            ),
+            workspace_roots=roots,
+            change_review_root_aliases=aliases,
+            change_review_skipped_roots=skipped,
+            tool_policy_profile_id=resolve_turn_tool_policy_profile_id(
+                app, inputs.workspace_id
+            ),
+            persona_policy_rules=resolve_turn_persona_policy_rules(app, session),
+            mcp_definition_maximum=mcp_definition_maximum,
+            scratch_space=controller._scratch_snapshot_provider(inputs.session_id),
+            character_authority=capture_character_authority(
+                session, inputs.character_repository
+            ),
+            prompt_transform_inputs=capture_prompt_transform_inputs(app, session),
+            skill_context_maximum=capture_skill_context_maximum(app),
+            rag_top_k=controller._rag_top_k_accessor(),
+        )
 
 
 def authority_for(controller: Any, inputs: AuthorityInputs) -> TurnAuthority:

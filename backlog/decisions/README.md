@@ -148,6 +148,15 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-211](211-ephemeral-provider-failure-presentation.md) | Accepted | Keep sanitized provider failure presentation transient across the gateway, agent outcome and Console while preserving typed fallback semantics and diagnostic persistence. |
 | [ADR-224](224-conversation-timestamp-normalization.md) | Accepted | Migrate `conversations.last_modified` and `flashcards.next_review` to the ADR-173 canonical UTC shape (schema v78→v79) so the keyset, due-card, and character-list queries compare and order on raw indexed columns; a partial expression index serves the character visibility predicate and NOCASE order. |
 
+| [ADR-182](182-personal-context-memory-evolution.md) | Accepted | Evolve memory through existing owners, starting with an offline baseline, truthful provenance and selection inspection, and measured local retrieval. |
+| [ADR-201](201-versioned-profile-evidence-and-temporal-claims.md) | Accepted (design only) | Bind future V2 Personal Context evidence to exact source authority/version/span and distinguish support, approval and temporal claim changes. |
+| [ADR-202](202-dependency-aware-personal-context-forgetting.md) | Accepted (design only) | Fence future forgetting across existing owners with source suppression, durable recovery and honest peer acknowledgements. |
+| [ADR-203](203-personal-context-provider-disclosure-authority.md) | Accepted (design only) | Separate restrictive model audiences from Sync and agent authority using qualified destination/purpose-bound local grants. |
+| [ADR-188](188-opt-in-proposal-only-memory-consolidation.md) | Accepted (design only) | Bound opt-in new-source consolidation to canonical proposals, exact foreground review and native disclosure/budget/recovery owners. |
+| [ADR-189](189-reviewed-memory-feedback-and-repair-ownership.md) | Accepted (design only) | Route explicit corrections and repair through canonical profiles and foreground Notes/lessons, with bounded non-authorizing guidance. |
+| [ADR-192](192-personal-context-v2-canonical-data-contract.md) | Accepted (design only) | Freeze inactive V2 aggregates, complete digest/attribution rules and restrictive disclosure without enabling native consumers. |
+| [ADR-193](193-native-v2-profile-compatibility-and-admission.md) | Accepted (design only) | Require current profile-wide consumer qualification and exact native atomic admission before V2 use. |
+
 ## Historical Decision Material
 
 Some older decision material exists outside this directory. See [historical-index.md](historical-index.md). Historical entries are context, not canonical ADRs under the current immutability rules.

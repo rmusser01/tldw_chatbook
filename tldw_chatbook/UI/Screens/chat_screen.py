@@ -691,6 +691,13 @@ NoteRequested = ConsoleSelectionNoteRequested
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
+    from ...Widgets.Console.console_next_send_selection import (
+        ConsoleNextSendSelectionResult,
+    )
+    from ...Chat.console_conversation_activation import (
+        CharacterConversationActivationRequest,
+        ConsoleConversationActivationResult,
+    )
     from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
     from tldw_chatbook.UI.Console_Modules.environment import (
         ConsoleEnvironmentController,
@@ -6297,68 +6304,16 @@ class ChatScreen(BaseAppScreen):
     def _console_inspector_next_send_factories(
         self, controller: Any, session_id: str
     ) -> tuple[
-        Callable[[], Awaitable[ConsoleContextSnapshot]],
+        Callable[
+            [], Awaitable["ConsoleContextSnapshot | ConsoleNextSendSelectionResult"]
+        ],
         Callable[[], int | None],
         int | None,
         bool,
     ]:
-        """Build the Next Send tab's snapshot/estimate factories (task-18300).
+        from ..Console_Modules.inspector_data import build_next_send_factories
 
-        Shared by BOTH ``ConsoleConversationInspector`` entry points (the
-        cost chip and Ctrl+Shift+P) -- the two push the SAME modal
-        instance, and the user can switch to the Next Send tab regardless
-        of which tab it opened on, so a caller that skipped this would
-        leave the tab showing nothing. Building the closures themselves is
-        cheap: the Context view calls ``snapshot_factory`` only when opened
-        or explicitly refreshed. Usage and exchange views do not prepare
-        hidden next-send content.
-
-        ``session_id`` is threaded in rather than re-read from the store
-        because the composer only reflects the ACTIVE session; see
-        ``_captured_draft``.
-        """
-
-        def _captured_draft() -> str:
-            if controller.store.active_session_id == session_id:
-                try:
-                    return self.query_one(
-                        "#console-native-composer", ConsoleComposerBar
-                    ).draft_text()
-                except (NoMatches, QueryError):
-                    pass
-            session = next(
-                (item for item in controller.store.sessions() if item.id == session_id),
-                None,
-            )
-            return session.draft if session is not None else ""
-
-        async def _factory() -> ConsoleContextSnapshot:
-            current_draft = _captured_draft()
-            pending = controller.store.pending_attachments(session_id)
-            current_attachments = tuple(
-                MessageAttachment(
-                    data=pending_attachment.data,
-                    mime_type=pending_attachment.mime_type or "image/png",
-                    display_name=pending_attachment.display_name,
-                    position=index,
-                )
-                for index, pending_attachment in enumerate(pending)
-            )
-            current_staged_sources = controller.store.workspace_context.allowed_sources
-
-            return await controller.build_context_snapshot(
-                draft=current_draft,
-                attachments=current_attachments,
-                staged_sources=current_staged_sources,
-                session_id=session_id,
-            )
-
-        def _estimate_factory() -> int | None:
-            return self._estimate_tokens({"draft": _captured_draft()})
-
-        token_estimate = _estimate_factory()
-        in_progress = controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
-        return _factory, _estimate_factory, token_estimate, in_progress
+        return build_next_send_factories(self, controller, session_id)
 
     def _estimate_tokens(self, payload: dict[str, Any]) -> int | None:
         """Return a token estimate for the current draft text."""
@@ -11951,7 +11906,9 @@ class ChatScreen(BaseAppScreen):
         self,
         *,
         initial_tab: str,
-        snapshot_factory: Callable[[], Awaitable[ConsoleContextSnapshot]],
+        snapshot_factory: Callable[
+            [], Awaitable["ConsoleContextSnapshot | ConsoleNextSendSelectionResult"]
+        ],
         estimate_factory: Callable[[], int | None] | None = None,
         token_estimate: int | None = None,
         payload_estimate: Callable[[ConsoleContextSnapshot], int | None] | None = None,
