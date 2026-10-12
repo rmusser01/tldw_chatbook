@@ -188,6 +188,15 @@ async def test_guardian_topics_never_carry_crisis_text_into_synthesis(
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _enabled_guardian(monkeypatch):
+    # These positive interop tests explicitly exercise opted-in discovery.
+    monkeypatch.setattr(
+        "tldw_chatbook.Guardian.settings.guardian_setting",
+        lambda key, default=None: True if key == "enabled" else default,
+    )
+
+
 def _no_chat():
     raise RuntimeError("no chat in this test")
 
