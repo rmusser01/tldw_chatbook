@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 05:56'
-updated_date: '2026-10-12 03:43'
+updated_date: '2026-10-12 05:35'
 labels: []
 dependencies:
   - TASK-34806
@@ -26,6 +26,7 @@ Enable the approved Console response-rule behavior for plan task 9. Preserve exi
 - [ ] #1 Integrated route tests cover learning, checking, cancellation, shared repair and inert reopen.
 - [ ] #2 Provider behavior and native UI evidence are qualified separately from scripted tests.
 - [ ] #3 Targeted regression and static checks pass and independent whole-branch review findings are addressed or recorded.
+- [ ] #4 A bounded named critical selection covering helper-preparation custody, installed schema/recovery/voice and native/hook/currentness boundaries runs in actual required PR lanes with nonvacuous executable membership checks, preserved existing targets/order/limits and exact final-head hosted results.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -36,6 +37,8 @@ ADR required: yes. ADR path: backlog/decisions/228-console-learned-response-rule
 Latest-dev PR integration (2026-10-04): retain ADR-228; merge origin/dev 1b12df2757, preserve incoming Console model/settings and quit behavior, move unpublished response-rule schema to v77 after the installed v76 notes FTS migration, qualify exact v75/v76 recovery plus the targeted feature/owner/static gates, record remaining qualification limits, then push and open the requested PR against dev. ADR required: no new ADR; ADR path: backlog/decisions/228-console-learned-response-rules.md; reason: integration preserves the approved ownership and runtime contracts.
 
 Current-dev PR3010 integration: follow Docs/superpowers/plans/2026-10-11-pr3010-current-dev-integration.md on the actual post-prior-merge base. ADR required: yes. ADR path: backlog/decisions/228-console-learned-response-rules.md. Reason: preserve the approved local storage/recovery, helper custody and shared native/hook acceptance; source ADR219 remapped after the older claimant. Reproduce reviewed failures before fixes; qualify actual next schema, six voice residues, exact private/index/table catalogs, preparation-through-transport custody, lazy first-use, current Goal/Personal Context owners and separately labelled real-provider/native UI evidence. Historical source qualification above is retained; reopened acceptance awaits current integrated verification and independent review.
+
+Scoped dispatch-plan preflight correction: Ruling: bind critical response-rule safety regressions into required CI and qualification-task acceptance — existing green lanes cannot prove unenrolled new contracts — costs bounded recurring cases and executable membership controls within original limits. Follow the revised current integration Task1 before product edits; preserve source-approved scopes and every historical receipt/acceptance record. No new ADR/ID or product boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -44,6 +47,8 @@ Current-dev PR3010 integration: follow Docs/superpowers/plans/2026-10-11-pr3010-
 Implemented the integrated Console response-rule journeys and resolved all seven Important whole-branch review findings in one native TDD pass. Initial implementation evidence: 233 feature cases and 62 touched-owner cases passed. Latest-dev publication integrates origin/dev 1b12df2757, retains incoming model picker/Chat Settings/quit behavior and installs response rules as v77 after dev's v76 notes FTS migration; exact v75/v76 restricted recovery is covered. ADR-228 remains authoritative.
 
 Fresh integrated evidence: the 17-file feature run passed 232 cases with three initial-send UI timeouts; the selected owner run passed 222 cases with two UI timeouts and two documented exclusions. Correcting test predicate polling and settling one frame before the next click preserved all assertions and 30-second domain deadlines; the final six-case gate passed all four learn/repair/reopen/exclude journeys and both literal-send cases in 501.32s. Ruff on 70 changed Python files, Black on 34 authored files plus changed legacy ranges, mypy on 12 domain files, final test formatting/lint, diff and generated-bundle checks passed. Governance passed 29 cases with two ratchets identifying unchanged dev sources. The sparse-context-policy Save assertion reproduces with exact current-dev ConsoleChatStore after real profile bootstrap; symlink privilege is unavailable. Failed combined attempts and exclusions remain in Docs/superpowers/reviews/2026-10-03-console-response-rules.md; no whole-suite pass is claimed. Updated source/UI/tests, migration/recovery owners, ADR-228, user guide, implementation evidence and concrete scratch-ACL/UI-synchronization lessons. Repairs retain completed work and original answers, prompt recall excludes machine feedback, promotion preserves body-free calibration and capacity refuses before publication. One independent review, no re-review, no deferred minors. Actual configured provider probe returned ConnectError, visible native-terminal tooling is unavailable and mixed native/external-hook transport qualification remains open. Acceptance criterion 2 stays unchecked and this task remains In Progress. The subsequent user request authorizes push and a draft PR against dev; retain the managed worktree for review feedback.
+
+Independent bounded plan preflight preserves original scope but found missing recurring required-CI acceptance/verification argument. Current plan and this acceptance now make final executable critical coverage explicit. Applicable original measurement/prerequisite/consumer obligations are clarified without relaxing limits or claiming implementation/UAT.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
