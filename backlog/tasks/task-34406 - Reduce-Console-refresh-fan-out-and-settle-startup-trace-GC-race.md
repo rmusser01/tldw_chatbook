@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-12 04:26'
+updated_date: '2026-10-12 05:35'
 labels: []
 dependencies: []
 ---
@@ -95,6 +95,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [ ] #75 A raw operation checks each unchanged exact stock native hold once after all acquisitions, retaining every counted lease, custom callback behavior and maintenance-race refusal before any read/write body.
 - [ ] #76 Original Windows tab-refresh refusal is joined to its actual configuration lock or pause owner, then the proven cause is repaired with unchanged original journey and cleanup deadlines.
 - [ ] #77 Repeated settled missing-profile companion metadata avoids redundant record walks on eligible POSIX holds while retaining original lock, both fallback leases and publication/source invalidation.
+- [ ] #78 Bounded named critical GC/JSON/wire, finite-custody/authority and manual-Preparing escalation controls run in actual required PR lanes with nonvacuous executable membership checks, preserved existing targets/order/limits and exact final-head results.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -492,6 +493,8 @@ Mounted skill Send fixture follow-up: original leading-dollar failures report no
 Context/spend extraction plan (after savedb4a284513b): move one coherent display-only controller into UI/Console_Modules/context_spend.py, per DESIGN.md section7 and the existing screen-decomposition specification. Move18 related method bodies,2 inspector helpers and13 owned caches/state fields; retain exactly the two checked presentation wrappers on Screen. Named late-bound callbacks retain the actual Screen proof owner for context capacity, context reads and pricing; actual qualified Screen-module pricing aliases continue to dispatch at call time. Keep navigation, DOM, CSS, IDs, private authority, freshness bounds and lifecycle semantics unchanged. Retarget private tests/source observers to the real defining owner, preserving all behavioral assertions; constructor-free fixtures explicitly wire the new owner. Existing mounted cost/settings/inspector and source/owner tests characterize this behavior; no DOM region is moved. Run the unchanged size ceiling, controller wiring/static inventory and targeted cache/context/pricing/inspector/timer tests, then original mounted controls. Independent source review already mapped exact dependencies; obtain final review after implementation. ADR required:no. ADR path:N/A. Reason: mechanical implementation of existing DESIGN7 controller boundaries, without new authority, storage or cross-module service contract.
 
 Current PR3023 integration: follow Docs/superpowers/plans/2026-10-11-pr3023-current-dev-integration.md on actual sequential current dev. ADR required: existing accepted230, accepted bounded amendment231, exact126/097semantic/179/197/220 as applicable; general231 remains Proposed. Preserve older source history/qualification above and all76optimizationIDs/14followups. Current acceptance awaits per-owner disposition, original native/caller/lifetime/security controls, unchanged budgets and separately qualified final saved-source/provider/rendered evidence; no whole-stack replacement, blanket closure or raised cap.
+
+Scoped dispatch-plan preflight correction: Ruling: require executable critical coverage, matched alternate-order/route/host timing receipts and the accepted detached-consumer zero-I/O proof — these are source-approved contracts missing from the dispatch argument — costs bounded recurring CI plus small contract/measurement evidence, without new product categories or relaxed budgets. Follow the revised current integration Task1 before product edits; preserve source-approved scopes and every historical receipt/acceptance record. No new ADR/ID or product boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -668,6 +671,8 @@ Context repair checkpoint: all four actual original callback controls now PASS (
 AC50 verified checkpoint: untouched rail defaults remain in memory and no longer dispatch a configuration write. Existing saved-source adoption (including empty mappings), explicit-toggle markers, serialized writer/latest-value ordering and recovered-profile read-only default rendering remain. Local original publisher-return evidence identified the prior startup writer; two focused regressions first failed solely on that unwanted dispatch. Final runs pass8 distinct targeted cases on identical product source:5default/migration/delayed-write/intent checks, then original first-chat stage-to-consume generation race and compose/mount checked-reader responsiveness (106.422s driver). Both model controls retain generation1 throughout, no config publisher, original current source, actual checked worker/lease retirement, normal App shutdown and zero network/profile refusals; original100ms/10s/240s bounds unchanged. The handoff fixture uses an actual saved Default-workspace layout so its real generation-race assertion remains meaningful after default-only writes disappear. An initial incorrectly unscoped fixture failed that assertion and was corrected to DEFAULT_WORKSPACE_ID, not waived. The local diagnostic code was saved outside version control; only its unarmed-controller cleanup correction remains. ADR083 clarifies the existing defaults/adoption distinction. This fixes the absent-source startup write, not all legitimate later generation changes or whole startup/Send budgets.
 
 AC29 configured-provider fixture checkpoint: all15 original stock skill setup/lifetime/source/cancellation cases pass locally (453.18s pytest,459.125s contained driver) at4874767 plus test-only TOML inputs. Source and HEAD remained unchanged throughout; original native process/identity/pipes/profile retirement completed normally. Blocked-network and real-profile zero-refusal assertions remain intact in every case, along with original builder custody and10-second bounds. Linux/macOS CI confirmation remains pending; no broader startup/Send budget claim follows. ADR check:no new ADR; test-only isolation recorded in the implementation plan.
+
+Independent bounded plan preflight preserves original scope but found missing recurring required-CI acceptance/verification argument. Current plan and this acceptance now make final executable critical coverage explicit. Applicable original measurement/prerequisite/consumer obligations are clarified without relaxing limits or claiming implementation/UAT.
 <!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up
