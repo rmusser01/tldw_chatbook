@@ -1827,11 +1827,24 @@ def validate_text_input(
     return True
 
 
-#: Bound for one user-typed Dreams phrase (a topic, a goal, the region),
-#: in Unicode code points of the stored (NFC) form. The text is embedded
-#: in the query-synthesis prompt and, on the deterministic fallback, in an
-#: outbound search query.
+#: Bound for one user-typed Dreams phrase (a topic, a goal, the region):
+#: this many code points that are NOT combining marks. The text is
+#: embedded in the query-synthesis prompt and, on the deterministic
+#: fallback, in an outbound search query.
+#:
+#: Marks are left out of the count because the count has to be the same
+#: every time the text is read (review of #2921, round 5, F3): NFC writes
+#: some single letters as a letter and a mark (the Devanagari nukta
+#: letters) and some letter-and-mark pairs as one letter, so a measure in
+#: plain code points depends on which form it is taken of -- and the
+#: typed form is gone once the text is stored. Round 4 took the shorter
+#: of the two, stored text that was longer than 200, and then refused
+#: its own stored form.
 DREAMS_PROFILE_TEXT_MAX_LENGTH = 200
+
+#: Bound on the stored form as a whole, marks included: no phrase is
+#: longer than this however its letters are decorated.
+_DREAMS_TEXT_MAX_STORED_LENGTH = DREAMS_PROFILE_TEXT_MAX_LENGTH * 3
 
 #: Input longer than this is refused before any Unicode work is done on
 #: it. NFC composition can shorten text (a letter and its combining mark
@@ -1937,10 +1950,12 @@ def validate_dreams_profile_text(value: object) -> str:
       tag characters inside a subdivision flag;
     * no noncharacter and no lone surrogate (which cannot even be written
       to SQLite or TOML);
-    * at most ``DREAMS_PROFILE_TEXT_MAX_LENGTH`` Unicode code points --
-      of the text as typed or of the stored form, whichever is shorter,
-      so an emoji counts once, a decomposed accent composes away, and a
-      letter NFC writes as two code points still counts once.
+    * at most ``DREAMS_PROFILE_TEXT_MAX_LENGTH`` Unicode code points that
+      are not combining marks, and three times that in all -- measured on
+      the stored form, in a way normalisation cannot change, so that the
+      stored form always passes this rule again (round 5, F3). An emoji
+      counts once per code point, an accent never counts apart from its
+      letter, and a letter NFC writes as a letter and a mark counts once.
 
     Text people type is not refused for what this interpreter's Unicode
     tables happen to know (round 4, C4): private-use code points (the
@@ -2018,7 +2033,10 @@ def validate_dreams_profile_text(value: object) -> str:
             readable = True
     if not readable:
         raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
-    if min(len(typed), len(text)) > DREAMS_PROFILE_TEXT_MAX_LENGTH:
+    letters = sum(
+        1 for char in text if not unicodedata.category(char).startswith("M"))
+    if (letters > DREAMS_PROFILE_TEXT_MAX_LENGTH
+            or len(text) > _DREAMS_TEXT_MAX_STORED_LENGTH):
         raise ValueError(_DREAMS_TEXT_TOO_LONG)
     return text
 

@@ -267,8 +267,8 @@ def test_composed_and_decomposed_spellings_are_stored_as_one():
 
 
 def test_the_limit_counts_code_points_of_the_stored_form():
-    """200 code points, counted after NFC: an astral emoji is one, and a
-    decomposed letter that composes counts once."""
+    """200 code points that are not combining marks: an astral emoji is
+    one, and an accent never counts apart from its letter."""
     assert len(validate_dreams_profile_text("\U0001f600" * 200)) == 200
     decomposed = "é" * DREAMS_PROFILE_TEXT_MAX_LENGTH  # 400 as typed
     assert validate_dreams_profile_text(decomposed) == (
@@ -307,3 +307,101 @@ def test_the_shared_text_helper_is_not_part_of_this_rule(monkeypatch):
     assert validate_dreams_profile_text("javascript: basics") == (
         "javascript: basics")
     assert unicodedata.normalize("NFC", "x") == "x"  # the real module is intact
+
+
+# === Review of #2921, round 5, F3: the stored form must pass its own rule ==========
+#
+# Round 4 measured ``min(len(typed), len(stored))``. On a re-read the typed
+# length is gone: 101 nukta letters were accepted and stored as 202 code
+# points, and validating THAT raised "longer than 200 characters" -- so a
+# region saved in Settings was ignored by ``dreams_region()``, and a derived
+# keyword passed the first check of the signal refresh and was dropped by
+# the second.
+
+from hypothesis import given, settings as hyp_settings  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
+
+_NUKTA = "\u0958"  # one letter; NFC writes it as a base letter and a mark
+
+
+def test_text_that_normalisation_lengthens_is_accepted_again_as_stored():
+    stored = validate_dreams_profile_text(_NUKTA * 101)
+    assert len(stored) == 202, "fixture: NFC lengthened it past 200"
+
+    assert validate_dreams_profile_text(stored) == stored
+
+
+def test_the_measure_counts_letters_not_the_marks_on_them():
+    """At most 200 code points that are not combining marks -- which NFC
+    cannot change -- and at most 600 in all."""
+    limit = DREAMS_PROFILE_TEXT_MAX_LENGTH
+    assert len(validate_dreams_profile_text(_NUKTA * limit)) == 2 * limit
+    with pytest.raises(ValueError, match="longer than"):
+        validate_dreams_profile_text(_NUKTA * (limit + 1))
+    # Two marks on every letter ("q" composes with neither): 600 code
+    # points, 200 letters.
+    stacked = "q\u0331\u0325" * limit
+    assert len(unicodedata.normalize("NFC", stacked)) == 3 * limit, "fixture"
+    assert validate_dreams_profile_text(stacked) == unicodedata.normalize(
+        "NFC", stacked)
+    # Three marks on every letter is 800: past the bound on the whole.
+    with pytest.raises(ValueError, match="longer than"):
+        validate_dreams_profile_text("q\u0331\u0325\u0323" * limit)
+    # Marks cannot be used to smuggle length in on a few letters.
+    with pytest.raises(ValueError, match="longer than"):
+        validate_dreams_profile_text("q" + "\u0331" * 700)
+
+
+def test_a_region_that_normalisation_lengthens_is_used_not_ignored(monkeypatch):
+    """The reviewer's probe: a 179-code-point phrase with a nukta letter in
+    every word is saved as 209, and ``dreams_region()`` then returned ""."""
+    from tldw_chatbook.Dreams import settings as dreams_settings
+
+    typed = " ".join([_NUKTA + "\u093e\u0928\u0942\u0928"] * 30)[:179]
+    saved = validate_dreams_profile_text(typed)
+    assert len(typed) == 179 and len(saved) > 200, "fixture"
+    monkeypatch.setattr(
+        dreams_settings, "get_cli_setting",
+        lambda section, key, default=None: saved if key == "region" else default)
+
+    assert dreams_settings.dreams_region() == saved
+
+
+#: Characters that exercise every way the rule rewrites or measures text:
+#: marks that compose and marks that do not, letters NFC splits, Hangul
+#: jamo NFC joins, the characters it removes, the blanks it writes as a
+#: space, every kind of space, joiners, emoji with their selectors.
+_F3_ALPHABET = (
+    "abz AZ09 .,-'\"()[]"
+    "\u0301\u0308\u0323\u093c\u0958\u0959\u095a\u00e9e\u0915"
+    "\u1100\u1161\u11a8\uac00"
+    "\u200b\u00ad\u2060\ufeff\ufffc\u2062"
+    "\u2800\u3164\uffa0\u00a0\u3000\u2003"
+    "\u200c\u200d\u200e\ufe0f\u20e3#\u203c\u2764\U0001f3b8\U0001f1ef\U0001f1f5"
+    "\u0e20\u0e32\u65e5\u672c"
+)
+
+
+#: Text near the limit made of what NFC lengthens (nukta letters), what
+#: it shortens (a letter and its accent, Hangul jamo) and what the rule
+#: removes or rewrites -- where the measure decides.
+_F3_NEAR_THE_LIMIT = st.builds(
+    lambda letters, count, filler: letters * count + filler,
+    st.sampled_from(["\u0958", "\u0959\u0301", "e\u0301", "\u1100\u1161",
+                     "a\u0323\u0331", "\u0958\u200b", "\u0958\u2800"]),
+    st.integers(90, 210),
+    st.text(alphabet="a \u0301\u0958", max_size=12),
+)
+
+
+@hyp_settings(max_examples=1500, deadline=None)
+@given(st.one_of(
+    st.text(alphabet=st.sampled_from(_F3_ALPHABET), max_size=260),
+    _F3_NEAR_THE_LIMIT))
+def test_validating_the_stored_form_again_changes_nothing(typed):
+    try:
+        stored = validate_dreams_profile_text(typed)
+    except ValueError:
+        return  # refused input stores nothing
+
+    assert validate_dreams_profile_text(stored) == stored

@@ -2090,6 +2090,34 @@ async def test_one_keyword_in_two_spellings_from_two_sources_is_one_topic(
     assert stored["jazzguitar"]["source"] == "media"
 
 
+@pytest.mark.asyncio
+async def test_a_keyword_that_normalisation_lengthens_is_stored_not_dropped(
+        dreams_db, monkeypatch):
+    """Review round 5, F3, the reviewer's third probe: the keyword passed
+    the first check of the refresh (as read) and failed the second (as
+    stored) -- kept [209, 8], stored only the 8."""
+    from tldw_chatbook.Dreams import profile_sources
+    from tldw_chatbook.Dreams.cycle_service import _refresh_profile_signals
+    from tldw_chatbook.Utils.input_validation import (
+        validate_dreams_profile_text,
+    )
+
+    keyword = " ".join(["\u0958\u093e\u0928\u0942\u0928"] * 30)[:179]
+    stored_form = validate_dreams_profile_text(keyword)
+    assert len(stored_form) > 200, "fixture"
+    monkeypatch.setattr(
+        profile_sources, "read_note_topics",
+        lambda _db: [{"facet": "topic", "text": keyword, "weight": 0.9},
+                     {"facet": "topic", "text": "rust tui", "weight": 0.5}])
+    deps = _deps(dreams_db)
+    deps.chachanotes_db_getter = lambda: object()
+
+    assert await _refresh_profile_signals(deps, NOW) == []
+
+    assert {row["text"] for row in dreams_db.list_profile()} == {
+        stored_form.lower(), "rust tui"}
+
+
 def test_signal_refresh_still_never_clobbers_a_users_own_topic(dreams_db):
     """The protection is keyed on the stored form, so a derived row whose
     NFC spelling is the user's topic leaves the user's weight alone."""

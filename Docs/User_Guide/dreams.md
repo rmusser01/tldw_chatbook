@@ -34,9 +34,9 @@ The same page lets you:
 A topic, a goal and the region are each one line of plain text of at most
 200 characters. They are counted as Unicode code points: a letter or a
 simple emoji is one, while a flag, a skin-toned or a family emoji is
-several (a subdivision flag such as Scotland's is seven). An accent
-typed as a separate mark counts together with its letter where Unicode
-has one character for the pair, and as one more where it has not. The
+several (a subdivision flag such as Scotland's is seven). Accents and
+other marks on a letter do not count, however they were typed (a letter
+may carry at most two of them on average). The
 rule is about
 what the text is, not what it mentions — `JavaScript: The Good Parts`,
 `<b>` or `[b]` are fine: Dreams stores them as typed, shows them as
