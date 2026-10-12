@@ -2911,7 +2911,7 @@ async def _dispatch_changed(
         except Exception as exc:  # noqa: BLE001 - notification degrades
             logger.warning(
                 "Dreams track dispatch getter failed: {}", type(exc).__name__)
-    if dispatcher is None:
+    if dispatcher is None or not dreams_setting("enabled"):
         return False
     payload = {
         "category": "dreams_track",
@@ -3082,7 +3082,14 @@ async def _run_track_check_claimed(
         return {"status": "skipped", "notified": False}
 
     disabled = {"status": "disabled", "notified": False}
-    if not dreams_setting("enabled"):
+    halted = False
+
+    def switched_off() -> bool:
+        nonlocal halted
+        halted = halted or not dreams_setting("enabled")
+        return halted
+
+    if switched_off():
         # Switched off since this check was dispatched (item 3a): the
         # flag is re-read before each spend and before the notification.
         return disabled
@@ -3103,6 +3110,9 @@ async def _run_track_check_claimed(
             now_iso=to_utc_iso(now))
         return {"status": "skipped", "notified": False}
 
+    if switched_off():
+        return disabled
+
     # Question synthesis uses NO LLM: the template IS the query.
     # ``date_range=None`` deliberately overrides ``run_queries``'s cycle
     # default of ``"m"`` (ruling P8): a track check compares a watch's
@@ -3116,6 +3126,8 @@ async def _run_track_check_claimed(
         queries=[query], result_count=_TRACK_CHECK_RESULT_COUNT,
         date_range=None)
 
+    if switched_off():
+        return disabled
     if not results:
         await asyncio.to_thread(
             _record_run, dreams_db, tracked_item_id,
@@ -3146,7 +3158,7 @@ async def _run_track_check_claimed(
     # RESERVED immediately before it is attempted, so the budget is spent
     # either way from there and two concurrent checks cannot both take
     # the day's last call (Qodo #11, PR #2921).
-    if not dreams_setting("enabled"):
+    if switched_off():
         return disabled
     verdict: tuple[bool, str] | None = None
     chat: Any = None
@@ -3157,6 +3169,8 @@ async def _run_track_check_claimed(
     except Exception as exc:  # noqa: BLE001 - provider resolution degrades
         logger.warning("Dreams track check: chat resolution failed: {}",
                        type(exc).__name__)
+    if switched_off():
+        return disabled
     if chat is not None:
         if not await asyncio.to_thread(
                 dreams_db.usage_reserve, local_date,
@@ -3169,6 +3183,8 @@ async def _run_track_check_claimed(
                 status="skipped", digest=None, note="budget", notified=0,
                 now_iso=to_utc_iso(now))
             return {"status": "skipped", "notified": False}
+        if switched_off():
+            return disabled
         try:
             response = await asyncio.to_thread(
                 chat, **_judge_call_kwargs(query, results))
@@ -3178,6 +3194,8 @@ async def _run_track_check_claimed(
         except Exception as exc:  # noqa: BLE001 - judge call degrades
             logger.warning("Dreams track judge call failed: {}",
                            type(exc).__name__)
+    if switched_off():
+        return disabled
     if verdict is None:
         await asyncio.to_thread(
             _record_run, dreams_db, tracked_item_id,
@@ -3193,7 +3211,7 @@ async def _run_track_check_claimed(
             now_iso=to_utc_iso(now))
         return {"status": "unchanged", "notified": False}
 
-    if not dreams_setting("enabled"):
+    if switched_off():
         # No "Tracked update" from a disabled Dreams, and no ``changed``
         # run either: recording it would move the anchor past a change
         # the user was never told about.
@@ -3201,6 +3219,8 @@ async def _run_track_check_claimed(
     delivered = await _dispatch_changed(
         deps, query_template=query_template, note=note,
         tracked_item_id=tracked_item_id)
+    if not delivered and switched_off():
+        return disabled
     # Qodo #4 (PR #2890): ``notified`` records DELIVERY, not intent -- a
     # degraded dispatch writes 0 and marks the note so the user can see
     # the alert never arrived.

@@ -405,7 +405,10 @@ def _preferred_sources(
             source = str(entry.get("source") or origin)
             weight = float(entry.get("weight", 0.0))
             best = winners.get(key)
-            if best is None or weight > best[0]:
+            if (best is None
+                    or (best[1] == "guardian" and source != "guardian")
+                    or (source != "guardian" and weight > best[0])
+                    or (best[1] == "guardian" and weight > best[0])):
                 winners[key] = (weight, source)
     return {key: source for key, (_, source) in winners.items()}
 
@@ -474,11 +477,19 @@ def _upsert_profile_signals(
     is how many rows the caller already left out for the same reason
     (:func:`_stored_form_signals`), so the one line reports them all.
     """
+    existing = dreams_db.list_profile()
     protected = {
         (str(row["facet"]), str(row["text"]))
-        for row in dreams_db.list_profile()
+        for row in existing
         if str(row.get("source")) in ("user", "seed")
     }
+    independent = {
+        (str(row["facet"]), str(row["text"]))
+        for row in existing if str(row.get("source")) != "guardian"
+    }
+    # Guardian evidence expires with consent; ordinary derived topics decay.
+    with dreams_db.transaction() as conn:
+        conn.execute("DELETE FROM dream_interest_profile WHERE source = 'guardian'")
     stamped: list[tuple[str, str]] = []
     for row in merged:
         merged_key = (str(row["facet"]), str(row["text"]))
@@ -492,12 +503,13 @@ def _upsert_profile_signals(
         except ValueError:
             dropped += 1
             continue
-        if key in protected:
+        source = source_by_key.get(merged_key, "notes")
+        if key in protected or (source == "guardian" and key in independent):
             continue
         dreams_db.upsert_profile_entry(
             key[0], key[1],
             weight=float(row["weight"]), searchable=1,
-            source=source_by_key.get(merged_key, "notes"),
+            source=source,
         )
         stamped.append(key)
     if dropped:
@@ -548,8 +560,13 @@ async def _refresh_profile_signals(
                 profile_sources.read_media_topics, media_db)))
         except Exception as exc:  # noqa: BLE001
             notes.append(f"profile signals: media failed: {exc}")
+    from tldw_chatbook.Guardian.settings import guardian_setting
+
     guardian_getter = getattr(deps, "guardian_db_getter", None)
-    guardian_db = guardian_getter() if guardian_getter is not None else None
+    guardian_db = (
+        guardian_getter()
+        if guardian_getter is not None and guardian_setting("enabled") else None
+    )
     if guardian_db is not None:
         try:
             collected.append(("guardian", await asyncio.to_thread(
@@ -569,13 +586,9 @@ async def _refresh_profile_signals(
             collected.append(("personal_context", await asyncio.to_thread(
                 profile_sources.read_personal_context_topics, pc_service,
                 cache_path=cache_path)))
-    if not collected:
-        return notes
     # Stored form FIRST, then merge (round 4, I2).
     collected, dropped = _stored_form_signals(collected)
     merged = interest_profile.merge_signals([rows for _, rows in collected])
-    if not merged:
-        return notes
     try:
         await asyncio.to_thread(
             _upsert_profile_signals, deps.dreams_db, merged,
@@ -584,6 +597,30 @@ async def _refresh_profile_signals(
     except Exception as exc:  # noqa: BLE001 - a failed write degrades
         notes.append(f"profile signals: profile write failed: {exc}")
     return notes
+
+
+async def _guardian_snapshot_authorized(deps: CycleDeps, snap: dict) -> bool:
+    """Refuse an outbound snapshot whose Guardian consent was revoked."""
+    topics = {
+        str(row["text"]).strip().lower()
+        for row in snap.get("topics", []) if row.get("source") == "guardian"
+    }
+    if not topics:
+        return True
+    from tldw_chatbook.Guardian.settings import guardian_setting
+
+    try:
+        if not guardian_setting("enabled") or deps.guardian_db_getter is None:
+            return False
+        db = deps.guardian_db_getter()
+        if db is None:
+            return False
+        current = await asyncio.to_thread(profile_sources.read_guardian_topics, db)
+        return bool(guardian_setting("enabled")) and topics <= {
+            str(row["text"]).strip().lower() for row in current
+        }
+    except Exception:  # Consent uncertainty never grants outbound authority.
+        return False
 
 
 #: Feedback kinds carrying a POSITIVE signal (ruling R19): they net +1 on
@@ -897,6 +934,14 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
         snap = await asyncio.to_thread(
             interest_profile.snapshot, dreams_db, now_epoch=now.timestamp(),
             feedback=feedback_net)
+        async def may_spend() -> bool:
+            nonlocal halted
+            if switched_off():
+                return False
+            authorized = await _guardian_snapshot_authorized(deps, snap)
+            halted = halted or not authorized
+            return not switched_off()
+
         profile_digest = hashlib.sha256(
             json.dumps(snap, sort_keys=True).encode()).hexdigest()[:16]
         collection_id = await asyncio.to_thread(
@@ -970,6 +1015,8 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                 # disk and may reach the keyring — neither belongs on the
                 # event loop.
                 chat = await asyncio.to_thread(deps.chat_getter)
+                if not await may_spend():
+                    chat = None
                 # The synthesis call spends the same daily llm budget as
                 # stories: its slot is taken BEFORE the call, and an
                 # exhausted budget searches the deterministic fallback
@@ -984,7 +1031,7 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                         snap.get("goals", []), count=query_count)
                     notes.append("llm budget exhausted: fallback queries, no "
                                  "synthesis call")
-                else:
+                elif await may_spend():
                     query_rows = await query_synthesis.synthesize_query_rows(
                         chat, snapshot=snap, count=query_count,
                         exploration_slots=int(
@@ -1051,9 +1098,10 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                 """
                 if switched_off():
                     return False
-                return bool(await asyncio.to_thread(
+                reserved = await asyncio.to_thread(
                     dreams_db.usage_reserve, local_date,
-                    counter="searches", limit=max_searches))
+                    counter="searches", limit=max_searches)
+                return bool(reserved) and await may_spend()
 
             found, sent = await discovery.run_queries(
                 deps.perform_search,
@@ -1147,6 +1195,8 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                     notes.append(
                         "llm budget: spent by other Dreams work mid-cycle; "
                         "no further stories")
+                    break
+                if not await may_spend():
                     break
                 result = await asyncio.to_thread(
                     story_service.generate_story, chat,

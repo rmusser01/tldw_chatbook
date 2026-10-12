@@ -3455,7 +3455,7 @@ class ServiceWiringMixin:
         from .Guardian.settings import guardian_db_path, guardian_setting
 
         if not guardian_setting("enabled"):
-            return getattr(self, "guardian_db", None)
+            return None
         with self._guardian_db_lock:
             if getattr(self, "guardian_db", None) is None:
                 try:

@@ -179,6 +179,7 @@ def read_guardian_topics(
             FROM guardian_alerts AS a
             JOIN guardian_rules AS r ON r.id = a.rule_id
             WHERE r.feeds_discovery = 1
+              AND r.enabled = 1 AND r.is_crisis = 0
               AND a.rule_id IS NOT NULL
               AND a.ts >= ?
             GROUP BY a.topic
