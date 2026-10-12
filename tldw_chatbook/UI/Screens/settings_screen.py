@@ -16677,7 +16677,7 @@ class SettingsScreen(BaseAppScreen):
         provider = self._provider_widget_value()
         previous = self._model_picker_overlay_provider
         if previous and provider_config_key(previous) != provider_config_key(provider):
-            picker.set_discovered_models(previous, (), notify=False)
+            picker.set_discovered_models(previous, ())
         self._model_picker_overlay_provider = provider
         picker.set_discovered_models(
             provider,
@@ -16685,7 +16685,6 @@ class SettingsScreen(BaseAppScreen):
                 str(getattr(model, "model_id", "") or "")
                 for model in self._model_discovery_models
             ),
-            notify=False,
             served_now=True,
         )
 

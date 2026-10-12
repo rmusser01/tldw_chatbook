@@ -220,13 +220,6 @@ class ModelSearchPicker(Widget):
             self.model_id = model_id
             self.custom = custom
 
-    class ProvenanceOptionsChanged(Message):
-        """Posted when source-aware options become available for a provider."""
-
-        def __init__(self, provider: str) -> None:
-            super().__init__()
-            self.provider = provider
-
     def __init__(
         self,
         *,
@@ -383,8 +376,6 @@ class ModelSearchPicker(Widget):
         cache_key = provider_config_key(normalized_provider)
         if not force and cache_key in self._options_by_provider:
             self._render_catalog_status()
-            if self._show_provenance:
-                self.post_message(self.ProvenanceOptionsChanged(normalized_provider))
             return
 
         self._set_status("Loading models...")
@@ -467,7 +458,6 @@ class ModelSearchPicker(Widget):
         provider: str,
         model_ids: tuple[str, ...] | list[str],
         *,
-        notify: bool = True,
         served_now: bool = False,
     ) -> None:
         """Merge models returned by an explicit endpoint probe into the picker.
@@ -479,8 +469,6 @@ class ModelSearchPicker(Widget):
         Args:
             provider: Provider whose overlay is changing.
             model_ids: Discovered model identifiers.
-            notify: Post ``ProvenanceOptionsChanged`` to the host. Settings
-                passes False: the overlay is its own, so it has nothing to hear.
             served_now: The listing is the current endpoint's own, dropped by
                 its host whenever that endpoint changes (Settings), so its
                 new ids group as "Served now" instead of custom.
@@ -500,8 +488,6 @@ class ModelSearchPicker(Widget):
             return
         self._render_catalog_status()
         self._rerender_focused_list()
-        if notify and self._uses_provenance_options():
-            self.post_message(self.ProvenanceOptionsChanged(provider))
 
     def provenance_for_model(
         self,
@@ -539,11 +525,7 @@ class ModelSearchPicker(Widget):
         return option.provenance
 
     def set_provenance_options(
-        self,
-        provider: str,
-        options: Sequence[ResolvedProviderModelOption],
-        *,
-        notify: bool = True,
+        self, provider: str, options: Sequence[ResolvedProviderModelOption]
     ) -> None:
         """Replace one provider's results with source-aware model choices.
 
@@ -556,8 +538,6 @@ class ModelSearchPicker(Widget):
         Args:
             provider: Provider whose source-aware options are changing.
             options: Complete typed model projection.
-            notify: Post ``ProvenanceOptionsChanged`` to the host; False for
-                a host that is applying options it derived itself.
         """
         cache_key = provider_config_key(provider)
         normalized_options: list[ResolvedProviderModelOption] = []
@@ -583,8 +563,6 @@ class ModelSearchPicker(Widget):
             return
         self._render_catalog_status()
         self._rerender_focused_list()
-        if notify:
-            self.post_message(self.ProvenanceOptionsChanged(provider))
 
     def toggle_custom_mode(self) -> None:
         """Toggle the explicit custom-ID escape hatch."""
