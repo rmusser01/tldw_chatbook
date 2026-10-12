@@ -239,15 +239,20 @@ def test_configure_connection_applies_on_revival(tmp_path) -> None:
 
         def _configure_connection(self, conn):
             conn = super()._configure_connection(conn)
-            conn.execute("PRAGMA user_version = 42")
+            # Per-connection only (never persisted in the file), so a fresh
+            # connection to the same database reports the default, not 42.
+            conn.execute("PRAGMA cache_size = -1234")
             return conn
 
     store = _ConfiguredStore(str(tmp_path / "revive.sqlite"))
     first = store._held_connection()
-    assert first.execute("PRAGMA user_version").fetchone()[0] == 42
+    assert first.execute("PRAGMA cache_size").fetchone()[0] == -1234
     first.close()
     store._thread_local.conn_last_used = 0.0
     revived = store._held_connection()
     assert revived is not first
-    assert revived.execute("PRAGMA user_version").fetchone()[0] == 42
+    # Proves _configure_connection ran on the REVIVED connection: a fresh
+    # connection would report SQLite's default (-2000), not the override.
+    assert revived.execute("PRAGMA cache_size").fetchone()[0] == -1234
+    assert revived.isolation_level is None
     store.close()
