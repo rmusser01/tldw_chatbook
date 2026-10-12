@@ -6,6 +6,10 @@ a bare parent timeout, the child's log unread. The parent's own limit now
 moves later, so the child stops first and writes its stacks to a file the
 parent quotes; a child that still cannot finish is asked once more and ended
 before the parent's moved limit.
+
+One real pytest child (a few seconds); every other case is a bare
+interpreter standing in for the child, or a direct call, so the file stays
+cheap in the PR Fast Lane.
 """
 
 import asyncio
@@ -13,8 +17,6 @@ import os
 import signal
 import sys
 import threading
-import time
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -27,8 +29,9 @@ from Tests.private_profile import (
     private_profile_test,
 )
 
-_CHILD_LIMIT = 3
-#: Where a child says it has reached the state its parent test asks it in.
+#: What the parent test arms its own timer at for the real child.
+_CHILD_LIMIT = 2.0
+#: Where a stand-in child says it is in place for its parent's ask.
 _READY = "TLDW_TEST_PRIVATE_PROFILE_CHILD_READY"
 
 
@@ -49,19 +52,6 @@ def _stuck_worker(release: threading.Event) -> None:
 
 async def _waits_on_the_worker() -> None:
     await asyncio.Event().wait()
-
-
-@pytest.mark.skipif(_CHILD_NODE not in os.environ, reason="the child of the next test")
-@pytest.mark.timeout(_CHILD_LIMIT, func_only=True)  # the wait itself, not start-up
-@private_profile_test
-async def test_child_whose_worker_never_answers(request):
-    threading.Thread(
-        target=_stuck_worker,
-        args=(threading.Event(),),
-        name="zq-stuck-worker",
-        daemon=True,
-    ).start()
-    await _waits_on_the_worker()
 
 
 async def test_a_dump_groups_identical_stacks_and_keeps_its_head_within_its_bound(
@@ -111,14 +101,20 @@ async def test_a_dump_groups_identical_stacks_and_keeps_its_head_within_its_boun
     assert len(bounded) < len(head) + 200
 
 
-def _as_parent(request, tmp_path, child):
+def test_a_dump_that_fails_when_asked_is_swallowed(tmp_path):
+    """Review of #3091, item 4c: under SIGUSR1 a dump that raises (here its
+    file is a directory) must not raise into whatever the child was doing."""
+    private_profile._answer_the_parent(str(tmp_path))
+
+
+def _as_parent(request, tmp_path, child, marker=None):
     """A parent-side request for ``child``, as pytest would hand its wrapper."""
     module = request.node.nodeid.rsplit("::", 1)[0]
     return SimpleNamespace(
         node=SimpleNamespace(
             nodeid=f"{module}::{child.__name__}",
             name=child.__name__,
-            get_closest_marker=lambda _name: None,
+            get_closest_marker=lambda _name: marker,
         ),
         function=child,
         config=request.config,
@@ -126,112 +122,118 @@ def _as_parent(request, tmp_path, child):
     )
 
 
-@pytest.mark.skipif(not hasattr(signal, "SIGALRM"), reason="POSIX signals")
+class _OwnTimer:
+    """Arm this test's own ITIMER_REAL, as pytest-timeout would, then restore."""
+
+    def __init__(self, seconds: float) -> None:
+        self.seconds = seconds
+        self.fired = []
+
+    def __enter__(self):
+        self._handler = signal.getsignal(signal.SIGALRM)
+        self._left = signal.getitimer(signal.ITIMER_REAL)[0]
+        signal.signal(signal.SIGALRM, lambda *_: self.fired.append(True))
+        signal.setitimer(signal.ITIMER_REAL, self.seconds)
+        return self
+
+    def __exit__(self, *_exc):
+        signal.setitimer(signal.ITIMER_REAL, self._left)
+        handler = self._handler
+        signal.signal(signal.SIGALRM, signal.SIG_DFL if handler is None else handler)
+
+
+def _watch_the_spawn(monkeypatch, seen, script=None):
+    """Record the child's command and this test's timer at the spawn; with a
+    ``script``, run that in a bare interpreter instead of the child."""
+    spawn = asyncio.create_subprocess_exec
+
+    async def spawned(*command, **options):
+        seen["command"] = command
+        if hasattr(signal, "getitimer"):
+            seen["alarm"] = signal.getitimer(signal.ITIMER_REAL)[0]
+        if script is None:
+            return await spawn(*command, **options)
+        return await spawn(sys.executable, "-c", script, **options)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawned)
+
+
+def _child_timeout(seen) -> str:
+    flags = [arg for arg in seen["command"] if arg.startswith("--timeout=")]
+    assert len(flags) == 1
+    return flags[0].removeprefix("--timeout=")
+
+
+# --- the one real child ------------------------------------------------------
+
+
+@pytest.mark.skipif(_CHILD_NODE not in os.environ, reason="the child of the next test")
+# No limit of its own: the parent's --timeout applies, around the call only.
+@pytest.mark.timeout(func_only=True)
+@private_profile_test
+async def test_child_whose_worker_never_answers(request, monkeypatch):
+    threading.Thread(
+        target=_stuck_worker,
+        args=(threading.Event(),),
+        name="zq-stuck-worker",
+        daemon=True,
+    ).start()
+    monkeypatch.setattr(os, "environ", {})  # the dump's path survives this
+    await _waits_on_the_worker()
+
+
+@pytest.mark.skipif(not hasattr(signal, "setitimer"), reason="POSIX signals")
 async def test_a_hung_child_fails_its_parent_with_its_own_timeout_and_stacks(
-    request, tmp_path
+    request, tmp_path, monkeypatch
 ):
-    """A real child, hung in an await behind a stuck thread: the parent's
-    failure quotes the child's own timeout, names the thread and the await."""
+    """A real child, hung in an await behind a stuck thread, with this test's
+    own timer armed at 2 s.
+
+    The child's --timeout is what was left of that timer (review of #3091,
+    items 5a and 5c); the parent's timer was moved later by the lead before
+    the child started, and never fired; the parent's failure quotes the
+    child's own timeout and the stacks it wrote at it: the main thread, the
+    await chain and the stuck thread, although the test replaced os.environ
+    (item 4a).
+    """
+    seen = {}
+    _watch_the_spawn(monkeypatch, seen)
     child = test_child_whose_worker_never_answers
 
-    with pytest.raises(pytest.fail.Exception) as failure:
+    with (
+        _OwnTimer(_CHILD_LIMIT) as timer,
+        pytest.raises(pytest.fail.Exception) as failure,
+    ):
         await child(request=_as_parent(request, tmp_path, child))
 
+    budget = _child_timeout(seen)
+    assert _CHILD_LIMIT - 0.5 < float(budget) <= _CHILD_LIMIT
+    moved = _CHILD_LIMIT + private_profile._CHILD_LEAD_SECONDS
+    assert moved - 0.5 < seen["alarm"] <= moved
+    assert not timer.fired
     text = str(failure.value)
-    assert f"Timeout (>{_CHILD_LIMIT}.0s) from pytest-timeout" in text
-    assert "(killed" not in text
-    stacks = text.split("--- child stacks at its deadline ---")[1]
+    assert f"Timeout (>{budget}s) from pytest-timeout" in text
+    assert "(killed" not in text and "(still running" not in text
+    assert "--- child stacks at its deadline ---\n" in text
+    stacks = text.split("--- child stacks at its deadline ---\n")[1]
     stacks = stacks.split("--- child log tail ---")[0]
+    assert stacks.startswith("--- stacks when its own timeout fired\n")
+    assert "--- thread MainThread" in stacks
     assert "--- thread zq-stuck-worker" in stacks and "release.wait()" in stacks
     awaits = stacks.split("--- the test, outermost await first")[1]
     assert "await _waits_on_the_worker()" in awaits
     assert "await asyncio.Event().wait()" in awaits
 
 
-_NEVER_EXITS = """
-import os, signal, time
-def asked(*_):
-    with open(os.environ[{stacks!r}], "a") as output:
-        output.write("zq-asked-before-the-end\\n")
-signal.signal(signal.SIGUSR1, asked)
-print("zq-child-log-line", flush=True)
-for _ in range(1200):  # at most 60 s: a parent ended mid-test leaves no orphan
-    time.sleep(0.05)
-"""
-
-
-@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signals")
-async def test_a_child_that_cannot_finish_is_asked_then_ended_before_the_parents_limit(
-    request, tmp_path, monkeypatch
-):
-    """The parent's own wait: a stand-in child that never exits is asked for
-    its stacks, ended, and reported with them, well inside the parent's limit."""
-    spawn = asyncio.create_subprocess_exec
-
-    async def never_exits(*_command, **options):
-        script = _NEVER_EXITS.format(stacks=_CHILD_STACKS)
-        return await spawn(sys.executable, "-c", script, **options)
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", never_exits)
-    monkeypatch.setattr(
-        private_profile, "_child_deadlines", lambda _budget, _lead: (1.0, 5.0)
-    )
-    child = test_child_whose_worker_never_answers
-    started = asyncio.get_running_loop().time()
-
-    with pytest.raises(pytest.fail.Exception) as failure:
-        await child(request=_as_parent(request, tmp_path, child))
-
-    assert asyncio.get_running_loop().time() - started < 30
-    text = str(failure.value)
-    assert "(killed: still running after 5s; asked for its stacks first)" in text
-    assert "(the child wrote no JUnit report)" in text
-    assert "--- child stacks at its deadline ---\nzq-asked-before-the-end" in text
-    assert "zq-child-log-line" in text
-
-
-_EXITS_ONCE_ASKED = """
-import os, signal, time
-def asked(*_):
-    with open(os.environ[{stacks!r}], "a") as output:
-        output.write("zq-asked\\n")
-    os._exit(1)
-signal.signal(signal.SIGUSR1, asked)
-for _ in range(1200):  # at most 60 s
-    time.sleep(0.05)
-"""
-
-
-@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signals")
-async def test_a_child_that_exits_once_asked_is_not_reported_as_killed(
-    request, tmp_path, monkeypatch
-):
-    spawn = asyncio.create_subprocess_exec
-
-    async def exits_once_asked(*_command, **options):
-        script = _EXITS_ONCE_ASKED.format(stacks=_CHILD_STACKS)
-        return await spawn(sys.executable, "-c", script, **options)
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", exits_once_asked)
-    monkeypatch.setattr(
-        private_profile, "_child_deadlines", lambda _budget, _lead: (1.0, 3.0)
-    )
-    child = test_child_whose_worker_never_answers
-
-    with pytest.raises(pytest.fail.Exception) as failure:
-        await child(request=_as_parent(request, tmp_path, child))
-
-    text = str(failure.value)
-    assert "(killed" not in text
-    assert "asked for its stacks, it then exited by itself)" in text
-    assert "--- child stacks at its deadline ---\nzq-asked" in text
+# --- bare interpreters standing in for the child -----------------------------
 
 
 def _ask_once_the_child_is_ready(monkeypatch, tmp_path) -> None:
-    """The parent asks half a second after its child says it is in place.
+    """The parent asks a tenth of a second after its child says it is in place,
+    and gives it half a second to answer.
 
-    The child's start-up takes seconds and varies with load; a fixed deadline
-    would ask some runs before the child got where the test needs it.
+    A fixed deadline would ask some runs before the stand-in had installed
+    what the test is about.
     """
     ready = tmp_path / "ready"
     monkeypatch.setenv(_READY, str(ready))
@@ -249,153 +251,86 @@ def _ask_once_the_child_is_ready(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(private_profile, "_exited_within", exited_within)
     monkeypatch.setattr(
-        private_profile, "_child_deadlines", lambda _budget, _lead: (600.0, 0.5)
+        private_profile, "_child_deadlines", lambda _budget, _lead: (600.0, 0.1)
     )
+    monkeypatch.setattr(private_profile, "_PARENT_RESERVE_SECONDS", 1.0)
 
 
-@pytest.mark.skipif(_CHILD_NODE not in os.environ, reason="the child of the next test")
-@pytest.mark.timeout(_CHILD_LIMIT, func_only=True)
-@private_profile_test
-async def test_child_that_replaces_its_environment(request, monkeypatch):
-    monkeypatch.setattr(os, "environ", {})
-    await _waits_on_the_worker()
+#: Answers the ask with the real handler, which importing Tests.private_profile
+#: installs by itself (no wrapper, no pytest-timeout: whatever the timeout
+#: method, and before any fixture or test body), then cannot finish.
+_ANSWERS_THEN_HANGS = """
+import asyncio, os, pathlib
+from Tests import private_profile
 
+async def _hangs():
+    pathlib.Path(os.environ[{ready!r}]).touch()
+    await asyncio.sleep(60)  # at most 60 s: a parent ended mid-test leaves no orphan
 
-@pytest.mark.skipif(not hasattr(signal, "SIGALRM"), reason="POSIX signals")
-async def test_a_child_that_replaces_os_environ_still_writes_its_stacks(
-    request, tmp_path, monkeypatch
-):
-    """Review of #3091, item 4a: the dump's path is read at import, not when
-    the signal arrives, so a test that replaces os.environ keeps it."""
-    monkeypatch.setattr(
-        private_profile, "_child_deadlines", lambda _budget, _lead: (1.0, 60.0)
-    )
-    child = test_child_that_replaces_its_environment
+async def main():
+    task = asyncio.ensure_future(_hangs())
+    private_profile._awaiting = task.get_coro()
+    print("zq-child-log-line", flush=True)
+    await task
 
-    with pytest.raises(pytest.fail.Exception) as failure:
-        await child(request=_as_parent(request, tmp_path, child))
-
-    text = str(failure.value)
-    assert f"Timeout (>{_CHILD_LIMIT}.0s) from pytest-timeout" in text
-    assert "--- stacks when its own timeout fired" in text
-
-
-@pytest.fixture
-def _hangs_in_setup():
-    Path(os.environ[_READY]).touch()
-    for _ in range(1200):  # at most 60 s; the parent ends it first
-        time.sleep(0.05)
-
-
-@pytest.mark.skipif(_CHILD_NODE not in os.environ, reason="the child of the next test")
-@pytest.mark.timeout(120, method="thread")
-@private_profile_test
-async def test_child_hung_in_a_fixture(request, _hangs_in_setup):
-    pass
+asyncio.run(main())
+"""
 
 
 @pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signals")
-async def test_a_child_asked_in_fixture_setup_under_the_thread_method_answers(
+async def test_a_child_that_cannot_finish_is_asked_then_ended_before_the_parents_limit(
     request, tmp_path, monkeypatch
 ):
-    """Review of #3091, item 4b: the child answers the parent's ask from
-    import on, whatever its timeout method, not only once its test body has
-    started under the signal method; before, the ask itself killed it."""
+    """The parent's own wait: a child that never exits is asked for its stacks
+    with a real SIGUSR1, answers through the handler installed at import
+    (review of #3091, items 4b and 5b), and is ended and reported."""
     _ask_once_the_child_is_ready(monkeypatch, tmp_path)
-    child = test_child_hung_in_a_fixture
-
-    with pytest.raises(pytest.fail.Exception) as failure:
-        await child(request=_as_parent(request, tmp_path, child))
-
-    text = str(failure.value)
-    assert "(killed: still running after" in text
-    assert "--- stacks when the parent asked" in text
-    assert "in _hangs_in_setup" in text.split("--- stacks when the parent asked")[1]
-
-
-@pytest.mark.skipif(_CHILD_NODE not in os.environ, reason="the child of the next test")
-@private_profile_test
-async def test_child_whose_stacks_file_cannot_be_written(request):
-    os.mkdir(os.environ[_CHILD_STACKS])
-    Path(os.environ[_READY]).touch()
-    await _waits_on_the_worker()
-
-
-@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signals")
-async def test_a_dump_that_fails_when_asked_does_not_end_the_child(
-    request, tmp_path, monkeypatch
-):
-    """Review of #3091, item 4c: a dump that raises under SIGUSR1 (here its
-    file is a directory) is swallowed, as under the child's own timeout, and
-    does not end the child's test with an unrelated error."""
-    _ask_once_the_child_is_ready(monkeypatch, tmp_path)
-    child = test_child_whose_stacks_file_cannot_be_written
-
-    with pytest.raises(pytest.fail.Exception) as failure:
-        await child(request=_as_parent(request, tmp_path, child))
-
-    text = str(failure.value)
-    assert "(killed: still running after" in text
-    assert "IsADirectoryError" not in text
-
-
-@pytest.mark.skipif(not hasattr(signal, "setitimer"), reason="POSIX itimers")
-async def test_the_child_gets_the_armed_budget_and_the_parent_moves_its_own_limit(
-    request, tmp_path, monkeypatch
-):
-    """Review of #3091, items 5a and 5c, with a real ITIMER_REAL: the child's
-    --timeout is what is left of the parent's armed timer, and the parent's
-    own timer is moved later by the lead before the child starts."""
-    seen = {}
-    spawn = asyncio.create_subprocess_exec
-
-    async def record(*command, **options):
-        seen["command"] = command
-        seen["alarm"] = signal.getitimer(signal.ITIMER_REAL)[0]
-        return await spawn(sys.executable, "-c", "raise SystemExit(3)", **options)
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", record)
+    _watch_the_spawn(monkeypatch, {}, _ANSWERS_THEN_HANGS.format(ready=_READY))
     child = test_child_whose_worker_never_answers
-    handler = signal.getsignal(signal.SIGALRM)
-    left = signal.getitimer(signal.ITIMER_REAL)[0]
-    signal.signal(signal.SIGALRM, lambda *_: None)  # stands in for pytest-timeout's
-    signal.setitimer(signal.ITIMER_REAL, 100.0)
-    try:
-        with pytest.raises(pytest.fail.Exception):
-            await child(request=_as_parent(request, tmp_path, child))
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, left)
-        signal.signal(signal.SIGALRM, signal.SIG_DFL if handler is None else handler)
+    started = asyncio.get_running_loop().time()
 
-    flags = [arg for arg in seen["command"] if arg.startswith("--timeout=")]
-    assert len(flags) == 1
-    assert 95.0 < float(flags[0].removeprefix("--timeout=")) <= 100.0
-    assert 125.0 < seen["alarm"] <= 130.0
+    with pytest.raises(pytest.fail.Exception) as failure:
+        await child(request=_as_parent(request, tmp_path, child))
+
+    assert asyncio.get_running_loop().time() - started < 30
+    text = str(failure.value)
+    assert "(killed: still running after 0s; asked for its stacks first)" in text
+    assert "(the child wrote no JUnit report)" in text
+    assert "zq-child-log-line" in text
+    assert "--- child stacks at its deadline ---\n" in text
+    stacks = text.split("--- child stacks at its deadline ---\n")[1]
+    assert stacks.startswith("--- stacks when the parent asked\n--- thread MainThread")
+    # A -c script has no source lines to show; its frame names the coroutine.
+    awaits = stacks.split("--- the test, outermost await first")[1]
+    assert ", in _hangs\n" in awaits
 
 
-@pytest.mark.skipif(_CHILD_NODE not in os.environ, reason="the child of the next test")
-@private_profile_test
-async def test_child_without_a_timeout_marker(request):
-    Path(os.environ[_READY]).touch()
-    await _waits_on_the_worker()
+_EXITS_ONCE_ASKED = """
+import os, pathlib, signal, time
+def asked(*_):
+    with open(os.environ[{stacks!r}], "a") as output:
+        output.write("zq-asked\\n")
+    os._exit(1)
+signal.signal(signal.SIGUSR1, asked)
+pathlib.Path(os.environ[{ready!r}]).touch()
+for _ in range(1200):  # at most 60 s
+    time.sleep(0.05)
+"""
 
 
 @pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="POSIX signals")
-async def test_an_unmarked_child_asked_with_a_real_signal_writes_its_stacks(
+async def test_a_child_that_exits_once_asked_is_not_reported_as_killed(
     request, tmp_path, monkeypatch
 ):
-    """Review of #3091, item 5b: the parent's real SIGUSR1 reaches the
-    child's own handler, whose dump names the main thread and the await."""
     _ask_once_the_child_is_ready(monkeypatch, tmp_path)
-    child = test_child_without_a_timeout_marker
+    script = _EXITS_ONCE_ASKED.format(stacks=_CHILD_STACKS, ready=_READY)
+    _watch_the_spawn(monkeypatch, {}, script)
+    child = test_child_whose_worker_never_answers
 
     with pytest.raises(pytest.fail.Exception) as failure:
         await child(request=_as_parent(request, tmp_path, child))
 
     text = str(failure.value)
-    assert "(killed: still running after" in text
-    assert "--- stacks when the parent asked" in text
-    asked = text.split("--- stacks when the parent asked")[1]
-    assert "--- thread MainThread" in asked
-    awaits = asked.split("--- the test, outermost await first")[1]
-    assert "await _waits_on_the_worker()" in awaits
+    assert "(killed" not in text
+    assert "asked for its stacks, it then exited by itself)" in text
+    assert "--- child stacks at its deadline ---\nzq-asked" in text
