@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
@@ -35,6 +36,31 @@ FLASHCARD_SELECT_CARD_MOVE_TOOLTIP = (
 )
 FLASHCARD_SELECT_DECK_DELETE_TOOLTIP = "Select a deck before deleting it."
 FLASHCARD_DELETE_DECK_SERVER_TOOLTIP = "Server mode does not support deck deletion. Delete cards individually or switch to local mode."
+
+
+def _quiet_when_swapped_out(action):
+    """End a controller action quietly when Flashcards is swapped out under it.
+
+    The Study window stays mounted while its sub-view goes, so any lookup an
+    action makes after an await (its service call, the card-list rebuild) can
+    miss. It then has nothing left to show, and `NoMatches` out of its worker
+    or button handler would end the app.
+
+    Args:
+        action: An async controller method.
+
+    Returns:
+        The method, ending on `NoMatches` instead of raising it.
+    """
+
+    @functools.wraps(action)
+    async def guarded(self, *args: Any, **kwargs: Any) -> None:
+        try:
+            await action(self, *args, **kwargs)
+        except NoMatches:
+            return
+
+    return guarded
 
 
 class StudyFlashcardsController:
@@ -624,23 +650,15 @@ class StudyFlashcardsController:
 
         self._update_lifecycle_controls()
 
+    @_quiet_when_swapped_out
     async def refresh_cards(self, *, preserve_review_panel: bool = False) -> None:
         """Rebuild `#card-list`; concurrent rebuilds run one after another.
 
         Interleaved, one rebuild's clear landed between the other's clear and
         appends, so the list held both rebuilds' rows.
-
-        The Flashcards view can be swapped out while a rebuild waits its turn
-        or awaits the service (the window stays mounted, its sub-view does
-        not), so a lookup that then misses ends the rebuild quietly.
         """
         async with self._refresh_cards_lock:
-            try:
-                await self._rebuild_card_list(
-                    preserve_review_panel=preserve_review_panel
-                )
-            except NoMatches:
-                return
+            await self._rebuild_card_list(preserve_review_panel=preserve_review_panel)
 
     async def _rebuild_card_list(self, *, preserve_review_panel: bool) -> None:
         service = self._scope_service()
@@ -651,8 +669,8 @@ class StudyFlashcardsController:
             self.handle_scope_changed()
             return
 
-        # `refresh_cards` catches a lookup that misses; the search box is read
-        # before the next await.
+        # `refresh_cards` ends quietly on a lookup that misses; the search box
+        # is read before the next await.
         list_view = self.window.query_one("#card-list", ListView)
         search_value = self.window.query_one("#flashcard-search-input", Input).value
         await list_view.clear()
@@ -708,6 +726,7 @@ class StudyFlashcardsController:
             self._set_review_status("Ready to review selected deck.")
         self._update_lifecycle_controls()
 
+    @_quiet_when_swapped_out
     async def create_deck(self) -> None:
         service = self._scope_service()
         if service is None:
@@ -749,6 +768,7 @@ class StudyFlashcardsController:
         await self.refresh_cards()
         self._set_review_status(f"Deck '{created.get('name', name)}' created.")
 
+    @_quiet_when_swapped_out
     async def create_card(self) -> None:
         service = self._scope_service()
         if service is None:
@@ -827,6 +847,7 @@ class StudyFlashcardsController:
         self._sync_move_target_options()
         self._update_lifecycle_controls()
 
+    @_quiet_when_swapped_out
     async def delete_selected_card(self) -> None:
         service = self._scope_service()
         self._reconcile_live_selection_state()
@@ -861,6 +882,7 @@ class StudyFlashcardsController:
         if review_snapshot is not None:
             self._restore_review_panel_state(review_snapshot)
 
+    @_quiet_when_swapped_out
     async def move_selected_card(self) -> None:
         service = self._scope_service()
         self._reconcile_live_selection_state()
@@ -901,6 +923,7 @@ class StudyFlashcardsController:
         if review_snapshot is not None:
             self._restore_review_panel_state(review_snapshot)
 
+    @_quiet_when_swapped_out
     async def delete_selected_deck(self) -> None:
         service = self._scope_service()
         self._reconcile_live_selection_state()

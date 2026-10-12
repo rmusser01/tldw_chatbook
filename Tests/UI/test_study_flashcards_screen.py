@@ -1468,6 +1468,24 @@ async def _open_flashcards_deck(pilot, app, scope):
     return window, deck_select, card_list
 
 
+def _hold(scope, name: str) -> tuple[asyncio.Event, asyncio.Event]:
+    """Make ``scope.<name>`` wait until released.
+
+    Returns:
+        The event set when the call starts, and the one that releases it.
+    """
+    entered, release = asyncio.Event(), asyncio.Event()
+    call = getattr(scope, name)
+
+    async def held(**kwargs):
+        entered.set()
+        await release.wait()
+        return await call(**kwargs)
+
+    setattr(scope, name, held)
+    return entered, release
+
+
 async def _enter_review(pilot, app):
     """Open Flashcards, pick the deck, start a review and reveal the answer."""
     await pilot.pause(0.2)
@@ -1672,6 +1690,73 @@ async def test_a_held_card_list_rebuild_ends_quietly_when_the_sub_view_is_swappe
         await rebuild  # NoMatches before the fix
         await pilot.pause()
         assert window.current_view == "quizzes"
+
+
+#: The five controller actions that await the card-list rebuild, with the
+#: service call each makes first.
+_ACTION_SERVICE_CALLS = {
+    "create_card": "create_flashcard",
+    "create_deck": "create_deck",
+    "delete_selected_card": "delete_flashcard",
+    "move_selected_card": "move_flashcard",
+    "delete_selected_deck": "delete_deck",
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    ("action", "held"),
+    [
+        *_ACTION_SERVICE_CALLS.items(),
+        # Deleting the deck leaves none selected, so its rebuild lists nothing.
+        *(
+            (action, "list_flashcards")
+            for action in _ACTION_SERVICE_CALLS
+            if action != "delete_selected_deck"
+        ),
+    ],
+)
+async def test_an_action_held_across_the_sub_view_swap_ends_quietly(action, held):
+    """Create, delete and move end quietly when Flashcards is swapped out
+    while they await the service or the card-list rebuild.
+
+    Fix round 1 of the #3057 review, finding 19: the rebuild itself ended
+    quietly (R3 #8), but each of these five actions touched the review panel
+    or the deck list on its next statement and raised `NoMatches` out of its
+    worker (`study-create-card`, `study-create-deck`) or its button handler.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, _card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+        controller = window.flashcards_controller
+        window.query_one("#new-deck-name-input", Input).value = "Physics"
+        window.query_one("#card-front", TextArea).text = "Front"
+        window.query_one("#card-back", TextArea).text = "Back"
+        controller.selected_card_record = controller.current_cards[0]
+        # The deck the Move target Select would name.
+        controller._selected_target_deck_record = lambda: controller.current_decks[1]
+        await pilot.pause()
+
+        entered, release = _hold(scope, held)
+        running = asyncio.ensure_future(getattr(controller, action)())
+        await _until(pilot, entered.is_set, f"{action} to reach {held}")
+        # Any other sub-view removes Flashcards; this one loads nothing.
+        window.current_view = "structured_learning"
+        await _until(
+            pilot,
+            lambda: not window.query("#review-status"),
+            "Flashcards to be swapped out",
+        )
+
+        release.set()
+        await running  # NoMatches before the fix
+        await pilot.pause()
+        assert not window.query("#review-status")
 
 
 @pytest.mark.asyncio
