@@ -116,3 +116,13 @@ existing selected private source under the conftest contract; original dispatch,
 ordering, exception, timeout and owner assertions remain. No emergency-stop or
 config admission gate is changed. Bind the affected scheduler nodes to the final
 required-lane inventory alongside the new Dreams startup controls.
+
+
+### Dreams historical admission execution note
+
+Native source-bound census of the eight distinct historical author definitions
+produced 30 catalogs across v1–v6, including retained-index and ALTER variants.
+ADR196 records the marker-history ruling before implementation. Qualify every
+measured catalog with populated rows, direct upgrade/reopen, rollback and
+malformed/future/hybrid refusal, then install the same exact catalogs in recovery.
+No new version is necessary for recognizing existing v6 shapes.
