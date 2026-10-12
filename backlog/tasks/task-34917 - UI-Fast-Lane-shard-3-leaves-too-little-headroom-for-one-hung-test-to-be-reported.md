@@ -12,7 +12,7 @@ priority: medium
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-UI Fast Lane shard 3 has a 20-minute cap and ran with a median of 16.4 minutes and a maximum of 18.8 over 35 pull-request runs measured on 2026-10-12. The shard holds a Console test that hangs now and then (test_applying_on_anthropic_submits_none_of_the_hidden_fields). A hung private-profile test costs up to about 3 minutes 20 seconds before the wrapper reports it; added to a typical run that pushes the shard past its cap in about a quarter of runs, and the cancelled job then loses exactly the report that says where the test hung. Measured during the review of PR #3091 (TASK-34789).
+UI Fast Lane shard 3 has a 20-minute cap and ran with a median of 16.4 minutes and a maximum of 18.8 over 35 pull-request runs measured on 2026-10-12. The shard holds a Console test that hangs now and then (test_applying_on_anthropic_submits_none_of_the_hidden_fields). A hung private-profile test costs about 3 minutes 10 seconds before the wrapper reports it when the child stops at its own timeout, and about 3 minutes 18 seconds when it cannot exit. Added to the measured run times, that pushes the shard past its cap in about a fifth of runs (5 of 35 and 7 of 35 respectively, against 4 of 35 before the wrapper change in PR #3091), and the cancelled job then loses exactly the report that says where the test hung. Measured during the review of PR #3091 (TASK-34789).
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria

@@ -13,6 +13,7 @@ cheap in the PR Fast Lane.
 """
 
 import asyncio
+import functools
 import os
 import signal
 import sys
@@ -180,6 +181,9 @@ async def test_child_whose_worker_never_answers(request, monkeypatch):
         daemon=True,
     ).start()
     monkeypatch.setattr(os, "environ", {})  # the dump's path survives this
+    # Installed at import and still in place once the test body runs: nothing
+    # the app or a plugin loads in between has replaced it (review of #3091).
+    assert isinstance(signal.getsignal(signal.SIGUSR1), functools.partial)
     await _waits_on_the_worker()
 
 
@@ -199,6 +203,11 @@ async def test_a_hung_child_fails_its_parent_with_its_own_timeout_and_stacks(
     """
     seen = {}
     _watch_the_spawn(monkeypatch, seen)
+    # The parent's wait is the child's limit plus the lead, less the reserve.
+    # At the real 20 s lead that is 17 s from the spawn, which a loaded
+    # machine can use up before the child's own 2 s timeout fires; a longer
+    # lead costs nothing when the child stops in time (review of #3091).
+    monkeypatch.setattr(private_profile, "_CHILD_LEAD_SECONDS", 60.0)
     child = test_child_whose_worker_never_answers
 
     with (
