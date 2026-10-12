@@ -72,7 +72,14 @@ class OutputsPanel(ScrollableContainer):
     def __init__(self, app_instance: "TldwCli", **kwargs: Any):
         super().__init__(**kwargs)
         self.app_instance = app_instance
-        self.scope_service = getattr(app_instance, "server_outputs_scope_service", None)
+        # The wiring sets ``outputs_scope_service`` (Outputs_Interop); the
+        # legacy ``server_outputs_scope_service`` name is kept as a fallback
+        # for older app instances, mirroring Sharing_Panel's idiom.
+        self.scope_service = getattr(app_instance, "outputs_scope_service", None)
+        if self.scope_service is None:
+            self.scope_service = getattr(
+                app_instance, "server_outputs_scope_service", None
+            )
 
     def compose(self) -> ComposeResult:
         yield Static("Server Outputs require server mode.", id="outputs-disabled")
