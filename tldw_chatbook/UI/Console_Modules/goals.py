@@ -64,7 +64,7 @@ class ConsoleGoalsController:
             self.get_controller()
             coordinator = self.get_coordinator()
             await coordinator.recover()
-            rows = await asyncio.to_thread(
+            rows = await coordinator.service.call(
                 coordinator.service.list_goals, limit=50, offset=offset
             )
             self.push_screen(
@@ -102,7 +102,7 @@ class ConsoleGoalsController:
     async def _review_changes(self, goal, checkpoint) -> None:
         # The selected checkpoint is an attempt identity, never a newest-run query.
         coordinator = self.get_coordinator()
-        run_id = await asyncio.to_thread(
+        run_id = await coordinator.service.call(
             coordinator.service.checkpoint_run_id, goal.id, checkpoint.id
         )
         if run_id:
@@ -138,7 +138,9 @@ class ConsoleGoalsController:
             )
             registry = coordinator.service.persistence.workspace_registry
             workspace_id = controller.store.session_workspace_id(active)
-            rows = await asyncio.to_thread(registry.list_runtime_bindings, workspace_id)
+            rows = await coordinator.service.call(
+                registry.list_runtime_bindings, workspace_id
+            )
             bindings = tuple(
                 GoalBindingRef(
                     workspace_id=r.workspace_id,
@@ -170,7 +172,7 @@ class ConsoleGoalsController:
                 entries.extend(e for e in mcp.list_catalog() if e.id in mcp_refs)
 
             async def discover_tools(binding):
-                current = await asyncio.to_thread(
+                current = await coordinator.service.call(
                     registry.list_runtime_bindings, workspace_id
                 )
                 row = next(

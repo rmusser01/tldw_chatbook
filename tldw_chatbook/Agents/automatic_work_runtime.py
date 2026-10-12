@@ -42,6 +42,22 @@ def manual_work_scope() -> Iterator[None]:
         _CURRENT.reset(token)
 
 
+def _owned_goal_call(function):
+    """Retire Goal checks on each physical caller; ordinary automatic work is unchanged."""
+    from functools import wraps
+
+    @wraps(function)
+    def invoke(context, *args, **kwargs):
+        if context.goal is None:
+            return function(context, *args, **kwargs)
+        from .goal_storage_lifetime import owned_goal_storage
+
+        with owned_goal_storage(context.goal._coordinator.service):
+            return function(context, *args, **kwargs)
+
+    return invoke
+
+
 @dataclass(frozen=True)
 class AutomaticWorkContext:
     """Immutable chain authority with a process-local acceptance latch.
@@ -67,7 +83,13 @@ class AutomaticWorkContext:
         """Bind this authority for helper calls and restore the caller's scope."""
         token = _CURRENT.set(self)
         try:
-            yield self
+            if self.goal is None:
+                yield self
+            else:
+                from .goal_storage_lifetime import owned_goal_storage
+
+                with owned_goal_storage(self.goal._coordinator.service):
+                    yield self
         finally:
             _CURRENT.reset(token)
 
@@ -88,10 +110,12 @@ class AutomaticWorkContext:
             else {"accepted", "completed"}
         )
 
+    @_owned_goal_call
     def policy_kind(self) -> str:
         """Policy follows the immutable allowance root, including child chats."""
         return self.ledger.policy_kind(self.chain_id)
 
+    @_owned_goal_call
     def mark_accepted(self) -> None:
         """Latch acceptance only after the required durable fence succeeded."""
         attempt = self._read_attempt()
@@ -102,6 +126,7 @@ class AutomaticWorkContext:
             raise AutomaticWorkRefused("acceptance_required")
         self._accepted.set()
 
+    @_owned_goal_call
     def check(self) -> AutomaticWorkSnapshot:
         """Enforce accepted authority, the root kill switch, and live limits."""
         from .agent_service import _coerce_autowake_enabled
@@ -138,6 +163,7 @@ class AutomaticWorkContext:
             return True
         return False
 
+    @_owned_goal_call
     def output_cap(self, requested: int | None) -> int:
         """Narrow an ordinary output limit without replenishing chain limits."""
         snapshot = self.check()
@@ -152,6 +178,7 @@ class AutomaticWorkContext:
             raise AutomaticWorkRefused("output_tokens_budget")
         return cap
 
+    @_owned_goal_call
     def begin_call(self, input_tokens: int, output_tokens: int) -> str:
         """Durably admit one physical provider generation and its token budget."""
         self.check()
@@ -167,6 +194,7 @@ class AutomaticWorkContext:
             raise AutomaticWorkRefused("call_already_dispatched")
         return reservation
 
+    @_owned_goal_call
     def settle_call(self, reservation_id: str, actual_tokens: int | None) -> None:
         """Keep missing or interrupted usage conservative and durable."""
         self.ledger.settle(

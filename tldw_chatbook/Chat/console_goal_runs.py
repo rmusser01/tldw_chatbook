@@ -28,6 +28,7 @@ from tldw_chatbook.Agents.goal_models import (
     GoalSnapshot,
     GoalToolObservation,
 )
+from tldw_chatbook.Agents.goal_storage_lifetime import goal_authority_operation
 from tldw_chatbook.Agents.run_log import _setting
 from tldw_chatbook.Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
@@ -160,6 +161,7 @@ class GoalIterationAuthorization:
         if self.started is not None and self.remaining_seconds() <= 0:
             raise AutomaticWorkRefused("iteration_wall_budget")
 
+    @goal_authority_operation
     def capture_admitted_roots(self):
         """Narrow current workspace admission to the frozen primary and source refs."""
         from types import SimpleNamespace
@@ -202,6 +204,7 @@ class GoalIterationAuthorization:
             roots.append(replace(root, allow_write=writable, guard=guard))
         return tuple(roots)
 
+    @goal_authority_operation
     def execution_roots(self, project_selection, project_authority_guard):
         """Select the frozen primary root while preserving the current guidance guard."""
         from tldw_chatbook.Chat.console_chat_controller import (
@@ -234,6 +237,7 @@ class GoalIterationAuthorization:
         )
         return run_admitted_roots, project_selection, project_authority_guard
 
+    @goal_authority_operation
     def remaining_seconds(self) -> float:
         snapshot = self.context.ledger.snapshot(self.work_chain_id)
         iteration = self.goal.policy.iteration_wall_seconds
@@ -340,6 +344,7 @@ class GoalIterationAuthorization:
         self._script_invocations[invocation.id] = invocation
         return invocation
 
+    @goal_authority_operation
     def finish_script(
         self, invocation: GoalScriptInvocation, result: ScriptRunResult
     ) -> None:
@@ -404,6 +409,7 @@ class GoalIterationAuthorization:
         self.observations.append(item)
         return f"goal_evidence_id: {item.id}\n" + content
 
+    @goal_authority_operation
     def record_outcome(self, run_id: str, outcome: RunOutcome) -> None:
         if self.native_run_id is not None and self.native_run_id != run_id:
             raise ValueError("goal native run identity conflict")
@@ -490,7 +496,7 @@ class ConsoleGoalCoordinator:
         audit = self.controller.fleet_wake.recovery_result
         if audit is None:
             return ()
-        result = await asyncio.to_thread(self.service.project_recovery, audit)
+        result = await self.service.call(self.service.project_recovery, audit)
         self._projected_audit = audit
         return result
 
@@ -586,7 +592,7 @@ class ConsoleGoalCoordinator:
     async def _launch(
         self, request: GoalRequest, launch_id: str, app: Any
     ) -> GoalSnapshot:
-        goal = await asyncio.to_thread(
+        goal = await self.service.call(
             self.service.create, request, launch_id=launch_id
         )
         if (
@@ -625,13 +631,13 @@ class ConsoleGoalCoordinator:
         self, goal_id: str, *, expected_revision: int, app: Any
     ) -> GoalSnapshot:
         try:
-            goal = await asyncio.to_thread(self.service.get, goal_id)
+            goal = await self.service.call(self.service.get, goal_id)
             if goal.revision != expected_revision:
                 raise ValueError("revision_conflict")
             if goal.status not in {"paused", "ready"}:
                 raise ValueError("resume_requires_clean_checkpoint")
             if self._closed or self.controller._disposed:
-                return await asyncio.to_thread(self.service.get, goal_id)
+                return await self.service.call(self.service.get, goal_id)
             hydration = asyncio.create_task(self.restore_session(goal_id, app=app))
             try:
                 await asyncio.shield(hydration)
@@ -639,15 +645,15 @@ class ConsoleGoalCoordinator:
                 # A cancelled view never reaches here; explicit runtime/hydration
                 # cancellation still drains the existing read before stores close.
                 await asyncio.gather(hydration, return_exceptions=True)
-                return await asyncio.to_thread(self.service.get, goal_id)
+                return await self.service.call(self.service.get, goal_id)
             if self._closed or self.controller._disposed:
-                return await asyncio.to_thread(self.service.get, goal_id)
+                return await self.service.call(self.service.get, goal_id)
             if goal.status == "paused":
-                goal = await asyncio.to_thread(
+                goal = await self.service.call(
                     self.service.resume, goal_id, expected_revision=expected_revision
                 )
             else:
-                goal = await asyncio.to_thread(self.service.get, goal_id)
+                goal = await self.service.call(self.service.get, goal_id)
             if (
                 not self._closed
                 and not self.controller._disposed
@@ -685,7 +691,7 @@ class ConsoleGoalCoordinator:
                 # Clear before the awaited snapshot: a control notification arriving
                 # during that read must remain observable even if the snapshot is old.
                 self._wake.clear()
-                goal = await asyncio.to_thread(self.service.get, goal_id)
+                goal = await self.service.call(self.service.get, goal_id)
                 if goal.status != "ready":
                     return goal
                 if goal.retry_at is not None:
@@ -709,16 +715,16 @@ class ConsoleGoalCoordinator:
                     self.service.defer(goal_id, reason="primary_capacity", delay=1)
                     continue
                 if result.attempt_id:
-                    attempt = await asyncio.to_thread(
+                    attempt = await self.service.call(
                         self.ledger.read_goal_attempt,
                         result.attempt_id,
                         owner_id=self._owner_id,
                     )
                     if attempt.state in {"accepted", "review_required"}:
                         try:
-                            await asyncio.to_thread(self.service.checkpoint, result)
+                            await self.service.call(self.service.checkpoint, result)
                         except Exception:  # noqa: BLE001 - never replay to replace a lost checkpoint
-                            return await asyncio.to_thread(
+                            return await self.service.call(
                                 self.service.checkpoint_failed, goal_id
                             )
                     elif result.reason_code:
@@ -733,7 +739,7 @@ class ConsoleGoalCoordinator:
                             "paused",
                             result.reason_code or "goal_preflight_refused",
                         )
-                goal = await asyncio.to_thread(
+                goal = await self.service.call(
                     self.service.db.goal_runs.settle_control, goal_id
                 )
                 self.notify_goal_changed(goal_id)
@@ -859,7 +865,7 @@ class ConsoleGoalCoordinator:
         if self._manual_priority(authorization.goal.conversation_id):
             raise AutomaticWorkRefused("primary_capacity")
         authorization.acceptance_started = True
-        accepted = await asyncio.to_thread(
+        accepted = await self.service.call(
             self.ledger.accept_goal_iteration,
             authorization.attempt_id,
             owner_id=self._owner_id,
@@ -867,7 +873,7 @@ class ConsoleGoalCoordinator:
         )
         if not accepted:
             raise AutomaticWorkRefused("attempt_not_prepared")
-        await asyncio.to_thread(authorization.context.mark_accepted)
+        await self.service.call(authorization.context.mark_accepted)
         authorization.accepted = True
         authorization.started = time.monotonic()
         self._check_admission_open()
@@ -913,7 +919,7 @@ class ConsoleGoalCoordinator:
             return GoalIterationResult(
                 goal_id, 0, None, None, None, "runtime_unavailable"
             )
-        goal = await asyncio.to_thread(self.service.get, goal_id)
+        goal = await self.service.call(self.service.get, goal_id)
         if self._closed or self.controller._disposed:
             return GoalIterationResult(
                 goal_id, 0, None, None, None, "runtime_unavailable"
@@ -932,9 +938,9 @@ class ConsoleGoalCoordinator:
             )
         audit = self.controller.fleet_wake.recovery_result
         if audit is not None and audit is not self._projected_audit:
-            await asyncio.to_thread(self.service.project_recovery, audit)
+            await self.service.call(self.service.project_recovery, audit)
             self._projected_audit = audit
-            goal = await asyncio.to_thread(self.service.get, goal_id)
+            goal = await self.service.call(self.service.get, goal_id)
             if goal.status != "ready":
                 return GoalIterationResult(
                     goal_id, 0, None, None, None, "goal_not_ready"
@@ -990,7 +996,7 @@ class ConsoleGoalCoordinator:
         reason = RunTerminationReason.PREFLIGHT_REFUSED
         reason_code = None
         try:
-            attempt = await asyncio.to_thread(
+            attempt = await self.service.call(
                 self.ledger.prepare_goal_iteration, goal_id, owner_id=self._owner_id
             )
             self._check_admission_open()
@@ -1065,7 +1071,7 @@ class ConsoleGoalCoordinator:
         finally:
             if attempt is not None:
                 try:
-                    await asyncio.to_thread(
+                    await self.service.call(
                         self.ledger.abort_goal_iteration,
                         attempt.id,
                         owner_id=self._owner_id,

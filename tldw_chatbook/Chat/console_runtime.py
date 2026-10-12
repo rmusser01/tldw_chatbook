@@ -3210,15 +3210,14 @@ class ConsoleRuntime:
         if store is None or controller is None:
             return None
         session = next(row for row in store.sessions() if row.id == session_id)
-        from tldw_chatbook.DB.base_db import operation_owned_connection
-
-        with operation_owned_connection(getattr(store.persistence, "db", None)):
-            values = controller._hook_authority_values(session_id)
-            return (
-                session.workspace_id,
-                values["workspace_roots"],
-                values["project_authority"],
-            )
+        values = controller._run_owned_chat_db_operation(
+            controller._hook_authority_values, session_id
+        )
+        return (
+            session.workspace_id,
+            values["workspace_roots"],
+            values["project_authority"],
+        )
 
     async def prepare_hooks_v2(
         self,
