@@ -2346,3 +2346,135 @@ async def test_spacings_of_one_keyword_fold_into_one_row_and_old_rows_stay(
     assert rows["rust  tui"]["weight"] == pytest.approx(0.4), "left to decay"
     assert (rows["jazz  guitar"]["weight"], rows["jazz  guitar"]["source"]) == (
         pytest.approx(0.3), "user"), "a user's own row stays as typed"
+
+
+# --- Follow-up to #2921: Guardian consent compares stored forms ------------------
+#
+# The cycle refuses to go on when a Guardian-sourced topic in its snapshot is
+# no longer one Guardian consents to. The snapshot holds the topic in its
+# STORED form (the profile text rule: NFC, invisible characters removed,
+# spaces collapsed, lowercased by the merge); the check compared it with the
+# RAW Guardian label, so any label the stored form changes never matched and
+# every cycle halted.
+
+
+def _guardian_with_topic(tmp_path, monkeypatch, label):
+    from tldw_chatbook.DB.Guardian_DB import GuardianDB
+    from tldw_chatbook.Guardian import settings as guardian_settings
+
+    monkeypatch.setattr(
+        guardian_settings, "guardian_setting",
+        lambda key, default=None: True if key == "enabled" else default)
+    guardian = GuardianDB(tmp_path / "guardian.sqlite", "consent")
+    rule = guardian.upsert_rule(
+        name="topic", topic=label, pattern="x", feeds_discovery=1)
+    guardian.insert_alert(rule_id=rule, session_id="a", visit_id="v",
+                          topic=label, message_digest="a" * 64)
+    return guardian, rule
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "label, stored",
+    [
+        ("late  night radio", "late night radio"),
+        ("late\u00a0night radio", "late night radio"),
+        ("Cafe\u0301 culture", "caf\u00e9 culture"),
+        ("jazz\u200bguitar", "jazzguitar"),
+        ("x\u2062y plots", "xy plots"),
+    ],
+    ids=["two-spaces", "no-break-space", "decomposed-accent",
+         "zero-width-space", "invisible-times"],
+)
+async def test_a_guardian_topic_the_stored_form_changes_keeps_its_consent(
+        tmp_path, dreams_db, settings, monkeypatch, label, stored):
+    guardian, _rule = _guardian_with_topic(tmp_path, monkeypatch, label)
+    searched: list[str] = []
+
+    def perform(search_engine, search_query, **kwargs):
+        searched.append(search_query)
+        return _fake_perform(search_engine, search_query, **kwargs)
+
+    try:
+        deps = _deps(dreams_db, perform=perform)
+        deps.guardian_db_getter = lambda: guardian
+
+        result = await run_cycle(deps, trigger="scheduled")
+
+        assert {row["text"] for row in dreams_db.list_profile()
+                if row["source"] == "guardian"} == {stored}, "fixture"
+        assert result["status"] == "complete", result
+        assert searched, "the cycle searched: the consent check held"
+    finally:
+        guardian.close()
+
+
+@pytest.mark.asyncio
+async def test_a_guardian_topic_whose_consent_is_withdrawn_still_halts_the_cycle(
+        tmp_path, dreams_db, settings, monkeypatch):
+    """The control: the same awkward label, consent withdrawn while the
+    cycle waits for its provider. Nothing goes out after that."""
+    guardian, rule = _guardian_with_topic(
+        tmp_path, monkeypatch, "late  night radio")
+    calls: list[str] = []
+
+    def chat(**kwargs):
+        calls.append("model")
+        return _fake_chat(**kwargs)
+
+    def perform(search_engine, search_query, **kwargs):
+        calls.append("search")
+        return _fake_perform(search_engine, search_query, **kwargs)
+
+    def resolve():
+        guardian.upsert_rule(id=rule, feeds_discovery=0)  # withdrawn
+        return chat
+
+    try:
+        deps = _deps(dreams_db, perform=perform)
+        deps.chat_getter = resolve
+        deps.guardian_db_getter = lambda: guardian
+
+        await run_cycle(deps, trigger="scheduled")
+
+        assert calls == [], "no model call and no search after withdrawal"
+    finally:
+        guardian.close()
+
+
+from hypothesis import given, settings as hyp_settings  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
+
+
+@hyp_settings(max_examples=400, deadline=None)
+@given(st.text(
+    alphabet=st.sampled_from(
+        "ab CD\u00e9e\u0301\u0958\u200b\u00a0\u2062\u2800\u3000I\u0130\u00df"),
+    min_size=1, max_size=40))
+def test_the_stored_topic_helper_is_the_refreshs_own_path(label):
+    """_stored_topic_text must give exactly the text the refresh stores:
+    stored form, then the merge's strip+lower, then the rule again. If it
+    raises, the refresh must drop the label too."""
+    from tldw_chatbook.Dreams.cycle_service import (
+        _stored_form_signals,
+        _stored_topic_text,
+    )
+    from tldw_chatbook.Dreams.interest_profile import merge_signals
+    from tldw_chatbook.Utils.input_validation import (
+        validate_dreams_profile_text,
+    )
+
+    collected, _dropped = _stored_form_signals(
+        [("guardian", [{"facet": "topic", "text": label, "weight": 0.5}])])
+    stored = set()
+    for row in merge_signals([rows for _origin, rows in collected]):
+        try:
+            stored.add(validate_dreams_profile_text(row["text"]))
+        except ValueError:
+            pass
+
+    try:
+        expected = {_stored_topic_text(label)}
+    except ValueError:
+        expected = set()
+    assert stored == expected

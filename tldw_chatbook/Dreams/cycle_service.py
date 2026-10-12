@@ -413,6 +413,26 @@ def _preferred_sources(
     return {key: source for key, (_, source) in winners.items()}
 
 
+def _stored_topic_text(text: str) -> str:
+    """The text a derived topic is stored under, from its raw label.
+
+    Exactly the path the signal refresh takes a label along:
+    :func:`_stored_form_signals` puts it into the profile text rule's
+    stored form, ``interest_profile.merge_signals`` strips and lowercases
+    it, and :func:`_upsert_profile_signals` applies the rule once more
+    before it stores the row. Anything that compares a raw label with a
+    stored topic must go through here (follow-up to #2921: the Guardian
+    consent check compared raw labels and halted every cycle whose
+    Guardian topic the stored form had changed). Pinned against the
+    refresh itself by a test.
+
+    Raises:
+        ValueError: The label fails the text rule; it is never stored.
+    """
+    return validate_dreams_profile_text(
+        validate_dreams_profile_text(text).strip().lower())
+
+
 def _stored_form_signals(
     collected: list[tuple[str, list[dict]]],
 ) -> tuple[list[tuple[str, list[dict]]], int]:
@@ -613,11 +633,25 @@ def _guardian_snapshot_authorized_sync(deps: CycleDeps, snap: dict) -> bool:
 
 
 def _read_guardian_snapshot_authority(deps: CycleDeps, snap: dict) -> bool:
-    """Refuse an outbound snapshot whose Guardian consent was revoked."""
-    topics = {
-        str(row["text"]).strip().lower()
-        for row in snap.get("topics", []) if row.get("source") == "guardian"
-    }
+    """Refuse an outbound snapshot whose Guardian consent was revoked.
+
+    Both sides of the subset test are stored-form text
+    (:func:`_stored_topic_text`): the snapshot holds Guardian topics as
+    they were stored, so Guardian's current labels are put into the same
+    form before they are compared. A label that fails the text rule is
+    left out of the consented set -- that cannot widen consent: such a
+    label is dropped by the refresh too, so it is never stored and never
+    in a snapshot, and leaving it out only makes the set smaller. A
+    snapshot topic that does not pass the rule itself (a row an earlier
+    build stored) is uncertain consent, which never grants authority.
+    """
+    try:
+        topics = {
+            _stored_topic_text(str(row["text"]))
+            for row in snap.get("topics", []) if row.get("source") == "guardian"
+        }
+    except ValueError:
+        return False
     if not topics:
         return True
     from tldw_chatbook.Guardian.settings import guardian_setting
@@ -632,9 +666,13 @@ def _read_guardian_snapshot_authority(deps: CycleDeps, snap: dict) -> bool:
 
         with operation_owned_connection(db):
             current = profile_sources.read_guardian_topics(db)
-        return bool(guardian_setting("enabled")) and topics <= {
-            str(row["text"]).strip().lower() for row in current
-        }
+        consented: set[str] = set()
+        for row in current:
+            try:
+                consented.add(_stored_topic_text(str(row["text"])))
+            except ValueError:
+                continue  # never stored, so never in a snapshot (above)
+        return bool(guardian_setting("enabled")) and topics <= consented
     except Exception:  # noqa: BLE001 - uncertain consent never grants authority
         return False
 
