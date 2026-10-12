@@ -1,16 +1,15 @@
 ---
 id: TASK-34816
-title: >-
-  After a restore, a source Dreams created can be fetched as a trusted address
+title: After a restore, a source Dreams created can be fetched as a trusted address
   until Dreams next runs
 status: In Progress
 assignee: []
-created_date: '2026-10-12 05:39'
-updated_date: '2026-10-12 19:39'
+created_date: 2026-10-12 05:39
+updated_date: 2026-10-12 23:19
 labels:
-  - dreams
-  - security
-  - backup-recovery
+- dreams
+- security
+- backup-recovery
 dependencies: []
 priority: high
 ---
@@ -38,18 +37,16 @@ Enforce conservative durable lineage at the first restored fetch even with Dream
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 
-<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 Current source update: author0c941ba2ec984d960ba83376aeace0e830452bbc, 113 nonmerge commits/88 feature paths after actual merged Goal9595facbbb. Independent source review preserves the real shared Toast fix and stronger reconcile/suspension work; remaining integrated proof and actual post-Buddy/latest-dev publication gate are pending. Prior source/plan/qualification claims remain historical. No product change or completion is claimed here.
 
 PR2921 current private integration qualification (2026-10-12):
 Subscriptions v3 conservatively normalizes missing/malformed legacy lineage before the first fetch, independent of Dreams startup/on/off state. Actual restore of unmarked active sources with Dreams off refuses private-address fetch; explicit stored user-entered authority survives. Optional Dreams recovery, exact populated historical catalog upgrades and inactive restored authority are qualified. Unmarked intranet rows need explicit user edit or existing allowlist; absence never proves intent. ADR-207/196/126 apply.
 Full source-bound outcomes, original failures, native owners and tradeoffs: .superpowers/sdd/2026-10-11-pr2921-current-dev-integration/task-1-report.md; external pr-review-wave2/pr2921-current-integration. Local implementation is ready for independent review. Actual-base restack, complete independent review and hosted required gates remain pending; preserve In Progress and the existing acceptance checklist until the full DoD is met.
-<!-- SECTION:NOTES:END -->
-
+2026-10-12, re-checked on dev 7b38b26c69 after PR #2921 merged (independent review, real stores): acceptance criteria 1, 2 and 4 look met by the URL-provenance rework (fail-closed read in Utils/egress.py, the Subscriptions v2->v3 migration, stamping on create; proven by Tests/Backup_Recovery/test_restored_source_first_fetch.py), and criterion 3 by the Dreams database now being a backup owner (DB/recovery_dreams_guardian.py). What this task does not cover, a restore undoing the Dreams switch-off itself, is TASK-34924. Not ticked here: whoever owns this task should confirm and close it.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
