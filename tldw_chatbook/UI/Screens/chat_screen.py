@@ -16782,7 +16782,12 @@ class ChatScreen(BaseAppScreen):
             labels = ", ".join(str(t.get("label")) for t in trends[:3])
             parts.append(f"trends: {labels}")
         if parts:
-            self.app_instance.notify("; ".join(parts), severity="information")
+            text = "; ".join(parts)
+            if payload.get("is_crisis") is not False:
+                from tldw_chatbook.Guardian.crisis_resources import render_crisis_block
+
+                text = f"{text}\n\n{render_crisis_block()}"
+            self.app_instance.notify(text, severity="information")
 
     async def _finalize_guardian_visit(self) -> None:
         """# guardian: finalize the visit's summary at Console unmount.

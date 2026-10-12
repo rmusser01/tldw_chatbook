@@ -180,7 +180,7 @@ def read_guardian_topics(
             JOIN guardian_rules AS r ON r.id = a.rule_id
             WHERE r.feeds_discovery = 1
               AND r.enabled = 1 AND r.is_crisis = 0
-              AND a.rule_id IS NOT NULL
+              AND a.rule_id IS NOT NULL AND a.crisis_provenance = 0
               AND a.ts >= ?
             GROUP BY a.topic
             ORDER BY hits DESC, a.topic COLLATE NOCASE
