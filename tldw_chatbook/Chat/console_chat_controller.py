@@ -11776,11 +11776,9 @@ class ConsoleChatController:
         self, call: Callable[..., Any], /, *args: Any, **kwargs: Any
     ) -> Any:
         """Close a worker invocation's chat handle after all its work unwinds."""
-        from tldw_chatbook.DB.base_db import operation_owned_connection
+        from .console_automatic_submission import run_owned_chat_operation
 
-        database = getattr(self.store.persistence, "db", None)
-        with operation_owned_connection(database):
-            return call(*args, **kwargs)
+        return run_owned_chat_operation(self, call, *args, **kwargs)
 
     async def _run_durable_db_call(
         self, call: Callable[..., Any], /, *args: Any

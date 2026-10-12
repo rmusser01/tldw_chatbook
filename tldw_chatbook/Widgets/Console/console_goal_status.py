@@ -70,7 +70,9 @@ class ConsoleGoalStatus(ModalScreen[None]):
     @work(exclusive=True, group="goal-read")
     async def load_goal(self) -> None:
         try:
-            goal = await asyncio.to_thread(self.coordinator.service.get, self.goal_id)
+            goal = await self.coordinator.service.call(
+                self.coordinator.service.get, self.goal_id
+            )
         except Exception:  # noqa: BLE001 - private view failures must not crash the app
             if self.is_mounted and self.query("#goal-error"):
                 self.query_one("#goal-error", Static).update(
@@ -157,7 +159,7 @@ class ConsoleGoalStatus(ModalScreen[None]):
             text += f"\nCheckpoint {checkpoint.id}\nArtifact {checkpoint.artifact_digest}\n{checkpoint.report.summary}\n{checkpoint.report.candidate_draft}"
         self.query_one("#goal-report", Static).update(text)
         try:
-            evidence = await asyncio.to_thread(
+            evidence = await self.coordinator.service.call(
                 self.coordinator.service.evidence, self.goal_id
             )
         except Exception:  # noqa: BLE001 - an evidence read must not close the app
@@ -211,7 +213,7 @@ class ConsoleGoalStatus(ModalScreen[None]):
                     if action == "remove"
                     else getattr(service, action)
                 )
-                await asyncio.to_thread(method, goal.id)
+                await self.coordinator.service.call(method, goal.id)
             elif action == "resume":
                 self.resume_goal(goal)
                 return
@@ -219,7 +221,7 @@ class ConsoleGoalStatus(ModalScreen[None]):
                 checkpoint = self.selected_checkpoint()
                 if checkpoint is None:
                     raise ValueError("Select an iteration to review.")
-                decision = await asyncio.to_thread(
+                decision = await self.coordinator.service.call(
                     service.completion_check,
                     goal.id,
                     checkpoint_id=checkpoint.id,
@@ -236,7 +238,7 @@ class ConsoleGoalStatus(ModalScreen[None]):
                 self.query_one("#goal-error").scroll_visible()
             elif action in {"accept", "reject"} and self._review_identity:
                 revision, checkpoint_id, artifact = self._review_identity
-                await asyncio.to_thread(
+                await self.coordinator.service.call(
                     service.review_result,
                     goal.id,
                     expected_revision=revision,
@@ -246,7 +248,7 @@ class ConsoleGoalStatus(ModalScreen[None]):
                 )
                 self._review_identity = None
             elif action == "recovery":
-                await asyncio.to_thread(
+                await self.coordinator.service.call(
                     service.resolve_recovery,
                     goal.id,
                     expected_revision=goal.revision,

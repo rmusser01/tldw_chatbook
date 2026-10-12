@@ -323,3 +323,21 @@ def run_hooks_engine(controller):
     """
     accessor = controller._ensure_run_hooks
     return accessor() if accessor is not None else None
+
+
+def run_owned_chat_operation(controller, call, /, *args, **kwargs):
+    """Retain the current chat boundary and include Goal-owned binding/run reads."""
+    from contextlib import nullcontext
+
+    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+    from tldw_chatbook.DB.base_db import operation_owned_connection
+
+    automatic = current_automatic_work()
+    scope = (
+        automatic.scope()
+        if automatic is not None and automatic.goal is not None
+        else nullcontext()
+    )
+    database = getattr(controller.store.persistence, "db", None)
+    with scope, operation_owned_connection(database):
+        return call(*args, **kwargs)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from tldw_chatbook.Agents.automatic_work_budget import RuntimeRecoveryResult
 from tldw_chatbook.Agents.goal_models import (
@@ -21,6 +22,8 @@ from tldw_chatbook.Chat.chat_persistence_service import (
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+from .goal_storage_lifetime import goal_storage_operation, owned_goal_storage
+
 
 class GoalRunService:
     """Own saved lifecycle; execution admission remains the shared ledger’s fence."""
@@ -30,6 +33,19 @@ class GoalRunService:
         self.persistence = persistence
         self._control_listener: Callable[[GoalSnapshot], None] | None = None
 
+    async def call(
+        self, operation: Callable[..., Any], /, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Offload a finite Goal callback without abandoning its thread's handles."""
+        from tldw_chatbook.DB.base_db import run_owned_db_call
+
+        def invoke():
+            with owned_goal_storage(self):
+                return operation(*args, **kwargs)
+
+        return await run_owned_db_call(self.db, invoke)
+
+    @goal_storage_operation
     def list_goals(
         self, *, limit: int = 50, offset: int = 0
     ) -> tuple[GoalHistoryEntry, ...]:
@@ -47,10 +63,12 @@ class GoalRunService:
                 )
             )
 
+    @goal_storage_operation
     def get(self, goal_id: str) -> GoalSnapshot:
         """Inspect saved state without dispatch, recovery audit or provisioning."""
         return self.db.goal_runs.get(goal_id)
 
+    @goal_storage_operation
     def checkpoint_run_id(self, goal_id: str, checkpoint_id: str) -> str | None:
         """Resolve one owned saved iteration for exact change-review navigation."""
         goal = self.get(goal_id)
@@ -63,23 +81,27 @@ class GoalRunService:
             ).fetchone()
         return row[0] if row else None
 
+    @goal_storage_operation
     def evidence(self, goal_id: str) -> tuple[GoalEvidence, ...]:
         """Read selected private evidence; never part of a diagnostic projection."""
         self.get(goal_id)
         return self.db.goal_runs.evidence(goal_id)
 
+    @goal_storage_operation
     def pause(self, goal_id: str) -> GoalSnapshot:
         snapshot = self.db.goal_runs.control(goal_id)
         if self._control_listener:
             self._control_listener(snapshot)
         return snapshot
 
+    @goal_storage_operation
     def stop(self, goal_id: str) -> GoalSnapshot:
         snapshot = self.db.goal_runs.control(goal_id, stop=True)
         if self._control_listener:
             self._control_listener(snapshot)
         return snapshot
 
+    @goal_storage_operation
     def checkpoint(self, result: GoalIterationResult) -> GoalSnapshot:
         """Atomically retain a native iteration; never dispatch its successor."""
         goal = self.get(result.goal_id)
@@ -89,6 +111,7 @@ class GoalRunService:
             and not self._binding_reason(goal.request),
         )
 
+    @goal_storage_operation
     def checkpoint_failed(self, goal_id: str) -> GoalSnapshot:
         """Fence an already drained increment when checkpoint durability is uncertain."""
         with self.db.automatic_work.transaction() as conn:
@@ -109,6 +132,7 @@ class GoalRunService:
             )
             return self.get(goal_id)
 
+    @goal_storage_operation
     def completion_check(
         self,
         goal_id: str,
@@ -128,11 +152,8 @@ class GoalRunService:
         if goal.request is None:
             raise ValueError("goal_payload_removed")
         with self.db.connection() as conn:
-            unsettled = conn.execute(
-                "SELECT 1 FROM goal_iterations i JOIN automatic_wake_attempts a ON a.id=i.attempt_id WHERE i.goal_id=? AND a.state IN ('prepared','accepted','review_required')",
-                (goal_id,),
-            ).fetchone()
-        if goal.status == "recovery_required" or unsettled:
+            unsettled = self.db.goal_runs.unsettled_root(conn, goal.chain_id)
+        if goal.status == "recovery_required" or goal.accounting.uncertain or unsettled:
             return GoalDecision(action="recovery_required", reason="uncertain_effect")
         if not goal.checkpoints:
             return GoalDecision(action="continue", reason="no_checkpoint")
@@ -160,6 +181,7 @@ class GoalRunService:
             }
         )
 
+    @goal_storage_operation
     def defer(self, goal_id: str, *, reason: str, delay: float) -> GoalSnapshot:
         """Persist one bounded retry time inside the original chain deadline."""
         import time
@@ -201,10 +223,12 @@ class GoalRunService:
             )
             return self.get(goal_id)
 
+    @goal_storage_operation
     def clear_wait(self, goal_id: str) -> None:
         with self.db.automatic_work.transaction() as conn:
             conn.execute("DELETE FROM goal_waits WHERE goal_id=?", (goal_id,))
 
+    @goal_storage_operation
     def project_recovery(
         self, audit: RuntimeRecoveryResult
     ) -> tuple[GoalSnapshot, ...]:
@@ -231,6 +255,7 @@ class GoalRunService:
                 )
             return tuple(self.get(goal_id) for goal_id, _, _ in audit.goals)
 
+    @goal_storage_operation
     def resume(self, goal_id: str, *, expected_revision: int) -> GoalSnapshot:
         """Resume clean checkpointed or never-accepted work without refilling authority."""
         from tldw_chatbook.Agents.automatic_work_budget import (
@@ -277,6 +302,7 @@ class GoalRunService:
             return self._state(self.get(goal_id), "paused", exc.reason)
         return self.get(goal_id)
 
+    @goal_storage_operation
     def review_result(
         self,
         goal_id: str,
@@ -310,6 +336,7 @@ class GoalRunService:
             )
             return self.get(goal_id)
 
+    @goal_storage_operation
     def resolve_recovery(
         self, goal_id: str, *, expected_revision: int, resolution: RecoveryResolution
     ) -> GoalSnapshot:
@@ -330,9 +357,11 @@ class GoalRunService:
             )
             return self.get(goal_id)
 
+    @goal_storage_operation
     def remove_payloads(self, goal_id: str) -> GoalSnapshot:
         return self.db.goal_runs.remove_payloads(goal_id)
 
+    @goal_storage_operation
     def create(self, request: GoalRequest, *, launch_id: str) -> GoalSnapshot:
         """Persist intent first and reconcile exact chat/workspace identity.
 
@@ -367,6 +396,7 @@ class GoalRunService:
         reason = self._binding_reason(snapshot.request)
         return self._state(snapshot, "paused" if reason else "ready", reason)
 
+    @goal_storage_operation
     def _state(
         self, snapshot: GoalSnapshot, status: str, reason: str | None
     ) -> GoalSnapshot:
@@ -382,6 +412,7 @@ class GoalRunService:
             # A concurrent delivery won the CAS; never overwrite its projection.
             return self.get(snapshot.id)
 
+    @goal_storage_operation
     def _binding_reason(self, request: GoalRequest) -> str | None:
         registry = self.persistence.workspace_registry
         if registry is None:

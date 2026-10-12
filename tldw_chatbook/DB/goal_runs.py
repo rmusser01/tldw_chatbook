@@ -383,13 +383,12 @@ class GoalRunsStore:
                 (prior.decision.failed_count if prior else 0) + 1 if failed else 0
             )
             decision = decision.model_copy(update={"failed_count": failed_count})
-            unresolved = conn.execute(
-                "SELECT 1 FROM automatic_work_reservations WHERE chain_id=? AND "
-                "(state IN ('reserved','uncertain') OR (kind='tokens' AND state='committed')) LIMIT 1",
-                (goal.chain_id,),
-            ).fetchone()
+            unresolved = self.unsettled_root(
+                conn, goal.chain_id, excluding_attempt=result.attempt_id
+            )
             uncertain = bool(
                 unresolved
+                or goal.accounting.uncertain
                 or attempt["state"] == "review_required"
                 or result.outcome is None
                 or result.termination_reason == RunTerminationReason.UNKNOWN_EFFECT
@@ -560,6 +559,32 @@ class GoalRunsStore:
                 ).fetchone(),
             )
 
+    def unsettled_root(
+        self, conn: sqlite3.Connection, chain_id: str, *, excluding_attempt: str = ""
+    ) -> bool:
+        """Inspect every canonical allowance member without accepting or releasing work.
+
+        Checkpointing excludes only its own admitted attempt, whose physical result
+        is being persisted. Descendant wake/chat-start attempts are never excluded.
+        """
+        root_id = self.db.automatic_work._allowance_chain(conn, chain_id)["id"]
+        active = conn.execute(
+            "SELECT 1 FROM automatic_work_chains c WHERE (c.id=? OR c.allowance_root_chain_id=?) "
+            "AND (c.status='review_required' "
+            "OR EXISTS (SELECT 1 FROM automatic_wake_attempts a WHERE a.chain_id=c.id "
+            "AND a.id!=? AND a.state IN ('prepared','accepted','review_required')) "
+            "OR EXISTS (SELECT 1 FROM automatic_chat_start_attempts a WHERE a.chain_id=c.id "
+            "AND a.state IN ('prepared','accepted','review_required'))) LIMIT 1",
+            (root_id, root_id, excluding_attempt),
+        ).fetchone()
+        uncertain = conn.execute(
+            "SELECT 1 FROM automatic_work_reservations r JOIN automatic_work_chains c ON c.id=r.chain_id "
+            "WHERE (c.id=? OR c.allowance_root_chain_id=?) "
+            "AND (r.state IN ('reserved','uncertain') OR (r.kind='tokens' AND r.state='committed')) LIMIT 1",
+            (root_id, root_id),
+        ).fetchone()
+        return bool(active or uncertain)
+
     def remove_payloads(self, goal_id: str) -> GoalSnapshot:
         """Remove settled private bodies only; retain non-resumable accounting identity."""
         with self.db.automatic_work.transaction() as conn:
@@ -570,29 +595,11 @@ class GoalRunsStore:
                 raise ValueError("unknown_goal")
             if row["status"] == "removed":
                 return self._snapshot(conn, row)
-            root_id = self.db.automatic_work._allowance_chain(conn, row["chain_id"])[
-                "id"
-            ]
-            active = conn.execute(
-                "SELECT 1 FROM automatic_work_chains c WHERE (c.id=? OR c.allowance_root_chain_id=?) "
-                "AND (c.status='review_required' "
-                "OR EXISTS (SELECT 1 FROM automatic_wake_attempts a WHERE a.chain_id=c.id "
-                "AND a.state IN ('prepared','accepted','review_required')) "
-                "OR EXISTS (SELECT 1 FROM automatic_chat_start_attempts a WHERE a.chain_id=c.id "
-                "AND a.state IN ('prepared','accepted','review_required'))) LIMIT 1",
-                (root_id, root_id),
-            ).fetchone()
-            uncertain = conn.execute(
-                "SELECT 1 FROM automatic_work_reservations r JOIN automatic_work_chains c ON c.id=r.chain_id "
-                "WHERE (c.id=? OR c.allowance_root_chain_id=?) "
-                "AND (r.state IN ('reserved','uncertain') OR (r.kind='tokens' AND r.state='committed')) LIMIT 1",
-                (root_id, root_id),
-            ).fetchone()
+            unsettled = self.unsettled_root(conn, row["chain_id"])
             if (
                 row["status"]
                 not in ("paused", "completed", "awaiting_result_review", "stopped")
-                or active
-                or uncertain
+                or unsettled
             ):
                 raise ValueError("goal_not_settled")
             for table in (

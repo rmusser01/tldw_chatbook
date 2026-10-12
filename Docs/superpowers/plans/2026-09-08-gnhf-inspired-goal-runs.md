@@ -5,7 +5,7 @@
 **Goal:** Let a Chatbook user start a bounded objective, receive independently recorded increments and evidence, and safely pause, stop, review and resume the work.
 
 **Architecture:** Add an app-owned goal service above the native Console agent turn. Extend the current automatic-work attempt ledger and reuse the controller's provider preparation, capacity, permissions, CLI/skill/MCP tools, transcript, and review paths. Workflows authoring and whole external-agent iteration adapters can integrate with the same service later.
-wtf 
+
 **Tech stack:** Python >=3.11, Textual >=8.0.0,<9, Pydantic, existing SQLite/run-log infrastructure; no new runtime dependency.
 
 **Spec:** [Review and proposed design](../specs/2026-09-08-gnhf-inspired-goal-runs-design.md).
