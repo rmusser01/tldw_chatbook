@@ -10,7 +10,7 @@ Save still wrote the linked provider.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Input, Select
+from textual.widgets import Button, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _active_destination_screen
@@ -456,3 +456,37 @@ async def test_the_key_check_row_is_composed_for_the_linked_provider(
 
         assert _form_provider(screen) == _ANTHROPIC
         assert said and all(word.startswith("Not ready") for word in said), said
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_linked_pair_never_reads_new_chat_default(request, monkeypatch):
+    """Finding 5: the Provider and Model rows read "new-chat default" for a
+    linked pair that is not the default, and went on reading it after the
+    first edit although Save then writes that pair."""
+    from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+        SELECTION_SOURCE_WORDS,
+    )
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    host = _SettingsCssHarness(_app(), "settings")
+
+    def words() -> list[str]:
+        return [
+            str(screen.query_one(selector, Static).renderable)
+            for selector in ("#settings-provider-source", "#settings-model-source")
+        ]
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _deep_link_to_anthropic_key(host, pilot)
+        assert words() == [SELECTION_SOURCE_WORDS["navigation"]] * 2
+
+        await pilot.press("x")
+        await pilot.pause()
+
+        assert words() == ["edited *", "edited *"]
+        assert screen._provider_return_dirty_field_names() == (
+            "API key",
+            "Model",
+            "Provider",
+        )

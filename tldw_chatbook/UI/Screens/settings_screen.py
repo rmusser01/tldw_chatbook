@@ -13473,17 +13473,21 @@ class SettingsScreen(BaseAppScreen):
         )
         if "model" in staged and not str(staged.get("model") or "").strip():
             resolved = replace(resolved, model="", model_source="settings_draft")
-        # The draft pins provider and model beside any edit, so each reads
-        # edited only when its own value differs from the saved one (captures
-        # 03 and 04: a staged Temperature alone marked both).
-        dirty = draft.dirty_keys if draft is not None else set()
-        return replace(
-            resolved,
-            provider_source=(
-                resolved.provider_source if "provider" in dirty else "chat_defaults"
-            ),
-            model_source=resolved.model_source if "model" in dirty else "chat_defaults",
-        )
+        return resolved
+
+    def _provider_selection_source(self, key: str, shown: object) -> str:
+        """Say how the shown provider or model stands against the saved default.
+
+        "chat_defaults" when it is the saved one; otherwise "settings_draft"
+        beside a draft (Save writes it) and "navigation" in a linked form
+        nobody has edited. The draft pins both beside any edit, so an edit
+        elsewhere marks neither (captures 03 and 04).
+        """
+        saved = getattr(resolve_effective_provider_model(self._chat_defaults()), key)
+        normal = provider_config_key if key == "provider" else str.strip
+        if normal(str(shown or "")) == normal(str(saved or "")):
+            return "chat_defaults"
+        return "settings_draft" if self._provider_draft() is not None else "navigation"
 
     def _provider_loaded_setting_values(self) -> dict[str, object]:
         resolved = resolve_effective_provider_model(self._chat_defaults())
@@ -13681,8 +13685,16 @@ class SettingsScreen(BaseAppScreen):
                 for draft_key, name in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
             },
         }
+        # A linked form's pin is not the saved pair, and Save writes it.
+        pinned = {
+            key
+            for key in ("provider", "model")
+            if key in draft.values
+            and self._provider_selection_source(key, draft.values[key])
+            != "chat_defaults"
+        }
         names: list[str] = []
-        for key in sorted(draft.dirty_keys):
+        for key in sorted(draft.dirty_keys | pinned):
             label = labels.get(key)
             if label is None and key.startswith("provider_api_mode:"):
                 label = "API mode"

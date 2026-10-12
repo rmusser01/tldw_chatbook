@@ -57,6 +57,8 @@ def _screen(
         # R1 #18: nothing saved is not a "new-chat default".
         ("chat_defaults", "", "not set"),
         ("chat_defaults", None, "not set"),
+        # Fix round 1 (finding 5): a linked form's pair is not the default.
+        ("navigation", "anthropic", "not the default"),
     ],
 )
 def test_provider_and_model_rows_say_where_the_shown_value_comes_from(
@@ -65,9 +67,15 @@ def test_provider_and_model_rows_say_where_the_shown_value_comes_from(
     assert card.selection_source_word(source, value) == word
 
 
-def test_the_selection_words_are_the_two_sources_settings_hands_the_rows():
-    """R1 #18: "this chat" and "built-in" could never be shown here."""
-    assert set(card.SELECTION_SOURCE_WORDS) == {"settings_draft", "chat_defaults"}
+def test_the_selection_words_are_the_three_sources_settings_hands_the_rows():
+    """R1 #18: "this chat" and "built-in" could never be shown here. Fix
+    round 1 (finding 5), rewritten on purpose: a linked form nobody has
+    edited is the third source (``_provider_selection_source``)."""
+    assert set(card.SELECTION_SOURCE_WORDS) == {
+        "settings_draft",
+        "chat_defaults",
+        "navigation",
+    }
     assert card.SELECTION_SOURCE_WORDS["settings_draft"] == _EDITED
 
 

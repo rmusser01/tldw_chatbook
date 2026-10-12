@@ -145,7 +145,7 @@ _BUDGETS: dict[str, int] = {
     # quit summary's single-writer save and its Inspector guide (C8), the
     # staged credential source behind the Key check row, the deep link's
     # first edit (C1) and Save selected's own worker group and lock (C9).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33869,
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33881,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -165,7 +165,7 @@ _BUDGETS: dict[str, int] = {
     # fixes (2026-10-11) re-pin it at the integrated head's 2,371: the API
     # key row follows an unsaved Env var edit and its sentences fit one line
     # (R1 #10, #11), with the Source words as named constants (C3, C4).
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2371,
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2369,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 722,

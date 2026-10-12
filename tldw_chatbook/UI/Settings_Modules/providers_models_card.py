@@ -116,12 +116,13 @@ if TYPE_CHECKING:
 
 
 #: TASK-33007.2: the Provider and Model rows' Source words (spec §6 row
-#: grammar). Settings hands the rows two sources: "settings_draft" for a
-#: field the draft changed and "chat_defaults" for everything else
-#: (``_resolve_provider_model_for_settings``).
+#: grammar), by how the shown value stands against the saved default
+#: (``_provider_selection_source``): the saved one, one a draft holds, or
+#: a linked form's that nobody has edited (Save has nothing to write yet).
 SELECTION_SOURCE_WORDS = {
     "settings_draft": EDITED,
     "chat_defaults": "new-chat default",
+    "navigation": "not the default",
 }
 #: C3: a value read from config, on every row that shows one. It fits the
 #: Source column (16 cells at 211x44).
@@ -499,8 +500,9 @@ def selection_source_word(source: object, value: object) -> str:
         value: The provider or model shown.
 
     Returns:
-        "edited *" for a staged change; otherwise "new-chat default", or
-        "not set" when config holds none.
+        "edited *" for a staged change, "not the default" for a linked
+        form's value; otherwise "new-chat default", or "not set" when config
+        holds none.
     """
     if source != "settings_draft" and not str(value or "").strip():
         return NOT_SET
@@ -877,16 +879,12 @@ def refresh_connect_rows(screen: SettingsScreen, provider: str, endpoint: str) -
         provider: The provider the form holds.
         endpoint: The Endpoint field's value.
     """
-    resolved = screen._resolve_provider_model_for_settings()
     sync_provider_control(screen)
-    screen._set_static_text(
-        "#settings-provider-source",
-        selection_source_word(resolved.provider_source, provider),
-    )
-    screen._set_static_text(
-        "#settings-model-source",
-        selection_source_word(resolved.model_source, _shown_model(screen)),
-    )
+    for key, shown in (("provider", provider), ("model", _shown_model(screen))):
+        source = screen._provider_selection_source(key, shown)
+        screen._set_static_text(
+            f"#settings-{key}-source", selection_source_word(source, shown)
+        )
     try:
         env_var = screen.query_one("#settings-provider-credential-env-var", Input).value
     except QueryError:
@@ -1460,7 +1458,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             else (False, "")
         )
         screen.call_after_refresh(screen._update_guided_action_widgets)
-    resolved = screen._resolve_provider_model_for_settings()
+    source = screen._provider_selection_source
     values = screen._provider_display_setting_values()
     # An emptied field stages None, which must not be rebuilt as "None".
     provider = str(values["provider"] or "")
@@ -1501,7 +1499,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 select_on_focus=False,
             )
             yield Static(
-                selection_source_word(resolved.provider_source, provider),
+                selection_source_word(source("provider", provider), provider),
                 id="settings-provider-source",
                 classes="settings-source-word",
                 markup=False,
@@ -1851,7 +1849,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             model_picker.disabled = registry_locked
             yield model_picker
             yield Static(
-                selection_source_word(resolved.model_source, model),
+                selection_source_word(source("model", model), model),
                 id="settings-model-source",
                 classes="settings-source-word",
                 markup=False,

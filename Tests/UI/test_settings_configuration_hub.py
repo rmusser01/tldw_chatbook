@@ -12791,17 +12791,24 @@ def test_settings_source_labels_cover_every_resolvable_source():
     became the Provider and Model rows' Source words.
 
     Review of PR #3057 (R1 #18), rewritten on purpose: Settings resolves
-    with no Console arguments and `_resolve_provider_model_for_settings`
-    hands the rows "settings_draft" or "chat_defaults" only, so "this chat"
-    and "built-in" were words nothing could show ("default" is a key the
-    resolver never returns); an unknown key reads as the saved default.
+    with no Console arguments, so "this chat" and "built-in" were words
+    nothing could show ("default" is a key the resolver never returns); an
+    unknown key reads as the saved default.
+
+    Fix round 1 (finding 5), rewritten on purpose: the rows take their
+    source from `_provider_selection_source`, whose third answer is a linked
+    form nobody has edited ("navigation").
     """
     from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
         SELECTION_SOURCE_WORDS,
         selection_source_word,
     )
 
-    assert set(SELECTION_SOURCE_WORDS) == {"settings_draft", "chat_defaults"}
+    assert set(SELECTION_SOURCE_WORDS) == {
+        "settings_draft",
+        "chat_defaults",
+        "navigation",
+    }
     assert selection_source_word("console_session", "openai") == "new-chat default"
 
 
