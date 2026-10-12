@@ -337,3 +337,28 @@ settings-final-start-119-lint.json binds the exact unchanged119 diagnostic
 families; no inherited cleanup/exemption. Focused editor/rules-engine controls
 8pass2.40s; Dreams modal/new UI test Ruff clean. Pending complete affected source
 inventory and required lanes still gate whole Task1 completion.
+
+## Checkpoint: actual Guardian daily and first-chat native proof
+
+The daily proof now runs the real file-backed trend analyzer and grouped
+analysis/store/retention/watermark work, blocking an actual SQLite SELECT on
+its owned worker. The scheduler returns and the UI loop remains responsive;
+recovery drain refuses while that statement is admitted, then succeeds after
+settlement. Shutdown awaits the actual admitted analysis and suppresses later
+notification/retention/watermark work. Complete and resumed recovery paths
+persist the trend, prune the old alert, set the watermark, and deliver through
+a real UI-thread-created NotificationDispatchService/ClientNotificationsDB.
+Every captured worker connection is physically closed while that same worker
+is still alive, before natural process exit. No fake analyzer or notification
+store stands in for those boundaries.
+
+Native blank-Console notify/block cases now start from a real ConsoleChatStore
+and file-backed ChatPersistenceService with no chat. The captured chat is
+created before the actual Guardian match; switching to another native chat
+while matching is paused leaves the system message, alert and visit summary
+with the original nonempty chat. Provider dispatch is explicitly stopped by
+the existing blocked-reason seam. These are bounded local native proofs, not
+claims of a connected provider run. Final formatted two-file selection:
+`guardian-native-final`:10pass4.01s; Ruff passes. Earlier `guardian-blank-native`
+2pass1.75s and `guardian-actual-daily-native`3pass1.41s remain predecessor receipts.
+No product changes were needed for this qualification phase.
