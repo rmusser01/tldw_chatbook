@@ -38,7 +38,7 @@ _FAMILY = "family \U0001f468‍\U0001f469‍\U0001f467"
     [
         ("visit Japan", "visit Japan"),
         ("  jazz guitar  ", "jazz guitar"),
-        ("日本の祭り　2027", "日本の祭り　2027"),
+        ("\u65e5\u672c\u306e\u796d\u308a\u30002027", "\u65e5\u672c\u306e\u796d\u308a 2027"),
         ("x" * DREAMS_PROFILE_TEXT_MAX_LENGTH, "x" * DREAMS_PROFILE_TEXT_MAX_LENGTH),
         # Angle brackets, Rich-style brackets and braces are ordinary text.
         ("C++ <templates> and a<b comparisons", "C++ <templates> and a<b comparisons"),
@@ -63,8 +63,8 @@ _FAMILY = "family \U0001f468‍\U0001f469‍\U0001f467"
         # Combining marks: Arabic with harakat, Hebrew with niqqud.
         ("مُحَمَّد", "مُحَمَّد"),
         ("שָׁלוֹם", "שָׁלוֹם"),
-        # A no-break space INSIDE text is a space.
-        ("jazz guitar", "jazz guitar"),
+        # A no-break space INSIDE text is a space -- stored as one (N5).
+        ("jazz\u00a0guitar", "jazz guitar"),
     ],
 )
 def test_accepts_plain_text_and_returns_it_trimmed(value, expected):
@@ -213,7 +213,7 @@ def test_accepts_text_people_actually_type(value, expected):
         ("⠓⠑⠇⠇⠕⠀⠺⠕⠗⠇⠙",
          "⠓⠑⠇⠇⠕ ⠺⠕⠗⠇⠙"),
         ("jazzㅤguitar", "jazz guitar"),
-        ("  jazz ⠀ guitar  ", "jazz   guitar"),
+        ("  jazz \u2800 guitar  ", "jazz guitar"),
     ],
 )
 def test_harmless_invisible_characters_are_removed_not_refused(value, stored):
@@ -451,3 +451,37 @@ def test_a_huge_paste_is_still_refused_before_any_unicode_work(monkeypatch):
     for paste in ("x" * 5_000_000, "\u200b" * 5_000_000 + "x"):
         with pytest.raises(ValueError, match="longer than"):
             validate_dreams_profile_text(paste)
+
+
+# --- Review round 5, N5: one spacing, one topic -----------------------------------
+#
+# The removals and the blank-to-space rewrite could leave runs of spaces:
+# "rust <ZWSP> tui" was stored as "rust  tui", and that and "rust tui" are
+# two topics under the exact (facet, text) key.
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "rust tui", "rust  tui", "rust \u200b tui", "rust\u00a0tui",
+        "rust\u3000tui", "rust \u2800 tui", "rust\u2003\u2003tui",
+        " rust\u202ftui ", "rust\u205f \u00a0 tui",
+    ],
+)
+def test_every_spacing_of_a_phrase_is_stored_as_one(value):
+    assert validate_dreams_profile_text(value) == "rust tui"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["rust\ttui", "rust\ntui", "rust\u2028tui", "rust\x1ctui"],
+)
+def test_collapsing_spaces_does_not_let_line_breaks_through(value):
+    with pytest.raises(ValueError, match="single line"):
+        validate_dreams_profile_text(value)
+
+
+def test_the_mongolian_vowel_separator_is_not_a_space():
+    """It is a format character shaping needs, not whitespace: kept."""
+    mongolian = "\u182e\u1823\u1829\u182d\u1823\u182f\u180e\u1820"
+    assert validate_dreams_profile_text(mongolian) == mongolian

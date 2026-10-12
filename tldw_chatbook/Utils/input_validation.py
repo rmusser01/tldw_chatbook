@@ -2000,8 +2000,9 @@ def validate_dreams_profile_text(value: object) -> str:
 
     Returns:
         The text to store: trimmed, without the removable invisible
-        characters, in NFC -- so a composed and a decomposed spelling of
-        the same phrase are one stored value.
+        characters, every run of spaces written as one space, in NFC --
+        so a composed and a decomposed spelling, and two spacings, of the
+        same phrase are one stored value.
 
     Raises:
         ValueError: If the value is not text, has nothing readable in it,
@@ -2049,6 +2050,13 @@ def validate_dreams_profile_text(value: object) -> str:
             readable = True
     if not readable:
         raise ValueError(_DREAMS_TEXT_NOTHING_READABLE)
+    # One spacing, one topic (round 5, N5): every run of spaces -- a
+    # no-break, ideographic or em space, or what is left where an
+    # invisible character was removed -- is stored as ONE ASCII space;
+    # "rust  tui" and "rust tui" were two topics under the exact key.
+    # Safe here: line breaks and controls were refused above, so only
+    # spaces are whitespace now.
+    text = " ".join(text.split())
     letters = sum(
         1 for char in text if not unicodedata.category(char).startswith("M"))
     if (letters > DREAMS_PROFILE_TEXT_MAX_LENGTH
