@@ -583,6 +583,7 @@ async def test_removed_setup_controls_ignore_delayed_catalog(stores):
         await pilot.pause()
         assert app.screen is modal
         assert modal._catalog_binding_id == req.binding.binding_id
+        assert modal.query_one("#goal-start").disabled
         assert not launches
 
 
