@@ -59,6 +59,24 @@ def _upstream_v15_database(path):
     with db.transaction() as conn:
         # Remove later feature shape as well as version rows: this fixture
         # must actually enter the v19/v20 upgrade path when reopened.
+        # v24 Goal triggers depend on wake tables that this v15 fixture removes.
+        conn.execute("DROP TRIGGER goal_launch_immutable")
+        for table in (
+            "goal_payload_reservations",
+            "goal_evidence",
+            "goal_checkpoints",
+            "goal_reports",
+            "goal_iterations",
+            "goal_waits",
+            "goal_runs",
+        ):
+            conn.execute(f"DROP TABLE {table}")
+        assert (
+            conn.execute(
+                "SELECT name FROM sqlite_master WHERE name GLOB 'goal_*'"
+            ).fetchall()
+            == []
+        )
         conn.execute("DROP TABLE agent_worktrees")
         conn.execute("ALTER TABLE agent_definitions DROP COLUMN max_wall_seconds")
         names = conn.execute(

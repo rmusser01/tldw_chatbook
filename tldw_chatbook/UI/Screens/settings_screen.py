@@ -64,13 +64,6 @@ from tldw_chatbook.UI.focus_ownership import (
 from ...Chat.console_runtime import ensure_console_runtime
 from ...Agents.agent_models import LOOP_DETECTION_N
 from ...Chat.Chat_Deps import ChatConfigurationError
-from .settings_goal_policy import (
-    GOAL_SETTING_DEFAULTS,
-    GOAL_SETTING_KEYS,
-    normalize_goal_setting,
-    compose_goal_policy,
-    sync_goal_policy,
-)
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
 from ...Canvas.limits import CanvasLimits
 from ...Chat.console_chat_controller import CapturePolicyMutationStatus
@@ -1517,7 +1510,6 @@ CONSOLE_BEHAVIOR_CHAT_DEFAULT_KEYS = frozenset(
     }
 )
 CONSOLE_BEHAVIOR_SAVE_ORDER = (
-    *GOAL_SETTING_KEYS,
     "collapse_large_pastes",
     "show_model_thinking",
     "thinking_history_policy_default",
@@ -7192,6 +7184,8 @@ class SettingsScreen(BaseAppScreen):
             ),
             "thinking_budget_tokens": self._loaded_console_default_thinking_budget_tokens(),
         }
+        from .settings_goal_policy import GOAL_SETTING_DEFAULTS
+
         agents = self._app_config_mapping().get("agents", {})
         values.update(
             {
@@ -7205,6 +7199,8 @@ class SettingsScreen(BaseAppScreen):
     @on(Input.Changed, ".settings-goal-policy")
     @on(Checkbox.Changed, "#settings-goal-runs-enabled")
     def _goal_policy_changed(self, event) -> None:
+        from .settings_goal_policy import normalize_goal_setting
+
         if getattr(self, "_syncing_goal_policy", False):
             return
         widget = event.control
@@ -19470,6 +19466,8 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _render_console_behavior_card(self, *, compact: bool = False) -> ComposeResult:
+        from .settings_goal_policy import compose_goal_policy
+
         # Keep the displayed choices and the apply baseline on the same policy.
         self._console_capture_policy = runtime_capture_policy()
         with Vertical(
@@ -32755,9 +32753,11 @@ class SettingsScreen(BaseAppScreen):
             return
 
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
+            from .settings_goal_policy import GOAL_SETTING_KEYS, normalize_goal_setting
+
             dirty_values = {
                 key: draft.values[key]
-                for key in CONSOLE_BEHAVIOR_SAVE_ORDER
+                for key in (*GOAL_SETTING_KEYS, *CONSOLE_BEHAVIOR_SAVE_ORDER)
                 if key in draft.dirty_keys
             }
             try:
@@ -34129,6 +34129,8 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _sync_console_behavior_widgets(self) -> None:
+        from .settings_goal_policy import sync_goal_policy
+
         sync_goal_policy(self)
         self._console_capture_policy = runtime_capture_policy()
         try:

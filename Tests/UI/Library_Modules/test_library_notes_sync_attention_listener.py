@@ -10,6 +10,7 @@ by ``Tests/UI/test_library_notes_sync_attention_listener.py``.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from types import SimpleNamespace
 
@@ -28,6 +29,9 @@ class _App:
         self._thread_id = threading.get_ident() if same_thread else -1
         self.timers: list[tuple[float, object]] = []
         self.marshalled: list[tuple[object, tuple[object, ...]]] = []
+
+    def _context(self):
+        return contextlib.nullcontext()
 
     def set_timer(self, delay: float, callback) -> None:
         self.timers.append((delay, callback))
@@ -196,3 +200,38 @@ def test_manage_sync_folders_rows_follow_a_publication_and_publish_only_a_change
     assert attention.refresh_manage_sync_folders_rows(host) is False
     assert elsewhere.calls == []
     assert attention.refresh_manage_sync_folders_rows(SimpleNamespace()) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("from_thread", [False, True])
+async def test_native_timer_publication_without_app_context_is_delivered(from_thread):
+    import asyncio
+    import contextvars
+
+    from textual._context import active_app
+    from textual.app import App
+
+    delivered = asyncio.Event()
+    app = App()
+    host = _Host(app)
+    host.run_worker = lambda *args, **kwargs: delivered.set()
+    listener = attention.LibraryNotesSyncAttentionListener(host)
+    async with app.run_test() as pilot:
+        before = active_app.get(None)
+        if from_thread:
+            await asyncio.to_thread(contextvars.Context().run, listener, object())
+        else:
+            contextvars.Context().run(listener, object())
+        assert active_app.get(None) is before
+        await asyncio.wait_for(delivered.wait(), timeout=2)
+        await pilot.pause()
+        assert listener._pending is False
+
+
+def test_shutdown_publication_cannot_start_another_timer():
+    app = _App()
+    app._exit = True
+    host = _Host(app)
+    attention.LibraryNotesSyncAttentionListener(host)(object())
+    assert app.timers == []
+    assert host.scheduled == []

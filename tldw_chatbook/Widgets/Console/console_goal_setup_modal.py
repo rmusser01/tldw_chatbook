@@ -52,19 +52,28 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
 
     def compose(self) -> ComposeResult:
         p = self.request.policy
-        with Vertical():
-            with VerticalScroll():
-                yield Label("Start a goal")
+        with Vertical(classes="goal-dialog-panel"):
+            with VerticalScroll(classes="goal-dialog-scroll"):
+                yield Label("Start a goal", classes="goal-dialog-text")
                 yield Static(
                     f"{self.request.provider.provider} / {self.request.provider.model}",
                     markup=False,
+                    classes="goal-dialog-text",
                 )
-                yield Label("Objective")
-                yield TextArea(self.request.objective, id="goal-objective")
-                yield Label("Success criteria")
-                yield TextArea(self.request.criteria, id="goal-criteria")
+                yield Label("Objective", classes="goal-dialog-text")
+                yield TextArea(
+                    self.request.objective,
+                    id="goal-objective",
+                    classes="goal-dialog-editor",
+                )
+                yield Label("Success criteria", classes="goal-dialog-text")
+                yield TextArea(
+                    self.request.criteria,
+                    id="goal-criteria",
+                    classes="goal-dialog-editor",
+                )
                 if self.bindings:
-                    yield Label("Project binding")
+                    yield Label("Project binding", classes="goal-dialog-text")
                     yield Select(
                         [
                             (b.locator + " (" + b.access + ")", b.binding_id)
@@ -75,7 +84,10 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                         id="goal-binding",
                     )
                     if any(b.access == "ro" for b in self.bindings):
-                        yield Label("Additional read-only sources (optional)")
+                        yield Label(
+                            "Additional read-only sources (optional)",
+                            classes="goal-dialog-text",
+                        )
                         yield SelectionList(
                             *[
                                 (b.locator, b.binding_id, False)
@@ -83,21 +95,33 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                                 if b.access == "ro"
                             ],
                             id="goal-sources",
+                            classes="goal-dialog-selections",
                         )
-                    yield Label("Tools (selection narrows existing permissions)")
+                    yield Label(
+                        "Tools (selection narrows existing permissions)",
+                        classes="goal-dialog-text",
+                    )
                     yield SelectionList(
                         *[
                             (t, t, t in self.request.tool_scope.catalog_tools)
                             for t in self.tool_ids
                         ],
                         id="goal-tools",
+                        classes="goal-dialog-selections",
                     )
-                    yield Label("Trusted validation skill (optional)")
+                    yield Label(
+                        "Trusted validation skill (optional)",
+                        classes="goal-dialog-text",
+                    )
                     yield Input(placeholder="Skill name", id="goal-skill")
-                    yield Label("Script path within the trusted skill")
+                    yield Label(
+                        "Script path within the trusted skill",
+                        classes="goal-dialog-text",
+                    )
                     yield Input(placeholder="scripts/check.py", id="goal-script")
                     yield Label(
-                        "Arguments (JSON array; include the project path explicitly)"
+                        "Arguments (JSON array; include the project path explicitly)",
+                        classes="goal-dialog-text",
                     )
                     yield Input(
                         "[]",
@@ -105,7 +129,8 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                         id="goal-arguments",
                     )
                     yield Label(
-                        "Checked input paths (JSON array, relative to the project)"
+                        "Checked input paths (JSON array, relative to the project)",
+                        classes="goal-dialog-text",
                     )
                     yield Input(
                         '["fixture.txt"]',
@@ -120,6 +145,7 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                     ),
                     id="goal-selected-tools",
                     markup=False,
+                    classes="goal-dialog-text",
                 )
                 yield Static(
                     "Selected checks: "
@@ -132,27 +158,33 @@ class ConsoleGoalSetupModal(ModalScreen[GoalSnapshot | None]):
                     ),
                     id="goal-selected-checks",
                     markup=False,
+                    classes="goal-dialog-text",
                 )
                 yield Static(
                     f"{p.iterations} iterations; {p.model_calls} model calls; {p.budget_tokens:,} budget tokens; {p.output_tokens:,} output tokens/call; {p.wall_seconds}s elapsed. Each iteration: {p.iteration_model_turns} turns, {p.iteration_steps} steps, {p.iteration_wall_seconds}s. Waits and pauses count after acceptance. Unknown usage stays reserved. Raising settings does not refill this goal.",
                     markup=False,
+                    classes="goal-dialog-text",
                 )
                 yield Static(
                     "File writes, glob and grep stay within the selected project. Selected read-only sources support fs_read/fs_list under existing permissions. Trusted CLI scripts run with the configured executor’s actual authority; the scratch directory is not an OS sandbox. Existing trust and approval rules still apply.",
                     markup=False,
+                    classes="goal-dialog-text",
                 )
                 yield Checkbox(
                     "Require human result review",
                     value=self.request.human_review_required,
                     id="goal-human-review",
                 )
-                yield Static("", id="goal-setup-error", markup=False)
-            with Horizontal():
-                yield Button("Cancel", id="goal-cancel")
+                yield Static(
+                    "", id="goal-setup-error", markup=False, classes="goal-dialog-text"
+                )
+            with Horizontal(classes="goal-dialog-actions"):
+                yield Button("Cancel", id="goal-cancel", classes="goal-dialog-action")
                 yield Button(
                     "Review launch" if self.configure else "Start",
                     id="goal-start",
                     variant="primary",
+                    classes="goal-dialog-action",
                 )
 
     @on(Select.Changed, "#goal-binding")

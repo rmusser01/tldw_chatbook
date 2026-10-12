@@ -434,12 +434,14 @@ class LibraryNotesSyncAttentionListener:
     def _arm(self, app: Any) -> None:
         """On the app thread: start the debounce once per burst."""
 
-        if self._pending:
+        if self._pending or getattr(app, "_exit", False):
             return
         self._pending = True
         set_timer = getattr(app, "set_timer", None)
         if callable(set_timer):
-            set_timer(STATUS_LISTENER_DEBOUNCE_SECONDS, self.fire)
+            # Same-thread runtime tasks can lack Textual's app context.
+            with app._context():
+                set_timer(STATUS_LISTENER_DEBOUNCE_SECONDS, self.fire)
         else:
             self.fire()
 
