@@ -296,5 +296,13 @@ Content),2pass. Corrected assertion inspects Text AND native Content spans;
 red-3:6 real failures/6positive controls2.79s. After repairs, green:24pass4.27s,
 including original rule-pane behavior. Unmatched closers no longer crash and
 all tested names have no style/action spans. Markup census checker passes with
-its original ratchet, one fewer pinned site. Test/RulesPane scoped Ruff clean.
+its original ratchet, one fewer pinned site. The subsequent Ruff command found one owned test ClassVar diagnostic and five
+existing RulesPane diagnostics; the earlier clean wording was premature and
+is corrected here. The test diagnostic is repaired; base attribution is bound
+separately below. No existing RulesPane cleanup is implied.
 No durable names are changed; no new ADR/schema/task is needed.
+
+`rules-pane-lint-start-control.json` binds the exact current and frozen private
+START9ab source hashes and identical five diagnostic code/message families
+(threeRUF012, ISC004, BLE001). New test now Ruff clean. No broad exemption or
+unrelated cleanup; the shared file's inherited diagnostics remain explicit.
