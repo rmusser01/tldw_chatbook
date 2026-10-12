@@ -1,7 +1,7 @@
 ---
 id: TASK-34657
 title: Expose structured source downloads and portable note exports
-status: In Progress
+status: Done
 created_date: 2026-10-07 03:19
 dependencies:
 - TASK-34653
@@ -13,7 +13,7 @@ labels:
 - structured-editing
 documentation:
 - /Users/macbook-dev/.codex/worktrees/structured-document-editing/tldw_chatbook/Docs/superpowers/plans/2026-09-27-structured-document-editors.md
-updated_date: 2026-10-12 09:05
+updated_date: 2026-10-12 09:33
 ---
 
 ## Description
@@ -24,10 +24,10 @@ Make source downloads and portable notes distinct and preserve language through 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Download source returns exact source with a matching known-mode extension; Export note returns a versioned portable envelope with source/language/metadata.
-- [ ] #2 Real action wiring uses the reviewed import/export builders and scoped authority without passing structured source through Markdown conversion.
-- [ ] #3 User guidance explains check/save separation, supported/refused constructs, limits and undo behavior; targeted action/static and source-byte controls are recorded.
-- [ ] #4 Relevant ADR assessment, scoped static/security evidence and completion documentation are recorded without hiding unfinished release gates.
+- [x] #1 Download source returns exact source with a matching known-mode extension; Export note returns a versioned portable envelope with source/language/metadata.
+- [x] #2 Real action wiring uses the reviewed import/export builders and scoped authority without passing structured source through Markdown conversion.
+- [x] #3 User guidance explains check/save separation, supported/refused constructs, limits and undo behavior; targeted action/static and source-byte controls are recorded.
+- [x] #4 Relevant ADR assessment, scoped static/security evidence and completion documentation are recorded without hiding unfinished release gates.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -49,13 +49,13 @@ Reason: direct source/portable action wiring and user guidance implement accepte
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented distinct Download source and Export note (.note.json) actions through complete Database Library session snapshots, existing transfer admission and native FileSave/path writer. Source writes UTF-8 bytes; portable output uses the existing tldw.note.v1 validator, retaining source/language/keywords. File Notes serializer/authority/excerpt paths are untouched. Added the structured editing guide and source/picker action controls. Existing ADR194 and server ADR065-069 govern; no new ADR is required.
 Verification: native visible action/picker 5 passed; affected action/builder 60 passed; focused F6/archive4+Canvas/pre-effect+token 40 passed. Strict new test checks pass; immutable-base Ruff228->226 and Bandit17->17 with no introduced findings; actual edited-region Black checks pass. Scoped mypy remains blocked by the unchanged Screen '# type:' comment (BASE11106); no whole-suite or physical TTY/File Notes download claim. Full report/evidence: .superpowers/sdd/2026-09-27-structured-document-editing/task-14-report.md. Self-review complete; keep In Progress and all AC/DoD unchecked for Root review.
+Independent Task14 review: Spec compliant / Approved, no Critical or Important findings. Root verified all543 durable artifact hashes and18 unit source hashes; additive formatter-label clarification preserves original records and verifies six actual base/head source pairs. Scope reconciliation: task-14-review-scope-resolution.md. Existing ADR194/065-069 apply; no new ADR. Non-pristine warnings, inherited native mypy barrier and stale writer description remain I5/final triage. Six inherited save scenarios, cross-application and physical/deployment release gates remain unfinished; this closes only the verified source/portable actions and guidance.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Distinct exact-source and portable-note actions are verified through complete Database Library captures and native FileSave bytes. Independent review approved; File Notes restrictions, inherited tooling and unfinished release gates remain explicit.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
