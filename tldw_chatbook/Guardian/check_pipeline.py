@@ -279,6 +279,7 @@ class GuardianChecker:
                 topic=str(rule.get("topic") or ""),
                 message_digest=digest,
                 ts=now_iso,
+                is_crisis=bool(rule.get("is_crisis")),
             )
             state = db.bump_escalation(rule_id, now=now_iso)
             self._arm_cooldown_if_escalated_block(db, rule, rule_id, state, now_iso)
@@ -367,7 +368,7 @@ class GuardianChecker:
 
         for outcome in outcomes:
             rule = outcome["rule_row"]
-            action = outcome["current_action"]
+            action = "notify" if rule.get("is_crisis") else outcome["current_action"]
             name = str(rule.get("name") or rule.get("topic") or "rule")
             if _ACTION_RANK.get(action, 0) > _ACTION_RANK.get(top_action, -1):
                 top_action = action
@@ -551,6 +552,7 @@ class GuardianChecker:
 
         rows = db.visit_alert_rows(visit_id)
         per_topic_counts: dict[str, int] = {}
+        is_crisis = any(notice.is_crisis for notice in trend_notices)
         escalated_rules: list[str] = []
         for row in rows:
             topic = str(row.get("topic") or "")
@@ -559,6 +561,7 @@ class GuardianChecker:
             # surfaced artifact, so it counts non-silent rules only.
             if str(row.get("display_mode") or "") != "silent_log":
                 per_topic_counts[topic] = per_topic_counts.get(topic, 0) + hits
+                is_crisis = is_crisis or bool(row.get("is_crisis", True))
             current = str(row.get("current_action") or "")
             base = str(row.get("rule_action") or "notify")
             if (
@@ -600,6 +603,7 @@ class GuardianChecker:
             "session_id": session_id,
             "visit_id": visit_id,
             "per_topic_counts": per_topic_counts,
+            "is_crisis": is_crisis,
             "escalated_rules": escalated_rules,
             "trend_notices": [
                 {
@@ -608,6 +612,7 @@ class GuardianChecker:
                     "label": notice.label,
                     "hits": notice.hits,
                     "message": notice.message,
+                    "is_crisis": notice.is_crisis,
                 }
                 for notice in trend_notices
             ],

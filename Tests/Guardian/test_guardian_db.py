@@ -279,10 +279,10 @@ def test_second_build_does_not_reseed(tmp_path):
         second.close()
 
 
-def test_schema_reports_version_1(db):
+def test_schema_reports_version_2(db):
     with db.connection() as conn:
         row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
-    assert int(row[0]) == 1
+    assert int(row[0]) == 2
 
 
 # ---------------------------------------------------------------------------

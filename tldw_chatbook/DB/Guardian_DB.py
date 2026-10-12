@@ -18,9 +18,10 @@ import json
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
+from functools import lru_cache
 from pathlib import Path
-from typing import Iterator, Union
 
 from loguru import logger
 
@@ -105,7 +106,7 @@ class GuardianDB(BaseDB):
     never again on reopen.
     """
 
-    _CURRENT_SCHEMA_VERSION = 1
+    _CURRENT_SCHEMA_VERSION = 2
     _WAL_SETUP_TIMEOUT_SECONDS = 5.0
     _LIVENESS_PING_IDLE_SECONDS = 30.0
 
@@ -193,7 +194,7 @@ class GuardianDB(BaseDB):
     )
 
     def __init__(
-        self, database_path: Union[str, Path], client_id: str | None = None
+        self, database_path: str | Path, client_id: str | None = None
     ) -> None:
         # Per-thread connections (DreamsDB trap): every ":memory:" connection
         # is its own empty database, so to_thread hops would see no schema.
@@ -203,9 +204,11 @@ class GuardianDB(BaseDB):
                 "across its per-thread connections"
             )
         self._thread_local = threading.local()
-        super().__init__(
-            database_path, client_id if client_id is not None else "default"
-        )
+        try:
+            super().__init__(database_path, client_id if client_id is not None else "default")
+        except BaseException:
+            self.close()
+            raise
 
     # ------------------------------------------------------------------
     # Connection handling (Dreams_DB idiom)
@@ -283,31 +286,55 @@ class GuardianDB(BaseDB):
     # Schema + seeding
     # ------------------------------------------------------------------
 
-    def _initialize_schema(self) -> None:
-        """Atomically initialize the Guardian schema (additive, idempotent).
+    @classmethod
+    @lru_cache(maxsize=2)
+    def _expected_schema(cls, version: int) -> tuple[str, ...]:
+        """Native catalog for the retained v1 DDL and additive v2 migration."""
+        with closing(sqlite3.connect(":memory:")) as connection:
+            connection.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)")
+            for statement in cls._SCHEMA_DDL:
+                connection.execute(statement)
+            if version == 2:
+                for statement in cls._migration_statements():
+                    connection.execute(statement)
+            return cls._schema_catalog(connection)
 
-        Seed rules ride the version 0 -> 1 transition only: a second build
-        finds version 1 already recorded and never re-seeds (pinned by
-        ``test_second_build_does_not_reseed``).
-        """
+    @staticmethod
+    def _schema_catalog(connection: sqlite3.Connection) -> tuple[str, ...]:
+        return tuple(" ".join(row[0].split()) for row in connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"))
+
+    @staticmethod
+    def _migration_statements() -> tuple[str, ...]:
+        path = Path(__file__).parent / "migrations/guardian_v1_to_v2_crisis_provenance.sql"
+        return tuple(part.strip() for part in path.read_text().split(";") if part.strip())
+
+    def _initialize_schema(self) -> None:
+        """Validate lineage before atomically initializing or migrating."""
         with self.transaction() as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS schema_version"
-                " (version INTEGER PRIMARY KEY NOT NULL)"
-            )
-            row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
-            current_version = int(row[0] or 0) if row is not None else 0
-            if current_version > self._CURRENT_SCHEMA_VERSION:
-                raise GuardianSchemaError("schema_too_new")
-            fresh_build = current_version == 0
-            for statement in self._SCHEMA_DDL:
-                conn.execute(statement)
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
-                (self._CURRENT_SCHEMA_VERSION,),
-            )
-            if fresh_build:
+            tables = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+            fresh = not tables
+            if fresh:
+                conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)")
+                for statement in self._SCHEMA_DDL:
+                    conn.execute(statement)
                 self._seed_defaults(conn)
+                version = 1
+            else:
+                if "schema_version" not in tables:
+                    raise GuardianSchemaError("schema_version_missing")
+                versions = conn.execute("SELECT version FROM schema_version").fetchall()
+                if len(versions) != 1 or type(versions[0][0]) is not int:
+                    raise GuardianSchemaError("schema_version_invalid")
+                version = versions[0][0]
+                if version not in (1, 2):
+                    raise GuardianSchemaError("schema_too_new" if version > 2 else "schema_version_invalid")
+                if self._schema_catalog(conn) != self._expected_schema(version):
+                    raise GuardianSchemaError("schema_lineage_mismatch")
+            if version == 1:
+                for statement in self._migration_statements():
+                    conn.execute(statement)
 
     @staticmethod
     def _seed_defaults(conn: sqlite3.Connection) -> None:
@@ -551,6 +578,7 @@ class GuardianDB(BaseDB):
         topic: str,
         message_digest: str,
         ts: str | None = None,
+        is_crisis: bool | None = None,
     ) -> int:
         """Insert one alert row; returns the new row id.
 
@@ -562,12 +590,17 @@ class GuardianDB(BaseDB):
         windows share one time base.
         """
         with self.transaction() as conn:
+            if is_crisis is None:
+                rule = conn.execute("SELECT is_crisis FROM guardian_rules WHERE id=?", (rule_id,)).fetchone()
+                classification = int(bool(rule[0])) if rule is not None else -1
+            else:
+                classification = int(bool(is_crisis))
             cursor = conn.execute(
                 "INSERT INTO guardian_alerts"
-                " (rule_id, session_id, visit_id, topic, message_digest, ts)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                " (rule_id, session_id, visit_id, topic, message_digest, ts, crisis_provenance)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (rule_id, session_id, visit_id, topic, message_digest,
-                 ts or _utc_now_iso()),
+                 ts or _utc_now_iso(), classification),
             )
             return int(cursor.lastrowid)
 
@@ -662,16 +695,17 @@ class GuardianDB(BaseDB):
         """
         with self.connection() as conn:
             rows = conn.execute(
-                "SELECT a.rule_id AS rule_id, r.topic AS topic,"
+                "SELECT a.rule_id AS rule_id, a.topic AS topic,"
                 " r.name AS name, r.display_mode AS display_mode,"
                 " r.action AS rule_action, s.current_action AS"
-                " current_action, COUNT(*) AS hits"
+                " current_action, COUNT(*) AS hits,"
+                " MAX(a.crisis_provenance != 0) AS is_crisis"
                 " FROM guardian_alerts a"
-                " JOIN guardian_rules r ON r.id = a.rule_id"
+                " LEFT JOIN guardian_rules r ON r.id = a.rule_id"
                 " LEFT JOIN guardian_escalation_state s"
                 " ON s.rule_id = a.rule_id"
-                " WHERE a.visit_id = ?"
-                " GROUP BY a.rule_id ORDER BY a.rule_id",
+                " WHERE a.visit_id = ? AND a.rule_id IS NOT NULL"
+                " GROUP BY a.rule_id, a.topic ORDER BY a.rule_id, a.topic",
                 (visit_id,),
             ).fetchall()
         return [dict(row) for row in rows]

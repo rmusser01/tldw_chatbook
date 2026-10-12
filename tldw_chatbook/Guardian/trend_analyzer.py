@@ -24,8 +24,8 @@ without a restart. Local analysis only: no LLM, no network, budget-free.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from . import settings as guardian_settings
@@ -54,6 +54,7 @@ class TrendNotice:
     topic: str
     hits: int
     message: str
+    is_crisis: bool = False
 
     @property
     def label(self) -> str:
@@ -100,23 +101,26 @@ def analyze(
         guardian_settings.guardian_setting("doomloop_hits_per_day", 20) or 20
     )
 
-    now_dt = _parse_iso(now) or datetime.now(timezone.utc)
+    now_dt = _parse_iso(now) or datetime.now(UTC)
     with guardian_db.connection() as conn:
         rows = conn.execute(
-            "SELECT topic, ts FROM guardian_alerts WHERE rule_id IS NOT NULL"
+            "SELECT topic, ts, crisis_provenance FROM guardian_alerts WHERE rule_id IS NOT NULL"
         ).fetchall()
 
     window_cutoff = now_dt - timedelta(days=window_days)
     window_counts: dict[str, int] = {}
     window_total = 0
+    crisis_topics: set[str] = set()
     per_day_counts: dict[tuple[str, date], int] = {}
     for row in rows:
         moment = _parse_iso(row["ts"])
         if moment is None:
             continue
         topic = str(row["topic"])
+        if row["crisis_provenance"] != 0:
+            crisis_topics.add(topic)
         day = (
-            moment.astimezone(timezone.utc).date()
+            moment.astimezone(UTC).date()
             if moment.tzinfo is not None
             else moment.date()
         )
@@ -171,6 +175,10 @@ def analyze(
 
     inserted: list[TrendNotice] = []
     for notice in detected:
+        if notice.topic in crisis_topics:
+            from .crisis_resources import render_crisis_block
+
+            notice = replace(notice, is_crisis=True, message=f"{notice.message}\n\n{render_crisis_block()}")
         if guardian_db.count_topic_alerts(notice.label, visit_id=visit_id) > 0:
             continue  # frequency cap: one notice per label per visit
         guardian_db.insert_alert(
@@ -179,6 +187,7 @@ def analyze(
             visit_id=visit_id,
             topic=notice.label,
             message_digest=hashlib.sha256(notice.label.encode()).hexdigest(),
+            is_crisis=notice.is_crisis,
             ts=now,
         )
         inserted.append(notice)
@@ -207,5 +216,5 @@ def _parse_iso(value: Any) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return parsed
