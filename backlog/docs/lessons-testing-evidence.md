@@ -19700,3 +19700,18 @@ Phase29 then proved a second lifetime error in the actual automatic collector lo
 ### PR3010: trusted recovery imports can acquire startup admission
 
 On 2026-10-12, all three hosted Eval recovery jobs failed the complete retained-definition rebackup case. The selected-import staging helper imported `Chat.response_rules.recovery`; Python executed `Chat.__init__`, reached runtime TLS/config initialization, and retained a process-lifetime startup lease. Isolated publication then waited on its own unbound holder. A complete actual-dev control passed, and a passive original-child trace identified the extra holder; importing test helpers in an earlier observer had contaminated that observer and was not valid causal evidence. Recovery helpers must live behind constructor-free installed DB recovery imports. Test populated/malformed candidates in fresh children as well as complete publication: ordinary pytest fixture imports already preload Chat/config and conceal this dependency regression. The fix preserves startup/admission ownership and original deadlines rather than releasing the holder or preloading runtime.
+## A call that can defer returns whether it ran; a test that ignores it acts on stale state (TASK-34789, PR #3091)
+
+TASK-34415 made `ChatScreen._sync_console_control_bar` defer when another thread holds a config lock: it schedules
+the same sync on a 0.2 s timer and returns False. Fifteen test call sites called it, ignored the result, and then
+pressed a control or read the rendered control bar with no await long enough for that timer. On a loaded UI Fast Lane
+runner a background config write held the lock at that moment: Send was still in its mount-time disabled state,
+`Button.press()` on a disabled button silently does nothing, and
+`test_console_poll_outlives_a_turn_the_controller_has_not_started` failed 10 s later at
+`asyncio.wait_for(entered.wait(), 10)` (runs 38064483856 and 38068440232) with a bare TimeoutError that named
+neither the lock nor the button.
+
+**What to do.** When a method returns whether it did its work, a test that relies on the work asserts the result, or
+makes the condition impossible (here: a shared helper that holds both config locks, which are reentrant, and asserts
+True). Grep every call site that drops the result before trusting one; only the ones followed by a press, a click or
+an assertion on what it renders are exposed.
