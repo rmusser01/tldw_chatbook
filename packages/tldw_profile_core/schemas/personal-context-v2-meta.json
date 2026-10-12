@@ -1,0 +1,113 @@
+{
+  "$dynamicAnchor": "meta",
+  "$id": "urn:tldw:profile-core:json-schema:dialect:2",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$vocabulary": {
+    "https://json-schema.org/draft/2020-12/vocab/applicator": true,
+    "https://json-schema.org/draft/2020-12/vocab/content": true,
+    "https://json-schema.org/draft/2020-12/vocab/core": true,
+    "https://json-schema.org/draft/2020-12/vocab/format-annotation": true,
+    "https://json-schema.org/draft/2020-12/vocab/meta-data": true,
+    "https://json-schema.org/draft/2020-12/vocab/unevaluated": true,
+    "https://json-schema.org/draft/2020-12/vocab/validation": true,
+    "urn:tldw:profile-core:json-schema:vocabulary:semantic:2": true
+  },
+  "allOf": [
+    {
+      "$ref": "https://json-schema.org/draft/2020-12/schema"
+    },
+    {
+      "if": {
+        "properties": {
+          "$schema": {
+            "const": "urn:tldw:profile-core:json-schema:dialect:2"
+          }
+        },
+        "required": [
+          "$schema"
+        ]
+      },
+      "then": {
+        "required": [
+          "x-tldw-profile-semantics"
+        ]
+      }
+    }
+  ],
+  "description": "Structural Draft 2020-12 plus mandatory complete V2 semantic processing; no native capability attestation.",
+  "properties": {
+    "x-tldw-profile-semantics": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregateRules": {
+          "const": "profile-aggregates-v2"
+        },
+        "attributionRules": {
+          "const": "claim-attribution-v2"
+        },
+        "bindingProjection": {
+          "const": "owner-version-evidence-binding-v1"
+        },
+        "canonicalClaimMaxUtf8Bytes": {
+          "const": 16384
+        },
+        "canonicalDateTime": {
+          "const": "utc-milliseconds-v1"
+        },
+        "canonicalManifestMaxUtf8Bytes": {
+          "const": 16384
+        },
+        "canonicalPayloadMaxUtf8Bytes": {
+          "const": 16384
+        },
+        "canonicalProposalMaxUtf8Bytes": {
+          "const": 98304
+        },
+        "canonicalRecordMaxUtf8Bytes": {
+          "const": 65536
+        },
+        "canonicalization": {
+          "const": "rfc8785-v1"
+        },
+        "claimProjection": {
+          "const": "profile-claim-v2"
+        },
+        "disclosureRules": {
+          "const": "profile-disclosure-ceiling-v2"
+        },
+        "iJsonMaxSafeInteger": {
+          "const": 9007199254740991
+        },
+        "manifestRequirements": {
+          "const": "profile-context-requirements-v2"
+        },
+        "pendingProposalExpiryDays": {
+          "const": 90
+        },
+        "temporalRelations": {
+          "const": "profile-relations-v2"
+        }
+      },
+      "required": [
+        "canonicalization",
+        "canonicalDateTime",
+        "iJsonMaxSafeInteger",
+        "canonicalPayloadMaxUtf8Bytes",
+        "canonicalClaimMaxUtf8Bytes",
+        "canonicalRecordMaxUtf8Bytes",
+        "canonicalProposalMaxUtf8Bytes",
+        "canonicalManifestMaxUtf8Bytes",
+        "pendingProposalExpiryDays",
+        "aggregateRules",
+        "claimProjection",
+        "bindingProjection",
+        "attributionRules",
+        "temporalRelations",
+        "disclosureRules",
+        "manifestRequirements"
+      ],
+      "type": "object"
+    }
+  },
+  "title": "tldw Personal Context Profile v2 required semantic dialect"
+}
