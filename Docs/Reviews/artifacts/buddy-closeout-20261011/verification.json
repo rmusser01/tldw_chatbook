@@ -22,7 +22,8 @@
     "Tests/Character_Chat/test_character_generation_controller.py": "bceb08246a402991613aae68c0ac22ca324959b59c6e793181e2d73ac98b8021",
     "Tests/UI/test_personas_generation_wiring.py": "09805dd9660e74e6074a6b78a0ac46d728562094fbe7e5afa34a4641e34f67f3",
     "Tests/UI/test_console_runtime_ownership.py": "254a05f2b09630956388f2afe8202c0392d83c097640d2b5f4929aa4f53ba0d0",
-    "Tests/UI/test_actor_pack_export_ownership.py": "cc6315506b48fdd4bfd476deb5cd4a7778b953950d30e4250dfe9e7ab87547ee"
+    "Tests/UI/test_actor_pack_export_ownership.py": "cc6315506b48fdd4bfd476deb5cd4a7778b953950d30e4250dfe9e7ab87547ee",
+    "Tests/UI/test_library_notes_sync_delete_restore.py": "d3871d3cfd023dc492bd85b85588fc121f162704b7b20ce6f819e7b2694df0f4"
   },
   "runs": [
     {
@@ -291,9 +292,44 @@
       ],
       "junit_sha256": "dd489940dd727b700452075e133770b5ecd8214ec1bf71b05569ffddb13835a0",
       "log_sha256": "76da46bb55fe260aba1348f3e8a8e760256ec749c35acc5645c90ef6367fed38"
+    },
+    {
+      "name": "library-real-prune-green",
+      "command_cwd": "/Users/macbook-dev/.codex/worktrees/buddy-task-burndown/tldw_chatbook",
+      "python_binary": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "command": "env PYTHONPATH=/private/tmp:. BUDDY_FOLDER_DIAG_MODE=real_prune_handoff PYTHONDONTWRITEBYTECODE=1 python -m pytest 'Tests/UI/test_library_notes_sync_delete_restore.py::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[False]' -p buddy_folder_diagnostic -q --tb=short --junitxml=/private/tmp/buddy-library-prune-green-20261011.xml",
+      "exit": 0,
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 12.436,
+      "test_identities": [
+        "Tests.UI.test_library_notes_sync_delete_restore::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[False]"
+      ],
+      "junit_sha256": "766e2d6348e4b9a0c42d59004ca9972df5bf65fb6c29e99f73924e970a925004",
+      "log_sha256": "a6013aab8c61ab15195585be85e59ae7da8bb9968ae980566d8c093022469149"
+    },
+    {
+      "name": "library-original-journeys-green",
+      "command_cwd": "/Users/macbook-dev/.codex/worktrees/buddy-task-burndown/tldw_chatbook",
+      "python_binary": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "command": "env PYTHONDONTWRITEBYTECODE=1 python -m pytest Tests/UI/test_library_notes_sync_delete_restore.py -q --tb=short --junitxml=/private/tmp/buddy-library-handoff-green-20261011.xml",
+      "exit": 0,
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 16.768,
+      "test_identities": [
+        "Tests.UI.test_library_notes_sync_delete_restore::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[False]",
+        "Tests.UI.test_library_notes_sync_delete_restore::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[True]"
+      ],
+      "junit_sha256": "d913fd5b68f7630ffa54c41b67af4f0084c04bcf00985490768e98fcdefd0eca",
+      "log_sha256": "3f58b68c51cea2c768d2b2a72cb7a5f3e05438014cf28abd144f9b0e64e81dc4"
     }
   ],
-  "unique_passing_test_identities": 159,
+  "unique_passing_test_identities": 161,
   "controls": [
     {
       "name": "controller-red",
@@ -439,7 +475,7 @@
     "Tests/Character_Chat/test_character_generation_controller.py": "bceb08246a402991613aae68c0ac22ca324959b59c6e793181e2d73ac98b8021",
     "Tests/UI/test_personas_generation_wiring.py": "09805dd9660e74e6074a6b78a0ac46d728562094fbe7e5afa34a4641e34f67f3"
   },
-  "unique_passing_repository_test_identities": 158,
+  "unique_passing_repository_test_identities": 160,
   "default_factory_selfcheck": {
     "source": "from types import SimpleNamespace\nimport pytest\n\npytestmark = pytest.mark.bootstrap_profile\n\ndef test_deferred_default_controller_constructs():\n    from tldw_chatbook.UI.Screens.personas_screen import PersonasScreen\n    from tldw_chatbook.Character_Chat.character_generation_controller import CharacterGenerationController\n    host = SimpleNamespace(preview=SimpleNamespace(ensure_gateway=lambda: None), app_instance=SimpleNamespace(app_config={}))\n    controller = PersonasScreen._character_generation_controller(host)\n    assert isinstance(controller, CharacterGenerationController)\n    assert callable(controller._runner)\n    injected = object()\n    host._generation_controller_override = injected\n    assert PersonasScreen._character_generation_controller(host) is injected\n",
     "source_sha256": "7ab5efcfb483744797c3fb08e8e5ecbe3de925abbf811d3181169b539769bfaa",
@@ -637,5 +673,384 @@
       }
     },
     "independent_review": "Independent code/protocol and final receipt review completed with no findings. Source/result hashes, original assertions, controls and aggregate counts verified."
+  },
+  "ci_library_handoff": {
+    "tested_base": "ac8f1d836f754c7c80334bb874c57ac7879b7888",
+    "failed_head": "ac8f1d836f754c7c80334bb874c57ac7879b7888",
+    "failed_job_url": "https://github.com/rmusser01/tldw_chatbook/actions/runs/38188524633/job/114616021261",
+    "failure_log_sha256": "11ddfb2b71b3e345d84d696bee28da0da40ff841c1bf50fa38d51d45dd1c3d57",
+    "derived_failure": "Aggregate Require successful UI fast lane; no separate derived-source failure.",
+    "derived_log_sha256": "e39b85de614e02689525dc68e11db77fe4a6f22aaaf085eedcadbda0b50c3201",
+    "repair": "One await pilot.pause() after exact folder-1 readiness, before the existing fresh identity query and press; follows _wait_for_selector settling. Production, all original assertions and timeout constants remain unchanged.",
+    "control_mechanism": "Actual NotesCanvas recompose; existing library-notes-list native on_prune paused100ms; unmodified exact-folder test helper.",
+    "red": {
+      "terminal_exit": 1,
+      "result": {
+        "tests": "1",
+        "failures": "1",
+        "errors": "0",
+        "skipped": "0"
+      },
+      "paths_sha256": {
+        "log": {
+          "path": "/private/tmp/buddy-folder-diagnostic-real_prune_handoff.log",
+          "sha256": "1896568061cdd01e9393d01db5582e01aaad7889849e5f2727f44282d4c78979"
+        },
+        "junit": {
+          "path": "/private/tmp/buddy-folder-diagnostic-real_prune_handoff.xml",
+          "sha256": "af9c4f9b89ca5ce8436d547b406797a527a362795b9cbf7f3d0834d00f1202be"
+        },
+        "events": {
+          "path": "/private/tmp/buddy-library-prune-red-events-20261011.json",
+          "sha256": "f57766437569c9b1a6cd6939a8604fe1f278101c164b128d02cf3a8c9ad2930c"
+        },
+        "source": {
+          "path": "/private/tmp/buddy-library-prune-control-20261011.py",
+          "sha256": "4358d95385ed9ad739791e287d7b52a1d9a2600d8d4eae5d5472564ad23fe964"
+        }
+      },
+      "mode": "real_prune_handoff",
+      "mechanism": "Actual NotesCanvas recompose; existing library-notes-list native on_prune paused100ms; unmodified exact-folder test helper.",
+      "press": {
+        "t": 6.705248,
+        "event": "folder_press",
+        "mounted": true,
+        "disabled": false,
+        "display": false,
+        "parent": "Vertical",
+        "closing": false,
+        "closed": false,
+        "pruning": true,
+        "button_id": 4820988128,
+        "ancestors": [
+          {
+            "type": "Vertical",
+            "id": "library-notes-list",
+            "display": false,
+            "mounted": true,
+            "closing": false,
+            "pruning": true,
+            "children_ready": null
+          },
+          {
+            "type": "LibraryNotesCanvas",
+            "id": "library-notes-canvas",
+            "display": true,
+            "mounted": true,
+            "closing": false,
+            "pruning": false,
+            "children_ready": false
+          },
+          {
+            "type": "Vertical",
+            "id": "library-canvas",
+            "display": true,
+            "mounted": true,
+            "closing": false,
+            "pruning": false,
+            "children_ready": null
+          },
+          {
+            "type": "LibraryBrowseReaderShell",
+            "id": "library-browse-reader-shell",
+            "display": true,
+            "mounted": true,
+            "closing": false,
+            "pruning": false,
+            "children_ready": null
+          },
+          {
+            "type": "Horizontal",
+            "id": "library-shell-grid",
+            "display": true,
+            "mounted": true,
+            "closing": false,
+            "pruning": false,
+            "children_ready": null
+          },
+          {
+            "type": "Container",
+            "id": "screen-content",
+            "display": true,
+            "mounted": true,
+            "closing": false,
+            "pruning": false,
+            "children_ready": null
+          },
+          {
+            "type": "LibraryScreen",
+            "id": null,
+            "display": true,
+            "mounted": true,
+            "closing": false,
+            "pruning": false,
+            "children_ready": null
+          },
+          {
+            "type": "TldwCli",
+            "id": null,
+            "display": true,
+            "mounted": "<bound method App.is_mounted of TldwCli(title='tldw chatbook', classes={'-dark-mode', '-wide-viewport'}, pseudo_classes={'dark', 'focus', 'nocolor'})>",
+            "closing": false,
+            "pruning": false,
+            "children_ready": null
+          }
+        ]
+      },
+      "processed_folder_events": 0,
+      "queued_folder_events": 0,
+      "final_note_wait": {
+        "t": 36.827453,
+        "event": "note_wait_end",
+        "state": {
+          "expanded": [],
+          "epoch": 1,
+          "lifecycle": 0,
+          "branches": [
+            {
+              "key": "NotesBranchKey(parent_id=None, slice_kind='folders')",
+              "loading": false,
+              "freshness": "fresh",
+              "generation": 1,
+              "topology_epoch": 1,
+              "item_ids": [
+                "folder:folder-1"
+              ],
+              "error": ""
+            },
+            {
+              "key": "NotesBranchKey(parent_id=None, slice_kind='placements')",
+              "loading": false,
+              "freshness": "fresh",
+              "generation": 1,
+              "topology_epoch": 1,
+              "item_ids": [],
+              "error": ""
+            }
+          ],
+          "workers": [
+            {
+              "name": "run",
+              "group": "scheduling",
+              "state": "WorkerState.RUNNING"
+            }
+          ]
+        },
+        "rows": [
+          {
+            "id": "library-notes-tree-folder-0",
+            "label": "\u25b8 VSync  \u21c4 Sync managed",
+            "mounted": true
+          }
+        ]
+      },
+      "excluded": "Initial observer threw AttributeError while reading controller.workers; that invalid result is excluded. Corrected observer and root-sibling-response ordering passed, so they establish no production response/epoch defect.",
+      "ci_limit": "This reproduces the original assertion and proves helper susceptibility to real pruning rows; the CI failed attempt lacks lifecycle state, so its exact schedule remains unobserved."
+    },
+    "green_result": {
+      "name": "library-real-prune-green",
+      "command_cwd": "/Users/macbook-dev/.codex/worktrees/buddy-task-burndown/tldw_chatbook",
+      "python_binary": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "command": "env PYTHONPATH=/private/tmp:. BUDDY_FOLDER_DIAG_MODE=real_prune_handoff PYTHONDONTWRITEBYTECODE=1 python -m pytest 'Tests/UI/test_library_notes_sync_delete_restore.py::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[False]' -p buddy_folder_diagnostic -q --tb=short --junitxml=/private/tmp/buddy-library-prune-green-20261011.xml",
+      "exit": 0,
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 12.436,
+      "test_identities": [
+        "Tests.UI.test_library_notes_sync_delete_restore::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[False]"
+      ],
+      "junit_sha256": "766e2d6348e4b9a0c42d59004ca9972df5bf65fb6c29e99f73924e970a925004",
+      "log_sha256": "a6013aab8c61ab15195585be85e59ae7da8bb9968ae980566d8c093022469149"
+    },
+    "green_first_folder_press": {
+      "t": 9.236552,
+      "event": "folder_press",
+      "mounted": true,
+      "disabled": false,
+      "display": true,
+      "parent": "Vertical",
+      "closing": false,
+      "closed": false,
+      "pruning": false,
+      "button_id": 4876951408,
+      "ancestors": [
+        {
+          "type": "Vertical",
+          "id": "library-notes-list",
+          "display": true,
+          "mounted": true,
+          "closing": false,
+          "pruning": false,
+          "children_ready": null
+        },
+        {
+          "type": "LibraryNotesCanvas",
+          "id": "library-notes-canvas",
+          "display": true,
+          "mounted": true,
+          "closing": false,
+          "pruning": false,
+          "children_ready": true
+        },
+        {
+          "type": "Vertical",
+          "id": "library-canvas",
+          "display": true,
+          "mounted": true,
+          "closing": false,
+          "pruning": false,
+          "children_ready": null
+        },
+        {
+          "type": "LibraryBrowseReaderShell",
+          "id": "library-browse-reader-shell",
+          "display": true,
+          "mounted": true,
+          "closing": false,
+          "pruning": false,
+          "children_ready": null
+        },
+        {
+          "type": "Horizontal",
+          "id": "library-shell-grid",
+          "display": true,
+          "mounted": true,
+          "closing": false,
+          "pruning": false,
+          "children_ready": null
+        },
+        {
+          "type": "Container",
+          "id": "screen-content",
+          "display": true,
+          "mounted": true,
+          "closing": false,
+          "pruning": false,
+          "children_ready": null
+        },
+        {
+          "type": "LibraryScreen",
+          "id": null,
+          "display": true,
+          "mounted": true,
+          "closing": false,
+          "pruning": false,
+          "children_ready": null
+        },
+        {
+          "type": "TldwCli",
+          "id": null,
+          "display": true,
+          "mounted": "<bound method App.is_mounted of TldwCli(title='tldw chatbook', classes={'-wide-viewport', '-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'})>",
+          "closing": false,
+          "pruning": false,
+          "children_ready": null
+        }
+      ]
+    },
+    "original_two_case_result": {
+      "name": "library-original-journeys-green",
+      "command_cwd": "/Users/macbook-dev/.codex/worktrees/buddy-task-burndown/tldw_chatbook",
+      "python_binary": "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "command": "env PYTHONDONTWRITEBYTECODE=1 python -m pytest Tests/UI/test_library_notes_sync_delete_restore.py -q --tb=short --junitxml=/private/tmp/buddy-library-handoff-green-20261011.xml",
+      "exit": 0,
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "duration_seconds": 16.768,
+      "test_identities": [
+        "Tests.UI.test_library_notes_sync_delete_restore::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[False]",
+        "Tests.UI.test_library_notes_sync_delete_restore::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[True]"
+      ],
+      "junit_sha256": "d913fd5b68f7630ffa54c41b67af4f0084c04bcf00985490768e98fcdefd0eca",
+      "log_sha256": "3f58b68c51cea2c768d2b2a72cb7a5f3e05438014cf28abd144f9b0e64e81dc4"
+    },
+    "static": {
+      "base": "ac8f1d836f754c7c80334bb874c57ac7879b7888",
+      "path": "Tests/UI/test_library_notes_sync_delete_restore.py",
+      "source_sha256": "d3871d3cfd023dc492bd85b85588fc121f162704b7b20ce6f819e7b2694df0f4",
+      "whole_module_ast_unchanged_except_single_pilot_pause": true,
+      "original_assertions_and_timeout_constants_unchanged": true,
+      "ruff_baseline": 0,
+      "ruff_current": 0,
+      "introduced_ruff": 0,
+      "bandit_baseline": 16,
+      "bandit_current": 16,
+      "introduced_bandit": 0,
+      "formatter_base_exit": 0,
+      "formatter_current_exit": 0,
+      "compile": "passed",
+      "whitespace": "passed"
+    },
+    "artifacts": {
+      "control.py": {
+        "path": "Docs/Reviews/artifacts/buddy-closeout-20261011/library-handoff/control.py",
+        "raw_path": "/private/tmp/buddy-library-prune-control-20261011.py",
+        "decoded_sha256": "4358d95385ed9ad739791e287d7b52a1d9a2600d8d4eae5d5472564ad23fe964",
+        "stored_sha256": "4358d95385ed9ad739791e287d7b52a1d9a2600d8d4eae5d5472564ad23fe964",
+        "encoding": "unchanged bytes"
+      },
+      "prune-red.log.gz": {
+        "path": "Docs/Reviews/artifacts/buddy-closeout-20261011/library-handoff/prune-red.log.gz",
+        "raw_path": "/private/tmp/buddy-folder-diagnostic-real_prune_handoff.log",
+        "decoded_sha256": "1896568061cdd01e9393d01db5582e01aaad7889849e5f2727f44282d4c78979",
+        "stored_sha256": "ab8e35bee63ef47024d2c7027d3dfb7af300e0d92202a4c9a6820bc797e18d5c",
+        "encoding": "gzip (mtime=0)"
+      },
+      "prune-red.xml.gz": {
+        "path": "Docs/Reviews/artifacts/buddy-closeout-20261011/library-handoff/prune-red.xml.gz",
+        "raw_path": "/private/tmp/buddy-folder-diagnostic-real_prune_handoff.xml",
+        "decoded_sha256": "af9c4f9b89ca5ce8436d547b406797a527a362795b9cbf7f3d0834d00f1202be",
+        "stored_sha256": "71606b41e274f1bd3f56afa4475fc4d770ab6d0e2a9a394d67d94bed8ee5f498",
+        "encoding": "gzip (mtime=0)"
+      },
+      "prune-red.events.json.gz": {
+        "path": "Docs/Reviews/artifacts/buddy-closeout-20261011/library-handoff/prune-red.events.json.gz",
+        "raw_path": "/private/tmp/buddy-library-prune-red-events-20261011.json",
+        "decoded_sha256": "f57766437569c9b1a6cd6939a8604fe1f278101c164b128d02cf3a8c9ad2930c",
+        "stored_sha256": "6e781773e0c7ffdb6cbf2391ead7612a4879dbfe2e7bb6fe39e64001d700d79e",
+        "encoding": "gzip (mtime=0)"
+      },
+      "prune-green.log.gz": {
+        "path": "Docs/Reviews/artifacts/buddy-closeout-20261011/library-handoff/prune-green.log.gz",
+        "raw_path": "/private/tmp/buddy-library-prune-green-20261011.log",
+        "decoded_sha256": "a6013aab8c61ab15195585be85e59ae7da8bb9968ae980566d8c093022469149",
+        "stored_sha256": "376706c019f567a417fb62f5dc6779bc5d41cd01593236f6b156de2acea1ab5f",
+        "encoding": "gzip (mtime=0)"
+      },
+      "prune-green.xml.gz": {
+        "path": "Docs/Reviews/artifacts/buddy-closeout-20261011/library-handoff/prune-green.xml.gz",
+        "raw_path": "/private/tmp/buddy-library-prune-green-20261011.xml",
+        "decoded_sha256": "766e2d6348e4b9a0c42d59004ca9972df5bf65fb6c29e99f73924e970a925004",
+        "stored_sha256": "cadd7d822c1e29c25fbf7892f356341cbfb7136b512206e0ca9f886066b5755d",
+        "encoding": "gzip (mtime=0)"
+      },
+      "prune-green.events.json.gz": {
+        "path": "Docs/Reviews/artifacts/buddy-closeout-20261011/library-handoff/prune-green.events.json.gz",
+        "raw_path": "/private/tmp/buddy-library-prune-green-events-20261011.json",
+        "decoded_sha256": "99cef5be1f0a519658d222c28744a7f88ccc07e2586e4646b73ff55d41918958",
+        "stored_sha256": "9aea6e2ebde033addeff1fa40b40fd6d49c0567566b51dbfb55c1742f0dcb7fb",
+        "encoding": "gzip (mtime=0)"
+      },
+      "journey-green.log.gz": {
+        "path": "Docs/Reviews/artifacts/buddy-closeout-20261011/library-handoff/journey-green.log.gz",
+        "raw_path": "/private/tmp/buddy-library-handoff-green-20261011.log",
+        "decoded_sha256": "3f58b68c51cea2c768d2b2a72cb7a5f3e05438014cf28abd144f9b0e64e81dc4",
+        "stored_sha256": "22dc0659cb59229062f5a4d90f2915e91eafbde7de257693652a8750b92f129a",
+        "encoding": "gzip (mtime=0)"
+      },
+      "journey-green.xml.gz": {
+        "path": "Docs/Reviews/artifacts/buddy-closeout-20261011/library-handoff/journey-green.xml.gz",
+        "raw_path": "/private/tmp/buddy-library-handoff-green-20261011.xml",
+        "decoded_sha256": "d913fd5b68f7630ffa54c41b67af4f0084c04bcf00985490768e98fcdefd0eca",
+        "stored_sha256": "c51c49ddb1f8625ca48b554f523a04567d5e9f2c588961b0a9c1c657b3a7552d",
+        "encoding": "gzip (mtime=0)"
+      }
+    },
+    "causation_limit": "This reproduces the original assertion and proves helper susceptibility to real pruning rows; the CI failed attempt lacks lifecycle state, so its exact schedule remains unobserved.",
+    "independent_review": "Completed independent code and final evidence review: no findings. All nine stored/decoded artifacts and raw bytes, XML outcomes, original assertions, source/static hashes and 161=160+constructor union verified. Controlled-mechanism and unobserved-CI-schedule distinction retained."
   }
 }

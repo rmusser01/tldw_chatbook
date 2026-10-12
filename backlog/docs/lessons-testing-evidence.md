@@ -19554,6 +19554,17 @@ pause do not prove that a sibling slice has arrived. The 30-second budget,
 real service, storage and all original action assertions remain unchanged.
 Evidence: [retained controls and RED/GREEN](../../Docs/QA/task-34414/README.md).
 
+
+October 11 follow-up, PR3078: exact identity alone can still match a row in
+Textual's native prune window. Pausing the real list removal for 100 ms made
+the unchanged helper press a mounted but pruning, hidden VSync row; no event
+was posted and its original note-list wait expired. Settle pending recomposes
+after domain readiness, then re-query the current exact row and press without
+another yield. The same controlled lifecycle and both original Delete/Undo
+journeys pass. The CI schedule itself was not captured; this control proves
+the helper defect, not a historical request/epoch cause.
+Evidence: [Buddy closeout receipt](../../Docs/Reviews/artifacts/buddy-closeout-20261011/verification.json).
+
 ## A safe output wrapper cannot protect an earlier markup parse (PR #3040, TASK-1513)
 
 **Incident.** Post-merge review of f509ef52 found that the new markup guard
