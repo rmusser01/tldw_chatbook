@@ -60,7 +60,10 @@ from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
 )
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_native_chat_flow import (
+    _configure_native_ready_console,
+    _sync_console_control_bar_now,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -1047,7 +1050,7 @@ async def test_control_sync_shares_one_inspector_snapshot_with_both_consumers(
             ),
         )
 
-        screen._sync_console_control_bar()
+        _sync_console_control_bar_now(screen)
 
         assert builds == [snapshot]
         assert summary_states == [snapshot]
@@ -1107,7 +1110,7 @@ async def test_strict_inspector_rejection_keeps_authority_summary_at_prior_snaps
         )
 
         with pytest.raises(ownership.UnownedInspectorContentError):
-            screen._sync_console_control_bar()
+            _sync_console_control_bar_now(screen)
 
         assert summary.last_state is prior
 

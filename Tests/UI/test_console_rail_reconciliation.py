@@ -14,7 +14,10 @@ from textual.events import Click, MouseDown, MouseScrollDown, MouseScrollUp, Mou
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_console_native_chat_flow import (
+    _configure_native_ready_console,
+    _sync_console_control_bar_now,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -2113,7 +2116,7 @@ async def test_chat_screen_inspector_mutation_paths_delegate_one_owner_request(
                 "_build_console_inspector_state",
                 lambda _launch: state,
             )
-            screen._sync_console_control_bar(screen._current_console_rail_state())
+            _sync_console_control_bar_now(screen, screen._current_console_rail_state())
         await _settle(pilot, passes=10)
 
         assert "local" in events

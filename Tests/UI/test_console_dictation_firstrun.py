@@ -30,6 +30,7 @@ from Tests.UI.test_console_dictation import (
     _wait_for_mic_label,
 )
 from Tests.UI.test_console_dictation_streaming import _patch_availability
+from Tests.UI.test_console_native_chat_flow import _sync_console_control_bar_now
 from tldw_chatbook.Chat import console_voice_input as voice_module
 from tldw_chatbook.UI.Console_Modules import dictation as dictation_module
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -411,7 +412,7 @@ async def test_an_unrelated_ui_refresh_cannot_wipe_the_preparing_message(monkeyp
             await pilot.click("#console-dictation")
             before = await _wait_for_painted(chip, pilot, "speech model")
 
-            console._sync_console_control_bar()
+            _sync_console_control_bar_now(console)
             await pilot.pause()
 
             assert _painted(chip) == before

@@ -278,7 +278,7 @@ def _apply_mounted_console_provider_config(
             source="user",
         )
     )
-    console._sync_console_control_bar()
+    _sync_console_control_bar_now(console)
 
 
 def _configure_openai_missing_api_key(app, model: str = "gpt-4o") -> None:
@@ -4854,6 +4854,24 @@ async def _wait_for_workspace_switcher_modal(host: ConsoleHarness, pilot):
     raise AssertionError("Console workspace switcher modal did not open")
 
 
+def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object) -> None:
+    """Render the control bar before returning, whatever holds the config locks.
+
+    While another thread holds a config lock, ``_sync_console_control_bar``
+    defers to a 0.2s timer and returns False (TASK-34415). A test that then
+    presses a control or reads the rendered state, with no await long enough
+    for that timer, acts on the state from before the call (TASK-34789).
+    Holding both locks first (the sync's own order; they are reentrant) makes
+    it render now.
+
+    Args:
+        console: The mounted ChatScreen to render.
+        *rail_state: The optional pre-computed rail state the sync accepts.
+    """
+    with config_module._settings_rebuild_lock(), config_module._config_file_lock():
+        assert console._sync_console_control_bar(*rail_state)
+
+
 def _select_llamacpp_console(console: ChatScreen) -> None:
     """Select the native llama.cpp path after mounted controls initialize.
 
@@ -4891,13 +4909,9 @@ def _select_llamacpp_console(console: ChatScreen) -> None:
             source="user",
         )
     )
-    # While another thread holds a config lock the sync below defers to a
-    # 0.2s timer and returns False (TASK-34415): Send keeps its mount-time
-    # disabled state and the caller's next ``press()`` is a silent no-op.
-    # Holding both locks first (the sync's own order; they are reentrant)
-    # makes it render before this helper returns (TASK-34789).
-    with config_module._settings_rebuild_lock(), config_module._config_file_lock():
-        assert console._sync_console_control_bar()
+    # Callers load a draft and press Send next: a deferred sync would leave
+    # Send in its mount-time disabled state and make that press a no-op.
+    _sync_console_control_bar_now(console)
 
 
 @pytest.mark.asyncio
@@ -5938,7 +5952,7 @@ async def test_console_streaming_chunks_render_after_slow_provider_validation():
             console._ensure_console_chat_controller().run_state.status
             is ConsoleRunStatus.VALIDATING
         )
-        console._sync_console_control_bar()
+        _sync_console_control_bar_now(console)
         send_button = console.query_one("#console-send-message", Button)
         stop_button = console.query_one("#console-stop-generation", Button)
 
@@ -14400,7 +14414,7 @@ async def test_clear_attachment_button_resyncs_composer_blocked_state(monkeypatc
         # Mirror the sync `_process_console_attachment` performs right after
         # staging, so the composer starts in the same blocked state a real
         # attach would leave behind.
-        console._sync_console_control_bar()
+        _sync_console_control_bar_now(console)
         await pilot.pause()
 
         send_button = console.query_one("#console-send-message", Button)

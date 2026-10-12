@@ -13,6 +13,7 @@ from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_console_native_chat_flow import (
     ConsoleNavigationHarness,
     _ReadyResolutionGateway,
+    _sync_console_control_bar_now,
 )
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
@@ -1658,7 +1659,7 @@ async def test_console_workbench_send_action_disables_during_active_run():
                 "Streaming response.",
             )
         )
-        console._sync_console_control_bar()
+        _sync_console_control_bar_now(console)
         await pilot.pause()
 
         assert not _is_displayed(console.query_one("#console-workbench-command-strip"))
@@ -1791,7 +1792,7 @@ async def test_console_active_stream_sync_skips_unchanged_chrome_and_inspector(
         monkeypatch.setattr(inspector, "refresh", count_inspector_refresh)
 
         for _ in range(5):
-            console._sync_console_control_bar()
+            _sync_console_control_bar_now(console)
         await pilot.pause()
 
         assert workbench_syncs == 0
