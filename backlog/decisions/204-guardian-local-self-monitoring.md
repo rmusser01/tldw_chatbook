@@ -54,5 +54,29 @@ File-backed check/trend work uses finite grouped thread ownership with explicit
 drain and retirement of only newly acquired handles. Borrowed/in-memory notification
 stores keep their thread affinity. Direct, aggregate, trend and next-visit crisis
 notices preserve crisis provenance and the existing resource/disclaimer block.
-Guardian v1 remains optional in recovery, uses its selected custom path, and
+Guardian remains optional in recovery, uses its selected custom path, and
 restored rules/settings confer no automatic recording or execution authority.
+
+
+### Historical crisis provenance amendment (2026-10-12)
+
+An alert records its crisis classification at observation time; a later rule edit
+or deletion cannot reclassify it into discovery material or remove its resource
+context. The v1 alert schema has no snapshot or supported payload field, so v2
+adds a tri-state crisis_provenance column: 1 crisis, 0 explicitly non-crisis, -1
+unproven legacy lineage. Existing v1 rows migrate to -1 without inferring intent
+from a mutable current rule. Unproven rows remain local, are excluded from
+Dreams discovery input, and any visible aggregate containing them carries the
+existing crisis resource/disclaimer block. This conservative compatibility cost
+also applies to old summary payloads lacking a classification marker.
+
+Direct checks pass the matched rule's captured classification to the alert write.
+Trend notices and visit summaries propagate whether any contributing alert is
+crisis or unproven; newly inserted trend rows retain that marker. Discovery needs
+both an explicitly non-crisis alert and a currently enabled, non-crisis,
+feeds_discovery rule. No new clinical resources or historical text storage is
+introduced. Exact populated v1 catalogs remain supported as predecessor inputs;
+v1-to-v2 migration is atomic, preserves rows and timestamps, rolls back on failure,
+and refuses malformed, future, or hybrid version/schema claims before mutation.
+Installed recovery qualifies measured v1 and v2 catalogs at the selected optional
+custom path; restore still confers no automatic execution authority.
