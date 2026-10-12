@@ -96,6 +96,53 @@ async def _restore(vault: Vault, tombstone_version: int) -> None:
     assert _tombstone(vault)["deleted"] is False
 
 
+@pytest.mark.parametrize("seam", ["delete", "restore"])
+async def test_delete_and_undo_survive_a_commit_from_another_connection(
+    vault: Vault, seam: str
+) -> None:
+    """TASK-34789: a commit landing mid-delete (or mid-Undo) must not fail it.
+
+    Both seams read the note's version and then write it, in one
+    transaction. Started deferred, that transaction holds a WAL read
+    snapshot, and when ANOTHER connection commits to the same database
+    between the read and the write SQLite refuses the upgrade at once
+    (``database is locked``, no busy wait) -- the Library painted "Delete
+    failed -- edits kept" and no Undo receipt. The app has such a writer on
+    every boot: notes-sync wiring creates the Agent_Lessons folder on the
+    main thread while a Delete runs on its worker.
+
+    The interleaving is driven directly, not by timing: the other commit is
+    made from SQLite's own statement hook, as the seam's UPDATE starts.
+    """
+    tombstone_version = await _delete(vault) if seam == "restore" else 0
+    seam_connection = vault.interop._get_db("user-1").get_connection()
+    other = sqlite3.connect(vault.notes_path, timeout=0.05)
+    interleaved: list[str] = []
+
+    def commit_elsewhere_as_the_write_starts(statement: str) -> None:
+        if interleaved or not statement.lstrip().upper().startswith("UPDATE NOTES"):
+            return
+        interleaved.append(statement)
+        try:
+            other.execute("CREATE TABLE IF NOT EXISTS task_34789_other_writer (n)")
+            other.execute("INSERT INTO task_34789_other_writer VALUES (1)")
+            other.commit()
+        except sqlite3.OperationalError:
+            # The seam already holds the write lock: the other writer waits.
+            other.rollback()
+
+    seam_connection.set_trace_callback(commit_elsewhere_as_the_write_starts)
+    try:
+        if seam == "delete":
+            await _delete(vault)
+        else:
+            await _restore(vault, tombstone_version)
+    finally:
+        seam_connection.set_trace_callback(None)
+        other.close()
+    assert interleaved, "the other connection never got its turn"
+
+
 async def test_deleting_a_bound_note_holds_the_root_and_leaves_its_file_on_disk(
     vault: Vault,
 ) -> None:
