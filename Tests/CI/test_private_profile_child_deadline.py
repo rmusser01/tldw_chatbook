@@ -385,3 +385,22 @@ async def test_a_log_cut_inside_a_character_is_still_reported(
         await child(request=_as_parent(request, tmp_path, child))
 
     assert "--- child log tail ---\nzq-cut-r\ufffd" in str(failure.value)
+
+
+@pytest.mark.skipif(not hasattr(signal, "setitimer"), reason="POSIX signals")
+async def test_a_test_without_a_timeout_moves_no_timer(request, tmp_path, monkeypatch):
+    """Review of #3091, round 2, nit R-N3: with no timeout of its own, the
+    wrapper leaves an itimer someone else armed where it was."""
+    seen = {}
+    _watch_the_spawn(monkeypatch, seen, "raise SystemExit(3)")
+    child = test_child_whose_worker_never_answers
+    no_timeout = SimpleNamespace(args=(0,), kwargs={})
+
+    with (
+        _OwnTimer(100.0),
+        pytest.raises(pytest.fail.Exception),
+    ):
+        await child(request=_as_parent(request, tmp_path, child, no_timeout))
+
+    assert _child_timeout(seen) == "0.0"
+    assert 95.0 < seen["alarm"] <= 100.0

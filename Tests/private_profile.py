@@ -270,7 +270,9 @@ def private_profile_test(function):
             else 0.0
         )
         child_timeout, wait = _child_deadlines(
-            min(armed or timeout, timeout), _extend_own_alarm(armed)
+            min(armed or timeout, timeout),
+            # A test with no timeout of its own leaves any armed timer alone.
+            _extend_own_alarm(armed) if timeout > 0 else 0.0,
         )
         report = work / "pytest.xml"
         log = work / "pytest.log"
