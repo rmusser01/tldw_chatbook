@@ -89,7 +89,7 @@ async def test_gate_off_returns_allow_without_db_touch(gate_off):
     assert second["action"] == "allow"
     assert first["recorded"] is False and second["recorded"] is False
     assert notes["rows"] == [] and notes["notified"] == []
-    assert gate_off["n"] == 1, "the gate is a single cached config read"
+    assert gate_off["n"] == 2, "each check reads live runtime consent"
 
 
 async def test_command_kind_draft_skipped(gate_on):
@@ -135,7 +135,7 @@ async def test_every_match_records_even_when_notice_deduped(gate_on, tmp_path):
     assert db.count_recent_alerts(rules[0]["id"], since_iso=EPOCH) == 2, (
         "every match records an alert row regardless of notice dedup"
     )
-    assert gate_on["n"] == 1, "the gate stays a single cached read"
+    assert gate_on["n"] >= 2, "each check revalidates live runtime consent"
 
 
 async def test_redact_rewrites_draft_in_memory(gate_on, tmp_path):

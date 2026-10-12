@@ -52,6 +52,10 @@ def operation_owned_connection(database: object) -> Iterator[None]:
         from .Workspace_DB import WorkspaceDB
 
         owned_types = {AgentRunsDB, LibraryCollectionsDB, WorkspaceDB}
+        if type(database).__module__ == "tldw_chatbook.DB.Guardian_DB":
+            from .Guardian_DB import GuardianDB
+
+            owned_types.add(GuardianDB)
         if type(database) not in owned_types:
             from .RAG_Indexing_DB import RAGIndexingDB
 
@@ -96,7 +100,12 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
         from .ChaChaNotes_DB import CharactersRAGDB
         from .Workspace_DB import WorkspaceDB
 
-        if type(database) not in {AgentRunsDB, CharactersRAGDB, WorkspaceDB} or database.is_memory_db:
+        owned_types = {AgentRunsDB, CharactersRAGDB, WorkspaceDB}
+        if type(database).__module__ == "tldw_chatbook.DB.Guardian_DB":
+            from .Guardian_DB import GuardianDB
+
+            owned_types.add(GuardianDB)
+        if type(database) not in owned_types or database.is_memory_db:
             return operation(*args, **kwargs)
         with operation_owned_connection(database):
             return operation(*args, **kwargs)

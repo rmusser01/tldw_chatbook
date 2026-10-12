@@ -17,19 +17,19 @@ The watermark is written LAST on purpose: a run that dies mid-way leaves
 it untouched, so the next tick re-projects the task due and the cadence
 self-heals.
 
-Unlike ``dream_track_handler`` there is deliberately NO ``shutdown()``
-seam: a spawned trend run touches only the local Guardian store, settles
-in milliseconds, and app-exit teardown cancels the loop that owns it --
-the dream seam exists for checks that can be waiting on an LLM or a
-search engine mid-flight.
+Native store work runs in finite owned callbacks. Shutdown cancels delivery
+and drains admitted physical work before application store teardown. Notification
+delivery stays on the event loop so borrowed and memory stores keep their affinity.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Callable
+from threading import Event
+from typing import Any
 
 from loguru import logger
 
@@ -45,6 +45,33 @@ from tldw_chatbook.Scheduling.services.guardian_projection import (
 #: event loop and can be garbage-collected mid-flight). Entries are
 #: discarded by a done callback.
 _SPAWNED_TREND_RUNS: set[asyncio.Task[None]] = set()
+
+_PHYSICAL_TREND_WORK: set[asyncio.Task] = set()
+
+
+async def _store_work(db: Any, operation: Callable, *args: Any) -> Any:
+    from tldw_chatbook.DB.base_db import run_owned_db_call
+
+    task = asyncio.create_task(run_owned_db_call(db, operation, *args))
+    _PHYSICAL_TREND_WORK.add(task)
+    def finished(completed: asyncio.Task) -> None:
+        _PHYSICAL_TREND_WORK.discard(completed)
+        if not completed.cancelled():
+            completed.exception()
+    task.add_done_callback(finished)
+    return await asyncio.shield(task)
+
+
+async def shutdown() -> int:
+    """Cancel pending delivery and drain finite physical store callbacks."""
+    pending = tuple(_SPAWNED_TREND_RUNS)
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
+    while _PHYSICAL_TREND_WORK:
+        await asyncio.gather(*(asyncio.shield(task) for task in tuple(_PHYSICAL_TREND_WORK)),
+            return_exceptions=True)
+    return len(pending)
 
 
 @dataclass(frozen=True)
@@ -76,7 +103,7 @@ class GuardianTrendHandler:
     """
 
     def __init__(
-        self, *, deps_getter: Callable[[], "GuardianTrendDeps | None"]
+        self, *, deps_getter: Callable[[], GuardianTrendDeps | None]
     ) -> None:
         """Initialize the handler.
 
@@ -120,7 +147,7 @@ class GuardianTrendHandler:
         _SPAWNED_TREND_RUNS.add(spawned)
         spawned.add_done_callback(_SPAWNED_TREND_RUNS.discard)
 
-    async def _run_daily_trends(self, deps: "GuardianTrendDeps") -> None:
+    async def _run_daily_trends(self, deps: GuardianTrendDeps) -> None:
         """Run one daily analysis to completion, containing every failure.
 
         This coroutine is the whole body of the spawned task, so nothing
@@ -134,6 +161,7 @@ class GuardianTrendHandler:
         this handler module is imported during ``app.py``'s
         post-``_ui_ready`` wiring, well after the module census.
         """
+        stopped = Event()
         try:
             from tldw_chatbook.Guardian.settings import guardian_setting
             from tldw_chatbook.Guardian.trend_analyzer import analyze
@@ -141,67 +169,42 @@ class GuardianTrendHandler:
 
             db = deps.guardian_db
             now_iso = utc_now_iso()
-            # Date-scoped visit id: the analyzer's per-visit frequency cap
-            # then bounds trend notices to one per label per DAY, and a
-            # new day is a fresh scope by construction.
-            visit_id = f"trends:{now_iso[:10]}"
-            notices = analyze(
-                db, now=now_iso, visit_id=visit_id, session_id="daily"
-            )
-            dispatched = 0
+            def admitted() -> bool:
+                return not stopped.is_set() and bool(guardian_setting("enabled", False))
+
+            def collect():
+                if not admitted():
+                    return []
+                notices = analyze(db, now=now_iso, visit_id=f"trends:{now_iso[:10]}", session_id="daily")
+                if admitted():
+                    retention_days = float(guardian_setting("alert_retention_days", 180) or 180)
+                    cutoff = (datetime.fromisoformat(now_iso)
+                        - timedelta(days=retention_days)).isoformat()
+                    db.prune_alerts(cutoff)
+                return notices
+
+            notices = await _store_work(db, collect)
             dispatch = getattr(deps.dispatch_service, "dispatch", None)
             for notice in notices:
+                if not admitted():
+                    return
                 if not callable(dispatch):
-                    break  # degrade: rows landed, delivery unavailable
+                    break
                 try:
-                    dispatch(
-                        category="guardian",
-                        title=f"Guardian trend: {notice.label}",
-                        message=notice.message,
-                        severity="warning",
-                    )
-                    dispatched += 1
-                except Exception as dispatch_exc:  # noqa: BLE001 - one denial stops nothing
-                    logger.debug(
-                        "Guardian trend notification delivery failed "
-                        f"({type(dispatch_exc).__name__})"
-                    )
-            # Retention (contract 9): best-effort sweep at each daily run.
-            retention_days = float(
-                guardian_setting("alert_retention_days", 180) or 180
-            )
-            try:
-                cutoff = (
-                    datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
-                    - timedelta(days=retention_days)
-                ).isoformat()
-                pruned = db.prune_alerts(cutoff)
-                if pruned:
-                    logger.info(
-                        "Guardian retention pruned {} alert(s) at the "
-                        "daily trend run",
-                        pruned,
-                    )
-            except Exception:  # noqa: BLE001 - retention never blocks the run
-                logger.opt(exception=True).debug(
-                    "Guardian retention sweep failed"
-                )
-            # Watermark LAST: a run that dies above leaves it untouched
-            # so the next tick re-projects the task and retries.
-            db.set_meta("trends_last_run", now_iso)
-            logger.info(
-                "Scheduled guardian trend run finished: {} new notice(s), "
-                "{} dispatched",
-                len(notices),
-                dispatched,
-            )
+                    dispatch(category="guardian", title=f"Guardian trend: {notice.label}",
+                        message=notice.message, severity="warning")
+                except Exception as exc:  # noqa: BLE001 - delivery is best effort
+                    logger.debug("Guardian trend delivery failed ({})", type(exc).__name__)
+            # Advance only after analysis and delivery, and revalidate inside
+            # the actual worker callback as well as after the preceding await.
+            if admitted():
+                await _store_work(db, lambda: db.set_meta("trends_last_run", now_iso) if admitted() else None)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - must never escape uncaught
-            logger.warning(
-                "Scheduled guardian trend run failed: "
-                f"{type(exc).__name__}"
-            )
+        except Exception as exc:  # noqa: BLE001 - detached task contains failures
+            logger.warning("Scheduled guardian trend run failed: {}", type(exc).__name__)
+        finally:
+            stopped.set()
 
     async def __call__(self, task: dict[str, Any]) -> None:
         """Allow the handler to be invoked directly by the scheduler loop."""

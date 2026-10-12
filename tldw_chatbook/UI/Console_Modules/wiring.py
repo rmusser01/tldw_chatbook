@@ -836,6 +836,9 @@ def _guardian_checker_for_screen(screen: Any) -> Any:
             text, severity=severity
         ),
         append_system_row=_append_system_row,
+        append_captured_system_row=lambda text, session_id: screen._append_native_console_system_message(
+            text, session_id=session_id
+        ),
         now=utc_now_iso,
     )
     try:
@@ -2437,6 +2440,9 @@ def build_console_controllers(
         setup_blocked_reason_accessor=(lambda: screen._console_setup_blocked_reason()),
         append_system_message=(
             lambda text: screen._append_native_console_system_message(text)
+        ),
+        append_captured_system_message=lambda text, session_id: screen._append_native_console_system_message(
+            text, session_id=session_id
         ),
         notify=(
             lambda text, severity: screen.app_instance.notify(text, severity=severity)

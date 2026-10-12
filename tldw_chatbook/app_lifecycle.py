@@ -1237,6 +1237,15 @@ class LifecycleMixin:
                     f"Error stopping scheduled Dreams track checks: {e}"
                 )
 
+            # Drain admitted Guardian SQLite callbacks before stores are closed.
+            try:
+                from .Scheduling.scheduler.handlers.guardian_trend_handler import (
+                    shutdown as guardian_trend_shutdown,
+                )
+                await guardian_trend_shutdown()
+            except Exception as e:
+                self.loguru_logger.error(f"Error stopping Guardian trend work: {e}")
+
             # Disconnect local MCP client sessions (P5-T6), if any were ever
             # established this run.
             try:

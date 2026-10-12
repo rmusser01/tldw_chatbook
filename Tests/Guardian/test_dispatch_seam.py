@@ -67,7 +67,7 @@ class _SpyChecker:
         self.order = order if order is not None else []
         self.calls = calls if calls is not None else []
 
-    async def check(self, draft: str) -> dict:
+    async def check(self, draft: str, *, session_id: str | None = None) -> dict:
         self.calls.append(draft)
         if self.order is not None:
             self.order.append("checker")
@@ -289,7 +289,7 @@ async def test_raising_checker_fails_open_at_the_seam():
     calls = _calls()
 
     class _ExplodingChecker:
-        async def check(self, draft: str) -> dict:  # pragma: no cover
+        async def check(self, draft: str, *, session_id: str | None = None) -> dict:  # pragma: no cover
             raise RuntimeError("checker exploded")
 
     controller = _seam_controller(lambda: _ExplodingChecker(), calls)
@@ -301,7 +301,7 @@ async def test_raising_checker_fails_open_at_the_seam():
 
 
 async def test_checker_runs_before_blocked_reason_gate_and_counts_intent():
-    """Seam ordering pin: checker first, blocked-reason gate second.
+    """Capture visible gate input first; Guardian still precedes its refusal.
 
     The draft is refused by the blocked-reason gate, yet the checker still
     observed the typed intent -- and because dispatch refused, the send
@@ -321,8 +321,8 @@ async def test_checker_runs_before_blocked_reason_gate_and_counts_intent():
 
     assert outcome.status is ConsolePromptDispatchStatus.REFUSED
     assert "setup incomplete" in outcome.detail
-    assert order == ["checker", "blocked_reason"], (
-        "the Guardian check precedes the blocked-reason refusal gate"
+    assert order == ["blocked_reason", "checker"], (
+        "setup is captured before awaiting Guardian; refusal still follows the check"
     )
     assert spy.calls == ["a message while blocked"], (
         "typed intent counts even when the send is later refused"
