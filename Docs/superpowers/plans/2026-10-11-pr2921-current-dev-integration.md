@@ -94,3 +94,15 @@ legacy rows excluded from discovery and resource-bearing when surfaced. Preserve
 all v1 proofs/catalogs as predecessor evidence; qualify populated migration,
 rollback/reopen/future/hybrid refusal and measured installed recovery. No fresh ADR
 or task ID and no broad rules/history redesign. Remaining Task1 gates unchanged.
+
+
+### Task1 startup admission implementation ruling
+
+ADR required: yes (existing ADR196 amended before this interface change).
+ADR path: backlog/decisions/196-dreams-daily-discovery-and-tracking.md.
+Reason: separate bounded scheduler startup waiting from per-task authority. A
+failed/timeout boot pass retains pending Dreams dispatch refusals, preserves
+unrelated task progress and occurrence state, and conservatively holds
+unclassified watchlists when ownership could not be established. Qualify real
+scheduler dispatch, error/timeout, known unrelated work, and successful later
+settlement; do not weaken scheduler timeout or existing suspension ownership.

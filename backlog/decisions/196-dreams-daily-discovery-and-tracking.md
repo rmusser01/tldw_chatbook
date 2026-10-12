@@ -135,7 +135,23 @@ and feedback; lexical overlap never establishes a goal's provenance.
 
 The production Library artifact owner exposes the existing Dreams story actions
 and goals modal. Collection detail displays existing degradation reasons literally.
-Dreams v6 and Guardian v1 are optional recovery owners with current custom-path
+Dreams v6 and Guardian v2 (with retained v1 history) are optional recovery owners with current custom-path
 selection and inert restored automatic behavior, governed by ADR-126. The later
 public DreamsDB quiescent-close outcome remains separate from finite retirement
 of connections acquired by these operations.
+
+
+### Startup dispatch admission (2026-10-12)
+
+The bounded scheduler startup wait controls responsiveness, not authority. Its
+completion, timeout, or failure cannot authorize pending Dreams-owned work. An
+installed per-task dispatch guard stays active until the boot pass has verified
+its persisted suspension/provenance obligations. It holds known Dreams-created
+watchlist jobs and reminders linked by dream_tracked_item; unrelated reminders
+and other scheduler types continue, as do positively classified unrelated
+watchlists. If the ownership read itself is unavailable, watchlist jobs remain
+unclassified and held until a successful read; unknown ownership never grants a
+fetch. This conservative delay is preferable to either globally wedging the
+scheduler or dispatching a disabled private source. Guarded occurrences do not
+advance their schedule or claim a successful run. Native boot-task ownership,
+maintenance admission and both-store execution checks remain in force.
