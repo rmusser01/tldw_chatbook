@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-11 23:58'
-updated_date: '2026-10-12 06:02'
+updated_date: '2026-10-12 06:20'
 labels:
   - memory
   - canvas
@@ -47,7 +47,7 @@ Complete-head review correction: follow Task2 in Docs/superpowers/plans/2026-10-
 
 Task4: reconcile independently cleared feature-only range onto actual merged Goal9595facbbb; preserve atomic/lazy Goal Settings with cached PC identity, source-built CSS and exact current required targets/census187; qualify only changed joint native/UI/Canvas/import/CI boundaries. Actual post-Focus/latest-dev, independent clearance and protected CI remain required before publication/completion. ADR required: no new ADR; direct existing Personal Context/Canvas/Goal227 integration.
 
-Task5: preserve actualdev352 concurrentNotes-sync inode/containment fix and executable admissiontarget while rebasing reviewed PC feature-only range; qualify only affected CI/nativeNotes/dependency controls and exact sourcebindings. Existing ADRs; no new ADR/authority/storage/permission/cap. FinalactualpostFocus/latestdev andprotectedhostedCI remain rootgates.
+Task5: preserve actualdev352 concurrentNotes-sync inode/containment fix and executable fast sandbox containment target while rebasing reviewed PC feature-only range; qualify only affected CI/nativeNotes/dependency controls and exact sourcebindings. Existing ADRs; no new ADR/authority/storage/permission/cap. FinalactualpostFocus/latestdev andprotectedhostedCI remain rootgates.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -70,6 +70,8 @@ Task3 independent spec PASS and quality PASS at ea50008b3c, with38 affected CI/c
 2026-10-11 Task4 current-Goal reconciliation: feature-only range transplanted onto exact merged9595facbbb, preserving current request/Goal/tool/root budgets and pure Canvas preview/currentness owners. Canvas/native boundary group54 pass/1 already retained Goal outer_timeout failure; that exact body also fails on isolated9595 source with unchanged two-second dispatch wait. Settings61, current Goal style/navigation2, native original-owner/Notes admission22 and executable CI/census105 pass; required target order/flags/deadlines retained, current180+7 census187, all12 offline preflight guards pass. Original seals untouched; new receipts/report are separate under pr2862-task4-current-goal-integration and Task4 SDD. No new cap, permission/schema/AAD/V1/V2/Forget/source/disclosure/server activation or GitHub mutation. Existing three component and broad lint/format failures retain exactbase evidence. Status/AC remain In Progress/open pending root independent clearance and actual post-Focus/latest-dev/hosted qualification. No new ADR; direct existing Canvas/PC/Goal227 integration.
 
 Task4 final independent specPASS/qualityPASS at31eb with all227feature paths/current41base owners/source/evidence seals verified; zero new findings, inherited4RED remain documented. Actualdev advanced withPR3077 nativeNotes/requiredCI changes, prompting boundedTask5 beforepublications. No TaskDone claim.
+
+2026-10-11 Task5: rebased only9595..e0d7b600 feature/governance onto exact concurrent Notes-fix352496f5, qualified runtime57745fb68416cf8b206ea300814a5973187eee31. All227 feature paths retained; all11 nonoverlapping Notes-fix paths match352; only append-only testing lesson conflicted, both bodies retained. Settings/CSS/PC/Goal/Canvas/packages/runtime feature bytes remain independently cleared31eb, except identified actual-base Notes changes. Actual containment target belongs fast sandbox: preserve38base+26PC targets,22base+originalcleanup admission module (13 cases), exact180+7 census187, four comment-aware parser function ASTs, flags/deadlines/caps. Fresh CI105, Notes context9, containment36pass/1APFSskip and complete original settlement15pass/2APFSskip; all12offlinepreflight passed with canonical cache. Exact352 settlement control15pass/2APFSskip establishes existing native retirement debt: candidate20dead-worker leases/86physicalFDs versus base21/88 over17Notes DB paths; no cleanup, GC or borrower repair. Initial copied observer17teardown errors remain diagnostic, not clean base evidence. Current CI Ruff check/format pass; prior4RED/121lint debt retained through unchanged sourcebindings. All32009 qualification-source hashes unchanged and1100immutable receipt files retain their seals; root live sequence-state is explicitly outside immutable history. New receipts/report separate under pr2862-task5-current-notes-integration and Task5 SDD. ADR required:no newADR; existing Notes/Console/PC/Canvas/Goal/required-regression decisions apply. Status/AC remain In Progress/open pending root independent/latestdev/postFocus/hosted clearance; no publication/merge/TaskDone claim.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
