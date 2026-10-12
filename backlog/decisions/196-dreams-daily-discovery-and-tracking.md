@@ -170,3 +170,16 @@ fresh-initialization case. Existing v6 columns and migration semantics remain;
 no new stored shape is introduced. Preserve all original data and perform
 upgrades atomically. This trades repair of unverifiable partial stores for
 explicit refusal; recovery retains the original bytes for investigation.
+
+
+### Mixed goal/topic collection opportunity (TASK34801)
+
+After URL deduplication/exclusions and existing stable topic-overlap ranking,
+a collection with at least two selected candidates keeps one place for a
+provenance-bearing goal result if topic ranking would otherwise select none.
+Use the highest-ranked eligible goal result for the last slot; preserve the
+other topic choices and all existing goal/query attribution. This does not
+change profile weights, private-goal eligibility, result limits or budgets.
+A one-slot collection keeps the existing ranking because both sources cannot
+be represented simultaneously. Existing selected goal results need no quota
+adjustment. No lexical overlap creates goal attribution.
