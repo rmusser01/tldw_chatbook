@@ -837,6 +837,19 @@ plugin masks exactly this failure. A new mounted-app file carries the marker its
 counts for a NEW file is one plain `pytest <file> -n0` run from the worktree root
 with no plugin on `PYTHONPATH` -- as CI runs it.
 
+**TASK-33008 final fix wave, 2026-10-11: one `Tests/ProductionApp` path on the command
+line fails collection for every Tests/UI file named beside it.**
+`Tests/ProductionApp/conftest.py` re-points `HOME`, the `XDG_*` directories and
+`TLDW_CONFIG_PATH` when it is imported, and pytest imports the conftest of every directory
+named on the command line before it collects anything. A covering run that named 33
+Tests/UI files and one ProductionApp file ended `12 failed, 673 passed, 366 errors`: 21 of
+the Tests/UI files, `test_app_instance_warning.py` among them, failed collection in the
+xdist workers with `raw_source_selection_changed`. Collect-only pairs named the directory:
+Tests/UI with Tests/ProductionApp gave 3 errors and nothing collected; with
+Tests/integration, Tests/Notes or Tests/State it collected cleanly. Run Tests/ProductionApp
+in an invocation of its own, and read a wall of collection errors as the command line's
+doing before the branch's.
+
 ## A local red wall of `RecoveryRequired` hides the guard you meant to run
 
 **TASK-33003.1 review round 1, 2026-09-28.** The task's AC#4 guard
