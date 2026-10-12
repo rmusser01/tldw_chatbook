@@ -1431,3 +1431,32 @@ def test_a_glued_quote_opens_a_phrase_only_inside_a_quoted_line(line, query):
     assert _query_row(line, [(_G1, None)]) == {
         "query": query, "goal_derived": True, "goal": _G1}
 
+
+# --- J2: only a standalone mark on the next line makes a colon line a heading ----
+
+
+@pytest.mark.asyncio
+async def test_a_colon_query_above_a_glued_subscript_is_kept():
+    """``arr[g1]`` is text (a subscript), so the line above it does not
+    head a list of marked queries."""
+    chat, _calls = _capture_chat(
+        "rust tui news\nwhat is new in rust:\nindex into arr[g1]\njazz guitar")
+
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [row["query"] for row in rows] == [
+        "rust tui news", "what is new in rust:", "index into arr[g1]",
+        "jazz guitar"]
+
+
+@pytest.mark.asyncio
+async def test_a_colon_line_above_a_standalone_mark_is_still_a_heading():
+    chat, _calls = _capture_chat(
+        "rust tui news\nGoal queries:\n**[g1]** wednesday 13 tour")
+
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [row["query"] for row in rows] == [
+        "rust tui news", "wednesday 13 tour"]

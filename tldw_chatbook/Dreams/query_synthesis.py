@@ -582,6 +582,18 @@ def _query_row(
     return {"query": text, "goal_derived": goal is not None, "goal": goal}
 
 
+def _has_standalone_mark(line: str) -> bool:
+    """Whether a line carries a mark that is a mark, not a subscript.
+
+    The test :func:`_without_marks` makes, on the line as
+    :func:`_query_row` sees it: ``index into arr[g1]`` has none (round 8,
+    J2 -- the line above it was taken for a heading).
+    """
+    text = " ".join(_peel(line).split())
+    return any(not _is_subscript(text, match.start())
+               for match in _MARK_TOKEN_RE.finditer(text))
+
+
 def _response_rows(
     response_text: str, goals: list[tuple[str, str | None]],
 ) -> list[dict]:
@@ -596,7 +608,7 @@ def _response_rows(
         if index + 1 >= len(lines):
             return False
         following = lines[index + 1]
-        return (index == 0 or bool(_GOAL_MARK_RE.search(following))
+        return (index == 0 or _has_standalone_mark(following)
                 or _leading_number(following) is not None)
 
     rows = (
