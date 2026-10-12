@@ -1460,3 +1460,31 @@ async def test_a_colon_line_above_a_standalone_mark_is_still_a_heading():
 
     assert [row["query"] for row in rows] == [
         "rust tui news", "wednesday 13 tour"]
+
+
+# === Review of #2921, round 9: the J1 residue, pinned ===============================
+#
+# One family, accepted as rare: a QUOTED line whose glued phrase quote has
+# no partner before the line's closing quote. The quotes cannot all pair up
+# either way; one stray quote stays. Pinned so the residue cannot widen (or
+# be "fixed" into something else) without this test saying so.
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        ('"[g1]"cheap flights"', 'cheap flights"'),
+        ("'[g1]'rock 'n' roll'", "'rock 'n' roll"),
+        ('"[g1]"tokyo"', 'tokyo"'),
+        ('"[g1]"a" "b"', '"a" "b'),
+    ],
+)
+def test_the_known_quoted_line_residue_keeps_one_stray_quote(line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    row = _query_row(line, [(_G1, None)])
+
+    assert row == {"query": query, "goal_derived": True, "goal": _G1}
+    assert "[g1]" not in row["query"]
+    stray = [char for char in row["query"] if char in ('"', "'")]
+    assert len(stray) % 2 == 1, "exactly the unpaired quote is left"

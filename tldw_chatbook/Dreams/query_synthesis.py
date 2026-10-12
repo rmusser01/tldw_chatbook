@@ -349,11 +349,20 @@ def _opens_the_next_phrase(text: str, closing: str, after: int) -> bool:
     asked only for "the same quote again later", and a later quote of
     ANOTHER phrase misfired: ``"[g1]"cheap "tokyo" flights`` kept a stray
     quote (round 8, J1). ``"[g1]"cheap flights`` and that line are quoted
-    marks. Every other
+    marks, read correctly. Every other
     wrapper -- bold, italics, backticks, brackets, curly quotes -- has a
     closer that cannot open anything, and closes around the mark even
     glued to the next word (round 7, H1: G-N7 applied the rule to all of
     them, and "**[g1]**cheap" left "*cheap").
+
+    Known residue, accepted as rare (round 9): a QUOTED line whose glued
+    phrase quote has no partner of its own before the line's closing
+    quote. The quotes then cannot all pair up whichever way they are
+    read, and one stray quote stays in the query (the goal is still
+    attributed and no mark survives). Pinned by a test:
+    ``"[g1]"cheap flights"`` -> ``cheap flights"``; ``"[g1]"tokyo"`` ->
+    ``tokyo"``; ``'[g1]'rock 'n' roll'`` -> ``'rock 'n' roll``;
+    ``"[g1]"a" "b"`` -> ``"a" "b``.
     """
     if closing not in ('"', "'") or after >= len(text):
         return False
