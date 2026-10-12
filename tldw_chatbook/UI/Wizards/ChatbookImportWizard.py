@@ -15,10 +15,11 @@ Implements the chatbook import workflow:
 
 import asyncio
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple, TYPE_CHECKING
+from typing import ClassVar, Dict, List, Any, Optional, Tuple, TYPE_CHECKING
 
 from textual.app import ComposeResult
 from textual.containers import Container
+from textual import on
 from textual.widgets import (
     Static,
     Button,
@@ -45,6 +46,7 @@ from ...Chatbooks.chatbook_importer import (
     IMPORT_OUTCOME_SKIPPED,
     UNSUPPORTED_BY_IMPORTER_NOUN,
     ChatbookImporter,
+    ImportConflict,
     ImportStatus,
     ImportTypeResult,
 )
@@ -82,6 +84,26 @@ PER_TYPE_STATUS_ROWS: List[Tuple[str, ContentType, str]] = [
     ("status-characters", ContentType.CHARACTER, "characters"),
     ("status-media", ContentType.MEDIA, "media items"),
 ]
+
+
+def _manifest_item_count(
+    manifest: Optional[ChatbookManifest], content_type: ContentType
+) -> int:
+    """How many items of one content type the chatbook's manifest lists.
+
+    Used only where a claim must be made about what the FILE holds (the
+    fatal-error per-type rows, task-19869) -- never to report what a run
+    imported, which only results can say (task-19734).
+    """
+    if manifest is None:
+        return 0
+    counts = {
+        ContentType.CONVERSATION: manifest.total_conversations,
+        ContentType.NOTE: manifest.total_notes,
+        ContentType.CHARACTER: manifest.total_characters,
+        ContentType.MEDIA: manifest.total_media_items,
+    }
+    return counts.get(content_type, 0)
 
 #: The progress-panel title for each whole-import outcome.
 _OUTCOME_TITLES = {
@@ -590,7 +612,44 @@ class PreviewValidationStep(WizardStep):
 
 
 class ConflictResolutionStep(WizardStep):
-    """Step 3: Conflict Resolution."""
+    """Step 3: Conflict Resolution.
+
+    Whether the destination already holds any of this chatbook's items is a
+    COMPUTED fact, not a default: this step used to render an unconditional
+    "✅ No conflicts detected - all content is new" that no code had checked,
+    under a "Potential Conflicts Detected" panel that no code could ever
+    reveal (task-19861). Both elements are now driven by
+    ``ChatbookImporter.scan_conflicts``, which runs when the step is shown:
+
+    * findings -> the conflict panel lists them, and no "no conflicts" claim
+      is made anywhere on the step;
+    * a completed scan with no findings -> the "no conflicts" message is
+      shown, worded as what was actually checked;
+    * no manifest yet, or the scan failed -> the step says nothing about
+      conflicts either way.
+    """
+
+    #: What one rendered conflict line calls the item's content type.
+    _TYPE_LABELS: ClassVar[Dict[ContentType, str]] = {
+        ContentType.CONVERSATION: "Conversation",
+        ContentType.NOTE: "Note",
+        ContentType.CHARACTER: "Character",
+        ContentType.MEDIA: "Media item",
+    }
+
+    #: The coverage sentence both outcomes state, so neither can over- or
+    #: under-claim what "conflict" was measured over. Prompts are not listed
+    #: because the resolution strategy does not apply to them; kept briefings
+    #: and canvas graphs are matched by content, not by name.
+    _COVERAGE_NOTE: ClassVar[str] = (
+        "Checked the conversations, notes, characters and media in this "
+        "chatbook against your databases."
+    )
+
+    def on_show(self) -> None:
+        """Run the conflict scan every time the step is shown."""
+        super().on_show()
+        self.conflict_worker = self.run_worker(self._scan_conflicts(), exclusive=True)
 
     def compose(self) -> ComposeResult:
         """Compose conflict resolution UI."""
@@ -630,17 +689,76 @@ class ConflictResolutionStep(WizardStep):
                 classes="strategy-description",
             )
 
-        # Conflict preview (placeholder for now)
+        # Conflicts the scan found. Hidden until the scan reports findings;
+        # ``_apply_scan_result`` is the code path that reveals it.
         with Container(id="conflict-container", classes="conflict-preview hidden"):
             yield Static("Potential Conflicts Detected:", classes="conflict-title")
             yield Container(id="conflict-list", classes="conflict-list")
 
-        # No conflicts message
+        # No conflicts message. Hidden until a scan actually ran and found
+        # nothing -- an unearned reassurance is the defect this step is
+        # named after (task-19861).
         yield Static(
             "✅ No conflicts detected - all content is new",
             id="no-conflicts",
-            classes="no-conflicts",
+            classes="no-conflicts hidden",
         )
+
+    async def _scan_conflicts(self) -> None:
+        """Scan the destination for items this chatbook would collide with."""
+        self._reset_conflict_ui()
+        file_path = self.wizard.wizard_data.get("file-selection", {}).get("file_path")
+        manifest = self.wizard.wizard_data.get("preview-validation", {}).get("manifest")
+        if not file_path or not manifest:
+            # Nothing validated yet: say nothing about conflicts either way.
+            return
+        try:
+            db_paths = get_chatbook_database_paths()
+            findings, error = ChatbookImporter(db_paths).scan_conflicts(Path(file_path))
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"ConflictResolutionStep._scan_conflicts: scan failed: {e}"
+            )
+            return
+        if error is not None or findings is None:
+            logger.error(
+                f"ConflictResolutionStep._scan_conflicts: {error or 'no result'}"
+            )
+            return
+        self._apply_scan_result(findings)
+
+    def _reset_conflict_ui(self) -> None:
+        """Hide both conflict elements until the scan says which to show."""
+        self.query_one("#conflict-container", Container).add_class("hidden")
+        self.query_one("#no-conflicts", Static).add_class("hidden")
+        self.query_one("#conflict-list", Container).remove_children()
+
+    def _apply_scan_result(self, findings: List["ImportConflict"]) -> None:
+        """Render one completed scan: the findings, or their earned absence."""
+        no_conflicts = self.query_one("#no-conflicts", Static)
+        if findings:
+            conflict_list = self.query_one("#conflict-list", Container)
+            for finding in findings:
+                label = self._TYPE_LABELS.get(finding.content_type, "Item")
+                conflict_list.mount(
+                    Static(
+                        f"• {label} \"{finding.title}\" — already present as "
+                        f"\"{finding.existing_name}\"",
+                        classes="conflict-item",
+                    )
+                )
+            self.query_one("#conflict-container", Container).remove_class("hidden")
+            # The reassurance copy does not merely get hidden here: a claim
+            # this scan just falsified is cleared outright, so it cannot be
+            # read back out of the widget tree (task-19861).
+            no_conflicts.update("")
+        else:
+            no_conflicts.update(
+                "✅ No conflicts detected — no conversation, note, character "
+                "or media item in this chatbook already exists in your "
+                "databases. " + self._COVERAGE_NOTE
+            )
+            no_conflicts.remove_class("hidden")
 
     def get_step_data(self) -> Dict[str, Any]:
         """Get selected resolution strategy."""
@@ -663,13 +781,6 @@ class ConflictResolutionStep(WizardStep):
 
 class ImportOptionsStep(WizardStep):
     """Step 4: Import Options."""
-
-    def on_show(self) -> None:
-        """Apply initial execution mode when the step is first shown."""
-        super().on_show()
-        if getattr(self.wizard, "initial_execution_mode", "local") == "server":
-            self.query_one("#execution-mode", RadioSet).pressed_index = 1
-        self._update_server_mode_availability()
 
     def compose(self) -> ComposeResult:
         """Compose import options UI."""
@@ -715,16 +826,25 @@ class ImportOptionsStep(WizardStep):
                 classes="option-description",
             )
 
-            yield Checkbox(
-                "Import embeddings",
-                value=True,
-                id="import-embeddings",
-                classes="checkbox-option",
-            )
-            yield Static(
-                "Import vector embeddings for RAG search (if available)",
-                classes="option-description",
-            )
+            # Embedding items are a SERVER-request option only: the local
+            # importer cannot write them (it reports the type as unsupported),
+            # and chatbooks produced by this app never contain any -- the
+            # exporter never writes embedding data, so there is nothing to
+            # import even in principle (task-19868). The control is therefore
+            # hidden in local mode rather than shown doing nothing: a
+            # default-ON box that does nothing is a claim.
+            with Container(id="embeddings-option-group", classes="hidden"):
+                yield Checkbox(
+                    "Import embeddings",
+                    value=False,
+                    id="import-embeddings",
+                    classes="checkbox-option",
+                )
+                yield Static(
+                    "Server import: include embedding items in the request "
+                    "(left out when unchecked)",
+                    classes="option-description",
+                )
 
             # This box used to read "Merge with existing tags" and was wired
             # straight to the importer's `prefix_imported` flag, which never
@@ -745,6 +865,41 @@ class ImportOptionsStep(WizardStep):
                 "Tags and keywords are unaffected.",
                 classes="option-description",
             )
+
+    def on_show(self) -> None:
+        """Apply initial execution mode when the step is first shown."""
+        super().on_show()
+        if getattr(self.wizard, "initial_execution_mode", "local") == "server":
+            # ``RadioSet.pressed_index`` has no setter (textual 8.x); pressing
+            # the radio through its value is the public API and fires the
+            # same ``RadioSet.Changed`` a user click does.
+            self.query_one("#mode-server", RadioButton).value = True
+        self._update_embeddings_control_visibility()
+        self._update_server_mode_availability()
+
+    @on(RadioSet.Changed, "#execution-mode")
+    def _on_execution_mode_changed(self, event: RadioSet.Changed) -> None:
+        """Re-evaluate the options the newly selected mode actually has."""
+        self._update_embeddings_control_visibility()
+        self._update_server_mode_availability()
+
+    def _update_embeddings_control_visibility(self) -> None:
+        """Show the embeddings option only in the mode that consumes it.
+
+        The option changes what the SERVER request includes; the local import
+        call takes no embeddings option at all (task-19868), so in local mode
+        the control is absent rather than present-and-inert.
+        """
+        mode_set = self.query_one("#execution-mode", RadioSet)
+        server_selected = (
+            mode_set.pressed_button is not None
+            and mode_set.pressed_button.id == "mode-server"
+        )
+        group = self.query_one("#embeddings-option-group", Container)
+        if server_selected:
+            group.remove_class("hidden")
+        else:
+            group.add_class("hidden")
 
     async def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
         """Re-evaluate server mode availability when content-affecting options change."""
@@ -769,7 +924,7 @@ class ImportOptionsStep(WizardStep):
         if blockers:
             server_radio.disabled = True
             if mode_set.pressed_button and mode_set.pressed_button.id == "mode-server":
-                mode_set.pressed_index = 0
+                self.query_one("#mode-local", RadioButton).value = True
             warning.update(
                 "Server import unavailable for this selection. Unsupported content: "
                 + ", ".join(blockers)
@@ -785,15 +940,28 @@ class ImportOptionsStep(WizardStep):
         if mode_set.pressed_button and mode_set.pressed_button.id == "mode-server":
             execution_mode = "server"
 
-        # Every key here is consumed by the import call below. Two former
-        # keys, `preserve_timestamps` and `import_tags`, were collected and
-        # read by nothing at all; their controls are gone (task-19734).
-        return {
+        # Every key here is consumed by the import dispatch that follows, in
+        # the mode it is collected in: `execution_mode` picks the path,
+        # `import_media` and `prefix_imported` are parameters of BOTH import
+        # calls, and `import_embeddings` -- collected in server mode only --
+        # is a parameter of the server request (it filters embedding items
+        # out of the selection). The local importer takes no embeddings
+        # option: it cannot write embeddings, and chatbooks contain none
+        # because the exporter never writes them (task-19868). Three former
+        # keys were collected and read by nothing at all
+        # (`preserve_timestamps`, `import_tags` -- task-19734 -- and the
+        # local-mode `import_embeddings`, task-19868); their controls are
+        # gone from the mode that ignored them.
+        options: Dict[str, Any] = {
             "execution_mode": execution_mode,
             "import_media": self.query_one("#import-media", Checkbox).value,
-            "import_embeddings": self.query_one("#import-embeddings", Checkbox).value,
             "prefix_imported": self.query_one("#prefix-imported", Checkbox).value,
         }
+        if execution_mode == "server":
+            options["import_embeddings"] = self.query_one(
+                "#import-embeddings", Checkbox
+            ).value
+        return options
 
 
 class ImportProgressStep(WizardStep):
@@ -805,6 +973,9 @@ class ImportProgressStep(WizardStep):
         self.progress_value = reactive(0)
         self.is_complete = reactive(False)
         self.import_status: Optional[ImportStatus] = None
+        # Set by the server branch when the job payload carried no item
+        # counts at all: unreported is UNKNOWN, not zero (task-19869).
+        self._server_counts_unknown = False
 
     def compose(self) -> ComposeResult:
         """Compose progress UI."""
@@ -1013,18 +1184,34 @@ class ImportProgressStep(WizardStep):
                         )
 
                     self.import_status = ImportStatus()
-                    self.import_status.successful_items = int(
-                        job_result.get("successful_items", 0) or 0
+                    # Only counts the server actually reported are recorded:
+                    # a missing key means UNKNOWN, not zero (task-19869). The
+                    # old code defaulted ``successful_items`` to 0 and
+                    # hard-set ``skipped_items = 0``, which made a 4-item
+                    # chatbook report "this chatbook contained no items" and
+                    # invented a skip count the server never sent.
+                    raw_successful = job_result.get("successful_items")
+                    raw_failed = job_result.get("failed_items")
+                    raw_skipped = job_result.get("skipped_items")
+                    if raw_successful is not None:
+                        self.import_status.successful_items = int(raw_successful or 0)
+                    if raw_failed is not None:
+                        self.import_status.failed_items = int(raw_failed or 0)
+                    if raw_skipped is not None:
+                        self.import_status.skipped_items = int(raw_skipped or 0)
+                    counts_reported = any(
+                        value is not None
+                        for value in (raw_successful, raw_failed, raw_skipped)
                     )
-                    self.import_status.failed_items = int(
-                        job_result.get("failed_items", 0) or 0
-                    )
-                    self.import_status.total_items = (
-                        self.import_status.successful_items
-                        + self.import_status.failed_items
-                    )
-                    self.import_status.processed_items = self.import_status.total_items
-                    self.import_status.skipped_items = 0
+                    self._server_counts_unknown = not counts_reported
+                    if counts_reported:
+                        status_total = (
+                            self.import_status.successful_items
+                            + self.import_status.failed_items
+                            + self.import_status.skipped_items
+                        )
+                        self.import_status.total_items = status_total
+                        self.import_status.processed_items = status_total
 
                     # A server import returns totals only, so no per-type row
                     # can honestly claim anything (task-19734).
@@ -1081,7 +1268,6 @@ class ImportProgressStep(WizardStep):
                 conflict_resolution=resolution_strategy,
                 prefix_imported=options.get("prefix_imported", False),
                 import_media=options.get("import_media", True),
-                import_embeddings=options.get("import_embeddings", False),
                 import_status=self.import_status,
             )
 
@@ -1162,9 +1348,47 @@ class ImportProgressStep(WizardStep):
         """Show the completion panel, headlined by what actually happened."""
         self.is_complete = True
 
-        title, banner, outcome_state = describe_import_outcome(
-            self.import_status or ImportStatus()
-        )
+        if self._server_counts_unknown:
+            # The server completed the job but reported no item counts. That
+            # is neither success nor emptiness -- the honest report is
+            # "unknown", never a zero the server did not send (task-19869).
+            manifest = self.wizard.wizard_data.get("preview-validation", {}).get(
+                "manifest"
+            )
+            item_count = len(manifest.content_items) if manifest else 0
+            title = "⚠️ Import Finished — Item Counts Unknown"
+            banner = (
+                "⚠ The server completed the import but reported no item "
+                "counts. "
+            )
+            if item_count:
+                banner += (
+                    f"This chatbook contains {item_count} item(s); how many "
+                    "of them landed is unknown. "
+                )
+            banner += "Check your databases before retrying: anything that already landed will conflict or duplicate."
+            outcome_state = "outcome-unknown"
+        else:
+            title, banner, outcome_state = describe_import_outcome(
+                self.import_status or ImportStatus()
+            )
+            # "This chatbook contained no items" is a claim about the FILE
+            # (the one-vocabulary rule, task-19734). A server payload of
+            # explicit zeros for a chatbook whose manifest lists items must
+            # not earn it: the run imported nothing, but the file is not
+            # empty (task-19869).
+            if outcome_state == f"outcome-{IMPORT_OUTCOME_EMPTY}":
+                manifest = self.wizard.wizard_data.get("preview-validation", {}).get(
+                    "manifest"
+                )
+                listed_items = len(manifest.content_items) if manifest else 0
+                if listed_items:
+                    title = "⊘ Nothing Imported"
+                    banner = (
+                        "⊘ Nothing was imported — the server reported no "
+                        f"items imported. This chatbook contains "
+                        f"{listed_items} item(s)."
+                    )
 
         # Update title
         self.query_one("#progress-title", Static).update(title)
@@ -1175,13 +1399,138 @@ class ImportProgressStep(WizardStep):
 
         message_widget = self.query_one("#completion-message", Static)
         message_widget.update(banner)
-        message_widget.remove_class(*(f"outcome-{name}" for name in _OUTCOME_TITLES))
+        message_widget.remove_class(
+            *(f"outcome-{name}" for name in _OUTCOME_TITLES),
+            "outcome-unknown",
+        )
         message_widget.add_class(outcome_state)
 
-        # Update statistics
+        # Update statistics. An unreported count is shown as unknown, not as
+        # zero (task-19869).
         if self.import_status:
             self.query_one("#stat-total", Static).update(
-                str(self.import_status.total_items)
+                "?" if self._server_counts_unknown else str(self.import_status.total_items)
+            )
+            self.query_one("#stat-imported", Static).update(
+                "?" if self._server_counts_unknown else str(self.import_status.successful_items)
+            )
+            self.query_one("#stat-skipped", Static).update(
+                "?" if self._server_counts_unknown else str(self.import_status.skipped_items)
+            )
+            self.query_one("#stat-failed", Static).update(
+                "?" if self._server_counts_unknown else str(self.import_status.failed_items)
+            )
+
+        # Update wizard navigation
+        self.wizard.can_go_back = False
+        next_button = self.wizard.query_one("#wizard-next", Button)
+        next_button.label = "Close"
+        next_button.variant = "default"
+
+    def _fatal_error_banner(self) -> str:
+        """What a fatal import error must say about what was already written.
+
+        There is no rollback (task-19550): items committed before the failure
+        are permanently in the databases, and the old error surface concealed
+        exactly that -- a frozen "Preparing ..." list over no stats panel,
+        reading as "nothing happened" (task-19869).
+        """
+        status = self.import_status
+        if status is None or (
+            status.planned_items == 0 and status.accounted_items == 0
+        ):
+            # The run died before recording any result at all: what happened
+            # is unknown in every direction, and saying less would repeat the
+            # "nothing happened" reading this surface exists to prevent.
+            return (
+                "❌ Import failed — it stopped before reporting any result. "
+                "Items may still have been written — this import cannot be "
+                "rolled back; check your databases before retrying."
+            )
+        written = status.successful_items
+        unaccounted = status.unaccounted_items
+        if written and unaccounted:
+            detail = (
+                f"{written} item(s) were already written and stay written, "
+                f"and the {unaccounted} item(s) the import was working on may "
+                "also have landed"
+            )
+        elif written:
+            detail = f"{written} item(s) were already written and stay written"
+        elif unaccounted:
+            detail = (
+                f"the {unaccounted} item(s) the import was working on may "
+                "have landed; their fate is unknown"
+            )
+        else:
+            detail = "no items were recorded as written"
+        return (
+            f"❌ Import failed — {detail}. This import cannot be rolled "
+            "back. Retry with care: anything that already landed will "
+            "conflict or duplicate."
+        )
+
+    def _error_surface_row(self, content_type: ContentType, noun: str) -> Tuple[str, str]:
+        """What one per-type row says on a fatal-error surface.
+
+        What the import recorded comes first. A type the run never reported
+        on says so as UNKNOWN -- never as a claim about the chatbook, and
+        never frozen on "Preparing ..." (task-19869).
+        """
+        status = self.import_status
+        if status is not None:
+            result = status.result_snapshot(content_type)
+            if result.attempted > 0 or result.left_out > 0:
+                return describe_type_result(result, noun)
+
+        manifest = self.wizard.wizard_data.get("preview-validation", {}).get("manifest")
+        manifest_count = _manifest_item_count(manifest, content_type)
+        if content_type == ContentType.MEDIA and manifest_count:
+            options = self.wizard.wizard_data.get("import-options", {})
+            if not options.get("import_media", True):
+                return (
+                    "",
+                    (
+                        f"— {manifest_count} {noun} in this chatbook were not "
+                        "imported (you turned this option off)"
+                    ),
+                )
+        if manifest_count:
+            return (
+                "",
+                f"❓ Unknown — the import stopped before {noun} were reported",
+            )
+        return ("", f"— No {noun} in this chatbook")
+
+    async def _show_error(self, error_message: str) -> None:
+        """Show the failure surface, reporting what the run had already done.
+
+        The import writes item by item with no rollback, so a fatal error
+        leaves every already-written item in the databases. This surface
+        states that, paints each per-type row with what is known about that
+        type (including unknown), and shows the counts recorded before the
+        failure (task-19869).
+        """
+        self._update_status("status-finalize", "error", f"✗ Error: {error_message}")
+        self.query_one("#progress-title", Static).update("❌ Import Failed")
+
+        for status_id, content_type, noun in PER_TYPE_STATUS_ROWS:
+            state, text = self._error_surface_row(content_type, noun)
+            self._update_status(status_id, state, text)
+
+        # The stats panel renders on failure too: the counts recorded up to
+        # the failure are real, and hiding them reads as "nothing happened".
+        completion = self.query_one("#completion-container", Container)
+        completion.display = True
+        message_widget = self.query_one("#completion-message", Static)
+        message_widget.update(self._fatal_error_banner())
+        message_widget.remove_class(
+            *(f"outcome-{name}" for name in _OUTCOME_TITLES), "outcome-unknown"
+        )
+        message_widget.add_class("outcome-failed")
+        if self.import_status is not None:
+            self.query_one("#stat-total", Static).update(
+                str(self.import_status.attempted_items)
             )
             self.query_one("#stat-imported", Static).update(
                 str(self.import_status.successful_items)
@@ -1192,17 +1541,6 @@ class ImportProgressStep(WizardStep):
             self.query_one("#stat-failed", Static).update(
                 str(self.import_status.failed_items)
             )
-
-        # Update wizard navigation
-        self.wizard.can_go_back = False
-        next_button = self.wizard.query_one("#wizard-next", Button)
-        next_button.label = "Close"
-        next_button.variant = "default"
-
-    async def _show_error(self, error_message: str) -> None:
-        """Show error message."""
-        self._update_status("status-finalize", "error", f"✗ Error: {error_message}")
-        self.query_one("#progress-title", Static).update("❌ Import Failed")
 
         # Allow going back to fix issues
         self.wizard.can_go_back = True

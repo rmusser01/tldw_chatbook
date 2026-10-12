@@ -140,7 +140,6 @@ def test_fresh_database_creates_v1_compatibility_and_capture_v3(tmp_path: Path) 
 
     database = LibraryCollectionsDB(path)
 
-    assert database.get_schema_version() == 4
     assert database.has_compatible_legacy_schema() is True
     database.require_capture_schema()
     objects = _schema_objects(path)
@@ -148,6 +147,9 @@ def test_fresh_database_creates_v1_compatibility_and_capture_v3(tmp_path: Path) 
     assert {"library_collections", "library_collection_items"} <= {
         name for kind, name in objects if kind == "table"
     }
+    # Trailing on purpose (task-19866): a version assertion before the
+    # substantive ones switches this body off on the next schema bump.
+    assert database.get_schema_version() == 4
     database.close()
 
 
@@ -158,10 +160,11 @@ def test_real_v1_fixture_migrates_without_changing_legacy_values(tmp_path: Path)
 
     database = LibraryCollectionsDB(path)
 
-    assert database.get_schema_version() == 4
     assert _legacy_rows(path) == before
     assert database.has_compatible_legacy_schema() is True
     database.require_capture_schema()
+    # Trailing on purpose (task-19866).
+    assert database.get_schema_version() == 4
     database.close()
 
 
@@ -235,8 +238,9 @@ def test_v3_reopen_is_idempotent(tmp_path: Path) -> None:
 
     second = LibraryCollectionsDB(path)
 
-    assert second.get_schema_version() == 4
     assert _schema_objects(path) == before
+    # Trailing on purpose (task-19866).
+    assert second.get_schema_version() == 4
     second.close()
 
 
@@ -271,7 +275,6 @@ def test_v2_processing_row_migrates_with_unowned_expired_lease(
 
     database = LibraryCollectionsDB(path)
 
-    assert database.get_schema_version() == 4
     database.require_capture_schema()
     with database.connection() as connection:
         columns = {
@@ -297,6 +300,8 @@ def test_v2_processing_row_migrates_with_unowned_expired_lease(
     } <= columns
     assert tuple(row) == ("processing", None, None)
     assert versions == [1, 2, 4]
+    # Trailing on purpose (task-19866).
+    assert database.get_schema_version() == 4
     database.close()
 
 

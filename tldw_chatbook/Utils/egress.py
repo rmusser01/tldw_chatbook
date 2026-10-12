@@ -874,6 +874,50 @@ def same_origin(url_a: str, url_b: str) -> bool:
     return origin_a is not None and origin_a == origin_of(url_b)
 
 
+class _StickyOriginPolicy:
+    """Fetch-spec credential stickiness for ONE guarded-fetch redirect chain.
+
+    The Fetch specification removes a credential PERMANENTLY once a redirect
+    has taken the request off its original origin, precisely so a chain
+    cannot launder its way back into an authenticated state. Comparing each
+    hop against the ORIGINAL url (``same_origin(url, current)``) does not do
+    that: a chain ``feed.example -> evil.example -> feed.example`` strips on
+    hop 2 and then RE-ATTACHES the credential on hop 3, because hop 3 is
+    same-origin with the start. The attacker never receives the credential
+    directly, but they choose the path and query string of the request that
+    carries it (task-19863).
+
+    This is the one stickiness rule every ``guarded_fetch_*`` loop shares:
+    the first hop that leaves home ends credential forwarding for every
+    later hop, whatever that hop's origin. A new loop added to this module
+    uses this class rather than calling :func:`same_origin` per hop.
+
+    Args:
+        original_url: The chain's first request URL, held fixed for the
+            whole chain.
+    """
+
+    __slots__ = ("_crossed", "_original")
+
+    def __init__(self, original_url: str):
+        self._original = original_url
+        self._crossed = False
+
+    def hop_carries_credentials(self, current_url: str) -> bool:
+        """Record one hop and answer whether it may carry credentials.
+
+        Args:
+            current_url: The URL this hop is about to request.
+
+        Returns:
+            ``True`` only while the chain has never left its original
+            origin -- the sticky form of ``same_origin(original, current)``.
+        """
+        if not same_origin(self._original, current_url):
+            self._crossed = True
+        return not self._crossed
+
+
 def _hop_headers(
     headers: Mapping[str, str] | None, same_origin: bool
 ) -> dict[str, str]:
@@ -973,9 +1017,10 @@ def guarded_fetch_httpx(
     never attached to the client/session object itself.
     """
     current = url
+    origins = _StickyOriginPolicy(url)
     for hop in range(MAX_REDIRECT_HOPS + 1):
         check_url_or_raise(current, trusted_origins=trusted_origins)
-        is_same_origin = same_origin(url, current)
+        is_same_origin = origins.hop_carries_credentials(current)
         request = client.build_request(
             "GET",
             current,
@@ -1060,9 +1105,10 @@ async def guarded_fetch_httpx_async(
     never attached to the client/session object itself.
     """
     current = url
+    origins = _StickyOriginPolicy(url)
     for hop in range(MAX_REDIRECT_HOPS + 1):
         await check_url_or_raise_async(current, trusted_origins=trusted_origins)
-        is_same_origin = same_origin(url, current)
+        is_same_origin = origins.hop_carries_credentials(current)
         request = client.build_request(
             "GET",
             current,
@@ -1347,9 +1393,10 @@ def guarded_fetch_requests(
     owns_session = session is None
     try:
         current = url
+        origins = _StickyOriginPolicy(url)
         for _hop in range(MAX_REDIRECT_HOPS + 1):
             check_url_or_raise(current, trusted_origins=trusted_origins)
-            is_same_origin = same_origin(url, current)
+            is_same_origin = origins.hop_carries_credentials(current)
             prepared = sess.prepare_request(
                 requests.Request(
                     "GET", current, headers=_hop_headers(headers, is_same_origin)
@@ -1426,9 +1473,10 @@ async def guarded_fetch_aiohttp(
     from multidict import CIMultiDict
 
     current = url
+    origins = _StickyOriginPolicy(url)
     for _hop in range(MAX_REDIRECT_HOPS + 1):
         await check_url_or_raise_async(current, trusted_origins=trusted_origins)
-        is_same_origin = same_origin(url, current)
+        is_same_origin = origins.hop_carries_credentials(current)
         if not is_same_origin:
             # aiohttp re-applies session-level credentials inside get() and
             # offers no per-request suppression (see

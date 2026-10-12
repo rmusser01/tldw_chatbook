@@ -15691,6 +15691,11 @@ ConflictResolutionStep .conflict-list {
     color: $text-muted;
 }
 
+ConflictResolutionStep .conflict-item {
+    margin-bottom: $ds-space-1;
+    color: $warning;
+}
+
 ConflictResolutionStep .no-conflicts {
     text-align: center;
     padding: $ds-space-3;
@@ -15796,6 +15801,12 @@ ImportProgressStep .completion-message.outcome-excluded {
 ImportProgressStep .completion-message.outcome-failed {
     background: $error 20%;
     border: round $error;
+}
+
+
+ImportProgressStep .completion-message.outcome-unknown {
+    background: $warning 20%;
+    border: round $warning;
 }
 
 ImportProgressStep .completion-stats {
