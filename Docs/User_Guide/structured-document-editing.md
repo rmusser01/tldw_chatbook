@@ -12,7 +12,7 @@ YAML indentation may be syntactically valid while expressing an unintended struc
 
 Common limits are 1 MiB of UTF-8 source, nesting depth 100, 100 displayed diagnostics and a 2-second processing deadline per request. A limited, unsupported or failed check is not a successful syntax check. File Notes additionally keeps its existing 200,000-character interactive limit; an excerpt cannot become editable because the engine permits more bytes. Native mixed/lone-CR representation fences preserve canonical source for download/export and title/save while body editing is unavailable.
 
-Syntax errors never add a save veto, and formatting never saves automatically. Existing optimistic versions, conflict/overwrite controls, authority and path checks still apply. Empty drafts remain local when a server's nonempty-body contract rejects saving; recovery keeps the empty source without inserting placeholder text. Restore the draft, add content if needed and retry the existing Save action. Diagnostics are separate from save and recovery status.
+Syntax errors never add a save veto. Formatting makes one undoable draft edit and does not directly invoke Save; that edit follows the editor’s existing autosave and conflict rules. Saving does not trigger formatting. Existing optimistic versions, conflict/overwrite controls, authority and path checks still apply. Empty drafts remain local when a server's nonempty-body contract rejects saving; recovery keeps the empty source without inserting placeholder text. Restore the draft, add content if needed and retry the existing Save action. Diagnostics are separate from save and recovery status.
 
 ## Download source or export a note
 
