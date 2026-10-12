@@ -206,3 +206,68 @@ async def test_library_dreams_lazy_owner_native_close_before_worker_exit(
         )
         loop._default_executor = previous
         pool.shutdown(wait=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["story", "goals", "guardian"])
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+@private_profile_test
+async def test_feature_modals_keep_controls_inside_production_viewport(
+    tmp_path, request, kind, size
+):
+    from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+    from tldw_chatbook.DB.Guardian_DB import GuardianDB
+    from tldw_chatbook.UI.Screens.settings_screen import GuardianRuleEditModal
+
+    db = (
+        GuardianDB(tmp_path / "guardian.sqlite")
+        if kind == "guardian"
+        else DreamsDB(tmp_path / "dreams.sqlite")
+    )
+    if kind == "guardian":
+        modal = GuardianRuleEditModal(db_getter=lambda: db, on_changed=lambda: None)
+        selector = "#grm-dialog"
+    elif kind == "goals":
+        modal = DreamsGoalsModal(dreams_db_getter=lambda: db, on_changed=lambda: None)
+        selector = "#dgm-dialog"
+    else:
+        modal = DreamsStoryModal(
+            {
+                "id": 1,
+                "title": "Readable story",
+                "body": "A short story.",
+                "url": "https://example.com/story",
+                "query": "science",
+            },
+            dreams_db_getter=lambda: db,
+            capture_backend_getter=lambda: None,
+            on_changed=lambda: None,
+        )
+        selector = "#dsm-dialog"
+    app = ConsolidatedCSSApp(css_path=list(APP_STYLESHEETS))
+    try:
+        async with app.run_test(size=size) as pilot:
+            await app.push_screen(modal)
+            await pilot.pause()
+            app.save_screenshot(f"{kind}-{size[0]}x{size[1]}.svg", path=str(tmp_path))
+            panel = modal.query_one(selector)
+            assert panel.region.width <= size[0] and panel.region.height <= size[1]
+            for button in modal.query(Button):
+                if not button.display:
+                    continue
+                button.scroll_visible(animate=False)
+                await pilot.pause()
+                assert panel.content_region.x <= button.region.x
+                assert button.region.right <= panel.content_region.right, (
+                    button.id,
+                    button.region,
+                    panel.content_region,
+                )
+                assert (
+                    button.region.intersection(panel.content_region).height
+                    == button.region.height
+                )
+            await pilot.press("escape")
+            assert app.screen is not modal
+    finally:
+        db.close_all() if kind != "guardian" else db.close()

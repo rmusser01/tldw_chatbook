@@ -13,17 +13,15 @@ Structure follows this stream's own modal idioms (see
 - Dismiss pattern and literal-text discipline from the story modal: goal
   text is user-typed, so every row renders through ``rich.text.Text``,
   never a bare ``str`` nor markup-parsed.
-- Panel styling from the story modal / ``ArtifactShareDialog``: a small
-  ``DEFAULT_CSS`` composed of existing theme variables
-  (``$background``/``$surface``/``$primary``/``$warning``) rather than any
-  new tcss sheet, token, or hex literal (ADR-150: nothing new to govern).
+- Panel styling uses central design tokens and the existing consolidated
+  CSS builder (ADR-150), with SafeModalDismissMixin for dismissal and
+  opener focus restoration (ADR-161).
 - All writes are single-row instant SQLite calls made directly in the
   action handlers (controller ruling, mirroring the kept-briefings and
   story modals): ``DreamsDB.upsert_profile_entry`` /
   ``delete_profile_entry`` are one-statement transactions against a
   thread-local held connection, so no worker is warranted. After ANY
-  mutating action the modal calls ``on_changed()`` (the Artifacts screen
-  re-reads its rows) and posts a dismissible notice; failures surface as
+  mutating action the modal calls ``on_changed()`` (the Library reader refreshes after modal return) and posts a dismissible notice; failures surface as
   notices, never crashes.
 
 Key routing note: the goals ``ListView`` holds focus on mount so the
@@ -46,6 +44,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, ListItem, ListView, Static
 
 from ...Utils.input_validation import validate_dreams_profile_text
+from ...Widgets.modal_dismissal import SafeModalDismissMixin
 
 #: Weight for goal rows: goals never decay and never carry signal weight,
 #: so every write uses the same nominal value.
@@ -54,7 +53,7 @@ _GOAL_WEIGHT = 1.0
 _NO_DB_NOTICE = "Dreams is unavailable in this runtime: no dreams database."
 
 
-class DreamsGoalsModal(ModalScreen[None]):
+class DreamsGoalsModal(SafeModalDismissMixin, ModalScreen[None]):
     """List, add, remove, and gate the profile's goals; dismisses ``None``.
 
     Args:
@@ -76,19 +75,19 @@ class DreamsGoalsModal(ModalScreen[None]):
         Binding("escape", "close", "Close", show=False),
     )
 
-    # Mirrors the story modal's placement ruling: DEFAULT_CSS parses at
-    # mount (runtime), not into the boot bundle, and uses only existing
-    # theme variables -- zero new tokens or literals (ADR-150).
-    DEFAULT_CSS = """
-    DreamsGoalsModal { align: center middle; background: $background 70%; }
+    SAFE_MODAL_CONTENT = "#dgm-dialog"
+
+    # Central tokens are resolved by the existing consolidated CSS builder.
+    BUNDLED_CSS = """
+    DreamsGoalsModal { align: center middle; background: $background $ds-opacity-dim; }
     DreamsGoalsModal > VerticalScroll {
-        width: 76; max-width: 96%; height: auto; max-height: 90%;
-        background: $surface; border: solid $primary; padding: 1 2;
+        width: $ds-size-76; max-width: $ds-percent-96; height: auto; max-height: $ds-percent-90;
+        background: $ds-surface-raised; border: solid $ds-action-focus; padding: $ds-space-1 $ds-space-2;
     }
-    DreamsGoalsModal #dgm-region { margin-top: 1; }
-    DreamsGoalsModal #dgm-goals { height: auto; max-height: 12; margin-top: 1; }
-    DreamsGoalsModal #dgm-new-goal { margin-top: 1; }
-    DreamsGoalsModal #dgm-hints { color: $warning; margin-top: 1; }
+    DreamsGoalsModal #dgm-region { margin-top: $ds-space-1; }
+    DreamsGoalsModal #dgm-goals { height: auto; max-height: $ds-size-12; margin-top: $ds-space-1; }
+    DreamsGoalsModal #dgm-new-goal { margin-top: $ds-space-1; }
+    DreamsGoalsModal #dgm-hints { color: $ds-status-warning; margin-top: $ds-space-1; }
     """
 
     def __init__(

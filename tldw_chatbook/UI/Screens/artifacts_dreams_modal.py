@@ -26,11 +26,9 @@ Modal structure follows this stream's own modal idioms:
   ``rich.text.Text`` (never a bare ``str``, never markup-parsed) or
   ``rich.markdown.Markdown(..., hyperlinks=False)`` -- a link must never
   carry an invisible destination.
-- Panel styling from the Artifacts screen's own sibling modal
-  (``artifact_share_dialog.ArtifactShareDialog``): a small
-  ``DEFAULT_CSS`` composed of existing theme variables (``$background``/
-  ``$surface``/``$primary``/``$warning``) rather than any new tcss sheet,
-  token, or hex literal (ADR-150: nothing new to govern).
+- Central design tokens and the existing consolidated CSS builder style
+  the panel and compact action grid (ADR-150). SafeModalDismissMixin
+  preserves top-screen dismissal and restores the opener's focus (ADR-161).
 - Handoff staging follows the ``skills_screen.attach_to_console`` idiom
   exactly: resolve ``open_chat_with_handoff`` off the running app with
   ``getattr``, warn-and-stay when the runtime lacks it, never invent
@@ -56,7 +54,7 @@ action handlers (controller ruling, mirroring the kept-briefings modal):
 ``DreamsDB.set_story_kept``/``record_feedback`` are one-statement
 transactions against a thread-local held connection, so no worker and no
 ``asyncio.to_thread`` hop is warranted. After ANY mutating action the
-modal calls ``on_changed()`` (the Artifacts screen re-reads its rows) and
+modal calls ``on_changed()`` (the Library reader refreshes after modal return) and
 posts a dismissible notice; export/path errors surface as notices, never
 crashes.
 """
@@ -78,13 +76,14 @@ from rich.markdown import Markdown
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Grid, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Utils.path_validation import validate_filename, validate_path_simple
 from ...Utils.timestamps import utc_now_iso
+from ...Widgets.modal_dismissal import SafeModalDismissMixin
 from .artifacts_dreams_goals_modal import DreamsGoalsModal
 
 #: Same refusal as ``kept_briefings_modal._MARKDOWN_HYPERLINKS`` and the
@@ -261,7 +260,7 @@ def _export_markdown(story: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-class DreamsStoryModal(ModalScreen[None]):
+class DreamsStoryModal(SafeModalDismissMixin, ModalScreen[None]):
     """Inspect one Dreams story and act on it; always dismisses ``None``.
 
     Args:
@@ -310,16 +309,22 @@ class DreamsStoryModal(ModalScreen[None]):
         Binding("escape", "close", "Close", show=False),
     )
 
-    # Mirrors ArtifactShareDialog's placement ruling: DEFAULT_CSS parses
-    # at mount (runtime), not into the boot bundle, and uses only
-    # existing theme variables -- zero new tokens or literals (ADR-150).
-    DEFAULT_CSS = """
-    DreamsStoryModal { align: center middle; background: $background 70%; }
+    SAFE_MODAL_CONTENT = "#dsm-dialog"
+
+    # Central tokens are resolved by the existing consolidated CSS builder.
+    BUNDLED_CSS = """
+    DreamsStoryModal { align: center middle; background: $background $ds-opacity-dim; }
     DreamsStoryModal > VerticalScroll {
-        width: 76; max-width: 96%; height: auto; max-height: 90%;
-        background: $surface; border: solid $primary; padding: 1 2;
+        width: $ds-size-76; max-width: $ds-percent-96; height: auto; max-height: $ds-percent-90;
+        background: $ds-surface-raised; border: solid $ds-action-focus; padding: $ds-space-1 $ds-space-2;
     }
-    DreamsStoryModal #dsm-hints { color: $warning; margin-top: 1; }
+    DreamsStoryModal #dsm-hints { color: $ds-status-warning; margin-top: $ds-space-1; }
+    DreamsStoryModal #dsm-actions {
+        grid-size: 2; grid-columns: 1fr 1fr;
+        grid-rows: $ds-control-height-compact; grid-gutter: $ds-space-1;
+        height: auto; margin-top: $ds-space-1;
+    }
+    DreamsStoryModal #dsm-actions Button { width: $ds-width-full; min-width: $ds-size-0; }
     """
 
     def __init__(
@@ -353,7 +358,7 @@ class DreamsStoryModal(ModalScreen[None]):
             else:
                 yield Static(_detail_renderable(self._story), id="dsm-detail")
                 yield Static("", id="dsm-preview")
-            with Horizontal(id="dsm-actions"):
+            with Grid(id="dsm-actions"):
                 if not self._synthetic:
                     yield Button(
                         "Unkeep (k)" if self._story.get("kept") else "Keep (k)",

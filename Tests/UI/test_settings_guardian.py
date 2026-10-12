@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 from loguru import logger
-from textual.app import App
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from textual.widgets import Button, Checkbox, Input, Select, Static
 
 import Tests.UI.app_factory  # noqa: F401 - config-participant admission binding

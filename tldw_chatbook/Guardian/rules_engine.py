@@ -11,8 +11,9 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable
+from typing import Any
 
 from loguru import logger
 

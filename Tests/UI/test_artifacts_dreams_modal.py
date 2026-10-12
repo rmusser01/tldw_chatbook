@@ -17,7 +17,7 @@ import pytest
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.text import Text
-from textual.app import App
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.Screens.artifacts_dreams_modal as dsm_module
