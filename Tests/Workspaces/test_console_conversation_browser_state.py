@@ -8,9 +8,15 @@ from tldw_chatbook.Workspaces.conversation_browser_state import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     CONSOLE_CONVERSATION_BROWSER_ROW_HEIGHT,
     CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES,
+    DATE_BUCKET_OLDER,
+    DATE_BUCKET_THIS_WEEK,
+    DATE_BUCKET_TODAY,
+    DATE_BUCKET_YESTERDAY,
     ConsoleConversationBrowserInputRow,
     build_console_conversation_browser_state,
     console_conversation_browser_group_row_limit,
+    console_conversation_date_bucket,
+    console_conversation_date_dividers,
     console_persisted_row_updated_sort,
     console_rail_section_height_budget,
     format_console_relative_age,
@@ -466,3 +472,196 @@ def test_character_row_identity_survives_normalization():
         active_workspace_id=None,
     )
     assert _chats(state).rows == ()
+
+
+# ---------------------------------------------------------------------------
+# TASK-18924: Chats date dividers
+# ---------------------------------------------------------------------------
+
+from datetime import timedelta
+
+
+def _iso(moment: datetime) -> str:
+    return moment.isoformat()
+
+
+_NOW = datetime(2026, 10, 11, 12, 0, tzinfo=timezone.utc)
+
+
+def test_date_bucket_boundaries_are_deterministic():
+    now = _NOW
+    assert (
+        console_conversation_date_bucket(_iso(now - timedelta(minutes=5)), now=now)
+        == DATE_BUCKET_TODAY
+    )
+    # Same UTC date, earlier hour: still Today.
+    assert (
+        console_conversation_date_bucket(_iso(now.replace(hour=0, minute=5)), now=now)
+        == DATE_BUCKET_TODAY
+    )
+    assert (
+        console_conversation_date_bucket(
+            _iso(now - timedelta(days=1, hours=1)), now=now
+        )
+        == DATE_BUCKET_YESTERDAY
+    )
+    assert (
+        console_conversation_date_bucket(_iso(now - timedelta(days=3)), now=now)
+        == DATE_BUCKET_THIS_WEEK
+    )
+    # Six days back is the last "This week" day; seven is Older.
+    assert (
+        console_conversation_date_bucket(_iso(now - timedelta(days=6)), now=now)
+        == DATE_BUCKET_THIS_WEEK
+    )
+    assert (
+        console_conversation_date_bucket(_iso(now - timedelta(days=7)), now=now)
+        == DATE_BUCKET_OLDER
+    )
+    # Missing/unparseable timestamps fall to Older; future ones to Today.
+    assert console_conversation_date_bucket("", now=now) == DATE_BUCKET_OLDER
+    assert console_conversation_date_bucket("not-a-date", now=now) == DATE_BUCKET_OLDER
+    assert (
+        console_conversation_date_bucket(_iso(now + timedelta(hours=3)), now=now)
+        == DATE_BUCKET_TODAY
+    )
+
+
+def test_chats_section_carries_date_dividers_by_recency_order():
+    state = build_console_conversation_browser_state(
+        rows=[
+            _row("old", "Old chat", updated_sort=_iso(_NOW - timedelta(days=30))),
+            _row("today2", "Today 2", updated_sort=_iso(_NOW - timedelta(minutes=1))),
+            _row("today1", "Today 1", updated_sort=_iso(_NOW - timedelta(minutes=2))),
+            _row("yday", "Yesterday", updated_sort=_iso(_NOW - timedelta(days=1))),
+        ],
+        active_workspace_id=DEFAULT_WORKSPACE_ID,
+        now=_NOW,
+    )
+    section = _chats(state)
+    # Sorted newest first: today2 (1m), today1 (2m), yday, old — one
+    # divider per bucket run, before the first row of each run.
+    assert [row.row_key for row in section.rows] == [
+        "today2",
+        "today1",
+        "yday",
+        "old",
+    ]
+    assert section.date_dividers == (
+        (0, DATE_BUCKET_TODAY),
+        (2, DATE_BUCKET_YESTERDAY),
+        (3, DATE_BUCKET_OLDER),
+    )
+
+
+def test_single_bucket_list_still_leads_with_its_divider():
+    state = build_console_conversation_browser_state(
+        rows=[
+            _row("a", "A", updated_sort=_iso(_NOW - timedelta(minutes=1))),
+            _row("b", "B", updated_sort=_iso(_NOW - timedelta(minutes=2))),
+        ],
+        active_workspace_id=DEFAULT_WORKSPACE_ID,
+        now=_NOW,
+    )
+    assert _chats(state).date_dividers == ((0, DATE_BUCKET_TODAY),)
+
+
+def test_dividers_stay_while_search_filtering_is_active():
+    # AC#2 pinned decision: dividers STAY under filtering — the display
+    # order stays recency-based, so buckets stay truthful.
+    state = build_console_conversation_browser_state(
+        rows=[
+            _row("a", "alpha today", updated_sort=_iso(_NOW - timedelta(minutes=1))),
+            _row("b", "alpha old", updated_sort=_iso(_NOW - timedelta(days=30))),
+        ],
+        active_workspace_id=DEFAULT_WORKSPACE_ID,
+        query="alpha",
+        now=_NOW,
+    )
+    section = _chats(state)
+    assert [row.row_key for row in section.rows] == ["a", "b"]
+    assert section.date_dividers == (
+        (0, DATE_BUCKET_TODAY),
+        (1, DATE_BUCKET_OLDER),
+    )
+
+
+def test_dividers_address_only_visible_rows_under_the_cap():
+    state = build_console_conversation_browser_state(
+        rows=[
+            _row(
+                f"r{index}",
+                f"Row {index}",
+                updated_sort=_iso(_NOW - timedelta(days=index * 30)),
+            )
+            for index in range(6)
+        ],
+        active_workspace_id=DEFAULT_WORKSPACE_ID,
+        group_row_limit=2,
+        now=_NOW,
+    )
+    section = _chats(state)
+    # Capped to 2 visible rows: r0 (today), r1 (30d old).
+    assert [row.row_key for row in section.rows] == ["r0", "r1"]
+    # Divider indices address the visible tuple and cannot exceed it.
+    assert section.date_dividers == (
+        (0, DATE_BUCKET_TODAY),
+        (1, DATE_BUCKET_OLDER),
+    )
+    assert max(index for index, _ in section.date_dividers) < len(section.rows)
+
+
+def test_collapsed_chats_section_has_no_dividers():
+    state = build_console_conversation_browser_state(
+        rows=[_row("a", "A", updated_sort=_iso(_NOW))],
+        active_workspace_id=DEFAULT_WORKSPACE_ID,
+        group_collapse_preferences={"section:chats": True},
+        now=_NOW,
+    )
+    section = _chats(state)
+    assert section.collapsed
+    assert section.rows == ()
+    assert section.date_dividers == ()
+
+
+def test_empty_chats_section_has_no_dividers():
+    state = build_console_conversation_browser_state(
+        rows=[],
+        active_workspace_id=DEFAULT_WORKSPACE_ID,
+        now=_NOW,
+    )
+    assert _chats(state).date_dividers == ()
+
+
+def test_dividers_follow_the_starred_first_display_order():
+    # Starred rows sort ahead of unstarred ones, so buckets can repeat out
+    # of chronological order; a divider appears at every bucket CHANGE.
+    state = build_console_conversation_browser_state(
+        rows=[
+            _row(
+                "starred-old",
+                "Starred old",
+                starred=True,
+                updated_sort=_iso(_NOW - timedelta(days=30)),
+            ),
+            _row("plain-today", "Plain today", updated_sort=_iso(_NOW)),
+        ],
+        active_workspace_id=DEFAULT_WORKSPACE_ID,
+        now=_NOW,
+    )
+    section = _chats(state)
+    assert [row.row_key for row in section.rows] == ["starred-old", "plain-today"]
+    assert section.date_dividers == (
+        (0, DATE_BUCKET_OLDER),
+        (1, DATE_BUCKET_TODAY),
+    )
+
+
+def test_divider_helper_is_pure_over_input_rows():
+    rows = (
+        _row("a", "A", updated_sort=_iso(_NOW)),
+        _row("b", "B", updated_sort=_iso(_NOW - timedelta(days=2))),
+    )
+    first = console_conversation_date_dividers(rows, now=_NOW)
+    second = console_conversation_date_dividers(rows, now=_NOW)
+    assert first == second == ((0, DATE_BUCKET_TODAY), (1, DATE_BUCKET_THIS_WEEK))

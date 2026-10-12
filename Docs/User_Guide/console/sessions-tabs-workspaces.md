@@ -218,6 +218,15 @@ History remain usable.
 | Conversation row | Click to open it in the Console |
 | "☆" / "★" | Stars or unstars the conversation; starred rows sort first in this same list |
 
+Conversation rows are grouped under **date headers** — Today, Yesterday,
+This week, Older — computed from each chat's last activity, so a long list
+reads chronologically at a glance. A header appears only when a chat in
+that bucket is visible, and the headers stay in place while a search filter
+is active (the list keeps its recency order under a filter, so the buckets
+stay truthful). Because starred rows sort ahead of unstarred ones, a
+starred older chat can pull its date bucket above newer unstarred chats —
+the headers follow the list you see, not the calendar.
+
 ### Workspaces
 
 **Default Persona.** The shared New Workspace dialog lets you create a workspace

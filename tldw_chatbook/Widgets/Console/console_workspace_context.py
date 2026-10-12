@@ -1482,6 +1482,12 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                 height += ConsoleWorkspaceContextTray._conversation_browser_rows_height(
                     section.rows, row_title_budget
                 )
+                # TASK-18924: each date divider is a one-line dim Static
+                # ("Today"/"Yesterday"/"This week"/"Older" — labels far
+                # shorter than any rail width, so never wrapped), adding
+                # exactly one row of height. Dividers exist only on an
+                # expanded section with visible rows — exactly this branch.
+                height += len(section.date_dividers)
             elif section.empty_copy:
                 height += ConsoleWorkspaceContextTray._empty_copy_line_count(
                     section.empty_copy, empty_copy_budget
@@ -1962,7 +1968,28 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
                     # distinguishable; the all-global Chats section does not need
                     # it (Qodo #812).
                     show_workspace = section.section_id == "starred"
-                    for row in section.rows:
+                    # TASK-18924: date dividers render before the visible row
+                    # at each recorded index. Recorded through
+                    # `_record_composed_node` so the recompose guard sees a
+                    # divider move (a row aging across a date boundary) as a
+                    # structural change instead of skipping it as a no-op.
+                    divider_labels = dict(section.date_dividers)
+                    for index, row in enumerate(section.rows):
+                        divider_label = divider_labels.get(index)
+                        if divider_label is not None:
+                            yield self._record_composed_node(
+                                self._static(
+                                    divider_label,
+                                    id=(
+                                        "console-conversation-browser-divider-"
+                                        f"{section.section_id}-{index}"
+                                    ),
+                                    classes=(
+                                        "console-workspace-empty-copy "
+                                        "console-conversation-browser-date-divider"
+                                    ),
+                                )
+                            )
                         yield from self._compose_conversation_browser_row(
                             row,
                             row_index,
