@@ -506,6 +506,64 @@ async def test_home_primary_action_opens_target_route():
 
 
 @pytest.mark.asyncio
+async def test_home_primary_action_routes_from_the_action_it_displays():
+    """TASK-2760: the primary-action button must navigate to the route of
+    the SAME HomeAction whose label it displays.
+
+    With a failed item selected on the top suggestion's own route, the
+    canvas's ``Next:`` hint is the H3-suppressed recomputation (the failed
+    item's canvas already offers its own recovery), so the button reads
+    "Start a conversation" -- but the press handler used to navigate from
+    the UNSUPPRESSED ``summarize_home_dashboard`` action ("Review failed
+    work" -> library), landing the user on a route the button never named.
+    """
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:job-1",
+                title="failed_import.txt",
+                source="Library",
+                status="failed",
+                detail_route="library",
+            ),
+        ),
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        # The failed ingest job auto-selects (approval > failed > ...), and
+        # H3 suppresses the "Review failed work" suggestion for it -- the
+        # canvas falls through to the ready-Console suggestion.
+        primary = home.query_one("#home-primary-action")
+        assert "Start a conversation" in str(primary.label)
+        callout = str(home.query_one("#home-next-action-callout").renderable)
+        assert "Start a conversation" in callout
+        # The unsuppressed dashboard action still targets the failed item's
+        # route -- that is exactly the disagreement this test pins.
+        assert home._current_dashboard.next_action.action_id == "review_failed_work"
+        assert home._current_dashboard.next_action.target_route == "library"
+
+        await pilot.click("#home-primary-action")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "chat", (
+        "primary action navigated from a different HomeAction than the one "
+        "its label displays"
+    )
+    # start_console carries no nav context; asserting it pins that the press
+    # context is built from the SAME (suppressed) action too.
+    assert host.seen_contexts[-1] == {}
+
+
+@pytest.mark.asyncio
 async def test_home_screen_shows_lightweight_agent_and_schedule_controls():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
@@ -583,6 +641,14 @@ async def test_home_notification_primary_action_opens_watchlists_notifications_c
 
 @pytest.mark.asyncio
 async def test_home_failed_watchlist_primary_action_opens_watchlist_runs_context():
+    """TASK-2760 companion: with a failed watchlist item selected on its own
+    route, the H3-suppressed canvas hint is the ready-Console fallback (the
+    failed canvas already offers that item's own Retry/Open-details), so the
+    primary button reads "Start in Console" and must navigate to Console --
+    NOT to the unsuppressed "Review failed work" action's subscriptions
+    route, which the button never named. (Pinned the old disagreeing
+    behavior before TASK-2760; the runs-section context stays covered by the
+    no-selection count-driven canvas.)"""
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
@@ -602,6 +668,38 @@ async def test_home_failed_watchlist_primary_action_opens_watchlist_runs_context
 
     async with host.run_test(size=HOME_TEST_SIZE) as pilot:
         await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+        primary = home.query_one("#home-primary-action")
+        assert "Start in Console" in str(primary.label)
+        await pilot.click("#home-primary-action")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "chat"
+    assert host.seen_contexts[-1] == {}
+
+
+@pytest.mark.asyncio
+async def test_home_failed_count_primary_action_opens_watchlist_runs_context():
+    """Count-only input (no selectable row, so no H3 suppression): the
+    canvas IS the "Review failed work" suggestion, and the primary press
+    still lands on Watchlists with the runs-section context."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        failed_run_count=2,
+        # No failed item row exists to source a route from, so the
+        # suggestion follows the adapter's declared detail route.
+        active_detail_route="subscriptions",
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+        primary = home.query_one("#home-primary-action")
+        assert "Review failed work" in str(primary.label)
         await pilot.click("#home-primary-action")
         await pilot.pause(HOME_MOUNT_PAUSE)
 

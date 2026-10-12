@@ -49,6 +49,7 @@ from tldw_chatbook.Home.dashboard_state import (
     LOCAL_MEDIA_ITEM_ID_PREFIX,
     LOCAL_NOTE_ITEM_ID_PREFIX,
     HomeActiveWorkItem,
+    HomeAction,
     HomeContentSnapshot,
     HomeControl,
     HomeDashboard,
@@ -350,6 +351,14 @@ class HomeScreen(BaseAppScreen):
         # just the first failed item in the list). See
         # ``_activate_home_control``.
         self._current_canvas_controls: tuple[HomeControl, ...] = ()
+        # TASK-2760: the canvas's own ``next_action`` -- the action whose
+        # label the primary-action button and ``Next:`` callout render.
+        # Distinct from ``_current_dashboard.next_action`` whenever the H3
+        # suppression fires for the selected item (the canvas recomputes
+        # with exclusions; the dashboard summary does not), so the press
+        # handler must dispatch from THIS one or the button navigates to a
+        # route it never named.
+        self._current_canvas_next_action: HomeAction | None = None
         # T190: cached content/readiness snapshot, refreshed by the
         # ``_refresh_home_content_snapshot`` worker off the compose path and
         # merged into every ``_build_dashboard_input``. Per-instance --
@@ -732,6 +741,7 @@ class HomeScreen(BaseAppScreen):
         self._current_dashboard = summarize_home_dashboard(dashboard_input)
         self._current_dashboard_input = dashboard_input
         self._current_canvas_controls = triage.canvas.actions
+        self._current_canvas_next_action = triage.canvas.next_action
         self._home_selected_row_id = triage.selected_row_id
 
         yield Static(
@@ -882,6 +892,7 @@ class HomeScreen(BaseAppScreen):
         self._current_dashboard = summarize_home_dashboard(dashboard_input)
         self._current_dashboard_input = dashboard_input
         self._current_canvas_controls = triage.canvas.actions
+        self._current_canvas_next_action = triage.canvas.next_action
         self._home_selected_row_id = triage.selected_row_id
         try:
             self.query_one("#home-rail", HomeRail).sync_state(
@@ -925,14 +936,25 @@ class HomeScreen(BaseAppScreen):
         self._activate_home_control(button_id)
 
     def _activate_home_primary_action(self) -> None:
-        dashboard = self._current_dashboard
-        if dashboard is None:
-            return
+        # TASK-2760: dispatch from the canvas's own ``next_action`` -- the
+        # SAME HomeAction whose label the pressed button displays. The
+        # unsuppressed ``_current_dashboard.next_action`` disagrees with it
+        # exactly when the H3 suppression fires for the selected item, and
+        # navigating from that one sent the user to a route the button never
+        # named (e.g. "Start a conversation" opening Library). The dashboard
+        # action is only a defensive fallback (canvas state is always set by
+        # compose/sync before a press can land).
+        action = self._current_canvas_next_action
+        if action is None:
+            dashboard = self._current_dashboard
+            if dashboard is None:
+                return
+            action = dashboard.next_action
         self.post_message(
             NavigateToScreen(
-                dashboard.next_action.target_route,
+                action.target_route,
                 screen_context=_home_primary_action_context(
-                    dashboard.next_action, self._current_dashboard_input
+                    action, self._current_dashboard_input
                 ),
             )
         )
