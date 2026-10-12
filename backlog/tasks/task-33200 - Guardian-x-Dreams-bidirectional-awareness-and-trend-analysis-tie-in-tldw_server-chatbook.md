@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-23 06:07'
-updated_date: '2026-10-12 05:07'
+updated_date: '2026-10-12 14:38'
 labels:
   - guardian
   - dreams
@@ -101,6 +101,8 @@ trends, interop), `Tests/UI/test_settings_guardian.py`,
 The earlier implementation notes below describe frozen source7f18b6ec1063009b916dad51d468629f20687917 and historical source qualification. Current integration is In Progress; reopened acceptance outcomes require the actual fixed current-dev candidate. No integrated test, publication or merged claim is made by this preparation.
 
 Scoped updated-plan preflight found final qualification preceded the admitted follow-up changes and required-CI coverage was absent from task acceptance. Plan order now places all changes before final source/node freeze and qualification; Guardian integration acceptance gains the bounded required-CI outcome. Collections predecessor/rollback/reopen/future-refusal and installed recovery obligations are explicit in extracted Task1. No product or completion claim.
+
+Current source update: author0c941ba2ec984d960ba83376aeace0e830452bbc, 113 nonmerge commits/88 feature paths after actual merged Goal9595facbbb. Independent source review preserves the real shared Toast fix and stronger reconcile/suspension work; remaining integrated proof and actual post-Buddy/latest-dev publication gate are pending. Prior source/plan/qualification claims remain historical. No product change or completion is claimed here.
 <!-- SECTION:NOTES:END -->
 
 > Renumbering provenance: filed as task-32902 on the pre-divergence docs
