@@ -28,6 +28,13 @@
 #home-canvas {
     border: solid $ds-column-line;
     background: $ds-surface-panel;
+    /* TASK-2762: both panes subclass Vertical (Textual default
+     * `overflow: hidden hidden`), so a full Needs Attention/Running feed
+     * or a tall canvas silently clipped past the fold with no scrollbar
+     * and no keyboard path. Same remedy as `#library-rail`: vertical
+     * auto-scroll with a visible scrollbar, horizontal stays clipped. */
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .home-rail-row {
