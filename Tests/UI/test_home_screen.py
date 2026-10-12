@@ -349,6 +349,29 @@ async def test_home_empty_state_inspector_explains_selected_primary_action():
 
 
 @pytest.mark.asyncio
+async def test_home_import_sources_primary_action_opens_library_ingest_canvas():
+    """TASK-2765: the fresh-install primary action promises an importer --
+    the press must carry LIBRARY_NAV_CONTEXT_INGEST so Library opens its
+    ingest surface (same contract as app.py's ingest deep link), not the
+    default rail row."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        await pilot.click("#home-primary-action")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "library"
+    assert host.seen_contexts[-1] == {LIBRARY_NAV_CONTEXT_INGEST: True}
+
+
+@pytest.mark.asyncio
 async def test_home_next_actions_offer_distinct_followup_choices():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(

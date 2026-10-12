@@ -25,6 +25,7 @@ from tldw_chatbook.config import (
 )
 from tldw_chatbook.Constants import (
     CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
@@ -115,6 +116,11 @@ def _home_primary_action_context(
     action_id = getattr(action, "action_id", None)
     if action_id == "fix_model_setup":
         return {"category": SettingsCategoryId.PROVIDERS_MODELS.value}
+    if action_id == "import_sources":
+        # The suggestion promises an importer ("Import Library sources") --
+        # land Library on its ingest canvas, the same navigation-context
+        # contract as app.py's ingest deep link (TASK-2765).
+        return {LIBRARY_NAV_CONTEXT_INGEST: True}
     if action_id == "resume_last_conversation":
         # The terminal suggestion deep-links the newest conversation into
         # Console via the resume-navigation seam (spec §4; the contract
