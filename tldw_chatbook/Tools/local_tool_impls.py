@@ -1552,10 +1552,13 @@ def _grep_relative_files(
         return "\n".join(shown)
     empty = f"(no matches for {pattern!r})"
     if ci_near_total:
-        return (
-            f"{empty}\n{HINT_LABEL}: {ci_near_total} line(s) match "
-            f"case-insensitively (e.g. {ci_near_example}) — prefix the "
-            "pattern with (?i) if that is intended"
+        # Review fix (PR #3086 Minor-2): route through _bound_hint so the
+        # path-bearing example respects the same cap as every other hint
+        # (AC#5's blanket bound claim).
+        return f"{empty}\n{HINT_LABEL}: " + _bound_hint(
+            f"{ci_near_total} line(s) match case-insensitively "
+            f"(e.g. {ci_near_example}) — prefix the pattern with "
+            "(?i) if that is intended"
         )
     return empty
 

@@ -3093,7 +3093,7 @@ def _grep_relative_files(pattern: str, *, workspace: Path, mode: str, max_result
         return '\n'.join(shown)
     empty = f'(no matches for {pattern!r})'
     if ci_near_total:
-        return f'{empty}\n{HINT_LABEL}: {ci_near_total} line(s) match case-insensitively (e.g. {ci_near_example}) — prefix the pattern with (?i) if that is intended'
+        return f'{empty}\n{HINT_LABEL}: ' + _bound_hint(f'{ci_near_total} line(s) match case-insensitively (e.g. {ci_near_example}) — prefix the pattern with (?i) if that is intended')
     return empty
 
 def _relative_target_is_safe(relative: Path, workspace: Path, exclusions: tuple[SensitiveExclusion, ...], *, is_directory: bool, resolved_workspace: Path | None=None) -> bool:
@@ -5562,4 +5562,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("4f49b5338a785f6cc576372e3acc83c95920506b25ca0715a547c88fc6854327")
+BUNDLE_SHA256 = _enter_worker_exchange("0ddd83736eb716211776f5924cc45d1020bbc614b0195b486cefbdaf055d77f4")
