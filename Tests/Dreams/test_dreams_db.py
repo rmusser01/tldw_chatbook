@@ -129,10 +129,17 @@ def test_usage_reserve_holds_the_write_lock_from_its_read_to_its_write(
     oversells". The reservation reads the counter and then writes it; what
     makes that atomic is that both happen under ``BEGIN IMMEDIATE``. So a
     second connection that tries to write at the exact moment the read
-    runs must be refused. Without the transaction that write goes through
-    and the reservation, which adds to the counter, takes it past its
-    limit (1 + 3 + 4 = 8 of 5 here). The threaded test further down
-    cannot show that reliably; it is a smoke test and says so."""
+    runs must be refused.
+
+    What a reservation WITHOUT the transaction does here (run, round 5,
+    N3): the trace callback fires as the read starts, so the other
+    connection's +3 is written first and the read already sees it -- 1 +
+    3 = 4 of 5 spent; the reservation then grants 1 instead of 4 and the
+    counter ends at 5. It does not overspend in this sequence; it lets a
+    second writer in between, and that is what the first two assertions
+    catch (``outcome`` is "the other connection wrote", ``granted`` is 1).
+    The last assertion holds either way. The threaded test further down
+    cannot show the race reliably; it is a smoke test and says so."""
     day = "2026-09-22"
     assert db.usage_reserve(day, counter="searches", limit=5) == 1
     other = sqlite3.connect(
