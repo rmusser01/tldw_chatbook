@@ -4869,7 +4869,8 @@ def _sync_console_control_bar_now(console: ChatScreen, *rail_state: object) -> N
         *rail_state: The optional pre-computed rail state the sync accepts.
     """
     with config_module._settings_rebuild_lock(), config_module._config_file_lock():
-        assert console._sync_console_control_bar(*rail_state)
+        rendered = console._sync_console_control_bar(*rail_state)
+    assert rendered
 
 
 def _select_llamacpp_console(console: ChatScreen) -> None:

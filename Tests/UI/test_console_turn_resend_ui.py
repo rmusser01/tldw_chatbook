@@ -364,12 +364,13 @@ async def test_console_poll_paints_again_after_work_that_ended_during_a_paint(
 ):
     """A turn that ends while a poll tick is painting committed its last rows
     after that tick read them, and once a send's echo has replaced its
-    "Sending…" row nothing but the poll repaints a finished turn.
+    "Sending…" row nothing repaints a finished turn by itself.
 
     Measured on a loaded machine (TASK-34789, the test above, 1 run in 86):
-    one tick's paint took 0.35 s, the turn ended inside it, the tick then
-    found no live work and stopped the poll, and the Console stayed at
-    "Run: Validating provider." with the failed reply never shown.
+    one tick's paint took 0.448 s (0.346 s of it the transcript), the turn
+    ended inside it, the tick then found no live work and stopped the poll,
+    and the Console stayed at "Run: Validating provider." with the failed
+    reply never shown.
     """
     host = _console_app(FailThenRecoverGateway())
 
@@ -377,17 +378,15 @@ async def test_console_poll_paints_again_after_work_that_ended_during_a_paint(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         console._ensure_console_chat_controller()
-        # A late mount-time repaint would stand in for the one asserted below.
-        await pilot.pause(0.5)
         live = True
-        painted_after_the_end = 0
+        poll_paints = []
 
         async def paint() -> None:
-            nonlocal live, painted_after_the_end
-            if live:
-                live = False  # the work ends while this paint is under way
-            else:
-                painted_after_the_end += 1
+            nonlocal live
+            if sys._getframe(1).f_code.co_name != "_poll_transcript":
+                return  # only the poll's own paints are counted
+            poll_paints.append(live)
+            live = False  # the work ends while the first one is under way
 
         monkeypatch.setattr(console, "_console_transcript_poll_needed", lambda: live)
         monkeypatch.setattr(console, "_sync_native_console_chat_ui", paint)
@@ -399,7 +398,8 @@ async def test_console_poll_paints_again_after_work_that_ended_during_a_paint(
         stopped = console._console_transcript_sync_timer is None
 
     assert stopped
-    assert painted_after_the_end
+    # The paint during which the work ended, then the poll's own repaint.
+    assert poll_paints[:2] == [True, False]
 
 
 @pytest.mark.asyncio
