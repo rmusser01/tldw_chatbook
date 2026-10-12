@@ -681,6 +681,12 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "set_interval",
             "tldw_chatbook/app.py",
             "TldwCli",
+            "_perform_sync_log_retention",
+        ),
+        (
+            "set_interval",
+            "tldw_chatbook/app.py",
+            "TldwCli",
             "_reconcile_boot_worker_slots",
         ),
         (
