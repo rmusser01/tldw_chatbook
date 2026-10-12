@@ -107,9 +107,10 @@ async def test_delete_and_undo_survive_a_commit_from_another_connection(
     snapshot, and when ANOTHER connection commits to the same database
     between the read and the write SQLite refuses the upgrade at once
     (``database is locked``, no busy wait) -- the Library painted "Delete
-    failed -- edits kept" and no Undo receipt. The app has such a writer on
-    every boot: notes-sync wiring creates the Agent_Lessons folder on the
-    main thread while a Delete runs on its worker.
+    failed -- edits kept" and no Undo receipt. The app has such a writer on a
+    profile's first boot: notes-sync wiring creates the Agent_Lessons folder
+    on the main thread while a Delete runs on its worker (once the folder is
+    seeded that step only reads).
 
     The interleaving is driven directly, not by timing: the other commit is
     made from SQLite's own statement hook, as the seam's UPDATE starts.

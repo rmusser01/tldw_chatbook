@@ -18,7 +18,9 @@ TASK-34789: the third test is the same rule for the canvas's OWN recompose.
 While it removes and remounts its children the header row can be in the DOM
 without its children, and a shell resize handled on the screen's pump in
 that window (``apply_work_width``) must not raise -- the shape it asked for
-lands on the new children when the recompose completes.
+lands on the new children when the recompose completes. The fourth covers
+the other half of that window (the row still attached, its children already
+pruned), for a recompose and for the canvas being removed outright.
 
 Fast lane: a bare Textual app (``run_test``), no product app boot; the
 fallback and recompose tests mount one ``LibraryNotesCanvas`` under the app
@@ -217,3 +219,71 @@ async def test_a_resize_landing_mid_recompose_is_applied_when_the_recompose_comp
         # The shape the mid-recompose resize asked for, on the NEW children.
         assert stacked.styles.layout.name == "vertical"
         assert canvas.query_one("#library-note-status").has_class("h-1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("teardown", ["recompose", "remove"])
+async def test_a_resize_landing_while_the_header_is_torn_down_never_raises(
+    monkeypatch, teardown: str
+):
+    """TASK-34789 (PR #3090 review): the leaf-first half of the same window.
+
+    Children leave before their parent, so the header row is still in the DOM
+    after the widgets it held are gone. The resize is delivered from that
+    row's own unmount, the one point where that state is certain. For a
+    recompose the readiness flag covers it; a canvas that is being removed
+    keeps that flag, and only its pruning state says its children are going.
+
+    RED without the pruning half of the guard for ``remove``, and without
+    any guard for both: ``NoMatches`` on ``#library-note-heading``.
+    """
+    seen: list[tuple[bool, bool]] = []
+    outcome: list[str] = []
+
+    def on_unmount(self) -> None:
+        if self.id != "library-note-header-second-row" or outcome:
+            return
+        canvas = next(
+            (node for node in self.ancestors if isinstance(node, LibraryNotesCanvas)),
+            None,
+        )
+        if canvas is None:
+            return
+        seen.append(
+            (
+                bool(canvas.query("#library-note-header-second-row")),
+                bool(canvas.query("#library-note-status")),
+            )
+        )
+        try:
+            canvas.apply_work_width(STACKED_WORK_WIDTH)
+        except NoMatches as exc:
+            outcome.append(f"raised: {exc}")
+        else:
+            outcome.append("applied")
+
+    monkeypatch.setattr(Horizontal, "on_unmount", on_unmount, raising=False)
+    app = _EditorCanvasApp()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        canvas = app.query_one(LibraryNotesCanvas)
+        canvas.apply_work_width(ONE_ROW_WORK_WIDTH)
+        if teardown == "remove":
+            await canvas.remove()
+        else:
+            canvas.refresh(recompose=True)
+        for _ in range(100):
+            rebuilt = teardown == "remove" or canvas.query("#library-note-status")
+            if outcome and rebuilt:
+                break
+            await pilot.pause(0.02)
+        await pilot.pause()
+
+        # The row was still attached and its children were already gone.
+        assert seen == [(True, False)]
+        assert outcome == ["applied"]
+        if teardown == "recompose":
+            # ... and the shape it asked for lands on the new children.
+            row = canvas.query_one("#library-note-header-second-row")
+            assert row.styles.layout.name == "vertical"
+

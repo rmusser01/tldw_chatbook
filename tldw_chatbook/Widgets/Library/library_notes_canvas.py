@@ -3566,18 +3566,26 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Update responsive copy without remounting the canvas."""
         self.compact = compact
         self.styles.min_width = 0 if compact else 40
-        if not self.is_mounted or not self._children_ready:
+        if not self.is_mounted or not self._children_ready or self._pruning:
             # TASK-34789: this canvas's own ``recompose()`` prunes its
             # children leaf-first and remounts them root-first, so for its
             # whole duration the header row can be in the DOM without the
             # save state and toolbars the block below reads unguarded. A
             # shell resize handled on the SCREEN's pump in that window
             # (``apply_work_width``, on a work pane a notes-tree or trash
-            # reload was recomposing) raised ``NoMatches`` and took the app
-            # down. Same early-out as ``apply_session_state``, and as
-            # complete: ``compact`` is stored above and the widths by the
-            # callers, and ``_after_recompose`` re-applies them to the new
-            # children through ``_apply_post_compose_state``.
+            # reload was recomposing) raised ``NoMatches`` out of the
+            # screen's resize handler: the end of a headless run, and in the
+            # running app the keep-alive retiring the Library screen.
+            #
+            # Nothing is lost for a recompose: ``compact`` is stored above
+            # and the widths by the callers, and ``_after_recompose``
+            # re-applies them to the new children. A canvas that is itself
+            # being removed (``_pruning``) loses its children the same way
+            # while both flags still read True; it never paints again, so
+            # there is nothing to re-apply. The not-yet-mounted half is
+            # older than this guard and keeps the gap ``apply_session_state``
+            # documents (a width handed over before mount waits for the next
+            # sync).
             return
         if self.mode == "list" and self.list_state is not None:
             try:
