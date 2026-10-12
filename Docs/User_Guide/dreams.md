@@ -49,8 +49,9 @@ formatting. What is refused — the notice says which of these it was —
 while your typed text stays in the field to fix:
 
 - text with nothing to read in it. A letter or a number in any script is
-  enough, and so is an emoji (keycaps such as #️⃣ and emoji such as ‼️
-  included) or a symbol such as ♥, € or ©. Punctuation, maths signs
+  enough, and so is an emoji — typed with or without the invisible emoji
+  selector (a keycap such as #️⃣, ‼, ◽ and the skin-tone swatches included)
+  — or a symbol such as ♥, € or ©. Punctuation, maths signs
   (+, ∞, →), accents and invisible characters on their own are not;
 - line breaks and control characters, including Unicode's line and
   paragraph separators;

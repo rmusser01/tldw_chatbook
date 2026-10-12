@@ -515,7 +515,7 @@ def test_an_emoji_made_of_punctuation_or_a_sign_is_readable(value):
     "value",
     [
         "+", "\u221e", "\u2192", "^", "~",  # maths signs and modifiers alone
-        "\u203c",                           # punctuation without the selector
+        "!", "\u203d",                     # punctuation; the interrobang is no emoji
         "\ufe0f", "\u20e3", "\ufe0f\u20e3",  # the selectors on nothing
         "+ - \u00d7",
     ],
@@ -575,3 +575,40 @@ def test_a_selector_or_keycap_on_a_character_that_is_no_emoji_is_not_readable(
 def test_every_emoji_unicode_writes_with_a_selector_on_a_sign_is_readable(
         value):
     assert validate_dreams_profile_text(value) == value
+
+
+# --- Review round 7, H4: an emoji is readable with or without its selector -------
+#
+# G2 accepted the eleven punctuation and maths-sign emoji only WITH U+FE0F,
+# and the five skin-tone swatches (category Sk) not at all. Two of the
+# squares and the swatches show as emoji by default, so an emoji keyboard
+# produces them without the selector.
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["\u203c", "\u2049", "\u2194", "\u25fb", "\u25fc", "\u25fd", "\u25fe",
+     "\u2934", "\u2935", "\u3030", "\u303d",
+     "\U0001f3fb", "\U0001f3fc", "\U0001f3fd", "\U0001f3fe", "\U0001f3ff",
+     "\U0001f3fb\ufe0f"],
+)
+def test_an_emoji_base_is_readable_without_its_selector(value):
+    assert validate_dreams_profile_text(value) == value
+
+
+def test_every_emoji_in_richs_table_is_readable_with_or_without_the_selector():
+    """2,810+ entries of rich's emoji table, each as listed and with every
+    U+FE0F removed. (rich's emoji module is imported here, in a test only:
+    it is not, and must not be, on any boot path.)"""
+    from rich._emoji_codes import EMOJI
+
+    refused = []
+    for name, value in EMOJI.items():
+        for form in {value, value.replace("\ufe0f", "")}:
+            try:
+                validate_dreams_profile_text(form)
+            except ValueError:
+                refused.append((name, form))
+
+    assert refused == []
+    assert len(EMOJI) > 2800, "fixture: the table is the full one"

@@ -1931,9 +1931,17 @@ _DREAMS_TEXT_FLAG_SEQUENCE_RE = re.compile(
 #: direction mark, a combining mark or a filler with U+FE0F after it was
 #: a topic. ``+\ufe0f`` and ``-\u20e3`` are not emoji either: they are
 #: what ``+`` and ``-`` are, maths signs, which alone are refused.
+#:
+#: The selector is OPTIONAL on these bases, and the five skin-tone
+#: swatches (category Sk) count on their own too (round 7, H4): the
+#: medium small squares and the swatches show as emoji by default, so an
+#: emoji keyboard produces them without U+FE0F, and the rest are emoji
+#: whichever way they were typed. Every entry of rich's emoji table is
+#: readable with and without its selectors (pinned by a test).
 _DREAMS_TEXT_EMOJI_PRESENTATION_RE = re.compile(
     "[#*0-9]\ufe0f?\u20e3"
-    "|[\u203c\u2049\u2194\u25fb-\u25fe\u2934\u2935\u3030\u303d]\ufe0f")
+    "|[\u203c\u2049\u2194\u25fb-\u25fe\u2934\u2935\u3030\u303d"
+    "\U0001f3fb-\U0001f3ff]")
 
 # One refusal per thing that can be wrong (round 4, C4): the caller shows
 # it after "Topic not added: " / "Goal not added: " / "Region not saved: ".
