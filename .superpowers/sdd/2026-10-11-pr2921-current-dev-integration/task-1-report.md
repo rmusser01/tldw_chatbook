@@ -92,3 +92,37 @@ Root requested an actual first lazy Guardian getter audit. Guardian construction
 Boot-and-lazy-checkpoint-1:70pass/3original SchedulerLoop due-dispatch failures29.52s, all held by emergency-stop before our seam. One exact original node fails in isolated current and immutable private START9ab export, both logging emergency-stop active. A module-local bootstrap_profile marker retains the guarded config source imported at collection per current conftest contract. No emergency-stop or production config gate is weakened. Required affected scheduler lane membership is recorded in the plan. Scheduler-admission-checkpoint-1 then has85pass/1old lifecycle synchronization failure44.34s: its unasserted10ms sleep stopped the real scheduler during native startup. The lifecycle test now awaits actual handler entry under its existing1-second deadline, then stops; original dispatch assertion and deadline remain. Only invalidated lifecycle plus four boot cases rerun: scheduler-lifecycle-green-1 5pass4.29s. All distinct failures/raw/JUnit/source bindings remain; do not describe the earlier mixed run as a full pass. Current new Guardian/native/boot tests, track_reconcile and cycle_service pass Ruff; diff check is clean.
 
 Whole Task1 remains incomplete. Exact Dreams schema/recovery/native installed ownership, real restored first-fetch proof, source preview, mixed selection, Library routing/actions/degradation, remaining literal/token/docs/lint and bounded required-lane membership are next. No task Done, complete product, or publication claim.
+
+
+## Checkpoint: actual historical Dreams v1–v6 runtime lineages
+
+Exact author file history contains eight distinct schema/migration definitions.
+The source-bound native census executed114fresh/upgraded builds, recording98
+unique catalog+version-marker states and30distinct catalogs (v1:2,v2:4,v3:3,
+v4:4,v5:7,v6:10). It preserves early retained indexes, native ALTER/rename SQL
+and earlier version markers. Source history before9595 is fixture evidence only,
+never an imported feature/prerequisite replay. ADR196 ruling aaa607b419 preceded
+implementation. Immutable catalog declarations open no reference SQLite store.
+
+Runtime refuses missing/empty/invalid/future/hybrid lineages before WAL setup
+and revalidates under the immediate schema transaction. Existing v6 migrations
+and data shape remain; successful old histories retain all prior marker rows.
+Failed construction closes its own newly acquired native handle. Exact future
+source bytes remain unchanged, no WAL is created, and closure is probed before
+the constructor caller returns. Populated tests preserve original columns, IDs,
+private/searchable profile flags, user/seed angles, generating goals, suspension,
+story/feedback/track history and timestamps across all30catalogs and reopen.
+Injected post-write migration failure rolls back the entire old dump, then
+succeeds on reopen. Public caller-only close semantics remain PR3042-owned.
+
+Dreams-lineage-red-1:5unsafe-admission failures/32pass7.15s. First connected
+green:98pass/5obsolete historical-fixture failures19.53s. Those fixtures
+rewound selected columns in a current v6 file and falsely called that v1–v5;
+new exact lineage admission correctly rejects them. Replaced only their fixture
+construction with measured historical catalogs, preserving original test data,
+assertions and owners. Dreams-lineage-green-2:85pass14.59s across changed
+historical/native/track DB tests. The unchanged general DB tests passed in the
+first connected run; no unnecessary rerun. New catalog/tests Ruff clean, diff
+check clean. Raw/JUnit/argv/environment/source hashes and census receipts retained.
+Installed Dreams recovery, activation/first-fetch and remaining whole Task1
+outcomes remain incomplete; no task or publication gate is closed.

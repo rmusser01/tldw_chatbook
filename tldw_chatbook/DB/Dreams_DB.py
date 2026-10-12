@@ -258,9 +258,13 @@ class DreamsDB(BaseDB):
         # open), and ``sqlite3.Connection`` cannot be weakly referenced.
         self._opened: list[sqlite3.Connection] = []
         self._opened_lock = threading.Lock()
-        super().__init__(
-            database_path, client_id if client_id is not None else "default"
-        )
+        try:
+            super().__init__(
+                database_path, client_id if client_id is not None else "default"
+            )
+        except BaseException:
+            self.close_all()
+            raise
 
     # ------------------------------------------------------------------
     # Connection handling (Library_Collections_DB idiom)
@@ -272,17 +276,17 @@ class DreamsDB(BaseDB):
         # thread still USES only the connection it holds; the one call
         # that crosses threads is ``close_all`` closing them.
         conn = super()._get_connection(check_same_thread=False)
-        conn.execute("PRAGMA foreign_keys = ON")
-        if not self.is_memory_db:
-            self._enable_wal(conn)
-        # NORMAL is safe under WAL (app-crash-safe) and avoids an fsync per
-        # commit; synchronous is per-connection, so it is re-applied on every
-        # NEW connection here, the one place connections are created.
-        conn.execute("PRAGMA synchronous = NORMAL")
-        # A held (long-lived) connection needs true autocommit: Python's
-        # default isolation mode auto-BEGINs on DML and would make the
-        # explicit BEGIN in transaction() fail (task-3012).
-        conn.isolation_level = None
+        try:
+            # Refuse unknown stores before WAL changes their header/journal state.
+            self._validate_schema_lineage(conn)
+            conn.execute("PRAGMA foreign_keys = ON")
+            if not self.is_memory_db:
+                self._enable_wal(conn)
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.isolation_level = None
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
     def _enable_wal(self, conn: sqlite3.Connection) -> None:
@@ -391,17 +395,37 @@ class DreamsDB(BaseDB):
         # Every thread's stale handle is forgotten with the old storage.
         self._thread_local = threading.local()
 
+    @staticmethod
+    def _validate_schema_lineage(conn: sqlite3.Connection) -> int:
+        """Recognize complete historical catalogs before any schema write."""
+        from .dreams_schema import DREAMS_SCHEMAS
+
+        catalog = tuple(" ".join(row[0].split()) for row in conn.execute(
+            "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"))
+        if not catalog:
+            return 0
+        try:
+            versions = [row[0] for row in conn.execute("SELECT version FROM schema_version")]
+        except sqlite3.Error as exc:
+            raise DreamsSchemaError("schema_version_missing") from exc
+        if not versions or any(type(version) is not int or version < 1 for version in versions):
+            raise DreamsSchemaError("schema_version_invalid")
+        version = max(versions)
+        if version > DreamsDB._CURRENT_SCHEMA_VERSION:
+            raise DreamsSchemaError("schema_too_new")
+        if not any(version == known and catalog == tuple(" ".join(sql.split()) for sql in schema)
+                   for known, schema in DREAMS_SCHEMAS):
+            raise DreamsSchemaError("schema_lineage_mismatch")
+        return version
+
     def _initialize_schema(self) -> None:
-        """Atomically initialize the Dreams schema (additive, idempotent)."""
+        """Validate, then atomically initialize or upgrade a known lineage."""
         with self.transaction() as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS schema_version"
-                " (version INTEGER PRIMARY KEY NOT NULL)"
-            )
-            row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
-            current_version = int(row[0] or 0) if row is not None else 0
-            if current_version > self._CURRENT_SCHEMA_VERSION:
-                raise DreamsSchemaError("schema_too_new")
+            current_version = self._validate_schema_lineage(conn)
+            if current_version == self._CURRENT_SCHEMA_VERSION:
+                return
+            if not current_version:
+                conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)")
             for statement in self._SCHEMA_DDL:
                 conn.execute(statement)
             self._migrate_profile_source_check_v3(conn)
@@ -412,6 +436,7 @@ class DreamsDB(BaseDB):
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
                 (self._CURRENT_SCHEMA_VERSION,),
             )
+            self._validate_schema_lineage(conn)
 
     @staticmethod
     def _migrate_profile_source_check_v3(conn: sqlite3.Connection) -> None:
