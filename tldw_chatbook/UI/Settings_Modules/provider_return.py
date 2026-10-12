@@ -18,8 +18,10 @@ it is never part of the handoff or of a navigation context.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+from ...Chat.provider_readiness import provider_config_key
 from ..Navigation.conversation_settings_navigation import (
     ConversationSettingsReturnOutcome as Outcome,
 )
@@ -106,6 +108,44 @@ def return_outcome(screen: SettingsScreen) -> Outcome | None:
     ):
         return outcome
     return Outcome.WITHOUT_SAVING
+
+
+def routed_model(screen: SettingsScreen, values: Mapping[str, object]) -> str:
+    """The model shown beside a routed provider before any edit.
+
+    The route's own model when it names or pins one (Chat settings pins even
+    none), else Settings' own. One route had no right answer in that rule: a route
+    that names no model to a provider other than the one Settings holds.
+    Settings' model is another provider's there, and the first edit pinned it
+    beside the routed provider, so a saved key made "<provider> · <another
+    provider's model>" the default for new chats.
+
+    Such a route is resolved here, once, to the routed provider's configured
+    model or none, as choosing that provider in the Provider control does. It
+    is then held as the route's own model: the page's echo guards compare
+    what a mounted field posts with the routed model, and any other shown
+    model would be staged as an edit the user never made.
+
+    Args:
+        screen: The Settings screen a provider route is in effect on.
+        values: Settings' own provider values (no draft exists yet).
+
+    Returns:
+        The model id, or "" for none.
+    """
+    provider = str(screen._navigation_provider or "")
+    held = str(values.get("provider") or "")
+    if (
+        not screen._navigation_model_is_explicit
+        and not screen._navigation_model
+        and provider_config_key(provider) != provider_config_key(held)
+    ):
+        screen._navigation_model = screen._provider_model_default(provider)
+        screen._navigation_model_is_explicit = True
+    model = str(screen._navigation_model or "").strip()
+    if not model and not screen._navigation_model_is_explicit:
+        model = str(values.get("model") or "").strip()
+    return model
 
 
 def route_focus(screen: SettingsScreen, selector: str | None) -> str | None:

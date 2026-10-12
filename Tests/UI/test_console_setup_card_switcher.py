@@ -345,6 +345,56 @@ async def test_card_choose_model_opens_switch_model_and_sets_the_new_chat_defaul
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_save_as_model_default_on_the_cards_list_saves_the_models_defaults(
+    monkeypatch, request
+) -> None:
+    """Final review: while no new-chat default works, Enter on the card's
+    list also sets it (AC#5). The same swap was made for every action, so
+    Save as model default ran as Ctrl+N: the notice read "Eligible new-chat
+    default saved" and the model's own defaults were never written. Only
+    Enter is swapped; a default action runs as pressed."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _console_app(
+        {
+            "chat_defaults": {"provider": "llama_cpp", "model": ""},
+            "api_settings.llama_cpp": {"api_url": SAVED_LLAMA, "model": ""},
+        },
+        {"llama_cpp": ["model-a", "model-b"]},
+    )
+    notices: list[str] = []
+    monkeypatch.setattr(
+        app, "notify", lambda message, **_kwargs: notices.append(str(message))
+    )
+    harness = _Harness(app)
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console, modal = await _blocking_card(harness, pilot)
+        await _focused_action(harness, console, pilot, CONSOLE_SETUP_MODAL_ACTION_ID)
+        await pilot.press("enter")
+        switcher = await _switcher_ready(harness, pilot)
+        assert _scope(switcher) == model_switcher.SCOPE_THIS_CHAT_AND_NEW_CHATS
+        row = switcher.highlighted_row()
+        assert (row.kind, row.provider, row.model) == ("pair", "llama_cpp", "model-a")
+        switcher.query_one("#console-popover-temperature", Input).value = "0.31"
+        await pilot.pause()
+
+        switcher.query_one("#console-popover-save-model-default", Button).press()
+        await _until(pilot, lambda: harness.screen is console, "the switcher to close")
+        await _drain(app)
+        await _until(pilot, lambda: not modal.is_blocking, "the card to unlock")
+
+        assert _pair(console) == ("llama_cpp", "model-a")
+        saved = _saved()
+        profile = saved["api_settings"]["llama_cpp"]["model_defaults"]["model-a"]
+        assert profile["temperature"] == pytest.approx(0.31)
+        # As pressed: the model's defaults, not the default for new chats.
+        assert saved["chat_defaults"]["model"] == ""
+        assert "Model profile default saved: llama_cpp/model-a" in notices
+        assert not [notice for notice in notices if "new-chat default" in notice]
+    assert app.console_default_durability_state.failure_phase is None
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_card_pick_applies_to_this_chat_only_while_a_new_chat_default_works(
     request,
 ) -> None:

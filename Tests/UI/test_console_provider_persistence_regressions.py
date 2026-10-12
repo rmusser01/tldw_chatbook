@@ -397,7 +397,7 @@ def test_detected_server_adoption_keeps_configured_endpoint(monkeypatch, request
         f"({configured_endpoint}) with the detected one ({detected_endpoint})."
     )
     warning = (
-        f"Keeping the saved endpoint {configured_endpoint} for llama_cpp; "
+        f"Keeping the saved endpoint {configured_endpoint} for llama.cpp; "
         "using the detected server for this session only."
     )
     assert [m for m, _kwargs in notifies if "Keeping" in m] == [warning]

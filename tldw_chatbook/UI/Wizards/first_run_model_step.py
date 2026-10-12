@@ -543,6 +543,8 @@ class ModelStep(SetupStep):
         # can try to mount fresh "setup-model-option-N" ids while the stale
         # ones are still present, raising DuplicateIds.
         await radio_set.remove_children()
+        if not radio_set.is_attached:  # Quit mid-load: a mount would raise.
+            return
         if (
             load_generation is not None
             and load_generation != self._model_load_generation

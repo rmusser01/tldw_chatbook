@@ -1063,7 +1063,8 @@ class ConsoleModelPopover(
     def _returned_to(self, key: str) -> bool:
         """Whether a return from Settings reopened the list on provider
         ``key``, while Find is as it opened."""
-        return key == self._reopened and self._query == self._opened_query
+        # ``_reopened`` is "" for every other opener: no key is that.
+        return bool(key) and key == self._reopened and self._query == self._opened_query
 
     def _capped(self, rows: list[SwitcherRow], cap: int) -> list[SwitcherRow]:
         """The first ``cap`` rows; the highlight pair's row is never cut.
@@ -1072,8 +1073,23 @@ class ConsoleModelPopover(
         place: left out, Enter acted on Find's best match instead, which can
         be another provider's model (an aggregator id that starts with the
         provider's name outranks the provider's own models).
+
+        A list reopened from Settings with no row for the pair (the row named
+        no model, or the catalog dropped it) keeps that provider's first row
+        the same way when the cut leaves none of its rows: the highlight is
+        that row or nothing, and the list said nothing about the provider.
         """
         late = next((row for row in rows[cap:] if self._leads(row)), None)
+        if late is None and self._returned_to(self._reopened):
+            first = next(
+                (
+                    index
+                    for index, row in enumerate(rows)
+                    if provider_key(row.provider) == self._reopened
+                ),
+                0,
+            )
+            late = rows[first] if first >= cap else None
         return rows[:cap] if late is None else [*rows[: cap - 1], late]
 
     def _is_current(self, provider: str, model: str | None) -> bool:
@@ -1250,6 +1266,15 @@ class ConsoleModelPopover(
                     )
                 ready_rows.extend(self._catalog_status_rows(key, bool(models)))
                 continue
+            if (
+                readiness.blocker == "model_missing"
+                and not models
+                and self._returned_to(key)
+            ):
+                # Its key is saved and no model is chosen or listed: its row's
+                # Enter opens Settings again, so the same line says what to
+                # type here.
+                returned = self._catalog_status_rows(key, False)
             setup = self._setup_rows(key, readiness, query, tokens, current_shown)
             if (
                 setup

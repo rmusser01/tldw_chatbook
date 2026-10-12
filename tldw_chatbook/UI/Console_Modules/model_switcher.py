@@ -310,8 +310,9 @@ def open_provider_setup(
     (TASK-33008.2); never a key or an endpoint. A provider or model the
     return cannot name opens Settings one way, as before; a navigation that
     never leaves takes its return back, and so does a Console the user
-    reaches again by hand (``provider_return.py``). Either way Settings keeps
-    its own model field when no model is routed.
+    reaches again by hand (``provider_return.py``). Either way, with no model
+    routed Settings keeps its own model only for the provider it already
+    holds; any other provider shows its own configured model or none.
 
     Args:
         screen: The Console screen that opens Settings.
@@ -631,6 +632,10 @@ def _open_switcher(
     )
     from ...Widgets.Console.console_model_popover import ConsoleModelPopover
 
+    if not screen._owns_console_screen_stack():
+        # A second press of a card action before the first one's Switch model
+        # had the screen: a second dialog would sit over it on stale state.
+        return
     store = screen._ensure_console_chat_store()
     session_id = store.active_session_id
     if session_id is None:
@@ -670,7 +675,8 @@ def _open_switcher(
             verdict = readiness(chosen.provider, chosen.model)
             if not verdict.native_send_supported:
                 raise ValueError(f"Unavailable: {verdict.detail}")
-            if not adopt:
+            if not adopt and submission.action is ConsoleSettingsAction.APPLY_TO_CHAT:
+                # Enter. Save as model default and Ctrl+N run as pressed.
                 submission = replace(
                     submission,
                     action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
@@ -821,6 +827,7 @@ def adopt_detected_local_server(
     )
 
     provider_key = provider_config_key(server.provider_key)
+    name = provider_display_name(provider_key)  # as every other line here says it
 
     def endpoint_in(config: dict[str, object]) -> str | None:
         return first_configured_endpoint(
@@ -852,7 +859,7 @@ def adopt_detected_local_server(
         screen.app_instance.notify(
             "Keeping the saved endpoint "
             f"{safe_endpoint_display(configured_endpoint) or configured_endpoint} "
-            f"for {provider_key}; using the detected "
+            f"for {name}; using the detected "
             "server for this session only.",
             severity="warning",
             markup=False,
@@ -877,7 +884,7 @@ def adopt_detected_local_server(
             "applying to this session only"
         )
         screen.app_instance.notify(
-            f"Default not saved for {provider_key}/{settings.model}; "
+            f"Default not saved for {name}/{settings.model}; "
             "it applies to this chat only.",
             severity="warning",
             markup=False,

@@ -908,6 +908,17 @@ that echo then left the help blank, because the resting copy had only ever been 
 the echo's refresh. Treat a `Changed` whose value equals the committed display text as no
 query (`handle_provider_search_changed`), and compose the resting copy directly.
 
+**An echo guard knows only the values it was told about (TASK-33008.2, final fix wave,
+2026-10-11).** Settings' Default model field ignores its mount echo by comparing the posted
+value with the routed model (`_navigation_model`) and with Settings' own. A route that names
+no model was changed to show the routed provider's own saved model: a third value neither
+comparison knew. On the real app DeepSeek's page arrived with a draft nobody made (provider
+and model staged), no Return to Console and focus on the nav bar's Home button. The same
+change for a provider with no saved model passed, because an empty field posts no echo.
+When a mounted field gets a new source for its value, make that source the value the guard
+compares against (`routed_model` holds the resolved model as the route's own), and test it
+with a non-empty value.
+
 ---
 
 ## `DataTable.clear()` posts a `RowHighlighted` for row 0 before the rows come back

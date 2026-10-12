@@ -431,6 +431,12 @@ named field (API key or Endpoint) in focus, and it remembers the way back. The
 way back is a status line, a return button and **Stay in Settings**, under the
 Default model's **Applies to** row.
 
+The page shows the model the request named. A Console request that names
+none (a **NEEDS SETUP** row of a provider that lists no models) shows that
+provider's own saved model, or none, as choosing the provider here does; your
+default model stays only when the request is for your default provider. So a
+save never pairs the provider with another provider's model.
+
 A named field that is disabled cannot take focus. The API key is, while **Sign
 in with** is **Claude subscription**: a missing or expired subscription
 credential is fixed outside the app, by logging in with Claude Code, but the

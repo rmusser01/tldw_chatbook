@@ -1109,35 +1109,173 @@ async def test_every_unsaved_recovery_state_offers_return_without_saving(
         assert not app.pending_handoffs.has_pending(CHANNEL)
 
 
+#: route -> (provider, the model Settings shows for a route that names none).
+_ROUTES_THAT_NAME_NO_MODEL = {
+    # The default provider: Settings' own model stays (TASK-33008.1).
+    "default-provider": ("openai", "gpt-5"),
+    # Another provider with no list and no model of its own saved, as 24 of
+    # the 60 shipped providers are: none, never the default provider's.
+    "lists-no-models": ("cerebras", ""),
+    # Another provider that lists nothing here and has a model of its own
+    # saved (DeepSeek ships one): that model.
+    "its-own-saved-model": ("deepseek", "deepseek-v4-flash"),
+}
+
+
+async def _route_with_no_model(app, pilot, provider: str, **route):
+    """From the Get started card, open Settings on ``provider`` as a NEEDS
+    SETUP row that names no model does; arrive in its API key field."""
+    await _until(
+        pilot,
+        lambda: getattr(app.focused, "id", None) == "console-setup-modal-action",
+        "the Get started card's action to hold focus",
+    )
+    console = app._navigation_outgoing_screen()
+    open_provider_setup(console, provider, **route)
+    await _until(
+        pilot,
+        lambda: (
+            isinstance(app.screen, SettingsScreen)
+            and getattr(app.focused, "id", None) == "settings-provider-api-key"
+        ),
+        "Settings to open with focus in the API key field",
+    )
+    target = app.screen._provider_return_target
+    assert target is not None and target.model is None
+    assert target.pins_model is False
+    assert app.screen._provider_widget_value() == provider
+    return console, app.screen
+
+
+async def _save_the_typed_key(app, pilot) -> None:
+    await pilot.press(*_KEY)
+    await pilot.press("escape")  # leave the field, so s is Save
+    await pilot.press("s")
+    await _until(
+        pilot,
+        lambda: getattr(app.focused, "id", None) == "settings-provider-return",
+        "focus on the Return to Console action after the save",
+    )
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("route", list(_ROUTES_THAT_NAME_NO_MODEL))
 @private_profile_test
-async def test_a_route_that_names_no_model_keeps_settings_own_model(
-    monkeypatch, request
+async def test_a_route_that_names_no_model_never_borrows_another_providers_model(
+    monkeypatch, request, route: str
 ):
-    """A NEEDS SETUP row of a provider that lists no models routes no model.
-    The return-bearing route must then leave Settings' own model in the
-    field, as the one-way route did; only a routed model replaces it."""
+    """Controller ruling (c) of 2026-10-11. Rewritten on purpose from
+    ``test_a_route_that_names_no_model_keeps_settings_own_model``, which
+    pinned Settings' own model beside every provider routed without one.
+
+    A NEEDS SETUP row of a provider that lists no models routes no model.
+    Settings kept the saved default's model in the field, the first edit
+    pinned it, and the save wrote "<provider> · <the old default's model>" as
+    the default for new chats. A route to the default provider still keeps
+    Settings' own model. A route to any other provider shows that provider's
+    saved model or none, as choosing it in the Provider control does, and the
+    save writes what the page shows."""
+    provider, shown = _ROUTES_THAT_NAME_NO_MODEL[route]
+    for name in ("CEREBRAS_API_KEY", "DEEPSEEK_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     app = _cloud_app(monkeypatch)
 
     async with app.run_test(size=(211, 44)) as pilot:
-        await _until(
-            pilot,
-            lambda: getattr(app.focused, "id", None) == "console-setup-modal-action",
-            "the Get started card's action to hold focus",
+        _console, settings = await _route_with_no_model(app, pilot, provider)
+        model_field = settings.query_one("#settings-model-value", Input)
+        assert model_field.value == shown
+        # Showing it is no edit: the return is offered as on any arrival.
+        assert not settings._category_has_unsaved_changes(
+            settings._active_category_id()
         )
-        open_provider_setup(app._navigation_outgoing_screen(), "openai")
+        assert settings.query_one("#settings-provider-return-continuation").display
+
+        await _save_the_typed_key(app, pilot)
+        saved = _saved_config()
+        assert saved["api_settings"][provider]["api_key"] == _KEY
+        defaults = saved["chat_defaults"]
+        assert (defaults["provider"], defaults["model"]) == (provider, shown)
+        assert model_field.value == shown
+
+
+def _painted_pairs(switcher) -> str:
+    pairs = switcher.query_one("#console-popover-pairs").region
+    painted = [strip.text for strip in switcher._compositor.render_strips()]
+    return "\n".join(painted[pairs.y : pairs.bottom])
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_provider_saved_with_no_model_is_finished_on_the_reopened_list(
+    monkeypatch, request
+):
+    """Controller ruling (c), the rest of the trip, on the real app. Cerebras
+    lists no models and has none saved, so its NEEDS SETUP row routes none
+    and the saved default for new chats is "Cerebras" with no model. The
+    untouched chat follows it, so the Get started card still blocks, and
+    Switch model reopens over it on "Cerebras ". Its row is still under NEEDS
+    SETUP, now for its model, and READY PROVIDERS opens with the line that
+    says what to type. The id typed after the name applies to the chat and,
+    with no working new-chat default, becomes that too."""
+    monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+    app = _cloud_app(monkeypatch)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        console, _settings = await _route_with_no_model(
+            app, pilot, "cerebras", reopen_switcher=True
+        )
+        await _save_the_typed_key(app, pilot)
+        await pilot.press("enter")
+
+        def reopened_on_its_row() -> bool:
+            if not isinstance(app.screen, ConsoleModelPopover):
+                return False
+            row = app.screen.highlighted_row()
+            return row is not None and (row.kind, row.provider, row.model) == (
+                "setup",
+                "cerebras",
+                None,
+            )
+
+        await _until(pilot, reopened_on_its_row, "Switch model on Cerebras's own row")
+        reopened = app.screen
+        _chat, readiness = console._active_console_settings_readiness()
+        assert _chat_pair(console) == ("cerebras", None)
+        assert (readiness.blocker, readiness.recovery_action) == (
+            "model_missing",
+            "select_model",
+        )
+        assert reopened.query_one("#console-popover-find", Input).value == "Cerebras "
+        assert reopened._scope_copy == model_switcher.SCOPE_THIS_CHAT_AND_NEW_CHATS
+        assert (
+            "Cerebras · no models reported · type its name and an id"
+            in _painted_pairs(reopened)
+        )
+
+        await pilot.press(*"llama-x")
         await _until(
             pilot,
             lambda: (
-                isinstance(app.screen, SettingsScreen)
-                and getattr(app.focused, "id", None) == "settings-provider-api-key"
+                (row := reopened.highlighted_row()) is not None
+                and (row.kind, row.provider, row.model)
+                == ("typed", "cerebras", "llama-x")
             ),
-            "Settings to open with focus in the API key field",
+            "the typed id's row to be the highlight",
         )
-        target = app.screen._provider_return_target
-        assert target is not None and target.model is None
-        assert app.screen.query_one("#settings-model-value", Input).value == "gpt-5"
-        assert target.pins_model is False
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console
+                and not console._console_setup_modal_blocking()
+                and _saved_config()["chat_defaults"].get("model") == "llama-x"
+            ),
+            "the pick to unlock the card and be saved as the new-chat default",
+        )
+        assert _chat_pair(console) == ("cerebras", "llama-x")
+        assert _saved_config()["chat_defaults"]["provider"] == "cerebras"
+        _chat, readiness = console._active_console_settings_readiness()
+        assert readiness.operability == "ready_to_send"
 
 
 @pytest.mark.asyncio

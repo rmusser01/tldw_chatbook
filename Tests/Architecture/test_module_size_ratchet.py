@@ -358,7 +358,7 @@ _BUDGETS: dict[str, int] = {
     # replaced/kept copy moved to first_run_voice_{status,prefill}.py, and
     # the service table to first_run_voice_service_row.py.
     "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 892,
-    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
+    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1002,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
 }

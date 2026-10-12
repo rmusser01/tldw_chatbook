@@ -1373,7 +1373,6 @@ def _install_ready_vllm_target(app, *, generation: int = 7):
 
 @private_profile_test
 @pytest.mark.asyncio
-@private_profile_test
 async def test_vllm_console_handoff_replaces_only_active_session_without_config_write(
     request,
     monkeypatch,

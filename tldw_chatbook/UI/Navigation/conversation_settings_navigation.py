@@ -311,7 +311,10 @@ class ProviderSettingsNavigationTarget:
         """Whether the routed model replaces the one Settings would show.
 
         Chat settings routes its draft's model, even none. A Console recovery
-        that names no model (a provider that lists none) leaves Settings' own.
+        that names no model (a provider that lists none) leaves the choice to
+        Settings: its own model for the provider it holds, and for any other
+        that provider's configured model or none, never another provider's
+        (``Settings_Modules.provider_return.routed_model``).
         """
         return self.session_id is None or self.model is not None
 

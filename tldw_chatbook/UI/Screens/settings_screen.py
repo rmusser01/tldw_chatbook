@@ -13590,10 +13590,10 @@ class SettingsScreen(BaseAppScreen):
         if self._provider_draft() is not None or not self._navigation_provider:
             return values
         provider = self._navigation_provider
+        from ..Settings_Modules.provider_return import routed_model
+
         # The model _apply_navigation_provider_context puts in the field.
-        model = str(self._navigation_model or "").strip()
-        if not model and not self._navigation_model_is_explicit:
-            model = str(values.get("model") or "").strip()
+        model = routed_model(self, values)  # never another provider's; resolves once
         display_values = dict(values)
         display_values.update(
             {
@@ -24646,9 +24646,9 @@ class SettingsScreen(BaseAppScreen):
             return
         if self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS):
             return
-        provider_settings = self._provider_setting_values_mapping()
+        provider_settings = self._provider_display_setting_values()  # the shown pair
         model_value = (
-            str(model or "").strip()
+            str(model or self._navigation_model or "").strip()
             if self._navigation_model_is_explicit
             else str(model or provider_settings.get("model") or "").strip()
         )

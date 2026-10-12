@@ -406,6 +406,31 @@ async def test_esc_from_the_detected_switcher_returns_to_the_card_with_nothing_s
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_two_presses_of_use_detected_open_one_switch_model(request) -> None:
+    """Final review: a double click posts two ``Button.Pressed`` before the
+    first one's Switch model has the screen. Each opened a dialog, and the
+    lower one stayed open on stale state after the top one applied. Only the
+    first opens; one Esc is back on the card."""
+    app = _blocked_console_app((_DETECTED_SERVER,))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        detected = await _detected_action_focused(host, console, pilot)
+
+        detected.post_message(Button.Pressed(detected))
+        detected.post_message(Button.Pressed(detected))
+        await _switcher_ready(host, pilot)
+        await pilot.pause()
+
+        opened = [type(screen).__name__ for screen in host.screen_stack]
+        assert opened[-2:] == ["ChatScreen", "ConsoleModelPopover"], opened
+        await pilot.press("escape")
+        await _until(pilot, lambda: host.screen is console, "one Esc to close it")
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_detected_server_keeps_a_different_saved_endpoint_for_this_chat_only(
     monkeypatch,
     request,
@@ -480,7 +505,7 @@ async def test_detected_server_keeps_a_different_saved_endpoint_for_this_chat_on
         ]
         assert app.app_config["api_settings"]["llama_cpp"]["api_url"] == saved_endpoint
         warning = (
-            "Keeping the saved endpoint http://127.0.0.1:9099 for llama_cpp; "
+            "Keeping the saved endpoint http://127.0.0.1:9099 for llama.cpp; "
             "using the detected server for this session only."
         )
         assert (warning, "warning") in notices
@@ -593,7 +618,7 @@ async def test_a_failed_default_save_says_the_pick_applies_to_this_chat_only(
         await _enter_enter(host, console, pilot)
 
         assert (
-            "Default not saved for llama_cpp/srv-model-a; it applies to this chat only.",
+            "Default not saved for llama.cpp/srv-model-a; it applies to this chat only.",
             "warning",
         ) in notices
         assert _pair(console) == ("llama_cpp", "srv-model-a")
@@ -667,7 +692,7 @@ async def test_a_failed_save_keeps_the_detected_ollama_for_this_chat_and_unlocks
         await _until(pilot, lambda: not modal.is_blocking, "the card to unlock")
 
         assert (
-            "Default not saved for ollama/llama3.2; it applies to this chat only.",
+            "Default not saved for Ollama/llama3.2; it applies to this chat only.",
             "warning",
         ) in notices
         store = console._ensure_console_chat_store()

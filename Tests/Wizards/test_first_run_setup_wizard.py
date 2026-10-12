@@ -8778,6 +8778,41 @@ async def test_model_status_is_plain_text_that_space_and_enter_cannot_pick(
 
 
 @pytest.mark.asyncio
+async def test_a_model_render_in_flight_at_quit_mounts_nothing(monkeypatch):
+    """TASK-33008.5 (final review): ``_render_models`` awaits the picker's
+    ``remove_children()`` and then mounts its rows or its status line. A quit
+    while the model list loads lands in that gap, Textual refuses a mount once
+    the app is exiting, and the wizard's worker raised ``MountError``. The
+    render stops after the removal instead."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={},  # no provider: the discovery key is None throughout
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        step._cancel_model_discovery()
+        radio_set = step.query_one("#setup-model-choice", RadioSet)
+        real_remove = radio_set.remove_children
+
+        async def quit_while_the_rows_go():
+            await real_remove()
+            app.exit()
+
+        monkeypatch.setattr(radio_set, "remove_children", quit_while_the_rows_go)
+        await step._render_models([], discovery_state="loading")
+
+        assert not radio_set.is_attached
+        assert list(radio_set.children) == []
+
+
+@pytest.mark.asyncio
 async def test_model_step_curated_fallback_bridges_raw_provider_key(monkeypatch):
     """Task-6/7 finding: ProviderStep persists chat_defaults.provider as the
     RAW provider_key (e.g. "openai"), but config.toml's curated [providers]

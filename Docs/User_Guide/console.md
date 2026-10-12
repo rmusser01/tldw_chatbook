@@ -385,16 +385,17 @@ model or settings change (another pick in Switch model, or Apply in Chat
 settings, returns it to the saved address) or Chatbook restarts, and a
 notice says so. If the default cannot be saved, a notice says the pick
 applies to this chat only, and the detected server is used the same way.
-Discovery runs once each time Console opens on
-the card; a well-known port where nothing answers stays silent.
+Discovery runs once per launch, the first time Console shows the card; a
+well-known port where nothing answers stays silent. A server you start
+after that is not offered on the card until Chatbook restarts.
 
-Every action on the card *(was "Both actions" — superseded by task-32558
-below: the count contradicted this page's own task-32555 stamp, which names
-three)* is drawn as a button with a rounded edge, one under the other; Tab and
-Shift+Tab move between the ones shown, wrapping at either end, and the focused
-one grows heavy side rails, so which one Enter will press is visible without
-reading the text. Focus stays where Tab put it while the card refreshes; only a
-newly found server's action takes it, once. Esc does not close the card.
+Every action on the card is drawn as a button with a rounded edge, one under
+the other; Tab and Shift+Tab move between the ones shown, wrapping at either
+end, and the focused one grows heavy side rails, so which one Enter will press
+is visible without reading the text. Focus stays where Tab put it while the
+card refreshes; only a newly found server's action takes it, once. Esc does
+not close the card. *(Was "Both actions" — superseded by task-32558 below: the
+count contradicted this page's own task-32555 stamp, which names three.)*
 
 If you land here with a handoff already staged — e.g. from Library's
 **Use in Console** on a Search/RAG result or on an open note while a
@@ -763,49 +764,17 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
 - **NEEDS SETUP**, providers with a blocker such as a missing key. **Enter**
   on one never applies it: it closes the list and opens **Settings ▸
   Providers & Models** at that provider, with its key or endpoint field in
-  focus. Keys are only ever entered in Settings. **Return to Console** there
-  (see
-  [Settings — Coming back from a provider fix](settings.md#coming-back-from-a-provider-fix))
-  comes back to this chat and reopens Switch model with the provider's name
-  in **Find** and the row's model highlighted, whether or not you saved. Once
-  the key is saved the provider's models read "Ready · not tested" and
-  **Enter** applies the highlighted pair to this chat: a chat that holds work
-  keeps its own pair through the save, so this is the step that moves it (a
-  chat with no messages and no edited settings already follows the saved
-  pair, and the list marks it **● CURRENT**). If you came back without
-  saving, the row is still under NEEDS SETUP and is the one highlighted, even
-  when PREVIOUS or RECENT lists the same pair, so **Enter** opens its fix
-  again; **Esc** leaves the chat as it was with the composer in focus. Other
-  matches for the provider's name, however many, never push the row's model
-  off the list. If the list has no row for that model (the row named none,
-  or the provider no longer lists it), that provider's first row is
-  highlighted instead, and nothing is when the list has no row of that
-  provider's. A provider that is ready to send and lists no models has
-  none: READY PROVIDERS then opens with that provider's own line, "<name> ·
-  no models reported · type its name and an id". Its name is already in
-  **Find**, so type the model id after it (as in "Ollama qwen3:32b"): the
-  pair appears under **TYPED MODEL ID**, the last row of the list, and
-  **Enter** on that row applies it. A listed row that holds every word in
-  **Find**, in its model id or its provider's name, is highlighted ahead of
-  that row, and it can be another provider's: an aggregator's
-  "openai/gpt-y" holds both words of "OpenAI gpt-y". So read the
-  highlighted row's provider before **Enter**, and press **Down** until the
-  TYPED MODEL ID row is highlighted. Until you
-  change **Find** or move the highlight yourself, the highlight never lands
-  on another provider's match for the name, so **Enter** cannot apply one
-  by accident; once you type, it is Find's best match again.
-  Opened from the Get started card, the
-  list comes back over the card while setup is unfinished, and **Esc**
-  returns to the card. **Stay in Settings**, or walking back to the Console
-  yourself, drops the return, so the list does not reopen. A custom
-  endpoint's row opens Settings too, where its own entry is edited, but
-  Settings offers no way back from there, so nothing reopens for it. A local
-  server that refused
-  or timed out is listed first and reads "start it; rechecked on open": the
-  fix is outside the app, so **Enter** on it only repeats that hint (the
-  group's heading says "Enter opens the fix or explains it"). A cloud
-  provider whose key check timed out reads "Enter: open Settings" instead,
-  since only **t** there checks it again.
+  focus. Keys are only ever entered in Settings. Saving there also makes
+  that provider, with the model the page shows, the default for new chats:
+  every new chat, and every open chat with no messages and no edited
+  settings, moves to it. **Return to Console** there comes back to this chat
+  and reopens Switch model on that provider, saved or not: see
+  [After Return to Console](#after-return-to-console). A local server that
+  refused or timed out is listed first and reads "start it; rechecked on
+  open": the fix is outside the app, so **Enter** on it only repeats that
+  hint (the group's heading says "Enter opens the fix or explains it"). A
+  cloud provider whose key check timed out reads "Enter: open Settings"
+  instead, since only **t** there checks it again.
 - **NOT RUNNING**, one line naming the local servers you never set up that
   refused: a provider still at its shipped settings (such as TabbyAPI on
   `localhost:8080`) that is not this chat's, the default's or a recent
@@ -907,7 +876,10 @@ or, for a custom endpoint, the first model listed in that endpoint's entry.
 Your default model (`[chat_defaults] model`) only comes along when you switch
 to your default provider. A provider with no configured model gets no model,
 and Console asks you to choose one. It never borrows another provider's
-model. In Switch model a chat with no model has no **● CURRENT** row, and
+model. The same holds when a **NEEDS SETUP** row opens Settings: the page
+shows the row's model, or, for a row that names none, that provider's own
+saved model or none. In Switch model a chat with no model has no
+**● CURRENT** row, and
 **Enter** with nothing to apply answers "Choose a model: type to search,
 then Enter." In the first moment after the list opens, while it is still
 empty or reads "checking providers…", a row may not be highlighted yet, so
@@ -934,6 +906,52 @@ by the count, however long the list. When catalog refresh is turned off (for
 every provider, or for this one in its list of opted-out providers), the last
 of these says why instead: "Catalog refresh is off. Showing N configured
 models."
+
+#### After Return to Console
+
+**Return to Console** in Settings (see
+[Settings — Coming back from a provider fix](settings.md#coming-back-from-a-provider-fix))
+comes back to the chat a **NEEDS SETUP** row left and reopens Switch model
+with that provider's name in **Find**, whether or not you saved. Opened from
+the Get started card, the list comes back over the card while setup is
+unfinished, and **Esc** returns to the card. **Stay in Settings**, or walking
+back to the Console yourself, drops the return, so the list does not reopen. A
+custom endpoint's row opens Settings too, where its own entry is edited, but
+Settings offers no way back from there, so nothing reopens for it.
+
+- **After a save.** A provider that lists models reads "Ready · not tested"
+  on each, and **Enter** applies the highlighted pair to this chat. A chat
+  that holds work keeps its own pair through the save, so this is the step
+  that moves it; a chat with no messages and no edited settings already
+  follows the saved pair, and the list marks it **● CURRENT**.
+- **Without a save.** The row is still under NEEDS SETUP and is the one
+  highlighted, even when PREVIOUS or RECENT lists the same pair, so **Enter**
+  opens its fix again; **Esc** leaves the chat as it was with the composer in
+  focus.
+- **What is highlighted.** The row's model. Other matches for the provider's
+  name, however many, never push it off the list. If the list has no row for
+  that model (the row named none, or the provider no longer lists it), that
+  provider's first row is highlighted instead and is kept on the list the
+  same way; nothing is highlighted when the list has no row of that
+  provider's. Until you change **Find** or move the highlight yourself, the
+  highlight never lands on another provider's match for the name, so
+  **Enter** cannot apply one by accident; once you type, it is Find's best
+  match again.
+- **A provider that lists no models.** Its row named no model, so with the
+  key saved it has none to offer: READY PROVIDERS opens with that provider's
+  own line, "<name> · no models reported · type its name and an id". When no
+  model is saved for it either, the provider stays under NEEDS SETUP, reading
+  "Not ready · no model", with its row highlighted; **Enter** there opens
+  Settings again, where a Default model can be chosen. Its name is already in
+  **Find**, so type the model id after it (as in "Ollama qwen3:32b"): the
+  pair appears under **TYPED MODEL ID**, the last row of the list, and
+  **Enter** on that row applies it.
+- **A typed id another provider lists.** A listed row that holds every word
+  in **Find**, in its model id or its provider's name, is highlighted ahead
+  of the TYPED MODEL ID row, and it can be another provider's: an
+  aggregator's "openai/gpt-y" holds both words of "OpenAI gpt-y". So read the
+  highlighted row's provider before **Enter**, and press **Down** until the
+  TYPED MODEL ID row is highlighted.
 
 #### QwenCloud in Console
 
