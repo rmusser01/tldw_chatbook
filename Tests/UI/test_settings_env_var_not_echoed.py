@@ -120,9 +120,5 @@ async def test_the_test_result_does_not_repeat_a_key_pasted_into_env_var(
 
         pasted = await _test_result(host, pilot, screen, _PASTED)
         assert "or set that variable" in pasted, pasted
-        shown = "\n".join(
-            str(static.renderable)
-            for static in screen.query(Static)
-            if static.id != "settings-provider-credential-guidance"
-        )
+        shown = "\n".join(str(static.renderable) for static in screen.query(Static))
         assert _PASTED not in shown

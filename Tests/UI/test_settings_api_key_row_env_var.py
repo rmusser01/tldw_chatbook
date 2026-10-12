@@ -74,9 +74,5 @@ async def test_the_api_key_row_reads_the_env_var_being_typed(request, monkeypatc
         pasted = "sk_live_" + "a1B2c3D4" * 3
         await _type_env_var(screen, pilot, pasted)
         assert _key_row(screen) == ("missing", "paste one, or set that variable")
-        shown = "\n".join(
-            str(static.renderable)
-            for static in screen.query(Static)
-            if static.id != "settings-provider-credential-guidance"
-        )
+        shown = "\n".join(str(static.renderable) for static in screen.query(Static))
         assert pasted not in shown
