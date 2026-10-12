@@ -19557,3 +19557,36 @@ inside them: argument evaluation happens before the wrapper can make text
 inert. Consumer opt-outs also need this check; they cannot change evaluation
 of their arguments. Exercise both construction and mutation seams, and assert
 the guard's failure exit as well as its occurrence counts.
+
+## Source-era tests must follow the current owner protocol (PR #2563)
+
+**Incident (2026-10-11).** The native Goal port initially reported four failures
+in a 208-case targeted lane. A fixture called `find_tools` with no selected
+catalogue although current first-request planning legitimately omitted discovery;
+a source-read callback asserted a nonexistent `root_alias` field instead of the
+launch `binding_id` and cancelled before dispatch; another re-requested an already
+completed single startup audit; a retry assertion ran before its wait persisted.
+The corrected 58-case affected lane passed without relaxing production authority.
+
+**What to do.** Inspect the actual accepted request and native outcome before
+changing a current owner to satisfy an older fixture. Assert advertised schemas,
+model real replacement-owner recovery, and wait for the specific persisted state
+with a bounded timeout. Keep finite business budgets unchanged. Bind final test
+receipts to the complete integration's committed source bytes: an intermediate
+storage commit can reference runtime behavior still present only in its worktree.
+
+### Native Goal worker resource qualification (PR2563 current-dev integration)
+
+The complete-head 62-case Goal run passed but warned about 785 additional file
+descriptors. A post-finalizer probe identified 10 AgentRuns and 9 Workspace
+connections still registered after the real two-increment CLI runtime disposed;
+dead native model/provider/tool threads owned several of them. Caller-thread
+`close()` cannot retire another thread's cached SQLite handle. Raw service
+`asyncio.to_thread` was only part of the cause: native authority and binding
+checks also acquired handles. Reusing `operation_owned_connection` and
+`run_owned_db_call` at the finite Goal callback/native boundaries reduced the
+same probe to zero registered handles in all three database families. Fresh
+and borrowed real CLI/mounted paths, in-memory/foreign controls, cancellation
+until physical completion, and actual maintenance drain establish ownership;
+an aggregate warning disappearing alone does not. Preserve the old failed
+receipt and write baseline/fixed probes to different filenames.

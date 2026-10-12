@@ -30,3 +30,34 @@ This is one cohesive integration task: its storage, runtime and UI contracts are
 7. Self-review the complete resulting diff, scoped Ruff/format/diff checks. Update tasks/implementation notes with exact current receipts and explicit remaining external qualification; do not promote old failed live-model trials. Commit only task-owned files and return the report path, phase commits and targeted receipts. Root will perform independent review, latest-base rebase, GitHub checks and merge.
 
 Acceptance: the original first-release behavior works on current owners; all identified review defects are addressed; current affected boundaries retain their behavior; new evidence validates actual integrated code. No source stack duplication or unverified completion claims.
+
+## Implementation closeout
+
+The complete implementation is committed through `8bf7c02e51` on the pinned `a3c47c6c72` base. Storage and exact recovery are schema24; current runtime custody, automatic chat-start roots, progress wakes, admitted filesystem roots and backup staging remain the governing owners. ADR227 records the live decision; original source ADR141 and task history remain provenance.
+
+Current owner line-count excess is inherited: controller 29474 -> 29448 (cap29299), store22642 ->22633 (cap22344); ChatScreen25142 ->25135 and756 methods meets25204/756. No ratchet was raised. Root approved narrowing the integration delta instead of repairing unrelated baseline excess.
+
+The final report and byte-bound test receipt are `.superpowers/sdd/2026-10-11-pr2563-current-dev-integration/task-1-report.md` and `pr2563-complete-head-receipt.json` in the external wave2 evidence directory. Full integration review, latest-base reconciliation and publication remain root-owned; TASK34797 AC5 remains pending until that review. No full test sweep or external model qualification was run.
+
+## Independent review fix wave
+
+The complete-head review of `8bf7c02e51` found two blocking integration defects.
+Checkpoint and quality-review settlement must include all canonical allowance
+root descendants, typed attempts and conservative accounting, including work
+that becomes uncertain after a checkpoint. Goal callbacks and native
+provider/tool authority checks must retire only the SQLite handles they acquire
+using current operation-owned boundaries; borrowed, in-memory and foreign
+handles retain their owners. The inherited hook-preflight implementation was
+compared to pinned base before extending its finite callback boundary only
+when Goal authority is active. No ordinary hook policy or global resource
+threshold changes.
+
+The combined fix adds real SQLite descendant and late-uncertainty regressions,
+fresh/borrowed actual CLI and mounted paths, cancellation/physical-drain and
+maintenance controls. Exact baseline acquisition receipts remain historical;
+fixed probe filenames are distinct. All seven Goal/composer/integration tasks
+remain In Progress and TASK34797 AC5 stays open for root's scoped re-review.
+The task-1 report records the complete fixed commit and byte-bound qualification
+when finished. The historical plan's added trailing whitespace is corrected.
+
+Code fix commit: `790d456f213c7c185e756f490162c47887bbae8e`. Supporting fix lanes pass 80 Goal runtime, 96 current owner/budget/hook/maintenance, and 36 mounted UI cases without resource warnings. Exact post-finalizer probes report zero retained AgentRuns, Chat and Workspace handles. Final complete-head qualification uses `pr2563-fixed-head-receipt.json` and `pr2563-fixed-head-verification.txt`; the report preserves both prior failed resource evidence and the baseline JSON overwrite/repeat provenance.
