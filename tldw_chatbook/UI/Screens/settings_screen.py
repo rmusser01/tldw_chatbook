@@ -1302,11 +1302,9 @@ STREAMING_CONFIG_KEY_FACT = (
     "chat_defaults.streaming is canonical; enable_streaming is read only "
     "when streaming is absent"
 )
-#: TASK-33002.12: Providers & Models status for a saved default naming an
-#: ADR-146 registry entry that no longer exists.
-ENDPOINT_NOT_FOUND_SETTINGS_COPY = (
-    "Not ready · endpoint not found; choose another provider"
-)
+#: TASK-33002.12: the API key row's help for a saved default naming an
+#: ADR-146 registry entry that no longer exists (one row: 39 cells).
+ENDPOINT_NOT_FOUND_SETTINGS_COPY = "not found · choose another provider"
 #: Placeholder for a Connect field a registry default does not offer.
 REGISTRY_FIELD_PLACEHOLDER = "Managed in Custom endpoints"
 #: Connect fields Save cannot apply for an ADR-146 ``custom-ep:`` id (Qodo
@@ -15299,22 +15297,23 @@ class SettingsScreen(BaseAppScreen):
             readiness: ``get_provider_readiness`` for ``provider``.
 
         Returns:
-            The status line, or None for an ordinary provider.
+            The API key row's one-row help, or None for an ordinary provider.
         """
         if not self._provider_is_registry_id(provider):
             return None
         entry = self._provider_registry_entry(provider)
         if entry is None:
             return ENDPOINT_NOT_FOUND_SETTINGS_COPY
-        if not readiness.ready:
-            return f"Not ready · {readiness.recovery or readiness.reason}"
+        if not readiness.ready:  # the Test result's Key row has the recovery
+            if self._validate_credential_env_var(entry.api_key_env):
+                return "invalid Env var · edit this endpoint"
+            return "not ready · Test (t) says why"
         declared = _custom_endpoint_declared_credential(entry, None)
         if declared is None:
-            return "API key source: none required by this endpoint"
+            return "none required by this endpoint"
         if declared[1] == "environment":
-            name = env_var_echo(entry.api_key_env or "")
-            return f"API key source: env var {name} (this endpoint)"
-        return "API key source: saved in this endpoint"
+            return f"env var {env_var_echo(entry.api_key_env or '')} (this endpoint)"
+        return "saved in this endpoint"
 
     def _provider_registry_endpoint(
         self, provider: str
@@ -17542,9 +17541,11 @@ class SettingsScreen(BaseAppScreen):
         )
         registry_rows: dict[str, str] = {}
         if entry is not None:
-            registry_rows["Key"] = str(
-                self._provider_registry_credential_text(provider, readiness)
-            ).removeprefix("API key source: ")
+            registry_rows["Key"] = (
+                str(self._provider_registry_credential_text(provider, readiness))
+                if readiness.ready
+                else f"Not ready · {readiness.recovery or readiness.reason}"
+            )
         elif self._provider_is_registry_id(provider):
             registry_rows["Endpoint"] = (
                 "not found — choose another provider, or recreate it under "
@@ -17979,12 +17980,7 @@ class SettingsScreen(BaseAppScreen):
             sync_openai_reconnect_row,
         )
 
-        try:
-            provider = self._provider_widget_value()
-        except QueryError:
-            provider = str(
-                self._provider_display_setting_values().get("provider") or ""
-            )
+        provider = self._provider_widget_value()  # falls back by itself
         try:
             endpoint = self.query_one(
                 "#settings-provider-endpoint-value", Input

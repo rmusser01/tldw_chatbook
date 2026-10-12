@@ -28,6 +28,7 @@ from Tests.UI.test_settings_configuration_hub import (
     _open_settings_category,
     _settle_settings_mount_storm,
 )
+from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_readiness,
     build_default_console_session_settings,
@@ -358,8 +359,9 @@ def test_registry_load_flags_an_invalid_api_key_env_without_logging_it(caplog):
 async def test_settings_opens_on_an_entry_with_an_invalid_api_key_env(request):
     app = _registry_default_app("custom-ep:gpu-box")
     app.app_config["custom_endpoints"]["gpu-box"]["api_key_env"] = "gpu-key"
-    host = DestinationHarness(app, "settings")
-    async with host.run_test(size=(180, 50)) as pilot:
+    # The real stylesheet at full screen: the row is one line with an ellipsis.
+    host = _SettingsCssHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
         await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         overview = _text(screen, "#settings-overview-configuration")
@@ -368,10 +370,12 @@ async def test_settings_opens_on_an_entry_with_an_invalid_api_key_env(request):
 
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle_settings_mount_storm(pilot)
-        # TASK-33007.2, rewritten on purpose: the Credentials status line and
-        # the readiness block's key row are one API key row; its help says it.
-        status = _text(screen, "#settings-provider-api-key-help")
-        assert "credential env var name is invalid" in status, status
+        # Fix round 1 (finding 26), rewritten on purpose: the readiness
+        # recovery (about 200 cells) was this row's help and was cut before
+        # the word "invalid"; the row has its own sentence, read as painted.
+        help_line = screen.query_one("#settings-provider-api-key-help", Static)
+        painted = "".join(_region_rows(screen, help_line))
+        assert "invalid Env var · edit this endpoint" in painted, painted
         assert _text(screen, "#settings-provider-key-status") == "this endpoint"
         assert "gpu-key" not in _all_static_text(screen)
 

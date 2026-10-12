@@ -72,7 +72,7 @@ def test_a_custom_endpoint_env_var_shaped_like_a_key_is_not_in_its_credential_li
         screen, "custom-ep:box", SimpleNamespace(ready=True)
     )
 
-    assert line == "API key source: env var that variable (this endpoint)"
+    assert line == "env var that variable (this endpoint)"
 
 
 async def _test_result(host, pilot, screen, value: str) -> str:

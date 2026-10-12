@@ -850,9 +850,12 @@ another provider enables those controls again.
 If the entry's `api_key_env` is not a valid environment variable name (for
 example `gpu-key`, hand-edited into `config.toml`), the entry stays listed
 but is not ready: Overview reads **Not ready · check settings** and
-the credential line says the endpoint's credential env var name is invalid.
-Fix it with **Edit ▸ Env var** (letters, digits, and underscores, not
-starting with a digit). A stored key on the entry still works meanwhile.
+Providers & Models' API key row reads **this endpoint** with "invalid Env
+var · edit this endpoint". Fix it with **Edit ▸ Env var** (letters, digits,
+and underscores, not starting with a digit). A stored key on the entry still
+works meanwhile. An entry that is not ready for another reason (its variable
+is not set in your shell, say) reads "not ready · Test (t) says why": press
+**t** and the result's **Key** row names what to set.
 
 If the entry the default names no longer exists (for example, it was removed
 from `config.toml` by hand), Overview reads **Not ready · unsupported**

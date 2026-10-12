@@ -80,7 +80,6 @@ from ..Screens.settings_screen import (
     ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY,
     API_URL_PROVIDER_KEYS,
     CONFIG_KEY_ROW_LABEL,
-    ENDPOINT_NOT_FOUND_SETTINGS_COPY,
     INSTANT_APPLY_BEHAVIOR_COPY,
     MODEL_DISCOVERY_CAPABILITY_WARNING,
     MODEL_DISCOVERY_EMPTY_COPY,
@@ -155,7 +154,6 @@ SUBSCRIPTION_KEY_HELP = {
     "missing": "missing · log in with Claude Code",
 }
 API_KEY_INVALID_HELP = "repair it in Advanced Config"
-ENDPOINT_NOT_FOUND_HELP = "not found · choose another provider"
 #: ADR-012:29: the env var is the safer path. C4: the row says the field
 #: holds a name ("a", not the ruling's "the", to fit 39 cells with "safer").
 ENV_VAR_HELP_COPY = "safer: a variable's name, never the key"
@@ -531,11 +529,8 @@ def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
         background_credentials=True,
     )
     registry = screen._provider_registry_credential_text(provider, readiness)
-    if registry == ENDPOINT_NOT_FOUND_SETTINGS_COPY:
-        return "this endpoint", ENDPOINT_NOT_FOUND_HELP
     if registry is not None:
         # The Source word already says whose key it is.
-        registry = registry.removeprefix("API key source: ")
         return "this endpoint", registry.removesuffix(" (this endpoint)")
     if readiness.subscription_status is not None:
         return "subscription", SUBSCRIPTION_KEY_HELP[readiness.subscription_status]
