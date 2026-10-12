@@ -479,6 +479,10 @@ DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS = 0.1
 #: maintenance: a 0.1 s timer could expire while synchronous post-ready setup
 #: was still running and race the ADR-097 UI-ready module census.
 DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS = 5.0
+#: The speech-stack environment diagnostic (one `persist_event` line) is
+#: post-ready work: its `console_voice_input` import pulls the STT stack,
+#: which must stay off the first-paint leg (TASK-22504).
+DEFERRED_SPEECH_STACK_DIAGNOSTICS_DELAY_SECONDS = 0.1
 #: Workspace agent provisioning (task-8) deferral: after `_ui_ready` so
 #: `Workspaces.agent_provisioning` stays out of the UI-ready census
 #: (ADR-097); same 0.1-0.2 s non-essential-startup window as audio.
@@ -3269,21 +3273,17 @@ class TldwCli(
             )
         mount_start = time.perf_counter()
 
-        # task-19561: hand the process-level SIGTERM/SIGINT handler this app
-        # and its running loop, so a termination signal becomes an ordinary
-        # `App.exit()` instead of an `os._exit(0)` through the middle of
-        # whatever was writing at the time.
-        register_running_app(self)
+    def _record_speech_stack_diagnostics(self) -> None:
+        """Record this interpreter's speech-stack availability (one line).
 
-        # TASK-1240. Anchors a session in the persistent log; its absence dates
-        # a crash to before this point. Wrapped: `persist_event` raises on a
-        # malformed component and its sink can fail; diagnostics must never be
-        # the reason mount does not complete.
-        try:
-            persist_event(_DIAGNOSTICS_COMPONENT_APP, "app_started")
-        except Exception:
-            pass
-
+        Moved out of `on_mount` (TASK-22504): the `console_voice_input`
+        import this needs pulls the STT coordinator stack, and the
+        diagnostic is a persistent-diagnostics record, not first-frame
+        work -- `_post_mount_setup` schedules it past `_ui_ready`. The
+        body is unchanged; the function-body import below still reads the
+        LIVE module attribute, so tests that patch
+        `console_voice_input.resolve` before it runs keep reaching it.
+        """
         # Which interpreter's speech stack this run actually has. Dictation
         # degrades silently and differently per missing package -- without
         # `webrtcvad` no segment can finalize mid-capture (so nothing appears
@@ -3338,6 +3338,54 @@ class TldwCli(
                 level=logging.WARNING if _provider_substituted else logging.INFO,
                 **_speech_fields,
             )
+        except Exception:
+            pass
+
+    def on_mount(self) -> None:
+        """Configure logging and schedule post-mount setup."""
+        self._start_persona_buddy_overlay()
+        runtime = self.console_runtime
+        if runtime is not None:
+            runtime.start_async_lifecycles()
+        self._start_served_canvas_control()
+        self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
+            local_service=self.local_watchlists_service,
+            briefing_db=self.subscriptions_db,
+        )
+        self.watchlists_operation_coordinator.bind_running_loop()
+        self._wire_watchlists_command_service()
+        self._bind_tts_service()
+        self._start_backup_maintenance_monitor()
+        self._notes_sync_runtime_start_task = asyncio.create_task(
+            self.notes_sync_runtime_owner.start(),
+            name="start_notes_sync_runtime",
+        )
+        self._notes_sync_runtime_start_task.add_done_callback(
+            self._observe_notes_sync_runtime_start
+        )
+        mount_start = time.perf_counter()
+
+        # task-19561: hand the process-level SIGTERM/SIGINT handler this app
+        # and its running loop, so a termination signal becomes an ordinary
+        # `App.exit()` instead of an `os._exit(0)` through the middle of
+        # whatever was writing at the time.
+        register_running_app(self)
+
+        # TASK-1240. Anchors a session in the persistent log; its absence dates
+        # a crash to before this point. Wrapped: `persist_event` raises on a
+        # malformed component and its sink can fail; diagnostics must never be
+        # the reason mount does not complete.
+        try:
+            persist_event(_DIAGNOSTICS_COMPONENT_APP, "app_started")
+        except Exception:
+            pass
+
+        # The speech-stack environment diagnostic (dictation/
+        # speech_stack_available) is scheduled PAST `_ui_ready` -- see
+        # `_record_speech_stack_diagnostics`, called from
+        # `_post_mount_setup` (TASK-22504: its `console_voice_input`
+        # import must stay off the first-paint leg).
+
         except Exception:
             pass
 
@@ -4481,6 +4529,13 @@ class TldwCli(
         self._ui_ready = True
         ui_ready_time = time.perf_counter()
         freeze_long_lived_heap("ui_ready")  # ADR-198: keep the boot heap out of gen-2 scans
+
+        # TASK-22504: the speech-stack diagnostic's `console_voice_input`
+        # import stays off the first-paint leg; one timer tick past ready.
+        self.set_timer(
+            DEFERRED_SPEECH_STACK_DIAGNOSTICS_DELAY_SECONDS,
+            self._record_speech_stack_diagnostics,
+        )
 
         self.loguru_logger.info("App _post_mount_setup: Post-mount setup completed.")
 
