@@ -376,7 +376,9 @@ def private_profile_test(function):
                 + ending
                 + f"{_child_failure_report(report)}\n"
                 + (f"--- child stacks at its deadline ---\n{dumps}" if dumps else "")
-                + f"--- child log tail ---\n{log.read_text()[-16000:]}"
+                + "--- child log tail ---\n"
+                # A kill can land between two writes of one character.
+                + log.read_text(encoding="utf-8", errors="replace")[-16000:]
             )
         if coverage_controller is not None and not coverage_file.is_file():
             pytest.fail(f"private profile child did not produce coverage: {log}")

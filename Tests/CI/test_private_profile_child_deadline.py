@@ -361,3 +361,27 @@ async def test_a_child_ended_by_the_ask_itself_is_reported_as_such(
     text = str(failure.value)
     assert "ended by the ask for its stacks before it could answer)" in text
     assert "exited by itself" not in text and "(killed" not in text
+
+
+#: Ends its log one byte into a two-byte character, as a kill between two
+#: buffered writes can.
+_CUT_MID_CHARACTER = """
+import sys
+sys.stdout.buffer.write("zq-cut-r\u00e9".encode()[:-1])
+sys.stdout.flush()
+raise SystemExit(3)
+"""
+
+
+async def test_a_log_cut_inside_a_character_is_still_reported(
+    request, tmp_path, monkeypatch
+):
+    """Review of #3091, round 2, item R4: the log tail is decoded leniently,
+    so a truncated character cannot replace the whole report."""
+    _watch_the_spawn(monkeypatch, {}, _CUT_MID_CHARACTER)
+    child = test_child_whose_worker_never_answers
+
+    with pytest.raises(pytest.fail.Exception) as failure:
+        await child(request=_as_parent(request, tmp_path, child))
+
+    assert "--- child log tail ---\nzq-cut-r\ufffd" in str(failure.value)
