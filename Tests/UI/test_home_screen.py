@@ -2447,3 +2447,150 @@ async def test_home_model_badge_reports_ready_with_credential(monkeypatch, reque
         assert "Model: Ready" in status_text
         assert "Model: Not set up" not in status_text
         assert home._current_dashboard.next_action.action_id != "fix_model_setup"
+
+
+# --- TASK-2763: Home refreshes itself (no click needed) --------------------
+
+
+def _find_rail_row(home, row_id: str):
+    return next(
+        (
+            button
+            for button in home.query("Button.home-rail-row")
+            if str(getattr(button, "row_id", "")) == row_id
+        ),
+        None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_home_auto_refresh_updates_running_ingest_without_clicks(monkeypatch):
+    """TASK-2763 AC1+AC3: a Library ingest job progressing queued -> parsing
+    moves Home's rail on its own -- no click, no remount. Drives the REAL
+    adapter (no test-input override) with a live ingest-jobs provider; the
+    auto-refresh interval is shrunk via the module constant the production
+    timer reads (its default is pinned separately to the adapter's TTL)."""
+    import time as _time
+
+    from tldw_chatbook.Home.active_work_adapter import (
+        LocalNotificationHomeActiveWorkAdapter,
+    )
+    from tldw_chatbook.Library.library_ingest_jobs import (
+        IngestJobState,
+        LibraryIngestJob,
+    )
+
+    monkeypatch.setattr(
+        home_screen_module, "_HOME_AUTO_REFRESH_INTERVAL_SECONDS", 0.2
+    )
+
+    def _job(state: IngestJobState) -> LibraryIngestJob:
+        return LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/report.txt",
+            state=state,
+        )
+
+    jobs: list[LibraryIngestJob] = [_job(IngestJobState.QUEUED)]
+    app = _build_test_app()
+    app.home_active_work_adapter = LocalNotificationHomeActiveWorkAdapter(
+        ingest_jobs_provider=lambda: tuple(jobs)
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        # The auto-selected job's canvas status line carries the state.
+        canvas_lines = lambda: str(home.query_one("#home-canvas-lines").renderable)  # noqa: E731
+        assert _find_rail_row(home, "local:ingest:ingest-job-1") is not None
+        assert "queued" in canvas_lines()
+
+        # The job progresses with no user interaction on Home.
+        jobs[0] = _job(IngestJobState.PARSING)
+        updated = False
+        deadline = _time.monotonic() + 10.0
+        while _time.monotonic() < deadline:
+            await pilot.pause(0.2)
+            if "parsing" in canvas_lines():
+                updated = True
+                break
+        assert updated, "Home never reflected the ingest state change"
+
+
+@pytest.mark.asyncio
+async def test_home_auto_refresh_pauses_while_another_screen_is_on_top(monkeypatch):
+    """TASK-2763 AC2 companion: the tick must not churn (or re-sync) while
+    Home is suspended under another route; resuming re-enables it."""
+    import time as _time
+
+    from textual.screen import Screen as TextualScreen
+
+    from tldw_chatbook.Home.active_work_adapter import (
+        LocalNotificationHomeActiveWorkAdapter,
+    )
+    from tldw_chatbook.Library.library_ingest_jobs import (
+        IngestJobState,
+        LibraryIngestJob,
+    )
+
+    monkeypatch.setattr(
+        home_screen_module, "_HOME_AUTO_REFRESH_INTERVAL_SECONDS", 0.2
+    )
+
+    def _job(state: IngestJobState) -> LibraryIngestJob:
+        return LibraryIngestJob(
+            job_id="ingest-job-2",
+            source_path="/tmp/notes.txt",
+            state=state,
+        )
+
+    jobs: list[LibraryIngestJob] = [_job(IngestJobState.QUEUED)]
+    app = _build_test_app()
+    app.home_active_work_adapter = LocalNotificationHomeActiveWorkAdapter(
+        ingest_jobs_provider=lambda: tuple(jobs)
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+        assert _find_rail_row(home, "local:ingest:ingest-job-2") is not None
+
+        await host.push_screen(TextualScreen())
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        jobs[0] = _job(IngestJobState.PARSING)
+        await pilot.pause(1.0)
+        # Home is suspended: the rail (read straight off the live widget
+        # tree) must not have re-synced while covered.
+        assert host.screen is not home
+        canvas_lines = lambda: str(home.query_one("#home-canvas-lines").renderable)  # noqa: E731
+        assert _find_rail_row(home, "local:ingest:ingest-job-2") is not None
+        assert "queued" in canvas_lines(), (
+            "auto-refresh must not run while Home is suspended"
+        )
+
+        await host.pop_screen()
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        updated = False
+        deadline = _time.monotonic() + 10.0
+        while _time.monotonic() < deadline:
+            await pilot.pause(0.2)
+            if "parsing" in canvas_lines():
+                updated = True
+                break
+        assert updated, "auto-refresh did not resume after popping back"
+
+
+def test_home_auto_refresh_interval_follows_adapter_cache_ttl():
+    """TASK-2763 AC2: the poll cadence IS the adapter's cache TTL -- no
+    busy-loop, no redundant seam queries."""
+    from tldw_chatbook.Home.active_work_adapter import (
+        ACTIVE_WORK_CACHE_TTL_SECONDS,
+    )
+
+    assert (
+        home_screen_module._HOME_AUTO_REFRESH_INTERVAL_SECONDS
+        == ACTIVE_WORK_CACHE_TTL_SECONDS
+    )
