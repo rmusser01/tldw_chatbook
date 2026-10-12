@@ -1245,14 +1245,13 @@ def env_var_echo(name: str) -> str:
         name: The Env var field's value, saved or being typed.
 
     Returns:
-        The name, or "that variable" for a secret-shaped value or one over
-        40 characters with no underscore.
+        The name when it is written the way variable names are (upper case)
+        and is not secret-shaped; otherwise "that variable". A provider key
+        is a valid name too (Groq's ``gsk_...``, a 32-character Mistral key).
     """
     from ...MCP.redaction import looks_like_secret_value
 
-    looks_like_key = looks_like_secret_value(name) or (
-        len(name) > 40 and "_" not in name
-    )
+    looks_like_key = looks_like_secret_value(name) or not name.isupper()
     return "that variable" if looks_like_key else name
 
 

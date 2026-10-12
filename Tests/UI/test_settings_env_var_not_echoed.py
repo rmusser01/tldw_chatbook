@@ -35,8 +35,16 @@ _NAME = "A2_ECHO_VAR"
         (_NAME, _NAME),
         ("OPENAI_API_KEY", "OPENAI_API_KEY"),
         (_PASTED, "that variable"),
-        ("a" * 41, "that variable"),  # over 40 characters, no underscore
+        ("a" * 41, "that variable"),
         ("A_" + "B" * 40, "A_" + "B" * 40),
+        # Fix round 1 (findings 3 and 15): provider keys that are also valid
+        # variable names and match no secret pattern. Only text written the
+        # way variable names are written (upper case) is repeated.
+        ("gsk_" + "a1B2c3D4e5F6g" * 4, "that variable"),  # Groq
+        ("hf_" + "aB3dE6gH9jK2mN5pQ" * 2, "that variable"),  # Hugging Face
+        ("a1B2c3D4" * 4, "that variable"),  # 32 characters (Mistral)
+        ("a1B2c3D4" * 5, "that variable"),  # exactly 40 (Cohere)
+        ("my_openai_key", "that variable"),  # a lower-case name is not echoed
     ],
 )
 def test_a_value_shaped_like_a_key_is_named_that_variable(value, echoed):
