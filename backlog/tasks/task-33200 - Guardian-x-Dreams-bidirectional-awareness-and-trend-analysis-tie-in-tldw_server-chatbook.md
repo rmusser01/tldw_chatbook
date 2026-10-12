@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-23 06:07'
-updated_date: '2026-10-12 20:23'
+updated_date: '2026-10-12 21:20'
 labels:
   - guardian
   - dreams
@@ -115,6 +115,10 @@ Final independent review fix plan (before code):
 4. Qualify amended native controls, affected existing cases and recurring CI membership; preserve sealed evidence and write a separate post-review report. ADR required: no; existing ADR126/196/204 govern finite-worker and notification-affinity contracts. Status/AC stay unchanged pending independent review and publication.
 
 Final review fix implementation: file-backed Guardian delivery and all three Settings constructors now use existing finite local-worker ownership. Native controls exposed and then qualified the connected Dreams reconciliation worker caches in the same fix. Final native daily16/Settings9, connected ownership and membership47, existing mounted toggle/import6 pass. Borrowed handles, cancellation settlement, installed recovery drain and exact ordering remain covered; no public-close change. Full separate source-bound report: pr-review-wave2/pr2921-current-integration/post-review-fix-report.md. Existing ADR126/196/204 apply. Keep In Progress/AC/history; scoped independent re-review and hosted publication remain pending.
+
+Hosted publication Task3 plan (2026-10-12), before CI edits: Preserve concrete first hosted Fast outcomes (one stale4-versus6 guard failure, 2025pass/1skip; original admission509pass/1xfail; new boundary164pass; new admission89collected then canceled). Move only the two added Dreams groups, unchanged commands/targets/conditions/order, after the original two Console P0 invocations in its existing20min job. Preserve original four invocations, Fast35min and all per-test caps, six lanes/required aggregation/profile-process isolation. Audit/update all real CI count/location consumers and add meaningful placement/membership/overlap/resolution/suppression negatives. Qualify targeted CI files only; no replay of runtime/native/UI groups. Existing ADR103 applies, no newADR/ID. Preserve Task2 bytes, task history/status/AC and earlier seals; scoped review and new-head hosted qualification remain pending.
+
+Hosted publication Task3 implementation/qualification (2026-10-12): Moved only the two introduced Dreams/Guardian invocation blocks from Fast to the end of existing Console P0. Exact byte/YAML proof preserves all six step bodies/argv/conditions, original four order, every job/test timeout, minimal install and required aggregate; Fast35min and P020min remain. Fixed stale count and all genuine location consumers; exact six job/step pins, unique final P0 placement, complete P0 overlap inventory and negative membership/order/overlap/resolution/suppression/condition/budget checks. Original stale guard RED reproduced; all four affected CI consumer files pass213 cases in9.61s. Zero added Ruff diagnostics (two inherited P0 guard findings), full actual-base diff check passes. Production and Task2 test bytes unchanged. Hosted89 cancellation remains incomplete; neither164/89 nor native/UI cohorts rerun. Full new report/source/member/handoff: pr-review-wave2/pr2921-hosted-ci-budget-task3-report.md and associated Task3 artifacts. ExistingADR103; no newjob/cap/ID/Done. Scoped review and normal new-head hosted qualification remain pending.
 <!-- SECTION:NOTES:END -->
 
 > Renumbering provenance: filed as task-32902 on the pre-divergence docs

@@ -344,11 +344,11 @@ def test_fast_lane_is_one_serial_minimal_python_312_job() -> None:
     # the admission-sensitive step (worst case measured 28m20s).
     assert fast["timeout-minutes"] == 35
     assert "strategy" not in fast
-    # TASK-32873 / PR2921: 7 steps -- the admission-sensitive suites run in a
+    # TASK-32873: 5 steps -- the admission-sensitive suites run in a
     # separate pytest invocation inside the same job (their
     # keep_bootstrap_profile enrollment poisons sandboxed suites sharing
     # a process).
-    assert len(fast["steps"]) == 7
+    assert len(fast["steps"]) == 5
 
     setup = next(
         step for step in fast["steps"] if step.get("uses") == "actions/setup-python@v5"
@@ -388,7 +388,8 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
     assert p0["name"] == "Console P0 regression gate"
     assert p0["if"] == LANES
     assert p0["runs-on"] == "ubuntu-latest"
-    assert 10 <= p0["timeout-minutes"] <= 25
+    assert p0["timeout-minutes"] == 20
+    assert len(p0["steps"]) == 7
     assert "strategy" not in p0
     setup = next(
         step for step in p0["steps"] if step.get("uses") == "actions/setup-python@v5"
@@ -648,8 +649,17 @@ def test_exact_invocation_accepts_comments_without_changing_executable_argv():
 
 
 def _assert_dreams_required_steps(workflow: dict) -> None:
-    job = workflow["jobs"]["pr-fast-lane"]
-    assert job["timeout-minutes"] == 35
+    job = workflow["jobs"]["console-p0-gate"]
+    assert job["timeout-minutes"] == 20
+    names = (
+        "Run Dreams and Guardian boundary contracts",
+        "Run Dreams admission-sensitive contracts",
+    )
+    assert tuple(step.get("name") for step in job["steps"][-2:]) == names
+    for name in names:
+        owners = [key for key, candidate in workflow["jobs"].items()
+                  for step in candidate.get("steps", ()) if step.get("name") == name]
+        assert owners == ["console-p0-gate"]
     assert not job.get("continue-on-error", False)
     for name, targets, limit in (
         ("Run Dreams and Guardian boundary contracts", DREAMS_BOUNDARY_TARGETS, 180),
@@ -676,8 +686,43 @@ def test_dreams_critical_boundaries_are_executable_required_lane_members() -> No
 ])
 def test_dreams_membership_cannot_be_satisfied_by_comments(name, targets) -> None:
     workflow = _workflow("derived-artifacts.yml")
-    step = _named_step(workflow["jobs"]["pr-fast-lane"], name)
+    step = _named_step(workflow["jobs"]["console-p0-gate"], name)
     step["run"] = step["run"].replace(targets[0] + " \\\n", "")
     step["run"] += "\n# " + targets[0]
+    with pytest.raises(AssertionError):
+        _assert_dreams_required_steps(workflow)
+
+
+@pytest.mark.parametrize("name", [
+    "Run Dreams and Guardian boundary contracts",
+    "Run Dreams admission-sensitive contracts",
+])
+@pytest.mark.parametrize("mutation", [
+    "missing", "order", "duplicate", "wrong-job", "suppression",
+    "conditional", "continue-on-error", "job-budget", "test-budget",
+])
+def test_dreams_required_placement_rejects_drift(name, mutation):
+    workflow = _workflow("derived-artifacts.yml")
+    job = workflow["jobs"]["console-p0-gate"]
+    step = _named_step(job, name)
+    if mutation == "missing":
+        job["steps"].remove(step)
+    elif mutation == "order":
+        job["steps"][-2:] = reversed(job["steps"][-2:])
+    elif mutation == "duplicate":
+        workflow["jobs"]["pr-fast-lane"]["steps"].append(copy.deepcopy(step))
+    elif mutation == "wrong-job":
+        job["steps"].remove(step)
+        workflow["jobs"]["pr-fast-lane"]["steps"].append(step)
+    elif mutation == "suppression":
+        step["run"] += " --collect-only"
+    elif mutation == "conditional":
+        step["if"] = "success()"
+    elif mutation == "continue-on-error":
+        step["continue-on-error"] = True
+    elif mutation == "job-budget":
+        job["timeout-minutes"] += 1
+    else:
+        step["run"] = step["run"].replace("--timeout=", "--timeout=1")
     with pytest.raises(AssertionError):
         _assert_dreams_required_steps(workflow)
