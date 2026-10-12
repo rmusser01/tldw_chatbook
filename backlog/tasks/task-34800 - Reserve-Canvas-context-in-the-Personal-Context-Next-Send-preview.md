@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-11 23:58'
-updated_date: '2026-10-12 04:58'
+updated_date: '2026-10-12 05:25'
 labels:
   - memory
   - canvas
@@ -64,6 +64,8 @@ Native Python 3.12.11 reproduced the original 123565 versus 121793 token mismatc
 2026-10-11 Task2 correction gates named production Goal/Canvas/native-tight/fenced-tight/unreadable/denied planner and both publication-drift controls in the existing required sandbox lane, plus selection factories and lazy worker cancellation in UI census. Complete bounded minimal-dependency selection826 sandbox (62 feature additions),13 admission and46 UI cases passed with unchanged deadlines/caps. All original179 UI entries retained; seven additions floor186, preserve root post-Goal180+7 at transplant. First-read canonical provenance owner fence, literal export label and living architecture corrections are in Task2 report/new pr2862-review-fixes receipt seal. V1/schema8/AAD1 and all closed activation gates remain. In Progress pending independent root scoped review, actual current-dev transplant and hosted clearance; no publication or merge by implementer.
 
 Task3 independent spec PASS and quality PASS at ea50008b3c, with38 affected CI/copy-probe controls passing and all prior/runtime seals unchanged. Task4 integration qualification begins against actual merged Goal; no Task Done or hosted clearance is claimed.
+
+2026-10-11 Task4 current-Goal reconciliation: feature-only range transplanted onto exact merged9595facbbb, preserving current request/Goal/tool/root budgets and pure Canvas preview/currentness owners. Canvas/native boundary group54 pass/1 already retained Goal outer_timeout failure; that exact body also fails on isolated9595 source with unchanged two-second dispatch wait. Settings61, current Goal style/navigation2, native original-owner/Notes admission22 and executable CI/census105 pass; required target order/flags/deadlines retained, current180+7 census187, all12 offline preflight guards pass. Original seals untouched; new receipts/report are separate under pr2862-task4-current-goal-integration and Task4 SDD. No new cap, permission/schema/AAD/V1/V2/Forget/source/disclosure/server activation or GitHub mutation. Existing three component and broad lint/format failures retain exactbase evidence. Status/AC remain In Progress/open pending root independent clearance and actual post-Focus/latest-dev/hosted qualification. No new ADR; direct existing Canvas/PC/Goal227 integration.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance
