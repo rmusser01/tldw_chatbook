@@ -70,17 +70,19 @@ def _settled_canvas(screen, selector: str):
 
     TASK-34789: a Notes canvas answers every sync that lands (a tree slice,
     the trash reload, Undo's own reload, a sync publication) by recomposing.
-    While that runs, or is queued, its previous children are still in the
-    DOM but already pruning: Textual reports them as not displayed,
-    ``Button.press()`` on one does nothing, and a read can land between the
-    removal and the remount. Each read and press below starts from a canvas
-    that is doing neither.
+    While that runs its previous children are still in the DOM but pruning:
+    Textual reports them as not displayed, ``Button.press()`` on one does
+    nothing, and a read can land between the removal and the remount. A
+    recompose that is only queued has not pruned anything yet; it is excluded
+    too, so each read and press below starts from a canvas with nothing
+    pending. A canvas that is itself being removed (a whole-screen recompose)
+    keeps its ready flag, so it must also still be displayed.
     """
     canvases = screen.query(selector)
     if not canvases:
         return None
     canvas = canvases.first()
-    if not canvas._children_ready or canvas._recompose_required:
+    if not canvas.display or not canvas._children_ready or canvas._recompose_required:
         return None
     return canvas
 
@@ -92,7 +94,9 @@ def _live_button(screen, canvas: str, selector: str, accept=None) -> Button | No
     and enabled on a canvas that is not rebuilding, and no Notes mutation is
     fenced. Otherwise Textual drops it (``press()`` on a pruning or disabled
     button does nothing) or the screen's handler returns without acting, and
-    the step after it waits 30 s for nothing.
+    the step after it waits 30 s for nothing. "Displayed" is the button's own
+    ``display``: a button inside a hidden region still counts, as it did
+    before this helper existed.
     """
     owner = _settled_canvas(screen, canvas)
     if owner is None or screen._library_notes_mutation_fenced():
@@ -111,12 +115,22 @@ def _live_button(screen, canvas: str, selector: str, accept=None) -> Button | No
 
 async def _press(screen, pilot, canvas: str, selector: str, what: str, accept=None):
     """Press the live control at ``selector``, waiting until there is one."""
+    found: list[Button] = []
+
+    def pressable() -> bool:
+        button = _live_button(screen, canvas, selector, accept)
+        if button is not None:
+            found[:] = [button]
+        return button is not None
+
     await _until(
         pilot,
-        lambda: _live_button(screen, canvas, selector, accept) is not None,
-        what,
+        pressable,
+        f"{what}: no pressable control at {selector} on {canvas} (it must be "
+        "displayed and enabled, on a settled canvas, with no Notes mutation fenced)",
     )
-    _live_button(screen, canvas, selector, accept).press()
+    # No await since the check: the press is posted to a live button.
+    found[0].press()
 
 
 def _manage_rows_mounted(screen) -> bool:
@@ -127,9 +141,7 @@ def _manage_rows_mounted(screen) -> bool:
     ``NoMatches`` -- the row is not in the DOM between a recompose's removal
     and its remount.
     """
-    return _settled_canvas(screen, WORK) is not None and bool(
-        screen.query(ROOT_STATUS)
-    )
+    return _settled_canvas(screen, WORK) is not None and bool(screen.query(ROOT_STATUS))
 
 
 def _delete_prompt_shown(screen) -> bool:
@@ -172,7 +184,9 @@ async def _open_manage_sync_folders(screen, pilot) -> str:
 
 
 async def _back_to_notes_list(screen, pilot) -> None:
-    await _press(screen, pilot, WORK, "#notes-sync-roots-back", "‹ Back to be pressable")
+    await _press(
+        screen, pilot, WORK, "#notes-sync-roots-back", "‹ Back to be pressable"
+    )
     await _until(
         pilot,
         lambda: screen._notes_state.view == "list",
@@ -213,7 +227,6 @@ async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(
                 screen = await _library(app, pilot)
                 release_folders = asyncio.Event()
                 readiness_reached = asyncio.Event()
-                wait_for_selector = _wait_for_selector
                 if delayed_root_folders:
                     # A real Unfiled row may paint before the independent
                     # folder slice. Gate that response, not the UI or data.
@@ -234,21 +247,12 @@ async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(
                         readiness_reached.set()
                         return await until(*args, **kwargs)
 
-                    async def observed_selector(*args, **kwargs):
-                        row = await wait_for_selector(*args, **kwargs)
-                        if args[2] == ".library-notes-folder-row":
-                            readiness_reached.set()
-                        return row
-
                     monkeypatch.setattr(__name__ + "._until", observed_until)
-                    monkeypatch.setattr(
-                        __name__ + "._wait_for_selector", observed_selector
-                    )
                 screen.query_one("#library-row-browse-notes", Button).press()
                 if delayed_root_folders:
                     opening = asyncio.create_task(_open_synced_folder(screen, pilot))
                     try:
-                        await wait_for_selector(
+                        await _wait_for_selector(
                             screen, pilot, ".library-notes-folder-row"
                         )
                         await until(
@@ -326,9 +330,7 @@ async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(
                 await _back_to_notes_list(screen, pilot)
 
                 # Phase 2: Undo from the receipt.
-                await _press(
-                    screen, pilot, LIST, "#library-notes-delete-undo", "Undo"
-                )
+                await _press(screen, pilot, LIST, "#library-notes-delete-undo", "Undo")
                 await _until(
                     pilot,
                     lambda: owner.snapshot().roots[0].status == "up_to_date",

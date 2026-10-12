@@ -194,6 +194,21 @@ def _console_sync_settled(console: Any) -> bool:
     )
 
 
+def test_the_settle_wait_reads_flags_the_console_still_sets():
+    """Two of the flags ``_console_sync_settled`` reads are assigned lazily, so
+    it reads them with ``getattr`` and a default, as the Console itself does.
+    A rename would make that wait pass without covering the deferred replay it
+    exists for; this fails instead.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    names = set(ChatScreen._run_coalesced_control_bar_sync.__code__.co_names)
+    assert {
+        "_console_control_bar_replay_whole_sync",
+        "_console_control_bar_sync_scheduled",
+    } <= names
+
+
 async def _delete_from_third_message(app: Any, pilot: Any, console: Any) -> None:
     """Delete message 3 (and the one after it) through More > Delete > confirm."""
     from tldw_chatbook.Widgets.Console import ConsoleTranscript
@@ -220,13 +235,17 @@ async def _delete_from_third_message(app: Any, pilot: Any, console: Any) -> None
     await console._sync_native_console_chat_ui()
     # The awaited sync may have been deferred; open More only once the sync
     # for this selection has really run, so nothing is left to repaint it.
+    # One wait, then the press with no await in between: a separate wait for
+    # the opener would pump the app once more and reopen the gap.
+    opener = f"#console-message-action-more-{target}"
     await _wait_until(
         pilot,
-        lambda: _console_sync_settled(console),
-        lambda: "the Console sync for the selection never settled",
+        lambda: _console_sync_settled(console) and bool(console.query(opener)),
+        lambda: (
+            "the Console sync for the selection never settled, or the More "
+            f"opener never rendered: settled={_console_sync_settled(console)}"
+        ),
     )
-    opener = f"#console-message-action-more-{target}"
-    await _wait_until(pilot, lambda: bool(console.query(opener)))
     console.query_one(opener, Button).press()
     await _wait_until(
         pilot, lambda: bool(console.query("#console-message-more-delete"))
