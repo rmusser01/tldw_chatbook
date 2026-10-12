@@ -192,7 +192,15 @@ async def test_home_rail_preferences_prefers_app_config_over_cli_config(monkeypa
     the ``get_cli_setting`` fallback must never be consulted.
     """
     app = _build_test_app()
-    app.app_config["home"] = {"rail_state": {"sections": {"details_open": True}}}
+    # setitem, not a bare assignment: ``app_config`` is the process-wide
+    # cached settings dict (see ``build_test_app_config``), so a bare write
+    # leaks ``details_open: True`` into every later test's app under the
+    # shared bootstrap profile (observed flipping
+    # test_home_triage_rail.py's details-section assertions once that suite
+    # was enrolled in ``keep_bootstrap_profile``). Teardown restores.
+    monkeypatch.setitem(
+        app.app_config, "home", {"rail_state": {"sections": {"details_open": True}}}
+    )
 
     def raising_get_cli_setting(*args, **kwargs):
         raise AssertionError(
