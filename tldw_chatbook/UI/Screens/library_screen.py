@@ -28721,6 +28721,12 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         return self._notes_controller.handle_library_note_import_check(event)
 
+    @on(LibraryNoteImportCanvas.SourceModeToggled)
+    def handle_library_note_import_source_mode(
+        self, event: LibraryNoteImportCanvas.SourceModeToggled
+    ) -> None:
+        return self._notes_controller.handle_library_note_import_source_mode(event)
+
     @on(LibraryNoteImportCanvas.ObsidianModeToggled)
     def handle_library_note_import_obsidian_mode(
         self, event: LibraryNoteImportCanvas.ObsidianModeToggled

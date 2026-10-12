@@ -160,6 +160,7 @@ def _controller(
         *,
         destination_folder_segments=None,
         obsidian_mode=False,
+        source_mode=False,
     ):
         calls.append(
             (

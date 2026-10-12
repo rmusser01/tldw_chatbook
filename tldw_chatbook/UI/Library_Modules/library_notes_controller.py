@@ -5677,6 +5677,17 @@ class LibraryNotesController:
             exclusive=True,
             group="library_note_import_check",
         )
+
+    @on(LibraryNoteImportCanvas.SourceModeToggled)
+    def handle_library_note_import_source_mode(
+        self, event: LibraryNoteImportCanvas.SourceModeToggled
+    ) -> None:
+        event.stop()
+        try:
+            self._library_note_import_controller.set_source_mode(event.enabled)
+        except (TypeError, ValueError):
+            self._notify_library_note_import_failure()
+
     @on(LibraryNoteImportCanvas.ObsidianModeToggled)
     def handle_library_note_import_obsidian_mode(
         self, event: LibraryNoteImportCanvas.ObsidianModeToggled

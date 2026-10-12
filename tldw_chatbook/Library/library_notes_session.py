@@ -305,6 +305,9 @@ class DatabaseNoteSessionCoordinator:
         self._recovery = recovery
         self._recovery_scope = recovery_scope
         self._recovery_task: asyncio.Task[bool] | None = None
+        self._pending_recovery: (
+            tuple[NoteDraftScope | None, LibraryNoteSessionSnapshot, int] | None
+        ) = None
         self._retained_revision: tuple[int, int] | None = None
         self._recovery_base_version = 0
         self._clock = clock or (lambda: datetime.now(timezone.utc))
@@ -369,18 +372,25 @@ class DatabaseNoteSessionCoordinator:
         snapshot = self._snapshot
         if self._recovery is None or snapshot is None or not snapshot.dirty:
             return
-        previous = self._recovery_task
-        base_version = self._recovery_base_version
+        self._pending_recovery = (
+            self._recovery_scope,
+            snapshot,
+            self._recovery_base_version,
+        )
+        if self._recovery_task is None or self._recovery_task.done():
+            self._recovery_task = asyncio.create_task(self._drain_recovery())
 
-        async def retain() -> bool:
-            if previous is not None:
-                await asyncio.shield(previous)
+    async def _drain_recovery(self) -> bool:
+        if self._recovery is None:
+            return False
+        retained = False
+        while self._pending_recovery is not None:
+            scope, snapshot, base_version = self._pending_recovery
+            self._pending_recovery = None
             try:
-                if self._recovery_scope is None:
+                if scope is None:
                     raise ValueError("Draft recovery owner unavailable.")
-                await self._recovery.save(
-                    self._recovery_scope, snapshot.draft, base_version
-                )
+                await self._recovery.save(scope, snapshot.draft, base_version)
             except (OSError, sqlite3.Error, RuntimeError, ValueError):
                 current = self._snapshot
                 if (
@@ -391,31 +401,42 @@ class DatabaseNoteSessionCoordinator:
                         current,
                         status_message="Local draft storage failed — stay here and retry Save.",
                     )
-                return False
-            self._retained_revision = (
-                snapshot.session_generation,
-                snapshot.draft_revision,
-            )
-            return True
-
-        self._recovery_task = asyncio.create_task(retain())
+                retained = False
+            else:
+                self._retained_revision = (
+                    snapshot.session_generation,
+                    snapshot.draft_revision,
+                )
+                retained = True
+        return retained
 
     async def _retain_current_draft(self) -> bool:
         if self._recovery is None:
             return False
         self._queue_recovery()
         task = self._recovery_task
-        return await asyncio.shield(task) if task is not None else True
+        if task is not None and not await asyncio.shield(task):
+            return False
+        snapshot = self._snapshot
+        return (
+            snapshot is None
+            or not snapshot.dirty
+            or self._retained_revision
+            == (snapshot.session_generation, snapshot.draft_revision)
+        )
 
     async def _acknowledge_recovery(self, note_id: str, revision: int) -> bool:
         if self._recovery is None:
             return True
         try:
-            if self._recovery_task is not None:
-                await asyncio.shield(self._recovery_task)
-            if self._recovery_scope is None:
+            scope = self._recovery_scope
+            if self._recovery_task is not None and not await asyncio.shield(
+                self._recovery_task
+            ):
                 return False
-            await self._recovery.acknowledge(self._recovery_scope, note_id, revision)
+            if scope is None:
+                return False
+            await self._recovery.acknowledge(scope, note_id, revision)
             return True
         except (OSError, sqlite3.Error, RuntimeError, ValueError):
             return False
@@ -447,6 +468,7 @@ class DatabaseNoteSessionCoordinator:
                 note_id,
                 "Local draft storage failed — stay here and retry Save.",
             )
+        opening_draft = self._snapshot.draft if self._snapshot is not None else None
         self._session_request_token += 1
         request_token = self._session_request_token
         try:
@@ -499,6 +521,13 @@ class DatabaseNoteSessionCoordinator:
                 )
             if request_token != self._session_request_token:
                 return NoteLoadOutcome(NoteLoadOutcomeKind.STALE, note_id)
+        # Edits made during loading still belong to the old session's recovery slot.
+        if (
+            self._recovery is not None
+            and (self._snapshot.draft if self._snapshot is not None else None)
+            != opening_draft
+        ):
+            return NoteLoadOutcome(NoteLoadOutcomeKind.STALE, note_id)
         self._start_loaded_session(
             reply.detail,
             untouched_create_token=untouched_create_token,

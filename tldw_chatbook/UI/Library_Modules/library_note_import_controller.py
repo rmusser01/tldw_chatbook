@@ -275,6 +275,18 @@ class LibraryNoteImportController:
             already_synced=already_synced,
         )
 
+    def set_source_mode(self, enabled: bool) -> None:
+        """Choose exact source before building the read-only import plan."""
+        if type(enabled) is not bool:
+            raise TypeError("enabled must be a boolean.")
+        if self._state.phase not in {
+            NoteImportPhase.SELECT,
+            NoteImportPhase.DESTINATION,
+        }:
+            raise ValueError("Choose the import mode before checking sources.")
+        self._state = replace(self._state, source_mode=enabled)
+        self.publish()
+
     def set_obsidian_mode(self, enabled: bool) -> None:
         """Retain the vault-reading choice; the caller re-runs the read-only check.
 
@@ -387,6 +399,7 @@ class LibraryNoteImportController:
             discovery,
             self._bounds,
             destination_folder_segments=destination,
+            source_mode=selected.source_mode,
             obsidian_mode=selected.obsidian_mode,
         )
         preliminary = self._classify(batch, self._bounds)

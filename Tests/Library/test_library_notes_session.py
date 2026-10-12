@@ -1354,3 +1354,177 @@ async def test_reload_revalidates_after_deferred_acknowledgement(
     assert owner.snapshot.note_id == ("n-2" if switch_session else "n-1")
     assert owner.snapshot.body == "newer <>&"
     await owner._retain_current_draft()
+
+
+@pytest.mark.asyncio
+async def test_recovery_burst_coalesces_and_navigation_drains_latest(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Notes.note_draft_recovery import (
+        NoteDraftRecovery,
+        NoteDraftScope,
+    )
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    store = NotesDeviceStateStore(tmp_path / "bounded-recovery.db")
+    recovery = NoteDraftRecovery(store)
+    scope = NoteDraftScope("profile", "alice", None)
+    owner = DatabaseNoteSessionCoordinator(
+        FakeDatabaseNotePort(_detail()), recovery=recovery, recovery_scope=scope
+    )
+    await owner.open_session("n-1")
+    owner._port.load_replies.append(DatabaseNotePortLoadReply.loaded(_detail("n-2")))
+    original = recovery.save
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = []
+
+    async def held(scope, draft, base):
+        calls.append((scope, draft, base))
+        entered.set()
+        await release.wait()
+        await original(scope, draft, base)
+
+    monkeypatch.setattr(recovery, "save", held)
+    try:
+        owner.mutate(body="first", content_language="json")
+        await entered.wait()
+        task = owner._recovery_task
+        for revision in range(150):
+            owner.mutate(body=f"\ufeffvalue: {revision}\r\n", content_language="yaml")
+            assert owner._recovery_task is task
+        latest = owner.snapshot.draft
+        assert owner._pending_recovery[1].draft == latest
+        assert len(calls) == 1
+        opening = asyncio.create_task(owner.open_session("n-2"))
+        await asyncio.sleep(0)
+        assert not opening.done()
+        assert not owner.close_session()
+        release.set()
+        assert (await opening).kind is NoteLoadOutcomeKind.LOADED
+        assert owner.snapshot.note_id == "n-2"
+        assert len(calls) == 2
+        assert calls[-1] == (scope, latest, 1)
+        assert await recovery.load(scope, "n-1") == (latest, 1)
+        assert owner._pending_recovery is None
+        assert task.done()
+    finally:
+        release.set()
+        await asyncio.shield(owner._recovery_task)
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_coalesced_recovery_failure_retries_latest_before_navigation(
+    tmp_path, monkeypatch
+):
+    from tldw_chatbook.Notes.note_draft_recovery import (
+        NoteDraftRecovery,
+        NoteDraftScope,
+    )
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    store = NotesDeviceStateStore(tmp_path / "retry-recovery.db")
+    recovery = NoteDraftRecovery(store)
+    scope = NoteDraftScope("profile", "alice", None)
+    owner = DatabaseNoteSessionCoordinator(
+        FakeDatabaseNotePort(_detail()), recovery=recovery, recovery_scope=scope
+    )
+    await owner.open_session("n-1")
+    original = recovery.save
+
+    async def fail(*args):
+        raise OSError("owned fixture failure")
+
+    monkeypatch.setattr(recovery, "save", fail)
+    for revision in range(30):
+        owner.mutate(body=f"{revision}\r\n", content_language="jsonl")
+    latest = owner.snapshot.draft
+    assert (await owner.open_session("n-2")).kind is NoteLoadOutcomeKind.FAILED
+    assert not owner.close_session()
+    monkeypatch.setattr(recovery, "save", original)
+    assert await owner._retain_current_draft()
+    assert await recovery.load(scope, "n-1") == (latest, 1)
+    assert owner.close_session()
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_recovery_preserves_old_session_edits_during_navigation(tmp_path):
+    from tldw_chatbook.Notes.note_draft_recovery import (
+        NoteDraftRecovery,
+        NoteDraftScope,
+    )
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    store = NotesDeviceStateStore(tmp_path / "navigation-recovery.db")
+    recovery = NoteDraftRecovery(store)
+    scope = NoteDraftScope("profile", "alice", None)
+    port = FakeDatabaseNotePort(_detail())
+    owner = DatabaseNoteSessionCoordinator(
+        port, recovery=recovery, recovery_scope=scope
+    )
+    await owner.open_session("n-1")
+    gate = asyncio.Event()
+    port.load_gates.append(gate)
+    port.load_replies.append(DatabaseNotePortLoadReply.loaded(_detail("n-2")))
+    opening = asyncio.create_task(owner.open_session("n-2"))
+    await asyncio.sleep(0)
+    owner.mutate(body="old session still typing\r\n", content_language="yaml")
+    latest = owner.snapshot.draft
+    gate.set()
+    assert (await opening).kind is NoteLoadOutcomeKind.STALE
+    assert owner.snapshot.note_id == "n-1"
+    assert await owner._retain_current_draft()
+    port.load_replies.append(DatabaseNotePortLoadReply.loaded(_detail("n-2")))
+    assert (await owner.open_session("n-2")).kind is NoteLoadOutcomeKind.LOADED
+    owner.mutate(body="second session", content_language="text")
+    assert await owner._retain_current_draft()
+    assert await recovery.load(scope, "n-1") == (latest, 1)
+    assert (await recovery.load(scope, "n-2"))[0].body == "second session"
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_late_ack_keeps_newer_coalesced_source_and_mode(tmp_path, monkeypatch):
+    from tldw_chatbook.Notes.note_draft_recovery import (
+        NoteDraftRecovery,
+        NoteDraftScope,
+    )
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    store = NotesDeviceStateStore(tmp_path / "ack-recovery.db")
+    recovery = NoteDraftRecovery(store)
+    scope = NoteDraftScope("profile", "alice", None)
+    port = FakeDatabaseNotePort(_detail())
+    owner = DatabaseNoteSessionCoordinator(
+        port, recovery=recovery, recovery_scope=scope
+    )
+    await owner.open_session("n-1")
+    owner.mutate(body="first", content_language="text")
+    port.save_replies.extend(
+        [
+            DatabaseNotePortSaveReply.saved(version=2),
+            DatabaseNotePortSaveReply.failed("newer save refused"),
+        ]
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = recovery.acknowledge
+
+    async def held_ack(*args):
+        entered.set()
+        await release.wait()
+        await original(*args)
+
+    monkeypatch.setattr(recovery, "acknowledge", held_ack)
+    saving = asyncio.create_task(owner.request_save(explicit=True))
+    await entered.wait()
+    for revision in range(30):
+        owner.mutate(body=f"\ufeffkey: {revision}\r\n", content_language="yaml")
+    latest = owner.snapshot.draft
+    assert await owner._retain_current_draft()
+    assert await recovery.load(scope, "n-1") == (latest, 1)
+    release.set()
+    assert (await saving).kind is NoteSaveOutcomeKind.FAILED
+    assert owner.snapshot.draft == latest
+    assert await recovery.load(scope, "n-1") == (latest, 2)
+    store.close()

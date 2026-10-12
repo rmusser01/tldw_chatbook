@@ -1,5 +1,7 @@
 """Source-mode controls and keyboard-accessible syntax diagnostics."""
 
+import re
+
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -142,8 +144,9 @@ class DocumentDiagnostics(Vertical):
         if request and result:
             for diagnostic in result.diagnostics:
                 prefix = request.text[: diagnostic.start]
-                line = prefix.count("\n") + 1
-                column = len(prefix.rsplit("\n", 1)[-1].removesuffix("\r")) + 1
+                lines = re.split(r"\r\n|[\r\n]", prefix)
+                line = len(lines)
+                column = len(lines[-1]) + 1
                 problems.add_option(
                     Option(
                         f"{diagnostic.severity} {line}:{column} [{diagnostic.code}] {diagnostic.message}"
