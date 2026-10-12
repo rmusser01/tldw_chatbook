@@ -30704,8 +30704,8 @@ class SettingsScreen(BaseAppScreen):
         # The link stays: it names the form's provider when the draft empties.
         self._stage_provider_value("model", model_value or None)
         provider = str(self._provider_display_setting_values().get("provider") or "")
+        self._clear_provider_model_profile_draft_keys()  # first: rows read the draft
         self._sync_provider_model_profile_widgets(provider, model_value)
-        self._clear_provider_model_profile_draft_keys()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 

@@ -1080,13 +1080,15 @@ def context_window_summary(screen: SettingsScreen) -> str:
     state = model_context_window_state(
         screen._app_config_mapping(), str(values.get("provider") or ""), model
     )
+    # A staged Reset is an edit even when the number does not change, and
+    # when it blanks the field (an override with nothing detected).
+    reset = screen._provider_draft_value("model_context_window_reset")
+    if tokens != (state.effective_tokens or 0) or reset:
+        shown = f"{tokens:,} tokens" if tokens > 0 else state.unknown_copy
+        return f"{shown} · {EDITED}"
     if tokens <= 0:
         ask = "" if state.server_reported else " · enter the model's documented limit"
         return state.unknown_copy + ask
-    if tokens != state.effective_tokens or screen._provider_draft_value(
-        "model_context_window_reset"
-    ):  # a staged Reset is an edit even when the number does not change
-        return f"{tokens:,} tokens · {SELECTION_SOURCE_WORDS['settings_draft']}"
     if state.has_configured_override:
         return f"{tokens:,} tokens · override set"
     return f"{tokens:,} tokens · detected, no override"
