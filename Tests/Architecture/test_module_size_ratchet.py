@@ -140,8 +140,12 @@ _BUDGETS: dict[str, int] = {
     # helpers here (+80 on dev): re-pinned at the rebased head's 33,712, still
     # under dev's 34,598 for the file; the Provider list's prefix-first
     # highlight makes it 33,724; dev's #3056 session-summary deferrals add 8
-    # (rebased again): 33,732.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33732,
+    # (rebased again): 33,732. The review of #3057 (2026-10-11, every finding
+    # fixed by owner ruling) re-pins it at the integrated head's 33,881: the
+    # quit summary's single-writer save and its Inspector guide (C8), the
+    # staged credential source behind the Key check row, the deep link's
+    # first edit (C1) and Save selected's own worker group and lock (C9).
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33881,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -157,9 +161,14 @@ _BUDGETS: dict[str, int] = {
     # block's readiness row (which crashed the card at mount, on dev too);
     # one tooltip interpolated bare. Three guards, +3. The review of #3057
     # found two more rows that print an endpoint or an error's text through
-    # markup (the save result, the discovery status): +2.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2305,
-    "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 729,
+    # markup (the save result, the discovery status): +2. That review's
+    # fixes (2026-10-11) re-pin it at the integrated head's 2,371: the API
+    # key row follows an unsaved Env var edit and its sentences fit one line
+    # (R1 #10, #11), with the Source words as named constants (C3, C4).
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2371,
+    # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
+    # (two constants it had copied are imported; one number spelling, C6).
+    "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 722,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
