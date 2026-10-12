@@ -528,3 +528,50 @@ def test_maths_signs_punctuation_and_bare_selectors_are_not(value):
 @pytest.mark.parametrize("value", ["\u2665", "\u20ac", "\u00a9", "\U0001f3b8"])
 def test_a_symbol_alone_is_readable(value):
     assert validate_dreams_profile_text(value) == value
+
+
+# --- Review round 6, G2: the emoji rule must not accept invisible text -----------
+#
+# Round 5 accepted ANY character in front of the emoji selector or the
+# keycap, so invisible characters with a selector after them were a topic.
+# An emoji written with a selector is now one Unicode actually defines: a
+# keycap is 0-9, # or * (with or without U+FE0F) and U+20E3; an emoji
+# presentation sequence of punctuation or a maths sign exists only for the
+# few listed below. "+\ufe0f" is not an emoji, so it is what "+" is: a
+# maths sign, which alone is not a topic.
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "\u200d\ufe0f",          # zero width joiner + VS16
+        "\u200e\ufe0f",          # left-to-right mark + VS16
+        "\u061c\u20e3",          # Arabic letter mark + keycap
+        "\u180e\ufe0f",          # Mongolian vowel separator + VS16
+        "\u115f\ufe0f",          # Hangul choseong filler + VS16
+        "\u3164\ufe0f",          # Hangul filler + VS16
+        "\U0001d159\ufe0f",      # musical null notehead + VS16
+        "\u0301\ufe0f",          # combining acute + VS16
+        "\u034f\ufe0f",          # combining grapheme joiner + VS16
+        "+\ufe0f", ".\ufe0f", "-\u20e3", "+\u20e3", "!\ufe0f", "~\ufe0f",
+        "\u2192\ufe0f",          # rightwards arrow: no emoji sequence
+    ],
+)
+def test_a_selector_or_keycap_on_a_character_that_is_no_emoji_is_not_readable(
+        value):
+    with pytest.raises(ValueError, match="nothing readable"):
+        validate_dreams_profile_text(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "0\u20e3", "7\ufe0f\u20e3", "#\ufe0f\u20e3", "*\u20e3",
+        "\u203c\ufe0f", "\u2049\ufe0f", "\u2194\ufe0f", "\u25fb\ufe0f",
+        "\u25fe\ufe0f", "\u2934\ufe0f", "\u2935\ufe0f", "\u3030\ufe0f",
+        "\u303d\ufe0f",
+    ],
+)
+def test_every_emoji_unicode_writes_with_a_selector_on_a_sign_is_readable(
+        value):
+    assert validate_dreams_profile_text(value) == value

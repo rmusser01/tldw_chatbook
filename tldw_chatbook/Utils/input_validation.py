@@ -1918,13 +1918,22 @@ _DREAMS_TEXT_BLANK = frozenset("\u115f\u1160\U0001d159")
 _DREAMS_TEXT_FLAG_SEQUENCE_RE = re.compile(
     "\U0001f3f4[\U000e0030-\U000e0039\U000e0061-\U000e007a]+\U000e007f")
 
-#: A character turned into an emoji: followed by the emoji presentation
-#: selector, or capped with the combining enclosing keycap. That is how
-#: the keycaps (#\ufe0f\u20e3), the double exclamation mark and the arrow
-#: emoji are written; their base is punctuation or a maths sign, which
-#: alone is not readable, and the emoji is (round 5, N4).
+#: An emoji Unicode writes as punctuation or a maths sign with a selector
+#: after it (round 5, N4): a keycap -- 0-9, ``#`` or ``*``, optionally
+#: U+FE0F, then the combining enclosing keycap U+20E3 -- or one of the
+#: few emoji presentation sequences on such a base (the double
+#: exclamation and exclamation-question marks, the left-right arrow, the
+#: medium and small squares, the curved arrows, the wavy dash, the part
+#: alternation mark). Alone each base is not readable; the emoji is.
+#:
+#: Only the sequences Unicode DEFINES (round 6, G2). Round 5 accepted any
+#: character in front of a selector, and so a zero width joiner, a
+#: direction mark, a combining mark or a filler with U+FE0F after it was
+#: a topic. ``+\ufe0f`` and ``-\u20e3`` are not emoji either: they are
+#: what ``+`` and ``-`` are, maths signs, which alone are refused.
 _DREAMS_TEXT_EMOJI_PRESENTATION_RE = re.compile(
-    "[^\\s\ufe0f\u20e3][\ufe0f\u20e3]")
+    "[#*0-9]\ufe0f?\u20e3"
+    "|[\u203c\u2049\u2194\u25fb-\u25fe\u2934\u2935\u3030\u303d]\ufe0f")
 
 # One refusal per thing that can be wrong (round 4, C4): the caller shows
 # it after "Topic not added: " / "Goal not added: " / "Region not saved: ".
