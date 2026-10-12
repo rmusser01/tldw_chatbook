@@ -1,5 +1,7 @@
 """Actual Schedules and Watchlists controls display durable names literally."""
 
+from typing import ClassVar
+
 import pytest
 from rich.text import Text
 from textual.content import Content
@@ -15,7 +17,7 @@ NAMES = ("Ordinary name", "[/unmatched]", "[@click=app.quit]x[/]")
 
 
 class NameHarness(ConsolidatedCSSApp):
-    CSS_PATH = list(APP_STYLESHEETS)
+    CSS_PATH: ClassVar = list(APP_STYLESHEETS)
 
     def __init__(self, surface, name):
         super().__init__()
