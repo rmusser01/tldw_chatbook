@@ -65,7 +65,7 @@ from ..Utils.egress import (
     MAX_FETCH_BYTES_PAGE,
     guarded_fetch_httpx_async,
     host_of,
-    origin_set,
+    source_trusted_origins,
     warn_insecure_ssl,
 )
 from .watchlist_failure import InvalidFeedError, WatchlistPolicyFailure
@@ -1059,7 +1059,8 @@ class FeedMonitor:
                     feed_url,
                     client=client,
                     max_bytes=MAX_FETCH_BYTES_PAGE,
-                    trusted_origins=origin_set(feed_url),
+                    trusted_origins=_source_trusted_origins(
+                        subscription, feed_url),
                     headers=headers,
                     auth=auth,
                 )
@@ -1392,6 +1393,36 @@ class FeedMonitor:
 #: and document for a bound nobody has asked to move. `baseline_manager`'s
 #: `retention_days` is orphaned code and stays untouched (TASK-1360).
 _SNAPSHOTS_KEPT_PER_URL = 3
+
+
+def _source_trusted_origins(
+    subscription: Mapping[str, Any], url: str
+) -> frozenset:
+    """The trusted origins a subscription's own source earns on a fetch.
+
+    A source is fetched with its own configured URL as a trusted origin,
+    and the egress policy lets a trusted host through before it looks at
+    the address that host resolves to. That is right for a URL the user
+    typed -- an intranet page is a legitimate thing to watch -- and wrong
+    for one a Dreams story supplied: a public URL was tracked, its host
+    later resolved to a private address, and every later check fetched it
+    (review of #2921, item 2). A subscription whose URL nobody typed
+    records that in its ``processing_options``, and earns no trusted
+    origin (``Utils.egress.source_trusted_origins`` -- the one helper
+    every fetch arm uses, round 3, T17).
+
+    The defence is against a host that LATER RESOLVES to a private
+    address: the policy is asked again on every fetch and every redirect
+    hop. It is not address pinning -- the check and the connection
+    resolve the name separately (a documented non-goal of
+    ``Utils/egress.py``), so a name that changes its answer between the
+    two is not caught here.
+
+    Args:
+        subscription: The subscription (or execution config) being fetched.
+        url: The source URL about to be fetched.
+    """
+    return source_trusted_origins(url, subscription.get("processing_options"))
 
 
 class URLMonitor:
@@ -1774,9 +1805,13 @@ class URLMonitor:
                     # provenance the caller threads down when `source` is
                     # content-derived; absent it, `source` IS the configured
                     # value (the single-`url` and `url_list` arms) and
-                    # trusting it is correct.
-                    trusted_origins=origin_set(
-                        subscription.get("trusted_source") or url
+                    # trusting it is correct -- when a USER configured it.
+                    # A subscription whose URL nobody typed (review of
+                    # #2921, item 2) says so in its stored options and
+                    # earns no trusted origin, on every fetch.
+                    trusted_origins=_source_trusted_origins(
+                        subscription,
+                        subscription.get("trusted_source") or url,
                     ),
                     headers=headers,
                 )

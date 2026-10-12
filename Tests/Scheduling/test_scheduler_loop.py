@@ -903,3 +903,129 @@ def test_on_reminder_dispatched_defaults_to_none_and_is_optional():
     loop = SchedulerLoop.__new__(SchedulerLoop)
     # No `on_reminder_dispatched` attribute at all -- must not raise.
     loop._notify_reminder_dispatched("some-id")
+
+
+# --- Review of #2921, round 3, T14a: the first dispatch can be gated -----------
+
+
+def _loop_with_recorded_ticks(db, monkeypatch):
+    """A loop whose run() is cleared to execute and whose ticks are counted
+    instead of dispatched (the execution scope is the profile's, and is not
+    what these tests are about)."""
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Scheduling.scheduler import loop as loop_module
+
+    @contextmanager
+    def allowed(*args, **kwargs):
+        yield True
+
+    monkeypatch.setattr(loop_module, "execution_scope", allowed)
+    loop = SchedulerLoop(db, handlers={}, poll_interval=0.001)
+    ticks: list[int] = []
+
+    async def tick():
+        ticks.append(1)
+
+    async def nothing(*args, **kwargs):
+        return None
+
+    loop.tick = tick
+    loop._reload_queue = nothing
+    loop._reconcile_and_prune_run_ledger = nothing
+    loop.report_configuration = lambda: None
+    return loop, ticks
+
+
+@pytest.mark.asyncio
+async def test_first_dispatch_waits_for_a_registered_startup_gate(
+        db, monkeypatch):
+    loop, ticks = _loop_with_recorded_ticks(db, monkeypatch)
+    gate = asyncio.Event()
+    loop.first_dispatch_gates.append(gate.wait)
+
+    task = asyncio.create_task(loop.run())
+    await asyncio.sleep(0.1)
+    assert ticks == [], "nothing is dispatched while a startup gate is shut"
+
+    gate.set()
+    for _ in range(200):
+        if ticks:
+            break
+        await asyncio.sleep(0.005)
+    loop.stop()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    assert ticks, "and dispatch starts as soon as it opens"
+    assert loop.first_dispatch_gates == [], "a gate is waited for once"
+
+
+@pytest.mark.asyncio
+async def test_first_dispatch_does_not_wait_forever_for_a_stuck_gate(
+        db, monkeypatch):
+    loop, ticks = _loop_with_recorded_ticks(db, monkeypatch)
+    loop._FIRST_DISPATCH_GATE_TIMEOUT_SECONDS = 0.05
+    loop.first_dispatch_gates.append(asyncio.Event().wait)  # never opens
+
+    task = asyncio.create_task(loop.run())
+    for _ in range(400):
+        if ticks:
+            break
+        await asyncio.sleep(0.005)
+    loop.stop()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    assert ticks, "startup work that hangs must not stop the scheduler"
+
+
+@pytest.mark.asyncio
+async def test_a_loop_with_no_startup_gate_dispatches_as_before(
+        db, monkeypatch):
+    loop, ticks = _loop_with_recorded_ticks(db, monkeypatch)
+
+    task = asyncio.create_task(loop.run())
+    for _ in range(200):
+        if ticks:
+            break
+        await asyncio.sleep(0.005)
+    loop.stop()
+    await asyncio.wait_for(task, timeout=2.0)
+
+    assert ticks
+
+
+# --- Review of #2921, round 4: a public way to wait out storage maintenance ------
+#
+# Dreams' boot reconcile writes the stores the scheduler works on without
+# being dispatched by it, and waited on the private ``_maintenance_open``
+# event -- which ``stop()`` also sets, to wake its own waiters. A waiter
+# woken that way went on to write under a capture that was still open.
+
+
+@pytest.mark.asyncio
+async def test_wait_for_maintenance_admission_waits_out_a_capture(
+        db, monkeypatch):
+    loop, _ticks = _loop_with_recorded_ticks(db, monkeypatch)
+    assert await asyncio.wait_for(
+        loop.wait_for_maintenance_admission(), timeout=1.0) is True
+
+    loop._maintenance_close_admission()
+    waiter = asyncio.create_task(loop.wait_for_maintenance_admission())
+    await asyncio.sleep(0.05)
+    assert not waiter.done(), "held while a capture has admission closed"
+
+    loop._maintenance_resume()
+    assert await asyncio.wait_for(waiter, timeout=1.0) is True
+
+
+@pytest.mark.asyncio
+async def test_wait_for_maintenance_admission_says_no_when_stop_wakes_it(
+        db, monkeypatch):
+    loop, _ticks = _loop_with_recorded_ticks(db, monkeypatch)
+    loop._maintenance_close_admission()
+    waiter = asyncio.create_task(loop.wait_for_maintenance_admission())
+    await asyncio.sleep(0.05)
+
+    loop.stop()  # wakes every waiter; the capture is still open
+
+    assert await asyncio.wait_for(waiter, timeout=1.0) is False

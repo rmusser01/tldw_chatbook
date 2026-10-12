@@ -41,7 +41,12 @@ Re-tracking a story that already has an ACTIVE same-mechanism wrapper
 (Qodo #2, PR #2890) reuses it -- the cadence and event date refresh on
 the existing row, nothing is created, and the outcome is
 ``"attached"`` -- so one story can never own two live wrappers around
-the same watch and an untrack can never strand the older one.
+the same watch and an untrack can never strand the older one. The
+wrapper's reminder follows the refreshed plan (Qodo #13, PR #2921):
+created when missing, moved with the event date, disabled when the date
+is cleared -- and otherwise left exactly as it stands, so a re-track
+never re-arms, replaces or re-creates a reminder the user changed or one
+that has fired (review of #2921, items 4 and 5).
 
 Scheduling needs no registration here: ``WatchlistProjection`` fabricates
 ``watchlist:<subscription_id>`` tasks straight from subscription rows, so
@@ -61,6 +66,23 @@ and the quiet-retire count resolve through ``dreams_setting`` against
 ``DREAMS_DEFAULTS`` (``tracked_item_cap`` 20,
 ``track_min_check_interval_hours`` 12, ``track_quiet_retire_count`` 14)
 with no module-local fallback literals left.
+
+The master switch (Qodo #5, PR #2921): ``[dreams] enabled`` gates only
+what the Dreams projection emits. A page watch's subscription and an
+event watch's reminder live in the watchlist and reminder queues, which
+never read that flag, so ``set_tracking_suspended`` switches them -- off
+stops them for every live wrapper and records, on the wrapper, exactly
+what it stopped; on restores what was recorded and nothing the user had
+stopped themselves (review of #2921, item 4). The record
+(:func:`_suspension_record`) merges on every switch-off, its stops are
+re-applied until they have all landed, and it carries a ``settled``
+marker the startup check reads, so a switch that failed or was cut short
+part-way is finished by the next pass (round 3, T2/T3). ``reconcile_tracking`` is
+how it is called: it picks the direction from the live flag and runs the
+pass as a task this module owns, so the Settings toggle and the startup
+reconcile (``Dreams/track_reconcile.py``) can both ask for it, a
+cancelled caller cannot cut it short, and overlapping requests coalesce
+(item 3c).
 """
 
 from __future__ import annotations
@@ -68,18 +90,26 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from datetime import date, timedelta
+from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta, timezone
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from tldw_chatbook.Chat.Chat_Functions import extract_response_content
+from tldw_chatbook.Utils.egress import (
+    URL_PROVENANCE_OPTION,
+    UrlProvenance,
+    evaluate_url_policy_async,
+)
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.timestamps import to_utc_iso
 
 from . import discovery
 from .discovery import Candidate
-from .settings import DREAMS_DEFAULTS, dreams_setting
+from .settings import DREAMS_DEFAULTS, dreams_region, dreams_setting
+from .track_reconcile import SETTLED_OFF, SETTLED_ON, settled_state
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .cycle_service import CycleDeps
@@ -120,18 +150,19 @@ _JUDGE_QUESTION = (
     '"note": "<short explanation>"}.'
 )
 
-#: Run statuses that never anchor a comparison: they carry no trustworthy
-#: digest (error/skipped) or a deliberately suppressed one (withheld). The
-#: most recent run OUTSIDE this set is the baseline.
-_NON_BASELINE_RUN_STATUSES = frozenset({"error", "skipped", "withheld"})
-
-#: How many recent runs ``_baseline_digest`` scans for an anchoring digest
-#: (``DreamsDB.MAX_LIST_LIMIT`` -- the full bounded read).
-_BASELINE_SCAN_LIMIT = 200
+#: ``link_type`` every Dreams event reminder is created with: the one
+#: spelling shared by promote, disable, and the suspend/resume switch.
+_REMINDER_LINK_TYPE = "dream_tracked_item"
 
 #: Days before a tracked ``event_date`` that the promoted reminder fires
 #: (Phase 2 Task 5): one nudge with a week of runway, not a day-of alarm.
 _REMINDER_LEAD_DAYS = 7
+
+#: Local wall-clock time the reminder fires on its lead date (Qodo #14,
+#: PR #2921). An ``event_date`` is a calendar day, so the nudge needs an
+#: hour on the USER's calendar; nine in the morning is the hour the
+#: reminder forms' own examples use (``schedule_input_parsing``).
+_REMINDER_LOCAL_TIME = time(9, 0)
 
 #: Grace after a tracked ``event_date`` before the sweep retires the watch
 #: (Phase 2 Task 6): the event day itself plus one full day of aftermath
@@ -178,6 +209,11 @@ class TrackSourceDisabled(RuntimeError):
     never adopted, never re-enabled behind the user's back, and never given
     an active tracked item against a dead watch. Raised BEFORE any write.
 
+    Watchlists has no control that switches an existing source back on
+    (it can create one inactive, resume an auto-PAUSED one, and delete
+    one), so the notice for this must not send the user looking for one
+    (round 4, A2): what they can do is delete that source and track again.
+
     Attributes:
         reason_code: Stable machine identifier
             (``track_source_disabled``).
@@ -200,6 +236,26 @@ class TrackInvalidURL(ValueError):
     """
 
     reason_code = "track_invalid_url"
+
+
+class TrackPrivateURL(TrackInvalidURL):
+    """The URL to watch is not a public destination (Qodo #1, PR #2921).
+
+    A story URL comes out of a web search or a feed item, never out of the
+    user's keyboard, and the watchlist loop trusts a subscription's own
+    configured source when it fetches. Storing a loopback, private-network
+    or metadata address as a Dreams subscription would therefore let an
+    untrusted result point the watcher at the user's network. Raised by
+    :func:`track_page` BEFORE the subscription is created or re-enabled,
+    with a message that never echoes the URL. A subclass of
+    :class:`TrackInvalidURL`, so a caller that only handles the invalid
+    refusal still refuses.
+
+    Attributes:
+        reason_code: Stable machine identifier (``track_private_url``).
+    """
+
+    reason_code = "track_private_url"
 
 
 def _cap() -> int:
@@ -236,100 +292,550 @@ def _quiet_retire_count() -> int:
         return int(DREAMS_DEFAULTS["track_quiet_retire_count"])
 
 
-def _dream_owned_subscription(dreams_db: Any, subscription_id: int) -> bool:
-    """True when any tracked row pins dream ownership of a subscription.
-
-    Final review (ruling P10): provenance is a fact about the SUBSCRIPTION,
-    not about one wrapper's lifecycle state, so every status is consulted --
-    a sweep-retired (``event_passed``/``quiet``) or failure-paused row
-    proves ownership exactly as well as an active one. Sync; the caller
-    thread-offloads.
-    """
-    for status in ("active", "paused", "retired"):
-        rows = dreams_db.list_tracked_items(status)
-        if any(
-            int(row.get("subscription_id") or 0) == subscription_id
-            and int(row.get("created_by_dreams") or 0) == 1
-            for row in rows
-        ):
-            return True
-    return False
+#: What a subscription Dreams creates records about its URL: nobody typed
+#: it (review of #2921, item 2). The watchlist fetch reads this back and
+#: grants the URL no trusted egress origin -- see
+#: ``Subscriptions.monitoring_engine._source_provenance``.
+_STORY_URL_OPTIONS = {URL_PROVENANCE_OPTION: UrlProvenance.UNKNOWN.value}
 
 
-def _has_dreams_change_rule(rules: list[dict]) -> bool:
-    """Whether an enabled Dreams change rule already covers the page.
+async def _public_url_refusal(url: str) -> str | None:
+    """Why the egress policy would not fetch ``url`` on its own, or None.
 
-    Qodo #15 (PR #2890): ``track_page`` pins one ``items_above 0`` rule
-    named ``"Change: <title>"`` per subscription; the title suffix
-    differs between tracks, so identity is the name PREFIX plus the
-    condition -- exactly the tuple this path itself creates.
-
-    Args:
-        rules: ``LocalWatchlistsService.list_alert_rules`` rows
-            (normalized, ``condition_value`` already coerced).
+    The question is asked with NO trusted origins: a story URL never
+    vouches for itself (``UrlProvenance.UNKNOWN`` in ``Utils/egress.py``'s
+    terms). The policy resolves the host and refuses loopback, private,
+    link-local, reserved, multicast and metadata addresses (IPv4-mapped
+    and NAT64 wrappers included), and an unresolvable host fails closed.
+    ``[web_security] allowed_hosts`` and ``enabled`` apply exactly as they
+    do to every other guarded fetch.
 
     Returns:
-        True when any enabled rule on the subscription is a Dreams
-        change rule (``Change: `` name, ``items_above`` threshold 0).
+        ``None`` when the destination is public, else the policy's reason
+        slug (``private``/``metadata``/``dns_failure``/``scheme``).
     """
-    for rule in rules:
-        if not bool(rule.get("enabled", True)):
-            continue
-        if not str(rule.get("name") or "").startswith("Change: "):
-            continue
-        if str(rule.get("condition_type") or "") != "items_above":
-            continue
-        value = rule.get("condition_value") or {}
+    decision = await evaluate_url_policy_async(url)
+    return None if decision.allowed else str(decision.reason)
+
+
+async def _require_public_url(url: str) -> None:
+    """Refuse a story URL the egress policy would not fetch on its own.
+
+    Qodo #1 (PR #2921, security). ``validate_url`` checks syntax only, and
+    a story's URL was supplied by a search result or a feed item, not
+    typed by the user. Before Dreams stores (or re-enables) one as a
+    subscription it must be a public destination. This is the check at
+    the door; the same rule is applied again on every fetch, because the
+    subscription is created marked as story-derived
+    (``_STORY_URL_OPTIONS``) and the watchlist loop gives such a source
+    no trusted origin -- a host that resolves somewhere private LATER is
+    refused then (review of #2921, item 2). Neither check pins the
+    address it resolved (``Utils/egress.py``, a documented non-goal): a
+    name that changes its answer between the check and the connection is
+    outside what this covers.
+
+    Args:
+        url: The syntactically valid http(s) story URL.
+
+    Raises:
+        TrackPrivateURL: When the policy refuses the destination. The
+            message carries the policy's reason slug, never the URL.
+    """
+    reason = await _public_url_refusal(url)
+    if reason is not None:
+        raise TrackPrivateURL(
+            f"refusing to track a non-public destination ({reason})"
+        )
+
+
+def _source_options(source: Any) -> dict:
+    """A copy of the processing options a ``get_source`` row carries."""
+    return dict(
+        ((source or {}).get("settings") or {}).get("processing_options") or {})
+
+
+def _needs_story_mark(source: Any) -> bool:
+    """Whether a source Dreams owns still lacks any provenance record.
+
+    Only a source with NO record is stamped (round 4). One that carries
+    the story-derived mark has it; and one whose URL the user changed
+    carries the opposite record -- ``user_entered``, written by the
+    watchlists service on that edit -- and is the user's address now:
+    round 3 cleared the mark there instead, which made the edited source
+    look like one from before the mark existed, and the next switch-off
+    stamped the user's own address as a story address again.
+    """
+    return URL_PROVENANCE_OPTION not in _source_options(source)
+
+
+def _is_users_address(source: Any) -> bool:
+    """Whether the source records that a user entered its URL."""
+    return _source_options(source).get(
+        URL_PROVENANCE_OPTION) == UrlProvenance.USER_ENTERED.value
+
+
+def _story_options(source: Any) -> dict:
+    """A source's processing options with the story-derived mark added.
+
+    Options the source already carries are kept -- a provenance record
+    it already has included.
+    """
+    options = _source_options(source)
+    for key, value in _STORY_URL_OPTIONS.items():
+        options.setdefault(key, value)
+    return options
+
+
+async def _enable_dream_subscription(
+    subs_service: Any, subscription_id: int, source: Any
+) -> None:
+    """Turn a subscription Dreams created back on, marked story-derived.
+
+    Every path that re-enables a dream-created source goes through here,
+    so the source is marked whenever Dreams turns it on. (The mark does
+    not depend on a re-enable: ownership is enough, see
+    :func:`backfill_egress_marks`.)
+
+    Args:
+        subs_service: The app's ``LocalWatchlistsService``.
+        subscription_id: The dream-created subscription.
+        source: Its ``get_source`` row (for the options it already has).
+    """
+    await subs_service.update_source(
+        subscription_id,
+        {"active": True, "processing_options": _story_options(source)})
+
+
+async def backfill_egress_marks(
+    subs_service: Any, dreams_db: Any, *, verify: bool = False,
+) -> int:
+    """Stamp every subscription Dreams created that carries no mark yet.
+
+    Review of #2921, round 3, T1 (security). The mark was stamped when a
+    subscription was created and when Dreams re-enabled it, and "no mark"
+    reads as "the user typed this URL: trust its origin". So a
+    subscription created by a build without the mark -- which also had no
+    public-destination check at all -- stayed a trusted egress origin for
+    as long as the user never toggled Dreams. The mark is owed by
+    OWNERSHIP: every subscription a ``created_by_dreams`` wrapper names,
+    whatever the wrapper's status and whatever the master switch says
+    (the source exists either way and can be run from Watchlists).
+
+    Runs from the startup reconcile, once: ``DreamsDB`` keeps the list of
+    what is still to do (``subscriptions_awaiting_egress_mark``), each
+    subscription leaves it when stamped -- or found deleted -- and an
+    ordinary start then finds the list empty and never comes here. A
+    source whose stamp fails, or a start without the watchlists service,
+    stays on the list for the next start. Marking never changes whether
+    a source is active.
+
+    That list is a HINT (round 4, B4). It lives in dreams.sqlite, the
+    mark lives in the subscriptions store, and only the subscriptions
+    store is covered by backup: restore it from a generation taken
+    before the mark and Dreams' sources come back unmarked while the list
+    says "done". ``verify=True`` therefore ignores the list and reads the
+    real options of every source Dreams owns. It is what runs whenever
+    Dreams is reading the subscriptions anyway -- a start whose reconcile
+    has work, and once per daily cycle -- and the suspend pass, an attach
+    and a re-enable stamp from the real options too.
+
+    The limit that remains: reading every Dreams source on every start
+    would cost a first open of the subscriptions store and one read per
+    source Dreams ever created, on the boot path, for a case that needs a
+    partial restore. So a start with no other work does not verify. With
+    Dreams ON the next cycle does (at most a day later); with Dreams OFF
+    nothing does until Dreams is switched -- an unmarked restored source
+    that is still active is fetched as a trusted origin until then.
+
+    Args:
+        subs_service: The app's ``LocalWatchlistsService``, or None.
+        dreams_db: A ``DreamsDB``.
+        verify: Walk every subscription Dreams owns and decide from its
+            actual options, instead of trusting the "still to do" list.
+
+    Returns:
+        How many subscriptions were stamped.
+    """
+    if subs_service is None:
+        return 0
+    marked = 0
+    # ponytail: one get_source per Dreams-owned source when verifying;
+    # batch the read in SubscriptionsDB if a profile ever owns thousands.
+    for subscription_id in await asyncio.to_thread(
+            dreams_db.dream_owned_subscription_ids if verify
+            else dreams_db.subscriptions_awaiting_egress_mark):
         try:
-            threshold = int(value.get("threshold"))
-        except (AttributeError, TypeError, ValueError):
-            continue
-        if threshold == 0:
-            return True
-    return False
+            try:
+                source = await subs_service.get_source(subscription_id)
+            except KeyError:
+                source = None  # deleted by the user: nothing to stamp
+            if source is not None and _needs_story_mark(source):
+                await subs_service.update_source(
+                    subscription_id,
+                    {"processing_options": _story_options(source)})
+                marked += 1
+            await asyncio.to_thread(
+                dreams_db.set_egress_marked, subscription_id)
+        except Exception as exc:  # noqa: BLE001 - stays pending for a retry
+            logger.warning(
+                "Dreams egress mark: stamping subscription {} failed: {}",
+                subscription_id, type(exc).__name__)
+    return marked
+
+
+def _is_change_condition(rule: dict) -> bool:
+    """Whether a rule has the condition Dreams' change rule is made with."""
+    if str(rule.get("condition_type") or "") != "items_above":
+        return False
+    try:
+        return int((rule.get("condition_value") or {}).get("threshold")) == 0
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+async def _dreams_rules_on(
+    subs_service: Any, dreams_db: Any, subscription_id: int,
+) -> dict[int, dict]:
+    """The alert rule(s) Dreams itself created on a subscription, by id.
+
+    Round 3, T11. Dreams used to recognise "its" rule by name prefix
+    (``Change: ``) plus condition, so the user's own ``Change: my price
+    alert`` on their own source was adopted at track time and switched
+    off together with Dreams -- and because ``list_alert_rules(job_id=)``
+    also returns GLOBAL rules, a matching global rule would have been
+    silenced for every source. The rule is now known by the id recorded
+    on the wrappers (``dream_tracked_items.alert_rule_id``) and by
+    nothing else.
+
+    Wrappers from before the id was recorded (NULL) are looked at ONCE:
+    a rule scoped to this very subscription, with Dreams' condition, and
+    named exactly ``Change: <title>`` for a story one of those wrappers
+    tracks, is taken to be the one ``track_page`` created for it and its
+    id is recorded; anything else is not Dreams', and ``0`` ("none") is
+    recorded so the question is not asked again.
+
+    Args:
+        subs_service: The app's ``LocalWatchlistsService``.
+        dreams_db: The app's ``DreamsDB``.
+        subscription_id: The subscription to look at.
+
+    Returns:
+        ``{rule_id: rule}`` for every recorded rule that still exists on
+        the subscription (enabled or not), as ``list_alert_rules`` rows.
+    """
+    wrappers = await asyncio.to_thread(
+        dreams_db.list_tracked_for_subscription, subscription_id)
+    scoped = {
+        int(rule["rule_id"]): rule
+        for rule in await subs_service.list_alert_rules(job_id=subscription_id)
+        if rule.get("rule_id") is not None
+        # A global rule (no job) is every source's, never Dreams'.
+        and str(rule.get("job_id")) == str(subscription_id)
+    }
+    recorded = {int(w["alert_rule_id"]) for w in wrappers
+                if w.get("alert_rule_id")}
+    unrecorded = [w for w in wrappers if w.get("alert_rule_id") is None]
+    if unrecorded:
+        adopted = 0
+        if not recorded:
+            def expected_names() -> set[str]:
+                names = set()
+                for wrapper in unrecorded:
+                    story = (dreams_db.get_story(int(wrapper["origin_story_id"]))
+                             if wrapper.get("origin_story_id") else None)
+                    if story is not None:
+                        names.add(_change_rule_name(story.get("title")))
+                        names.add(_change_rule_name(
+                            story.get("title"), as_written_before=True))
+                return names
+
+            names = await asyncio.to_thread(expected_names)
+            adopted = next(
+                (rule_id for rule_id, rule in sorted(scoped.items())
+                 if str(rule.get("name")) in names
+                 and _is_change_condition(rule)), 0)
+        else:
+            # A later wrapper of a page whose rule IS recorded shares it.
+            adopted = min(recorded)
+        await asyncio.to_thread(
+            dreams_db.set_tracked_alert_rule, subscription_id, adopted,
+            only_unrecorded=True)
+        if adopted:
+            recorded.add(adopted)
+    return {rule_id: scoped[rule_id] for rule_id in sorted(recorded)
+            if rule_id in scoped}
+
+
+_SQUARE_BRACKETS = str.maketrans("[]", "()")
+
+
+def _label(text: Any) -> str:
+    """Text as Dreams writes it into a title in ANOTHER feature's store.
+
+    Review of #2921, round 4, C1. A story title and a watched query are
+    ordinary text and may contain square brackets ("[PDF] Rust
+    conference", "see [/r/boardgames] meetup"). Dreams copies them into a
+    reminder's title, an alert rule's name, a source's name and a
+    notification's title; Schedules and Watchlists show those rows on
+    screens that read ``[...]`` as Rich markup (pinned rows in
+    ``scripts/markup_interpolation_census.tsv``, not Dreams' to edit),
+    where an unmatched closing tag is a ``MarkupError`` at render time
+    and a tag-shaped word is swallowed. So what Dreams writes there has
+    its square brackets written as parentheses. The text itself -- the
+    story's title, the wrapper's ``query_template`` -- is stored as it
+    is; only these copies change.
+    """
+    return str(text).translate(_SQUARE_BRACKETS)
+
+
+def _change_rule_name(title: Any, *, as_written_before: bool = False) -> str:
+    """The name ``track_page`` gives the change rule it creates.
+
+    Args:
+        title: The story's title.
+        as_written_before: The name as builds before round 4 wrote it,
+            square brackets and all -- for recognising a rule one of
+            them made (:func:`_dreams_rules_on`).
+    """
+    name = f"Change: {str(title or 'Untitled dream story')[:40]}"
+    return name if as_written_before else _label(name)
+
+
+async def _reusable_wrapper(
+    dreams_db: Any, origin_story_id: int, mechanism: str,
+) -> dict | None:
+    """The story's live wrapper of one mechanism, put back to work.
+
+    The reuse lookup of both track paths. It also finds a PAUSED wrapper
+    (round 3, T5): a watch the sweep paused after repeated failures is
+    still the story's watch, and tracking the story again used to stack a
+    second wrapper -- and a second armed reminder for the same event --
+    beside it. A paused wrapper is reactivated, which is what pressing
+    "track" on it asks for; that makes one more active watch, so the cap
+    is consulted for it exactly as for a new one.
+
+    Raises:
+        TrackCapReached: When reactivating a paused wrapper would exceed
+            the cap; the wrapper stays paused.
+    """
+    wrapper = await asyncio.to_thread(
+        dreams_db.find_tracked_by_story, origin_story_id,
+        mechanism=mechanism, include_paused=True)
+    if wrapper is None or wrapper.get("status") == "active":
+        return wrapper
+    cap = _cap()
+    active = await asyncio.to_thread(dreams_db.count_active_tracked)
+    if active >= cap:
+        raise TrackCapReached(
+            f"track cap reached: {active} active tracked items (cap {cap})"
+        )
+    def reactivate() -> None:
+        dreams_db.set_tracked_status(int(wrapper["id"]), "active")
+        # A fresh start in the same step (round 4, B1). The failed checks
+        # that paused the watch are still its newest runs, and the sweep
+        # pauses on that streak: without this row the next sweep paused
+        # it again before a single check could run. Any other disposition
+        # ends a streak; the due clock is deliberately not touched.
+        dreams_db.insert_track_run(
+            int(wrapper["id"]), status="skipped", digest_hash=None,
+            verdict_note="reactivated", notified=0)
+
+    await asyncio.to_thread(reactivate)
+    wrapper["status"] = "active"
+    return wrapper
 
 
 async def _refresh_wrapper_plan(
-    dreams_db: Any, wrapper: dict, *, cadence: int, event_date: str | None
+    dreams_db: Any,
+    wrapper: dict,
+    *,
+    cadence: int,
+    event_date: str | None,
+    scheduling_db_getter: Any = None,
 ) -> None:
-    """Rewrite an active wrapper's cadence/event date when they moved.
+    """Bring an active wrapper, and its reminder, in line with a new plan.
 
-    The reuse branch of Qodo #2 (PR #2890). Only writes when a value
-    actually differs -- re-tracking with identical arguments is a pure
-    no-op read path.
+    The reuse branch of Qodo #2 (PR #2890). The plan row is only written
+    when a value actually differs. The reminder is looked at EVERY time
+    (Qodo #13, PR #2921): it is a separate row in the scheduling DB, so a
+    plan refresh alone left it missing (the first track ran before the
+    scheduling DB was wired, or the watch had no date then) or armed for
+    the old event (the date moved or was cleared).
+    :func:`promote_to_reminder` is told the date the wrapper carried
+    before, so it moves the reminder only when the event moved and
+    otherwise leaves an existing one exactly as the user left it.
 
     Args:
         dreams_db: The app's ``DreamsDB``.
         wrapper: The active tracked-item row being reused.
         cadence: The caller's (already clamped) check cadence.
         event_date: The caller's target-event date, or ``None``.
+        scheduling_db_getter: Zero-arg callable returning the app's
+            ``ScheduledTasksDB`` or None; None leaves reminders alone.
     """
     if (
-        int(wrapper.get("cadence_seconds") or 0) == cadence
-        and wrapper.get("event_date") == (event_date or None)
+        int(wrapper.get("cadence_seconds") or 0) != cadence
+        or wrapper.get("event_date") != (event_date or None)
     ):
-        return
-    await asyncio.to_thread(
-        dreams_db.set_tracked_plan, int(wrapper["id"]),
-        cadence_seconds=cadence, event_date=event_date,
+        await asyncio.to_thread(
+            dreams_db.set_tracked_plan, int(wrapper["id"]),
+            cadence_seconds=cadence, event_date=event_date,
+        )
+    if wrapper.get("event_date") != (event_date or None):
+        await _forget_superseded_reminders(dreams_db, wrapper)
+    await promote_to_reminder(
+        scheduling_db_getter,
+        {"id": wrapper["id"], "query_template": wrapper.get("query_template"),
+         "event_date": event_date,
+         "origin_story_id": wrapper.get("origin_story_id")},
+        previous_event_date=wrapper.get("event_date"),
+        dreams_db=dreams_db,
     )
 
 
-async def _disable_linked_reminders(
-    scheduling_db_getter: Any, tracked_item_id: int
-) -> None:
-    """Disable the one-time reminder linked to a tracked item; degrade.
+async def _forget_superseded_reminders(dreams_db: Any, wrapper: dict) -> None:
+    """Drop the reminders a suspension record owes once the event moved.
+
+    Round 3, T12(b). A record can still owe a reminder -- a resume ran
+    without the scheduling DB. That reminder is for the wrapper's OLD
+    event; when the event moves, :func:`promote_to_reminder` makes the
+    one for the new date, and a later resume re-arming the recorded one
+    left two armed reminders for two dates. The debt is dropped with the
+    date it belonged to; everything else the record says stands.
+    """
+    record = _suspension_record(wrapper)
+    if not record:
+        return
+    subscription, reminders, rules = _owed(record)
+    if not reminders:
+        return
+    settled = settled_state(wrapper.get("suspension"))
+    text: str | None = None
+    if subscription or rules or settled == SETTLED_OFF:
+        text = _record_text(
+            subscription=subscription, reminders=[], rules=rules,
+            held=record.get("held"), settled=settled)
+    await asyncio.to_thread(
+        dreams_db.set_tracked_suspension, int(wrapper["id"]), text)
+
+
+def _reminder_heir(dreams_db: Any, item: dict) -> dict | None:
+    """The live watch that inherits a retiring watch's event reminder.
+
+    One story has ONE reminder per event date, linked to whichever of its
+    watches was made first (round 3, T5). When that watch ends, the
+    reminder belongs to the story's other watch of the same event -- an
+    active or paused one -- if there is one (round 4, A3).
+    """
+    story_id = item.get("origin_story_id")
+    event_date = item.get("event_date")
+    if dreams_db is None or story_id is None or not event_date:
+        return None
+    for sibling in dreams_db.list_tracked_for_story(int(story_id)):
+        if (int(sibling["id"]) != int(item["id"])
+                and sibling.get("status") in ("active", "paused")
+                and sibling.get("event_date") == event_date):
+            return sibling
+    return None
+
+
+def _retire_reminders_sync(
+    scheduling_db: Any, dreams_db: Any, item: dict, hand_over: bool,
+) -> tuple[list[str], list[str]]:
+    """Sync body of :func:`_retire_linked_reminders`."""
+    item_id = str(item["id"])
+    heir = _reminder_heir(dreams_db, item) if hand_over else None
+    body = _reminder_body(item.get("event_date"))
+    rows = scheduling_db.list_reminder_tasks_by_link(
+        _REMINDER_LINK_TYPE,
+        [item_id] if heir is None else [item_id, str(heir["id"])])
+    if heir is not None and any(
+            str(row.get("link_id")) == str(heir["id"])
+            and row.get("body") == body for row in rows):
+        heir = None  # it already has a reminder of its own for this event
+    owed = set(_owed(_suspension_record(item))[1])
+    disarmed: list[str] = []
+    handed: list[str] = []
+    debt: list[str] = []
+    for row in rows:
+        if str(row.get("link_id")) != item_id:
+            continue
+        reminder_id = str(row["id"])
+        inherit = (heir is not None and not row.get("last_run_at")
+                   and row.get("body") == body)
+        if row.get("enabled") and inherit:
+            scheduling_db.update_reminder_task(
+                row["id"], link_id=str(heir["id"]))
+            handed.append(reminder_id)
+        elif row.get("enabled"):
+            scheduling_db.update_reminder_task(row["id"], enabled=False)
+            disarmed.append(reminder_id)
+        elif inherit and reminder_id in owed:
+            # Disabled by the master switch and owed a re-arm: the debt
+            # moves with the reminder, or switching Dreams on restores
+            # none for the watch that is left.
+            scheduling_db.update_reminder_task(
+                row["id"], link_id=str(heir["id"]))
+            handed.append(reminder_id)
+            debt.append(reminder_id)
+    if handed:
+        dreams_db.set_tracked_reminder_date(
+            int(heir["id"]), str(heir["event_date"]))
+    if debt:
+        record = _suspension_record(heir) or {}
+        subscription, reminders, rules = _owed(record)
+        # "off" stays true (the reminder is disabled); anything else is
+        # unfinished again, so the next resume pass re-arms it.
+        still_off = settled_state(heir.get("suspension")) == SETTLED_OFF
+        dreams_db.set_tracked_suspension(int(heir["id"]), _record_text(
+            subscription=subscription, reminders=reminders + debt,
+            rules=rules, held=record.get("held"),
+            settled=SETTLED_OFF if still_off else None))
+    return disarmed, handed
+
+
+async def _retire_linked_reminders(
+    scheduling_db_getter: Any,
+    dreams_db: Any,
+    item: dict,
+    *,
+    hand_over: bool = True,
+) -> tuple[list[str], list[str]]:
+    """Stop a retiring watch's reminders -- or hand them on; degrade.
 
     Qodo #13 (PR #2890): ``promote_to_reminder`` links the reminder with
     ``link_type="dream_tracked_item"``; untrack and sweep-retire stop the
-    watch, and the linked reminder must stop with it. Every failure mode
-    (no getter, raising getter, no scheduling DB, unwritable DB) logs and
-    returns -- retirement itself already happened and must not unwind.
+    watch, and the linked reminder must stop with it.
+
+    Unless the story has another live watch of the same event (round 4,
+    A3). The story's one reminder is linked to whichever watch was made
+    first; disarming it with that watch left the other one -- still
+    running, still showing its event date -- with none: untrack the page
+    of a story that is also watched as a question, or let the question
+    watch retire as quiet, and the reminder was gone with no way back.
+    An unfired reminder for the event is therefore RE-LINKED to that
+    watch instead (:func:`_reminder_heir`): the same row, with whatever
+    time the user moved it to, armed if it was armed. One the user had
+    switched off stays where it is, off. One the master switch disabled
+    moves too, and the debt to re-arm it moves onto the heir's record.
+
+    Every failure mode (no getter, raising getter, no scheduling DB,
+    unwritable DB) logs and returns -- retirement itself already happened
+    and must not unwind.
 
     Args:
         scheduling_db_getter: Zero-arg callable returning the app's
             ``ScheduledTasksDB`` or None.
-        tracked_item_id: The retired tracked item whose reminder dies.
+        dreams_db: The app's ``DreamsDB``.
+        item: The retired tracked item's row (as read before it retired).
+        hand_over: False when the event itself is over (the sweep's
+            ``event_passed``): nobody needs that reminder any more.
+
+    Returns:
+        ``(disarmed, handed)``: the ids of the reminders that were armed
+        and are now disabled -- what Dreams itself switched off (see
+        :func:`_record_retirement`) -- and the ids now linked to the
+        story's other watch, which this wrapper no longer answers for.
     """
     scheduling_db = None
     if scheduling_db_getter is not None:
@@ -339,18 +845,151 @@ async def _disable_linked_reminders(
             logger.warning(
                 "Dreams reminder getter failed while retiring: {}",
                 type(exc).__name__)
-            return
+            return [], []
     if scheduling_db is None:
-        return
+        return [], []
     try:
-        await asyncio.to_thread(
-            scheduling_db.disable_reminders_by_link,
-            "dream_tracked_item", str(tracked_item_id),
-        )
+        return await asyncio.to_thread(
+            _retire_reminders_sync, scheduling_db, dreams_db, item, hand_over)
     except Exception as exc:  # noqa: BLE001 - reminder degrades
         logger.warning(
             "Dreams reminder disable failed for item {}: {}",
-            tracked_item_id, type(exc).__name__)
+            item.get("id"), type(exc).__name__)
+        return [], []
+
+
+async def _record_retirement(
+    dreams_db: Any, item: dict, *, reminders: list[str], subscription: bool,
+    handed: list[str] | tuple[str, ...] = (),
+) -> None:
+    """Leave on a retired wrapper the record of what Dreams stopped then.
+
+    Round 3, T5/T10. Retiring a watch (untrack, the lifecycle sweep)
+    disables its armed reminders and, for the last rider of a source
+    Dreams created, the source. Until now nothing said so afterwards, and
+    a later re-track could not tell "Dreams switched this off when the
+    watch was retired" from "the user switched it off". The record uses
+    the suspension record's shape (:func:`_suspension_record`), merged
+    with whatever the switch already owed the wrapper, and
+    ``settled: "retired"``. A reminder handed to the story's other watch
+    (``handed``, round 4, A3) is that watch's now and is not listed.
+    """
+    owed_subscription, owed_reminders, _rules = _owed(_suspension_record(item))
+    owed_reminders = [value for value in owed_reminders if value not in handed]
+    try:
+        await asyncio.to_thread(
+            dreams_db.set_tracked_suspension, int(item["id"]), _record_text(
+                subscription=subscription or owed_subscription,
+                reminders=owed_reminders + reminders, rules=[],
+                settled=_SETTLED_RETIRED))
+    except Exception as exc:  # noqa: BLE001 - the retirement stands
+        logger.warning(
+            "Dreams retire: recording item {} failed: {}",
+            item.get("id"), type(exc).__name__)
+
+
+def _dreams_can_account_for_disable(riders: list[dict]) -> bool:
+    """Whether Dreams itself switched a now-disabled subscription off.
+
+    Round 3, T10. ``track_page`` may switch a disabled source back on
+    only when Dreams can account for its being off:
+
+    * a rider's record owes the subscription -- the master switch stopped
+      it, a resume is holding it, or the wrapper's retirement (untrack,
+      sweep) disabled it and said so (:func:`_record_retirement`); or
+    * no active wrapper rides it and a retired rider carries no record at
+      all -- retired by a build from before such records, when retiring
+      the last watch always disabled the source.
+
+    Anything else was switched off by the user in Watchlists.
+
+    Args:
+        riders: Every wrapper of the subscription, any status
+            (``DreamsDB.list_tracked_for_subscription``).
+    """
+    records = [(rider, _suspension_record(rider)) for rider in riders]
+    if any(record is not None and _owed(record)[0] for _, record in records):
+        return True
+    if any(rider.get("status") == "active" for rider in riders):
+        return False
+    return any(rider.get("status") == "retired" and record is None
+               for rider, record in records)
+
+
+async def _settle_source_restored(dreams_db: Any, riders: list[dict]) -> None:
+    """After a re-track switched a source back on: nobody owes it any more.
+
+    Every rider's record gives up the subscription (and the ``held``
+    reason with it). A live rider's record that then owes nothing is
+    cleared; a retired rider keeps its retirement record -- and one that
+    had none gets an empty one, so that an old, record-less retirement
+    cannot account for a LATER disable the user makes.
+    """
+    for rider in riders:
+        record = _suspension_record(rider)
+        retired = rider.get("status") == "retired"
+        if record is None and not retired:
+            continue
+        _subscription, reminders, rules = _owed(record)
+        text: str | None = None
+        if retired:
+            text = _record_text(
+                subscription=False, reminders=reminders, rules=[],
+                settled=_SETTLED_RETIRED)
+        elif reminders or rules:
+            text = _record_text(
+                subscription=False, reminders=reminders, rules=rules)
+        await asyncio.to_thread(
+            dreams_db.set_tracked_suspension, int(rider["id"]), text)
+
+
+async def _retry_held_source(
+    subs_service: Any, dreams_db: Any, wrapper: dict,
+) -> None:
+    """Ask again about a reused wrapper's page that a resume left off.
+
+    A watch whose page was not a public address when Dreams was switched
+    back on is held, and is asked about again by the next switch-on or
+    by tracking it again (round 3, T19) -- this is the "tracking it
+    again" half, for the story that already owns the wrapper.
+
+    Raises:
+        TrackPrivateURL: The page is still not a public destination; the
+            source stays off and the hold stands.
+    """
+    subscription_id = int(wrapper.get("subscription_id") or 0)
+    record = _suspension_record(wrapper)
+    if (not subscription_id or record is None or not _owed(record)[0]
+            or settled_state(wrapper.get("suspension")) == SETTLED_OFF):
+        return
+    resolved, held = await _restore_source(subs_service, subscription_id)
+    if not resolved:
+        raise TrackPrivateURL(
+            f"refusing to track a non-public destination ({held})")
+    await _settle_source_restored(
+        dreams_db, await asyncio.to_thread(
+            dreams_db.list_tracked_for_subscription, subscription_id))
+
+
+async def _disable_dream_source(subs_service: Any, subscription_id: int) -> bool:
+    """Switch off a source Dreams created; say whether DREAMS did it.
+
+    Used when the last watch on it is retired. A source that is already
+    off -- the user switched it off in Watchlists -- or gone is left
+    alone and is NOT claimed, so the retirement record never accounts for
+    a disable that was not Dreams' (round 3, T10).
+
+    Returns:
+        True when the source was running and Dreams switched it off.
+    """
+    try:
+        source = await subs_service.get_source(subscription_id)
+    except KeyError:
+        return False
+    if not (bool(source.get("active")) or bool(source.get("paused"))):
+        return False
+    await subs_service.update_source(subscription_id, {"active": False})
+    return True
 
 
 async def track_page(
@@ -403,6 +1042,12 @@ async def track_page(
         TrackInvalidURL: When ``url`` fails the shared ``validate_url``
             check (scheme, whitespace, credentials, host shape) --
             raised BEFORE any lookup or write.
+        TrackPrivateURL: When Dreams would have to create or re-enable
+            the subscription and the URL is not a public destination
+            under the egress policy (loopback, private network, metadata
+            endpoint, or an unresolvable host) -- raised before any
+            write. Attaching to a subscription the user already owns is
+            never refused on this ground.
         TrackCapReached: When ``count_active_tracked()`` already meets the
             cap -- raised BEFORE any subscription, watchlist, alert, or
             tracked-item write.
@@ -423,15 +1068,19 @@ async def track_page(
     # (cadence, event date) on the existing row instead of stacking a
     # second wrapper around the same watch, which a later untrack of the
     # newer row would strand. Reuse consumes nothing, so the cap guard
-    # below is deliberately not consulted (and must not refuse it).
+    # below is deliberately not consulted (and must not refuse it). The
+    # lookup asks for the PAGE wrapper (Qodo #3, PR #2921): the story may
+    # also own a newer question watch, and finding that one instead
+    # skipped reuse and stacked a duplicate page wrapper.
     if origin_story_id is not None:
-        wrapper = await asyncio.to_thread(
-            dreams_db.find_tracked_by_story, origin_story_id)
-        if wrapper is not None and wrapper.get("mechanism") == \
-                _PAGE_MECHANISM:
+        wrapper = await _reusable_wrapper(
+            dreams_db, origin_story_id, _PAGE_MECHANISM)
+        if wrapper is not None:
             await _refresh_wrapper_plan(
                 dreams_db, wrapper, cadence=cadence,
-                event_date=event_date)
+                event_date=event_date,
+                scheduling_db_getter=scheduling_db_getter)
+            await _retry_held_source(subs_service, dreams_db, wrapper)
             # The shared watchlist necessarily exists (this wrapper's
             # subscription joined it); resolving is idempotent and keeps
             # the response contract honest.
@@ -473,8 +1122,11 @@ async def track_page(
         # still pin provenance, or a re-track would wrap the watch as
         # created_by_dreams=0 and a later untrack would (correctly)
         # never disable it: an orphaned active subscription.
+        # One targeted read (Qodo #6, PR #2921), never a scan of the
+        # capped status lists: the owning row of an old subscription may
+        # be older than the newest 500 retired wrappers.
         dream_owned = await asyncio.to_thread(
-            _dream_owned_subscription, dreams_db, subscription_id
+            dreams_db.subscription_dream_owned, subscription_id
         )
         created_by_dreams = 1 if dream_owned else 0
         # P7 (fix round 1): the URL lookup ignores is_active, so a found
@@ -492,22 +1144,51 @@ async def track_page(
                     "source exists but is disabled (no dream provenance): "
                     f"subscription {subscription_id}"
                 )
-            # WE disabled it on a prior untrack (dream-created rows pin
-            # this subscription): re-enable and say so.
-            await subs_service.update_source(
-                subscription_id, {"active": True}
-            )
+            # A source Dreams created is off. Dreams switches it back on
+            # only when it can account for the disable (round 3, T10) --
+            # a wrapper's record says Dreams stopped it -- and never
+            # undoes the user's own "off" in Watchlists.
+            riders = await asyncio.to_thread(
+                dreams_db.list_tracked_for_subscription, subscription_id)
+            if not _dreams_can_account_for_disable(riders):
+                raise TrackSourceDisabled(
+                    "source exists but was switched off in Watchlists, "
+                    f"not by Dreams: subscription {subscription_id}"
+                )
+            # Re-enabling restarts fetches of a URL Dreams stored, so the
+            # destination is checked again now (Qodo #1, PR #2921) --
+            # still before any write.
+            await _require_public_url(str(url))
+            await _enable_dream_subscription(
+                subs_service, subscription_id, source)
+            await _settle_source_restored(dreams_db, riders)
             outcome = "re-enabled"
+        elif dream_owned and _needs_story_mark(source):
+            # A live source Dreams created before the mark existed (round
+            # 3, T1): attaching used to leave it unmarked, so it stayed a
+            # trusted egress origin. Ownership is enough to stamp it.
+            await subs_service.update_source(
+                subscription_id,
+                {"processing_options": _story_options(source)})
     else:
+        # Dreams is about to store this URL as a subscription the
+        # watchlist loop will fetch as a trusted source, and nobody typed
+        # it: it must be a public destination (Qodo #1, PR #2921). An
+        # ATTACH above is exempt on purpose -- that subscription is the
+        # user's own, already being fetched, and tracking adds no egress.
+        await _require_public_url(str(url))
         # Payload keys are the ones ``_source_batch_rows`` consumes:
         # ``source_type`` (not "type") and ``active`` (not "is_active").
         result = await subs_service.create_source(
             {
-                "name": f"Dreams: {str(title)[:40]}",
+                "name": _label(f"Dreams: {str(title)[:40]}"),
                 "source_type": "url",
                 "source": str(url),
                 "check_frequency": cadence,
                 "active": True,
+                # Nobody typed this URL: the watchlist fetch must never
+                # treat it as its own trusted origin (review item 2).
+                "processing_options": dict(_STORY_URL_OPTIONS),
             }
         )
         subscription_id = int(result["source_id"])
@@ -536,15 +1217,22 @@ async def track_page(
     # identical rule there would notify twice per qualifying run. An
     # existing enabled Dreams rule ("Change: " name + items_above 0) is
     # reused, never duplicated.
-    rules = await subs_service.list_alert_rules(job_id=subscription_id)
-    if not _has_dreams_change_rule(rules):
-        await subs_service.create_alert_rule(
-            name=f"Change: {str(title)[:40]}",
+    # The rule is found by the id Dreams recorded when it made it, never
+    # by its name (round 3, T11). One that exists is shared as it stands
+    # -- enabled or not: a rule the user switched off stays off.
+    dreams_rules = await _dreams_rules_on(
+        subs_service, dreams_db, subscription_id)
+    if dreams_rules:
+        alert_rule_id = min(dreams_rules)
+    else:
+        created_rule = await subs_service.create_alert_rule(
+            name=_change_rule_name(title),
             condition_type="items_above",
             condition_value={"threshold": 0},
             job_id=subscription_id,
             severity="information",
         )
+        alert_rule_id = int(created_rule["rule_id"])
 
     tracked_item_id = await asyncio.to_thread(
         dreams_db.create_tracked_item,
@@ -556,7 +1244,15 @@ async def track_page(
         event_date=event_date,
         cadence_seconds=cadence,
         created_by_dreams=created_by_dreams,
+        # Every branch above that leaves a Dreams-owned source leaves it
+        # marked; this is the record that it is (see
+        # ``backfill_egress_marks``).
+        egress_marked=created_by_dreams,
+        alert_rule_id=alert_rule_id,
     )
+    if created_by_dreams:
+        # ...for the older wrappers of the same source too.
+        await asyncio.to_thread(dreams_db.set_egress_marked, subscription_id)
     # Phase 2 Task 5: an event-dated watch gets one scheduled reminder a
     # week ahead. The wrapper row above already exists, so a reminder
     # failure (or a runtime without the scheduled-tasks DB) only logs --
@@ -564,7 +1260,8 @@ async def track_page(
     await promote_to_reminder(
         scheduling_db_getter,
         {"id": tracked_item_id, "query_template": None,
-         "event_date": event_date},
+         "event_date": event_date, "origin_story_id": origin_story_id},
+        dreams_db=dreams_db,
     )
     logger.debug(
         "Dreams tracked page: outcome={} subscription={} item={}",
@@ -592,7 +1289,9 @@ async def untrack(
     -- ``update_source(subscription_id, {"active": False})`` routing into
     ``SubscriptionsDB.update_subscription``'s allowlisted ``is_active``
     field -- never deleted, so its watchlist membership and alert rules
-    survive for a user who adopted them. A subscription Dreams merely
+    survive for a user who adopted them; and only once no other ACTIVE
+    wrapper rides the same subscription (Qodo #4, PR #2921: two stories
+    with one URL share it). A subscription Dreams merely
     attached to (``created_by_dreams = 0``) is never touched. The linked
     event reminder is disabled too (Qodo #13, PR #2890), so a stopped
     watch cannot still fire its one-time nudge.
@@ -609,7 +1308,8 @@ async def untrack(
 
     Returns:
         ``{"tracked_item_id": int, "status": "retired",
-        "subscription_disabled": bool}``.
+        "subscription_disabled": bool}`` -- the flag is False for an
+        attached subscription and for one another wrapper still watches.
 
     Raises:
         KeyError: If no tracked item has that id.
@@ -624,21 +1324,33 @@ async def untrack(
         "retired",
         retired_reason="manual",
     )
-    await _disable_linked_reminders(scheduling_db_getter, tracked_item_id)
+    disarmed, handed = await _retire_linked_reminders(
+        scheduling_db_getter, dreams_db, item)
 
     subscription_id = item.get("subscription_id")
     subscription_disabled = False
-    if item.get("created_by_dreams") and subscription_id:
+    # Qodo #4 (PR #2921): another story with the same URL may own an
+    # active wrapper on this very subscription. The item above is already
+    # retired, so the count is of the OTHER wrappers; the source is only
+    # disabled once none is left watching it.
+    if (
+        item.get("created_by_dreams")
+        and subscription_id
+        and not await asyncio.to_thread(
+            dreams_db.count_active_tracked_for_subscription,
+            int(subscription_id))
+    ):
         try:
-            await subs_service.update_source(
-                int(subscription_id), {"active": False}
-            )
-            subscription_disabled = True
+            subscription_disabled = await _disable_dream_source(
+                subs_service, int(subscription_id))
         except Exception as exc:  # noqa: BLE001 - wrapper is retired either way
             logger.warning(
                 "Dreams untrack: disabling subscription {} failed: {}",
                 subscription_id, type(exc).__name__,
             )
+    await _record_retirement(
+        dreams_db, item, reminders=disarmed,
+        subscription=subscription_disabled, handed=handed)
     return {
         "tracked_item_id": tracked_item_id,
         "status": "retired",
@@ -689,7 +1401,7 @@ def _sweep_sync(
             if passed:
                 dreams_db.set_tracked_status(
                     item_id, "retired", retired_reason="event_passed")
-                retired.append(item)
+                retired.append({**item, "retired_reason": "event_passed"})
                 notes.append(
                     f"track sweep: retired item {item_id} (event passed)")
                 continue
@@ -789,69 +1501,266 @@ async def sweep_track_lifecycle(
         # Qodo #13 first: the linked reminder dies for EVERY retired item
         # (page and question alike -- track_question promotes reminders
         # too).
-        await _disable_linked_reminders(scheduling_db_getter, int(item["id"]))
+        # ...unless the story's other watch of the same event is still
+        # live: then it inherits the reminder (round 4, A3). Not when the
+        # event itself is over.
+        disarmed, handed = await _retire_linked_reminders(
+            scheduling_db_getter, dreams_db, item,
+            hand_over=item.get("retired_reason") != "event_passed")
+        subscription_disabled = False
         subscription_id = item.get("subscription_id")
         # Qodo #1: a dream-created PAGE subscription is disabled so the
         # independent watchlist projection stops scheduling it; a foreign
         # attached subscription (created_by_dreams=0) is never ours to
         # stop, and a question item has no subscription at all.
+        # ...and, like untrack, only once no OTHER active wrapper still
+        # rides it (Qodo #4, PR #2921). Every row this pass retired is
+        # already retired by now, so two wrappers of one subscription
+        # retiring together still take it with them.
         if (
             subs_service is not None
             and item.get("mechanism") == _PAGE_MECHANISM
             and int(item.get("created_by_dreams") or 0) == 1
             and subscription_id
+            and not await asyncio.to_thread(
+                dreams_db.count_active_tracked_for_subscription,
+                int(subscription_id))
         ):
             try:
-                await subs_service.update_source(
-                    int(subscription_id), {"active": False}
-                )
+                subscription_disabled = await _disable_dream_source(
+                    subs_service, int(subscription_id))
             except Exception as exc:  # noqa: BLE001 - retire stands either way
                 logger.warning(
                     "Dreams sweep: disabling subscription {} failed: {}",
                     subscription_id, type(exc).__name__,
                 )
+        await _record_retirement(
+            dreams_db, item, reminders=disarmed,
+            subscription=subscription_disabled, handed=handed)
     return notes
 
 
 # --- Event reminders (Phase 2 Task 5) -------------------------------------------
 
 
+def _reminder_run_at(event_date: Any, lead_days: int) -> datetime:
+    """The instant an event's reminder fires: ``lead_days`` before it.
+
+    The lead date is a day on the user's own calendar (Qodo #14,
+    PR #2921). Storing it date-only made the scheduler read it as
+    midnight UTC -- the evening BEFORE that day anywhere west of UTC, so
+    the nudge arrived a local day early. The instant is therefore built
+    as ``_REMINDER_LOCAL_TIME`` on the lead date in the machine's local
+    timezone (the same "a naive time is local time" rule the reminder
+    forms apply), resolved for that date so a DST change in between
+    cannot shift it, and handed over timezone-aware.
+
+    Args:
+        event_date: The tracked item's ISO ``event_date``.
+        lead_days: Days of runway before the event.
+
+    Returns:
+        A timezone-aware UTC instant: nine in the morning, local time, on
+        the lead date.
+
+    Raises:
+        ValueError: If ``event_date`` is not an ISO date.
+    """
+    lead_date = date.fromisoformat(str(event_date)) - timedelta(
+        days=int(lead_days))
+    # A naive datetime's astimezone() reads it as local wall-clock time
+    # under the platform's rule for the date it carries.
+    return datetime.combine(
+        lead_date, _REMINDER_LOCAL_TIME).astimezone(timezone.utc)
+
+
+#: ``previous_event_date`` default for :func:`promote_to_reminder`: the
+#: wrapper's event did not move (a new wrapper, or a re-track with the
+#: same date). A sentinel, because ``None`` is a real previous value
+#: ("the watch had no date").
+_EVENT_NOT_MOVED: Any = object()
+
+
+def _reminder_body(event_date: Any) -> str:
+    """The body Dreams writes on an event reminder; it names the event."""
+    return f"Tracked Dreams event on {event_date}"
+
+
+#: ``settled`` value of the record a wrapper is left with when it is
+#: retired (untrack, lifecycle sweep): what Dreams itself stopped then.
+_SETTLED_RETIRED = "retired"
+
+
+def _dreams_disarmed(row: dict, wrappers: dict[str, dict]) -> bool:
+    """Whether Dreams itself can account for a reminder being disabled.
+
+    True when the reminder is linked to a wrapper Dreams retired and that
+    wrapper's record lists it among the reminders Dreams disabled then --
+    or carries no record at all (retired before such records existed, when
+    retiring a watch always disabled its reminder). Anything else was
+    switched off by the user, and stays their decision.
+    """
+    wrapper = wrappers.get(str(row.get("link_id")))
+    if wrapper is None or wrapper.get("status") != "retired":
+        return False
+    record = _suspension_record(wrapper)
+    return record is None or str(row["id"]) in _owed(record)[1]
+
+
+def _ensure_reminder(
+    scheduling_db: Any,
+    tracked_item: Any,
+    run_at: datetime | None,
+    owner_id: str,
+    moved: bool,
+    siblings: list[dict],
+) -> tuple[str | None, bool]:
+    """Sync body of :func:`promote_to_reminder`; the caller thread-offloads.
+
+    What changes a watch's reminder is its EVENT DATE changing -- never a
+    comparison of the stored instant with the one that would be computed
+    today (review of #2921, items 4 and 5). And whether a reminder is
+    owed at all is decided per STORY and event date, not per wrapper
+    (round 3, T5): the reminders looked at are those linked to ANY
+    wrapper the story ever had, so untracking and tracking again, or a
+    second way of watching the same story, cannot bring back a nudge
+    that was already delivered.
+
+    For a wrapper whose event is ``D``:
+
+    1. When the event moved, this wrapper's armed reminders for another
+       date are disabled.
+    2. A reminder for ``D`` that has FIRED, on any of the story's
+       wrappers, settles it: never again.
+    3. No reminder row for ``D`` is left but one of the story's wrappers
+       recorded that it made one (``reminder_event_date``): the user
+       deleted it. Not re-created.
+    4. This wrapper already has its reminder for ``D``: it stands as the
+       user left it -- armed, disabled or rescheduled. Only when the
+       event has just moved BACK to ``D`` is it re-armed (Dreams
+       disarmed it when the event moved away).
+    5. Another of the story's wrappers has it armed: nothing to add (when
+       that wrapper is retired the reminder is handed on, see
+       :func:`_retire_linked_reminders`).
+    6. It exists only disabled, on other wrappers: a new one is made when
+       Dreams itself disarmed every one of them by retiring their watch
+       (:func:`_dreams_disarmed`); otherwise the user switched it off,
+       and it stays off.
+    7. Otherwise one reminder is created.
+
+    Args:
+        siblings: Every wrapper of the same story (any status, this one
+            included); empty for a watch that has no story.
+
+    Returns:
+        ``(created_id, exists)``: the id of the reminder created (or
+        None), and whether a reminder for this event exists or existed --
+        the caller records the date on the wrapper when it does.
+    """
+    link_id = str(tracked_item.get("id"))
+    body = _reminder_body(tracked_item.get("event_date"))
+    wrappers = {str(row["id"]): row for row in siblings}
+    rows = scheduling_db.list_reminder_tasks_by_link(
+        _REMINDER_LINK_TYPE, {link_id, *wrappers})
+    own = [row for row in rows if str(row.get("link_id")) == link_id]
+    if moved:
+        for row in own:
+            if row.get("enabled") and row.get("body") != body:
+                scheduling_db.update_reminder_task(row["id"], enabled=False)
+    if run_at is None:
+        return None, False
+    for_date = [row for row in rows if row.get("body") == body]
+    if any(row.get("last_run_at") for row in for_date):
+        return None, True
+    if not for_date:
+        recorded = str(tracked_item.get("event_date"))
+        if any(str(row.get("reminder_event_date") or "") == recorded
+               for row in siblings):
+            return None, True
+    own_for_date = [row for row in for_date
+                    if str(row.get("link_id")) == link_id]
+    if own_for_date:
+        if moved:
+            for row in own_for_date:
+                if not row.get("enabled"):
+                    scheduling_db.update_reminder_task(row["id"], enabled=True)
+        return None, True
+    if for_date and (
+        any(row.get("enabled") for row in for_date)
+        or not all(_dreams_disarmed(row, wrappers) for row in for_date)
+    ):
+        return None, True
+    created = scheduling_db.create_reminder_task(
+        owner_id,
+        _label(
+            f"Dreams: {tracked_item.get('query_template') or 'tracked event'}"),
+        body=body,
+        schedule_kind="one_time",
+        run_at=run_at,
+        next_run_at=run_at,
+        link_type=_REMINDER_LINK_TYPE,
+        link_id=link_id,
+    )
+    return created, True
+
+
 async def promote_to_reminder(
     scheduling_db_getter: Any,
     tracked_item: Any,
     *,
+    previous_event_date: Any = _EVENT_NOT_MOVED,
     lead_days: int = _REMINDER_LEAD_DAYS,
     owner_id: str = "local",
+    dreams_db: Any = None,
 ) -> str | None:
-    """Promote one event-dated tracked item into a scheduled reminder.
+    """Give one tracked item the reminder its event date calls for.
 
-    Only a tracked item with an ``event_date`` promotes (a dateless watch
-    has nothing on the calendar). The reminder is one ``one_time`` task
-    firing ``lead_days`` before the event, linked back to the tracked item
+    An event-dated item owns one ``one_time`` reminder firing
+    ``lead_days`` before the event, at nine in the morning local time
+    (see :func:`_reminder_run_at`), linked back to the tracked item
     (``link_type="dream_tracked_item"``, ``link_id=str(id)``) so the
-    scheduling UI can trace it.
+    scheduling UI can trace it; a dateless item owns none.
+
+    The call is safe to repeat: it creates a reminder only when the
+    story has none for that event, and it touches existing reminders only
+    when the event date itself moved (``previous_event_date`` differs
+    from the item's date) -- see :func:`_ensure_reminder`. A reminder the
+    user disabled or rescheduled, and one that has fired, are never
+    re-armed, replaced or re-created by a re-track of the same event --
+    whichever wrapper of the story is asking.
 
     Degrade, never raise -- the wrapper row already exists when this is
     called, so every failure mode (no getter, getter returning None --
     a runtime whose scheduled-tasks DB is not wired yet -- a raising
-    getter, an unwritable scheduling DB) logs and returns ``None``;
-    tracking itself is unaffected.
+    getter, an unwritable scheduling DB, an unparsable date) logs and
+    returns ``None``; tracking itself is unaffected. An unparsable NEW
+    date means the event is no longer known: no reminder is made, and
+    the one pending for the previous date is disarmed.
 
     Args:
         scheduling_db_getter: Zero-arg callable returning the app's
-            ``ScheduledTasksDB`` (``create_reminder_task`` seam) or None.
+            ``ScheduledTasksDB`` or None.
         tracked_item: Mapping with at least ``id``, ``query_template`` and
-            ``event_date`` -- the tracked row (or its just-created view).
+            ``event_date`` -- the tracked row (or its just-created view) --
+            and ``origin_story_id`` when the watch has a story.
+        previous_event_date: The event date the wrapper carried before
+            this call's ``event_date`` replaced it, when the caller
+            refreshed an existing wrapper's plan; omit it for a new
+            wrapper.
         lead_days: Days before ``event_date`` the reminder fires.
         owner_id: Reminder owner (the local scheduling owner id).
+        dreams_db: The app's ``DreamsDB``. With it the decision spans the
+            story's wrappers and the date is recorded on this one;
+            without it only this wrapper's own reminders are considered.
 
     Returns:
-        The new reminder task id, or ``None`` when nothing was promoted.
+        The id of the reminder created, or ``None`` when none was (no
+        event date, a reminder already stands or was delivered, or
+        nothing could be promoted).
     """
     event_date = tracked_item.get("event_date")
-    if not event_date:
-        return None
-
+    moved = previous_event_date is not _EVENT_NOT_MOVED and (
+        (previous_event_date or None) != (event_date or None))
     scheduling_db = None
     if scheduling_db_getter is not None:
         try:
@@ -865,31 +1774,815 @@ async def promote_to_reminder(
         # tracks; the reminder is a bonus, not a precondition.
         return None
 
-    try:
-        run_at = (
-            date.fromisoformat(str(event_date)) - timedelta(days=int(lead_days))
-        ).isoformat()
-    except ValueError:
-        logger.warning(
-            "Dreams reminder: unparsable event_date {!r}", event_date)
-        return None
+    run_at: datetime | None = None
+    if event_date:
+        try:
+            run_at = _reminder_run_at(event_date, lead_days)
+        except ValueError:
+            # The event is no longer known (round 3, T16, owner ruling).
+            # No reminder can be made for it -- but the one still pending
+            # for the OLD date must not stay armed, so this goes on to
+            # ``_ensure_reminder`` with nothing to create: when the date
+            # moved it disarms the old event's reminder, and a fired one
+            # is left alone.
+            logger.warning(
+                "Dreams reminder: unparsable event_date {!r}", event_date)
+
+    def promote() -> str | None:
+        siblings: list[dict] = []
+        story_id = tracked_item.get("origin_story_id")
+        if dreams_db is not None and story_id is not None:
+            siblings = dreams_db.list_tracked_for_story(int(story_id))
+        elif dreams_db is not None:
+            # A watch with no story is its own only sibling.
+            row = dreams_db.get_tracked_item(int(tracked_item["id"]))
+            siblings = [row] if row is not None else []
+        created, exists = _ensure_reminder(
+            scheduling_db, tracked_item, run_at, owner_id, moved, siblings)
+        if dreams_db is not None and exists:
+            dreams_db.set_tracked_reminder_date(
+                int(tracked_item["id"]), str(event_date))
+        return created
 
     try:
-        return await asyncio.to_thread(
-            scheduling_db.create_reminder_task,
-            owner_id,
-            f"Dreams: {tracked_item.get('query_template') or 'tracked event'}",
-            body=f"Tracked Dreams event on {event_date}",
-            schedule_kind="one_time",
-            run_at=run_at,
-            next_run_at=run_at,
-            link_type="dream_tracked_item",
-            link_id=str(tracked_item.get("id")),
-        )
+        return await asyncio.to_thread(promote)
     except Exception as exc:  # noqa: BLE001 - reminder degrades
         logger.warning(
             "Dreams reminder creation failed: {}", type(exc).__name__)
         return None
+
+
+# --- The master switch (Qodo #5, PR #2921) --------------------------------------
+
+
+def _scheduling_db(scheduling_db_getter: Any) -> Any:
+    """Resolve the app's ``ScheduledTasksDB`` for the switch, or None.
+
+    A missing getter, a getter returning None, and a raising getter all
+    mean "no reminders can be touched right now"; the switch degrades.
+    """
+    if scheduling_db_getter is None:
+        return None
+    try:
+        return scheduling_db_getter()
+    except Exception as exc:  # noqa: BLE001 - the switch degrades
+        logger.warning(
+            "Dreams switch: reminder getter failed: {}", type(exc).__name__)
+        return None
+
+
+def _suspension_record(item: Any) -> dict | None:
+    """A wrapper's suspension record, or None when it carries none.
+
+    The record is JSON on ``dream_tracked_items.suspension``::
+
+        {"subscription": bool,        # Dreams stopped this watch's
+                                      #   subscription and owes it a
+                                      #   re-enable
+         "reminders": ["<id>", ...],  # reminders Dreams disabled
+         "rules": [<id>, ...],        # alert rules Dreams silenced
+         "held": "<reason>",          # optional: why the subscription
+                                      #   could not be re-enabled
+         "settled": "off" | "on"}     # optional, see below
+
+    ``settled`` says whether a switch pass still has work on the wrapper
+    (review of #2921, round 3, T2/T3/T19). ``"off"``: every stop the
+    record names has been applied -- the watch is fully suspended.
+    ``"on"``: a resume restored everything it may; what the record still
+    owes is ``held`` (the page is not a public address) until the next
+    switch-on or re-track -- and, when the reason may pass (a failed
+    lookup, see ``_LASTING_HOLDS``), until the daily cycle or any resume
+    pass asks again (round 4, B2). Absent: unfinished -- the write-ahead record
+    of a stop that has not (all) landed, or a resume that could not reach
+    a service -- and the next pass in the switch's direction takes it up.
+
+    Unreadable text still means "a record" -- with nothing known to
+    restore -- so a damaged record is cleared by resume, never mistaken
+    for "no record".
+    """
+    raw = item.get("suspension")
+    if not raw:
+        return None
+    try:
+        record = json.loads(raw)
+    except ValueError:
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+#: Refusal reasons that are facts about the address itself. A hold for
+#: any other reason -- ``dns_failure`` -- may be gone tomorrow, and is
+#: asked about again without the user doing anything (round 4, B2).
+_LASTING_HOLDS = frozenset({"private", "metadata", "scheme"})
+
+
+def _hold_may_pass(raw: Any) -> bool:
+    """Whether a stored record holds its source for a passing reason."""
+    held = (_suspension_record({"suspension": raw}) or {}).get("held")
+    return bool(held) and held not in _LASTING_HOLDS
+
+
+def _resume_has_work(raw: Any) -> bool:
+    """Whether a resume pass still has something to do for this record.
+
+    A record that is not settled "on" -- and one that is, when what it
+    holds may pass.
+    """
+    return bool(raw) and (
+        settled_state(raw) != SETTLED_ON or _hold_may_pass(raw))
+
+
+def _owed(record: dict | None) -> tuple[bool, list[str], list[int]]:
+    """What a record owes: ``(subscription, reminder ids, rule ids)``."""
+    record = record or {}
+    try:
+        rules = [int(value) for value in record.get("rules") or []]
+    except (TypeError, ValueError):
+        rules = []
+    return (
+        bool(record.get("subscription")),
+        [str(value) for value in record.get("reminders") or []],
+        rules,
+    )
+
+
+def _record_text(
+    *,
+    subscription: bool,
+    reminders: list[str],
+    rules: list[int],
+    held: str | None = None,
+    settled: str | None = None,
+) -> str:
+    """Serialize a suspension record (see :func:`_suspension_record`)."""
+    record: dict[str, Any] = {
+        "subscription": bool(subscription),
+        "reminders": sorted(set(reminders)),
+        "rules": sorted(set(rules)),
+    }
+    if held:
+        record["held"] = held
+    if settled:
+        record["settled"] = settled
+    return json.dumps(record)
+
+
+def _enabled_linked_reminder_ids(scheduling_db: Any, item_id: int) -> list[str]:
+    """Ids of the item's linked reminders that are armed right now (sync)."""
+    return [
+        str(row["id"])
+        for row in scheduling_db.list_reminder_tasks_by_link(
+            _REMINDER_LINK_TYPE, [item_id])
+        if row.get("enabled")
+    ]
+
+
+def _disable_reminders(scheduling_db: Any, reminder_ids: list[str]) -> None:
+    """Disable exactly these reminders (sync; the caller thread-offloads)."""
+    for reminder_id in reminder_ids:
+        scheduling_db.update_reminder_task(reminder_id, enabled=False)
+
+
+def _restore_reminders(scheduling_db: Any, reminder_ids: list[str]) -> None:
+    """Re-arm the reminders the switch disabled (sync).
+
+    Only a reminder that still exists, is still disabled, and has not
+    fired is re-enabled; its schedule is left exactly as it stands.
+    """
+    for reminder_id in reminder_ids:
+        row = scheduling_db.get_reminder_task(reminder_id)
+        if row and not row.get("enabled") and not row.get("last_run_at"):
+            scheduling_db.update_reminder_task(reminder_id, enabled=True)
+
+
+def _riders_by_subscription(items: list[dict]) -> dict[int, list[dict]]:
+    """Every live wrapper, grouped by the subscription it rides."""
+    riders: dict[int, list[dict]] = {}
+    for item in items:
+        subscription_id = int(item.get("subscription_id") or 0)
+        if subscription_id:
+            riders.setdefault(subscription_id, []).append(item)
+    return riders
+
+
+@dataclass
+class _SourceStop:
+    """What one suspend pass decides for one subscription, ONCE.
+
+    Several wrappers can ride one subscription, and they need not agree
+    about who created it (round 3, T13). The decision is therefore made
+    per subscription, from all its riders, and every rider records it.
+
+    Attributes:
+        known: The watchlists service answered; ``owed`` and ``rules``
+            are facts. False leaves every rider unsettled for a later
+            pass (no service, or a failed read).
+        owed: Dreams stops this subscription -- it is Dreams' own and
+            running now, or an earlier record of a rider already owes it.
+        rules: Dreams' change rules that are enabled on it right now.
+        applied: Every stop for it landed in this pass.
+    """
+
+    known: bool = False
+    owed: bool = False
+    rules: list[int] = field(default_factory=list)
+    applied: bool = False
+    #: Options to stamp on a Dreams-owned source that is not marked yet
+    #: (round 3, T1); None when there is nothing to stamp.
+    mark: dict | None = None
+
+
+async def _plan_source_stop(
+    subs_service: Any, dreams_db: Any, subscription_id: int,
+    riders: list[dict],
+) -> _SourceStop:
+    """Read what is running on one subscription and decide its stop."""
+    plan = _SourceStop(owed=any(
+        _owed(_suspension_record(rider))[0] for rider in riders))
+    if subs_service is None:
+        return plan
+    try:
+        try:
+            source = await subs_service.get_source(subscription_id)
+        except KeyError:
+            # The user deleted the source (round 3, T4) -- the one by-hand
+            # action Watchlists offers on a "Dreams: ..." source. There is
+            # no subscription to stop and none to restore; the wrapper's
+            # reminders are still stopped, and it settles.
+            return _SourceStop(known=True, applied=True)
+        owned = any(
+            int(rider.get("created_by_dreams") or 0) == 1 for rider in riders
+        ) or await asyncio.to_thread(
+            dreams_db.subscription_dream_owned, subscription_id)
+        # Running means "would be fetched, now or after one press of
+        # Resume" (round 3, T9): the normalized ``active`` is ``is_active
+        # and not paused``, so an auto-paused source reads inactive while
+        # its ``is_active`` is still 1.
+        running = bool(source.get("active")) or bool(source.get("paused"))
+        plan.owed = plan.owed or (owned and running)
+        if owned and _needs_story_mark(source):
+            plan.mark = _story_options(source)
+        plan.rules = [
+            rule_id for rule_id, rule in (await _dreams_rules_on(
+                subs_service, dreams_db, subscription_id)).items()
+            if bool(rule.get("enabled", True))]
+        plan.known = True
+    except Exception as exc:  # noqa: BLE001 - the riders stay unsettled
+        logger.warning(
+            "Dreams suspend: reading subscription {} failed: {}",
+            subscription_id, type(exc).__name__)
+    return plan
+
+
+async def _suspend_pass(
+    subs_service: Any, dreams_db: Any, scheduling_db: Any, items: list[dict],
+) -> int:
+    """Stop the outside work of every live wrapper not settled "off".
+
+    Three steps, in this order:
+
+    1. **Record** (write-ahead). Each wrapper's record becomes what it
+       already owed MERGED with what is running now -- its armed
+       reminders, the enabled Dreams alert rule on its page, its
+       subscription when Dreams stops it. Merging, not skipping, is what
+       makes a left-over record harmless (round 3, T2): the record a held
+       resume leaves behind used to make the next switch-off skip the
+       wrapper while its reminder and rule were running again.
+    2. **Stop** everything the records name: the reminders per wrapper;
+       the rules and the subscription once per subscription. Every stop
+       is idempotent, so a record whose stops did not (all) land -- the
+       write failed, the app quit in between, a service was missing -- is
+       simply applied again (T3).
+    3. **Settle.** A wrapper is marked ``settled: "off"`` only when every
+       one of its stops landed in this pass. Anything else leaves it
+       unsettled, which is exactly what the startup check looks for.
+
+    Returns:
+        How many wrappers the pass worked on (settled or not).
+    """
+    pending = [item for item in items
+               if settled_state(item.get("suspension")) != SETTLED_OFF]
+    if not pending:
+        return 0
+    riders = _riders_by_subscription(items)
+    plans: dict[int, _SourceStop] = {}
+    for item in pending:
+        subscription_id = int(item.get("subscription_id") or 0)
+        if subscription_id and subscription_id not in plans:
+            plans[subscription_id] = await _plan_source_stop(
+                subs_service, dreams_db, subscription_id,
+                riders[subscription_id])
+
+    staged: list[tuple[dict, bool, list[str], list[int]]] = []
+    for item in pending:
+        item_id = int(item["id"])
+        plan = plans.get(int(item.get("subscription_id") or 0))
+        subscription, reminders, rules = _owed(_suspension_record(item))
+        try:
+            if scheduling_db is not None:
+                reminders = reminders + await asyncio.to_thread(
+                    _enabled_linked_reminder_ids, scheduling_db, item_id)
+            if plan is not None and plan.applied:
+                subscription, rules = False, []  # its source is gone
+            elif plan is not None:
+                subscription = subscription or plan.owed
+                rules = rules + plan.rules
+            await asyncio.to_thread(
+                partial(dreams_db.set_tracked_suspension, only_live=True),
+                item_id, _record_text(
+                    subscription=subscription, reminders=reminders,
+                    rules=rules))
+            if reminders and scheduling_db is not None:
+                await asyncio.to_thread(
+                    _disable_reminders, scheduling_db, reminders)
+        except Exception as exc:  # noqa: BLE001 - one failed wrapper stops nothing
+            logger.warning(
+                "Dreams suspend: switching tracked item {} failed: {}",
+                item_id, type(exc).__name__)
+            continue
+        staged.append((item, subscription, reminders, rules))
+
+    for subscription_id, plan in plans.items():
+        if not plan.known or plan.applied:
+            continue
+        recorded = [
+            entry for entry in staged
+            if int(entry[0].get("subscription_id") or 0) == subscription_id]
+        if plan.owed and not any(entry[1] for entry in recorded):
+            # No rider's write-ahead record says "Dreams stopped this"
+            # (round 4, A2): the staging step failed for every one of
+            # them. A stop nobody recorded is a stop nobody can undo --
+            # the next pass would find the source not running, record
+            # "subscription: false" and settle, and switching Dreams on
+            # would restore nothing. Left running and unsettled; the next
+            # pass records first and stops then.
+            continue
+        rule_ids = {rule_id for entry in recorded for rule_id in entry[3]}
+        try:
+            for rule_id in sorted(rule_ids):
+                try:
+                    await subs_service.update_alert_rule(
+                        rule_id, enabled=False)
+                except KeyError:
+                    pass  # the rule was deleted: nothing left to silence
+            payload: dict[str, Any] = {}
+            if plan.owed:
+                payload["active"] = False
+            if plan.mark is not None:
+                payload["processing_options"] = plan.mark
+            if payload:
+                await subs_service.update_source(subscription_id, payload)
+            if plan.mark is not None:
+                await asyncio.to_thread(
+                    dreams_db.set_egress_marked, subscription_id)
+            plan.applied = True
+        except Exception as exc:  # noqa: BLE001 - its riders stay unsettled
+            logger.warning(
+                "Dreams suspend: stopping subscription {} failed: {}",
+                subscription_id, type(exc).__name__)
+
+    for item, subscription, reminders, rules in staged:
+        plan = plans.get(int(item.get("subscription_id") or 0))
+        if scheduling_db is None or (plan is not None and not plan.applied):
+            continue  # unfinished: a later pass (the next start) retries
+        try:
+            await asyncio.to_thread(
+                partial(dreams_db.set_tracked_suspension, only_live=True),
+                int(item["id"]),
+                _record_text(subscription=subscription, reminders=reminders,
+                             rules=rules, settled=SETTLED_OFF))
+        except Exception as exc:  # noqa: BLE001 - stays unsettled
+            logger.warning(
+                "Dreams suspend: switching tracked item {} failed: {}",
+                item.get("id"), type(exc).__name__)
+    return len(staged)
+
+
+async def _restore_source(
+    subs_service: Any, subscription_id: int,
+) -> tuple[bool, str | None]:
+    """Re-enable one subscription Dreams stopped, if its page is public.
+
+    Re-enabling restarts fetches of a URL Dreams stored, so the same
+    question ``track_page`` asks before a re-enable is asked here (review
+    of #2921, item 2).
+
+    Returns:
+        ``(resolved, held)``. ``resolved`` is True when nothing is owed
+        any more -- the source runs again, or the user deleted it.
+        Otherwise ``held`` carries the policy's reason and the source
+        stays disabled.
+    """
+    try:
+        source = await subs_service.get_source(subscription_id)
+    except KeyError:
+        return True, None  # the user deleted the source
+    # The question is about a STORY address. One the user has since typed
+    # over it is theirs (round 4): Watchlists fetches it, private or not,
+    # and holding it here as "not public" would hold it for good.
+    refusal = None if _is_users_address(source) else (
+        await _public_url_refusal(str(source.get("url") or "")))
+    if refusal is not None:
+        # A held source is not an active one (round 4). It can be running:
+        # an earlier resume enabled it and was cut before it could say
+        # so, and by now the address is no longer public.
+        if bool(source.get("active")) or bool(source.get("paused")):
+            await subs_service.update_source(
+                subscription_id, {"active": False})
+        logger.warning(
+            "Dreams resume: subscription {} left disabled, its page is not "
+            "a public destination ({})", subscription_id, refusal)
+        return False, refusal
+    await _enable_dream_subscription(subs_service, subscription_id, source)
+    return True, None
+
+
+async def _resume_pass(
+    subs_service: Any, dreams_db: Any, scheduling_db: Any, items: list[dict],
+) -> int:
+    """Restore what the records say, for every wrapper not settled "on".
+
+    Per wrapper: the recorded reminders are re-armed (those that still
+    exist, are still disabled and have not fired) and the recorded alert
+    rules re-enabled. Per subscription, once: when a record owes it, it
+    is re-enabled after the public-destination check. What could be
+    restored leaves the record; an empty record is cleared.
+
+    A subscription whose page is not a public address stays disabled; its
+    riders keep the debt with the reason as ``held`` and are marked
+    ``settled: "on"`` (round 3, T19) -- the Tracked row shows it, and the
+    next switch-on or re-track asks again, not every start. A hold whose
+    reason may pass (the name could not be looked up) is also taken up
+    again by every resume pass that runs, and the daily cycle runs one
+    for it (round 4, B2, :func:`retry_unfinished_resume`); a private
+    address is not asked about again by itself. A debt that is left only
+    because a service could not be reached leaves the wrapper unsettled
+    instead, so the next pass does retry it.
+
+    Returns:
+        How many wrappers the pass worked on.
+    """
+    pending = [
+        item for item in items if _resume_has_work(item.get("suspension"))]
+    if not pending:
+        return 0
+    worked = 0
+    # (subscription still owed, reminders still owed, rules still owed)
+    left: dict[int, tuple[bool, list[str], list[int]]] = {}
+    # Wrappers whose restore failed part-way: the record written last is
+    # the truth about them, and the stale row read at pass start is not.
+    failed: set[int] = set()
+    for item in pending:
+        item_id = int(item["id"])
+        subscription, reminders, rules = _owed(_suspension_record(item))
+
+        async def write_unsettled() -> None:
+            await asyncio.to_thread(
+                partial(dreams_db.set_tracked_suspension, only_live=True),
+                item_id, _record_text(
+                    subscription=subscription, reminders=reminders,
+                    rules=rules))
+
+        try:
+            # The list was read when the pass began. A lifecycle sweep (a
+            # cycle, a track check) may have retired this watch since, and
+            # torn its outside work down; restoring from the stale row
+            # would re-arm its reminder and switch its source back on
+            # with no live watch left (round 3, T14b). Its record stays
+            # with the retired wrapper.
+            fresh = await asyncio.to_thread(dreams_db.get_tracked_item, item_id)
+            if fresh is None or fresh.get("status") not in ("active", "paused"):
+                continue
+            # The record stops saying "settled off" BEFORE anything is
+            # restored (round 4, A1), and is rewritten as each restore
+            # lands (round 3, T12). A wrapper whose reminder runs again is
+            # not suspended: the record used to be rewritten once, after
+            # the reminders AND the rules, so a failure in between left
+            # work running under a record the next switch-off -- and the
+            # boot check -- skip as done. And what has been restored is no
+            # longer owed, whatever happens to the rest: a reminder left
+            # listed was re-armed by the next resume over a disable the
+            # user had made in between.
+            await write_unsettled()
+            if reminders and scheduling_db is not None:
+                await asyncio.to_thread(
+                    _restore_reminders, scheduling_db, reminders)
+                reminders = []
+                await write_unsettled()
+            if rules and subs_service is not None:
+                for rule_id in rules:
+                    try:
+                        await subs_service.update_alert_rule(
+                            rule_id, enabled=True)
+                    except KeyError:
+                        pass  # the user deleted the rule
+                rules = []
+                await write_unsettled()
+        except Exception as exc:  # noqa: BLE001 - one failed wrapper stops nothing
+            logger.warning(
+                "Dreams resume: switching tracked item {} failed: {}",
+                item_id, type(exc).__name__)
+            failed.add(item_id)
+            continue
+        left[item_id] = (subscription, reminders, rules)
+        worked += 1
+
+    # One decision per subscription, shared by every rider that owes it.
+    outcomes: dict[int, tuple[bool, str | None]] = {}
+    for item in pending:
+        subscription_id = int(item.get("subscription_id") or 0)
+        item_id = int(item["id"])
+        if (item_id not in left or not left[item_id][0]
+                or not subscription_id or subscription_id in outcomes
+                or subs_service is None):
+            continue
+        try:
+            outcomes[subscription_id] = await _restore_source(
+                subs_service, subscription_id)
+        except Exception as exc:  # noqa: BLE001 - its riders stay unsettled
+            logger.warning(
+                "Dreams resume: restoring subscription {} failed: {}",
+                subscription_id, type(exc).__name__)
+
+    for item in items:
+        item_id = int(item["id"])
+        record = _suspension_record(item)
+        if record is None:
+            continue
+        outcome = outcomes.get(int(item.get("subscription_id") or 0))
+        if item_id in left:
+            subscription, reminders, rules = left[item_id]
+        elif item_id in failed:
+            continue  # its record stands as last written, for the retry
+        elif outcome is not None:
+            # A held rider this pass did not otherwise touch: its
+            # subscription was decided through another rider.
+            subscription, reminders, rules = _owed(record)
+        else:
+            continue
+        held: str | None = None
+        if subscription and outcome is not None:
+            resolved, held = outcome
+            subscription = not resolved
+        text: str | None = None
+        if subscription or reminders or rules:
+            only_held = bool(held) and not reminders and not rules
+            text = _record_text(
+                subscription=subscription, reminders=reminders, rules=rules,
+                held=held, settled=SETTLED_ON if only_held else None)
+        try:
+            # ``only_live``: a watch retired since the pass began carries
+            # its retirement record, which this pass must not rewrite
+            # from the row it read at its start (round 4).
+            await asyncio.to_thread(
+                partial(dreams_db.set_tracked_suspension, only_live=True),
+                item_id, text)
+        except Exception as exc:  # noqa: BLE001 - the record stands for a retry
+            logger.warning(
+                "Dreams resume: switching tracked item {} failed: {}",
+                item_id, type(exc).__name__)
+    return worked
+
+
+async def set_tracking_suspended(
+    subs_service: Any,
+    dreams_db: Any,
+    *,
+    suspended: bool,
+    scheduling_db_getter: Any = None,
+    now: datetime | None = None,
+) -> int:
+    """Suspend or resume the work Dreams scheduled outside its own loop.
+
+    ``[dreams] enabled`` gates the cycle and the question checks (their
+    projection emits nothing while it is off), but two things a watch
+    creates live in OTHER queues that never read that flag: a page watch
+    is a watchlists subscription the watchlist projection schedules by
+    itself, and an event-dated watch owns a reminder task. Switching
+    Dreams off therefore has to stop those too, or a disabled Dreams
+    keeps fetching pages and notifying.
+
+    Suspending (:func:`_suspend_pass`) walks every tracked item that is
+    not retired (active, and paused -- a paused watch keeps its reminder
+    armed) and is not settled "off" yet. For each it RECORDS what it is
+    about to stop -- the reminders linked to the wrapper that are armed
+    right now, the enabled ``Change:`` alert rule Dreams pinned on its
+    page (item 3b), and its subscription when that is Dreams' own and
+    running -- merged with whatever its record already owed, and then
+    stops exactly that through the same seams untrack uses. A
+    subscription Dreams merely attached to is the user's and keeps
+    running; only Dreams' own alert rule on it goes quiet. No wrapper
+    changes lifecycle state.
+
+    Resuming (:func:`_resume_pass`) restores what the records say and
+    nothing else (review of #2921, item 4): the recorded reminders are
+    re-armed with whatever schedule they now carry, the recorded rules
+    re-enabled, and the recorded subscription re-enabled after the same
+    public-destination check a re-track makes (item 2). A subscription
+    the user had disabled by hand, a reminder they had disabled, and a
+    reminder they had rescheduled were never in a record, or are restored
+    as they stand -- the switch cannot bring back what it did not stop.
+    The lifecycle sweep then runs (a watch whose event passed while
+    Dreams was off is retired, with the usual teardown, instead of left
+    to nag about a date already gone).
+
+    Both passes are idempotent and resumable: a wrapper whose stops or
+    restores did not all land keeps an unsettled record, and the next
+    pass in the same direction -- the next start runs one, see
+    ``track_reconcile`` -- takes it up again (round 3, T2/T3).
+
+    Degrade, never raise: a missing service or scheduling DB, or one
+    failed write, logs and moves on.
+
+    Args:
+        subs_service: The app's ``LocalWatchlistsService``, or None (page
+            subscriptions and alert rules are then left for a later
+            pass).
+        dreams_db: The app's ``DreamsDB``.
+        suspended: True when Dreams is off, False when it is on.
+        scheduling_db_getter: Zero-arg callable returning the app's
+            ``ScheduledTasksDB`` or None (reminders are then left for a
+            later pass).
+        now: Clock for the resume sweep (UTC-aware); defaults to the
+            current time.
+
+    Returns:
+        How many wrappers the pass worked on.
+    """
+    scheduling_db = _scheduling_db(scheduling_db_getter)
+    # Every watch that is not retired: a PAUSED one (the sweep paused its
+    # failing checks) still owns an armed event reminder, and a disabled
+    # Dreams must not send that either. One thread hop for both reads.
+    items = await asyncio.to_thread(
+        lambda: [
+            *dreams_db.list_tracked_items("active"),
+            *dreams_db.list_tracked_items("paused"),
+        ]
+    )
+    if suspended:
+        return await _suspend_pass(
+            subs_service, dreams_db, scheduling_db, items)
+    switched = await _resume_pass(
+        subs_service, dreams_db, scheduling_db, items)
+    # AFTER the restore, so every record is still on a live wrapper when
+    # it is read; a watch that died while Dreams was off is then retired
+    # with the sweep's own teardown.
+    try:
+        await sweep_track_lifecycle(
+            dreams_db, now=now or datetime.now(timezone.utc),
+            subs_service_getter=lambda: subs_service,
+            scheduling_db_getter=scheduling_db_getter)
+    except Exception as exc:  # noqa: BLE001 - resume degrades, never raises
+        logger.warning(
+            "Dreams resume: lifecycle sweep failed: {}", type(exc).__name__)
+    return switched
+
+
+#: The reconcile pass in flight, owned HERE (review of #2921, item 3c).
+#: A strong reference -- a bare task is only weakly held by the event
+#: loop -- and the reason a cancelled caller cannot stop the switch: the
+#: caller awaits this task through ``asyncio.shield``. Event-loop-only,
+#: like ``_INFLIGHT_TRACK_CHECKS``.
+_RECONCILE_TASK: asyncio.Task | None = None
+
+#: The latest request that arrived while a pass was running; the running
+#: task takes it up when its pass ends, so overlapping requests coalesce
+#: into one more pass instead of running side by side.
+_RECONCILE_PENDING: tuple | None = None
+
+
+async def _reconcile_until_settled(request: tuple) -> int:
+    """Run switch passes until no newer request is waiting (the task body).
+
+    Each pass reads ``[dreams] enabled`` as it is at that moment, so the
+    watches end where the LATEST switch says whatever order the requests
+    arrived in. Nothing escapes: this is the whole body of a task nobody
+    may be awaiting any more.
+    """
+    global _RECONCILE_PENDING
+    switched = 0
+    settle: Any = None
+    while True:
+        subs_service, dreams_db, scheduling_db_getter, now, on_settled = request
+        settle = on_settled or settle
+        try:
+            switched += await set_tracking_suspended(
+                subs_service, dreams_db,
+                suspended=not bool(dreams_setting("enabled")),
+                scheduling_db_getter=scheduling_db_getter, now=now)
+        except Exception as exc:  # noqa: BLE001 - must never escape the task
+            logger.warning(
+                "Dreams reconcile: switching tracked watches failed: {}",
+                type(exc).__name__)
+        request, _RECONCILE_PENDING = _RECONCILE_PENDING, None
+        if request is not None:
+            continue
+        # Only now, with no further pass waiting (round 3, T14c): the
+        # callback reloads the scheduler queue, and reloading it between
+        # an "off" pass and the "on" pass already queued behind it loaded
+        # the first pass's state.
+        if settle is not None:
+            try:
+                settle()
+            except Exception as exc:  # noqa: BLE001 - must never escape the task
+                logger.warning(
+                    "Dreams reconcile: settle callback failed: {}",
+                    type(exc).__name__)
+        return switched
+
+
+async def reconcile_tracking(
+    subs_service: Any,
+    dreams_db: Any,
+    *,
+    scheduling_db_getter: Any = None,
+    now: datetime | None = None,
+    on_settled: Any = None,
+) -> int:
+    """Bring Dream-owned outside work in line with ``[dreams] enabled``.
+
+    The robust way to apply the master switch (review of #2921, item 3c).
+    :func:`set_tracking_suspended` is one pass in one direction; this
+    decides the direction from the live flag and makes the pass safe to
+    request from anywhere:
+
+    * it cannot be cut short. The pass runs as a task this module owns,
+      and callers await it shielded, so cancelling a caller -- a Settings
+      worker cancelled by another settings action, a screen dismissed
+      mid-switch -- leaves the switch running to the end;
+    * it never runs twice at once. A request that arrives while a pass is
+      running is remembered (the latest one wins) and taken up when the
+      pass ends, and every caller is answered when the whole thing has
+      settled;
+    * it is idempotent. Wrappers already on the right side of the switch
+      are skipped (their suspension record says which side they are on),
+      so it is equally the startup reconcile for a hand-edited
+      ``config.toml`` or a switch that never finished.
+
+    Args:
+        subs_service: The app's ``LocalWatchlistsService``, or None.
+        dreams_db: The app's ``DreamsDB``.
+        scheduling_db_getter: Zero-arg callable returning the app's
+            ``ScheduledTasksDB`` or None.
+        now: Clock for the resume sweep; defaults to the current time.
+        on_settled: Zero-arg callable run once everything has settled --
+            after the last pass, not between coalesced ones (the app asks
+            its scheduler queue to reload, so work already loaded for a
+            suspended watch drops out). Called from the owned task, so it
+            still runs when the caller was cancelled.
+
+    Returns:
+        How many wrappers were switched by the time everything settled.
+    """
+    global _RECONCILE_TASK, _RECONCILE_PENDING
+    request = (subs_service, dreams_db, scheduling_db_getter, now, on_settled)
+    loop = asyncio.get_running_loop()
+    task = _RECONCILE_TASK
+    # No await between the check and the hand-off: two requests on one
+    # loop cannot both start a task. A task left by another (closed) loop
+    # is not this loop's to await.
+    if task is not None and not task.done() and task.get_loop() is loop:
+        _RECONCILE_PENDING = request
+    else:
+        _RECONCILE_PENDING = None
+        task = _RECONCILE_TASK = loop.create_task(
+            _reconcile_until_settled(request), name="dreams_track_reconcile")
+    return await asyncio.shield(task)
+
+
+async def retry_unfinished_resume(
+    subs_service: Any,
+    dreams_db: Any,
+    *,
+    scheduling_db_getter: Any = None,
+    now: datetime | None = None,
+) -> int:
+    """The daily cycle's turn at what a resume could not finish.
+
+    Round 4, B2. A tracked page that was left off because its name could
+    not be looked up when Dreams was switched on stayed off until the
+    user switched Dreams off and on, or tracked it again: every hold was
+    settled for good, whatever the reason. The startup check must not
+    look addresses up on every start (round 3, T19), so the cycle -- at
+    most once a day, and only while Dreams is on -- does it instead: when
+    any live watch's record still has work for a resume pass
+    (:func:`_resume_has_work`: unfinished, or held for a reason that may
+    pass) it asks for one, through :func:`reconcile_tracking` so that it
+    cannot run beside a switch the user makes at that moment.
+
+    One read when there is nothing to do. No scheduler reload is asked
+    for: a source this switches back on is picked up by the queue's own
+    periodic reload.
+
+    Returns:
+        How many wrappers the pass worked on (0 when none was needed).
+    """
+    records = await asyncio.to_thread(dreams_db.live_tracked_suspensions)
+    if not any(_resume_has_work(raw) for raw in records):
+        return 0
+    return await reconcile_tracking(
+        subs_service, dreams_db,
+        scheduling_db_getter=scheduling_db_getter, now=now)
 
 
 # --- Question mechanism + judged change checks (Phase 2 Task 4) ----------------
@@ -958,15 +2651,17 @@ async def track_question(
 
     # Reuse before anything is written (Qodo #2, PR #2890), same shape as
     # ``track_page``'s branch: the story's existing ACTIVE question
-    # wrapper keeps watching; only its cadence/event date refresh.
+    # wrapper keeps watching; only its cadence/event date refresh. Asked
+    # for by mechanism (Qodo #3, PR #2921) so a newer page watch on the
+    # same story cannot hide it.
     if origin_story_id is not None:
-        wrapper = await asyncio.to_thread(
-            dreams_db.find_tracked_by_story, origin_story_id)
-        if wrapper is not None and wrapper.get("mechanism") == \
-                _QUESTION_MECHANISM:
+        wrapper = await _reusable_wrapper(
+            dreams_db, origin_story_id, _QUESTION_MECHANISM)
+        if wrapper is not None:
             await _refresh_wrapper_plan(
                 dreams_db, wrapper, cadence=cadence,
-                event_date=event_date)
+                event_date=event_date,
+                scheduling_db_getter=scheduling_db_getter)
             # Qodo #11: identifiers and lengths only -- the template is
             # user text and must not reach the logs.
             logger.debug(
@@ -1001,7 +2696,8 @@ async def track_question(
     await promote_to_reminder(
         scheduling_db_getter,
         {"id": tracked_item_id, "query_template": template,
-         "event_date": event_date},
+         "event_date": event_date, "origin_story_id": origin_story_id},
+        dreams_db=dreams_db,
     )
     # Qodo #11 (PR #2890): identifiers and lengths only -- the template is
     # caller-supplied text (it can carry anything the user typed next to
@@ -1019,7 +2715,7 @@ def _render_query(template: str) -> str:
     check treats it as the literal query rather than crashing the loop.
     """
     try:
-        return template.format(region=dreams_setting("region", ""))
+        return template.format(region=dreams_region())
     except (KeyError, IndexError, ValueError):
         return template
 
@@ -1053,24 +2749,6 @@ def _results_digest(results: list[Candidate]) -> str:
     return hashlib.sha256(joined.encode()).hexdigest()
 
 
-def _baseline_digest(dreams_db: Any, tracked_item_id: int) -> str | None:
-    """Digest of the most recent run that may anchor a comparison.
-
-    ``error``/``skipped``/``withheld`` runs never anchor (no trustworthy
-    digest); everything that follows -- ``baseline``, ``unchanged``,
-    ``changed``, ``rebaselined`` -- carries the digest the next check
-    compares against. Sync; the caller thread-offloads.
-    """
-    for run in dreams_db.list_recent_track_runs(
-        tracked_item_id, limit=_BASELINE_SCAN_LIMIT
-    ):
-        if str(run["status"]) in _NON_BASELINE_RUN_STATUSES:
-            continue
-        digest = run["digest_hash"]
-        return str(digest) if digest else None
-    return None
-
-
 def _record_run(
     dreams_db: Any,
     tracked_item_id: int,
@@ -1093,6 +2771,26 @@ def _record_run(
     )
     dreams_db.touch_tracked_checked(tracked_item_id, now_iso)
     return run_id
+
+
+def _reserve_search(
+    dreams_db: Any, local_date: str, *, max_searches: int, max_llm_calls: int
+) -> bool:
+    """Take the check's one search slot, or refuse when a budget is spent.
+
+    One thread hop for the budget guard (Qodo #11, PR #2921). The LLM
+    budget is only READ here -- a check with no judge budget left would
+    search for nothing -- while the search slot is RESERVED atomically:
+    checks of different items run concurrently, and a read followed by a
+    bump after the search let two of them spend the same last slot.
+
+    Returns:
+        True when the search may run (its slot is already counted).
+    """
+    if int(dreams_db.usage_get(local_date)["llm_calls"]) >= max_llm_calls:
+        return False
+    return dreams_db.usage_reserve(
+        local_date, counter="searches", limit=max_searches) == 1
 
 
 def _first_json_object(text: str) -> dict | None:
@@ -1169,7 +2867,7 @@ def _judge_call_kwargs(query: str, results: list[Candidate]) -> dict[str, Any]:
     }
 
 
-def _dispatch_changed(
+async def _dispatch_changed(
     deps: "CycleDeps",
     *,
     query_template: str,
@@ -1181,6 +2879,17 @@ def _dispatch_changed(
     Qodo #4 (PR #2890): the caller learns whether the alert actually
     reached a dispatcher, so the run row can record ``notified=0`` and a
     degrade marker instead of claiming delivery that never happened.
+
+    Off the event loop (Qodo #7, PR #2921): ``dispatch`` reads the
+    notification settings and writes the inbox row through SQLite, the
+    same blocking shape as every other stage of a check, so it runs under
+    ``asyncio.to_thread`` -- but only when the dispatcher's store is
+    positively file-backed (``store.is_memory_db is False``). The
+    notifications store holds one connection per thread on disk and a
+    single loop-thread connection for ``:memory:`` (the app's fallback
+    when the file cannot open), which sqlite refuses from a worker
+    thread; an unknown store shape stays inline for the same reason
+    (``Home/active_work_adapter``'s confirmed-file-backed rule).
 
     Args:
         deps: Injected collaborators (only ``dispatch_getter`` is read).
@@ -1204,15 +2913,21 @@ def _dispatch_changed(
                 "Dreams track dispatch getter failed: {}", type(exc).__name__)
     if dispatcher is None:
         return False
+    payload = {
+        "category": "dreams_track",
+        "title": _label(f"Tracked update: {query_template[:50]}"),
+        "message": note,
+        "severity": "information",
+        "source_entity_kind": "dream_tracked_item",
+        "source_entity_id": str(tracked_item_id),
+    }
+    file_backed = getattr(
+        getattr(dispatcher, "store", None), "is_memory_db", None) is False
     try:
-        dispatcher.dispatch(
-            category="dreams_track",
-            title=f"Tracked update: {query_template[:50]}",
-            message=note,
-            severity="information",
-            source_entity_kind="dream_tracked_item",
-            source_entity_id=str(tracked_item_id),
-        )
+        if file_backed:
+            await asyncio.to_thread(dispatcher.dispatch, **payload)
+        else:
+            dispatcher.dispatch(**payload)
     except Exception as exc:  # noqa: BLE001 - notification degrades
         logger.warning(
             "Dreams track notification dispatch failed: {}",
@@ -1243,8 +2958,18 @@ async def run_track_check(deps: "CycleDeps", tracked_item_id: int) -> dict:
         ``{"status": <disposition>, "notified": bool}`` -- one of
         ``baseline``/``unchanged``/``changed``/``withheld``/``error``/
         ``skipped``, or ``inflight`` when this item already has a check
-        executing (nothing spent, nothing recorded).
+        executing (nothing spent, nothing recorded), or ``disabled`` when
+        ``[dreams] enabled`` is off -- at the start, or by the time the
+        check reached its search, its judge call, or its notification.
+        A check stopped that way records no run: the watch stays due and
+        its comparison anchor is untouched, so nothing it had found is
+        lost once Dreams is back on.
     """
+    # The master switch binds the check itself (review of #2921, item
+    # 3a): the projection emits no check while Dreams is off, but a check
+    # already dispatched would otherwise still search, judge and notify.
+    if not dreams_setting("enabled"):
+        return {"status": "disabled", "notified": False}
     # No await between the check and the add: a second dispatch of the
     # same item running on the same event loop cannot interleave here.
     if tracked_item_id in _INFLIGHT_TRACK_CHECKS:
@@ -1287,9 +3012,15 @@ async def _run_track_check_claimed(
       raises.
 
     Budgets: the check is skipped before any spend when either daily
-    counter is exhausted; the search bumps ``searches=1`` after it runs,
-    and any ATTEMPTED judge call bumps ``llm_calls=1`` (the attempted-call
-    accounting ``discovery.run_queries`` already applies to searches).
+    counter is exhausted. Each spend is RESERVED before the work it pays
+    for (``DreamsDB.usage_reserve``: a read and a write under one
+    ``BEGIN IMMEDIATE``): the search
+    slot by the guard itself, the judge slot immediately before the call
+    -- so an ATTEMPTED search or judge call is counted whatever its
+    outcome (the attempted-call accounting ``discovery.run_queries``
+    applies), and concurrent checks of different items can never both
+    spend the day's last slot (Qodo #11, PR #2921). A judge slot that
+    went to another spender mid-check is a ``skipped`` "budget" run.
 
     Args:
         deps: Injected collaborators (see ``CycleDeps``).
@@ -1350,12 +3081,22 @@ async def _run_track_check_claimed(
             notified=0, now_iso=to_utc_iso(now))
         return {"status": "skipped", "notified": False}
 
-    # Budget guard FIRST: an exhausted day skips before the search, the
-    # judge, and every bump -- spending nothing is the point.
-    usage = await asyncio.to_thread(dreams_db.usage_get, local_date)
-    if (int(usage["searches"]) >= int(dreams_setting("max_searches_per_day"))
-            or int(usage["llm_calls"]) >=
-            int(dreams_setting("max_llm_calls_per_day"))):
+    disabled = {"status": "disabled", "notified": False}
+    if not dreams_setting("enabled"):
+        # Switched off since this check was dispatched (item 3a): the
+        # flag is re-read before each spend and before the notification.
+        return disabled
+
+    # Budget guard FIRST: an exhausted day skips before the search and
+    # the judge -- spending nothing is the point. The guard RESERVES the
+    # search slot (Qodo #11, PR #2921) rather than reading the counter
+    # and bumping it after the work: checks of different items run side
+    # by side, and two of them could both read "one slot left".
+    max_searches = int(dreams_setting("max_searches_per_day"))
+    max_llm_calls = int(dreams_setting("max_llm_calls_per_day"))
+    if not await asyncio.to_thread(
+            _reserve_search, dreams_db, local_date,
+            max_searches=max_searches, max_llm_calls=max_llm_calls):
         await asyncio.to_thread(
             _record_run, dreams_db, tracked_item_id,
             status="skipped", digest=None, note="budget", notified=0,
@@ -1374,8 +3115,6 @@ async def _run_track_check_claimed(
         deps.perform_search, engine=str(dreams_setting("search_engine")),
         queries=[query], result_count=_TRACK_CHECK_RESULT_COUNT,
         date_range=None)
-    await asyncio.to_thread(
-        dreams_db.usage_bump, local_date, searches=1)
 
     if not results:
         await asyncio.to_thread(
@@ -1385,8 +3124,10 @@ async def _run_track_check_claimed(
         return {"status": "withheld", "notified": False}
 
     digest = _results_digest(results)
+    # The anchor is read directly (Qodo #12, PR #2921), however many
+    # non-anchoring runs came after it.
     baseline = await asyncio.to_thread(
-        _baseline_digest, dreams_db, tracked_item_id)
+        dreams_db.latest_anchor_digest, tracked_item_id)
     if baseline is None:
         await asyncio.to_thread(
             _record_run, dreams_db, tracked_item_id,
@@ -1401,11 +3142,14 @@ async def _run_track_check_claimed(
         return {"status": "unchanged", "notified": False}
 
     # Different digest: the one judge call. Resolving the chat seam can
-    # fail without any spend (nothing was invoked); once the call is
-    # ATTEMPTED the budget is spent either way.
+    # fail without any spend (nothing was invoked); the call's slot is
+    # RESERVED immediately before it is attempted, so the budget is spent
+    # either way from there and two concurrent checks cannot both take
+    # the day's last call (Qodo #11, PR #2921).
+    if not dreams_setting("enabled"):
+        return disabled
     verdict: tuple[bool, str] | None = None
     chat: Any = None
-    llm_spent = False
     try:
         chat = await asyncio.to_thread(deps.chat_getter)
     except asyncio.CancelledError:
@@ -1414,6 +3158,17 @@ async def _run_track_check_claimed(
         logger.warning("Dreams track check: chat resolution failed: {}",
                        type(exc).__name__)
     if chat is not None:
+        if not await asyncio.to_thread(
+                dreams_db.usage_reserve, local_date,
+                counter="llm_calls", limit=max_llm_calls):
+            # Another spender took the last call while this check was
+            # searching. A non-anchoring skip: the comparison anchor is
+            # untouched, so the next check judges this same change.
+            await asyncio.to_thread(
+                _record_run, dreams_db, tracked_item_id,
+                status="skipped", digest=None, note="budget", notified=0,
+                now_iso=to_utc_iso(now))
+            return {"status": "skipped", "notified": False}
         try:
             response = await asyncio.to_thread(
                 chat, **_judge_call_kwargs(query, results))
@@ -1423,11 +3178,6 @@ async def _run_track_check_claimed(
         except Exception as exc:  # noqa: BLE001 - judge call degrades
             logger.warning("Dreams track judge call failed: {}",
                            type(exc).__name__)
-        finally:
-            llm_spent = True
-    if llm_spent:
-        await asyncio.to_thread(
-            dreams_db.usage_bump, local_date, llm_calls=1)
     if verdict is None:
         await asyncio.to_thread(
             _record_run, dreams_db, tracked_item_id,
@@ -1443,7 +3193,12 @@ async def _run_track_check_claimed(
             now_iso=to_utc_iso(now))
         return {"status": "unchanged", "notified": False}
 
-    delivered = _dispatch_changed(
+    if not dreams_setting("enabled"):
+        # No "Tracked update" from a disabled Dreams, and no ``changed``
+        # run either: recording it would move the anchor past a change
+        # the user was never told about.
+        return disabled
+    delivered = await _dispatch_changed(
         deps, query_template=query_template, note=note,
         tracked_item_id=tracked_item_id)
     # Qodo #4 (PR #2890): ``notified`` records DELIVERY, not intent -- a
@@ -1475,7 +3230,7 @@ def rebaseline_track(dreams_db: Any, tracked_item_id: int) -> int | None:
     Returns:
         The new run id, or ``None`` when no baseline exists.
     """
-    digest = _baseline_digest(dreams_db, tracked_item_id)
+    digest = dreams_db.latest_anchor_digest(tracked_item_id)
     if digest is None:
         return None
     return dreams_db.insert_track_run(

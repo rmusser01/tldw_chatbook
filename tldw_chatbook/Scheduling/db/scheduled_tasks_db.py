@@ -13,7 +13,7 @@ import uuid
 from contextlib import closing, contextmanager
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
-from typing import Any, Iterator, Optional, Union, cast
+from typing import Any, Iterable, Iterator, Optional, Union, cast
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
@@ -926,6 +926,42 @@ class ScheduledTasksDB(BaseDB):
             cursor = conn.execute(
                 f"SELECT * FROM reminder_tasks {where_clause} ORDER BY created_at",
                 params,
+            )
+            return self._rows_to_dicts(
+                cursor.fetchall(), json_fields=self._REMINDER_JSON_FIELDS
+            )
+
+    def list_reminder_tasks_by_link(
+        self, link_type: str, link_ids: Iterable[Any]
+    ) -> list[dict[str, Any]]:
+        """List the reminders linked to the named entities, oldest first.
+
+        The read counterpart of :meth:`disable_reminders_by_link`: Dreams
+        asks for the reminders of one tracked item (or of every wrapper of
+        one story) instead of listing every reminder the user has and
+        filtering in Python.
+
+        Args:
+            link_type: The ``link_type`` the reminders were created with.
+            link_ids: The ``link_id`` values wanted; compared as the
+                strings their creator wrote.
+
+        Returns:
+            The matching rows (any ``enabled`` state), ``created_at``
+            ascending; empty when ``link_ids`` is empty.
+        """
+        wanted = [str(link_id) for link_id in link_ids]
+        if not wanted:
+            return []
+        placeholders = ", ".join("?" for _ in wanted)
+        # ponytail: unindexed, like ``disable_reminders_by_link`` -- one
+        # row per reminder the user has. Index (link_type, link_id) with a
+        # plan pin if reminder counts ever make this show.
+        with self.connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM reminder_tasks WHERE link_type = ?"
+                f" AND link_id IN ({placeholders}) ORDER BY created_at",
+                [link_type, *wanted],
             )
             return self._rows_to_dicts(
                 cursor.fetchall(), json_fields=self._REMINDER_JSON_FIELDS

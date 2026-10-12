@@ -31,6 +31,8 @@ class SettingsCategoryId(StrEnum):
     SKILLS = "skills"
     SCHEDULES = "schedules"
     WATCHLISTS = "watchlists"
+    DREAMS = "dreams"
+    GUARDIAN = "guardian"
     WORKFLOWS = "workflows"
     MCP_DEFAULTS = "mcp-defaults"
     ACP_DEFAULTS = "acp-defaults"

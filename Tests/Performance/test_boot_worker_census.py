@@ -91,6 +91,23 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         ("restore_ingest_jobs", "ingest_restore"),
         ("resume_startup", "research_source_association_startup"),
         ("run", "scheduling"),
+        # Dreams (review of #2921, item 3c): brings Dream-owned watches in
+        # line with the persisted master switch, post-`_ui_ready`. Started
+        # on every boot -- "off" (including a deleted `[dreams]` section)
+        # is a state it must reconcile. A coroutine worker with one thread
+        # hop, and what that hop costs (round 3, T20, stated in full):
+        #   * Dreams off, no dreams.sqlite: one stat.
+        #   * Dreams off, dreams.sqlite present: an ordinary open -- schema
+        #     init in a write transaction, a migration for a file from an
+        #     older build -- then two small reads, then the connections
+        #     are closed. (No read-only look: the `db.base` owner policy
+        #     in DB/private_sqlite.py admits no read-only target.)
+        #   * Dreams on: the app's own DreamsDB handle (opened, or created
+        #     on first use, exactly as the boot catch-up does) and the
+        #     same two reads.
+        # The Dreams service chain is imported only when there is work.
+        # The scheduler's first tick waits for this hop (T14a), bounded.
+        ("reconcile_at_boot", "dreams"),
         # -- ChatScreen / Console (initial-screen mount) --
         ("_refresh_console_persisted_rows_cache", "console-persisted-browser-cache"),
         # TASK-32826: batch-read durable manual reminders off-loop so restored

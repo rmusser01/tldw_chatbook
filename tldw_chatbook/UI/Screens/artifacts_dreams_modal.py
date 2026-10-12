@@ -119,6 +119,10 @@ _UNCONFIRMED_INGEST_NOTICE = (
 _NO_HTTP_URL_NOTICE = (
     "This story has no web URL to ingest."
 )
+_INGEST_PRIVATE_URL_NOTICE = (
+    "This story's address is on a private network or could not be resolved; "
+    "nothing was ingested."
+)
 _NO_HTTP_URL_TRACK_NOTICE = (
     "This story has no web URL to track."
 )
@@ -129,15 +133,23 @@ _NOT_TRACKED_NOTICE = (
     "This story is not being tracked."
 )
 _UNTRACKED_NOTICE = "Stopped tracking this page."
+_UNWATCHED_NOTICE = "Stopped watching this question."
 _TRACK_CAP_NOTICE = (
     "Tracking budget is full: retire a tracked page before adding more."
 )
+# Watchlists cannot switch an existing source back on, so this must not
+# tell the user to "enable it" there (review of #2921, round 4, A2).
 _TRACK_SOURCE_DISABLED_NOTICE = (
-    "This page's source already exists but is disabled; enable it in "
-    "Watchlists first, then track again."
+    "This page already has a source in Watchlists that is switched off, "
+    "and Dreams did not switch it off, so it is left alone. To track the "
+    "page, delete that source in Watchlists and track again."
 )
 _TRACK_INVALID_URL_NOTICE = (
     "This page's address is not a valid http(s) URL; nothing was tracked."
+)
+_TRACK_PRIVATE_URL_NOTICE = (
+    "This page's address is on a private network or could not be resolved; "
+    "nothing was tracked."
 )
 _NO_QUERY_NOTICE = (
     "This story recorded no query to watch."
@@ -537,7 +549,7 @@ class DreamsStoryModal(ModalScreen[None]):
             return
         self._story["kept"] = kept
         self.notify(
-            "Kept -- this story survives future cycles."
+            "Kept -- listed first among its day's stories."
             if kept
             else "Unkept.",
             markup=False,
@@ -645,6 +657,7 @@ class DreamsStoryModal(ModalScreen[None]):
         # Lazy Dreams import (same pattern as ``_preview_queries``).
         from ...Dreams.ingest_action import (
             UNKNOWN_OUTCOME_IDENTIFIER,
+            StoryUrlNotPublic,
             ingest_story_url,
         )
 
@@ -658,6 +671,11 @@ class DreamsStoryModal(ModalScreen[None]):
                     f"via Dreams {datetime.now(UTC).date().isoformat()}"
                 ),
             )
+        except StoryUrlNotPublic:
+            # Refused at the door, before anything was submitted (T24).
+            self.notify(_INGEST_PRIVATE_URL_NOTICE, severity="warning",
+                        markup=False)
+            return
         except Exception as exc:  # noqa: BLE001 - a failed capture is a notice
             logger.warning(f"Dreams ingest failed: {type(exc).__name__}")
             self.notify(
@@ -716,6 +734,7 @@ class DreamsStoryModal(ModalScreen[None]):
         from ...Dreams.track_service import (
             TrackCapReached,
             TrackInvalidURL,
+            TrackPrivateURL,
             TrackSourceDisabled,
             track_page,
         )
@@ -744,6 +763,13 @@ class DreamsStoryModal(ModalScreen[None]):
             )
         except TrackCapReached:
             self.notify(_TRACK_CAP_NOTICE, severity="warning", markup=False)
+            return
+        except TrackPrivateURL:
+            # Qodo #1 (PR #2921): a story URL nobody typed must be a
+            # public destination before Dreams stores it as a watch. The
+            # subclass is caught first so its notice says why.
+            self.notify(_TRACK_PRIVATE_URL_NOTICE, severity="warning",
+                        markup=False)
             return
         except TrackInvalidURL:
             # Qodo #8 (PR #2890): the service refused the URL before any
@@ -779,11 +805,13 @@ class DreamsStoryModal(ModalScreen[None]):
     async def action_untrack(self) -> None:
         """Retire the story's tracked wrapper (Phase 2 Task 6), if any.
 
-        ``find_tracked_by_story`` resolves the ACTIVE wrapper this story's
-        track created; found, ``untrack`` retires it
+        ``find_tracked_by_story`` resolves the ACTIVE page wrapper this
+        story's track created (or, when the story has no page watch, its
+        question watch); found, ``untrack`` retires it
         (``retired_reason="manual"``) and disables a dream-created
-        subscription -- a notice confirms, the badge clears, and
-        ``on_changed`` refreshes the screen's rows. No active wrapper
+        subscription -- a notice names what stopped, the badge clears
+        once no active watch is left, and ``on_changed`` refreshes the
+        screen's rows. No active wrapper
         (never tracked, the tracked row belongs to another story, or a
         sweep already auto-retired it) is a gentle notice with no write
         and no refresh. Untrack records NO feedback: removing a watch is
@@ -809,7 +837,17 @@ class DreamsStoryModal(ModalScreen[None]):
         try:
             # Single-row indexed read (``idx_dream_tracked_origin_story``):
             # direct call, the modal's single-row SQLite discipline.
-            tracked = db.find_tracked_by_story(story_id)
+            # Untrack is Track's inverse, so the PAGE wrapper is asked
+            # for by mechanism (Qodo #10, PR #2921): a story that is also
+            # watched by question owns a second, possibly newer, wrapper,
+            # and "the newest" retired that one while the page's
+            # subscription kept fetching. Only a story with no page
+            # watch falls back to whatever watch it does have, so a
+            # question watch is never left without a way to stop it.
+            tracked = (
+                db.find_tracked_by_story(story_id, mechanism="page")
+                or db.find_tracked_by_story(story_id)
+            )
             if tracked is None:
                 # Gentle refusal: nothing to retire, so nothing is written
                 # and the screen does not refresh.
@@ -823,6 +861,9 @@ class DreamsStoryModal(ModalScreen[None]):
                 # track action promotes through; None degrades silently).
                 scheduling_db_getter=self._scheduling_db_getter,
             )
+            # The badge means "an active watch names this story": another
+            # wrapper (the question watch) may still be running.
+            still_tracked = db.find_tracked_by_story(story_id) is not None
         except Exception as exc:  # noqa: BLE001 - a failed untrack is a notice
             logger.warning(f"Dreams untrack failed: {type(exc).__name__}")
             self.notify(
@@ -833,8 +874,12 @@ class DreamsStoryModal(ModalScreen[None]):
             return
         finally:
             self._track_in_flight = False
-        self._story["tracked"] = False
-        self.notify(_UNTRACKED_NOTICE, markup=False)
+        self._story["tracked"] = still_tracked
+        self.notify(
+            _UNTRACKED_NOTICE if tracked.get("mechanism") == "page"
+            else _UNWATCHED_NOTICE,
+            markup=False,
+        )
         self._changed()
         if self.is_attached:
             self.refresh(recompose=True)
@@ -917,6 +962,23 @@ class DreamsStoryModal(ModalScreen[None]):
         self.notify(f"Watching this question: {template}", markup=False)
         self._changed()
 
+    def _feedback_notice(self, steering: str) -> str:
+        """The notice for a more/less reaction: ``steering`` when it can steer.
+
+        Feedback moves the topics a story matched and the query angle of
+        the goal whose search found it (``cycle_service._net_from_rows`` /
+        ``_write_goal_angles``). A story with neither -- a watchlist item
+        that matched no topic, say -- has nothing for the reaction to act
+        on, and promising that future cycles will lean one way was false
+        (review of #2921, round 3, N6). The reaction is still recorded.
+        """
+        if self._story.get("matched_topics") or self._story.get("goal"):
+            return steering
+        return (
+            "Noted -- but this story matched none of your topics or goals, "
+            "so there is nothing for it to steer."
+        )
+
     def action_more(self) -> None:
         """Record ``more`` feedback, notify, dismiss."""
         if self._synthetic:
@@ -925,7 +987,9 @@ class DreamsStoryModal(ModalScreen[None]):
         if not self._record_feedback("more"):
             return
         self.notify(
-            "Noted -- future cycles will lean toward stories like this.",
+            self._feedback_notice(
+                "Noted -- future cycles will lean toward stories like this."
+            ),
             markup=False,
         )
         self._changed()
@@ -939,7 +1003,9 @@ class DreamsStoryModal(ModalScreen[None]):
         if not self._record_feedback("less"):
             return
         self.notify(
-            "Noted -- future cycles will lean away from stories like this.",
+            self._feedback_notice(
+                "Noted -- future cycles will lean away from stories like this."
+            ),
             markup=False,
         )
         self._changed()

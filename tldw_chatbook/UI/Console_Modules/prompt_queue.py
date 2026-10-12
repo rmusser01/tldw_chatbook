@@ -590,6 +590,7 @@ class ConsolePromptQueueUIController:
         load_recovered_turn: Callable[[str], None],
         edit_refusal: Callable[[str], str],
         sync_ui: Callable[[], Awaitable[None]],
+        guardian_checker_getter: Callable[[], Any] | None = None,
         turn_recovery_reason: Callable[[str], str] = lambda _session_id: "",
         sending_accessor: Callable[[str], bool] | None = None,
         precapture: (
@@ -626,6 +627,10 @@ class ConsolePromptQueueUIController:
         self._edit_refusal = edit_refusal
         self._sync_ui = sync_ui
         self._sending_accessor = sending_accessor
+        # Guardian (ADR-204): a getter returning the GuardianChecker, or
+        # None while [guardian] enabled is off -- a None checker is a
+        # zero-cost passthrough (contract 1).
+        self._guardian_checker_getter = guardian_checker_getter
 
     async def handle_primary_intent(
         self,
@@ -1085,6 +1090,63 @@ class ConsolePromptQueueUIController:
         the gate, which reads the VISIBLE chat, is read first: in the stretch
         where the hook gate checked that this send's chat is the visible one.
         """
+
+        # Guardian pre-send check (ADR-204 contract 4). This hook runs at
+        # the very head of dispatch -- BEFORE the blocked-reason refusal
+        # gate below, and therefore BEFORE ADR-148 ``UserPromptSubmit``
+        # hooks fire: the verified hook-emission call site lives far
+        # downstream in ``Chat.console_chat_controller._submit_draft_body``
+        # (the "UserPromptSubmit" ``fire_async``), which dispatch reaches
+        # only via ``_stage_normal_chain`` -> ``_launch_chain`` -> the
+        # controller submit chain. Consequences, pinned by
+        # ``Tests/Guardian/test_dispatch_seam.py``: a Guardian ``block``
+        # short-circuits the send before any user hook runs; a checker
+        # ``allow`` still counts the typed intent ahead of the hooks; a
+        # later hook block never un-counts the hit. The hook-emission
+        # point itself is untouched.
+        guardian_checker = (
+            self._guardian_checker_getter()
+            if self._guardian_checker_getter is not None
+            else None
+        )
+        if guardian_checker is not None:
+            try:
+                guardian_result = await guardian_checker.check(draft)
+            except Exception:
+                # Fail-open belt-and-suspenders (ADR-204 contract 5): the
+                # checker's own fail-open owns the loud part; this guard
+                # only guarantees a broken checker can never eat a send.
+                logger.opt(exception=True).warning(
+                    "Guardian checker raised at the dispatch seam; send proceeds"
+                )
+                guardian_result = None
+            guardian_action = (
+                guardian_result.get("action") if guardian_result else None
+            )
+            if guardian_action == "block":
+                # Route through the same refusal plumbing as the blocked
+                # reason below: system row, warning notification, refocus,
+                # REFUSED result with the rule's notice as the detail.
+                guardian_notice = guardian_result.get("notice")
+                guardian_detail = (
+                    guardian_notice["text"]
+                    if guardian_notice
+                    else "Guardian declined this message."
+                )
+                await self._append_system_message(guardian_detail)
+                self._notify(guardian_detail, "warning")
+                self._focus_composer()
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED, detail=guardian_detail
+                )
+            if guardian_action == "redact":
+                # Rewrite the draft in memory; the send continues with the
+                # redacted text (notify notices were already surfaced by
+                # the checker itself).
+                redacted = guardian_result.get("redacted_draft")
+                if isinstance(redacted, str) and redacted:
+                    draft = redacted
+
         blocked_reason = self._blocked_reason_accessor().strip()
         if blocked_reason:
             setup_reason = self._setup_blocked_reason_accessor().strip()

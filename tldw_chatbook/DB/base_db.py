@@ -22,7 +22,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Union
+from typing import Any, Union
 from weakref import WeakValueDictionary
 
 from loguru import logger
@@ -1003,12 +1003,20 @@ class BaseDB(ABC):
         """
         pass
 
-    def _get_connection(self) -> sqlite3.Connection:
+    def _get_connection(self, **connect_kwargs: Any) -> sqlite3.Connection:
         """
         Get a database connection with row factory.
         Can be overridden by subclasses for custom connection handling.
+
+        Args:
+            **connect_kwargs: Passed through to ``sqlite3.connect`` by the
+                private connector (a subclass that holds one connection
+                per thread and must be able to close them all asks for
+                ``check_same_thread=False``). The connection is still
+                opened HERE, under this module's ``db.base`` owner.
         """
-        conn = connect_private_sqlite("db.base", self.db_path_str)
+        conn = connect_private_sqlite(
+            "db.base", self.db_path_str, **connect_kwargs)
         conn.row_factory = sqlite3.Row
         return conn
 

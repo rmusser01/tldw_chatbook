@@ -36,8 +36,12 @@ from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProj
 
 # dreams phase 1: typing only -- see the matching guard in `queue.py`
 # (module-level import would put the Dreams chain on every boot census).
+# guardian task 2: same guard for the Guardian projection.
 if TYPE_CHECKING:
     from tldw_chatbook.Scheduling.services.dreams_projection import DreamsProjection
+    from tldw_chatbook.Scheduling.services.guardian_projection import (
+        GuardianProjection,
+    )
 
 Handler = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
 
@@ -94,6 +98,11 @@ class SchedulerLoop:
     #: never wedge the loop (AC#6).
     _PREFLIGHT_TIMEOUT_SECONDS = 10.0
 
+    #: Hard bound on each startup gate the first dispatch waits for (see
+    #: ``first_dispatch_gates``): startup work that hangs delays the first
+    #: tick by this much and no more.
+    _FIRST_DISPATCH_GATE_TIMEOUT_SECONDS = 10.0
+
     def __init__(
         self,
         db: Any,
@@ -103,6 +112,7 @@ class SchedulerLoop:
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
         dreams_projection: "DreamsProjection | None" = None,  # dreams phase 1
+        guardian_projection: "GuardianProjection | None" = None,  # guardian task 2
         queue_reload_interval_ticks: int = 60,
         expected_unhandled_types: frozenset[str] = frozenset(),
         missed_fire_grace_seconds: float = MISSED_FIRE_GRACE_SECONDS,
@@ -191,11 +201,21 @@ class SchedulerLoop:
         self._maintenance_changed = asyncio.Event()
         self._maintenance_open = asyncio.Event()
         self._maintenance_open.set()
+        #: Zero-arg callables returning awaitables that must finish before
+        #: the FIRST tick dispatches anything. For startup work that
+        #: decides what may be dispatched at all and is started beside this
+        #: loop, not before it -- Dreams' boot reconcile stops the watches
+        #: of a Dreams the config says is off, and an overdue one must not
+        #: be dispatched before that has landed (review of #2921, round 3,
+        #: T14a). Registered before ``run`` starts; each is waited for
+        #: once, bounded by ``_FIRST_DISPATCH_GATE_TIMEOUT_SECONDS``.
+        self.first_dispatch_gates: list[Callable[[], Any]] = []
         self.queue = PriorityQueue(
             db,
             watchlist_projection=watchlist_projection,
             briefing_projection=briefing_projection,
             dreams_projection=dreams_projection,  # dreams phase 1
+            guardian_projection=guardian_projection,  # guardian task 2
         )
 
     @contextmanager
@@ -238,6 +258,23 @@ class SchedulerLoop:
         """Reopen after the capture coordinator releases storage maintenance."""
         self._maintenance_closed = False
         self._maintenance_open.set()
+
+    async def wait_for_maintenance_admission(self) -> bool:
+        """Wait until storage maintenance lets new work in.
+
+        The public seam for work that writes the stores this loop works
+        on without being dispatched by it -- Dreams' boot reconcile
+        (review of #2921, round 4). It used to wait on the private
+        ``_maintenance_open`` event, which :meth:`stop` also sets to wake
+        this loop's own waiters while a capture may still be open.
+
+        Returns:
+            True when admission is open. False when the wait ended only
+            because the loop was stopped with admission still closed: the
+            caller must hold, not write under the capture.
+        """
+        await self._maintenance_open.wait()
+        return not self._maintenance_closed
 
     async def _offload(self, callback, *args, **kwargs):
         """Retain ownership of worker work even when its awaiter is cancelled."""
@@ -448,6 +485,7 @@ class SchedulerLoop:
                 # boundary needed (unlike the watchlist sweep, which runs
                 # alongside live work). Never lets maintenance break startup.
                 await self._reconcile_and_prune_run_ledger()
+            await self._await_first_dispatch_gates()
             while self.running:
                 await self._maintenance_open.wait()
                 if not self.running:
@@ -504,6 +542,39 @@ class SchedulerLoop:
                 self._owner_loop = None
                 self._reload_event = None
                 self._reload_condition.notify_all()
+
+    async def _await_first_dispatch_gates(self) -> None:
+        """Wait, bounded, for the startup gates before the first tick.
+
+        Outside the maintenance operation on purpose: a gate that is slow
+        to open must not hold a backup capture's drain open with it. A
+        gate that times out or raises is logged and passed -- startup work
+        that fails or hangs must never stop the scheduler.
+
+        The bound leaves a window, and it is a real one (review of #2921,
+        round 4): once a gate has timed out, the first tick dispatches
+        whatever is due although the startup work that would have
+        withdrawn it has not finished. For Dreams' gate that means one
+        overdue Dreams source or event reminder can be dispatched once
+        before the suspend of a hand-edited "off" lands, when that
+        suspend takes longer than
+        ``_FIRST_DISPATCH_GATE_TIMEOUT_SECONDS``. Accepted: the other
+        choice is a scheduler that a hung startup task can stop. The
+        user guide says so where the hand-edited "off" is described.
+        """
+        gates, self.first_dispatch_gates = self.first_dispatch_gates, []
+        for gate in gates:
+            try:
+                await asyncio.wait_for(
+                    gate(), timeout=self._FIRST_DISPATCH_GATE_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Scheduler: a startup gate did not open within {}s; "
+                    "dispatching anyway",
+                    self._FIRST_DISPATCH_GATE_TIMEOUT_SECONDS)
+            except Exception as exc:  # noqa: BLE001 - never stops the loop
+                logger.warning(
+                    "Scheduler: a startup gate failed: {}", type(exc).__name__)
 
     @_admitted_dispatch
     async def tick(self) -> None:

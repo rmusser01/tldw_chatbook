@@ -12,7 +12,7 @@ import math
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from tldw_chatbook.Dreams.settings import dreams_setting
+from tldw_chatbook.Dreams.settings import dreams_region
 
 if TYPE_CHECKING:
     from tldw_chatbook.DB.Dreams_DB import DreamsDB
@@ -138,7 +138,7 @@ def snapshot(
         ``{"topics": [decayed topic rows, heaviest first, at most
         SNAPSHOT_TOPIC_CAP], "goals": [goal rows, untouched, heaviest
         first], "region": str}`` where ``region`` comes from
-        ``dreams_setting("region")`` (empty when unset).
+        ``dreams_region()`` (empty when unset or not usable as one).
     """
     profile = db.list_profile()
     rows = [
@@ -156,7 +156,7 @@ def snapshot(
                 WEIGHT_FLOOR, float(topic["weight"]) + FEEDBACK_STEP * net))
     topics.sort(key=lambda topic: float(topic["weight"]), reverse=True)
     return {"topics": topics[:SNAPSHOT_TOPIC_CAP], "goals": goals,
-            "region": str(dreams_setting("region", ""))}
+            "region": dreams_region()}
 
 
 def _epoch(value: Any) -> float:

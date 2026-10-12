@@ -18,8 +18,10 @@ from ..DB.Subscriptions_DB import SubscriptionsDB
 from ..Utils.egress import (
     MAX_FETCH_BYTES_PAGE,
     MAX_FETCH_BYTES_SITEMAP,
+    URL_PROVENANCE_OPTION,
+    UrlProvenance,
     guarded_fetch_httpx_async,
-    origin_set,
+    source_trusted_origins,
 )
 from .db_offload import run_db_off_loop
 from .item_persist import (
@@ -862,10 +864,39 @@ class LocalWatchlistsService:
         if "source_type" in payload:
             changes["type"] = self._local_type_for_source_type(payload["source_type"])
         changes.update(self._subscription_config_fields(payload))
+        if "source" in changes and "processing_options" not in changes:
+            # A URL the user changes is the USER's entry: the "nobody typed
+            # this URL" mark Dreams puts on a source it created no longer
+            # describes it (review of #2921, round 3, T17). The record is
+            # REPLACED by one that says so, not removed (round 4): "no
+            # record" is also what a source from before the mark existed
+            # looks like, and Dreams stamps those -- it stamped the
+            # user's edited source back at the next switch-off. A write
+            # that leaves the URL as it is -- every write Dreams makes --
+            # keeps the mark, and so does one that sets the options
+            # itself.
+            current = await run_db_off_loop(db, db.get_subscription, int(source_id))
+            options = self._parsed_options(current)
+            if (current is not None and URL_PROVENANCE_OPTION in options
+                    and str(changes["source"]) != str(current.get("source"))):
+                options[URL_PROVENANCE_OPTION] = (
+                    UrlProvenance.USER_ENTERED.value)
+                changes["processing_options"] = options
         if changes:
             await run_db_off_loop(db, db.update_subscription, int(source_id), **changes)
         row = await run_db_off_loop(db, db.get_subscription, int(source_id))
         return normalize_local_subscription_row(row)
+
+    @staticmethod
+    def _parsed_options(row: Mapping[str, Any] | None) -> dict[str, Any]:
+        """A subscription row's ``processing_options`` as a dict (or empty)."""
+        options = (row or {}).get("processing_options")
+        if isinstance(options, str):
+            try:
+                options = json.loads(options)
+            except ValueError:
+                options = None
+        return dict(options) if isinstance(options, Mapping) else {}
 
     #: Statuses a watchlist item may be moved to from the UI. Mirrors
     #: `ItemsPane._STATUS_OPTIONS` minus its "all" filter entry.
@@ -2513,7 +2544,8 @@ class LocalWatchlistsService:
                 source,
                 client=client,
                 max_bytes=MAX_FETCH_BYTES_SITEMAP,
-                trusted_origins=origin_set(source),
+                trusted_origins=source_trusted_origins(
+                    source, subscription.get("processing_options")),
                 headers={"User-Agent": _PRODUCT_USER_AGENT},
             )
             response.raise_for_status()
@@ -2586,7 +2618,8 @@ class LocalWatchlistsService:
                 source,
                 client=client,
                 max_bytes=MAX_FETCH_BYTES_PAGE,
-                trusted_origins=origin_set(source),
+                trusted_origins=source_trusted_origins(
+                    source, subscription.get("processing_options")),
                 headers=headers,
                 params=request_params,
             )
