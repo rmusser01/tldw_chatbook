@@ -3457,13 +3457,18 @@ class ServiceWiringMixin:
 
         if not guardian_setting("enabled"):
             return None
+        from .Backup_Recovery.activation import execution_allowed
+
+        selected_path = guardian_db_path()
+        if not execution_allowed(("db.guardian",), selected_path):
+            return None
         with self._guardian_db_lock:
             if getattr(self, "guardian_db", None) is None:
                 try:
                     from .DB.Guardian_DB import GuardianDB
 
                     self.guardian_db = GuardianDB(
-                        guardian_db_path(), CLI_APP_CLIENT_ID
+                        selected_path, CLI_APP_CLIENT_ID
                     )
                 except Exception:
                     logger.opt(exception=True).warning(

@@ -68,6 +68,7 @@ def run_finite_local_worker(function, /, *args, **kwargs):
             "db.media.primary": "close_connection",
             "db.prompts.primary": "close_connection",
             "db.library_collections": "close",
+            "db.guardian": "close",
             "db.evals": "close",
             "notifications.client": "close",
         }
@@ -125,6 +126,7 @@ def _retire_current_thread_caches(pause) -> None:
         "db.library_ingest_jobs": "close",
         "db.workspaces": "close",
         "db.agent_runs": "close",
+        "db.guardian": "close",
         "db.subscriptions": "close",
         "db.evals": "close",
         "db.rag_indexing": "close",
@@ -313,6 +315,7 @@ def _repository_types():
         ("tldw_chatbook.DB.Evals_DB", "EvalsDB", "db.evals"),
         ("tldw_chatbook.DB.RAG_Indexing_DB", "RAGIndexingDB", "db.rag_indexing"),
         ("tldw_chatbook.DB.Subscriptions_DB", "SubscriptionsDB", "db.subscriptions"),
+        ("tldw_chatbook.DB.Guardian_DB", "GuardianDB", "db.guardian"),
         (
             "tldw_chatbook.Notes.file_notes_replica",
             "FileNotesReplica",
@@ -524,6 +527,7 @@ def _register_core_connection(repository, connection):
                 "db.library_collections",
                 "db.workspaces",
                 "db.agent_runs",
+                "db.guardian",
                 "notifications.client",
                 "db.scheduled_tasks",
                 "runtime.sync_state",

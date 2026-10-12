@@ -133,6 +133,7 @@ _GROUP_OWNERS = {
         "tamagotchi.config",
     ),
     "conversations": (
+        "db.guardian",
         "db.chachanotes.primary",
         "study.local",
         "quiz.local",

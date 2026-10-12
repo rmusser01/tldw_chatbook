@@ -52,7 +52,13 @@ _PHYSICAL_TREND_WORK: set[asyncio.Task] = set()
 async def _store_work(db: Any, operation: Callable, *args: Any) -> Any:
     from tldw_chatbook.DB.base_db import run_owned_db_call
 
-    task = asyncio.create_task(run_owned_db_call(db, operation, *args))
+    def admitted_operation():
+        from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+        with execution_scope(("db.guardian",), getattr(db, "db_path", None)) as allowed:
+            return operation(*args) if allowed else None
+
+    task = asyncio.create_task(run_owned_db_call(db, admitted_operation))
     _PHYSICAL_TREND_WORK.add(task)
     def finished(completed: asyncio.Task) -> None:
         _PHYSICAL_TREND_WORK.discard(completed)
@@ -184,6 +190,8 @@ class GuardianTrendHandler:
                 return notices
 
             notices = await _store_work(db, collect)
+            if notices is None:
+                return
             dispatch = getattr(deps.dispatch_service, "dispatch", None)
             for notice in notices:
                 if not admitted():
@@ -191,8 +199,13 @@ class GuardianTrendHandler:
                 if not callable(dispatch):
                     break
                 try:
-                    dispatch(category="guardian", title=f"Guardian trend: {notice.label}",
-                        message=notice.message, severity="warning")
+                    from tldw_chatbook.Backup_Recovery.activation import execution_scope
+
+                    with execution_scope(("db.guardian",), getattr(db, "db_path", None)) as allowed:
+                        if not allowed:
+                            return
+                        dispatch(category="guardian", title=f"Guardian trend: {notice.label}",
+                            message=notice.message, severity="warning")
                 except Exception as exc:  # noqa: BLE001 - delivery is best effort
                     logger.debug("Guardian trend delivery failed ({})", type(exc).__name__)
             # Advance only after analysis and delivery, and revalidate inside

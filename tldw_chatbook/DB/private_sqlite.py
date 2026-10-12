@@ -213,6 +213,12 @@ _SQLITE_OWNER_POLICIES = {
         "ensure_site_configs_schema declares site_configs on a caller-supplied "
         "path without opening the whole SubscriptionsDB.",
     ),
+    "recovery.operations.guardian": SQLiteOwnerPolicy(
+        "tldw_chatbook/DB/recovery_dreams_guardian", _PRIVATE_AND_READ_ONLY,
+        "Installed local Guardian snapshot; restored behavior remains inactive.",
+        centralized_backup_allowed=True, preserve_read_only_source_mode=True,
+        recovery_capture_allowed=True,
+    ),
     "recovery.operations.workspaces": SQLiteOwnerPolicy(
         "tldw_chatbook/DB/recovery_operations", _PRIVATE_AND_READ_ONLY,
         "Installed operational history snapshot; imported claims remain inactive.",

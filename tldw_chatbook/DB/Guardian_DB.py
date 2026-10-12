@@ -12,6 +12,7 @@ additive schema-versioned DDL, thread-local held connections) because the
 Guardian, like Dreams, is reached both from the UI thread and from
 ``asyncio.to_thread`` hops in the check pipeline.
 """
+# ruff: noqa: N999 - Existing DB owner naming convention and published module API.
 from __future__ import annotations
 
 import json
@@ -19,11 +20,20 @@ import sqlite3
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 
 from loguru import logger
+
+from tldw_chatbook.Backup_Recovery.participants import (
+    _core_access,
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
+)
 
 from ..Utils.timestamps import utc_now_iso
 from .base_db import BaseDB
@@ -214,13 +224,21 @@ class GuardianDB(BaseDB):
     # Connection handling (Dreams_DB idiom)
     # ------------------------------------------------------------------
 
+    @_core_getter
     def _get_connection(self) -> sqlite3.Connection:
+        _core_access(self)
         conn = super()._get_connection()
-        conn.execute("PRAGMA foreign_keys = ON")
-        if not self.is_memory_db:
+        _register_core_connection(self, conn)
+        try:
+            _core_access(self)
+            conn.execute("PRAGMA foreign_keys = ON")
             self._enable_wal(conn)
-        conn.execute("PRAGMA synchronous = NORMAL")
-        conn.isolation_level = None
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.isolation_level = None
+            _core_access(self)
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
     def _enable_wal(self, conn: sqlite3.Connection) -> None:
@@ -234,8 +252,10 @@ class GuardianDB(BaseDB):
                     raise
                 time.sleep(0.01)
 
+    @_core_getter
     def _held_connection(self) -> sqlite3.Connection:
-        conn = getattr(self._thread_local, "conn", None)
+        _core_access(self)
+        conn = _core_cached_connection(self, getattr(self._thread_local, "conn", None))
         if conn is not None:
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
@@ -246,10 +266,13 @@ class GuardianDB(BaseDB):
                 try:
                     conn.execute("SELECT 1")
                 except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                    # A failed probe alone cannot retire a live borrower.
                     try:
+                        sqlite3.Connection.in_transaction.__get__(conn)
+                    except sqlite3.ProgrammingError:
                         conn.close()
-                    except Exception:  # noqa: BLE001 - already unusable
-                        pass
+                    else:
+                        raise
                     conn = None
         if conn is None:
             conn = self._get_connection()
@@ -257,10 +280,12 @@ class GuardianDB(BaseDB):
         self._thread_local.conn_last_used = time.monotonic()
         return conn
 
+    @_core_transaction
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         yield self._held_connection()
 
+    @_core_transaction
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         conn = self._held_connection()
@@ -274,13 +299,18 @@ class GuardianDB(BaseDB):
             conn.commit()
 
     def close(self) -> None:
+        """Retire this thread's cache only after its native owner permits close."""
         conn = getattr(self._thread_local, "conn", None)
-        self._thread_local.conn = None
         if conn is not None:
-            try:
-                conn.close()
-            except Exception:  # noqa: BLE001 - best-effort teardown
-                pass
+            with _core_closing(self, conn) as allowed:
+                if not allowed:
+                    return
+                try:
+                    conn.close()
+                except Exception as exc:  # noqa: BLE001 - retain uncertain retirement
+                    logger.debug("Guardian native close failed ({})", type(exc).__name__)
+                    return
+                self._thread_local.conn = None
 
     # ------------------------------------------------------------------
     # Schema + seeding
@@ -290,14 +320,11 @@ class GuardianDB(BaseDB):
     @lru_cache(maxsize=2)
     def _expected_schema(cls, version: int) -> tuple[str, ...]:
         """Native catalog for the retained v1 DDL and additive v2 migration."""
-        with closing(sqlite3.connect(":memory:")) as connection:
-            connection.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY NOT NULL)")
-            for statement in cls._SCHEMA_DDL:
-                connection.execute(statement)
-            if version == 2:
-                for statement in cls._migration_statements():
-                    connection.execute(statement)
-            return cls._schema_catalog(connection)
+        from tldw_chatbook.DB.guardian_schema import GUARDIAN_SCHEMAS
+
+        catalog = next(schema for schema_version, schema in GUARDIAN_SCHEMAS
+                       if schema_version == version)
+        return tuple(" ".join(statement.split()) for statement in catalog)
 
     @staticmethod
     def _schema_catalog(connection: sqlite3.Connection) -> tuple[str, ...]:

@@ -366,3 +366,8 @@ execution API is initialized. It is excluded from centralized backup.
 
 | C93 | tldw_chatbook/Plugins/registry | PluginRegistry.__init__ | plugins.registry | private_file, memory, read_only_uri | owner-gated mutation and validated secondary browsing | Migrated via `connect_private_sqlite`. Exact v1 schema and integrity validation. Disk mutation requires the acquired runtime owner. No centralized backup authority. |
 | C94 | tldw_chatbook/Plugins/registry | PluginRegistry._reference_schema | plugins.registry | memory | installed schema reference | Migrated via `connect_private_sqlite`. Only packaged SQL enters; no execution or backup authority. |
+
+## Guardian installed recovery (TASK-34792, ADR-204/126)
+
+| C95 | tldw_chatbook/DB/recovery_dreams_guardian | _GuardianAdapter.validate | recovery.operations.guardian | private_file, read_only_uri | exact installed Guardian v1/v2 schema/history validation | Migrated via `connect_private_sqlite`. Immutable measured catalogs; no runtime constructor or authority inference from current rules. |
+| B39 | tldw_chatbook/DB/recovery_dreams_guardian | _GuardianAdapter.capture | recovery.operations.guardian | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Owner-checked private snapshot; restored rules and history remain inactive until explicit approval. |
