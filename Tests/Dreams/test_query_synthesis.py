@@ -1117,3 +1117,28 @@ async def test_a_colon_line_is_a_label_over_the_lines_below_it_only():
         "rust tui news", "C++ scope resolution operator ::",
         "beginner cello lessons", "what is new in rust:"]
 
+
+# --- G-N2: spaces are collapsed BEFORE the marks are read ------------------------
+#
+# Collapsing after the marks were read turned an over-padded mark (not a
+# mark) into a valid one inside the query: "cheap flights [g    1]" was
+# searched as "cheap flights [g 1]".
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        ("cheap flights [g    1]", "cheap flights"),
+        ("[g1    ] cheap flights", "cheap flights"),
+        ("[    g1] cheap flights", "cheap flights"),
+        ("cheap   flights [g1]", "cheap flights"),
+        ("[[[[g1]]]] cheap flights", "cheap flights"),
+        ("cheap flights [[[[[g1]]]]]", "cheap flights"),
+        ("\\[\\[g1\\]\\] cheap flights", "cheap flights"),
+    ],
+)
+def test_an_over_padded_or_over_bracketed_mark_is_still_a_mark(line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None), (_G2, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}

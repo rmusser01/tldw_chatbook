@@ -150,6 +150,9 @@ _MARK_WRAP_PAIRS = (
     ("(", ")"),
 )
 _CLOSER_OF = dict(_MARK_WRAP_PAIRS)
+#: ...and what a mark is GROWN over: the same, plus further brackets --
+#: ``[[[[g1]]]]`` is one mark, not "[ ]" around one (round 6, G-N2).
+_MARK_GROWTH_PAIRS = _MARK_WRAP_PAIRS + (("\\[", "\\]"), ("[", "]"))
 _OPENING_WRAP_CHARS = "*_\"'`\u201c\u2018("
 _WRAP_TOKEN_RE = re.compile(
     r"\*\*|__|[*_\"'`\u201c\u201d\u2018\u2019()]")
@@ -324,7 +327,7 @@ def _grown_over_wrapping(text: str, start: int, end: int) -> tuple[int, int]:
     grown = True
     while grown:
         grown = False
-        for opening, closing in _MARK_WRAP_PAIRS:
+        for opening, closing in _MARK_GROWTH_PAIRS:
             if (text.endswith(opening, 0, start)
                     and text.startswith(closing, end)):
                 start, end = start - len(opening), end + len(closing)
@@ -470,7 +473,10 @@ def _query_row(
     """
     if len(line) > _MAX_QUERY_LINE_LENGTH:
         return None
-    text = _peel(line)
+    # Spaces are collapsed BEFORE the marks are read (round 6, G-N2):
+    # collapsing after turned "[g    1]" -- read as no mark -- into a valid
+    # "[g 1]" inside the query.
+    text = " ".join(_peel(line).split())
     if _HEADING_RE.match(text):
         return None
     number = _NUMBER_RE.match(text)
