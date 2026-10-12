@@ -18692,14 +18692,10 @@ class ChatScreen(BaseAppScreen):
             return
 
         async def _poll_transcript() -> None:
-            # TASK-34789: work that ends while this paint is under way wrote
-            # its last rows after the paint read them. Nothing repaints a
-            # finished turn by itself: a send's acknowledgement resyncs only
-            # while its "Sending…" row is pending, and the runtime's receipt
-            # render (`ConsoleRuntime._request_visible_receipt_render`), like
-            # every starter, only asks for this poll -- a no-op while this
-            # timer exists. So only a paint begun with no live work, and
-            # asked for by nothing while it ran, may be the last one.
+            # TASK-34789: work ending mid-paint wrote rows this paint missed,
+            # and nothing else repaints a finished turn (starters only ask for
+            # this poll, a no-op while it runs). Only a paint begun with no live
+            # work, and asked for by nothing while it ran, may be the last.
             self._console_transcript_poll_asked = False
             live_before_paint = self._console_transcript_poll_needed()
             await self._sync_native_console_chat_ui()
