@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-11 23:58'
-updated_date: '2026-10-12 04:06'
+updated_date: '2026-10-12 04:24'
 labels:
   - memory
   - canvas
@@ -58,6 +58,8 @@ Native Python 3.12.11 reproduced the original 123565 versus 121793 token mismatc
 2026-10-11 current-dev implementation on323c3b0c: passive Canvas catalog metadata/schema loader now participates in the shared first-request planner before current Goal narrowing. A production Goal+Canvas regression reproduced123844 vs122349 token reservation and passed after reconciliation, preserving actual authenticated live dispatch and data-only preview. Exact session/Canvas/service/selection/expiry guards remain; no run/staging/permission/selection mutation occurs in preview. Current Inspector/Settings integration tests and native-owner qualification are recorded separately from historical source receipts in Task1 report. ADR121/202 apply; no new ADR or activation authority. Current integration remains In Progress pending complete-head independent root review and latest-dev transplant.
 
 2026-10-11 final Canvas handoff: passive production Goal+Canvas first-request planner regression and59-case helper/selection/snapshot group pass; affected Canvas fixture and feature cases have final joined410-node passing coverage with separate native retirement receipts. Preview authority/currentness remains data-only and native V2/schema8/AAD1/Forget/source/disclosure/server activation gates remain closed. Commits c0cb9f58ec and fa402213ac8aa78e99f64e1724bae46d59684b51; exact commands/source hash/node mapping in Task1 report and pr2862-final-integration receipt bundle. Existing ADR121/202 apply. Task remains In Progress until independent root review and actual post-Goal sequential-dev transplant; inherited guard/Goal deadline failures remain separately reported.
+
+2026-10-11 Task2 correction gates named production Goal/Canvas/native-tight/fenced-tight/unreadable/denied planner and both publication-drift controls in the existing required sandbox lane, plus selection factories and lazy worker cancellation in UI census. Complete bounded minimal-dependency selection826 sandbox (62 feature additions),13 admission and46 UI cases passed with unchanged deadlines/caps. All original179 UI entries retained; seven additions floor186, preserve root post-Goal180+7 at transplant. First-read canonical provenance owner fence, literal export label and living architecture corrections are in Task2 report/new pr2862-review-fixes receipt seal. V1/schema8/AAD1 and all closed activation gates remain. In Progress pending independent root scoped review, actual current-dev transplant and hosted clearance; no publication or merge by implementer.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

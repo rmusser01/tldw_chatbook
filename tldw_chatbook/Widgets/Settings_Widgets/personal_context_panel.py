@@ -175,6 +175,9 @@ class PersonalContextSettingsPanel(Vertical):
         service: PersonalContextService | Callable[..., PersonalContextService],
         interview_launcher: Callable[[str, str, str], Any] | None = None,
         link_launcher: Callable[[], Any] | None = None,
+        *,
+        current_service_getter: Callable[[], PersonalContextService | None]
+        | None = None,
         **kwargs: Any,
     ) -> None:
         kwargs.setdefault("id", "personal-context-settings-panel")
@@ -187,6 +190,11 @@ class PersonalContextSettingsPanel(Vertical):
         else:
             self._service = service
             self._service_factory = None
+        # Fixed injected services own their identity. Factory hosts must provide
+        # a cheap current cache reader; absence leaves provenance fail-closed.
+        self._current_service_getter = current_service_getter or (
+            (lambda: self._service) if self._service_factory is None else (lambda: None)
+        )
         self._interview_launcher = interview_launcher
         self._link_launcher = link_launcher
         self._load_generation = 0
@@ -497,7 +505,10 @@ class PersonalContextSettingsPanel(Vertical):
         )
         if subject is not None:
             yield PersonalContextProvenanceDetails(
-                subject, self._fresh_service, reload_details=self.load_records
+                subject,
+                self._fresh_service,
+                current_service_getter=self._current_service_getter,
+                reload_details=self.load_records,
             )
 
         if self.editor_mode:
@@ -553,7 +564,7 @@ class PersonalContextSettingsPanel(Vertical):
         )
         with Horizontal(classes="personal-context-toolbar"):
             yield Button(
-                f"Export plaintext: {export_scope_label}",
+                Text.assemble("Export plaintext: ", export_scope_label),
                 id="personal-context-export-plaintext",
             )
             yield Button("Export recovery copy", id="personal-context-export-recovery")
@@ -959,6 +970,7 @@ class PersonalContextSettingsPanel(Vertical):
                 "proposal", proposal.proposal_id
             ),
             provenance_service_loader=self._fresh_service,
+            provenance_current_service_getter=self._current_service_getter,
         )
         self.app.push_screen(
             self._proposal_review,

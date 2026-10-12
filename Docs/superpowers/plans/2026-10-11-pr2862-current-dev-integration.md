@@ -161,3 +161,5 @@ Ruling: correct first provenance publication using host-supplied cheap identity 
 Ruling: use literal Text.assemble instead of changing a required census for the newly flagged safe Text shape — preserves renderer output and avoids a broad exemption — costs a small label composition change.
 Ruling: gate bounded critical currentness/privacy/native/Canvas regressions in existing required lanes — a once-off local pass cannot protect the introduced contract — costs recurring measured CI time; no35minute/other timeout increase.
 Ruling: retain the sealed203 native observation entries as entries rather than claiming distinct owner cardinality — unique identities/path counts differ and overlapping populations cannot be summed — costs less impressive but accurate reporting; zero-survivor proof remains.
+
+Task2 verified producer erratum: the markup checker's AST reports the adjacent export Button f-string, while the deleted-record Text(f-string) is already inert. Preserve that deleted expression and correct the actual export label with Text.assemble plus mounted literal-content proof; no checker/census exemption. This supersedes the initial label attribution only.

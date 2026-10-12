@@ -22909,6 +22909,11 @@ class SettingsScreen(BaseAppScreen):
                 service = self.app_instance.get_personal_context_service
             yield panel_class(
                 service,
+                current_service_getter=lambda: (
+                    self._personal_context_service_injection
+                    if self._personal_context_service_injection is not None
+                    else getattr(self.app_instance, "_personal_context_service", None)
+                ),
                 interview_launcher=getattr(
                     self.app_instance, "launch_personal_context_interview", None
                 ),

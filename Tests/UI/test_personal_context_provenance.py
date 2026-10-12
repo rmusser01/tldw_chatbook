@@ -75,12 +75,17 @@ class HostScreen(Screen):
 
 
 class Host(ConsolidatedCSSApp):
-    CSS_PATH: ClassVar = [CSS_DIR / "tldw_cli_modular.tcss", CSS_DIR / "screen_agentic_settings.tcss"]
+    CSS_PATH: ClassVar = [
+        CSS_DIR / "tldw_cli_modular.tcss",
+        CSS_DIR / "screen_agentic_settings.tcss",
+    ]
 
     def __init__(self, reader, *, detail_class=PersonalContextProvenanceDetails):
         super().__init__()
         self.reader = reader
-        self.detail = detail_class(SUBJECT, lambda: self.reader)
+        self.detail = detail_class(
+            SUBJECT, lambda: self.reader, current_service_getter=lambda: self.reader
+        )
 
     def on_mount(self):
         self.push_screen(HostScreen(self.detail))
@@ -275,3 +280,27 @@ async def test_changed_details_keep_content_free_reload_after_hiding(hide):
         assert "changed" not in rendered(app.detail)
         assert "SOURCE_MARKER" not in rendered(app.detail)
         assert reader.calls == calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("change", ["current", "replacement", "absent", "profile"])
+async def test_pending_first_provenance_read_checks_current_host_owner(change):
+    reader = Reader()
+    reader.gate = Event()
+    app = Host(reader)
+    async with app.run_test(size=(100, 35)) as pilot:
+        app.detail.collapsed = False
+        await until(pilot, reader.entered.is_set)
+        assert app.detail._owner is None
+        try:
+            if change == "replacement":
+                app.reader = Reader()
+            elif change == "absent":
+                app.reader = None
+            elif change == "profile":
+                app.detail.invalidate()
+        finally:
+            reader.gate.set()
+        await until(pilot, lambda: not app.detail._pending)
+        assert ("SOURCE_MARKER" in rendered(app.detail)) is (change == "current")

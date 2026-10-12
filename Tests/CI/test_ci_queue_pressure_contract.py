@@ -87,6 +87,33 @@ FAST_LANE_TARGETS = (
     "Tests/Library/test_ingest_analysis_load_settings.py",
     "Tests/test_config_load_settings_table_guard.py",
     "Tests/Architecture/test_study_handler_service_keywords.py",
+    # TASK-25907.23 / 34800: bounded privacy, closed-native and Canvas parity.
+    "Tests/Personal_Context/test_context_service.py::test_device_only_additions_cannot_change_context_selection_or_explanation",
+    "Tests/Personal_Context/test_context_service.py::test_quarantine_hint_cannot_change_permitted_packing",
+    "Tests/Personal_Context/test_context_service.py::test_explanation_uses_the_snapshot_pass_and_excludes_ineligible_records",
+    "Tests/Personal_Context/test_context_service.py::test_explanation_expiry_invalidates_without_manifest_revision_change",
+    "Tests/Personal_Context/test_context_service.py::test_explanation_rejects_record_version_reuse_of_snapshot_cache_key",
+    "Tests/Personal_Context/test_context_service.py::test_explanation_rejects_replacement_profile_with_reused_revisions",
+    "Tests/Agents/test_profile_tool_provider.py::test_device_only_reads_hide_content_and_preserve_manual_owner_access",
+    "Tests/Personal_Context/test_native_profile_barrier.py::test_v2_manifest_blocks_readable_v1_before_content_authentication",
+    "Tests/Personal_Context/test_native_profile_barrier.py::test_compiled_inventory_covers_every_protected_native_call_site",
+    "Tests/Personal_Context/test_native_profile_barrier.py::test_reused_operation_rechecks_manifest_after_external_commit",
+    "Tests/Personal_Context/test_native_profile_barrier_routes.py::test_real_v1_write_routes_then_current_v2_deny_without_side_effects[record]",
+    "Tests/Personal_Context/test_native_profile_barrier_routes.py::test_real_v1_write_routes_then_current_v2_deny_without_side_effects[proposal]",
+    "Tests/Personal_Context/test_native_profile_barrier_routes.py::test_exports_deny_before_destination_write",
+    "packages/tldw_profile_core/tests/test_v2_aggregates.py::test_duplicate_aware_and_compiled_json_paths",
+    "packages/tldw_profile_core/tests/test_v2_aggregates.py::test_every_serializer_revalidates_unsafe_root_state",
+    "packages/tldw_profile_core/tests/test_v2_meaning.py::test_fixed_projection_and_json_round_trip",
+    "packages/tldw_profile_core/tests/test_v2_meaning.py::test_fixed_digest_and_scope_cannot_transplant_meaning",
+    "packages/tldw_profile_core/tests/test_evidence_binding.py::test_complete_identity_changes_when_one_bound_value_changes",
+    "packages/tldw_profile_core/tests/test_evidence_binding.py::test_digest_and_instance_admission_revalidate_unsafe_copies",
+    "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[goal-canvas]",
+    "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[native-tight]",
+    "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[fenced-tight]",
+    "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[unreadable]",
+    "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_inspector_reserves_the_dispatched_request_budget[canvas-denied]",
+    "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_during_project_preview_discard_snapshot",
+    "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_discard_late_profile_preview",
 )
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
 #: production runtime). They are ``bootstrap_profile``, so they run in the
@@ -134,7 +161,10 @@ def _named_step(job: dict, name: str) -> dict:
 def _pytest_targets(run: str) -> tuple[str, ...]:
     tokens = shlex.split(run.replace("\\\n", " "))
     return tuple(
-        token for token in tokens[1:] if token == "Tests" or token.startswith("Tests/")
+        token
+        for token in tokens[1:]
+        if token == "Tests"
+        or token.startswith(("Tests/", "packages/tldw_profile_core/tests/"))
     )
 
 
@@ -336,8 +366,16 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
     assert setup["with"]["python-version"] == "3.12"
     install = _named_step(p0, "Install fast-lane dependencies")["run"]
     assert shlex.split(install) == [
-        "python", "-m", "pip", "install", "-e", ".",
-        "pytest", "pytest-asyncio", "pytest-timeout", "packaging",
+        "python",
+        "-m",
+        "pip",
+        "install",
+        "-e",
+        ".",
+        "pytest",
+        "pytest-asyncio",
+        "pytest-timeout",
+        "packaging",
     ]
     commands = "\n".join(str(step.get("run", "")) for step in p0["steps"])
     assert commands.count("pip install") == 1
@@ -354,10 +392,14 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
         assert tokens[-2:] == [timeout, "--tb=short"]
         assert _pytest_targets(step["run"]), step["name"]
     # P0 targets live here, not in pr-fast-lane (whose budget they broke).
-    fast_targets = set(_pytest_targets(_named_step(
-        _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane"],
-        "Run admission-sensitive suites",
-    )["run"]))
+    fast_targets = set(
+        _pytest_targets(
+            _named_step(
+                _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane"],
+                "Run admission-sensitive suites",
+            )["run"]
+        )
+    )
     assert not fast_targets & set(_pytest_targets(admission["run"]))
 
 

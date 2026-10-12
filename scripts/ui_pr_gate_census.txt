@@ -253,3 +253,12 @@ Tests/UI/test_console_tab_switch_binds_composer.py::test_running_harness_retires
 # for the Notes status debounce;9 green cases, under10s locally. Appended
 # so every earlier entry retains its shard.
 Tests/UI/Library_Modules/test_library_notes_sync_attention_listener.py
+# TASK-25907.23 / 34800: bounded provenance/currentness and Canvas companions.
+# Preserve all earlier entries and shard placement; heavier files use node IDs.
+Tests/UI/test_personal_context_provenance.py
+Tests/UI/test_console_personal_context_selection_factory.py
+Tests/UI/test_personal_context_proposal_review.py::test_provenance_renewal_preserves_proposal_editor_and_acceptance
+Tests/UI/test_settings_personal_context.py::test_canonical_settings_pending_provenance_uses_cheap_current_owner
+Tests/UI/test_settings_personal_context.py::test_production_settings_inspects_private_and_deleted_metadata[size0]
+Tests/UI/test_console_conversation_inspector.py::test_detail_worker_creation_can_be_cancelled_before_coroutine_exists
+Tests/UI/test_settings_personal_context.py::test_export_and_deleted_labels_keep_literal_metadata
