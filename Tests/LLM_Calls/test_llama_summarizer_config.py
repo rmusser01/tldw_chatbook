@@ -48,7 +48,8 @@ def captured_post(monkeypatch):
             captured["json"] = json
             return _FakeResponse()
 
-    monkeypatch.setattr(lib, "create_default_session", lambda: _FakeSession())
+    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: _FakeSession(), raising=False)
+    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: _FakeSession(), raising=False)
     # Pooled seam (task-34387): production may reach the session through
     # create_pooled_default_session(mount_retry=..., mount_prefixes=...);
     # patch BOTH names so either production shape is intercepted.
@@ -61,7 +62,8 @@ def captured_post(monkeypatch):
     # (kept on BOTH modules while the remaining local handlers migrate).
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda: _FakeSession())
+    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _FakeSession(), raising=False)
+    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _FakeSession(), raising=False)
     monkeypatch.setattr(
         _general, "create_pooled_default_session", lambda **kwargs: _FakeSession(),
         raising=False,
@@ -189,21 +191,24 @@ def test_summarize_with_llama_parses_the_openai_response_shape(monkeypatch):
         def post(self, *_a, **_k):
             return _FakeResponse()
 
-    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     monkeypatch.setattr(
         lib, "create_pooled_default_session", lambda **kwargs: _Session(),
         raising=False,
     )
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     monkeypatch.setattr(
         _general, "create_pooled_default_session", lambda **kwargs: _Session(),
         raising=False,
     )
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     monkeypatch.setattr(
         _general, "create_pooled_default_session", lambda **kwargs: _Session(),
         raising=False,
@@ -224,14 +229,16 @@ def test_summarize_with_llama_still_parses_the_native_completion_shape(monkeypat
         def post(self, *_a, **_k):
             return _FakeResponse({"content": " NATIVE "})
 
-    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     monkeypatch.setattr(
         lib, "create_pooled_default_session", lambda **kwargs: _Session(),
         raising=False,
     )
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     monkeypatch.setattr(
         _general, "create_pooled_default_session", lambda **kwargs: _Session(),
         raising=False,
@@ -252,14 +259,16 @@ def test_summarize_with_llama_reports_an_unusable_payload(monkeypatch):
         def post(self, *_a, **_k):
             return _FakeResponse({"unexpected": True})
 
-    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     monkeypatch.setattr(
         lib, "create_pooled_default_session", lambda **kwargs: _Session(),
         raising=False,
     )
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     monkeypatch.setattr(
         _general, "create_pooled_default_session", lambda **kwargs: _Session(),
         raising=False,
@@ -332,14 +341,16 @@ def test_empty_content_failure_names_the_actual_cause(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     monkeypatch.setattr(
         lib, "create_pooled_default_session", lambda **kwargs: _Session(),
         raising=False,
     )
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     monkeypatch.setattr(
         _general, "create_pooled_default_session", lambda **kwargs: _Session(),
         raising=False,
@@ -390,14 +401,16 @@ def test_budget_and_diagnostic_reach_the_public_analyze_boundary(monkeypatch):
                 }
             )
 
-    monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     monkeypatch.setattr(
         lib, "create_pooled_default_session", lambda **kwargs: _Session(),
         raising=False,
     )
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     monkeypatch.setattr(
         _general, "create_pooled_default_session", lambda **kwargs: _Session(),
         raising=False,

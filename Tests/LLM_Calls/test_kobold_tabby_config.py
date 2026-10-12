@@ -73,7 +73,8 @@ def captured_post(monkeypatch):
             captured["json"] = json
             return FakeResponse()
 
-    monkeypatch.setattr(lib, "create_default_session", lambda: FakeSession())
+    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: FakeSession(), raising=False)
+    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: FakeSession(), raising=False)
     # Pooled seam (task-34387): production may reach the session through
     # create_pooled_default_session(mount_retry=..., mount_prefixes=...);
     # patch BOTH names so either production shape is intercepted.
@@ -83,7 +84,8 @@ def captured_post(monkeypatch):
     )
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda: FakeSession())
+    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: FakeSession(), raising=False)
+    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: FakeSession(), raising=False)
     monkeypatch.setattr(
         _general, "create_pooled_default_session", lambda **kwargs: FakeSession(),
         raising=False,
@@ -257,14 +259,16 @@ def test_kobold_streaming_uses_the_openai_compatible_endpoint(monkeypatch):
             seen["url"] = url
             return StreamResponse()
 
-    monkeypatch.setattr(lib, "create_default_session", lambda: StreamSession())
+    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: StreamSession(), raising=False)
+    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: StreamSession(), raising=False)
     monkeypatch.setattr(
         lib, "create_pooled_default_session", lambda **kwargs: StreamSession(),
         raising=False,
     )
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda: StreamSession())
+    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: StreamSession(), raising=False)
+    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: StreamSession(), raising=False)
     monkeypatch.setattr(
         _general, "create_pooled_default_session", lambda **kwargs: StreamSession(),
         raising=False,
@@ -309,14 +313,16 @@ def test_configuration_reaches_the_public_analyze_boundary(monkeypatch):
             seen["url"] = url
             return FakeResponse()
 
-    monkeypatch.setattr(lib, "create_default_session", lambda: Session())
+    monkeypatch.setattr(lib, "create_default_session", lambda *a, **k: Session(), raising=False)
+    monkeypatch.setattr(lib, "create_pooled_default_session", lambda *a, **k: Session(), raising=False)
     monkeypatch.setattr(
         lib, "create_pooled_default_session", lambda **kwargs: Session(),
         raising=False,
     )
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
 
-    monkeypatch.setattr(_general, "create_default_session", lambda: Session())
+    monkeypatch.setattr(_general, "create_default_session", lambda *a, **k: Session(), raising=False)
+    monkeypatch.setattr(_general, "create_pooled_default_session", lambda *a, **k: Session(), raising=False)
     monkeypatch.setattr(
         _general, "create_pooled_default_session", lambda **kwargs: Session(),
         raising=False,

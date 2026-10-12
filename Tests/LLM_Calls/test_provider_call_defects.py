@@ -68,7 +68,8 @@ def test_vllm_explicit_key_returns_a_summary(monkeypatch):
     }
     monkeypatch.setattr(lsl, "load_settings", lambda *a, **k: cfg)
     resp = FakeResponse(json_data={"choices": [{"message": {"content": " THE SUMMARY "}}]})
-    monkeypatch.setattr(lsl, "create_default_session", lambda: FakeSession(resp))
+    monkeypatch.setattr(lsl, "create_default_session", lambda *a, **k: FakeSession(resp), raising=False)
+    monkeypatch.setattr(lsl, "create_pooled_default_session", lambda *a, **k: FakeSession(resp), raising=False)
 
     result = lsl.summarize_with_vllm("explicit-key", "some text", "Summarize.")
 
@@ -98,9 +99,8 @@ def test_custom_openai_stream_yields_the_summary_once(monkeypatch):
         b'data: {"choices":[{"delta":{"content":"world"}}]}',
         b"data: [DONE]",
     ]
-    monkeypatch.setattr(
-        lsl, "create_default_session", lambda: FakeSession(FakeResponse(lines=lines))
-    )
+    monkeypatch.setattr(lsl, "create_default_session", lambda *a, **k: FakeSession(FakeResponse(lines=lines)), raising=False)
+    monkeypatch.setattr(lsl, "create_pooled_default_session", lambda *a, **k: FakeSession(FakeResponse(lines=lines)), raising=False)
 
     result = lsl.summarize_with_custom_openai(
         "k", "some text", "Summarize.", streaming=True
@@ -123,7 +123,8 @@ def test_anthropic_posts_through_the_session(monkeypatch):
         sgl, "get_cli_setting", lambda _section, _key, default=None: default
     )
     monkeypatch.setattr(sgl, "requests_verify", lambda: True)
-    monkeypatch.setattr(sgl, "create_default_session", lambda: session)
+    monkeypatch.setattr(sgl, "create_default_session", lambda *a, **k: session, raising=False)
+    monkeypatch.setattr(sgl, "create_pooled_default_session", lambda *a, **k: session, raising=False)
 
     def _boom(*_a, **_k):
         raise AssertionError("bare requests.post used; the retry adapter is bypassed")

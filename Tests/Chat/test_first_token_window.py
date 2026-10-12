@@ -260,7 +260,8 @@ def test_a_self_hosted_read_timeout_never_undercuts_the_first_token_window(
 
     _no_first_token_config(monkeypatch)
     session = _RecordingSession()
-    monkeypatch.setattr(local, "create_default_session", lambda: session)
+    monkeypatch.setattr(local, "create_default_session", lambda *a, **k: session, raising=False)
+    monkeypatch.setattr(local, "create_pooled_default_session", lambda *a, **k: session, raising=False)
 
     local._chat_with_openai_compatible_local_server(
         api_base_url="http://127.0.0.1:9412/v1",

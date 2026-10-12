@@ -364,7 +364,8 @@ def test_hugging_face_streams_go_through_the_capturing_session(
         session.mount("https://", _StreamAdapter(OPENAI_HEADERS))
         return session
 
-    monkeypatch.setattr(LLM_API_Calls, "create_default_session", factory)
+    monkeypatch.setattr(LLM_API_Calls, "create_default_session", lambda *a, **k: factory(), raising=False)
+    monkeypatch.setattr(LLM_API_Calls, "create_pooled_default_session", lambda *a, **k: factory(), raising=False)
     with capture_rate_limits_for("huggingface"):
         stream = LLM_API_Calls.chat_with_huggingface(
             input_data=[{"role": "user", "content": "hi"}],

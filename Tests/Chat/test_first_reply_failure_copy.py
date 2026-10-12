@@ -477,7 +477,8 @@ def test_the_hosted_transport_carries_a_streamed_error_body_to_the_copy(
         def close(self):
             return None
 
-    monkeypatch.setattr(hosted_chat, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda *a, **k: _Session(), raising=False)
+    monkeypatch.setattr(hosted_chat, "create_pooled_default_session", lambda *a, **k: _Session(), raising=False)
     config = hosted_chat.HostedHTTPTransportConfig(
         provider="openrouter",
         base_url="https://openrouter.ai/api/v1",

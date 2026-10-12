@@ -653,7 +653,8 @@ def _canned_session(
     )
 
     session = _RecordingSession(_TransportResponse(dict(_SUCCESS_BODY)))
-    monkeypatch.setattr(hosted_chat, "create_default_session", lambda: session)
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda *a, **k: session, raising=False)
+    monkeypatch.setattr(hosted_chat, "create_pooled_default_session", lambda *a, **k: session, raising=False)
     return session
 
 
