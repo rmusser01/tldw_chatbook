@@ -233,10 +233,15 @@ class HomeActiveWorkItem:
 
 @dataclass(frozen=True)
 class HomeDashboardInput:
+    # TASK-2761: ``mcp_ready``/``rag_ready`` used to live here as
+    # hard-coded constants no producer ever set (MCP always "Ready", RAG
+    # always "Missing sources") and fed two perpetual-lie Details segments
+    # plus an unreachable ``search_library`` suggestion. Removed rather
+    # than shown as constants; only fields with a real producer remain
+    # (``model_ready`` -- send-path readiness via HomeScreen, ``acp_ready``
+    # -- the ACP runtime manager snapshot).
     model_ready: bool = False
-    mcp_ready: bool = True
     acp_ready: bool = True
-    rag_ready: bool = False
     runtime_source: str = RUNTIME_SOURCE_LOCAL
     active_server_id: str | None = None
     server_label: str | None = None
@@ -474,13 +479,11 @@ def choose_next_best_action(
             "library",
             "Library content makes Console and RAG more useful.",
         )
-    if state.rag_ready:
-        return HomeAction(
-            "search_library",
-            "Search your Library",
-            "library",
-            "Search/RAG is ready over saved content.",
-        )
+    # TASK-2761: the ``search_library`` suggestion ("Search/RAG is ready
+    # over saved content.") used to sit here, gated on ``rag_ready`` -- a
+    # constant False no producer ever set -- so it was unreachable dead
+    # code. Deleted with the field; reintroduce only alongside a real RAG
+    # readiness producer.
     if state.console_ready:
         # T190: with the provider verifiably ready (fresh-config readiness,
         # not the boot snapshot), the terminal suggestion reads as the
@@ -893,10 +896,9 @@ def _home_idle_canvas_controls(
 
 
 def _status_summary_line(state: HomeDashboardInput) -> str:
+    # TASK-2761: RAG/MCP segments removed -- constant fields, no producer.
     return (
         f"Model: {'Ready' if state.model_ready else 'Not set up'} | "
-        f"RAG: {'Ready' if state.rag_ready else 'Missing sources'} | "
-        f"MCP: {'Ready' if state.mcp_ready else 'Blocked'} | "
         f"ACP: {'Ready' if state.acp_ready else 'Blocked'} | "
         f"Mode: {_runtime_source_label(state.runtime_source)} | "
         f"Server: {_server_status_label(state)} | "
@@ -1057,11 +1059,11 @@ def _system_status_lines(state: HomeDashboardInput) -> tuple[str, ...]:
         f"Runtime: {source_label}",
         f"Server sync: {server_label}",
         _runtime_explanation_line(state),
+        # TASK-2761: RAG/MCP dropped from the agent-readiness line --
+        # constant fields, no producer (only Model and ACP are real here).
         (
             "Agent readiness: "
             f"Model {'ready' if state.model_ready else 'not set up'}, "
-            f"RAG {'ready' if state.rag_ready else 'needs sources'}, "
-            f"MCP {'ready' if state.mcp_ready else 'blocked'}, "
             f"ACP {'ready' if state.acp_ready else 'blocked'}"
         ),
         _server_event_status_line(state),

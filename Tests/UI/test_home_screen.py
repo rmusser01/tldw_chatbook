@@ -222,8 +222,6 @@ async def test_home_screen_compacts_multi_module_readiness_summary():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
-        rag_ready=False,
-        mcp_ready=True,
         acp_ready=False,
         pending_approval_count=1,
         active_run_count=2,
@@ -237,11 +235,14 @@ async def test_home_screen_compacts_multi_module_readiness_summary():
 
         status_text = str(home.query_one("#home-details-body").renderable)
         assert "Model: Ready" in status_text
-        assert "RAG: Missing sources" in status_text
-        assert "MCP: Ready" in status_text
         assert "ACP: Blocked" in status_text
         assert "Active: 2" in status_text
         assert "Approvals: 1" in status_text
+        # TASK-2761: the RAG and MCP segments were hard-coded constants with
+        # no producer (RAG always "Missing sources", MCP always "Ready") --
+        # removed rather than shown as a lie.
+        assert "RAG:" not in status_text
+        assert "MCP:" not in status_text
 
 
 @pytest.mark.asyncio
@@ -250,8 +251,6 @@ async def test_home_screen_acp_readiness_uses_runtime_process_state():
     app.home_active_work_adapter = RecordingHomeActiveWorkAdapter(
         HomeDashboardInput(
             model_ready=True,
-            rag_ready=True,
-            mcp_ready=True,
             acp_ready=True,
         )
     )
@@ -275,8 +274,6 @@ async def test_home_system_status_groups_runtime_readiness_and_work_state():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
-        rag_ready=False,
-        mcp_ready=True,
         acp_ready=False,
         runtime_source="local",
         server_configured=False,
@@ -295,10 +292,11 @@ async def test_home_system_status_groups_runtime_readiness_and_work_state():
         assert "Runtime: Local" in system_text
         assert "Server sync: Not configured (local mode)" in system_text
         assert "Local mode is active. Server sync is optional." in system_text
-        assert (
-            "Agent readiness: Model ready, RAG needs sources, MCP ready, ACP blocked"
-            in system_text
-        )
+        # TASK-2761: RAG/MCP were constant no-producer fields -- the agent
+        # readiness line reports only the fields with a real producer.
+        assert "Agent readiness: Model ready, ACP blocked" in system_text
+        assert "RAG" not in system_text
+        assert "MCP" not in system_text
         assert "Work: 2 active, 1 approvals" in system_text
 
 
