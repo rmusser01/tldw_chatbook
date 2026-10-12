@@ -44,7 +44,13 @@ ADR required: no new ADR for rebase/direct existing-owner integration; ADR path:
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Rebased only the structured programme onto recorded dev `66a940d1a79673061ed5d3d0f16cb2430869ddb6`, retaining all current-dev documents and existing migration bodies. Dropped the old publication cleanup that would remove unrelated upstream documents; reconciled only feature server references (tasks 13586–13597, ADRs 070–074). Current app lifecycle, Notes canvas gates, import transaction/citation owner, sync maintenance, and atomic replace-confirmed export remain authoritative.
 
+Canonical note language now follows current schema 80 as additive 80→81. ADR-194 and ADR-126 govern its exact canonical and shared Subscriptions recovery catalogs; Subscriptions stays schema 2, runtime.sync_state has no DDL change, and the entire device-private Notes database/WAL remains excluded. New real SQLite controls cover old/fresh catalogs, restricted upgrade, preserved source and unknown-schema refusal. Exact source/portable exports preserve newline bytes inside the current atomic owner; recovery participates in the current producer drain fence.
+
+Focused storage, draft coalescing/original base, wire omission/null, import/archive, native history/layout, export, recovery/maintenance and real app lifecycle checks are recorded under `/private/tmp/structured-notes-pr-rebase-2026-10-12/c-evidence`; full report `c-rebase-report.md` records exact source and check manifests. Scoped lint/security/types are compared with current-dev and prior-feature debt, not claimed whole-file clean. The ProductionApp nested config-fixture collection refusal, aggregate FD/coroutine warnings, and LibraryScreen baseline mypy comment-parser limit remain qualified in that report. No full sweep, new transport/storage policy, push, merge or auto-merge.
+
+Task intentionally remains In Progress with acceptance criteria unchecked for Root's independent review and exact expected-head publication. Physical OS IME/spoken output remain unqualified; durable server-readable Notes sync remains deferred to TASK-34818. Existing lessons-testing-evidence entries already cover frozen shared catalogs and immutable SQLite/WAL fixture staging; this integration preserved those rules.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

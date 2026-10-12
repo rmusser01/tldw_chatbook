@@ -13,7 +13,7 @@
 - "Syntax errors never add a save veto."
 - "Run targeted checks only unless the user explicitly authorizes a full suite."
 - ADR required: yes. ADR path: `C/backlog/decisions/194-structured-note-language-and-local-editor-validation.md`; server ADR-031 governs existing Notes sync and requires a repository-local extension before new-version implementation.
-- Server extension allocated during F2: `S/Docs/ADR/065-portable-note-language-and-negotiated-structured-editing.md` extends locked ADR-031 and governs the additive field and negotiated clear/private snapshots.
+- Server extension allocated during F2: `S/Docs/ADR/070-portable-note-language-and-negotiated-structured-editing.md` extends locked ADR-031 and governs the additive field and negotiated clear/private snapshots.
 - Status: In Progress. Units affecting both repositories use separate repo-local Backlog tasks and commits; they are not one cross-repository transaction.
 
 ## F1: Repair exact-source transport and structured file admission

@@ -34,7 +34,7 @@ Keep language intent and exact source safe when clients and servers support diff
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
-ADR path: backlog/decisions/194-structured-note-language-and-local-editor-validation.md (C); Docs/ADR/065-portable-note-language-and-negotiated-structured-editing.md (S), existing decisions
+ADR path: backlog/decisions/194-structured-note-language-and-local-editor-validation.md (C); Docs/ADR/070-portable-note-language-and-negotiated-structured-editing.md (S), existing decisions
 Reason: implement approved negotiated client contracts and private confidentiality/pending behavior without a new transport.
 1. Read task4 brief, repo-local tasks/instructions/lessons and governing ADRs; trace current clear/private builders, receivers, outbox acknowledgements and authenticated Notes client capability paths.
 2. Add failing real SQLite builder/receiver, compatibility/pending/restart and capability/profile controls before edits.
@@ -51,7 +51,7 @@ F4 local immutable intent scope proof: capture exact server_profile/principal/wo
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implemented complete source/language capture and negotiation through existing Notes clients, immutable intents and scoped receivers. Authenticated provider-owned client, principal and dataset/workspace proof remains current through publication/application/acknowledgement; expected proof-read failures persist bounded pending state. New receipts bind supplied origin in immutable request metadata; historical unproved origins remain pending. Complete backlinks are validated/forwarded and unsupported canonical values refuse before writes. ADR194 and ADR065 govern the contract.
+Implemented complete source/language capture and negotiation through existing Notes clients, immutable intents and scoped receivers. Authenticated provider-owned client, principal and dataset/workspace proof remains current through publication/application/acknowledgement; expected proof-read failures persist bounded pending state. New receipts bind supplied origin in immutable request metadata; historical unproved origins remain pending. Complete backlinks are validated/forwarded and unsupported canonical values refuse before writes. ADR194 and ADR070 govern the contract.
 Verification: original compatibility and actual-store coverage plus final affected-owner196 and focused seam3; fix2 final authority/preflight selection156 passed, genuine RED8fail then GREEN14. Scoped Ruff/Bandit introduced none; formatter debt unchanged; git diff --check passed. Fresh task review and both scoped fix reviews complete, latest verdict clean.
 Limits: actual server private transport unavailable (ciphertext-backed intent retained); non-null canonical backlinks unsupported; actual Library compound-save caller supplies no remote origin, so no production receipt binding claimed. UI pending-reason consumption and application materializer qualification belong to I2/I3/I5.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

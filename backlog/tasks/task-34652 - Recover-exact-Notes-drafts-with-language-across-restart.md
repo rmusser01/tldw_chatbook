@@ -36,7 +36,7 @@ Keep unsaved edits recoverable across navigation, rejected saves and process res
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
-ADR path: backlog/decisions/194-structured-note-language-and-local-editor-validation.md (C); Docs/ADR/065-portable-note-language-and-negotiated-structured-editing.md (S), existing programme decisions
+ADR path: backlog/decisions/194-structured-note-language-and-local-editor-validation.md (C); Docs/ADR/070-portable-note-language-and-negotiated-structured-editing.md (S), existing programme decisions
 Reason: implement approved scoped durable-draft recovery and serialized-language ownership; extend the existing decision before storage changes, without a second authority/store.
 1. Read task5 brief and actual repo-local task/instructions/lessons/ADRs; trace canonical state, real note_session_port and LibraryScreen wiring, device-state migration/connection owner, and browser offline queue.
 2. Add meaningful failing language-only, exact empty-draft restart, older-ack/newer-revision, scope/logout and storage-failure controls before production changes.

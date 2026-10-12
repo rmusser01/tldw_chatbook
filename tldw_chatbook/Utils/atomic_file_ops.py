@@ -178,6 +178,7 @@ def atomic_write_text(
     privacy_safe_log: bool = False,
     overwrite: bool = True,
     private: bool = False,
+    newline: str | None = None,
 ) -> None:
     """
     Write text content to a file atomically.
@@ -206,6 +207,7 @@ def atomic_write_text(
             exFAT, many SMB/NFS mounts) the name is reserved with an
             exclusive create and the temporary file renamed over that
             placeholder instead -- see ``_publish_no_clobber``.
+        newline: Optional text newline policy; empty preserves exact source endings.
         private: Publish owner-only (0o600). The temporary file is already
             created ``O_CREAT|O_EXCL|O_NOFOLLOW`` at 0o600 by ``mkstemp``, so
             this simply suppresses the widening ``chmod`` that would otherwise
@@ -241,7 +243,7 @@ def atomic_write_text(
         )
 
         # Write content to temp file
-        with os.fdopen(fd, "w", encoding=encoding) as f:
+        with os.fdopen(fd, "w", encoding=encoding, newline=newline) as f:
             f.write(content)
             # Ensure data is written to disk, through the host's native
             # barrier (Darwin F_FULLFSYNC -- a plain fsync leaves the drive

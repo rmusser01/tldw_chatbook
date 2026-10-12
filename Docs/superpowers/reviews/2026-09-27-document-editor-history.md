@@ -136,7 +136,7 @@ Full commands, traces, RED/GREEN failures, static comparisons and self-review li
 in S `Docs/superpowers/reviews/2026-09-27-document-editor-history.md`, dated Monaco
 section, and the private task-11-report. The controlled textarea is still
 unqualified. C's already reviewed Textual bridge/code/tests are unchanged and
-were not rerun. This is an experiment under ADR194 and extended S ADR065, not I3
+were not rerun. This is an experiment under ADR194 and extended S ADR070, not I3
 adoption. Actual OS IME, extension Notes/history, prior-consumer singleton loader
 ordering and Next standalone packaging remain unqualified. Whole W typecheck
 passed after product wiring removal with a disclosed 12GB heap; initial default

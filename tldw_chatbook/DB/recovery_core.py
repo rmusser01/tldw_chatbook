@@ -473,6 +473,8 @@ class _CoreAdapter:
             CHACHANOTES_SARGABLE_V78_TO_V79_SQL,
             CHACHANOTES_BROWSE_V79_TO_V80_SQL,
             CHACHANOTES_V80_SCHEMAS,
+            CHACHANOTES_V81_SCHEMAS,
+            CHACHANOTES_LANGUAGE_V80_TO_V81_SQL,
             CORE_SCHEMAS,
             COLLECTIONS_V4_SCHEMA,
             COLLECTIONS_V5_SCHEMAS,
@@ -482,9 +484,9 @@ class _CoreAdapter:
         )
 
         _, version, sql = next(row for row in CORE_SCHEMAS if row[0] == self.owner_id)
-        schemas = ((version, sql),)
-        versions = (version,)
-        migrations = ()
+        schemas: tuple[tuple[int, tuple[str, ...]], ...] = ((version, sql),)
+        versions: tuple[int, ...] = (version,)
+        migrations: tuple[tuple[int, int, tuple[str, ...]], ...] = ()
         if self.owner_id == "db.chachanotes.primary":
             schemas += (
                 (version, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA),
@@ -507,14 +509,16 @@ class _CoreAdapter:
             schemas += tuple((78, schema) for schema in CHACHANOTES_V78_SCHEMAS)
             schemas += tuple((79, schema) for schema in CHACHANOTES_V79_SCHEMAS)
             # ADR-216: every v79-lineage variant has its own v80 successor
-            # under the v80 head (head + dictionary cover V80[0]/[1]).
-            schemas += tuple((80, schema) for schema in CHACHANOTES_V80_SCHEMAS[2:])
-            versions += (79, 78, 77, 76, 75)
+            # under the v81 head (head + dictionary cover V81[0]/[1]).
+            schemas += tuple((80, schema) for schema in CHACHANOTES_V80_SCHEMAS)
+            schemas += tuple((81, schema) for schema in CHACHANOTES_V81_SCHEMAS[2:])
+            versions += (80, 79, 78, 77, 76, 75)
             migrations = (
                 (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
                 (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
                 (78, 79, CHACHANOTES_SARGABLE_V78_TO_V79_SQL),
                 (79, 80, CHACHANOTES_BROWSE_V79_TO_V80_SQL),
+                (80, 81, CHACHANOTES_LANGUAGE_V80_TO_V81_SQL),
             )
         elif self.owner_id == "db.library_collections":
             versions = (5, 4)

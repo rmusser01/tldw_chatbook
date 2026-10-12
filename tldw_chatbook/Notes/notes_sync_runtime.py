@@ -1886,6 +1886,7 @@ class NotesSyncRuntimeOwner:
 
         return NoteDraftRecovery(self._store, self._run_draft_recovery)
 
+    @producer_call
     async def _run_draft_recovery(
         self, operation: Callable[..., Any], *args: object
     ) -> Any:

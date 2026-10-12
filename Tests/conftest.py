@@ -1602,6 +1602,17 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # with RecoveryRequired("raw_source_selection_changed") before any
             # assertion runs -- same admission signature as the suites above.
             "test_chatbook_thinking_round_trip.py",
+            # TASK-34911: structured Notes exercise the same source-bound
+            # config/export/runtime owners; their data remains tmp_path-owned.
+            "test_chatbook_note_language_round_trip.py",
+            "test_structured_note_import.py",
+            "test_note_import_executor.py",
+            "test_library_note_import_controller.py",
+            "test_structured_document_round_trip.py",
+            "test_structured_note_editor.py",
+            "test_structured_file_editor.py",
+            "test_final_structured_note_controls.py",
+            "test_structured_note_export_actions.py",
 
             # TASK-33370 (2026-10-10, EXPERIMENT): the Library file-notes and
             # wave-4 Notes batteries -- every suite that mounts the production

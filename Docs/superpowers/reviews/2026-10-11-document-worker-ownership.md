@@ -34,7 +34,7 @@ malformed/cancelled/closed/pending-init/SIGTERM-ignore/inherited-pipe children. 
 Ruff, Black, Bandit and mypy pass. No full suite. Wheel SHA256:
 `89cb28876c6c26dd16ea38e8dc2546df4da422910bfb5a896e2cf19d8772be32`.
 
-Browser companion limits and corrections are recorded in ADR065 and the full report:
+Browser companion limits and corrections are recorded in ADR070 and the full report:
 trusted host factory, default Turbopack self-CSP failure, supported webpack qualification,
 and native asynchronous termination. Those browser findings do not weaken Python reap.
 

@@ -115,7 +115,9 @@ def test_current_backup_restores_language_and_source(db, tmp_path):
 
 
 @pytest.mark.parametrize("historical_version", [73, 80])
-def test_language_migration_and_old_backup_preserve_source(tmp_path, monkeypatch, historical_version):
+def test_language_migration_and_old_backup_preserve_source(
+    tmp_path, monkeypatch, historical_version
+):
     path = tmp_path / "historical.db"
     with monkeypatch.context() as patch:
         patch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", historical_version)
