@@ -591,6 +591,7 @@ class ConsolePromptQueueUIController:
         edit_refusal: Callable[[str], str],
         sync_ui: Callable[[], Awaitable[None]],
         guardian_checker_getter: Callable[[], Any] | None = None,
+        append_captured_system_message: Callable[[str, str], Awaitable[None]] | None = None,
         turn_recovery_reason: Callable[[str], str] = lambda _session_id: "",
         sending_accessor: Callable[[str], bool] | None = None,
         precapture: (
@@ -631,6 +632,7 @@ class ConsolePromptQueueUIController:
         # None while [guardian] enabled is off -- a None checker is a
         # zero-cost passthrough (contract 1).
         self._guardian_checker_getter = guardian_checker_getter
+        self._append_captured_system_message = append_captured_system_message
 
     async def handle_primary_intent(
         self,
@@ -1109,9 +1111,24 @@ class ConsolePromptQueueUIController:
             if self._guardian_checker_getter is not None
             else None
         )
+        captured_gate: tuple[str, str] | None = None
         if guardian_checker is not None:
+            if not session_id:
+                self._ensure_active_session()
+                session_id = self._chat_controller_accessor().store.active_session_id or ""
+            if not session_id:
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.REFUSED,
+                    detail="A chat could not be prepared. Your draft is preserved.",
+                )
+            # Snapshot visible setup authority before Guardian's first await.
+            # Refusal still follows Guardian (typed intent) and precedes hooks.
+            captured_gate = (
+                self._blocked_reason_accessor().strip(),
+                self._setup_blocked_reason_accessor().strip(),
+            )
             try:
-                guardian_result = await guardian_checker.check(draft)
+                guardian_result = await guardian_checker.check(draft, session_id=session_id)
             except Exception:
                 # Fail-open belt-and-suspenders (ADR-204 contract 5): the
                 # checker's own fail-open owns the loud part; this guard
@@ -1133,11 +1150,12 @@ class ConsolePromptQueueUIController:
                     if guardian_notice
                     else "Guardian declined this message."
                 )
-                await self._append_system_message(guardian_detail)
-                self._notify(guardian_detail, "warning")
-                self._focus_composer()
+                await self._append_owned_dispatch_message(guardian_detail, session_id)
+                if self._chat_controller_accessor().store.active_session_id == session_id:
+                    self._notify(guardian_detail, "warning")
+                    self._focus_composer()
                 return ConsolePromptDispatchResult(
-                    ConsolePromptDispatchStatus.REFUSED, detail=guardian_detail
+                    ConsolePromptDispatchStatus.REFUSED, session_id=session_id, detail=guardian_detail
                 )
             if guardian_action == "redact":
                 # Rewrite the draft in memory; the send continues with the
@@ -1147,9 +1165,9 @@ class ConsolePromptQueueUIController:
                 if isinstance(redacted, str) and redacted:
                     draft = redacted
 
-        blocked_reason = self._blocked_reason_accessor().strip()
+        blocked_reason = captured_gate[0] if captured_gate is not None else self._blocked_reason_accessor().strip()
         if blocked_reason:
-            setup_reason = self._setup_blocked_reason_accessor().strip()
+            setup_reason = captured_gate[1] if captured_gate is not None else self._setup_blocked_reason_accessor().strip()
             visible = (
                 setup_reason
                 if setup_reason
@@ -1158,10 +1176,11 @@ class ConsolePromptQueueUIController:
                 )
                 else blocked_reason
             )
-            await self._append_system_message(visible)
-            if visible == setup_reason:
-                self._notify(visible, "warning")
-            self._focus_composer()
+            await self._append_owned_dispatch_message(visible, session_id)
+            if session_id is None or self._chat_controller_accessor().store.active_session_id == session_id:
+                if visible == setup_reason:
+                    self._notify(visible, "warning")
+                self._focus_composer()
             return ConsolePromptDispatchResult(
                 ConsolePromptDispatchStatus.REFUSED, detail=visible
             )
@@ -1225,6 +1244,12 @@ class ConsolePromptQueueUIController:
         return await self._stage_normal_chain(
             controller, session_id, draft, stash, prepared
         )
+
+    async def _append_owned_dispatch_message(self, text: str, session_id: str | None) -> None:
+        if session_id and self._append_captured_system_message is not None:
+            await self._append_captured_system_message(text, session_id)
+        elif session_id is None or self._chat_controller_accessor().store.active_session_id == session_id:
+            await self._append_system_message(text)
 
     def _dispatch_builds_turn(self, session_id: str) -> bool:
         """Whether ``dispatch`` would now capture a turn rather than refuse it.

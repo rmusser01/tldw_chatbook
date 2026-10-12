@@ -16746,17 +16746,25 @@ class ChatScreen(BaseAppScreen):
     def _notify_guardian_visit_summary_if_any(self) -> None:
         """# guardian: one-shot consumption of the last visit's summary slot.
 
-        Reads and clears ``_guardian_visit_summary_notice`` on the app
-        object (the report-on-next-mount slot precedent -- the app outlives
-        the screen that staged it), then surfaces one compact line. Empty
-        visits staged nothing, so an ordinary mount stays silent. Task 3
-        owns the polished surfacing; this is the minimal wiring.
+        Consume only the active chat's entry from the app-owned pending map.
+        Other chats retain their summaries until they are revisited. Runtime
+        disable suppresses delivery without destroying the saved entry.
         """
-        payload = getattr(self.app_instance, "_guardian_visit_summary_notice", None)
-        if not payload:
+        pending = getattr(self.app_instance, "_guardian_visit_summary_notice", None)
+        if not isinstance(pending, dict) or not pending:
+            return
+        from tldw_chatbook.Guardian.settings import guardian_setting
+
+        if not guardian_setting("enabled", False):
+            return
+        session_id = self._ensure_console_chat_store().active_session_id
+        payload = pending.get(session_id)
+        if not isinstance(payload, dict):
             return
         try:
-            self.app_instance._guardian_visit_summary_notice = None
+            remaining = dict(pending)
+            remaining.pop(session_id, None)
+            self.app_instance._guardian_visit_summary_notice = remaining or None
         except Exception:  # noqa: BLE001 - a broken slot never blocks a mount
             return
         counts = payload.get("per_topic_counts") or {}
@@ -16779,9 +16787,9 @@ class ChatScreen(BaseAppScreen):
     async def _finalize_guardian_visit(self) -> None:
         """# guardian: finalize the visit's summary at Console unmount.
 
-        Runs the checker's ``finalize_visit()`` (summary + trend cadence +
-        retention sweep) on a worker thread and stages the payload on the
-        app object's report-on-next-mount slot for the NEXT Console mount.
+        Capture store and chat owners on the event loop, drain admitted
+        checks, then run finite summary work. Stage each result under its
+        captured chat identity for that chat's next Console mount.
         Degrade-never-raise at this seam too: an unmount must always
         proceed, with or without a summary.
         """
@@ -16789,7 +16797,7 @@ class ChatScreen(BaseAppScreen):
         if checker is None:
             return
         try:
-            payload = await asyncio.to_thread(checker.finalize_visit)
+            payload = await checker.finalize_visit_async()
         except Exception:  # noqa: BLE001 - a summary never blocks unmount
             logger.opt(exception=True).debug(
                 "Guardian visit summary failed at Console unmount"
@@ -16798,7 +16806,14 @@ class ChatScreen(BaseAppScreen):
         if not payload:
             return
         try:
-            self.app_instance._guardian_visit_summary_notice = payload
+            pending = getattr(self.app_instance, "_guardian_visit_summary_notice", None)
+            pending = dict(pending) if isinstance(pending, dict) else {}
+            summaries = payload.get("session_summaries", [payload])
+            for summary in summaries:
+                session_id = summary.get("session_id")
+                if isinstance(session_id, str) and session_id:
+                    pending[session_id] = summary
+            self.app_instance._guardian_visit_summary_notice = pending
         except Exception:  # noqa: BLE001 - bare/unit harness has no app slot
             pass
 

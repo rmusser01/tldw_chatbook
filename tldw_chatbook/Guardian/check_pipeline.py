@@ -2,7 +2,7 @@
 
 Pipeline order per check (spec §Rules engine + pipeline):
 
-1. **Gate** -- ``[guardian] enabled`` first, as a single cached config
+1. **Gate** -- ``[guardian] enabled`` first, as a live config
    read; a disabled Guardian never touches the store (contract 1).
 2. **Command skip** -- command-kind drafts (``/...``) are app actions,
    not conversational intent; slash dispatch diverts upstream of the seam
@@ -48,9 +48,9 @@ import hashlib
 import re
 import time
 import uuid
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
-from typing import Any, Callable
+from typing import Any
 
 from loguru import logger
 
@@ -90,8 +90,6 @@ class GuardianChecker:
         now: Returns the current UTC ISO timestamp (injectable clock).
     """
 
-    #: The enabled gate is a single cached read refreshed on this TTL.
-    _GATE_TTL_SECONDS: float = 60.0
     #: How often the compiled-rule snapshot is revalidated against the
     #: store (rule edits apply within this window -- the server's own
     #: 30-60s compilation-cache semantics).
@@ -105,16 +103,19 @@ class GuardianChecker:
         notify: _GateCallable,
         append_system_row: _RowCallable,
         now: Callable[[], str],
+        append_captured_system_row: Callable[[str, str], Any] | None = None,
     ) -> None:
         self._db_getter = db_getter
         self._session_id_getter = session_id_getter
         self._notify = notify
         self._append_system_row = append_system_row
+        self._append_captured_system_row = append_captured_system_row
         self._now = now
         self._visit_id: str | None = None
+        self._visit_sessions: dict[str, str] = {}
+        self._visit_generation = 0
+        self._pending_store_work: set[asyncio.Task] = set()
         self._error_signatures: set[str] = set()
-        self._gate_value: bool | None = None
-        self._gate_read_at: float = 0.0
         self._rules_cache: RulesCache | None = None
         self._rules_cache_db: Any = None
         self._compiled: Any = None
@@ -136,13 +137,15 @@ class GuardianChecker:
         visit lifecycle wiring (Task 2); unit-pinned here.
         """
         self._visit_id = None
+        self._visit_sessions.clear()
+        self._visit_generation += 1
         self._error_signatures.clear()
 
     # ------------------------------------------------------------------
     # Check
     # ------------------------------------------------------------------
 
-    async def check(self, draft: str) -> dict:
+    async def check(self, draft: str, *, session_id: str | None = None) -> dict:
         """Run the pre-send pipeline over one draft; never raises.
 
         Args:
@@ -159,7 +162,7 @@ class GuardianChecker:
             draft with ``redacted_draft`` on ``redact``.
         """
         try:
-            return await self._check(draft)
+            return await self._check(draft, session_id=session_id)
         except Exception as exc:  # noqa: BLE001 - fail-open, loud (contract 5)
             self._fail_open(exc, draft)
             return {
@@ -169,7 +172,7 @@ class GuardianChecker:
                 "recorded": False,
             }
 
-    async def _check(self, draft: str) -> dict:
+    async def _check(self, draft: str, *, session_id: str | None = None) -> dict:
         # 1. Gate first: a disabled Guardian touches nothing (contract 1).
         if not self._gate_enabled():
             return self._allow()
@@ -177,16 +180,20 @@ class GuardianChecker:
         if draft.lstrip().startswith("/"):
             return self._allow()
 
+        session_id = str(session_id if session_id is not None else self._session_id_getter() or "")
+        if not session_id.strip():
+            # The dispatch owner creates a real blank-chat identity first.
+            # A standalone caller without custody may not write anonymous hits.
+            return self._allow()
         db = self._db_getter()
         if db is None:
             # Unavailable store (disabled mid-flight, failed open): no
             # rules to check against; the send proceeds.
             return self._allow()
 
-        if self._visit_id is None:
-            self._visit_id = str(uuid.uuid4())
-        session_id = str(self._session_id_getter() or "")
-        visit_id = self._visit_id
+        visit_id = self._visit_sessions.setdefault(session_id, str(uuid.uuid4()))
+        self._visit_id = visit_id
+        generation = self._visit_generation
 
         # 3. Match against the compiled snapshot; the store is consulted
         # only when the snapshot TTL expired (one thread hop then).
@@ -198,8 +205,13 @@ class GuardianChecker:
             if self._rules_cache is None or self._rules_cache_db is not db:
                 self._rules_cache = RulesCache(db)
                 self._rules_cache_db = db
-            self._compiled = await asyncio.to_thread(self._rules_cache.get)
+            cache = self._rules_cache
+            self._compiled = await self._run_store_work(
+                db, lambda: cache.get() if self._gate_enabled() else None
+            )
             self._compiled_at = moment
+        if not self._gate_enabled() or self._compiled is None or generation != self._visit_generation:
+            return self._allow()
         matches = self._compiled.match(draft)
         if not matches:
             return self._allow()
@@ -208,26 +220,41 @@ class GuardianChecker:
         # thread, in ONE hop for every matched rule.
         now_iso = str(self._now())
         digest = hashlib.sha256("".join(draft.split()).encode()).hexdigest()
-        outcomes = await asyncio.to_thread(
-            self._record_matches, db, matches, session_id, visit_id, digest, now_iso
+        outcomes = await self._run_store_work(
+            db, self._record_matches, db, matches, session_id, visit_id, digest, now_iso
         )
-        return await self._act(draft, matches, outcomes)
+        if not self._gate_enabled() or generation != self._visit_generation:
+            return {**self._allow(), "recorded": bool(outcomes)}
+        return await self._act(draft, matches, outcomes, session_id=session_id)
 
     # ------------------------------------------------------------------
     # Pipeline steps
     # ------------------------------------------------------------------
 
-    def _gate_enabled(self) -> bool:
-        moment = time.monotonic()
-        if (
-            self._gate_value is None
-            or (moment - self._gate_read_at) >= self._GATE_TTL_SECONDS
-        ):
-            self._gate_value = bool(
-                guardian_settings.guardian_setting("enabled", False)
+    async def _run_store_work(self, db: Any, operation: Callable, *args: Any) -> Any:
+        from tldw_chatbook.DB.base_db import run_owned_db_call
+
+        task = asyncio.create_task(run_owned_db_call(db, operation, *args))
+        self._pending_store_work.add(task)
+        def finished(completed: asyncio.Task) -> None:
+            self._pending_store_work.discard(completed)
+            if not completed.cancelled():
+                completed.exception()
+        task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
+    async def drain(self) -> None:
+        """Settle admitted native work without cancelling its physical owner."""
+        while self._pending_store_work:
+            await asyncio.gather(
+                *(asyncio.shield(task) for task in tuple(self._pending_store_work)),
+                return_exceptions=True,
             )
-            self._gate_read_at = moment
-        return self._gate_value
+
+    def _gate_enabled(self) -> bool:
+        # Consent is live at each admission boundary; cached rules confer no
+        # authority to keep reading/recording after runtime disable.
+        return bool(guardian_settings.guardian_setting("enabled", False))
 
     def _record_matches(
         self,
@@ -241,6 +268,8 @@ class GuardianChecker:
         """Record every match and return per-rule outcomes (thread hop body)."""
         outcomes: list[dict] = []
         for match in matches:
+            if not self._gate_enabled():
+                break
             rule = match.rule_row
             rule_id = int(rule["id"])
             db.insert_alert(
@@ -326,7 +355,8 @@ class GuardianChecker:
         return True
 
     async def _act(
-        self, draft: str, matches: list[GuardianMatch], outcomes: list[dict]
+        self, draft: str, matches: list[GuardianMatch], outcomes: list[dict],
+        *, session_id: str,
     ) -> dict:
         """Apply the outcomes: surface notices, rewrite redactions, refuse."""
         top_action = "allow"
@@ -362,7 +392,14 @@ class GuardianChecker:
                 surfaced.append(notice)
 
         for notice in surfaced:
-            result = self._append_system_row(notice["text"])
+            if not self._gate_enabled():
+                return {**self._allow(), "recorded": bool(outcomes)}
+            if self._append_captured_system_row is not None:
+                result = self._append_captured_system_row(notice["text"], session_id)
+            elif str(self._session_id_getter() or "") == session_id:
+                result = self._append_system_row(notice["text"])
+            else:
+                continue
             if isinstance(result, Awaitable):
                 await result
 
@@ -444,7 +481,7 @@ class GuardianChecker:
         failure is logged and returns ``None`` (analyzer failures degrade
         to summary-without-trends per spec §Failure modes).
 
-        Runs on a worker thread (the Console's unmount path offloads it);
+        The Console uses finalize_visit_async to capture owners and drain first;
         everything here is blocking store work with no event-loop calls.
 
         Returns:
@@ -460,20 +497,43 @@ class GuardianChecker:
             )
             return None
 
-    def _finalize_visit(self) -> dict | None:
-        # Contract 1 first: a disabled Guardian never touches the store.
-        if not self._gate_enabled():
-            return None
-        visit_id = self._visit_id
-        if visit_id is None:
-            # No check ever minted a visit (gate was off, or nothing was
-            # typed): an empty nav bounce mints nothing.
+    async def finalize_visit_async(self) -> dict | None:
+        """Drain checks and capture owners on the event loop before offloading."""
+        self._visit_generation += 1
+        await self.drain()
+        visits = tuple(self._visit_sessions.items())
+        if not visits or not self._gate_enabled():
             return None
         db = self._db_getter()
         if db is None:
             return None
+        return await self._run_store_work(db, self._finalize_visits, db, visits)
+
+    def _finalize_visit(self) -> dict | None:
+        if not self._gate_enabled() or not self._visit_sessions:
+            return None
+        db = self._db_getter()
+        if db is None:
+            return None
+        return self._finalize_visits(db, tuple(self._visit_sessions.items()))
+
+    def _finalize_visits(self, db: Any, visits: tuple[tuple[str, str], ...]) -> dict | None:
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        payloads = []
+        with operation_owned_connection(db):
+            for session_id, visit_id in visits:
+                if not self._gate_enabled():
+                    break
+                payload = self._finalize_session_visit(db, session_id, visit_id)
+                if payload:
+                    payloads.append(payload)
+        if len(payloads) == 1:
+            return payloads[0]
+        return {"session_summaries": payloads} if payloads else None
+
+    def _finalize_session_visit(self, db: Any, session_id: str, visit_id: str) -> dict | None:
         now_iso = str(self._now())
-        session_id = str(self._session_id_getter() or "")
 
         # Trend cadence (a): synchronously at visit end, BEFORE the summary
         # is written. A failure degrades to summary-without-trends.
@@ -537,6 +597,8 @@ class GuardianChecker:
             return None
 
         payload = {
+            "session_id": session_id,
+            "visit_id": visit_id,
             "per_topic_counts": per_topic_counts,
             "escalated_rules": escalated_rules,
             "trend_notices": [
