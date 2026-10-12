@@ -1142,3 +1142,28 @@ def test_an_over_padded_or_over_bracketed_mark_is_still_a_mark(line, query):
 
     assert _query_row(line, [(_G1, None), (_G2, None)]) == {
         "query": query, "goal_derived": True, "goal": _G1}
+
+
+# --- G-N3 / G-N6: the two stated limits, pinned ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_two_queries_that_both_begin_with_1_read_as_a_restarted_list():
+    """The residue the _is_numbered docstring names: each loses its "1."."""
+    chat, _calls = _capture_chat(
+        "1. FC K\u00f6ln transfer news\n1. FC Union Berlin tickets")
+
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [row["query"] for row in rows] == [
+        "FC K\u00f6ln transfer news", "FC Union Berlin tickets"]
+
+
+@pytest.mark.parametrize("line", ["tokyo[g1]", "(tokyo)[g1]", "tokyo[g1] flights"])
+def test_a_mark_glued_to_a_word_is_searched_as_text(line):
+    """The _query_row docstring's exception: a glued [gN] is text."""
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None)]) == {
+        "query": line, "goal_derived": False, "goal": None}

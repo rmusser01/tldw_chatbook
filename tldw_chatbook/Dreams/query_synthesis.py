@@ -292,6 +292,14 @@ def _is_numbered(lines: list[str]) -> bool:
     other list kept their numbers -- and their marks). A single ``2.
     Bundesliga Spielplan 2026`` among plain lines, or lines numbered 2,
     2, 1, is not a list.
+
+    What this gets wrong, by construction: real queries that begin with
+    numbers which happen to count up from 1. Two in order (``1. FC
+    K\u00f6ln ...``, ``2. Bundesliga ...``) read as a list -- and since a
+    list may start again at 1, so do two that BOTH begin with 1 (``1.
+    FC K\u00f6ln transfer news``, ``1. FC Union Berlin tickets``). Each
+    then loses its leading number; the searches still find the club
+    (round 6, G-N3). A single such line is never a list.
     """
     numbers = [
         number for number in map(_leading_number, lines) if number is not None]
@@ -445,8 +453,10 @@ def _query_row(
     * EVERY standalone goal mark, wherever on the line it stands, with
       the wrapping directly around it -- and whatever formatting stands
       in front of the first one (:func:`_without_marks`). No string this
-      returns as a query contains a mark the model wrote as one (review
-      of #2921, round 5, F1).
+      returns as a query contains a STANDALONE mark (review of #2921,
+      round 5, F1). A ``[gN]`` glued to a word in front of it --
+      ``tokyo[g1]``, ``(tokyo)[g1]``, ``arr[g1]`` -- is read as text, by
+      design, and stays in the query; it names no goal (round 6, G-N6).
 
     A heading line, a code fence, a label line, a line with no letter or
     digit in it and a line too long to be a query give no row. A label
