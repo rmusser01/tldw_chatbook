@@ -156,10 +156,11 @@ def read_guardian_topics(
     """Aggregate Guardian alert hits per topic, feeds_discovery rules only.
 
     The Dreams half of the discovery gate (ADR-204 contract 3): the SQL
-    joins ``guardian_alerts`` to ``guardian_rules`` and keeps ONLY rules
-    with ``feeds_discovery=1``, so a crisis-flagged rule's hits can never
-    reach this reader (the write boundary refuses crisis + feeds_discovery
-    outright; crisis topics are excluded by construction, not by filter).
+    requires captured ``crisis_provenance=0`` on each historical alert and
+    joins its current rule for enabled, non-crisis ``feeds_discovery=1``
+    consent. Unknown legacy or captured crisis history stays excluded after
+    rule edits or deletion. Live Guardian and restored-owner admission apply
+    independently of both stored facts.
     Output is counts per topic -- never message text -- weighted with the
     same ``_WEIGHT_PER_TOUCH`` saturation as the other readers.
 

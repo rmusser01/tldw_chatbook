@@ -210,6 +210,9 @@ class SchedulerLoop:
         #: T14a). Registered before ``run`` starts; each is waited for
         #: once, bounded by ``_FIRST_DISPATCH_GATE_TIMEOUT_SECONDS``.
         self.first_dispatch_gates: list[Callable[[], Any]] = []
+        # Startup owners may keep individual occurrences held after the
+        # responsiveness wait expires. Guards are synchronous and fail closed.
+        self.dispatch_guards: list[Callable[[dict[str, Any], str], bool]] = []
         self.queue = PriorityQueue(
             db,
             watchlist_projection=watchlist_projection,
@@ -551,16 +554,9 @@ class SchedulerLoop:
         gate that times out or raises is logged and passed -- startup work
         that fails or hangs must never stop the scheduler.
 
-        The bound leaves a window, and it is a real one (review of #2921,
-        round 4): once a gate has timed out, the first tick dispatches
-        whatever is due although the startup work that would have
-        withdrawn it has not finished. For Dreams' gate that means one
-        overdue Dreams source or event reminder can be dispatched once
-        before the suspend of a hand-edited "off" lands, when that
-        suspend takes longer than
-        ``_FIRST_DISPATCH_GATE_TIMEOUT_SECONDS``. Accepted: the other
-        choice is a scheduler that a hung startup task can stop. The
-        user guide says so where the hand-edited "off" is described.
+        Individual startup owners retain per-task dispatch guards after this
+        bounded wait. A timeout keeps unrelated work responsive without
+        authorizing the pending owner's occurrences.
         """
         gates, self.first_dispatch_gates = self.first_dispatch_gates, []
         for gate in gates:
@@ -840,6 +836,12 @@ class SchedulerLoop:
                 reporting it as a loop-blocking delay would be noise
                 dressed as a diagnostic.
         """
+        try:
+            if any(not guard(task, task_type) for guard in self.dispatch_guards):
+                return False
+        except Exception as exc:  # noqa: BLE001 - uncertain admission fails closed
+            logger.warning("Scheduler startup dispatch admission unavailable: {}", type(exc).__name__)
+            return False
         task_id = task.get("id")
         if scheduled:
             self._report_lateness_cause(task, task_type, now)

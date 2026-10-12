@@ -82,3 +82,11 @@ ADR-018 (`018-local-server-hybrid-scheduled-tasks.md`), ADR-019 (watchlist sched
 2. Missed-fire cause attribution is falsifiable: `busy` is backed by the previous tick's measured dispatch span.
 3. `automation_health` is read-time only; persisting it would drift from the run ledger.
 4. A reminder handler timeout advances its schedule — a wedged reminder handler can burn occurrences by design (bounded by the handler timeout).
+
+Dreams startup uses a bounded first-dispatch wait plus a separate per-task guard
+installed by `track_reconcile.first_dispatch_gate`. Timeout/error releases the
+wait, while `DreamsDispatchGate.permits` retains refusal for pending Dreams-owned
+subscriptions and linked reminders until persisted reconciliation is verified.
+Unclassified watchlists stay held if ownership could not be read; unrelated
+scheduler types and positively classified unrelated sources remain eligible.
+Held occurrences do not enter the run ledger or advance their due clock.

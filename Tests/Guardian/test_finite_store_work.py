@@ -207,3 +207,47 @@ async def test_discovery_reader_retires_only_its_new_native_worker_handle(tmp_pa
         finally:
             await asyncio.to_thread(db.close)
             db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lazy", [True, False])
+async def test_live_consent_owns_first_lazy_getter_but_preserves_worker_borrower(
+    tmp_path, monkeypatch, lazy,
+):
+    import threading
+    from types import SimpleNamespace
+
+    from tldw_chatbook.app_service_wiring import ServiceWiringMixin
+    from tldw_chatbook.Dreams.cycle_service import _guardian_snapshot_authorized
+    from tldw_chatbook.Guardian import settings
+
+    monkeypatch.setattr(settings, "guardian_setting", lambda *args: True)
+    monkeypatch.setattr(settings, "guardian_db_path", lambda: tmp_path / "lazy.db")
+    app = SimpleNamespace(guardian_db=None, _guardian_db_lock=threading.Lock())
+    getter = lambda: ServiceWiringMixin.get_guardian_db(app)
+    deps = SimpleNamespace(guardian_db_getter=getter)
+    handles = []
+    original = GuardianDB._get_connection
+    def capture(self):
+        connection = original(self)
+        handles.append(connection)
+        return connection
+    monkeypatch.setattr(GuardianDB, "_get_connection", capture)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        asyncio.get_running_loop().set_default_executor(executor)
+        try:
+            if not lazy:
+                assert await asyncio.to_thread(getter) is not None
+            assert not await _guardian_snapshot_authorized(
+                deps, {"topics": [{"text": "private", "source": "guardian"}]})
+            assert app.guardian_db is not None
+            assert len(handles) == 1
+            if lazy:
+                with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                    await asyncio.to_thread(handles[0].execute, "SELECT 1")
+            else:
+                assert await asyncio.to_thread(lambda: handles[0].execute("SELECT 1").fetchone()[0]) == 1
+            assert await asyncio.to_thread(lambda: True)
+        finally:
+            if app.guardian_db is not None:
+                await asyncio.to_thread(app.guardian_db.close)

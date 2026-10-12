@@ -38,7 +38,6 @@ from loguru import logger
 from tldw_chatbook.config import get_dreams_db_path, get_subscriptions_db_path
 from tldw_chatbook.Dreams.settings import dreams_setting
 
-
 #: ``settled`` values of a wrapper's suspension record (the record itself
 #: is documented in ``track_service``). They live HERE because this
 #: module answers the boot question from them and must stay light.
@@ -139,6 +138,40 @@ def _boot_db(app: Any) -> tuple[Any, bool, bool, bool]:
     return None, False, False, False
 
 
+class DreamsDispatchGate(asyncio.Event):
+    """Bounded startup waiting and durable-work permission are separate facts."""
+
+    def __init__(self, on_ready=None) -> None:
+        super().__init__()
+        self.dispatch_ready = False
+        self.source_ids: frozenset[int] | None = None
+        self._on_ready = on_ready
+
+    def authorize(self) -> None:
+        if not self.dispatch_ready:
+            self.dispatch_ready = True
+            if callable(self._on_ready):
+                self._on_ready()
+
+    def permits(self, task: dict, task_type: str) -> bool:
+        if self.dispatch_ready:
+            return True
+        if task_type in {"dreams_cycle", "dream_track_check"}:
+            return False
+        if task.get("link_type") == "dream_tracked_item":
+            return False
+        if task_type != "watchlist_job":
+            return True
+        # A failed ownership read cannot classify a watchlist as unrelated.
+        if self.source_ids is None:
+            return False
+        try:
+            prefix, raw_id = str(task.get("id", "")).split(":", 1)
+            return prefix == "watchlist" and int(raw_id) not in self.source_ids
+        except (TypeError, ValueError):
+            return False
+
+
 def first_dispatch_gate(scheduler_loop: Any) -> asyncio.Event:
     """Make the scheduler's first dispatch wait for the boot reconcile.
 
@@ -151,6 +184,8 @@ def first_dispatch_gate(scheduler_loop: Any) -> asyncio.Event:
     -- for the event returned here, which :func:`reconcile_at_boot` sets
     as soon as its cheap check finds nothing that has to land first (the
     ordinary start: one thread hop), and otherwise when its work is done.
+    A separate per-task guard remains after timeout/error until persisted
+    obligations are verified; opening the event alone does not authorize work.
 
     Called synchronously from the app's Dreams wiring, in the slice that
     also starts the scheduler worker, so the gate is registered before
@@ -163,7 +198,12 @@ def first_dispatch_gate(scheduler_loop: Any) -> asyncio.Event:
     Returns:
         The event to pass to :func:`reconcile_at_boot`.
     """
-    gate = asyncio.Event()
+    gate = DreamsDispatchGate(getattr(scheduler_loop, "request_reload", None))
+    guards = getattr(scheduler_loop, "dispatch_guards", None)
+    if guards is None:
+        guards = []
+        scheduler_loop.dispatch_guards = guards
+    guards.append(gate.permits)
     gates = getattr(scheduler_loop, "first_dispatch_gates", None)
     if isinstance(gates, list):
         gates.append(gate.wait)
@@ -270,7 +310,8 @@ async def _boot_pass(
             scheduler is waiting on one. It is set as soon as nothing
             that must precede the first dispatch is left -- at once when
             there is nothing to suspend and no source to mark -- and in
-            every case when this returns.
+            every case when this returns. That wake-up never grants per-task
+            permission after an error; the separate dispatch guard persists.
     """
     try:
         dreams_db, owned, switch, backfill = await asyncio.to_thread(
@@ -281,10 +322,15 @@ async def _boot_pass(
         must_precede_dispatch = backfill or (
             switch and not bool(dreams_setting("enabled")))
         if first_dispatch is not None and not must_precede_dispatch:
+            if isinstance(first_dispatch, DreamsDispatchGate):
+                first_dispatch.authorize()
             first_dispatch.set()
         if dreams_db is None:
             return
         try:
+            if isinstance(first_dispatch, DreamsDispatchGate):
+                first_dispatch.source_ids = frozenset(
+                    await asyncio.to_thread(dreams_db.dream_owned_subscription_ids))
             # Only now: there is something to do -- if the scheduler may.
             # While storage maintenance (a backup capture) has admission
             # closed the scheduler waits, and so does this; where the
@@ -328,6 +374,13 @@ async def _boot_pass(
                         getattr(app, "scheduler_loop", None),
                         "request_reload", None),
                 )
+            # Reconcile deliberately contains per-write failures. Returning
+            # from it does not prove that the persisted obligations settled.
+            records, pending_marks = await asyncio.to_thread(dreams_db.tracking_boot_state)
+            if (isinstance(first_dispatch, DreamsDispatchGate)
+                    and not pending_marks
+                    and not _records_need_switch(records, enabled=bool(dreams_setting("enabled")))):
+                first_dispatch.authorize()
         finally:
             if owned:
                 # Every connection, not just one thread's (T7): the hops
