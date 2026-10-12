@@ -42,3 +42,36 @@ Reason: opt-in presentation hook over existing notification events; no storage, 
 3. Settings surface (Console Behavior or Notifications category) with per-type toggles
 4. Tests + docs
 <!-- SECTION:PLAN:END -->
+
+## Deferral note (2026-10-11, dev `9f8533686c`)
+
+DEFERRED from the t2-hermes porting slice for capacity + collision risk:
+the settings-surface half lands in `settings_screen.py`'s Console Behavior
+category (key frozensets `CONSOLE_BEHAVIOR_*`, save order, grammar tests in
+`Tests/UI/test_settings_console_behavior_grammar.py`), and the model-config
+programme (PR #3057, open) is actively touching the same settings test
+family.
+
+Seam map gathered while scoping (all verified in code at dev `9f8533686c`):
+
+- **Hook sites (all three, with their dedupe already once-guarded)**:
+  `chat_screen.py::_notify_console_run_outcome` (run finished/failed for a
+  NON-viewed session — the copy already carries session title + workspace
+  name + verb, exactly the AC#3 content budget); `chat_screen.py::
+  _notify_console_run_failure` (viewed-session failure toast);
+  `_park_console_approval` (approval park). Hooking these three adds the OS
+  channel with the in-app toasts' dedupe semantics for free — they are the
+  once-guarded bridges `ConsoleChatController.notify_run_outcome` /
+  `notify_run_failure` already call on the main loop thread.
+- **Dispatcher**: new module (e.g. `Utils/os_notifications.py`) — macOS
+  `osascript -e display notification ...`, Linux `notify-send`; fixed argv,
+  scrubbed env, subprocess with a hard timeout, never awaited on the UI
+  thread (the plan's security review items). Windows: evaluate and report
+  honestly per the plan.
+- **Setting**: `[notifications]`-style config section default OFF with
+  per-type toggles (run finished / run failed / needs approval), read via
+  `config.get_cli_setting`; off-by-default pinned in tests per AC#1.
+- **Tests**: command construction (no message content) can pin the exact
+  argv without spawning (AC#3); failure tolerance by faking the binary
+  absent (AC#2); the hook sites can be driven with the existing
+  `_notify_console_run_outcome` seams.

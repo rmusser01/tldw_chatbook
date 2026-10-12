@@ -42,3 +42,16 @@ Reason: long-lived application-structure decision — replaces an existing (brok
 4. Shell entry points + keyboard conventions per ADR-031
 5. Tests + user guide page
 <!-- SECTION:PLAN:END -->
+
+## Deferral note (2026-10-11, dev `9f8533686c`)
+
+DEFERRED from the t2-hermes porting slice — untouched, deliberately, and
+consistent with the task's own "explicitly not immediate" framing. Sequencing
+facts for whenever it starts:
+
+1. The task's step 0 (audit the existing kanban surface) interacts with
+   PR #3084 (open at audit time), which reworks the Kanban trio's boot
+   wiring (lazy construction, retiring the zero-consumer local Kanban
+   store) — the audit must run against that landed state, not today's.
+2. ADR-075 (port vs rewrite boundary, data ownership) is a prerequisite
+   before any port of the backlog-md-py board.
