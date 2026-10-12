@@ -30,6 +30,8 @@ Status: in progress; implementation and verification are tracked in repo-local B
 
 ADR required: yes
 ADR path: [ADR-194](../../../backlog/decisions/194-structured-note-language-and-local-editor-validation.md)
+I3 production boundaries also extend server ADR065 through server `Docs/ADR/066-local-monaco-asset-owner.md` (fixed local Monaco assets/shared loader) and `Docs/ADR/067-notes-temporary-language-mode.md` (temporary old-server view mode). Neither rewrites accepted ADR065 rationale. Rulings47/48 were recorded before adoption.
+The secondary capture convention is recorded in server `Docs/ADR/068-exact-source-secondary-note-capture.md` (Rulings49/50): exact text-only save with explicit page-attribution limits, using the existing capture owner and no new provenance schema.
 Reason: portable storage/sync metadata and bounded local editor processing.
 Server governing ADR: `Docs/ADR/031-notes-capability-sync-domains.md` in the server repository. Before server implementation, record an extension under that repository's ADR assessment workflow for the new payload version; do not rewrite accepted ADR-031 rationale.
 Server extension allocated during F2: `S/Docs/ADR/065-portable-note-language-and-negotiated-structured-editing.md` extends locked ADR-031 and governs the additive field and negotiated clear/private snapshots.
