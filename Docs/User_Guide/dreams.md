@@ -71,10 +71,11 @@ stray marks a paste can carry along. A blank braille cell or a Hangul
 filler is saved as a space, and every run of spaces is saved as one.
 
 Two spellings of the same accented phrase (the accent typed as part of the
-letter, or as a separate mark) are saved as one topic from now on. A
-topic that an earlier version saved in the separate-mark spelling keeps
-that spelling, so adding it again makes a second topic beside it; remove
-the old one.
+letter, or as a separate mark), and two spacings of the same phrase, are
+saved as one topic from now on. A topic that an earlier version saved in
+the separate-mark spelling, or with two spaces (or a no-break space)
+between its words, keeps that spelling, so adding it again makes a
+second topic beside it; remove the old one.
 
 A `region` in `config.toml` that breaks these rules is ignored — Dreams
 behaves as if no region were set — until you correct it. Settings says so

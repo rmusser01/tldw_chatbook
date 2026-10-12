@@ -2310,3 +2310,39 @@ async def test_the_subject_in_front_of_a_mark_reaches_the_search(
     japan = _stories_by_url(
         dreams_db, result["collection_id"])["https://dreams.test/japan"]
     assert (japan["query"], japan["goal"]) == (query, _GOAL_JAPAN)
+
+
+@pytest.mark.asyncio
+async def test_spacings_of_one_keyword_fold_into_one_row_and_old_rows_stay(
+        dreams_db, monkeypatch):
+    """Review round 6, G-N5: the pin round 5 described. Derived keywords
+    spelled with two spaces and with a no-break space fold into ONE row
+    "rust tui", their weights summed. Rows an earlier build stored with a
+    run of spaces are not rewritten: the derived one is left to decay,
+    the user's own stays exactly as typed."""
+    from tldw_chatbook.Dreams import profile_sources
+    from tldw_chatbook.Dreams.cycle_service import _refresh_profile_signals
+
+    dreams_db.upsert_profile_entry(
+        "topic", "rust  tui", weight=0.4, searchable=1, source="notes")
+    dreams_db.upsert_profile_entry(
+        "topic", "jazz  guitar", weight=0.3, searchable=1, source="user")
+    monkeypatch.setattr(
+        profile_sources, "read_note_topics",
+        lambda _db: [{"facet": "topic", "text": "rust  tui", "weight": 0.5}])
+    monkeypatch.setattr(
+        profile_sources, "read_media_topics",
+        lambda _db: [{"facet": "topic", "text": "rust\u00a0tui", "weight": 0.3}])
+    deps = _deps(dreams_db)
+    deps.chachanotes_db_getter = lambda: object()
+    deps.media_db_getter = lambda: object()
+
+    assert await _refresh_profile_signals(deps, NOW) == []
+
+    rows = {row["text"]: row for row in dreams_db.list_profile()}
+    assert set(rows) == {"rust tui", "rust  tui", "jazz  guitar"}
+    assert rows["rust tui"]["weight"] == pytest.approx(0.8)
+    assert rows["rust tui"]["source"] == "notes"
+    assert rows["rust  tui"]["weight"] == pytest.approx(0.4), "left to decay"
+    assert (rows["jazz  guitar"]["weight"], rows["jazz  guitar"]["source"]) == (
+        pytest.approx(0.3), "user"), "a user's own row stays as typed"
