@@ -362,3 +362,19 @@ claims of a connected provider run. Final formatted two-file selection:
 `guardian-native-final`:10pass4.01s; Ruff passes. Earlier `guardian-blank-native`
 2pass1.75s and `guardian-actual-daily-native`3pass1.41s remain predecessor receipts.
 No product changes were needed for this qualification phase.
+
+## Checkpoint: populated Collections v4 installed provenance qualification
+
+The empty catalog controls are now complemented by exact frozenSTART9ab v4
+DDL, stored with source path/hash/commit in collections_v4.json. Native populated
+rows include capture URL/title/status/revision/historical timestamps and tag
+relationships. Both runtime and installed migration preserve all predecessor
+columns and assign UNKNOWN; repeated reopen retains that result. A fault after
+the additive provenance ALTER rolls the entire native dump back, then clean
+reopen migrates. Installed future/empty/hybrid/foreign-column catalogs refuse
+without mutation. Real recovery capture/relocation preserves migrated data and
+source bytes under actual maintenance/capture authority. No schema/policy change
+was needed. Two owned fixture setup failures (unnamed legacy collection insert,
+then missing required favorite) remain separate raw receipts; neither is a
+product failure. Corrected8pass1.82s; final formatted proof plus existing native
+catalog/initial-Capture/Retry/redirect controls33pass5.86s. Ruff passes.
