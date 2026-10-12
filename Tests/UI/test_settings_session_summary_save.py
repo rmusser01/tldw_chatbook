@@ -172,3 +172,25 @@ async def test_the_inspector_says_both_controls_apply_at_once(request, monkeypat
             assert rows["Focused setting"] == name
             assert rows["Saved as"] == key
             assert rows["Save"] == settings_screen.INSTANT_APPLY_BEHAVIOR_COPY
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(("hand_edited", "used"), [(99, "30"), ("abc", "3")])
+async def test_a_hand_edited_duration_is_composed_as_a_quit_reads_it(
+    request, monkeypatch, hand_edited, used
+):
+    """Fix round 1, finding 8: the title was built from the saved values as
+    a quit reads them ("On · 30 s") over a field composed from the raw one
+    (99), which corrected itself only when the field was left."""
+    config = _Config(monkeypatch)
+    config.saved = {"enabled": True, "duration_seconds": hand_edited}
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen, checkbox, field = await _open_session_summary(host, pilot)
+
+        assert checkbox.value is True
+        assert field.value == used
+        assert _title(screen) == f"{_TITLE}On · {used} s"
+        assert config.writes == []

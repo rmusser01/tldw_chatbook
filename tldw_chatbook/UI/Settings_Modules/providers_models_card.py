@@ -57,11 +57,7 @@ from ...Chat.provider_readiness import (
     provider_credential_source,
     required_base_url_target,
 )
-from ...config import (
-    get_cli_setting,
-    is_valid_provider_api_key,
-    provider_settings_for_key,
-)
+from ...config import is_valid_provider_api_key, provider_settings_for_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
@@ -2123,15 +2119,17 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 id="settings-session-summary-instant-hint",
                 classes="settings-instant-apply-hint",
             )
+            # The saved values as a quit reads them (C8): 99 in the file is 30.
+            saved = screen._saved_session_summary()["session_summary"]
             yield Checkbox(
                 "Show session usage summary when quitting",
-                value=bool(get_cli_setting("session_summary", "enabled", False)),
+                value=saved["enabled"],
                 id="settings-session-summary-enabled",
             )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Duration (seconds)", classes="settings-input-label")
                 yield Input(
-                    str(get_cli_setting("session_summary", "duration_seconds", 3)),
+                    str(saved["duration_seconds"]),
                     id="settings-session-summary-duration",
                     classes="settings-compact-input",
                     type="integer",
