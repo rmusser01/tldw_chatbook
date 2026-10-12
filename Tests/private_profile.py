@@ -30,11 +30,13 @@ _NO_CHILD_FAILURE = (
 #: its start-up no longer counts against it), so this takes nothing from a
 #: passing test; the slowest passing private-profile test in 189 CI logs took
 #: 127.1 s of its 180 s. A hung test is reported up to this much later than the
-#: lane's --timeout, by the child's own timeout naming the lane's value; the
-#: lead covers the child's start-up (5-7 s in CI) and its report, and is kept
-#: short because a hung child that cannot exit costs its CI job about
-#: budget + lead (UI shard 3 runs within 2 minutes of its 20-minute cap).
-#: Should the parent's own timeout still fire, it too names the lane's value.
+#: lane's --timeout, by the child's own timeout, which names what was left of
+#: the parent's armed timer (the lane's value less the parent's own setup:
+#: about ">179.98s" in a 180 s lane, not rounded down). The lead covers the
+#: child's start-up (5-7 s in CI) and its report, and is kept short because a
+#: hung child that cannot exit costs its CI job about budget + lead (UI shard 3
+#: runs within 2 minutes of its 20-minute cap). Should the parent's own timeout
+#: still fire, it names the lane's value.
 _CHILD_LEAD_SECONDS = 20.0
 #: What the parent keeps of its own limit to end a child that is still running
 #: and report it, before the parent's pytest-timeout would fire instead.
