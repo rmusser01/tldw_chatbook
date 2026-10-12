@@ -142,6 +142,7 @@ DREAMS_ADMISSION_TARGETS = (
     "Tests/Library/test_capture_url_provenance.py::test_actual_capture_first_and_retry_apply_egress_at_every_hop",
     "Tests/Subscriptions/test_local_watchlists_service.py",
     "Tests/Watchlists/test_watchlists_bulk_source_authoring.py",
+    "Tests/UI/test_settings_dreams_guardian_native_lifecycle.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
