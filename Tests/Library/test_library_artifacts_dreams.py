@@ -126,3 +126,6 @@ def test_tracked_status_keeps_origin_actions_and_missing_origin_is_readable(
     detail = catalog.read_detail(row.key)
     assert detail.dream_story is None
     assert dict(detail.details)["Tracking"] == "active"
+    assert dict(detail.details)["Mechanism"] == "question"
+    assert dict(detail.details)["Last check"] == "none yet"
+    assert dict(detail.details)["Query"] == "[broken]Missing[/other]"

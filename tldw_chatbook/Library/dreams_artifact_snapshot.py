@@ -60,7 +60,7 @@ class DreamsArtifactSnapshot:
                 f"""SELECT t.id, {title} AS title, t.status AS tracking_status,
                         COALESCE((SELECT status FROM dream_track_runs WHERE tracked_item_id=t.id
                         ORDER BY created_at DESC, id DESC LIMIT 1), t.status) AS status, 0 AS kept,
-                        t.created_at, t.updated_at, t.origin_story_id, t.suspension,
+                        t.created_at, t.updated_at, t.origin_story_id, t.suspension, t.mechanism,
                         c.local_date, c.status AS collection_status, c.degradation_notes,
                         (SELECT id FROM dream_track_runs WHERE tracked_item_id=t.id
                          ORDER BY created_at DESC, id DESC LIMIT 1) AS last_run_id,
@@ -204,7 +204,13 @@ class DreamsArtifactSnapshot:
         )
         story = self.db.get_story(story_id) if story_id is not None else None
         if self.source == "dream_track":
-            details.append(("Tracking", row["tracking_status"]))
+            details.extend(
+                (
+                    ("Tracking", row["tracking_status"]),
+                    ("Mechanism", row["mechanism"]),
+                    ("Query", row["title"]),
+                )
+            )
             if row["last_run_id"] is not None:
                 run = self.connection.execute(
                     "SELECT status, verdict_note FROM dream_track_runs WHERE id=?",
@@ -213,6 +219,8 @@ class DreamsArtifactSnapshot:
                 details.extend(
                     (("Last check", run["status"]), ("Verdict", run["verdict_note"]))
                 )
+            else:
+                details.append(("Last check", "none yet"))
             from ..Dreams.dreams_view import _held_reason
 
             held = _held_reason(dict(row))

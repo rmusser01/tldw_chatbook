@@ -91,7 +91,7 @@ import asyncio
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -108,7 +108,12 @@ from tldw_chatbook.Utils.timestamps import to_utc_iso
 
 from . import discovery
 from .discovery import Candidate
-from .settings import DREAMS_DEFAULTS, dreams_region, dreams_execution_allowed, dreams_setting
+from .settings import (
+    DREAMS_DEFAULTS,
+    dreams_execution_allowed,
+    dreams_region,
+    dreams_setting,
+)
 from .track_reconcile import SETTLED_OFF, SETTLED_ON, settled_state
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -1568,7 +1573,7 @@ def _reminder_run_at(event_date: Any, lead_days: int) -> datetime:
     # A naive datetime's astimezone() reads it as local wall-clock time
     # under the platform's rule for the date it carries.
     return datetime.combine(
-        lead_date, _REMINDER_LOCAL_TIME).astimezone(timezone.utc)
+        lead_date, _REMINDER_LOCAL_TIME).astimezone(UTC)
 
 
 #: ``previous_event_date`` default for :func:`promote_to_reminder`: the
@@ -2233,7 +2238,9 @@ async def _resume_pass(
         item_id = int(item["id"])
         subscription, reminders, rules = _owed(_suspension_record(item))
 
-        async def write_unsettled() -> None:
+        async def write_unsettled(
+            item_id: int, subscription: bool, reminders: list[str], rules: list[int]
+        ) -> None:
             await asyncio.to_thread(
                 partial(dreams_db.set_tracked_suspension, only_live=True),
                 item_id, _record_text(
@@ -2260,12 +2267,12 @@ async def _resume_pass(
             # longer owed, whatever happens to the rest: a reminder left
             # listed was re-armed by the next resume over a disable the
             # user had made in between.
-            await write_unsettled()
+            await write_unsettled(item_id, subscription, reminders, rules)
             if reminders and scheduling_db is not None:
                 await asyncio.to_thread(
                     _restore_reminders, scheduling_db, reminders)
                 reminders = []
-                await write_unsettled()
+                await write_unsettled(item_id, subscription, reminders, rules)
             if rules and subs_service is not None:
                 for rule_id in rules:
                     try:
@@ -2274,7 +2281,7 @@ async def _resume_pass(
                     except KeyError:
                         pass  # the user deleted the rule
                 rules = []
-                await write_unsettled()
+                await write_unsettled(item_id, subscription, reminders, rules)
         except Exception as exc:  # noqa: BLE001 - one failed wrapper stops nothing
             logger.warning(
                 "Dreams resume: switching tracked item {} failed: {}",
@@ -2426,7 +2433,7 @@ async def set_tracking_suspended(
     # with the sweep's own teardown.
     try:
         await sweep_track_lifecycle(
-            dreams_db, now=now or datetime.now(timezone.utc),
+            dreams_db, now=now or datetime.now(UTC),
             subs_service_getter=lambda: subs_service,
             scheduling_db_getter=scheduling_db_getter)
     except Exception as exc:  # noqa: BLE001 - resume degrades, never raises

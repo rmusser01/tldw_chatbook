@@ -4,7 +4,7 @@ title: A story captured through Dreams Ingest is fetched as a user-entered addre
 status: In Progress
 assignee: []
 created_date: '2026-10-12 01:45'
-updated_date: '2026-10-12 14:38'
+updated_date: '2026-10-12 19:39'
 labels:
   - dreams
   - security
@@ -50,6 +50,10 @@ Historical root integration preparation:
 Source author follow-up admitted into the user-authorized complete PR2921 review/remediation. Historical source description/notes retained. Current integration plan targets frozen updated author6c074d6eed/v6; actual post-Buddy dev and fresh author lease remain required before implementation. No product change or completion claimed.
 
 Current source update: author0c941ba2ec984d960ba83376aeace0e830452bbc, 113 nonmerge commits/88 feature paths after actual merged Goal9595facbbb. Independent source review preserves the real shared Toast fix and stronger reconcile/suspension work; remaining integrated proof and actual post-Buddy/latest-dev publication gate are pending. Prior source/plan/qualification claims remain historical. No product change or completion is claimed here.
+
+PR2921 current private integration qualification (2026-10-12):
+Persisted typed CaptureSaveRequest authority in Collections v5 and passed it through actual initial extraction, Library Retry and every redirect. Generic/serialized authority is UNKNOWN; explicit user input retains authorized intranet behavior. Populated exact v4 runtime/installed upgrade, injected rollback, reopen, refusal, capture/relocation and source-byte proof pass in final 33-case checkpoint. ADR-207/126 amendments govern the change. Existing shared DNS address-pinning limitation remains disclosed.
+Full source-bound outcomes, original failures, native owners and tradeoffs: .superpowers/sdd/2026-10-11-pr2921-current-dev-integration/task-1-report.md; external pr-review-wave2/pr2921-current-integration. Local implementation is ready for independent review. Actual-base restack, complete independent review and hosted required gates remain pending; preserve In Progress and the existing acceptance checklist until the full DoD is met.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

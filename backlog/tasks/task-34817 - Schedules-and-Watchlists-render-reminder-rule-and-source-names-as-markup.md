@@ -4,7 +4,7 @@ title: 'Schedules and Watchlists render reminder, rule and source names as marku
 status: In Progress
 assignee: []
 created_date: '2026-10-12 05:39'
-updated_date: '2026-10-12 14:38'
+updated_date: '2026-10-12 19:39'
 labels:
   - schedules
   - watchlists
@@ -42,6 +42,10 @@ Audit the actual Schedules/Watchlists reminder/rule/source runtime-name sinks, p
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 Current source update: author0c941ba2ec984d960ba83376aeace0e830452bbc, 113 nonmerge commits/88 feature paths after actual merged Goal9595facbbb. Independent source review preserves the real shared Toast fix and stronger reconcile/suspension work; remaining integrated proof and actual post-Buddy/latest-dev publication gate are pending. Prior source/plan/qualification claims remain historical. No product change or completion is claimed here.
+
+PR2921 current private integration qualification (2026-10-12):
+Unsafe actual Schedules/Watchlists name sinks now render literal Text/native Content with control-character protections retained. Native bracket/unmatched-closer/action cases produced genuine RED and pass after repair (24-case connected checkpoint). Corresponding unsafe interpolation site was removed from the ratcheted census; safe existing Text sites remain unchanged. No durable names are rewritten.
+Full source-bound outcomes, original failures, native owners and tradeoffs: .superpowers/sdd/2026-10-11-pr2921-current-dev-integration/task-1-report.md; external pr-review-wave2/pr2921-current-integration. Local implementation is ready for independent review. Actual-base restack, complete independent review and hosted required gates remain pending; preserve In Progress and the existing acceptance checklist until the full DoD is met.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

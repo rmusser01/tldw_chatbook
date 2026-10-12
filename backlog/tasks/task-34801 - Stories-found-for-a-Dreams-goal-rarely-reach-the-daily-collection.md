@@ -4,7 +4,7 @@ title: Stories found for a Dreams goal rarely reach the daily collection
 status: In Progress
 assignee: []
 created_date: '2026-10-12 01:45'
-updated_date: '2026-10-12 14:38'
+updated_date: '2026-10-12 19:39'
 labels:
   - dreams
 dependencies: []
@@ -39,6 +39,10 @@ Measure actual mixed goal/topic daily selection before and after; apply the smal
 Source author follow-up admitted into the user-authorized complete PR2921 review/remediation. Historical source description/notes retained. Current integration plan targets frozen updated author6c074d6eed/v6; actual post-Buddy dev and fresh author lease remain required before implementation. No product change or completion claimed.
 
 Current source update: author0c941ba2ec984d960ba83376aeace0e830452bbc, 113 nonmerge commits/88 feature paths after actual merged Goal9595facbbb. Independent source review preserves the real shared Toast fix and stronger reconcile/suspension work; remaining integrated proof and actual post-Buddy/latest-dev publication gate are pending. Prior source/plan/qualification claims remain historical. No product change or completion is claimed here.
+
+PR2921 current private integration qualification (2026-10-12):
+Actual mixed-profile measurement changed selected stories from topics-only to one goal plus retained topic stories using bounded reserved goal opportunity. Shared search/LLM budgets, private-goal exclusion and exact provenance remain intact; measured before/after and native cycle controls are in the report. ADR-196 amendment recorded before implementation.
+Full source-bound outcomes, original failures, native owners and tradeoffs: .superpowers/sdd/2026-10-11-pr2921-current-dev-integration/task-1-report.md; external pr-review-wave2/pr2921-current-integration. Local implementation is ready for independent review. Actual-base restack, complete independent review and hosted required gates remain pending; preserve In Progress and the existing acceptance checklist until the full DoD is met.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

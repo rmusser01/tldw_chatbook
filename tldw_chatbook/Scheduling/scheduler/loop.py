@@ -112,7 +112,7 @@ class SchedulerLoop:
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
         dreams_projection: "DreamsProjection | None" = None,  # dreams phase 1
-        guardian_projection: "GuardianProjection | None" = None,  # guardian task 2
+        guardian_projection: GuardianProjection | None = None,  # guardian task 2
         queue_reload_interval_ticks: int = 60,
         expected_unhandled_types: frozenset[str] = frozenset(),
         missed_fire_grace_seconds: float = MISSED_FIRE_GRACE_SECONDS,

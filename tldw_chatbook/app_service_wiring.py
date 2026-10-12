@@ -3474,7 +3474,7 @@ class ServiceWiringMixin:
                     self.guardian_db = GuardianDB(
                         selected_path, CLI_APP_CLIENT_ID
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001 - optional owner construction fails closed
                     logger.opt(exception=True).warning(
                         "Guardian DB unavailable",
                     )
@@ -3640,11 +3640,11 @@ class ServiceWiringMixin:
             self.get_guardian_db
         )
 
+        from .Guardian.settings import guardian_setting
         from .Scheduling.scheduler.handlers.guardian_trend_handler import (
             GuardianTrendDeps,
             GuardianTrendHandler,
         )
-        from .Guardian.settings import guardian_setting
 
         def _guardian_trend_deps():
             if not guardian_setting("enabled"):

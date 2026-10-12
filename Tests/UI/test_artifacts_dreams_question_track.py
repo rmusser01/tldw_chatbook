@@ -2,9 +2,9 @@
 
 Two surfaces, mirroring the story-modal file's harness split: the ``w``
 (watch question) action is exercised on a bare ``App`` (the modal owns its
-DB handle via the ``dreams_db_getter`` seam), while the Artifacts-screen
+DB handle via the ``dreams_db_getter`` seam), while the Library-reader
 Tracked-row interaction (click/Enter opens the origin story, or a summary
-notice when the origin is gone) reuses the DestinationHarness harness from
+notice when the origin is gone) reuses the production Library harness from
 ``test_artifacts_dreams_rows.py``.
 
 Import-order admission binding (75ecfdbca9 family, see the goals-modal
@@ -20,17 +20,19 @@ import pytest
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.text import Text
-from textual.app import App
 from textual.widgets import Button, Static
 
 import Tests.UI.app_factory  # noqa: F401 - config-participant admission binding (see module docstring)
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_artifacts_dreams_rows import _settle_artifacts_refreshes
-from Tests.UI.test_destination_shells import DestinationHarness
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
+from Tests.UI.test_artifacts_dreams_rows import (
+    _mounted_dreams,
+    _wait_for_dreams,
+)
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
 from tldw_chatbook.Dreams.dreams_view import list_recent_dreams
 from tldw_chatbook.UI.Screens.artifacts_dreams_modal import DreamsStoryModal
-from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 pytestmark = pytest.mark.ui
 
@@ -339,14 +341,6 @@ def _seed_orphan_track_db(tmp_path) -> DreamsDB:
     return db
 
 
-async def _wait_for_dreams(screen, pilot, selector: str, *, attempts: int = 50):
-    for _ in range(attempts):
-        await pilot.pause(0.05)
-        if screen._dreams and screen.query(selector):
-            break
-    else:
-        raise AssertionError(f"dreams refresh never landed {selector!r}")
-    await _settle_artifacts_refreshes(screen, pilot)
 
 
 # The wiring tests below build a real app via ``_build_test_app`` and need
@@ -358,16 +352,15 @@ async def test_tracked_row_click_opens_story_modal_for_resolvable_origin(
     tmp_path, monkeypatch
 ):
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = _seed_resolvable_track_db(tmp_path)
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
+    async with _mounted_dreams(app) as (host, screen, pilot):
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        assert isinstance(screen, ArtifactsScreen)
+        assert isinstance(screen, LibraryScreen)
         await _wait_for_dreams(screen, pilot, "#artifacts-dream-track-row-1")
 
-        await pilot.click("#artifacts-dream-track-row-1")
+        await pilot.click("#library-artifacts-dreams-actions")
         await pilot.pause()
 
         modal = host.screen_stack[-1]
@@ -381,22 +374,21 @@ async def test_tracked_row_click_opens_story_modal_for_resolvable_origin(
 
         await pilot.press("q")
         await pilot.pause()
-        assert host.screen_stack[-1] is screen, "close returns to the Artifacts screen"
+        assert host.screen_stack[-1] is screen, "close returns to the Library reader"
 
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_tracked_row_enter_opens_story_modal(tmp_path, monkeypatch):
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = _seed_resolvable_track_db(tmp_path)
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
+    async with _mounted_dreams(app) as (host, screen, pilot):
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
         await _wait_for_dreams(screen, pilot, "#artifacts-dream-track-row-1")
 
-        screen.query_one("#artifacts-dream-track-row-1", Static).focus()
+        screen.query_one("#library-artifacts-dreams-actions", Button).focus()
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
@@ -413,35 +405,28 @@ async def test_tracked_row_with_unresolvable_origin_shows_summary_notice(
 ):
     """A question watch with no origin story is a summary notice, not a modal."""
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = _seed_orphan_track_db(tmp_path)
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
+    async with _mounted_dreams(app) as (host, screen, pilot):
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        assert isinstance(screen, ArtifactsScreen)
+        assert isinstance(screen, LibraryScreen)
         await _wait_for_dreams(screen, pilot, "#artifacts-dream-track-row-1")
 
-        await pilot.click("#artifacts-dream-track-row-1")
         await pilot.pause()
 
         assert host.screen_stack[-1] is screen, (
             "an unresolvable origin must not push a modal"
         )
-        # The mounted app here is the harness host, not the wrapped
-        # (unmounted) TldwCli, so the toasts land on ``pilot.app``.
-        summary = next(
-            (
-                n.message
-                for n in pilot.app._notifications
-                if "mechanism: question" in n.message
-            ),
-            None,
-        )
-        assert summary is not None, "the summary notice must carry the mechanism"
-        assert "status: active" in summary
-        assert "standalone question" in summary, "the label (query) rides the summary"
-        assert "last run: none yet" in summary, "the last-run state rides the summary"
+        detail = screen._artifacts_controller.detail
+        assert detail.dream_story is None
+        summary = dict(detail.details)
+        assert summary["Mechanism"] == "question"
+        assert summary["Tracking"] == "active"
+        assert summary["Query"] == "standalone question"
+        assert summary["Last check"] == "none yet"
+        assert not screen.query_one("#library-artifacts-dreams-actions",Button).display
+
 
 
 @pytest.mark.bootstrap_profile
@@ -451,15 +436,14 @@ async def test_track_row_routing_keeps_dream_row_clicks_working(
 ):
     """The widened click routing must not break the existing dream-row path."""
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = _seed_resolvable_track_db(tmp_path)
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
+    async with _mounted_dreams(app) as (host, screen, pilot):
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
         await _wait_for_dreams(screen, pilot, "#artifacts-dream-row-1")
 
-        await pilot.click("#artifacts-dream-row-1")
+        await pilot.click("#library-artifacts-dreams-actions")
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, DreamsStoryModal), (
@@ -470,7 +454,8 @@ async def test_track_row_routing_keeps_dream_row_clicks_working(
         await pilot.pause()
         assert host.screen_stack[-1] is screen
 
-        await pilot.click("#artifacts-dream-track-row-1")
+        await _wait_for_dreams(screen,pilot,"#artifacts-dream-track-row-1")
+        await pilot.click("#library-artifacts-dreams-actions")
         await pilot.pause()
         assert isinstance(host.screen_stack[-1], DreamsStoryModal), (
             "and the tracked row still opens the origin story's modal"

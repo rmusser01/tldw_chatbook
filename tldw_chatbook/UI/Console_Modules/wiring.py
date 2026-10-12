@@ -843,8 +843,8 @@ def _guardian_checker_for_screen(screen: Any) -> Any:
     )
     try:
         screen._guardian_checker = checker
-    except Exception:  # noqa: BLE001 - read-only view doubles keep working
-        pass
+    except AttributeError:  # Read-only view doubles cannot cache the checker.
+        return checker
     return checker
 
 

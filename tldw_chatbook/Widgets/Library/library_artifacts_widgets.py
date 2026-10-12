@@ -286,7 +286,9 @@ class ArtifactWork(Vertical):
             body = Text("")
         else:
             body = (
-                Text("This discovery cycle recorded no stories.")
+                Text("The original story is unavailable. Open Details for tracking status.")
+                if c.selected and c.selected.source == "dream_track"
+                else Text("This discovery cycle recorded no stories.")
                 if dream
                 else Text(
                     f"This report is {row.status if row else 'unavailable'}. Open Watchlists for its status."

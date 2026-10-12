@@ -56,7 +56,7 @@ class PriorityQueue:
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
         dreams_projection: "DreamsProjection | None" = None,  # dreams phase 1
-        guardian_projection: "GuardianProjection | None" = None,  # guardian task 2
+        guardian_projection: GuardianProjection | None = None,  # guardian task 2
     ) -> None:
         self.db = db
         self.watchlist_projection = watchlist_projection

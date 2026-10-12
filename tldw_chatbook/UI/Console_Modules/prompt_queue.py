@@ -1129,7 +1129,7 @@ class ConsolePromptQueueUIController:
             )
             try:
                 guardian_result = await guardian_checker.check(draft, session_id=session_id)
-            except Exception:
+            except Exception:  # noqa: BLE001 - ADR204 preserves sends on checker failure
                 # Fail-open belt-and-suspenders (ADR-204 contract 5): the
                 # checker's own fail-open owns the loud part; this guard
                 # only guarantees a broken checker can never eat a send.

@@ -8,7 +8,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Union
+from typing import ClassVar, Iterator, Union
 
 from tldw_chatbook.Backup_Recovery.participants import (
     _core_access,
@@ -1101,16 +1101,16 @@ class DreamsDB(BaseDB):
     #: The read and the write of each reservable counter. The column is
     #: chosen by key from this table, never interpolated from a caller's
     #: string.
-    _USAGE_RESERVE_SQL = {
+    _USAGE_RESERVE_SQL: ClassVar[dict[str, tuple[str, str]]] = {
         "searches": (
             "SELECT searches FROM dream_daily_usage WHERE local_date = ?",
-            "UPDATE dream_daily_usage SET searches = searches + ?"
-            " WHERE local_date = ?",
+            ("UPDATE dream_daily_usage SET searches = searches + ?"
+             " WHERE local_date = ?"),
         ),
         "llm_calls": (
             "SELECT llm_calls FROM dream_daily_usage WHERE local_date = ?",
-            "UPDATE dream_daily_usage SET llm_calls = llm_calls + ?"
-            " WHERE local_date = ?",
+            ("UPDATE dream_daily_usage SET llm_calls = llm_calls + ?"
+             " WHERE local_date = ?"),
         ),
     }
 
