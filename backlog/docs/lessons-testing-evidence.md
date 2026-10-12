@@ -1,5 +1,18 @@
 # Lessons: what counts as evidence a change works
 
+
+## Aggregate lint counts can hide a new per-file finding (TASK-21236, 2026-10-11)
+
+**Incident.** The Buddy closeout removed two old import-order findings and added one elsewhere. Comparing total code/message counts reported no introduced finding; independent review found importer.py grew from three I001 diagnostics to four. Removing one blank line fixed it without changing the Python AST, and the three startup guards passed again.
+
+**What to do.** Compare diagnostic code/message multiplicities per file against exact base bytes, with the same explicit linter configuration. Keep tested and published source hashes distinct when a final formatting correction changes bytes.
+
+## A stale-review category can hide a storage-scope refusal (TASK-21236, 2026-10-11)
+
+**Incident.** Four existing Actor Pack artwork/conversion round trips failed with `actor_pack_import_review_stale` after the Buddy import-closure repair. Adding a bootstrap-profile marker did not change the failure. Tracing the original exception identified `operation_path_outside_scope`: review validation asked for the profile directory while the active SQLite operation owned only `actors.db`.
+
+**What to do.** Trace the original boundary exception before changing fixtures or weakening stale-review checks. Keep ordinary directory/capacity preflight outside the SQL operation and recheck exact source, staged bytes, UUID and visual authority inside the transaction. The repaired round trips and the conversion pre-insert/final-write source controls verify both sides; a fixture marker cannot grant a transaction unrelated path authority.
+
 ## A Console host does not retire the borrowed application (TASK-34786, 2026-10-10)
 
 **Incident.** A 90-case Console review run passed but grew by203 file descriptors. The new session-tab composer harness contributed161: it constructed a real TldwCli, then stopped only ConsoleHarness. A constructor-only control retained SQLite owners even after garbage collection; a real mounted control reduced descriptors from34 to21 only after draining the borrowed runtime and closing its four actual database owners.
@@ -19540,6 +19553,17 @@ then re-query its live row without yielding. A generic row and a Pilot settle
 pause do not prove that a sibling slice has arrived. The 30-second budget,
 real service, storage and all original action assertions remain unchanged.
 Evidence: [retained controls and RED/GREEN](../../Docs/QA/task-34414/README.md).
+
+
+October 11 follow-up, PR3078: exact identity alone can still match a row in
+Textual's native prune window. Pausing the real list removal for 100 ms made
+the unchanged helper press a mounted but pruning, hidden VSync row; no event
+was posted and its original note-list wait expired. Settle pending recomposes
+after domain readiness, then re-query the current exact row and press without
+another yield. The same controlled lifecycle and both original Delete/Undo
+journeys pass. The CI schedule itself was not captured; this control proves
+the helper defect, not a historical request/epoch cause.
+Evidence: [Buddy closeout receipt](../../Docs/Reviews/artifacts/buddy-closeout-20261011/verification.json).
 
 ## A safe output wrapper cannot protect an earlier markup parse (PR #3040, TASK-1513)
 

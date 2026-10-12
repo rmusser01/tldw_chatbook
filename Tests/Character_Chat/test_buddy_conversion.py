@@ -350,3 +350,51 @@ def test_timeline_ignores_only_invisible_rgb_and_preserves_alpha():
         transparent.putpixel((0, 0), (255, 0, 0, 1))
         with pytest.raises(ValueError, match="unfaithful"):
             _verified_timeline(output.getvalue(), [transparent, blue], [100, 100], True)
+
+
+def test_publication_rechecks_source_before_character_insert(tmp_path, monkeypatch):
+    from Tests.Actor_Packs.test_actor_pack_attribution import services
+    from tldw_chatbook.Actor_Packs.activation import (
+        ActorPackActivationError,
+        ActorPackActivationService,
+    )
+    from tldw_chatbook.Character_Chat.buddy_conversion import publish_buddy_character
+
+    root = tmp_path / "profile"
+    db, importer, _, _ = services(root)
+    current = [True]
+    conversion = only_idle(snapshot(current=lambda: current[0]))
+    original_check = ActorPackActivationService._raise_if_cancelled
+    original_insert = db._insert_character_card_in_transaction
+    inserted = []
+
+    def change_source_at_transaction_entry(checker):
+        original_check(checker)
+        if db.get_connection().in_transaction:
+            current[0] = False
+
+    def record_insert(*args, **kwargs):
+        inserted.append(True)
+        return original_insert(*args, **kwargs)
+
+    monkeypatch.setattr(
+        ActorPackActivationService,
+        "_raise_if_cancelled",
+        staticmethod(change_source_at_transaction_entry),
+    )
+    monkeypatch.setattr(db, "_insert_character_card_in_transaction", record_insert)
+    try:
+        with pytest.raises(ActorPackActivationError):
+            publish_buddy_character(
+                conversion,
+                name="Must not be inserted",
+                db=db,
+                local_service=importer._local_service,
+                profile_root=root,
+                authority_guard=lambda: True,
+            )
+        assert inserted == []
+        assert db.get_character_card_by_name("Must not be inserted") is None
+        assert not list((root / "buddy-conversion").iterdir())
+    finally:
+        db.close_connection()

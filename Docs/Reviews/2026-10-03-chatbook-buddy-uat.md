@@ -160,3 +160,11 @@ The earlier published head `e1cfc73e6611ff9e39d3c5d94080f7792ef6e6e7` completed 
 [Source, screenshot and verification hashes](artifacts/buddy-uat-20261003/verification.json) record final sources, earlier-stage attribution, targeted run counts and local log hashes. Screenshots contain synthetic fixtures. Config contents, bootstrap nonce, credentials, raw audio and raw application logs are excluded.
 
 Raw attempts remain under `/private/tmp/chatbook-*20261003*`. Final realtime stage: `chatbook-buddy-realtime-clean`. Final earlier stages: `chatbook-buddy-final-repairs`, `chatbook-queued-shutdown-final`, `chatbook-buddy-final-static`, `chatbook-worker-guard-base-control`, and `chatbook-buddy-workspace-command-qualified` (all with the 20261003 suffix).
+
+## Requester-approved acceptance closeout — 2026-10-11
+
+The requester approved closing TASK-31585 against verified repairs and previously accepted UAT, with historical coverage limits explicit. AC9 was revised prospectively; this is a scope reconciliation, not a claim that its former exact-revision native and full application-configured human OpenAI requirement passed.
+
+All nine original evidence files match the October 4 reconciliation hashes. Native move, resize and restart acceptance and the post-fix local human voice run remain accepted at their recorded scope. The production OpenAI OAuth probe establishes session readiness, a complete synthetic reply, 105600 output PCM bytes and clean session closure. It does not establish microphone input, audible playback or an application-configured credential. Native receipts retain their missing Git revision/dirty-state and exit-provenance limits. No accepted gestures or human voice checks were repeated, and no credential was read.
+
+Chatbook PR #3011 and server PR #3091 are merged at `3146bbd8da2f30eaa97d72bd0ab860de4c40de75` and `005802bdb070fd68e087c4db3f831c33bef07c39`. Historical repair verification keeps its original source attribution. The [closeout receipt](artifacts/buddy-uat-20261003/acceptance-closeout-20261011.json) records the requester decision, unchanged evidence hashes and limits. Full application-configured human OpenAI realtime remains unqualified; it is not a remaining requirement of this revised repair task.

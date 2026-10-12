@@ -101,6 +101,8 @@ async def _open_synced_folder(screen, pilot) -> None:
         ),
         "the synced folder to load",
     )
+    # Settle pending recomposes before querying the current folder button.
+    await pilot.pause()
     next(
         button
         for button in screen.query(".library-notes-folder-row").results(Button)

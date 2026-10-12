@@ -371,13 +371,12 @@ from ..Persona_Modules.personas_preview_coordinator import (
 )
 from ...Character_Chat.character_generation import CharacterGenerationError
 from ...Character_Chat.world_book_import import format_imported_lorebook_note
-from ...Character_Chat.character_generation_controller import (
-    CharacterGenerationController,
-    build_gateway_runner,
-)
 from ..Persona_Modules.personas_preview_controller import PersonasPreviewController
 
 if TYPE_CHECKING:
+    from ...Character_Chat.character_generation_controller import (
+        CharacterGenerationController,
+    )
     from ...Character_Chat.expression_set_io import ExpressionSetApplyResult
     from ...Chat.console_image_view import ConsoleImageRenderCache
     from ...Image_Generation.capabilities import ResolvedReferenceImage
@@ -10792,6 +10791,11 @@ class PersonasScreen(BaseAppScreen):
         override = getattr(self, "_generation_controller_override", None)
         if override is not None:
             return override
+        from ...Character_Chat.character_generation_controller import (
+            CharacterGenerationController,
+            build_gateway_runner,
+        )
+
         runner = build_gateway_runner(
             gateway_factory=self.preview.ensure_gateway,
             selection_factory=lambda: (
