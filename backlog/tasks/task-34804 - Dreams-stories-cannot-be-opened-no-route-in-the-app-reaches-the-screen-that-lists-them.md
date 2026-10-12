@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-10-12 02:33'
-updated_date: '2026-10-12 05:02'
+updated_date: '2026-10-12 14:38'
 labels:
   - dreams
   - navigation
@@ -32,6 +32,8 @@ Dreams writes a daily collection of stories and the user guide says they appear 
 
 <!-- SECTION:PLAN:BEGIN -->
 Use actual production Library routing/catalog/controller to expose Dreams stories, all existing actions and goals editor; update tests to mount actual destination and guide/Settings real location/key. Preserve shell authority/layout/token/owner contracts and current PC/Goal. Direct ADR172/196 integration, no new ADR.
+
+Source update admits34815 persisted degradation reasons alongside the real Library-owned story/list/goals navigation; compose existing token-backed views, preserve all original actions and avoid a second artifact shell.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -42,6 +44,8 @@ Use actual production Library routing/catalog/controller to expose Dreams storie
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 Source author follow-up admitted into the user-authorized complete PR2921 review/remediation. Historical source description/notes retained. Current integration plan targets frozen updated author6c074d6eed/v6; actual post-Buddy dev and fresh author lease remain required before implementation. No product change or completion claimed.
+
+Current source update: author0c941ba2ec984d960ba83376aeace0e830452bbc, 113 nonmerge commits/88 feature paths after actual merged Goal9595facbbb. Independent source review preserves the real shared Toast fix and stronger reconcile/suspension work; remaining integrated proof and actual post-Buddy/latest-dev publication gate are pending. Prior source/plan/qualification claims remain historical. No product change or completion is claimed here.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
