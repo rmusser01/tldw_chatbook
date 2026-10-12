@@ -145,7 +145,7 @@ _BUDGETS: dict[str, int] = {
     # quit summary's single-writer save and its Inspector guide (C8), the
     # staged credential source behind the Key check row, the deep link's
     # first edit (C1) and Save selected's own worker group and lock (C9).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33881,
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33879,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

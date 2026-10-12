@@ -10,7 +10,7 @@ Save still wrote the linked provider.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Input, Select
+from textual.widgets import Button, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _active_destination_screen
@@ -29,14 +29,16 @@ _TYPED_KEY = "sk-ant-api03-abcdefghijklmnop1234"
 PROVIDERS_MODELS = SettingsCategoryId.PROVIDERS_MODELS
 
 
-async def _deep_link_to_anthropic_key(host, pilot):
+async def _deep_link_to_anthropic_key(
+    host, pilot, provider="anthropic", model="claude-sonnet-4-6"
+):
     await _settle_settings(pilot)
     screen = _active_destination_screen(host)
     screen.apply_navigation_context(
         {
             "category": PROVIDERS_MODELS.value,
-            "provider": "anthropic",
-            "model": "claude-sonnet-4-6",
+            "provider": provider,
+            "model": model,
             "field": "api_key",
         }
     )
@@ -218,3 +220,114 @@ async def test_the_saved_default_can_be_chosen_from_a_deep_linked_form(request):
         assert _form_provider(screen) == ("OpenAI", "openai", "openai")
         assert screen.query_one("#settings-model-value", Input).value == "gpt-4.1"
         assert not screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+
+
+def _staged_pair(screen) -> tuple[object, object]:
+    staged = screen._provider_setting_values_mapping()
+    return staged["provider"], staged["model"]
+
+
+_LINKED_PAIR = ("anthropic", "claude-sonnet-4-6")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_sign_in_with_as_the_first_edit_after_a_deep_link_is_staged(
+    request, monkeypatch
+):
+    """Fix round 1, finding 1: the handler read the SAVED default's provider
+    while the link had no draft, returned early and staged nothing; the next
+    paint put "API key" back in the Select."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _deep_link_to_anthropic_key(host, pilot)
+        # Finding 11(b): before any edit the Inspector's guide is the linked
+        # provider's, not the saved default's.
+        guide = dict(screen._provider_field_guidance_rows())
+        assert guide["Saved as"] == "api_settings.anthropic.api_key", guide
+        auth = screen.query_one("#settings-provider-auth-source", Select)
+
+        auth.value = "claude_subscription"
+        await pilot.pause()
+
+        assert screen._provider_auth_source_value("anthropic") == (
+            "claude_subscription"
+        )
+        assert screen._category_has_unsaved_changes(PROVIDERS_MODELS)
+        assert _staged_pair(screen) == _LINKED_PAIR
+        screen._update_provider_dynamic_widgets()  # the next paint keeps it
+        await pilot.pause()
+        assert auth.value == "claude_subscription"
+        assert _form_provider(screen) == _ANTHROPIC
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_api_mode_as_the_first_edit_after_a_deep_link_is_staged(request):
+    app = _app()
+    app.app_config["api_settings"]["qwencloud"] = {"model": "qwen-max"}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _deep_link_to_anthropic_key(
+            host, pilot, "qwencloud", "qwen-max"
+        )
+        mode = screen.query_one("#settings-provider-api-mode", Select)
+        assert mode.value == "responses"
+
+        mode.value = "chat_completions"
+        await pilot.pause()
+
+        assert screen._provider_api_mode_value("qwencloud") == "chat_completions"
+        assert _staged_pair(screen) == ("qwencloud", "qwen-max")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_reset_as_the_first_edit_after_a_deep_link_resets_the_linked_pair(
+    request,
+):
+    """Finding 11(a): Reset read the default pair's state, which has no
+    override, and did nothing."""
+    app = _app()
+    app.app_config["model_capabilities"] = {
+        "models": {"claude-sonnet-4-6": {"context_window": 123_456}}
+    }
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _deep_link_to_anthropic_key(host, pilot)
+
+        screen.query_one("#settings-model-context-window-reset", Button).press()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen._provider_draft_value("model_context_window_reset") is True
+        assert _staged_pair(screen) == _LINKED_PAIR
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_value_equal_to_the_saved_default_s_is_staged_in_a_linked_form(
+    request, monkeypatch
+):
+    """Finding 11(c): the equal-to-current guard compared with the default
+    provider's Env var, so the same name typed for the linked one was dropped."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    app = _app()
+    app.app_config["api_settings"]["openai"]["api_key_env_var"] = "SHARED_KEY_VAR"
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _deep_link_to_anthropic_key(host, pilot)
+        env_var = screen.query_one("#settings-provider-credential-env-var", Input)
+        assert env_var.value == ""
+
+        env_var.value = "SHARED_KEY_VAR"
+        await pilot.pause()
+
+        assert screen._provider_draft_value("credential_env_var") == "SHARED_KEY_VAR"
+        assert _staged_pair(screen) == _LINKED_PAIR
+

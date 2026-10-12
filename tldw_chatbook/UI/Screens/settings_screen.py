@@ -13310,12 +13310,11 @@ class SettingsScreen(BaseAppScreen):
         if provider_key != "qwencloud":
             return
         category = SettingsCategoryId.PROVIDERS_MODELS
+        current = self._provider_display_setting_values()  # before a draft exists
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
         )
-        self._pin_provider_draft_selection(
-            draft, self._provider_setting_values_mapping()
-        )
+        self._pin_provider_draft_selection(draft, current)
         draft_key = self._provider_api_mode_draft_key(provider_key)
         original = draft.originals.get(
             draft_key, self._provider_saved_api_mode_value(provider_key)
@@ -13447,12 +13446,11 @@ class SettingsScreen(BaseAppScreen):
         if provider_config_key(str(provider or "")) != "anthropic":
             return
         category = SettingsCategoryId.PROVIDERS_MODELS
+        current = self._provider_display_setting_values()  # before a draft exists
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
         )
-        self._pin_provider_draft_selection(
-            draft, self._provider_setting_values_mapping()
-        )
+        self._pin_provider_draft_selection(draft, current)
         draft_key = self._provider_auth_source_draft_key("anthropic")
         original = draft.originals.get(
             draft_key, self._provider_saved_auth_source("anthropic")
@@ -18116,7 +18114,7 @@ class SettingsScreen(BaseAppScreen):
         return self._with_save_behavior_row(rows, save_copy)
 
     def _provider_field_guidance_rows_base(self) -> tuple[tuple[str, str], ...]:
-        values = self._provider_setting_values_mapping()
+        values = self._provider_display_setting_values()
         provider = str(values.get("provider") or "").strip()
         model = str(values.get("model") or "").strip() or "<model>"
         endpoint_key = self._provider_endpoint_row(provider).removeprefix(
@@ -30690,13 +30688,13 @@ class SettingsScreen(BaseAppScreen):
         ):
             return
         current_model = str(
-            self._provider_setting_values_mapping().get("model") or ""
+            self._provider_display_setting_values().get("model") or ""
         ).strip()
         if model_value == current_model:
             return
         # The link stays: it names the form's provider when the draft empties.
         self._stage_provider_value("model", model_value or None)
-        provider = str(self._provider_setting_values_mapping().get("provider") or "")
+        provider = str(self._provider_display_setting_values().get("provider") or "")
         self._sync_provider_model_profile_widgets(provider, model_value)
         self._clear_provider_model_profile_draft_keys()
         self._update_provider_dynamic_widgets()
@@ -30736,7 +30734,7 @@ class SettingsScreen(BaseAppScreen):
             draft.values.pop("model_context_window_reset", None)
             draft.originals.pop("model_context_window_reset", None)
         self._stage_provider_value("model_context_window", value)
-        values = self._provider_setting_values_mapping()
+        values = self._provider_display_setting_values()
         self._show_context_window_row(
             str(values.get("provider") or ""), str(values.get("model") or ""), value
         )
@@ -30745,7 +30743,7 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-model-context-window-reset")
     def handle_model_context_window_reset(self, event: Button.Pressed) -> None:
         event.stop()
-        values = self._provider_setting_values_mapping()
+        values = self._provider_display_setting_values()
         provider = str(values.get("provider") or "")
         model = str(values.get("model") or "")
         state = model_context_window_state(self._app_config_mapping(), provider, model)
@@ -30802,7 +30800,7 @@ class SettingsScreen(BaseAppScreen):
         if (
             event.value.strip()
             == str(
-                self._provider_setting_values_mapping().get("endpoint") or ""
+                self._provider_display_setting_values().get("endpoint") or ""
             ).strip()
         ):
             return
@@ -30823,7 +30821,7 @@ class SettingsScreen(BaseAppScreen):
         if self._syncing_provider_auth_source:
             return
         provider = str(
-            self._provider_setting_values_mapping().get("provider") or ""
+            self._provider_display_setting_values().get("provider") or ""
         ).strip()
         if provider_config_key(provider) != "anthropic":
             return
@@ -30841,7 +30839,7 @@ class SettingsScreen(BaseAppScreen):
         if self._syncing_provider_api_mode:
             return
         provider = str(
-            self._provider_setting_values_mapping().get("provider") or ""
+            self._provider_display_setting_values().get("provider") or ""
         ).strip()
         if provider_config_key(provider) != "qwencloud":
             return
@@ -30915,7 +30913,7 @@ class SettingsScreen(BaseAppScreen):
         if (
             event.value.strip()
             == str(
-                self._provider_setting_values_mapping().get("credential_env_var") or ""
+                self._provider_display_setting_values().get("credential_env_var") or ""
             ).strip()
         ):
             return
@@ -31275,7 +31273,7 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         if self._syncing_provider_model_profile:
             return
-        current = self._provider_setting_values_mapping()
+        current = self._provider_display_setting_values()
         draft = self._provider_draft()
         saved = (draft.originals if draft is not None else {}).get(
             key, current.get(key)
