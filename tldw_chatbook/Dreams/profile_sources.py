@@ -172,11 +172,14 @@ def read_guardian_topics(
         "source": "guardian"}``, heaviest first.
     """
     from tldw_chatbook.Backup_Recovery.activation import execution_scope
+    from tldw_chatbook.DB.base_db import operation_owned_connection
     from tldw_chatbook.Guardian.settings import guardian_setting
 
     if not guardian_setting("enabled", False):
         return []
-    with execution_scope(("db.guardian",), getattr(guardian_db, "db_path", None)) as allowed:
+    with operation_owned_connection(guardian_db), execution_scope(
+        ("db.guardian",), getattr(guardian_db, "db_path", None)
+    ) as allowed:
         if not allowed:
             return []
         cutoff = to_utc_iso(utc_now() - timedelta(days=window_days))
