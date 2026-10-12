@@ -115,14 +115,19 @@ async def test_story_derived_source_is_fetched_while_its_host_is_public(
     "stored", [None, {}, {"max_items": 5}, "not json"],
     ids=["no-options", "empty", "other-options", "unreadable"],
 )
-async def test_user_configured_private_source_is_still_fetched(
+async def test_unmarked_private_source_is_refused_without_user_evidence(
         monitor, wire, stored):
-    """The user's own subscription keeps its behaviour: an intranet page is
-    a legitimate thing to watch, and its source vouches for itself."""
+    """Legacy absence cannot establish an explicit user-entered URL."""
     wire.resolves_to = ["192.168.1.1"]
+    with pytest.raises(FetchBlockedError):
+        await monitor._fetch_url_content(_subscription(stored))
+    assert wire.sent == []
 
-    await monitor._fetch_url_content(_subscription(stored))
 
+@pytest.mark.asyncio
+async def test_explicit_user_entered_private_url_remains_allowed(monitor, wire):
+    wire.resolves_to = ["192.168.1.1"]
+    await monitor._fetch_url_content(_subscription({"url_provenance": "user_entered"}))
     assert wire.sent == [_URL]
 
 
@@ -181,7 +186,8 @@ async def test_user_configured_private_feed_sitemap_and_api_are_still_fetched(
     from tldw_chatbook.Subscriptions.monitoring_engine import FeedMonitor
 
     wire.resolves_to = ["192.168.1.1"]
-    subscription = {"id": 1, "source": _URL, "type": "rss"}
+    subscription = {"id": 1, "source": _URL, "type": "rss",
+                    "processing_options": {"url_provenance": "user_entered"}}
     try:
         if arm == "feed":
             await FeedMonitor()._fetch_and_parse_feed(subscription)
@@ -230,7 +236,8 @@ async def test_a_user_editing_the_url_makes_the_source_user_entered(
         assert options() == {**_STORY_DERIVED, "max_items": 5}
 
         await service.update_source(
-            source_id, {"url": "https://intranet.example/status"})
+            source_id, {"url": "https://intranet.example/status",
+                        "url_provenance": UrlProvenance.USER_ENTERED})
 
         assert options() == {
             URL_PROVENANCE_OPTION: UrlProvenance.USER_ENTERED.value,
@@ -244,3 +251,29 @@ async def test_a_user_editing_the_url_makes_the_source_user_entered(
         )
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arm", ["url", "feed", "sitemap", "api"])
+async def test_unknown_source_checks_every_redirect_destination(monkeypatch, monitor, wire, arm):
+    from tldw_chatbook.Subscriptions import LocalWatchlistsService
+    from tldw_chatbook.Subscriptions.monitoring_engine import FeedMonitor
+    from tldw_chatbook.Utils import egress
+    async def resolve(host):
+        return ["93.184.216.34" if host == "later-private.example" else "192.168.1.1"]
+    async def send(self, request, **kwargs):
+        wire.sent.append(str(request.url))
+        return httpx.Response(302, request=request, headers={"location":"http://internal.example/secret"})
+    monkeypatch.setattr(egress, "_resolve_async", resolve)
+    monkeypatch.setattr(httpx.AsyncClient, "send", send)
+    row = {"id": 1, "source": _URL, "type": "rss", "processing_options": _STORY_DERIVED}
+    with pytest.raises((FetchBlockedError, egress.EgressBlockedError)):
+        if arm == "url":
+            await monitor._fetch_url_content(row)
+        elif arm == "feed":
+            await FeedMonitor()._fetch_and_parse_feed(row)
+        elif arm == "sitemap":
+            await LocalWatchlistsService._urls_for_sitemap(row)
+        else:
+            await LocalWatchlistsService._items_for_api_source(row)
+    assert wire.sent == [_URL]

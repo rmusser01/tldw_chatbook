@@ -355,17 +355,14 @@ def _source_options(source: Any) -> dict:
 
 
 def _needs_story_mark(source: Any) -> bool:
-    """Whether a source Dreams owns still lacks any provenance record.
+    """Whether a source has no usable explicit provenance record.
 
-    Only a source with NO record is stamped (round 4). One that carries
-    the story-derived mark has it; and one whose URL the user changed
-    carries the opposite record -- ``user_entered``, written by the
-    watchlists service on that edit -- and is the user's address now:
-    round 3 cleared the mark there instead, which made the edited source
-    look like one from before the mark existed, and the next switch-off
-    stamped the user's own address as a story address again.
+    Preserve an explicit user entry; normalize absent or malformed lineage to
+    UNKNOWN without treating an old row as evidence of user intent.
     """
-    return URL_PROVENANCE_OPTION not in _source_options(source)
+    return _source_options(source).get(URL_PROVENANCE_OPTION) not in (
+        UrlProvenance.UNKNOWN.value, UrlProvenance.USER_ENTERED.value
+    )
 
 
 def _is_users_address(source: Any) -> bool:
@@ -381,8 +378,8 @@ def _story_options(source: Any) -> dict:
     it already has included.
     """
     options = _source_options(source)
-    for key, value in _STORY_URL_OPTIONS.items():
-        options.setdefault(key, value)
+    if options.get(URL_PROVENANCE_OPTION) != UrlProvenance.USER_ENTERED.value:
+        options[URL_PROVENANCE_OPTION] = UrlProvenance.UNKNOWN.value
     return options
 
 

@@ -129,11 +129,12 @@ def test_schema_policy_matches_installed_store(core_store):
         if name == "prompts"
         else (owner._CURRENT_SCHEMA_VERSION, 76, 75)
         if name == "chachanotes"
+        else (5, 4) if name == "library_collections"
         else (owner._CURRENT_SCHEMA_VERSION,)
     )
     assert policy.schema_sql[0] == (owner._CURRENT_SCHEMA_VERSION, actual)
     assert len(policy.schema_sql) == (
-        10 if name == "chachanotes" else 2 if name == "prompts" else 1
+        10 if name == "chachanotes" else 2 if name == "prompts" else 3 if name == "library_collections" else 1
     )
     if name == "chachanotes":
         from tldw_chatbook.DB.recovery_core_schema import (
@@ -145,6 +146,9 @@ def test_schema_policy_matches_installed_store(core_store):
             (77, schema) for schema in CHACHANOTES_V76_NATIVE_SCHEMAS
         )
         assert policy.migration_steps == ((76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),)
+    elif name == "library_collections":
+        from tldw_chatbook.DB.recovery_core_schema import COLLECTIONS_V4_TO_V5_SQL
+        assert policy.migration_steps == ((4, 5, COLLECTIONS_V4_TO_V5_SQL),)
     elif name != "prompts":
         assert policy.migration_steps == ()
 

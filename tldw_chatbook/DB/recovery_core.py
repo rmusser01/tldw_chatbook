@@ -474,6 +474,9 @@ class _CoreAdapter:
             CHACHANOTES_BROWSE_V79_TO_V80_SQL,
             CHACHANOTES_V80_SCHEMAS,
             CORE_SCHEMAS,
+            COLLECTIONS_V4_SCHEMA,
+            COLLECTIONS_V5_SCHEMAS,
+            COLLECTIONS_V4_TO_V5_SQL,
             PROMPTS_V4_SCHEMA,
             PROMPTS_V4_TO_V5_SQL,
         )
@@ -513,6 +516,11 @@ class _CoreAdapter:
                 (78, 79, CHACHANOTES_SARGABLE_V78_TO_V79_SQL),
                 (79, 80, CHACHANOTES_BROWSE_V79_TO_V80_SQL),
             )
+        elif self.owner_id == "db.library_collections":
+            versions = (5, 4)
+            schemas = tuple((5, schema) for schema in COLLECTIONS_V5_SCHEMAS)
+            schemas += ((4, COLLECTIONS_V4_SCHEMA),)
+            migrations = ((4, 5, COLLECTIONS_V4_TO_V5_SQL),)
         elif self.owner_id == "db.prompts.primary":
             schemas += ((4, PROMPTS_V4_SCHEMA),)
             versions += (4,)

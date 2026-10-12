@@ -83,14 +83,8 @@ class UrlProvenance(Enum):
     UNKNOWN = "unknown"
 
 
-#: Key under which a stored record that holds a URL (a subscription's
-#: ``processing_options``) carries that URL's provenance as a
-#: :class:`UrlProvenance` value. A record with no such key holds a URL its
-#: owner configured, which is how every record written before the key
-#: existed is read. Written by a producer that stores a URL nobody typed
-#: (a Dreams story's page), and read back at fetch time by
-#: ``Subscriptions.monitoring_engine``, so that such a URL is never its
-#: own trusted origin -- not when it is stored, and not on any later fetch.
+#: Durable provenance recorded only by a boundary that establishes user intent.
+#: Missing, malformed, legacy, and restored unmarked values remain UNKNOWN.
 URL_PROVENANCE_OPTION = "url_provenance"
 
 
@@ -115,22 +109,10 @@ def trusted_origins_for(url: str, provenance: UrlProvenance) -> frozenset:
 
 
 def provenance_of_stored_source(processing_options: Any) -> UrlProvenance:
-    """How a stored source came to hold its URL, read from its options.
+    """Decode explicit durable authority, conservatively rejecting unknown lineage.
 
-    A source whose URL nobody typed records that in
-    ``processing_options[URL_PROVENANCE_OPTION]`` (Dreams stamps the
-    subscriptions it creates from a story's URL). The options arrive
-    parsed from the watchlists service and as raw JSON text from a bare
-    subscription row; both are read.
-
-    Args:
-        processing_options: The source's stored options -- a mapping, its
-            JSON text, or None.
-
-    Returns:
-        ``UrlProvenance.UNKNOWN`` when the record says the URL is not the
-        user's own entry, else ``USER_ENTERED`` -- including for every
-        source with no such record, which is every one a user created.
+    An absent or malformed record cannot establish that a user entered the URL.
+    Only the exact persisted USER_ENTERED mark earns private-origin authority.
     """
     options = processing_options
     if isinstance(options, str):
@@ -140,10 +122,10 @@ def provenance_of_stored_source(processing_options: Any) -> UrlProvenance:
             options = None
     if (
         isinstance(options, Mapping)
-        and options.get(URL_PROVENANCE_OPTION) == UrlProvenance.UNKNOWN.value
+        and options.get(URL_PROVENANCE_OPTION) == UrlProvenance.USER_ENTERED.value
     ):
-        return UrlProvenance.UNKNOWN
-    return UrlProvenance.USER_ENTERED
+        return UrlProvenance.USER_ENTERED
+    return UrlProvenance.UNKNOWN
 
 
 def source_trusted_origins(url: str, processing_options: Any) -> frozenset:

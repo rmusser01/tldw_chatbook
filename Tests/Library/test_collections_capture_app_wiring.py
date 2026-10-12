@@ -308,10 +308,14 @@ async def test_startup_recovery_runs_blocking_capture_work_off_loop() -> None:
     calls: list[tuple[str, int, int | None]] = []
 
     class _Repository:
+        db = None
+
         def interrupt_stale_extractions(self) -> None:
             calls.append(("interrupt", threading.get_ident(), None))
 
     class _OfflineStore:
+        repository = _Repository()
+
         def reconcile_batch(self, *, limit: int) -> None:
             calls.append(("offline", threading.get_ident(), limit))
 

@@ -8,6 +8,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+# Real guarded config consumers retain their collection-time private profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Notifications import (
     ClientNotificationsDB,
@@ -604,11 +607,11 @@ async def test_local_watchlists_service_persists_source_execution_settings(tmp_p
     assert source["settings"]["extraction_rules"] == {
         "urls": ["https://example.com/a", "https://example.com/b"]
     }
-    assert source["settings"]["processing_options"] == {"max_urls": 2}
+    assert source["settings"]["processing_options"] == {"max_urls": 2, "url_provenance": "unknown"}
     assert source["settings"]["extraction_method"] == "full"
     assert source["settings"]["check_frequency"] == 300
     assert updated["url"] == "https://example.com/c"
-    assert updated["settings"]["processing_options"] == {"max_urls": 1}
+    assert updated["settings"]["processing_options"] == {"max_urls": 1, "url_provenance": "unknown"}
     assert updated["settings"]["extraction_rules"] == {
         "urls": ["https://example.com/c"]
     }

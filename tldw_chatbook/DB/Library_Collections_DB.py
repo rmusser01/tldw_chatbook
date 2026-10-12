@@ -45,7 +45,7 @@ class LibraryCollectionsDB(BaseDB):
     makes the held connection safe here -- each thread owns exactly one.
     """
 
-    _CURRENT_SCHEMA_VERSION = 4
+    _CURRENT_SCHEMA_VERSION = 5
     _WAL_SETUP_TIMEOUT_SECONDS = 5.0
 
     _CAPTURE_TABLE_NAMES = frozenset(
@@ -165,6 +165,8 @@ class LibraryCollectionsDB(BaseDB):
             updated_at TEXT NOT NULL,
             revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
             purge_state TEXT,
+            url_provenance TEXT NOT NULL DEFAULT 'unknown'
+                CHECK(url_provenance IN ('unknown', 'user_entered')),
             PRIMARY KEY(authority_key, capture_id),
             UNIQUE(authority_key, canonical_url)
         )
@@ -704,16 +706,41 @@ class LibraryCollectionsDB(BaseDB):
             )
             current_version = 0
             if has_version_table:
-                row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
-                current_version = int(row[0] or 0) if row is not None else 0
+                versions = [row[0] for row in conn.execute("SELECT version FROM schema_version")]
+                if not versions or any(type(version) is not int or version < 1 for version in versions):
+                    raise LibraryCollectionsSchemaError("unsupported_schema_version")
+                current_version = max(versions)
+            elif conn.execute(
+                "SELECT 1 FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchone():
+                raise LibraryCollectionsSchemaError("unsupported_schema_version")
             if current_version > self._CURRENT_SCHEMA_VERSION:
                 raise LibraryCollectionsSchemaError("schema_too_new")
+            if current_version == 5:
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(collection_capture_items)")}
+                if "url_provenance" not in columns:
+                    raise LibraryCollectionsSchemaError("unsupported_hybrid_schema")
 
             if current_version == 0:
                 for statement in self._LEGACY_SCHEMA_DDL:
                     conn.execute(statement)
                 conn.execute(
                     "INSERT OR IGNORE INTO schema_version (version) VALUES (1)"
+                )
+
+            if current_version in {2, 3, 4}:
+                columns = {
+                    str(row[1]) for row in conn.execute(
+                        "PRAGMA table_info(collection_capture_items)"
+                    )
+                }
+                if "url_provenance" in columns:
+                    raise LibraryCollectionsSchemaError("unsupported_hybrid_schema")
+                conn.execute(
+                    (Path(__file__).with_name("migrations")
+                     / "library_collections_v4_to_v5_url_provenance.sql").read_text(
+                        encoding="utf-8"
+                    )
                 )
 
             for statement in self._CAPTURE_SCHEMA_DDL:
@@ -785,6 +812,7 @@ class LibraryCollectionsDB(BaseDB):
             or not {
                 "extraction_owner_token",
                 "extraction_lease_expires_at",
+                "url_provenance",
             }
             <= capture_item_columns
         ):

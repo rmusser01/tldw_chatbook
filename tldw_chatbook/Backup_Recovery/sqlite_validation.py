@@ -262,6 +262,8 @@ class _Restrictions:
                 allowed |= {"printf", "sqlite_rename_test", "sqlite_rename_quotefix"}
                 if self.migration_owner == "db.prompts.primary":
                     allowed.add("trim")
+                if self.migration_owner == "db.subscriptions":
+                    allowed |= {"json_valid", "json_type", "json_extract", "json_set"}
                 if self.migration_owner == "db.evals":
                     allowed.add("sqlite_drop_column")
                 # ADR-224 v78->v79: normalization UPDATEs (julianday/strftime),
@@ -304,6 +306,10 @@ class _Restrictions:
             permitted |= (
                 self.migrating and self.migration_owner == "db.agent_runs"
                 and first == "quick_check" and second == "automatic_wake_attempts"
+            )
+            permitted |= (
+                self.migrating and self.migration_owner == "db.library_collections"
+                and first == "quick_check" and second == "collection_capture_items"
             )
             return sqlite3.SQLITE_OK if permitted else sqlite3.SQLITE_DENY
         if (
@@ -446,6 +452,34 @@ class _Restrictions:
                     )
                 )
                 return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
+            # ADR-207: installed provenance steps only. The candidate SQL was
+            # matched to a complete historical catalog before this gate opens.
+            if self.migration_owner in {"db.library_collections", "db.subscriptions"}:
+                allowed = database == "main" and source is None and (
+                    action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE}
+                    and first == "schema_version"
+                    or self.migration_owner == "db.subscriptions"
+                    and action == sqlite3.SQLITE_UPDATE
+                    and first == "subscriptions" and second == "processing_options"
+                )
+                allowed |= (
+                    self.migration_owner == "db.library_collections"
+                    and action == sqlite3.SQLITE_ALTER_TABLE
+                    and (first, second, database, source)
+                    == ("main", "collection_capture_items", None, None)
+                )
+                allowed |= (
+                    self.migration_owner == "db.subscriptions"
+                    and source is None and database == "main"
+                    and (
+                        action in {sqlite3.SQLITE_CREATE_TRIGGER, sqlite3.SQLITE_DROP_TRIGGER}
+                        and (first, second) == ("update_subscriptions_timestamp", "subscriptions")
+                        or action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE}
+                        and first == "sqlite_master"
+                    )
+                )
+                if allowed:
+                    return sqlite3.SQLITE_OK
             # Research keeps its existing ADD COLUMN authority. Only fixed
             # installed statements execute while this temporary gate is open.
             if (
