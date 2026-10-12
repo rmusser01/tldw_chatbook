@@ -1403,6 +1403,86 @@ async def test_a_cycle_does_not_write_into_a_collection_that_took_its_id(
     )
 
 
+def _take_over_todays_collection(dreams_db, *, digest="other") -> int:
+    """What "the other process" does: delete today's still-empty row and
+    create a new one that gets the SAME id (ids are reused)."""
+    row = dreams_db.get_collection_by_date(_today())
+    assert dreams_db.delete_empty_collection(int(row["id"])) is True
+    with dreams_db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO dreams_collections (id, local_date, status,"
+            " profile_digest, trigger, created_at) VALUES"
+            " (?, ?, 'generating', ?, 'catchup', '2000-01-01T00:00:00.000Z')",
+            (int(row["id"]), _today(), digest))
+    return int(row["id"])
+
+
+@pytest.mark.asyncio
+async def test_a_cycle_that_wrote_no_story_does_not_close_another_collection(
+        dreams_db, settings):
+    """Review round 5, F4 (a). A cycle with no model call left for a story
+    writes no story -- so no story insert can refuse the stale id -- and
+    then stamps its verdict ("failed") on its collection. If the id was
+    taken over meanwhile, that verdict used to land on the other one.
+
+    The day's one model call goes to query synthesis; the other process
+    takes the id over while that call runs."""
+    import sqlite3
+
+    _seed_topics(dreams_db)
+    settings["max_llm_calls_per_day"] = 1
+    taken_over: list[int] = []
+
+    def chat(**kwargs):
+        if not taken_over:
+            taken_over.append(_take_over_todays_collection(dreams_db))
+        return _fake_chat(**kwargs)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        await run_cycle(_deps(dreams_db, chat=chat), trigger="manual")
+
+    assert taken_over, "fixture: the id was taken over mid-cycle"
+    other = dreams_db.get_collection_by_date(_today())
+    assert (other["profile_digest"], other["status"]) == ("other", "generating")
+    assert other["completed_at"] is None and other["degradation_notes"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_appending_cycle_writes_only_into_the_row_it_appended_to(
+        dreams_db, settings, monkeypatch):
+    """Review round 5, F4 (b): the two-process case the claim is for. A
+    second trigger of the day appends to the existing (empty, failed) row.
+    Right after it has picked that row, the other process replaces it with
+    a new row under the same id; the appending cycle must hold the row it
+    picked, not whatever has its id when it next looks."""
+    import sqlite3
+
+    from tldw_chatbook.Dreams import cycle_service
+
+    _seed_topics(dreams_db)
+    first = dreams_db.create_collection(_today(), "scheduled", "first")
+    dreams_db.set_collection_status(first, "failed", story_count=0)
+    real_target = cycle_service._append_target
+    taken_over: list[int] = []
+
+    def target_then_taken_over(db, local_date):
+        target = real_target(db, local_date)
+        taken_over.append(_take_over_todays_collection(db))
+        return target
+
+    monkeypatch.setattr(cycle_service, "_append_target", target_then_taken_over)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        await run_cycle(_deps(dreams_db), trigger="manual")
+
+    assert taken_over == [first], "fixture: the appended-to id was reused"
+    other = dreams_db.get_collection_by_date(_today())
+    assert (other["profile_digest"], other["status"]) == ("other", "generating")
+    assert dreams_db.list_stories(first) == [], (
+        "the new collection got none of the appending cycle's stories"
+    )
+
+
 def test_delete_empty_collection_never_removes_a_collection_with_stories(
         dreams_db):
     """The halted-cycle cleanup can only ever remove an EMPTY row that is
