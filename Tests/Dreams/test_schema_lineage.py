@@ -171,3 +171,24 @@ def test_refused_constructor_closes_native_handle_before_return(tmp_path, monkey
         opened[0].execute("SELECT 1")
     assert path.read_bytes() == original
     assert not path.with_name(path.name + "-wal").exists()
+
+
+def test_historical_feedback_index_retains_statistics_free_plan(tmp_path):
+    """Qualification of a retained predecessor index, not a new runtime index."""
+    layout = next(row for row in LAYOUTS if any(
+        "CREATE INDEX idx_dream_feedback_story" in HISTORY["statements"][index]
+        for index in row["statements"]
+    ))
+    path = tmp_path / "historical-index.sqlite"
+    historical_store(path, layout)
+    db = DreamsDB(path)
+    try:
+        with db.connection() as connection:
+            assert connection.execute("SELECT 1 FROM sqlite_schema WHERE name='sqlite_stat1'").fetchone() is None
+            plan = connection.execute(
+                "EXPLAIN QUERY PLAN SELECT id FROM dream_feedback WHERE story_id=?", (51,)
+            ).fetchall()
+            assert any("SEARCH dream_feedback USING COVERING INDEX idx_dream_feedback_story" in row[3] for row in plan)
+            assert connection.execute("SELECT id FROM dream_feedback WHERE story_id=?", (51,)).fetchone()[0] == 61
+    finally:
+        db.close_all()

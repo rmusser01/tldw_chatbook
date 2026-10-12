@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-28 20:23'
-updated_date: '2026-10-12 14:38'
+updated_date: '2026-10-12 19:39'
 labels:
   - dreams
   - phase2
@@ -107,4 +107,8 @@ The earlier implementation notes below describe frozen source7f18b6ec1063009b916
 Scoped updated-plan preflight found final qualification preceded the admitted follow-up changes and required-CI coverage was absent from task acceptance. Plan order now places all changes before final source/node freeze and qualification; Guardian integration acceptance gains the bounded required-CI outcome. Collections predecessor/rollback/reopen/future-refusal and installed recovery obligations are explicit in extracted Task1. No product or completion claim.
 
 Current source update: author0c941ba2ec984d960ba83376aeace0e830452bbc, 113 nonmerge commits/88 feature paths after actual merged Goal9595facbbb. Independent source review preserves the real shared Toast fix and stronger reconcile/suspension work; remaining integrated proof and actual post-Buddy/latest-dev publication gate are pending. Prior source/plan/qualification claims remain historical. No product change or completion is claimed here.
+
+PR2921 current private integration qualification (2026-10-12):
+Preserved exact generating-goal/query attribution through dedup, persisted stories and feedback-angle adjustment without goal-weight changes. Exact original cycle/feedback controls pass in final-thread-contract-controls (24 parametrized cases across the selected thread contracts). ADR-196 retained.
+Full source-bound outcomes, original failures, native owners and tradeoffs: .superpowers/sdd/2026-10-11-pr2921-current-dev-integration/task-1-report.md; external pr-review-wave2/pr2921-current-integration. Local implementation is ready for independent review. Actual-base restack, complete independent review and hosted required gates remain pending; preserve In Progress and the existing acceptance checklist until the full DoD is met.
 <!-- SECTION:NOTES:END -->

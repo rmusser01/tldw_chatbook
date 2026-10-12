@@ -1244,7 +1244,7 @@ class LifecycleMixin:
                 )
                 await guardian_trend_shutdown()
             except Exception as e:
-                self.loguru_logger.error(f"Error stopping Guardian trend work: {e}")
+                self.loguru_logger.error(f"Error stopping Guardian trend work: {type(e).__name__}")
 
             # Disconnect local MCP client sessions (P5-T6), if any were ever
             # established this run.

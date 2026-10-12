@@ -3,9 +3,9 @@
 Two harnesses, mirroring the stream's own split: the modal's actions are
 exercised on a bare ``App`` (no destination shell needed -- the modal owns
 its DB handle via the ``dreams_db_getter`` seam and its handoff via the
-``open_chat_with_handoff`` app attribute), while the Artifacts-screen
+``open_chat_with_handoff`` app attribute), while the Library-reader
 wiring (row click / Enter opens the modal, refresh after actions) reuses
-the Task-6 ``DestinationHarness`` harness from
+the canonical production Library harness from
 ``test_artifacts_dreams_rows.py``.
 """
 
@@ -17,21 +17,24 @@ import pytest
 from rich.console import Group
 from rich.markdown import Markdown
 from rich.text import Text
-from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
 from textual.widgets import Button, Static
 
 import tldw_chatbook.UI.Screens.artifacts_dreams_modal as dsm_module
 from Tests.Dreams.test_ingest_action import FakeCaptureBackend
 from Tests.UI.app_factory import _build_test_app
-from Tests.UI.test_artifacts_dreams_rows import _settle_artifacts_refreshes
-from Tests.UI.test_destination_shells import DestinationHarness
+from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
+from Tests.UI.test_artifacts_dreams_rows import (
+    _mounted_dreams,
+    _settle_artifacts_refreshes,
+    _wait_for_dreams,
+)
 from tldw_chatbook.DB.Dreams_DB import DreamsDB
 from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Dreams.dreams_view import list_recent_dreams
 from tldw_chatbook.Library.collections_capture_models import CollectionsCaptureError
 from tldw_chatbook.Subscriptions import LocalWatchlistsService
 from tldw_chatbook.UI.Screens.artifacts_dreams_modal import DreamsStoryModal
-from tldw_chatbook.UI.Screens.artifacts_screen import ArtifactsScreen
+from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 
 pytestmark = pytest.mark.ui
 
@@ -1221,21 +1224,9 @@ async def test_missing_dreams_db_degrades_to_notice_without_crash(tmp_path):
         assert app.screen is modal, "a refused action must not dismiss or crash"
 
 
-# --- Artifacts-screen wiring ------------------------------------------------
+# --- Library-reader wiring ------------------------------------------------
 
 
-async def _wait_for_dreams(screen, pilot, selector: str, *, attempts: int = 50):
-    for _ in range(attempts):
-        await pilot.pause(0.05)
-        if screen._dreams and screen.query(selector):
-            break
-    else:
-        raise AssertionError(f"dreams refresh never landed {selector!r}")
-    # Same settle as the rows file: the dreams apply is only the first of
-    # the mount/resume recompose waves; without draining the reports and
-    # chatbook applies, a click resolved now races their remount and lands
-    # on whatever the recompose leaves at the row's coordinates.
-    await _settle_artifacts_refreshes(screen, pilot)
 
 
 # The four wiring tests below build a real app via ``_build_test_app``,
@@ -1252,16 +1243,15 @@ async def test_dream_row_click_opens_modal_and_actions_refresh_rows(
     tmp_path, monkeypatch
 ):
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = _seed_db(tmp_path)
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
+    async with _mounted_dreams(app) as (host, screen, pilot):
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        assert isinstance(screen, ArtifactsScreen)
+        assert isinstance(screen, LibraryScreen)
         await _wait_for_dreams(screen, pilot, "#artifacts-dream-row-1")
 
-        await pilot.click("#artifacts-dream-row-1")
+        await pilot.click("#library-artifacts-dreams-actions")
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, DreamsStoryModal)
@@ -1272,34 +1262,26 @@ async def test_dream_row_click_opens_modal_and_actions_refresh_rows(
 
         await pilot.press("q")
         await pilot.pause()
-        assert host.screen_stack[-1] is screen, "close returns to the Artifacts screen"
+        assert host.screen_stack[-1] is screen, "close returns to the Library reader"
 
-        # on_changed refreshed the screen's rows: the kept badge is painted.
-        # The refresh's recompose remounts the row mid-loop, so re-query by
-        # selector (never hold the old object) and tolerate the teardown
-        # window where no row is mounted for a beat.
-        for _ in range(50):
-            await pilot.pause(0.05)
-            rows = screen.query("#artifacts-dream-row-1")
-            if rows and "kept" in _renderable_text(rows.first().renderable):
-                break
-        rows = screen.query("#artifacts-dream-row-1")
-        assert rows and "kept" in _renderable_text(rows.first().renderable)
+        await _settle_artifacts_refreshes(screen,pilot)
+        assert screen._artifacts_controller.detail.dream_story["kept"] == 1
+        assert app.dreams_db.get_story(1)["kept"] == 1
+
 
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_dream_row_enter_opens_modal(tmp_path, monkeypatch):
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = _seed_db(tmp_path)
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
+    async with _mounted_dreams(app) as (host, screen, pilot):
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
         await _wait_for_dreams(screen, pilot, "#artifacts-dream-row-1")
 
-        screen.query_one("#artifacts-dream-row-1", Static).focus()
+        screen.query_one("#library-artifacts-dreams-actions", Button).focus()
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
@@ -1311,21 +1293,18 @@ async def test_dream_row_enter_opens_modal(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_synthetic_row_click_opens_status_view(tmp_path, monkeypatch):
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = _seed_db(tmp_path)
     _seed_failed_cycle(app.dreams_db)
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
+    async with _mounted_dreams(app) as (host, screen, pilot):
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
         await _wait_for_dreams(screen, pilot, "#artifacts-dream-row-cycle-2026-09-23")
 
-        await pilot.click("#artifacts-dream-row-cycle-2026-09-23")
-        await pilot.pause()
-
-        modal = host.screen_stack[-1]
-        assert isinstance(modal, DreamsStoryModal)
-        assert "Cycle 2026-09-23" in _visible_text(modal)
+        assert host.screen is screen
+        assert "Cycle 2026-09-23" in str(screen.query_one("#library-artifacts-title",Static).renderable)
+        assert dict(screen._artifacts_controller.detail.details)["Collection status"] == "failed"
+        assert not screen.query_one("#library-artifacts-dreams-actions",Button).display
 
 
 @pytest.mark.bootstrap_profile
@@ -1338,18 +1317,17 @@ async def test_dream_row_ingest_uses_app_capture_scope(tmp_path, monkeypatch):
     it on demand covers the boot-deferred capture services.
     """
     _enable_dreams(monkeypatch)
-    app = _build_test_app(configured_default="artifacts")
+    app = _build_test_app(configured_default="library")
     app.dreams_db = _seed_db(tmp_path)
     backend = FakeCaptureBackend()
     app.ensure_collections_capture_services = lambda: backend
-    host = DestinationHarness(app, "artifacts")
-    async with host.run_test(size=(160, 50)) as pilot:
+    async with _mounted_dreams(app) as (host, screen, pilot):
         await pilot.pause(0.1)
         screen = host.screen_stack[-1]
-        assert isinstance(screen, ArtifactsScreen)
+        assert isinstance(screen, LibraryScreen)
         await _wait_for_dreams(screen, pilot, "#artifacts-dream-row-1")
 
-        await pilot.click("#artifacts-dream-row-1")
+        await pilot.click("#library-artifacts-dreams-actions")
         await pilot.pause()
         modal = host.screen_stack[-1]
         assert isinstance(modal, DreamsStoryModal)
@@ -1391,7 +1369,7 @@ def _seed_event_story_db(tmp_path) -> DreamsDB:
 async def test_track_with_event_date_promotes_reminder(tmp_path, monkeypatch):
     """The modal's scheduling getter flows into the track service's reminder.
 
-    Task 5's seam: the Artifacts screen passes ``scheduling_db_getter`` (the
+    Task 5's seam: the Library reader passes ``scheduling_db_getter`` (the
     app's ScheduledTasksDB); tracking an event-dated story must land one
     one-time reminder linked to the tracked item.
     """

@@ -2,7 +2,6 @@
 import json
 import sqlite3
 from contextlib import closing
-from pathlib import Path
 from threading import Event
 
 import pytest
@@ -34,12 +33,8 @@ def test_native_guardian_catalogs_match_installed_policy(tmp_path):
     v2_fresh = _catalog(fresh_path)
     receipt = {"source_v1": "0c941ba2ec984d960ba83376aeace0e830452bbc exact DDL fixture",
         "catalogs": [[1, v1], [2, v2_migrated], [2, v2_fresh]]}
-    evidence = Path("/Users/macbook-dev/.codex/visualizations/2026/10/10/01a1267e-26ee-7513-9c34-58321c2fef6a/pr-review-wave2/pr2921-current-integration")
-    measured = evidence / "guardian-native-catalogs-v1-v2.json"
-    if measured.exists():
-        assert json.loads(measured.read_text()) == json.loads(json.dumps(receipt))
-    else:
-        measured.write_text(json.dumps(receipt, indent=2))
+    measured = tmp_path / "guardian-native-catalogs-v1-v2.json"
+    measured.write_text(json.dumps(receipt, indent=2))
     adapter = _adapter()
     for version, catalog in receipt["catalogs"]:
         assert (version, tuple(catalog)) in adapter.schema_policy().schema_sql

@@ -126,3 +126,26 @@ ADR196 records the marker-history ruling before implementation. Qualify every
 measured catalog with populated rows, direct upgrade/reopen, rollback and
 malformed/future/hybrid refusal, then install the same exact catalogs in recovery.
 No new version is necessary for recognizing existing v6 shapes.
+
+### Task1 execution ruling: bounded required-lane enrollment
+
+Retain the original64 fast-contract and23 admission targets byte-for-byte and in
+order, and all187 original UI census entries. Add two named PR Fast Lane steps
+for the affected Dreams/Guardian contracts: isolated sandboxed/native boundaries
+and the source-bound bootstrap/capture/authoring families, with the existing
+180/300-second per-test limits and unchanged35-minute job. Pin their exact
+comment-aware argv, conditions, no-continue-on-error and disjoint membership in
+the existing queue-pressure guard. Add the actual production Library Dreams UI
+file to the existing UI census and raise its membership floor only (no time,
+style, import, byte or runtime cap change). Existing module-local bootstrap
+corrections for the two Watchlists authoring families stay in the admission
+invocation; no global marker or profile reset. Local qualification runs only
+new targets in their actual process group, plus affected membership guards;
+original unrelated64/23/187 bodies are not repeated. Measured target costs and
+final source receipts will bind this selection before handoff.
+
+ADR required: no new ADR. ADR196/204/207/126 and existing CI ownership apply;
+this enrolls approved outcomes without a new service/storage/runtime boundary.
+Native schema receipt tests must write under pytest's private tmp_path, never
+under an implementation machine's evidence directory; external source-bound
+receipts are retained separately by the qualification runner.

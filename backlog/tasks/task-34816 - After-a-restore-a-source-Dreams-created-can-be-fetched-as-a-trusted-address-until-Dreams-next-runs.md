@@ -6,7 +6,7 @@ title: >-
 status: In Progress
 assignee: []
 created_date: '2026-10-12 05:39'
-updated_date: '2026-10-12 14:38'
+updated_date: '2026-10-12 19:39'
 labels:
   - dreams
   - security
@@ -44,6 +44,10 @@ Enforce conservative durable lineage at the first restored fetch even with Dream
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 Current source update: author0c941ba2ec984d960ba83376aeace0e830452bbc, 113 nonmerge commits/88 feature paths after actual merged Goal9595facbbb. Independent source review preserves the real shared Toast fix and stronger reconcile/suspension work; remaining integrated proof and actual post-Buddy/latest-dev publication gate are pending. Prior source/plan/qualification claims remain historical. No product change or completion is claimed here.
+
+PR2921 current private integration qualification (2026-10-12):
+Subscriptions v3 conservatively normalizes missing/malformed legacy lineage before the first fetch, independent of Dreams startup/on/off state. Actual restore of unmarked active sources with Dreams off refuses private-address fetch; explicit stored user-entered authority survives. Optional Dreams recovery, exact populated historical catalog upgrades and inactive restored authority are qualified. Unmarked intranet rows need explicit user edit or existing allowlist; absence never proves intent. ADR-207/196/126 apply.
+Full source-bound outcomes, original failures, native owners and tradeoffs: .superpowers/sdd/2026-10-11-pr2921-current-dev-integration/task-1-report.md; external pr-review-wave2/pr2921-current-integration. Local implementation is ready for independent review. Actual-base restack, complete independent review and hosted required gates remain pending; preserve In Progress and the existing acceptance checklist until the full DoD is met.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

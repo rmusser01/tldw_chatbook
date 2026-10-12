@@ -4,7 +4,7 @@ title: Dreams does not show why a daily cycle stopped short
 status: In Progress
 assignee: []
 created_date: '2026-10-12 05:39'
-updated_date: '2026-10-12 14:38'
+updated_date: '2026-10-12 19:39'
 labels:
   - dreams
   - ux
@@ -41,6 +41,10 @@ Compose an existing-token plain-text view of persisted degradation_notes in the 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 Current source update: author0c941ba2ec984d960ba83376aeace0e830452bbc, 113 nonmerge commits/88 feature paths after actual merged Goal9595facbbb. Independent source review preserves the real shared Toast fix and stronger reconcile/suspension work; remaining integrated proof and actual post-Buddy/latest-dev publication gate are pending. Prior source/plan/qualification claims remain historical. No product change or completion is claimed here.
+
+PR2921 current private integration qualification (2026-10-12):
+The actual Library collection reader shows the persisted degradation_notes literally, including empty/failed collections, and adds no normal-completion noise. Recorded reason rendering and real reader navigation pass in final Library qualification. No new cycle policy or shell was added; guide describes the location.
+Full source-bound outcomes, original failures, native owners and tradeoffs: .superpowers/sdd/2026-10-11-pr2921-current-dev-integration/task-1-report.md; external pr-review-wave2/pr2921-current-integration. Local implementation is ready for independent review. Actual-base restack, complete independent review and hosted required gates remain pending; preserve In Progress and the existing acceptance checklist until the full DoD is met.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

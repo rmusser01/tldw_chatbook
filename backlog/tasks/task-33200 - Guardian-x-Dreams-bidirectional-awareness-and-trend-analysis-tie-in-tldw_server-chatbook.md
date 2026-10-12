@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-23 06:07'
-updated_date: '2026-10-12 14:38'
+updated_date: '2026-10-12 19:39'
 labels:
   - guardian
   - dreams
@@ -103,6 +103,10 @@ The earlier implementation notes below describe frozen source7f18b6ec1063009b916
 Scoped updated-plan preflight found final qualification preceded the admitted follow-up changes and required-CI coverage was absent from task acceptance. Plan order now places all changes before final source/node freeze and qualification; Guardian integration acceptance gains the bounded required-CI outcome. Collections predecessor/rollback/reopen/future-refusal and installed recovery obligations are explicit in extracted Task1. No product or completion claim.
 
 Current source update: author0c941ba2ec984d960ba83376aeace0e830452bbc, 113 nonmerge commits/88 feature paths after actual merged Goal9595facbbb. Independent source review preserves the real shared Toast fix and stronger reconcile/suspension work; remaining integrated proof and actual post-Buddy/latest-dev publication gate are pending. Prior source/plan/qualification claims remain historical. No product change or completion is claimed here.
+
+PR2921 current private integration qualification (2026-10-12):
+Implemented local-only Guardian live consent, captured nonempty Console ownership, historical crisis provenance (Guardian v2), finite daily native work/drain and installed optional recovery with inert restored activation. Native ownership proves physical close before worker/process exit and preserves borrowed handles. Existing resource/disclaimer projections cover direct, trend, aggregate and next-visit summary. Required bounded CI groups measured 160 and 80 passing; exact comment-aware membership guards preserve the original 64/23 targets and 187 UI prefix. ADR-204/126 amendments precede changes. Companion-server implementation is outside the approved local scope.
+Full source-bound outcomes, original failures, native owners and tradeoffs: .superpowers/sdd/2026-10-11-pr2921-current-dev-integration/task-1-report.md; external pr-review-wave2/pr2921-current-integration. Local implementation is ready for independent review. Actual-base restack, complete independent review and hosted required gates remain pending; preserve In Progress and the existing acceptance checklist until the full DoD is met.
 <!-- SECTION:NOTES:END -->
 
 > Renumbering provenance: filed as task-32902 on the pre-divergence docs

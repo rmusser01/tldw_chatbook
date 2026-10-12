@@ -347,3 +347,6 @@ idx_automatic_chains_allowance_root	plan-pinned	Tests/DB/test_automatic_work_bud
 idx_automatic_chat_start_conversation_active	plan-pinned	Tests/DB/test_automatic_work_budget.py
 idx_conversations_archived_browse_order	plan-pinned	Tests/ChaChaNotesDB/test_conversations_browse_index.py
 idx_conversations_last_modified	plan-pinned	Tests/ChaChaNotesDB/test_conversations_browse_index.py
+
+# PR2921: retained historical catalog index, no new current-runtime CREATE.
+idx_dream_feedback_story	plan-pinned	Tests/Dreams/test_schema_lineage.py::test_historical_feedback_index_retains_statistics_free_plan

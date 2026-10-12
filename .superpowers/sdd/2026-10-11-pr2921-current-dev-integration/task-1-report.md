@@ -378,3 +378,186 @@ was needed. Two owned fixture setup failures (unnamed legacy collection insert,
 then missing required favorite) remain separate raw receipts; neither is a
 product failure. Corrected8pass1.82s; final formatted proof plus existing native
 catalog/initial-Capture/Retry/redirect controls33pass5.86s. Ruff passes.
+
+## Final local qualification and handoff
+
+The local implementation is ready for complete independent review, with the
+explicit inherited limitations below. All earlier checkpoint statements and
+failures above are chronological records, not current completion claims.
+No task is marked Done and no publication/merge/hosted-green claim is made.
+The parent owns actual-base restack, complete independent spec/quality review,
+any resulting fix wave, live author lease/thread refresh, and required hosted CI.
+
+Corrected publication boundary: carry 9a18c5ae56a0b4f9d3d573f47109aa578b3a4601..
+final head, including the six reviewed governance commits preceding implementation
+START9abffff815aa2856e2925c9bc523427d8506eaa7. START9ab remains the qualification
+baseline. Root reported actual post-Buddy dev66a940d1a79673061ed5d3d0f16cb2430869ddb6
+and author0c941ba2ec984d960ba83376aeace0e830452bbc unchanged. The private checkout
+has not been rebased. In particular, root must preserve accepted PR3082 sticky
+cross-origin credential stripping and the original Collections migration
+assertion ordering at that boundary. Private prerequisites are excluded from
+the publication payload. Root clarified that "source preview" in earlier
+checkpoint notes was carry-forward shorthand, not an additional feature or
+pending acceptance criterion; actual daily Guardian drain is qualified above.
+
+### Final lint, derived outputs and costs
+
+The final feature-only lint correction keeps the atomic budget SQL and current
+suspension debt values intact. The nested resume write receives the *current*
+subscription/reminder/rule debts explicitly at each call; it does not capture
+an earlier default value. Existing reminder date semantics remain. New Guardian
+construction and send-checker catches retain their documented fail-closed and
+fail-open contracts respectively, with local explained BLE001 annotations.
+The new shutdown diagnostic records exception type only, not private exception
+text. Existing public module names and namespace policies are retained.
+
+`owned-lint-behavior`:44pass11.12s. `dreams-final-guards`:106pass16.10s, including
+membership negative controls and exact resume/debt cases. Final selected new
+Guardian/runtime/recovery/Library/test files pass Ruff. The affected-product
+Ruff comparison uses each original relative stdin filename so project per-file
+policy applies equally to current and frozen START. Six count-delta diagnostics
+match exact unchanged START code blocks: sqlite_validation I001, scheduler loop
+UP041, chat_screen S110/F811, app_lifecycle BLE001 and app_service_wiring I001.
+`final-inherited-lint-block-bindings.json` records these blocks, positions and
+hashes; this is not a whole-file lint pass. The earlier Settings119 and RulesPane5
+source-bound debt remains explicit. No cap raise or broad exemption was added.
+
+Textual worker, timestamp writer, markup interpolation, index plan, profile-owned
+path, UI census and persistent diagnostic inventory checks passed in the final
+phase. The last shutdown formatting edit invalidated only the diagnostic inventory;
+its regenerated artifact and `final-diagnostic-inventory-after-format` receipt
+bind the final bytes. Inventory review inspected all changed log statements;
+new messages carry bounded IDs/types rather than private bodies. Historical
+Dreams feedback-index admission now has a real earliest-catalog upgrade and
+statistics-free EXPLAIN covering-index proof. This adds a plan-pin census row
+for an already-retained historical index, not a new runtime index or a timing
+claim. Boot/style/token limits remain unchanged.
+
+### Actual required-lane membership
+
+Two bounded serial invocations were added within the existing required PR fast
+job, retaining its35-minute job limit and180/300-second per-test deadlines.
+The18 boundary targets and4 admission-sensitive targets are listed exactly in
+the workflow and guarded with comment-aware executable argv comparisons,
+required failure propagation and negative comment-only controls. The two source
+module bootstrap markers preserve the already-selected profile only for their
+actual authoring families. No global marker plugin or participant reset exists.
+The portability correction to the installed Guardian catalog test stores its
+receipt in pytest's private tmp_path; old native evidence is retained externally.
+
+Measured `dreams-ci-sandbox-1`:160pass82.06s;
+`dreams-ci-admission-1`:80pass68.00s. The first guard run exposed an owned stale
+five-step assertion; the expected seven-step shape was corrected and the final
+106-case guard selection passed. Original64 fast targets and23 admission targets
+retain identical executable argv/order; original187 UI entries remain the exact
+prefix, with the actual production Library test appended as entry188.
+`final-required-membership-preservation.json` independently records that comparison.
+The subsequent orphan-reader change invalidated only the Library catalog/UI
+subset, requalified below. These are local measured invocations, not hosted CI.
+
+### Production Library route and orphan tracking summary
+
+The remaining source UI tests now mount the production registry's Library owner.
+All16 original route scenarios in the rows/modal/question files use the actual
+Library rail, reader and explicit Story actions button. Bare modal action tests
+remain and use the source production CSS. The production harness asserts the
+artifacts alias resolves to Library. Each test closes only its assigned Dreams
+owner after app exit. Detach coverage uses the actual controller generation and
+late page delivery; reader selection and focus use the native OptionList.
+
+Retired structural assertions were migrated deliberately: the old fixed two
+story/tracking groups yield to ADR172 newest-first unified rows; a missing store
+shows unavailable rather than a false empty collection; an empty collection
+retains the reader and recorded status rather than inventing a story modal;
+a missing original story retains durable Details rather than a transient toast.
+Original story feedback/Keep/Track/Watch/Ingest/Export/Dive/goals actions, exact
+mechanism/namespace selection, tracking state and ingest capture ownership stay
+covered. No second shell or new preview feature was added.
+
+A real catalog regression exposed missing orphan tracking summary fields:
+`library-orphan-summary-red` failed on absent Mechanism. The finite snapshot now
+reads the existing mechanism column and supplies Tracking, Mechanism, Query,
+Last check (including "none yet"), verdict and held reason. The reader points
+plainly to these Details when the original story is absent. No durable shape
+or authority changed. Recorded collection degradation text remains literal;
+normal collections add no noise.
+
+The initial migrated-route run retained16 owned harness/setup failures and3
+catalog passes; they are not behavioral RED or inherited debt. Corrected
+`library-author-modal-final`:38pass30.82s.
+`library-author-routes-final`:29pass88.93s, including catalog, original routes,
+production reader, geometry/ownership and unchanged preimport budget. Its
+canonical headroom warning is retained, with no import/module/LOC cap increase.
+Settings final qualification: `dreams-settings-final`19pass94.58s and
+`guardian-settings-final`6pass34.55s, complementing the previously qualified
+editor and six native80x24/120x40 modal layouts. These use isolated local apps,
+not a real user's profile or an external provider.
+
+### Review-thread contract disposition
+
+All rows describe local implementation/evidence; root owns GitHub replies and
+resolution. `final-thread-contract-controls` selected20 original nodes yielding
+24pass15.87s. The earlier154-case queued/currentness checkpoint and subsequent
+invalidated-only checks retain actual owner/trigger/deadline assertions.
+
+| Thread | Local outcome and qualifying owner |
+| --- | --- |
+| 4139620331 | Subscriptionsv3 UNKNOWN provenance, typed explicit-user positives, restored first fetch with Dreams off, and Collectionsv5 initial Capture/Retry/every redirect. Shared egress address-pinning residual remains disclosed. |
+| 4139620356 | Exact generating goal/query persists through dedup/story/feedback; lexical topic matching cannot invent goal authority and goal weights remain immune. Original cycle controls requalified. |
+| 4139620360 | Existing mechanism-aware tracking reuse retained; page/question and newer-other-mechanism original cases pass. |
+| 4139620367 | Shared source retirement, mixed ownership and durable suspension debt retained; actual original stop/restore and handover cases pass. |
+| 4139620334 | Strong shielded boot reconciliation and both-store activation preserved; pending work fails closed at actual dispatch, while unrelated known work progresses. Native finite boot scope qualifies lifetime. |
+| 4139620306 | Existing targeted ownership reads retained; provenance beyond former status-list cap is explicitly tested. |
+| 4139620313 | Existing file-backed alert offload and memory-store affinity retained; real Guardian daily grouped work and UI-owned notification store prove the new connected path separately. |
+| 4139620318 | Source profile text validation and non-destructive normalization retained; no unrelated new user-text limit imposed. |
+| 4139620325 | Actual story actions, canonical F4 and production Library hints corrected; token/focus/narrow-geometry proof accompanies docstrings. |
+| 4139620335 | Exact page/question untrack selection retained in original service and production Library action tests. |
+| 4139620339 | Single shared BEGIN IMMEDIATE search/LLM reservations retained; cycle/track last-slot races pass. Attempted work remains charged; no duplicate increments. |
+| 4139620344 | Targeted latest eligible anchor lookup retained and original anchor-behind200-runs case passes. |
+| 4139620347 | Reminder handover/debt preserved, including manual disable and master-off cases. Resume writes current unsettled debt after each successful restoration. |
+| 4139620349 | Date-aware local9am to UTC reminder behavior retained; exact timezone and fired-reminder controls pass. |
+| 4139620372 | Sticky post-await authority checks occur at actual queued search/model/story/judge/alert invocation; Guardian consent and enabled state are live. Already-started work settles conservatively. |
+
+### Durable owners, final inventory and limitations
+
+Final schemas are Dreams6, Guardian2, Subscriptions3 and Collections5. Existing
+ADR196/204/207/126 amendments precede durable-authority changes. Populated exact
+Dreams1–5, Guardian1, Subscriptions2 and Collections4 predecessors, rollback,
+reopen, future/hybrid refusal and installed recovery have distinct receipts.
+Guardian1 proofs remain predecessor evidence, not relabelled Guardian2.
+Optional unused/custom path, capture/validation/relocation, maintenance and
+inert restored activation are qualified through installed owners. Daily and
+lazy Guardian reader connections retire only new acquisitions through house
+ownership helpers; borrowed caller/transaction handles survive. Physical close
+is observed before originating worker/native process exit. Dreams public close
+remains caller-only; the strong registry/close_all survives and PR3042's separate
+public quiescent-close outcome is not claimed here.
+
+Compatibility costs are intentional: missing/malformed legacy source lineage
+never proves user intent; an unmarked intranet source needs explicit user edit
+or existing allowlist. Unknown legacy crisis provenance is excluded from outbound
+discovery and receives conservative resource treatment; mutable current rules
+cannot reclassify its history. Guardian captured crisis provenance survives rule
+edit/deletion across direct/trend/aggregate/next-visit summary. Resources reuse
+the existing local set and disclaimer. Unknown pending Watchlist ownership is
+held until classification, with unrelated known jobs continuing.
+
+Two recovery-inventory assertions fail identically on immutable START controls
+(raw_source_selection_changed and pre-existing Utils.platform_files import).
+They remain limited private-start fixture findings, not broad accepted-dev debt.
+Inherited PC/Notes native lease/style qualifications and Settings119/RulesPane5
+lint bindings retain their own source receipts; no unrelated cleanup, borrower
+closure, guard weakening, warning suppression or GC was used. The shared DNS
+address-pinning/TOCTOU limitation is unchanged. Final boot import headroom is
+small and explicitly warned by its existing check, never hidden.
+
+External `final-path-function-caller-disposition.json` freezes the complete
+original88 paths plus every final changed path, changed AST definitions and
+conservative product caller/reference candidates. Ambiguous names are retained
+as a superset; this static index does not replace the concrete owner proofs
+above. `final-targeted-evidence-inventory.json` freezes all available raw/JUnit/
+argv/environment/source bindings and exact collected node outcomes, including
+failed/interrupted/setup receipts as such. Final commit/status live in these
+external artifacts to avoid a self-referential report hash. No old count is
+relabeled as a final whole-suite proof. No full sweep, external service, model
+download, shared-config change, GitHub write or child agent was used.

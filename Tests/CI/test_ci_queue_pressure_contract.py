@@ -115,6 +115,35 @@ FAST_LANE_TARGETS = (
     "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_during_project_preview_discard_snapshot",
     "Tests/Chat/test_console_canvas_profile_preview.py::test_canvas_changes_discard_late_profile_preview",
 )
+
+# PR2921: source-bound additions leave the original fast/admission argv intact.
+DREAMS_BOUNDARY_TARGETS = (
+    "Tests/Dreams/test_dispatch_currentness.py",
+    "Tests/Dreams/test_cycle_service.py::test_mixed_profile_cycle_keeps_topic_and_goal_stories_without_changing_budgets",
+    "Tests/Dreams/test_cycle_service.py::test_no_goal_mark_or_list_marker_ever_reaches_the_search",
+    "Tests/Dreams/test_cycle_service.py::test_cycle_and_check_cannot_both_spend_the_last_search",
+    "Tests/Guardian/test_live_discovery_consent.py",
+    "Tests/Guardian/test_captured_dispatch_ownership.py",
+    "Tests/Guardian/test_daily_native_lifecycle.py",
+    "Tests/Guardian/test_crisis_provenance.py",
+    "Tests/Guardian/test_crisis_resources.py",
+    "Tests/Backup_Recovery/test_guardian_owner.py",
+    "Tests/Backup_Recovery/test_dreams_owner.py",
+    "Tests/Backup_Recovery/test_guardian_activation.py",
+    "Tests/Backup_Recovery/test_dreams_activation.py",
+    "Tests/Backup_Recovery/test_restored_source_first_fetch.py",
+    "Tests/Backup_Recovery/test_collections_provenance_owner.py",
+    "Tests/Library/test_library_artifacts_dreams.py",
+    "Tests/Watchlists/test_runtime_name_literals.py",
+    "Tests/Notifications/test_notification_toast_markup.py",
+)
+DREAMS_ADMISSION_TARGETS = (
+    "Tests/Dreams/test_boot_dispatch_admission.py",
+    "Tests/Library/test_capture_url_provenance.py::test_actual_capture_first_and_retry_apply_egress_at_every_hop",
+    "Tests/Subscriptions/test_local_watchlists_service.py",
+    "Tests/Watchlists/test_watchlists_bulk_source_authoring.py",
+)
+
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
 #: production runtime). They are ``bootstrap_profile``, so they run in the
 #: admission-sensitive invocation, never in the sandboxed one above. Pinned as
@@ -314,11 +343,11 @@ def test_fast_lane_is_one_serial_minimal_python_312_job() -> None:
     # the admission-sensitive step (worst case measured 28m20s).
     assert fast["timeout-minutes"] == 35
     assert "strategy" not in fast
-    # TASK-32873: 5 steps -- the admission-sensitive suites run in a
+    # TASK-32873 / PR2921: 7 steps -- the admission-sensitive suites run in a
     # separate pytest invocation inside the same job (their
     # keep_bootstrap_profile enrollment poisons sandboxed suites sharing
     # a process).
-    assert len(fast["steps"]) == 5
+    assert len(fast["steps"]) == 7
 
     setup = next(
         step for step in fast["steps"] if step.get("uses") == "actions/setup-python@v5"
@@ -615,3 +644,39 @@ def test_exact_invocation_accepts_comments_without_changing_executable_argv():
     step["run"] = "# Required tests follow.\n" + step["run"] + "\n# End of command.\n"
     assert _pytest_targets(step["run"]) == FAST_LANE_TARGETS
     _assert_fast_lane_invocation(workflow)
+
+
+def _assert_dreams_required_steps(workflow: dict) -> None:
+    job = workflow["jobs"]["pr-fast-lane"]
+    assert job["timeout-minutes"] == 35
+    assert not job.get("continue-on-error", False)
+    for name, targets, limit in (
+        ("Run Dreams and Guardian boundary contracts", DREAMS_BOUNDARY_TARGETS, 180),
+        ("Run Dreams admission-sensitive contracts", DREAMS_ADMISSION_TARGETS, 300),
+    ):
+        step = _named_step(job, name)
+        assert step["if"] == "${{ !cancelled() }}"
+        assert not step.get("continue-on-error", False)
+        tokens = tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True))
+        assert tokens == ("pytest", *targets, f"--timeout={limit}", "--tb=short")
+        assert len(set(targets)) == len(targets)
+        for target in targets:
+            assert (PROJECT_ROOT / target.split("::", 1)[0]).is_file()
+    assert not set(DREAMS_BOUNDARY_TARGETS) & set(DREAMS_ADMISSION_TARGETS)
+
+
+def test_dreams_critical_boundaries_are_executable_required_lane_members() -> None:
+    _assert_dreams_required_steps(_workflow("derived-artifacts.yml"))
+
+
+@pytest.mark.parametrize("name,targets", [
+    ("Run Dreams and Guardian boundary contracts", DREAMS_BOUNDARY_TARGETS),
+    ("Run Dreams admission-sensitive contracts", DREAMS_ADMISSION_TARGETS),
+])
+def test_dreams_membership_cannot_be_satisfied_by_comments(name, targets) -> None:
+    workflow = _workflow("derived-artifacts.yml")
+    step = _named_step(workflow["jobs"]["pr-fast-lane"], name)
+    step["run"] = step["run"].replace(targets[0] + " \\\n", "")
+    step["run"] += "\n# " + targets[0]
+    with pytest.raises(AssertionError):
+        _assert_dreams_required_steps(workflow)

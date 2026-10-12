@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from collections.abc import Iterable, Iterator
 from contextlib import closing, contextmanager
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Optional, Union, cast
+from typing import Any, Optional, Union, cast
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
