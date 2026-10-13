@@ -3763,6 +3763,17 @@ relabel, no `get_content_width` call in the layout after it, and width 43 for an
 18-cell label. A deferred relabel works because by then the chip's idle has cleared the
 pending flag.
 
+**Recurred on an auto-height OptionList, TASK-33008 capture fix 5, 2026-10-13.** Switch
+model drew a blank row under its last row on one fresh launch in three: each probe
+answer rebuilt the rows a row shorter, and when another widget's layout reached the
+screen while one rebuild's layout was still pending on the list, the list was measured
+at that length and reused after the next rebuild. Two traps in reproducing it: a bare
+`screen._refresh_layout()` re-arranges nothing (the parent's arrangement cache holds
+until a descendant's `_check_refresh` clears it), and a list that GROWS shows its
+scrollbar for a frame, whose own layout refresh bumps the list and hides the bug; only
+shrinking steps after a sibling's `_check_refresh` went red. The fix bumps the list's
+`_layout_updates` on every rebuild.
+
 **What to do.** Same as above, and when a relabel depends on geometry, run it
 after the refresh rather than inside the resize handler, then assert the
 region, not the string.
