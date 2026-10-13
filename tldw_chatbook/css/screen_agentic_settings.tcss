@@ -954,9 +954,12 @@ Button.settings-category-group-toggle:focus {
     text-overflow: ellipsis;
 }
 
+/* Capture finding 2: one cell of the help's own keeps it two from a 16-cell
+   Source word ("new-chat default", "Console Behavior"), which filled its
+   column and read as one phrase with the help one space away. */
 #settings-providers-models-card .settings-row-help,
 #settings-console-fallbacks .settings-row-help {
-    padding: $ds-space-0;
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
     color: $ds-text-muted;
 }
 

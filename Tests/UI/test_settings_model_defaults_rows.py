@@ -492,7 +492,9 @@ async def test_every_row_paints_its_whole_help(request, size):
                 )
                 help_line.scroll_visible(animate=False, immediate=True)
                 await pilot.pause()
-                painted = "".join(_region_rows(screen, help_line)).rstrip()
+                # Capture finding 2: the help's first cell is its own gap
+                # from the Source word, so the painted row starts blank.
+                painted = "".join(_region_rows(screen, help_line)).strip()
                 if painted != MODEL_CONFIG_FIELDS[name].help:
                     width = help_line.content_region.width
                     cut.append((provider, name, width, painted))

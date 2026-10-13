@@ -354,3 +354,39 @@ async def test_sign_in_with_is_one_row_with_a_source_word_and_help(request, size
         assert _squeezed(_text(screen, "#settings-provider-field-guide-1")) == (
             _squeezed(f"Purpose: {ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY}")
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_source_word_never_runs_into_its_help(request):
+    """Capture finding 2: a 16-cell Source word filled its column and sat one
+    space from the help, so "new-chat default 3 of 60 configured" and
+    "Console Behavior inherits 0.6" read as one phrase. Every shown row on
+    the card keeps two cells between the word's last cell and the help."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "m-1"}
+    app.app_config["api_settings"] = {"openai": dict(_SAVED_KEY)}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        card = screen.query_one("#settings-providers-models-card")
+        gaps = {}
+        for word in card.query(".settings-source-word"):
+            help_line = next(
+                (
+                    sibling
+                    for sibling in word.parent.children
+                    if sibling.has_class("settings-row-help")
+                ),
+                None,
+            )
+            if help_line is None or not (word.region.width and help_line.region):
+                continue  # a hidden row, or one in a closed disclosure
+            gaps[word.id] = help_line.content_region.x - word.content_region.right
+
+        assert {
+            "settings-provider-source",
+            "settings-model-profile-temperature-source",
+        } <= set(gaps), gaps
+        assert all(gap >= 2 for gap in gaps.values()), gaps
