@@ -436,9 +436,9 @@ class ConsoleStatusChips(Horizontal):
         self._cost_strip_end = 0.0
         self._cost_strip_width = 0
         self._cost_chip_width = 0
-        # The cost chip's x on the strip and the strip's width at the last
-        # layout of this screen (see _refit_after_layout).
-        self._cost_chip_place: tuple[int, int] | None = None
+        # What places the cost chip on the strip at the last layout of this
+        # screen (see _refit_after_layout).
+        self._cost_chip_place: tuple[object, ...] | None = None
         self._run_chip_state: tuple[bool, str] = (bool(run_copy), run_copy)
         self._collapsed = bool(collapsed)
         self.remove_class(*(name for name in self.classes if name.startswith("h-")))
@@ -1001,9 +1001,14 @@ class ConsoleStatusChips(Horizontal):
         screen's refresh, which can come before this screen lays out the new
         widths (under a dialog; or Switch model's result callback beating the
         chips' Layout messages), so it fitted from the old places. Only a
-        move (the chip's x or the strip's width) refits, so the relabel's own
-        layout does not start another. Still deferred: relabelled straight
-        from here the chip kept its old width (a layout was pending on it).
+        move (a chip before it, the strip's width, collapse) refits, so the
+        relabel's own layout does not start another. Still deferred:
+        relabelled straight from here the chip kept its old width (a layout
+        was pending on it). The move is read from cached sizes, never a
+        region: this runs after every layout, scrolls included, and a scroll
+        lays out only what is visible, so a region of a chip past the strip's
+        edge or of a collapsed strip arranged the whole screen again on every
+        scroll frame (capture fix 4 round 2).
         """
         try:
             chip = self.query_one("#console-cost-chip", ConsoleCostChip)
@@ -1012,7 +1017,16 @@ class ConsoleStatusChips(Horizontal):
         scroll = chip.parent
         if not isinstance(scroll, HorizontalScroll):
             return
-        place = (chip.virtual_region.x, scroll.scrollable_content_region.width)
+        place = (
+            self._collapsed,
+            chip.display,
+            scroll.outer_size.width,
+            tuple(
+                w.outer_size.width
+                for w in scroll.children
+                if w.display and w is not chip
+            ),
+        )
         if place != self._cost_chip_place:
             self._cost_chip_place = place
             self.call_after_refresh(self._refit_cost_chip)

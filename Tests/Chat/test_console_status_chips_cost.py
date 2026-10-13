@@ -15,6 +15,7 @@ from rich.cells import cell_len
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
@@ -644,6 +645,55 @@ async def test_a_pair_applied_under_a_dialog_refits_the_cost_chip(
             await pilot.pause()
         assert not isinstance(app.screen, _SwitchModelStandIn)
         assert _cost_chip_drawn_whole(app) == expected
+
+
+class _ChipsAndTranscriptApp(_ProductionChipsApp):
+    """The production strip beside a long scrolled list, like the transcript."""
+
+    def compose(self) -> ComposeResult:
+        yield from super().compose()
+        with VerticalScroll(id="transcript"):
+            for n in range(200):
+                yield Static(f"line {n}")
+
+
+@pytest.mark.parametrize(
+    ("width", "collapsed"),
+    ((211, False), (100, False), (211, True)),
+    ids=("chip-in-view", "chip-past-the-edge", "collapsed"),
+)
+@pytest.mark.asyncio
+async def test_scrolling_beside_the_strip_keeps_the_scroll_fast_path(
+    width: int, collapsed: bool
+) -> None:
+    """Capture fix 4 round 2 finding 1: the strip checks the cost chip's
+    place after every layout of its screen. A scroll lays out only what is
+    visible, which leaves out a chip past the strip's edge and a collapsed
+    strip, so reading their regions arranged the whole screen again on every
+    scroll frame."""
+    app = _ChipsAndTranscriptApp(
+        _capture_control_state(), cost_state=_cost_state(**_CAPTURE_LABELS)
+    )
+    async with app.run_test(size=(width, 20)) as pilot:
+        app.query_one(ConsoleStatusChips).set_collapsed(collapsed)
+        for _ in range(3):
+            await pilot.pause()
+        compositor = app.screen._compositor
+        arrange = compositor._arrange_root
+        full_arranges: list[bool] = []
+
+        def spy(root, size, visible_only=True):
+            if not visible_only:
+                full_arranges.append(True)
+            return arrange(root, size, visible_only=visible_only)
+
+        compositor._arrange_root = spy
+        transcript = app.query_one("#transcript", VerticalScroll)
+        for frame in range(1, 6):
+            transcript.scroll_to(y=frame * 10, animate=False)
+            await pilot.pause()
+        assert transcript.scroll_y == 50
+        assert full_arranges == []
 
 
 class _ChipsAndComposerApp(_ProductionChipsApp):
