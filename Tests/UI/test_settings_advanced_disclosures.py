@@ -815,5 +815,7 @@ async def test_the_cards_buttons_draw_an_edge(request):
         await _click_settings_category(pilot, "console-behavior")
         await pilot.pause()
         screen = _active_destination_screen(host)
-        prompt = screen.query_one("#settings-console-context-edit-summary-prompt", Button)
+        prompt = screen.query_one(
+            "#settings-console-context-edit-summary-prompt", Button
+        )
         assert _edged(prompt)

@@ -372,7 +372,11 @@ async def test_a_focused_field_keeps_applies_to_and_next_new_chat_in_view(reques
         for step in ("focus", "edit"):
             route = f"Temperature {step}"
             _assert_rows_in_view(screen, "provider", route)
-            for title in ("Applies to", "Next new chat will use", "Focused field guide"):
+            for title in (
+                "Applies to",
+                "Next new chat will use",
+                "Focused field guide",
+            ):
                 assert _in_view(screen, _heading(screen, title)), (route, title)
             if step == "focus":
                 await pilot.press("0", ".", "4")
