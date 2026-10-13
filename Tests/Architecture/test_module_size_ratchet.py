@@ -217,7 +217,9 @@ _BUDGETS: dict[str, int] = {
     # Round 4 after the rebase (ruling cf3r1-N1): leaving Settings keeps
     # unsaved snapshot preferences; the keep and restore live in
     # settings_quit_guard.py (+4): 35,775.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35775,
+    # Post-rebase round 1: leaving Settings waits for a snapshot Save still
+    # writing; the wait lives in settings_quit_guard.py (+3): 35,778.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35778,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

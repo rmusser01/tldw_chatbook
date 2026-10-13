@@ -1069,3 +1069,93 @@ async def test_a_snapshot_edit_left_before_its_change_lands_is_kept():
     assert "Providers & Models" in state[KEPT_UNSAVED_TITLES]
     assert fresh._snapshot_preferences_raw[1] == edited
     assert fresh._snapshot_preferences_dirty()
+
+
+def _held_snapshot_write(monkeypatch):
+    """Hold the snapshot preferences' config write until ``release`` is set.
+
+    Returns ``(entered, release, writes)``; nothing reaches a real config.
+    """
+    import threading
+
+    from tldw_chatbook.LLM_Management import snapshot_settings as preferences
+
+    entered, release = threading.Event(), threading.Event()
+    writes: list = []
+
+    def save(value, **kwargs):
+        writes.append(value)
+        entered.set()
+        assert release.wait(5)
+        return True
+
+    monkeypatch.setattr(preferences, "save_snapshot_preferences", save)
+    return entered, release, writes
+
+
+async def _save_a_snapshot_edit(app, pilot, entered) -> None:
+    """Edit the snapshot Keep count and press Save; return once it writes."""
+    keep = await _settings_snapshot_keep(app, pilot)
+    keep.value = str(int(keep.value) + 1)
+    await _until(pilot, app.screen._snapshot_preferences_dirty, "the edit to be staged")
+    app.screen.action_settings_save_category(allow_text_entry_focus=True)
+    await _until(pilot, entered.is_set, "the snapshot write to start")
+
+
+async def test_leaving_settings_waits_for_a_snapshot_save_in_flight(monkeypatch):
+    """Post-rebase round 1, finding 1: Save, then leaving Settings before the
+    config write returned, kept the edit as unsaved (the saved value is noted
+    only once the write returns) and unmounting cancelled the save's report.
+    Back in Settings the edit read 'Unsaved changes' and Save said it had
+    changed elsewhere. Leaving now waits for the save, as for the theme's."""
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+    from tldw_chatbook.UI.Settings_Modules.settings_quit_guard import (
+        KEPT_SNAPSHOT_PREFERENCES,
+        KEPT_UNSAVED_TITLES,
+    )
+
+    entered, release, writes = _held_snapshot_write(monkeypatch)
+    app = _build_test_app(configured_default="settings")
+    try:
+        async with app.run_test(size=(190, 55)) as pilot:
+            await _save_a_snapshot_edit(app, pilot, entered)
+            app.post_message(NavigateToScreen("home"))
+            await pilot.pause(0.2)
+            release.set()
+            await _until(
+                pilot, lambda: type(app.screen).__name__ == "HomeScreen", "Home"
+            )
+            state = app.screen_state_store.restore(
+                "settings", app._current_runtime_identity()
+            ) or {}
+            assert _notified(app, "Snapshot preferences saved.")
+    finally:
+        release.set()
+    assert len(writes) == 1
+    assert KEPT_SNAPSHOT_PREFERENCES not in state
+    assert "Providers & Models" not in state.get(KEPT_UNSAVED_TITLES, [])
+
+
+async def test_ctrl_q_on_settings_waits_for_a_snapshot_save_in_flight(monkeypatch):
+    """Post-rebase round 1, finding 1 on the quit path: Ctrl+Q while the
+    snapshot save was writing asked about Providers & Models, which was being
+    saved. The quit now waits for the save; with nothing else unsaved it
+    quits without asking."""
+    entered, release, writes = _held_snapshot_write(monkeypatch)
+    app = _build_test_app(configured_default="settings")
+    cleanups: list[bool] = []
+    monkeypatch.setattr(
+        app, "_run_approved_quit_cleanup", _record_cleanup_then_exit(app, cleanups)
+    )
+    try:
+        async with app.run_test(size=(190, 55)) as pilot:
+            await _save_a_snapshot_edit(app, pilot, entered)
+            await pilot.press("ctrl+q")
+            await pilot.pause(0.2)
+            release.set()
+            # A prompt would hold the quit, so reaching the shutdown proves none.
+            await _until_exited(app, cleanups, "Ctrl+Q to quit without asking")
+    finally:
+        release.set()
+    assert cleanups == [True]
+    assert len(writes) == 1

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual.css.query import QueryError
 from textual.widgets import Checkbox, Input
+from textual.worker import WorkerCancelled, WorkerFailed
 
 from ...Constants import TAB_SETTINGS
 from ...Widgets.confirmation_dialog import confirm_quit_discarding_edits
@@ -33,6 +34,24 @@ KEPT_UNSAVED_TITLES = "unsaved_titles"
 #: Unsaved Prompt-cache snapshot preferences, kept as the (loaded, raw) pair
 #: so Save still refuses a value changed elsewhere since (ruling cf3r1-N1).
 KEPT_SNAPSHOT_PREFERENCES = "snapshot_preferences"
+
+
+async def snapshot_save_settled(screen: SettingsScreen) -> None:
+    """Wait for a snapshot preferences Save that is still writing.
+
+    The screen notes the saved value only once the write returns, so a
+    leave or quit that did not wait kept (or asked about) a value being
+    saved, and the unmount cancelled the Save's report.
+
+    Args:
+        screen: The Settings screen being left.
+    """
+    for worker in list(screen.workers):
+        if worker.node is screen and worker.group == "settings-snapshot-save":
+            try:
+                await worker.wait()
+            except (WorkerCancelled, WorkerFailed):
+                pass  # the Save said why; its edit stays unsaved
 
 
 def keep_snapshot_preferences(screen: SettingsScreen, state: dict) -> None:
@@ -130,6 +149,7 @@ async def confirm_settings_quit(screen: SettingsScreen) -> bool:
         screen.app.screen, ThemeLeaveModal
     ):
         return False  # one prompt at a time, as confirm_navigation
+    await snapshot_save_settled(screen)
     names = unsaved_settings_titles(screen)
     if not names:
         return True

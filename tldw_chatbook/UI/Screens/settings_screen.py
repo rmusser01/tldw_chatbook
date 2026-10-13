@@ -25762,6 +25762,9 @@ class SettingsScreen(BaseAppScreen):
             confirmation, a theme leave prompt that is already open, or one
             that vanished unanswered).
         """
+        from ..Settings_Modules.settings_quit_guard import snapshot_save_settled
+
+        await snapshot_save_settled(self)  # as the theme's Save below (M-4)
         try:
             editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
         except QueryError:
