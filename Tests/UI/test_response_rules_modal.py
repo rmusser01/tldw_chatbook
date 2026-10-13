@@ -359,10 +359,13 @@ async def test_dirty_escape_discards_only_after_confirmation(native):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["promote", "toggle"])
+@pytest.mark.parametrize("concurrent_edit", [False, True])
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
 async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
-    native, action, size
+    native, action, size, concurrent_edit
 ):
+    import asyncio
+
     from textual.widgets import OptionList, Static
 
     from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
@@ -387,12 +390,49 @@ async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
                 break
         tested = modal.tested
         assert tested.rule.revision == 2 and tested.validation is not None
-        modal.query_one("#rr-save", Button).press()
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_db_call = rules.run_db_call
+
+        async def held_post_save_read(call, *args, **kwargs):
+            value = await original_db_call(call, *args, **kwargs)
+            if concurrent_edit and call == rules.store.list_drafts:
+                entered.set()
+                await release.wait()
+            return value
+
+        rules.run_db_call = held_post_save_read
+        try:
+            modal.query_one("#rr-save", Button).press()
+            if concurrent_edit:
+                await entered.wait()
+                assert rules.store.list_bindings(scope)[0].revision == 2
+                modal.query_one("#rr-title", Input).value = "Newer untested draft"
+        finally:
+            release.set()
         for _ in range(20):
             await pilot.pause()
             if not modal._busy and rules.store.list_bindings(scope)[0].revision == 2:
                 break
+        rules.run_db_call = original_db_call
         saved_selection = modal._selected
+        committed = rules.store.list_bindings(scope)[0]
+        assert saved_selection == tested.rule
+        assert (
+            modal._binding == committed
+            and modal._expected == committed.binding_revision
+        )
+        if concurrent_edit:
+            assert modal.query_one("#rr-title", Input).value == "Newer untested draft"
+            assert modal._has_unsaved() and modal.tested is None
+            assert modal.query_one("#rr-save", Button).disabled
+            assert (
+                "untested"
+                in str(modal.query_one("#rr-status", Static).render()).lower()
+            )
+            assert (
+                "untested"
+                in str(modal.query_one("#rr-examples", Static).render()).lower()
+            )
         saved_details = str(modal.query_one("#rr-details", Static).render())
         options = modal.query_one("#rr-rules", OptionList)
         saved_row = str(options.get_option_at_index(options.highlighted).prompt)
@@ -431,7 +471,13 @@ async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
         assert saved_selection == tested.rule == modal._selected
         assert "revision 2" in saved_details
         assert "revision 2" in saved_row and "Edited evidence definition" in saved_row
-        assert modal.query_one("#rr-title", Input).value == tested.rule.candidate.title
+        assert modal.query_one("#rr-title", Input).value == (
+            "Newer untested draft" if concurrent_edit else tested.rule.candidate.title
+        )
+        if concurrent_edit:
+            assert modal._has_unsaved() and modal.tested is None
+            assert modal._binding == rules.store.list_bindings(scope)[0]
+            assert modal._expected == modal._binding.binding_revision
 
 
 @pytest.mark.asyncio

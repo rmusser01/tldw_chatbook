@@ -200,7 +200,8 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             try:
                 definition = self._candidate().candidate_digest()
             except ValueError:
-                return
+                if selected_rule is None:
+                    return
         self._reload_generation += 1
         generation, selected_scope = self._reload_generation, self.scope
         bindings = []
@@ -221,12 +222,24 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             or not self._current_scope()
         ):
             return
-        if definition is not None:
+        current_definition = None
+        if definition is not None or selected_rule is not None:
             try:
-                if self._candidate().candidate_digest() != definition:
-                    return
+                current_definition = self._candidate().candidate_digest()
             except ValueError:
-                return
+                pass  # An invalid newer draft still belongs to this editor.
+        if (
+            definition is not None
+            and current_definition != definition
+            and selected_rule is None
+        ):
+            return
+        # A completed mutation must reconcile its saved identity/CAS even when
+        # the editor now contains a newer draft. Only field replacement differs.
+        preserve_editor = (
+            selected_rule is not None
+            and current_definition != selected_rule.candidate.candidate_digest()
+        )
         self._rows = [(b, None) for b in bindings if b.scope == self.scope]
         local = {b.rule_id for b, _ in self._rows}
         for binding in bindings:
@@ -271,7 +284,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                 0,
             )
             options.highlighted = selected
-            self._load_row(selected)
+            self._load_row(selected, preserve_editor=preserve_editor)
         else:
             self._selected = None
             detail_nodes.first(Static).update(
@@ -279,7 +292,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             )
             self._buttons()
 
-    def _load_row(self, index: int) -> None:
+    def _load_row(self, index: int, *, preserve_editor: bool = False) -> None:
         binding, draft = self._rows[index]
         self._binding = (
             binding if binding is not None and binding.scope == self.scope else None
@@ -316,17 +329,22 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             )
             self._expected = self._binding.binding_revision if self._binding else 0
         self._loaded_digest = candidate.candidate_digest()
-        self.query_one("#rr-title", Input).value = candidate.title
-        self.query_one("#rr-applicability", Select).value = candidate.applicability.kind
-        self.query_one("#rr-app-criteria", Input).value = (
-            candidate.applicability.criteria or ""
-        )
-        self.query_one("#rr-detector", Select).value = candidate.detector.kind
-        self.query_one("#rr-criteria", TextArea).load_text(
-            candidate.detector.criteria or "\n".join(candidate.detector.literals)
-        )
-        self.query_one("#rr-case", Checkbox).value = candidate.detector.case_sensitive
-        self.query_one("#rr-feedback", TextArea).load_text(candidate.feedback)
+        if not preserve_editor:
+            self.query_one("#rr-title", Input).value = candidate.title
+            self.query_one(
+                "#rr-applicability", Select
+            ).value = candidate.applicability.kind
+            self.query_one("#rr-app-criteria", Input).value = (
+                candidate.applicability.criteria or ""
+            )
+            self.query_one("#rr-detector", Select).value = candidate.detector.kind
+            self.query_one("#rr-criteria", TextArea).load_text(
+                candidate.detector.criteria or "\n".join(candidate.detector.literals)
+            )
+            self.query_one(
+                "#rr-case", Checkbox
+            ).value = candidate.detector.case_sensitive
+            self.query_one("#rr-feedback", TextArea).load_text(candidate.feedback)
         inherited = binding is not None and binding.scope != self.scope
         self.query_one("#rr-details", Static).update(
             f"{'Inherited' if inherited else 'Local'} · revision {rule.revision}. Edits create an inactive revision until Test and Save."
@@ -345,7 +363,13 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                 ),
                 None,
             )
-        self._show_examples(draft)
+        if preserve_editor:
+            self.query_one("#rr-examples", Static).update(
+                f"Saved revision {rule.revision} remains selected. "
+                "Your newer edits are untested; Test before Save."
+            )
+        else:
+            self._show_examples(draft)
         self._buttons()
 
     def _candidate(self) -> RuleCandidate:
@@ -518,9 +542,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             destinations = self.query("#rr-promote-scope")
             if not destinations:
                 return
-            destination = self._scopes[
-                int(str(destinations.first(Select).value))
-            ]
+            destination = self._scopes[int(str(destinations.first(Select).value))]
             existing = next(
                 (
                     b
@@ -599,9 +621,17 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                     result, self.scope, expected_binding_revision=self._expected
                 )
                 await self._reload(selected_rule=result.rule)
-                self.tested = result
-                self._show_examples(result)
-                self._status("Rule active · tested against examples.")
+                if self._selected != result.rule or not self.query("#rr-title"):
+                    return
+                if self._has_unsaved():
+                    self.tested = None
+                    self._status(
+                        f"Revision {result.rule.revision} saved. Newer edits remain untested."
+                    )
+                else:
+                    self.tested = result
+                    self._show_examples(result)
+                    self._status("Rule active · tested against examples.")
             elif action in {"disable", "exclude"}:
                 state = (
                     (
