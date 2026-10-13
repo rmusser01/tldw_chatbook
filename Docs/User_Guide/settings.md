@@ -134,7 +134,8 @@ changes?" and names the categories that hold them; **Keep editing** stays,
 **Discard and quit** quits (with unsaved theme edits too, the theme's own
 Save / Discard / Stay prompt asks after it). Quitting from another screen
 asks the same question about a draft you left in Settings; there **Keep
-editing** takes you back to Settings, draft and all. A draft that fails
+editing** takes you back to Settings, draft and all, or, when you quit from
+an open dialog, leaves you in that dialog. A draft that fails
 validation keeps its badge and count and names the problem — "State: Draft —
 save with s · 1 unsaved | Needs correction: \<the problem\>" — and Save stays
 blocked; with nothing pending, the buttons read **Save (s) — no changes** and

@@ -35,9 +35,9 @@ exited the app (review follow-up). A modal on ``SafeModalDismissMixin`` (the
 switcher, the video player, most Console modals) cannot pop the prompt at
 all: its covered dismiss is refused, which the switcher journey pins.
 
-The final pair pins ruling C-N1 (TASK-33007): a Settings draft kept after
+The final group pins ruling C-N1 (TASK-33007): a Settings draft kept after
 leaving Settings is asked about from any screen, and only while Settings is
-not open to ask for itself.
+not open to ask for itself; Keep editing under a modal stays in it.
 """
 
 from __future__ import annotations
@@ -886,3 +886,46 @@ async def test_ctrl_q_on_settings_never_asks_about_its_own_stale_snapshot(
         # A prompt would hold the quit, so reaching the shutdown proves none.
         await _until_exited(app, cleanups, "Ctrl+Q to quit without asking")
     assert cleanups == [True]
+
+
+async def test_keep_editing_on_a_kept_draft_under_a_modal_keeps_the_modal(
+    monkeypatch,
+):
+    """Capture fix 3 round 1, finding 1: Keep editing on the kept-draft
+    prompt went back to Settings, and navigating dismisses every modal with
+    None, past its own close guard. Under a modal the user stays in it."""
+    app = _build_test_app(configured_default="settings")
+    cleanups: list[bool] = []
+    monkeypatch.setattr(
+        app, "_run_approved_quit_cleanup", _record_cleanup_then_exit(app, cleanups)
+    )
+    async with app.run_test(size=(190, 55)) as pilot:
+        await _settings_with_a_kept_draft(app, pilot)
+        home = app.screen
+        results: list[object] = []
+        modal = _HooklessModal()
+        await app.push_screen(modal, callback=results.append)
+        await _until(pilot, lambda: app.screen is modal, "the covering modal")
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_dialogs_titled(app, _SETTINGS_QUIT_TITLE)),
+            "Ctrl+Q under the modal to ask about the kept Settings draft",
+            timeout=5.0,
+        )
+        await pilot.press("escape")  # Keep editing
+        await _until(
+            pilot,
+            lambda: app._quit_in_progress is False,
+            "the quit guard to clear after Keep editing",
+        )
+        # A navigation, were one posted, dismisses the modal within this.
+        for _ in range(50):
+            if modal not in app.screen_stack:
+                break
+            await pilot.pause(0.02)
+        assert results == [], "the modal was closed past its own guard"
+        assert app.screen is modal
+        assert app.screen_stack[-2] is home
+        assert cleanups == []

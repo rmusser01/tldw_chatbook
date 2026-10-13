@@ -92,12 +92,18 @@ class KeptSettingsDraft:
     async def confirm_quit(self) -> bool:
         """Ask as Settings would; Keep editing goes back to Settings.
 
+        Not from under a modal: navigating dismisses every modal with None,
+        past its own close guard, so there the user stays in the modal. A
+        prompt that vanished (only possible under a modal) stays too.
+
         Returns:
             True when the user chose Discard and quit; False to stay.
         """
+        under_modal = getattr(self.app.screen, "is_modal", False)
         if await _ask_to_discard(self, self._names):
             return True
-        self.app.post_message(NavigateToScreen(TAB_SETTINGS))
+        if not under_modal and not getattr(self.app.screen, "is_modal", False):
+            self.app.post_message(NavigateToScreen(TAB_SETTINGS))
         return False
 
 
