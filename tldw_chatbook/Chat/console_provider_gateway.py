@@ -237,6 +237,21 @@ NO_PROVIDER_CONTENT_COPY = "Provider returned no assistant content."
 MAX_TRACE_RESPONSE_ITEMS = 1_024
 
 
+def _capture_sanitizer_for(known_credentials: tuple[str, ...]) -> Any:
+    """Build one credential sanitizer per exchange flight (TASK-34919).
+
+    ``None`` on any construction failure: the per-chunk call site then
+    falls back to constructing from ``known_credentials`` exactly as
+    before, so capture never gains a new failure mode.
+    """
+    try:
+        from tldw_chatbook.Chat.console_trace_redaction import CredentialSanitizer
+
+        return CredentialSanitizer(known_credentials=known_credentials)
+    except Exception:  # noqa: BLE001 - capture is diagnostic, fail open
+        return None
+
+
 def _max_trace_accumulated_bytes() -> int:
     """ADR-097 boot ratchet: settlement's cap constant, read on first use."""
     from tldw_chatbook.Chat.console_trace_settlement import MAX_TRACE_RESPONSE_BYTES
@@ -993,6 +1008,7 @@ class ConsoleProviderStreamSignals:
                     sanitized, omitted = sanitize_capture_value_with_omission(
                         items,
                         known_credentials=flight["known_credentials"],
+                        sanitizer=flight.get("credential_sanitizer"),
                     )
                     if omitted:
                         path = f"response.{key}"
@@ -1321,6 +1337,9 @@ class ConsoleProviderCallSignals:
                 "response_truncation_inventory": [],
                 "credential_omission_inventory": [],
                 "known_credentials": known_credentials,
+                # TASK-34919: one sanitizer per exchange flight; the
+                # per-chunk mutation path reuses it instead of rebuilding.
+                "credential_sanitizer": _capture_sanitizer_for(known_credentials),
                 "capture_detail": self.capture_detail,
                 "pii_redaction_enabled": self._aggregate.pii_redaction_enabled,
                 "pii_ruleset_revision_id": (self._aggregate.pii_ruleset_revision_id),

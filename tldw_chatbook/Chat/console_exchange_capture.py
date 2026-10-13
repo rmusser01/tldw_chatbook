@@ -506,12 +506,40 @@ def sanitize_capture_value_with_omission(
     value: Any,
     *,
     known_credentials: tuple[str, ...] = (),
+    sanitizer: CredentialSanitizer | None = None,
 ) -> tuple[Any, bool]:
-    result = CredentialSanitizer(known_credentials=known_credentials).sanitize(value)
+    """Sanitize one captured value, reporting whether anything was omitted.
+
+    Args:
+        known_credentials: Runtime credential values to also remove; ignored
+            when ``sanitizer`` carries them already.
+        sanitizer: Pre-built sanitizer to reuse (TASK-34919: one per
+            exchange flight instead of one per streamed chunk). ``None``
+            constructs from ``known_credentials`` as before.
+    """
+    active = (
+        sanitizer
+        if sanitizer is not None
+        else CredentialSanitizer(known_credentials=known_credentials)
+    )
+    result = active.sanitize(value)
     if not result.available:
         return dict(_CREDENTIAL_OMISSION), True
+    sanitized_value = result.value
+    if (
+        isinstance(sanitized_value, str)
+        and len(sanitized_value) < _STUB_MIN_CHARS
+        and not sanitized_value.startswith("data:")
+    ):
+        # TASK-34919: the dominant streamed shape is a short plain-text
+        # delta, and both post-passes provably return such a string
+        # unchanged -- nested-credential removal passes plain strings
+        # through, and the binary stub gate requires a data: prefix or a
+        # canonical length >= _STUB_MIN_CHARS (canonical <= raw). Skip the
+        # whitespace-strip copy and base64 regex over every chunk.
+        return sanitized_value, result.redacted
     return (
-        stub_binary_strings(_remove_nested_credentials(result.value)),
+        stub_binary_strings(_remove_nested_credentials(sanitized_value)),
         result.redacted,
     )
 
