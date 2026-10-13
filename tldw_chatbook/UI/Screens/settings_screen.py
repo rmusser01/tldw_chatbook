@@ -3903,6 +3903,7 @@ class SettingsScreen(BaseAppScreen):
         self._subscription_readiness_observation: tuple[str, str, str | None] | None = (
             None
         )
+        self._subscription_readiness_gate: tuple[str, str, str, int] | None = None
         self._provider_subscription_test: tuple[str, int] | None = None
         self._provider_save_result = (
             "Provider settings have not been saved this session."
@@ -5094,12 +5095,34 @@ class SettingsScreen(BaseAppScreen):
             SettingsCategoryId.PROVIDERS_MODELS,
         }:
             self._subscription_readiness_observation = None
+            self._subscription_readiness_gate = None
             return
         provider = (
             str(self._resolve_provider_model_for_settings().provider or "")
             if category is SettingsCategoryId.OVERVIEW
             else self._provider_widget_value()
         )
+        # Cheap gate BEFORE the expensive resolution: readiness can only
+        # change when the provider/panel choice changes, the background
+        # credential snapshot goes stale or completes (cached status /
+        # revision), or a draft edit lands. Saves re-render the panel
+        # directly; this poll only covers background subscription
+        # transitions (chat_screen and the console settings modal gate on
+        # the same revision).
+        from ...LLM_Calls.anthropic_subscription import (
+            subscription_credential_status,
+            subscription_readiness_revision,
+        )
+
+        gate = (
+            category.value,
+            provider,
+            self._provider_auth_source_value(provider),
+            subscription_credential_status(background=True),
+            subscription_readiness_revision(),
+        )
+        if gate == self._subscription_readiness_gate:
+            return
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config()
@@ -5108,6 +5131,7 @@ class SettingsScreen(BaseAppScreen):
             background_credentials=True,
         )
         observation = (category.value, provider, readiness.subscription_status)
+        self._subscription_readiness_gate = gate
         if observation == self._subscription_readiness_observation:
             return
         self._subscription_readiness_observation = observation

@@ -323,3 +323,56 @@ async def test_settings_dismissal_stops_projection_of_pending_credentials(
                 await asyncio.sleep(0.01)
         await pilot.pause(0.3)
         assert screen._provider_test_result == before
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_poll_skips_resolution_until_the_gate_changes(
+    credential_io, monkeypatch, request
+):
+    """TASK-34913: the 0.25s poll must not resolve readiness on unchanged inputs."""
+    from tldw_chatbook.UI.Screens import settings_screen as settings_module
+
+    original_set_interval = SettingsScreen.set_interval
+
+    def start_paused(screen, interval, callback, *args, **kwargs):
+        timer = original_set_interval(screen, interval, callback, *args, **kwargs)
+        if getattr(callback, "__name__", "") == "_poll_subscription_readiness":
+            timer.pause()
+        return timer
+
+    monkeypatch.setattr(SettingsScreen, "set_interval", start_paused)
+
+    revision = [subscription.subscription_readiness_revision()]
+    monkeypatch.setattr(
+        subscription,
+        "subscription_readiness_revision",
+        lambda: revision[0],
+    )
+    calls = []
+    real_readiness = settings_module.get_provider_readiness
+
+    def counting_readiness(*args, **kwargs):
+        calls.append(None)
+        return real_readiness(*args, **kwargs)
+
+    monkeypatch.setattr(settings_module, "get_provider_readiness", counting_readiness)
+
+    host = DestinationHarness(settings_app(), "settings")
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        baseline = len(calls)  # mount/render paths resolve readiness directly
+        screen._poll_subscription_readiness()
+        first = len(calls)
+        assert first > baseline, "first poll must resolve readiness"
+
+        screen._poll_subscription_readiness()
+        screen._poll_subscription_readiness()
+        assert len(calls) == first, "unchanged gate must skip resolution"
+
+        revision[0] += 1
+        screen._poll_subscription_readiness()
+        assert (
+            len(calls) > first
+        ), "a background-refresh revision bump must re-resolve"
