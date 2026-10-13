@@ -72,7 +72,7 @@ from tldw_chatbook.Chat.provider_catalog import (
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import URL_BASED_PROVIDER_KEYS
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
-from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS
+from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS, temperature_range
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.Console.console_settings_unsaved import unsaved_prompt_copy
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
@@ -93,15 +93,14 @@ class ConsoleModelPopoverResult:
     compaction_mode: ContextCompactionMode
 
 
-_CONSOLE_POPOVER_TEMPERATURE_MIN = 0.0
-_CONSOLE_POPOVER_TEMPERATURE_MAX = 2.0
 _FULL_SETTINGS_ACTION = "full_settings"
 #: The value row, in order: exactly the quick default mask (ADR-095 D3), so
 #: Save as model default and Ctrl+N save every value this surface shows.
 VALUE_FIELDS = ("temperature", "max_tokens", "streaming")
 _INVALID = object()
+#: Temperature's range is the draft's provider's (capture finding 25).
 _VALUE_ERRORS = {
-    "temperature": "Temperature must be a finite number from 0 to 2.",
+    "temperature": "Temperature must be a finite number from {low:g} to {high:g}.",
     "max_tokens": "Max tokens must be a whole number of at least 1 (blank: no cap).",
 }
 
@@ -280,22 +279,6 @@ def context_copy(tokens: int, verified: bool) -> str:
     return size
 
 
-def _temperature_in_range(value: float) -> bool:
-    """Return whether a parsed temperature is finite and within modal bounds.
-
-    Args:
-        value: Parsed temperature candidate.
-
-    Returns:
-        True if ``value`` is within ``[0.0, 2.0]``. NaN and infinite values
-        always return False, since any comparison against them is False.
-    """
-    return (
-        isfinite(value)
-        and _CONSOLE_POPOVER_TEMPERATURE_MIN
-        <= value
-        <= _CONSOLE_POPOVER_TEMPERATURE_MAX
-    )
 
 
 def _widget_screen_region(widget: Widget) -> Any:
@@ -1581,8 +1564,11 @@ class ConsoleModelPopover(
         if focus is not None:
             focus.focus()
 
-    @staticmethod
-    def _parse_value(name: str, raw: str) -> object:
+    def _temperature_range(self) -> tuple[float, float]:
+        """The draft's provider's Temperature range, the one Ctrl+O holds."""
+        return temperature_range(provider_config_key(self._draft.settings.provider))
+
+    def _parse_value(self, name: str, raw: str) -> object:
         """One value control's text as its value; blank is None (no value)."""
         text = raw.strip()
         if not text:
@@ -1594,7 +1580,9 @@ class ConsoleModelPopover(
         except ValueError:
             return _INVALID
         if name == "temperature":
-            return value if _temperature_in_range(value) else _INVALID
+            low, high = self._temperature_range()
+            # NaN and infinities compare False, so they are refused too.
+            return value if isfinite(value) and low <= value <= high else _INVALID
         return value if value >= MIN_MAX_TOKENS else _INVALID
 
     def _value_input(self, name: str) -> Input:
@@ -1796,7 +1784,10 @@ class ConsoleModelPopover(
             control = self._value_input(name)
             value = self._parse_value(name, control.value)
             if value is _INVALID:
-                self._set_error(_VALUE_ERRORS[name], focus=control)
+                low, high = self._temperature_range()
+                self._set_error(
+                    _VALUE_ERRORS[name].format(low=low, high=high), focus=control
+                )
                 return None
             values[name] = value
         for name, value in values.items():

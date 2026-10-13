@@ -741,7 +741,9 @@ as "llama.cpp (legacy alias)") only appear when a chat uses them.
 Up and Down move the highlight while you type, and from the values too.
 Under the list, "Values for <model> · <provider>" names the highlighted pair,
 and the row below it shows that pair's **Temperature**, **Max tokens** and
-**Streaming** (On or Off), each one row tall. These three are exactly what
+**Streaming** (On or Off), each one row tall. Temperature takes the
+provider's own range, as in Chat settings (0 to 1 for Anthropic), and a
+value outside it is refused with that range. These three are exactly what
 the default actions save; Thinking and every other setting stay in Chat
 settings. Next to each value is a word saying where it comes from:
 
