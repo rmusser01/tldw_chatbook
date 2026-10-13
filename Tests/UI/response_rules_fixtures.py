@@ -60,6 +60,8 @@ async def mounted_rules_console(tmp_path, size=(80, 24)):
             failures=[],
             primary_entered=None,
             primary_release=None,
+            helper_entered=None,
+            helper_release=None,
         )
 
         import json
@@ -86,6 +88,10 @@ async def mounted_rules_console(tmp_path, size=(80, 24)):
                 k in wire for k in ("complaint", "rules", "reviewed_candidate")
             ):
                 transport.requests.append(wire)
+                if case.helper_entered is not None:
+                    case.helper_entered.set()
+                if case.helper_release is not None:
+                    await case.helper_release.wait()
                 if "rules" in wire:
                     checks = []
                     for i, value in enumerate(wire["cases"]):

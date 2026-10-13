@@ -180,3 +180,4 @@ def refresh_rule_controls(screen: Any, session_id: str) -> None:
     """Refresh only the currently mounted Chat's disposable controls."""
     if screen.is_mounted and screen._console_chat_store.active_session_id == session_id:
         screen._sync_console_control_bar()
+        screen._sync_console_mode_bar()

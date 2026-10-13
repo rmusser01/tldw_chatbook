@@ -3,7 +3,7 @@
 import asyncio
 
 import pytest
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from Tests.UI.response_rules_fixtures import mounted_rules_console, seed_answer
 from Tests.UI.test_console_native_chat_flow import (
@@ -272,3 +272,67 @@ async def test_violation_status_opens_rules_with_disable_action(tmp_path):
             await case.pilot.pause()
         assert isinstance(case.host.screen, ResponseRulesModal)
         assert not case.host.screen.query_one("#rr-disable", Button).disabled
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 35)])
+async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size):
+    async with mounted_rules_console(tmp_path, size) as case:
+        seed_answer(case)
+        case.helper_entered, case.helper_release = asyncio.Event(), asyncio.Event()
+        complaint = "/omfg Include evidence in the answer"
+        case.composer.load_draft(complaint)
+        await case.pilot.pause()
+        assert not case.console._console_transcript_poll_needed()
+        case.console.query_one("#console-send-message", Button).press()
+        try:
+            async with asyncio.timeout(5):
+                await case.helper_entered.wait()
+            await case.pilot.pause()
+            assert case.rules.state(case.session_id).phase == "drafting"
+            assert not case.console._console_transcript_poll_needed()
+            chip = case.console.query_one("#console-run-chip", Static)
+            assert chip.display and "Drafting rule" in str(chip.render())
+            stop = case.console.query_one("#console-stop-generation", Button)
+            assert stop.display and not stop.disabled
+            assert await case.pilot.click("#console-stop-generation")
+            await case.pilot.pause()
+            assert case.composer.draft_text() == complaint
+            assert case.rules.state(case.session_id).phase == "idle"
+            assert case.rules.helpers.unsettled_count == 1
+            assert "Drafting rule" not in str(chip.render())
+        finally:
+            case.helper_release.set()
+            async with asyncio.timeout(5):
+                await case.rules.helpers.wait_for_cleanup()
+            await case.console.workers.wait_for_complete()
+        assert case.rules.helpers.unsettled_count == 0
+        assert case.composer.draft_text() == complaint
+        assert case.learning_results and case.learning_results[-1][0] != "active"
+        assert case.rules.state(case.session_id).phase == "idle"
+        assert "Drafting rule" not in str(chip.render())
+
+
+@pytest.mark.asyncio
+async def test_rule_phase_events_project_only_the_mounted_current_session(tmp_path):
+    async with mounted_rules_console(tmp_path) as case:
+        for phase, label in (
+            ("checking", "Checking rules"),
+            ("drafting", "Drafting rule"),
+            ("testing", "Testing rule"),
+            ("repairing", "Repairing rule violation"),
+        ):
+            # Exercise the runtime's source notification boundary, not widget writers.
+            case.rules._project(case.session_id, phase=phase)
+            chip = case.console.query_one("#console-run-chip", Static)
+            assert chip.display and label in str(chip.render())
+            case.rules._project("other-session", phase="idle")
+            assert label in str(chip.render())
+        case.rules._project(case.session_id, phase="idle")
+        assert not chip.display
+        await case.host.pop_screen()
+        await case.pilot.pause()
+        assert not case.console.is_attached
+        before = str(chip.render())
+        case.rules._project(case.session_id, phase="checking")
+        assert str(chip.render()) == before

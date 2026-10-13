@@ -263,3 +263,6 @@ Tests/UI/test_settings_personal_context.py::test_production_settings_inspects_pr
 Tests/UI/test_console_conversation_inspector.py::test_detail_worker_creation_can_be_cancelled_before_coroutine_exists
 Tests/UI/test_settings_personal_context.py::test_export_and_deleted_labels_keep_literal_metadata
 Tests/UI/test_library_dreams_reader.py
+# PR3010 live phase/Stop event regression; bounded native owner and view guards.
+Tests/UI/test_console_response_rules.py::test_mapped_learning_phase_and_stop_follow_live_helper
+Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the_mounted_current_session

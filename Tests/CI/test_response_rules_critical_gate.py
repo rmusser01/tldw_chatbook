@@ -225,3 +225,35 @@ def test_suppressed_or_weakened_critical_process_is_rejected(damage):
         document["jobs"]["derived-artifacts"]["needs"].remove("console-p0-gate")
     with pytest.raises(AssertionError):
         validate(document)
+
+
+UI_PHASE_SELECTION = (
+    "Tests/UI/test_console_response_rules.py::test_mapped_learning_phase_and_stop_follow_live_helper",
+    "Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the_mounted_current_session",
+)
+
+
+def _validate_ui_phase_membership(census_path):
+    from scripts.check_ui_pr_gate_census import read_census, shard
+
+    entries = read_census(census_path)
+    shards = [shard(entries, index, 4) for index in range(4)]
+    for target in UI_PHASE_SELECTION:
+        assert sum(part.count(target) for part in shards) == 1
+
+
+def test_native_phase_controls_are_executable_in_required_ui_census():
+    _validate_ui_phase_membership(ROOT / "scripts/ui_pr_gate_census.txt")
+
+
+@pytest.mark.parametrize("target", UI_PHASE_SELECTION)
+@pytest.mark.parametrize("damage", ["remove", "comment"])
+def test_missing_or_comment_only_native_phase_control_is_rejected(
+    tmp_path, target, damage
+):
+    original = (ROOT / "scripts/ui_pr_gate_census.txt").read_text()
+    damaged = original.replace(target, "# " + target if damage == "comment" else "")
+    path = tmp_path / "census.txt"
+    path.write_text(damaged)
+    with pytest.raises(AssertionError):
+        _validate_ui_phase_membership(path)
