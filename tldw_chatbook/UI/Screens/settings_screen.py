@@ -1279,6 +1279,8 @@ STAGED_SAVE_BEHAVIOR_COPY = "staged - press s to save, r to revert"
 # Mirrored (with an Enter-to-apply clause) in
 # Widgets/settings_splash_screen_viewer.py, which cannot import this module.
 INSTANT_APPLY_BEHAVIOR_COPY = "applies immediately - no Save needed"
+#: Catalog refresh's receipt after a write (capture finding 6: never at rest).
+MODEL_CATALOG_SAVED_COPY = "Saved to config."
 #: TASK-33002.3: what a Providers & Models save reaches (ADR-095 D1). Shared
 #: by the save result and its toast; the State line says it in one row. The
 #: short form lives in `_category_state_scope_text`: change both together.
@@ -17025,8 +17027,10 @@ class SettingsScreen(BaseAppScreen):
         )
         with self._model_catalog_save_lock:
             if unchanged and not self._model_catalog_save_running:
+                # Nothing to write: keep a write's receipt, drop a refusal.
                 self._model_catalog_form_values = None
-                self._model_catalog_save_status = "Saved. Applies at next startup."
+                if self._model_catalog_save_status != MODEL_CATALOG_SAVED_COPY:
+                    self._model_catalog_save_status = ""
                 start_worker = False
             else:
                 # A return to the saved value still queues behind an older
@@ -17061,7 +17065,7 @@ class SettingsScreen(BaseAppScreen):
         self._model_catalog_save_failed = not saved
         if saved:
             self._model_catalog_form_values = None
-            self._model_catalog_save_status = "Saved. Applies at next startup."
+            self._model_catalog_save_status = MODEL_CATALOG_SAVED_COPY
         else:
             self._model_catalog_save_status = (
                 "Catalog refresh changes were not saved. Check that the config "

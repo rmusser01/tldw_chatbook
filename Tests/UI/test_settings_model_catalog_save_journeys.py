@@ -128,6 +128,40 @@ async def test_catalog_keyboard_failure_retry_and_fractional_interval(
 
 
 @pytest.mark.asyncio
+async def test_catalog_says_nothing_until_a_choice_is_saved(monkeypatch):
+    """#3057 capture finding 6 (10c): opened with nothing changed, Catalog
+    refresh said "Saved. Applies at next startup." under its "applies
+    immediately - no Save needed" hint. A control posting the value it was
+    built with writes nothing and says nothing; a field taken back to its
+    saved value drops the refusal it showed; a real write says it saved, and
+    a pane rebuild keeps that receipt."""
+    writer = ConfigWriter()
+    _install(monkeypatch, writer)
+    host = ProviderSettingsHarness(_build_settings_app(), "settings")
+    async with host.run_test(size=(170, 48)) as pilot:
+        screen = await _open(host, pilot)
+        await _open_catalog_refresh(host, pilot)
+        assert _status(screen) == ""
+        screen.mutate_reactive(SettingsScreen.active_category)
+        await _settle(host, pilot)
+        assert _status(screen) == ""
+        screen.query_one(HOURS, Input).value = "abc"
+        await _settle(host, pilot)
+        assert "not saved" in _status(screen).lower()
+        screen.query_one(HOURS, Input).value = "24"
+        await _settle(host, pilot)
+        assert _status(screen) == ""
+        assert not writer.calls
+        screen.query_one(HOURS, Input).value = "6"
+        await _settle(host, pilot)
+        assert writer.config["model_catalog"]["stale_after_hours"] == 6
+        assert _status(screen) == settings_module.MODEL_CATALOG_SAVED_COPY
+        screen.mutate_reactive(SettingsScreen.active_category)
+        await _settle(host, pilot)
+        assert _status(screen) == settings_module.MODEL_CATALOG_SAVED_COPY
+
+
+@pytest.mark.asyncio
 async def test_catalog_exception_preserves_choices_and_redacts_message(monkeypatch):
     writer = ConfigWriter(failure="raise")
     _install(monkeypatch, writer)

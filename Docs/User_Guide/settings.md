@@ -273,8 +273,8 @@ sit in one control column, wide enough for its longest choice; its two
 free-text Side chat fields (model and prompt template) take the rest of
 their row instead. Its disclosures and Permission summaries group draw no box.
 
-Catalog refresh shows whether changes are saving, saved, or could not be saved.
-If a write fails, your choices remain visible when you leave this category and
+Catalog refresh shows whether changes are saving, saved ("Saved to config."),
+or could not be saved; with nothing changed it says nothing. If a write fails, your choices remain visible when you leave this category and
 return; choose **Retry** after making the config file writable.
 
 **Session summary on quit** is a farewell screen, not a dashboard: after you
