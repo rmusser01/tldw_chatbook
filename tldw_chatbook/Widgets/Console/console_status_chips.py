@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.cells import cell_len
 from textual import events, on
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -56,6 +57,16 @@ class ConsoleChip(Static):
             Tooltip content: ``label``, plus ``HELP`` on a second line if set.
         """
         return Content(f"{label}\n{self.HELP}" if self.HELP else label)
+
+
+def _cost_label_forms(state: ConsoleCostState) -> list[str]:
+    """Every form of the cost label, longest first: the full and compact
+    labels, then each with whole " · " segments dropped from its end."""
+    forms: list[str] = []
+    for label in (state.label, state.compact_label):
+        parts = label.split(" · ")
+        forms += (" · ".join(parts[:end]) for end in range(len(parts), 0, -1))
+    return sorted(dict.fromkeys(forms), key=cell_len, reverse=True)
 
 
 def _items_word(count: int) -> str:
@@ -580,6 +591,7 @@ class ConsoleStatusChips(Horizontal):
         self.query_one(
             "#console-status-collapsed", Horizontal
         ).display = self._collapsed
+        self.call_after_refresh(self._refit_cost_chip)
 
     def _run_chip(self) -> ConsoleRunChip:
         label, tooltip, hidden = self._run_chip_render(*self._run_chip_state)
@@ -631,6 +643,7 @@ class ConsoleStatusChips(Horizontal):
         if next_state == self._run_chip_state:
             return
         self._run_chip_state = next_state
+        self.call_after_refresh(self._refit_cost_chip)
         try:
             chip = self.query_one("#console-run-chip", ConsoleRunChip)
         except NoMatches:
@@ -692,6 +705,7 @@ class ConsoleStatusChips(Horizontal):
         chip.update(label)
         chip.tooltip = tooltip
         chip.display = not hidden
+        self.call_after_refresh(self._refit_cost_chip)
 
     def _scope_chip(self) -> ConsoleScopeChip:
         label, tooltip, hidden, alert = self._scope_chip_render(self.scope_state)
@@ -790,6 +804,7 @@ class ConsoleStatusChips(Horizontal):
         chip.tooltip = tooltip
         chip.display = not hidden
         chip.set_class(alert, "console-chip-alert")
+        self.call_after_refresh(self._refit_cost_chip)
 
     def _cost_chip(self) -> ConsoleCostChip:
         label, tooltip, hidden, alert, cold = self._cost_chip_render(self._cost_state)
@@ -869,11 +884,29 @@ class ConsoleStatusChips(Horizontal):
         chip.set_class(not state.alert and not state.cold, "console-chip-dim")
 
     def _apply_cost_chip_label(self, chip: ConsoleCostChip) -> None:
-        """Apply the current cost state's full or compact width-aware label."""
+        """Apply the current cost state's full or compact width-aware label.
+
+        Capture fix 3 finding 4: the chips before it can leave less room on
+        the strip than that label needs, and the strip cut it mid-word
+        ("Current $0." at 211 columns). The longest form whose whole " · "
+        segments fit is shown instead (the tooltip keeps every figure); with
+        room for none, the label stays and scrolls in on focus like any
+        chip past the edge.
+        """
         state = self._cost_state
         if state is None:
             return
         label = state.compact_label if self.screen.size.width < 120 else state.label
+        scroll = chip.parent
+        if isinstance(scroll, HorizontalScroll) and scroll.size.width:
+            room = (
+                scroll.scrollable_content_region.width
+                - chip.virtual_region.x
+                - chip.styles.gutter.width
+            )
+            if cell_len(label) > room:
+                forms = _cost_label_forms(state)
+                label = next((f for f in forms if cell_len(f) <= room), label)
         chip.update(label)
         chip.refresh(layout=True)
 
@@ -883,6 +916,13 @@ class ConsoleStatusChips(Horizontal):
         Args:
             _event: Textual resize notification; width is read from the app.
         """
+        # After the refresh: relabelled from here the chip kept its old width
+        # until some later layout (measured at 211 columns).
+        self.call_after_refresh(self._refit_cost_chip)
+
+    def _refit_cost_chip(self) -> None:
+        """Refit the cost chip: also run (after layout) when a chip before it
+        changes width or shows, which moves it with no resize of the strip."""
         try:
             chip = self.query_one("#console-cost-chip", ConsoleCostChip)
         except NoMatches:
@@ -935,6 +975,7 @@ class ConsoleStatusChips(Horizontal):
             pass
         else:
             tools_chip.display = state.tools_active
+        self.call_after_refresh(self._refit_cost_chip)
 
     @on(ConsoleApprovalsChip.ReviewRequested)
     def on_approval_review_requested(

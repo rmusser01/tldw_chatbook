@@ -1291,7 +1291,10 @@ run, use **Stop**, **Ctrl+G**, or `/stop` instead.
 ## Quirks & troubleshooting
 
 - **Status chips look truncated.** They ellipsize to fit the row — hover a
-  chip for its full text.
+  chip for its full text. The cost chip at the end of the row shortens
+  instead: when the chips before it leave too little room, it switches to
+  its short words ("Ctx 0% · Now $0.00 · Next —") and then drops whole
+  figures from its end, so nothing it shows is cut. Hover it for all of them.
 - **The status strip shows no "Context" figure.** While the model's context
   window is unknown the cost chip leaves the context share out (hover it for
   why). It only matters if a send is refused, and then the refusal names the

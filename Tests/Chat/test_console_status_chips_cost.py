@@ -364,6 +364,86 @@ async def test_context_cost_label_fits_shipped_status_strip(
         assert chip.content_region.width >= cell_len(expected)
 
 
+#: The status row of captures 03f/05c (OpenAI, nothing sent yet).
+_CAPTURE_LABELS = {
+    "label": "Context 0% · Current $0.00 · On next send —",
+    "compact_label": "Ctx 0% · Now $0.00 · Next —",
+}
+
+
+def _capture_control_state(**overrides) -> ConsoleControlState:
+    return _control_state(
+        **{
+            "rag_label": "Library · Auto off · Agent access off",
+            "provider_label": "Provider: OpenAI",
+            "model_label": "Model: gpt-5.6-terra",
+            "system_prompt_label": "System Prompt: off",
+            "sources_label": "Sources: 0",
+            **overrides,
+        }
+    )
+
+
+def _cost_chip_drawn_whole(app) -> str:
+    """The chip's label, after asserting the strip shows all of the chip."""
+    chip = app.query_one("#console-cost-chip", ConsoleCostChip)
+    scroll = app.query_one("#console-status-chip-scroll")
+    assert chip.region.right <= scroll.content_region.right, (
+        str(chip.render()),
+        chip.region,
+        scroll.content_region,
+    )
+    return str(chip.render())
+
+
+@pytest.mark.parametrize(
+    ("width", "expected"),
+    (
+        (211, "Ctx 0% · Now $0.00"),
+        (235, _CAPTURE_LABELS["label"]),
+    ),
+)
+@pytest.mark.asyncio
+async def test_the_cost_chip_drops_whole_segments_to_fit_the_strip(
+    width: int, expected: str
+) -> None:
+    """Capture fix 3 finding 4 (03f, 05c): at 211 columns the strip cut the
+    chip at "Current $0.", because the label is chosen by screen width alone
+    and the chips before it fill the row. The chip shows the longest form
+    whose whole " · " segments fit the room left; the tooltip keeps all."""
+    app = _ProductionChipsApp(
+        _capture_control_state(), cost_state=_cost_state(**_CAPTURE_LABELS)
+    )
+    async with app.run_test(size=(width, 8)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        assert _cost_chip_drawn_whole(app) == expected
+
+
+@pytest.mark.asyncio
+async def test_the_cost_chip_refits_when_a_chip_before_it_changes() -> None:
+    """Capture fix 3 finding 4: a longer model name moves the cost chip right
+    with no cost change; the chip refits, and fits again when it shortens."""
+    app = _ProductionChipsApp(
+        _capture_control_state(), cost_state=_cost_state(**_CAPTURE_LABELS)
+    )
+    async with app.run_test(size=(235, 8)) as pilot:
+        await pilot.pause()
+        assert _cost_chip_drawn_whole(app) == _CAPTURE_LABELS["label"]
+        chips = app.query_one(ConsoleStatusChips)
+
+        longer = _capture_control_state(model_label="Model: gpt-5.6-terra-mini")
+        chips.sync_state(longer)
+        await pilot.pause()
+        await pilot.pause()
+        assert _cost_chip_drawn_whole(app) == _CAPTURE_LABELS["compact_label"]
+
+        chips.sync_state(_capture_control_state())
+        await pilot.pause()
+        await pilot.pause()
+        assert _cost_chip_drawn_whole(app) == _CAPTURE_LABELS["label"]
+
+
 @pytest.mark.asyncio
 async def test_cost_chip_click_posts_pressed_message():
     """A real ``pilot.click`` must dispatch through the normal message pump.
