@@ -51,7 +51,8 @@ def _quiet_when_swapped_out(action):
 
     Returns:
         The method, ending on a `NoMatches` raised once Flashcards is no
-        longer the sub-view; one raised while it is shown is a bug and raises.
+        longer the sub-view or the window is being removed (a tab switch);
+        one raised while it is shown is a bug and raises.
     """
 
     @functools.wraps(action)
@@ -60,8 +61,10 @@ def _quiet_when_swapped_out(action):
             await action(self, *args, **kwargs)
         except NoMatches:
             # Ask the window, not the DOM: a removal goes leaf first, so
-            # `#card-list` can outlive `#review-status` for a moment.
-            if self.window.current_view == "flashcards":
+            # `#card-list` can outlive `#review-status` for a moment. A tab
+            # switch removes the window and leaves `current_view` alone;
+            # `display` is False once the window is being removed.
+            if self.window.current_view == "flashcards" and self.window.display:
                 raise
 
     return guarded

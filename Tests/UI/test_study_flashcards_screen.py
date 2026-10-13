@@ -1788,6 +1788,32 @@ async def test_a_lookup_that_misses_while_flashcards_is_shown_still_raises():
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+async def test_an_action_held_while_the_study_window_goes_ends_quietly():
+    """Leaving the Study tab ends an action quietly (fix round 3, finding 1).
+
+    A tab switch removes the whole window and leaves `current_view` at
+    "flashcards", so round 2's guard took the miss for a renamed id and
+    re-raised it out of the worker.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, _card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+        entered, release = _hold(scope, "list_decks")
+        running = asyncio.ensure_future(window.flashcards_controller.initialize_view())
+        await _until(pilot, entered.is_set, "initialize_view to reach list_decks")
+
+        await window.remove()
+        assert window.current_view == "flashcards"
+        release.set()
+        await running  # NoMatches before the fix
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_card_front_with_brackets_is_listed_as_typed():
     """A card's text is literal in the card list (fix round 1, finding 21).
 
