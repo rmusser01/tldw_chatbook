@@ -56,23 +56,30 @@ class _HeldSaveScope(_CatalogScope):
 
 
 class _RefusingSaveScope(_HeldSaveScope):
-    """Save selected is held, then refused (``outcome`` is a status) or raises;
-    with ``clear_fails`` Clear raises too."""
+    """Save selected is held, then refused (``outcome`` is a status) or raises.
+    ``clear`` is "ok", "fails" (Clear raises) or "held" (Clear is still
+    writing when the save fails, and succeeds after)."""
 
-    def __init__(self, *args, outcome: str, clear_fails: bool = False, **kwargs):
+    def __init__(self, *args, outcome: str, clear: str = "ok", **kwargs):
         super().__init__(*args, **kwargs)
         self.outcome = outcome
-        self.clear_fails = clear_fails
+        self.clear = clear
+        self.clear_release = asyncio.Event()
 
     async def clear_discovered_models(self, **kwargs):
         self.clear_calls.append(kwargs)
-        if self.clear_fails:
+        if self.clear == "held":
+            await self.clear_release.wait()
+        if self.clear == "fails":
             raise OSError("the model cache is read-only")
 
     async def persist_discovered_models_to_settings(self, **kwargs):
         self.persist_calls.append(kwargs)
         self.started.set()
         await self.release.wait()
+        # A held Clear resumes on a later loop step, after the screen has
+        # handled this save's outcome.
+        self.clear_release.set()
         if self.outcome == "raise":
             raise OSError("config.toml is read-only")
         return PersistenceResult(
@@ -224,14 +231,15 @@ _RESELECT = (
 @pytest.mark.asyncio
 @private_profile_test
 @pytest.mark.parametrize(
-    ("interrupt", "clear_fails", "next_step", "still_checked"),
+    ("interrupt", "clear", "next_step", "still_checked"),
     [
-        pytest.param(_INTERRUPTS[0], False, _RESELECT, [], id="discover"),
-        pytest.param(_CLEAR, False, _RESELECT, [], id="clear"),
-        pytest.param(_CLEAR, True, "Try Save again", [_SERVED], id="failed-clear"),
+        pytest.param(_INTERRUPTS[0], "ok", _RESELECT, [], id="discover"),
+        pytest.param(_CLEAR, "ok", _RESELECT, [], id="clear"),
+        pytest.param(_CLEAR, "fails", "Try Save again", [_SERVED], id="failed-clear"),
+        pytest.param(_CLEAR, "held", _RESELECT, [], id="held-clear"),
         pytest.param(
             _SWITCH_PROVIDER,
-            False,
+            "ok",
             "Switch back to OpenAI, Discover and select them again, then press "
             "Save selected",
             [],
@@ -240,7 +248,7 @@ _RESELECT = (
     ],
 )
 async def test_save_selected_raised_after_another_action_names_a_true_next_step(
-    request, monkeypatch, interrupt, clear_fails, next_step, still_checked
+    request, monkeypatch, interrupt, clear, next_step, still_checked
 ):
     """Capture fix 3 round 4, finding 1 (the raise row above, rewritten on
     purpose): round 3 picked "Discover and select them again" from the
@@ -249,13 +257,18 @@ async def test_save_selected_raised_after_another_action_names_a_true_next_step(
     toast told the user to re-discover rows still on screen; and after a
     provider change "Discover" ran against the form's new provider. The step
     now follows the rows and the provider the form holds when the save
-    fails."""
+    fails.
+
+    Capture fix 3 round 5, finding 1 ("held-clear"): a Clear still writing
+    when the save failed has not dropped the rows yet, so the step read "Try
+    Save again"; the Clear then succeeded and took the list and Save selected
+    away. A Clear in flight counts as dropping the rows."""
     scope = _RefusingSaveScope(
         "openai",
         catalog=("gpt-4o",),
         served=(_SERVED,),
         outcome="raise",
-        clear_fails=clear_fails,
+        clear=clear,
     )
     logs: list[str] = []
     handler = logging.Handler(logging.WARNING)

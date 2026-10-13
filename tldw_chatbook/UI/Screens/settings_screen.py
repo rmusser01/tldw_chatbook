@@ -4009,6 +4009,7 @@ class SettingsScreen(BaseAppScreen):
         # The provider whose discovery listing the Default model picker shows.
         self._model_picker_overlay_provider = ""
         self._model_discovery_revision = 0
+        self._model_discovery_clears_in_flight = 0
         # Save selected is serialised, never cancelled (TASK-19559's rule).
         self._discovered_models_save_lock = asyncio.Lock()
         self._model_catalog_form_values: dict[str, dict[str, object]] | None = None
@@ -16864,12 +16865,15 @@ class SettingsScreen(BaseAppScreen):
             )
             # The step follows what is on screen now: Discover, a Clear that
             # worked or a provider change since the press drop the checked
-            # rows; a Clear that failed keeps them.
+            # rows; a Clear that failed keeps them. A Clear still running may
+            # yet drop them, so it counts as dropping them.
             same_provider = (
                 provider_config_key(self._provider_widget_value()) == provider_key
             )
-            if same_provider and set(selected_model_ids) <= (
-                self._model_discovery_selected_model_ids
+            if (
+                same_provider
+                and not self._model_discovery_clears_in_flight
+                and set(selected_model_ids) <= self._model_discovery_selected_model_ids
             ):
                 retry = "Try Save again"
             elif same_provider:
@@ -16963,6 +16967,7 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_revision += 1
         revision = self._model_discovery_revision
         if provider_key and scope_service is not None:
+            self._model_discovery_clears_in_flight += 1
             try:
                 await scope_service.clear_discovered_models(
                     mode="local",
@@ -16982,6 +16987,8 @@ class SettingsScreen(BaseAppScreen):
                 )
                 self._refresh_model_discovery_widgets()
                 return
+            finally:  # a Discover or Clear pressed meanwhile cancels this one
+                self._model_discovery_clears_in_flight -= 1
         if revision != self._model_discovery_revision:
             return
         self._reset_provider_model_discovery_state("Discovered model cache cleared.")
