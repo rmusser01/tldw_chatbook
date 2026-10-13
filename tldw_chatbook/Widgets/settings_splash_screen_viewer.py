@@ -135,7 +135,7 @@ class SettingsSplashScreenViewer(Vertical):
             # screen); the Enter clause covers the duration/animation-speed
             # Inputs, which persist on Input.Submitted, not per keystroke.
             yield Static(
-                "applies immediately - no Save needed; text fields apply on Enter",
+                "applies immediately · no Save needed; text fields apply on Enter",
                 id="settings-splash-instant-hint",
                 classes="settings-instant-apply-hint",
             )

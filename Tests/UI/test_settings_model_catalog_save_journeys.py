@@ -135,7 +135,7 @@ async def test_catalog_keyboard_failure_retry_and_fractional_interval(
 async def test_catalog_says_nothing_until_a_choice_is_saved(monkeypatch, request):
     """#3057 capture finding 6 (10c): opened with nothing changed, Catalog
     refresh said "Saved. Applies at next startup." under its "applies
-    immediately - no Save needed" hint. A control posting the value it was
+    immediately · no Save needed" hint. A control posting the value it was
     built with writes nothing and says nothing; a field taken back to its
     saved value drops the refusal it showed; a real write says it saved, and
     a pane rebuild keeps that receipt."""

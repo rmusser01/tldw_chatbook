@@ -1279,7 +1279,7 @@ def _session_summary_section_values(
 STAGED_SAVE_BEHAVIOR_COPY = "edits save with s · r reverts"
 # Mirrored (with an Enter-to-apply clause) in
 # Widgets/settings_splash_screen_viewer.py, which cannot import this module.
-INSTANT_APPLY_BEHAVIOR_COPY = "applies immediately - no Save needed"
+INSTANT_APPLY_BEHAVIOR_COPY = "applies immediately · no Save needed"
 #: Catalog refresh's receipt after a write (capture finding 6: never at rest).
 MODEL_CATALOG_SAVED_COPY = "Saved to config."
 #: TASK-33002.3: what a Providers & Models save reaches (ADR-095 D1). Shared

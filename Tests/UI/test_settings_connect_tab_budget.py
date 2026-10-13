@@ -402,7 +402,7 @@ async def test_restored_openai_connection_row_shows_only_while_a_review_awaits(
         ]
         assert guide[0] == "Focused setting: Restored OpenAI connection"
         assert guide[1].startswith("Purpose: This profile was restored from a backup")
-        assert guide[2] == "Save: applies immediately - no Save needed"
+        assert guide[2] == "Save: applies immediately · no Save needed"
 
         # Enter on the focused Review button asks, and "Allow OpenAI
         # requests" records the review; only the recovery store is stubbed.

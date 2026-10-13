@@ -9,12 +9,12 @@ save" — the user cannot answer "did that save?".
 These tests pin:
 * staged stays the default model for the guided categories;
 * every intentional instant-apply control is labeled inline
-  ("applies immediately - no Save needed") and visually separated from
+  ("applies immediately · no Save needed") and visually separated from
   staged fields (its own instant-apply group; TASK-33007.6 dropped that
   group's border, as the pane border is the card's only frame);
 * the focused-field inspector documents the per-field save behavior
   ("Save: edits save with s · r reverts" vs
-  "Save: applies immediately - no Save needed"). #3057 capture round 2,
+  "Save: applies immediately · no Save needed"). #3057 capture round 2,
   finding 3: the staged row read "Save: staged - press s to save, r to
   revert", which claimed an edit was waiting when none was; it is rewritten
   on purpose in the State line's words.
@@ -37,7 +37,7 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     SettingsScreen,
 )
 
-INSTANT_APPLY_LABEL = "applies immediately - no Save needed"
+INSTANT_APPLY_LABEL = "applies immediately · no Save needed"
 STAGED_SAVE_ROW = "Save: edits save with s · r reverts"
 INSTANT_SAVE_ROW = f"Save: {INSTANT_APPLY_LABEL}"
 
