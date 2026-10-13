@@ -9407,21 +9407,6 @@ class SettingsScreen(BaseAppScreen):
             *self._snapshot_preferences_dirty_names(),
         )
 
-    def _draft_status_copy(self, category: SettingsCategoryId) -> str:
-        """The Inspector's draft line; Providers & Models names what is unsaved.
-
-        #3057 capture round 2 (finding 7): a provider switch reads "2 unsaved"
-        (the provider and the model it cleared), so the line says which two.
-        """
-        if not self._category_has_unsaved_changes(category):
-            return "No unsaved changes"
-        names = (
-            self._provider_unsaved_field_names()
-            if category is SettingsCategoryId.PROVIDERS_MODELS
-            else ()
-        )
-        return f"Unsaved changes: {', '.join(names)}" if names else "Unsaved changes"
-
     @on(Input.Changed, "#settings-snapshot-keep")
     @on(Checkbox.Changed, "#settings-snapshot-enabled")
     def _snapshot_preferences_changed(self, event) -> None:
@@ -10227,9 +10212,10 @@ class SettingsScreen(BaseAppScreen):
 
     def _update_draft_status_widgets(self, category: SettingsCategoryId) -> None:
         has_unsaved_changes = self._category_has_unsaved_changes(category)
+        status = "Unsaved changes" if has_unsaved_changes else "No unsaved changes"
         try:
             self.query_one("#settings-selected-category-draft-status", Static).update(
-                self._draft_status_copy(category)
+                status
             )
         except QueryError:
             pass
@@ -10240,9 +10226,12 @@ class SettingsScreen(BaseAppScreen):
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             self._update_provider_return_widgets()
             # TASK-33007.4 (AC#3): the next new chat reads saved config, so a
-            # dirty form says its edits wait for s.
-            for note in self.query("#settings-provider-next-chat-note"):
+            # dirty form says its edits wait for s, and (#3057) which ones.
+            from ..Settings_Modules.providers_models_card import unsaved_edits_note
+
+            for note in self.query("#settings-provider-next-chat-note").results(Static):
                 note.display = has_unsaved_changes
+                note.update(unsaved_edits_note(self))
             if has_unsaved_changes and self._provider_save_result in (
                 PROVIDER_SAVED_COPY,
                 PROVIDER_NO_CHANGES_COPY,
@@ -23758,7 +23747,9 @@ class SettingsScreen(BaseAppScreen):
             f"Selected category: {summary.title}", classes="destination-section"
         )
         yield Static(
-            self._draft_status_copy(summary.category),
+            "Unsaved changes"
+            if self._category_has_unsaved_changes(summary.category)
+            else "No unsaved changes",
             id="settings-selected-category-draft-status",
             classes="destination-section",
         )

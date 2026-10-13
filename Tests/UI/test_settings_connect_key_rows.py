@@ -580,7 +580,9 @@ async def test_the_inspector_names_the_fields_a_provider_switch_leaves_unsaved(
 ):
     """Capture round 2, finding 7 (09b): choosing one provider read "2
     unsaved". Both are real (Save writes the provider and the model the
-    switch cleared), so the Inspector names them beside the count."""
+    switch cleared), so the Inspector's unsaved-edits note names them. It
+    sits in the scrolling body: the pinned "Unsaved changes" line keeps one
+    row, so Save (s) and Revert (r) never move while you edit."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {"openai": dict(_SAVED_KEY)}
@@ -598,4 +600,7 @@ async def test_the_inspector_names_the_fields_a_provider_switch_leaves_unsaved(
 
         banner = _text(screen, "#settings-category-state-banner")
         assert "· 2 unsaved" in banner, banner
-        assert _text(screen, status) == "Unsaved changes: Provider, Model"
+        assert _text(screen, status) == "Unsaved changes"
+        assert _text(screen, "#settings-provider-next-chat-note") == (
+            "Unsaved: Provider, Model. Edits apply only after save (s)."
+        )

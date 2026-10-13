@@ -173,8 +173,9 @@ _BUDGETS: dict[str, int] = {
     # one report is its toast, and its card line hides when empty (+1):
     # 33,941; the Inspector scrolls no further than a focused field's guide
     # needs and stops on a heading, after a revert and a resize too, and its
-    # fold row says when the rest is above (-8): 33,933.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33933,
+    # fold row says when the rest is above (-8): 33,933; the unsaved names
+    # move from the pinned draft line to the note (-9): 33,924.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33924,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -206,8 +207,9 @@ _BUDGETS: dict[str, int] = {
     # round 1: the API key help's width comment says what is measured (+0).
     # Capture round 2 A1: a filled Endpoint's help drops "required:" (+1):
     # 2,407; the Saved model list names the saved models it does not show,
-    # and the discovery line hides when a find leaves it empty (+43): 2,450.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2450,
+    # and the discovery line hides when a find leaves it empty (+43): 2,450;
+    # the unsaved-edits note names the unsaved fields (+17): 2,467.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2467,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and

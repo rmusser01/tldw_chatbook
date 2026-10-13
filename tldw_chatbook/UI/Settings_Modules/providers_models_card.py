@@ -1088,6 +1088,23 @@ def next_new_chat_lines(screen: SettingsScreen) -> tuple[str, str]:
     )
 
 
+def unsaved_edits_note(screen: SettingsScreen) -> str:
+    """Say which fields are unsaved, then that edits wait for s.
+
+    #3057 capture round 2 (finding 7): choosing one provider read "2
+    unsaved" (the provider and the model it cleared); this names them. The
+    note sits in the scrolling body, so a long list never moves Save.
+
+    Args:
+        screen: The Settings screen holding the draft.
+
+    Returns:
+        E.g. "Unsaved: Provider, Model. Edits apply only after save (s)."
+    """
+    names = ", ".join(screen._provider_unsaved_field_names())
+    return f"Unsaved: {names}. {UNSAVED_EDITS_NOTE}" if names else UNSAVED_EDITS_NOTE
+
+
 def refresh_next_new_chat(screen: SettingsScreen) -> None:
     """Re-say the Inspector's Next new chat block after a save.
 
@@ -1425,7 +1442,7 @@ def compose_providers_models_inspector(screen: SettingsScreen) -> ComposeResult:
             markup=False,
         )
     note = Static(
-        UNSAVED_EDITS_NOTE,
+        unsaved_edits_note(screen),
         id="settings-provider-next-chat-note",
         classes="settings-detail-row",
     )

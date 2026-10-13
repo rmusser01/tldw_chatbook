@@ -275,12 +275,17 @@ async def test_inspector_leads_with_reach_then_the_next_new_chat_then_the_field(
 
         assert screen._category_has_unsaved_changes(PROVIDERS_MODELS)
         assert note.display is True
-        # Capture finding 1, rewritten on purpose: the note is one row at
-        # 211x44. It appears after the focus scroll has pinned the field
-        # guide, so a wrapped note left a lone "(s)." at the Inspector's top.
+        # Capture finding 1, rewritten on purpose: a wrapped note left a lone
+        # "(s)." at the Inspector's top, under the focus scroll's pin of the
+        # field guide. Capture round 2 (findings 1, 2, 7), rewritten on
+        # purpose again: the Inspector now stops on a heading, so the note
+        # may wrap, whole and in view, and it names the unsaved field.
         await pilot.pause()
-        assert note.outer_size.height == 1
-        assert _static_text(note) == "Edits apply only after save (s)."
+        assert _static_text(note) == (
+            "Unsaved: Model. Edits apply only after save (s)."
+        )
+        view = screen.query_one("#settings-impact-pane-body").scrollable_content_region
+        assert view.y <= note.region.y and note.region.bottom <= view.bottom
         # The next new chat still gets the saved pair until s is pressed.
         assert _text(screen, "#settings-provider-next-chat-pair") == "OpenAI · gpt-4o"
 
