@@ -25755,15 +25755,20 @@ class SettingsScreen(BaseAppScreen):
         return True
 
     async def confirm_quit(self) -> bool:
-        """Ask before quitting with unsaved theme edits (review follow-up).
+        """Ask before quitting with unsaved theme edits or staged changes.
 
         ``TldwCli._confirm_and_quit`` consults ``confirm_quit``, not
-        ``confirm_navigation``; same prompt, same outcomes.
+        ``confirm_navigation``: the theme prompt first, then one Discard and
+        quit prompt for every other category's draft (TASK-33007).
 
         Returns:
             True to let the quit proceed; False to stay.
         """
-        return await self.confirm_navigation(quitting=True)
+        from ..Settings_Modules.settings_quit_guard import confirm_settings_quit
+
+        if not await self.confirm_navigation(quitting=True):
+            return False
+        return await confirm_settings_quit(self)
 
     def _theme_editor_shown(self) -> bool:
         try:

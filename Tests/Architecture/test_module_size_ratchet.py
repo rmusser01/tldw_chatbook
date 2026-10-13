@@ -182,8 +182,10 @@ _BUDGETS: dict[str, int] = {
     # a check or a blank (StateCheckbox, +1): 33,920; Permission summaries'
     # Provider is a list of providers, its options built in
     # settings_field_rows.py (+5): 33,925.
-    # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 33,937.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33937,
+    # Capture fix 2, group C: quitting with a staged change asks first; the
+    # prompt lives in Settings_Modules/settings_quit_guard.py (+5): 33,917.
+    # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 33,942.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33942,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

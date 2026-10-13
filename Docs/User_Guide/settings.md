@@ -128,7 +128,11 @@ you when you leave a category or the screen with unsaved edits — the **\*** in
 the rail is how you find it again. (Two exceptions: switching the
 active RAG profile prompts — see [RAG defaults](settings/rag.md) — and leaving
 Speech & TTS with edits raises its own save/discard dialog instead of keeping
-the draft; see that section and Quirks.) A draft that fails
+the draft; see that section and Quirks.) Quitting is different: **Ctrl+Q**
+on Settings with unsaved changes asks "Quit and discard unsaved Settings
+changes?" and names the categories that hold them; **Keep editing** stays,
+**Discard and quit** quits. A draft kept after you left Settings is not asked
+about: quitting from another screen drops it. A draft that fails
 validation keeps its badge and count and names the problem — "State: Draft —
 save with s · 1 unsaved | Needs correction: \<the problem\>" — and Save stays
 blocked; with nothing pending, the buttons read **Save (s) — no changes** and
