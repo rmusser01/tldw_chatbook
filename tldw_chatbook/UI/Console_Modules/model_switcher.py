@@ -590,7 +590,8 @@ def reopen_model_switcher(screen: ChatScreen, provider: str, model: str | None) 
     nothing has changed.
 
     It opens in the mode the chat is in now: the Get started card's while the
-    card still blocks, where Alt+M itself stays shut.
+    card still blocks, where Alt+M itself stays shut. In either mode, while
+    no new-chat default works, the pick also becomes that default.
 
     Args:
         screen: The Console screen the return landed on.
@@ -627,7 +628,9 @@ def _open_switcher(
         highlight: The pair highlighted first when the list has it; a
             detected server's first model takes its place.
         reopened: The provider a return from Settings reopened the list on;
-            the highlight stays on its rows until Find changes.
+            the highlight stays on its rows until Find changes, and, as on
+            the card, the pick also sets the new-chat default while none
+            works.
     """
     from ...Chat.console_settings_apply import (
         QUICK_MODEL_DEFAULT_FIELDS,
@@ -649,7 +652,9 @@ def _open_switcher(
         return
     session = store.switch_session(session_id)
     before = (settings.provider, settings.model)
-    sets_default = card and (
+    # A reopened list too: a save of a provider with no model leaves a
+    # new-chat default that cannot send, whatever the chat holds.
+    sets_default = (card or bool(reopened)) and (
         server is not None or not has_working_new_chat_default(screen)
     )
     detected: str | None = None

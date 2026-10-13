@@ -927,7 +927,11 @@ Settings offers no way back from there, so nothing reopens for it.
   on each, and **Enter** applies the highlighted pair to this chat. A chat
   that holds work keeps its own pair through the save, so this is the step
   that moves it; a chat with no messages and no edited settings already
-  follows the saved pair, and the list marks it **● CURRENT**.
+  follows the saved pair, and the list marks it **● CURRENT**. While no
+  default for new chats works (a provider saved with no model leaves one
+  that cannot send), the scope line reads "also the default for new chats"
+  and the pick becomes that default too, whatever the chat holds; as on the
+  Get started card, a pair that cannot send is refused with the reason.
 - **Without a save.** The row is still under NEEDS SETUP and is the one
   highlighted, even when PREVIOUS or RECENT lists the same pair, so **Enter**
   opens its fix again; **Esc** leaves the chat as it was with the composer in

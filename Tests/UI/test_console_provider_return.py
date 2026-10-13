@@ -1298,6 +1298,79 @@ async def test_a_provider_saved_with_no_model_is_finished_on_the_reopened_list(
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_reopened_list_sets_the_new_chat_default_while_none_works(
+    monkeypatch, request
+):
+    """Controller ruling of 2026-10-12 (final fix wave 1, item 2, Option A).
+
+    The chat holds work, so no card blocks and the list reopens in its plain
+    mode. Cerebras's row named no model, so its saved key left "Cerebras"
+    with no model as the default for new chats, which cannot send. The pick
+    applied to this chat only, and the next new chat started blocked. While
+    no new-chat default works, the reopened list says the pick is also that
+    default, and it is."""
+    monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+    app = _switcher_app(monkeypatch, **_SAVED_MODELS)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "console-native-composer",
+            "the composer to hold focus",
+        )
+        console = app._navigation_outgoing_screen()
+        store = console._ensure_console_chat_store()
+        store.append_message(
+            store.active_session_id, role=ConsoleMessageRole.USER, content="hi"
+        )
+        open_provider_setup(console, "cerebras", reopen_switcher=True)
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and getattr(app.focused, "id", None) == "settings-provider-api-key"
+            ),
+            "Settings to open with focus in Cerebras's API key field",
+        )
+        await _save_the_typed_key(app, pilot)
+        defaults = _saved_config()["chat_defaults"]
+        assert (defaults["provider"], defaults["model"]) == ("cerebras", "")
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: _reopened_on_its_setup_row(app, "cerebras"),
+            "Switch model on Cerebras's own row",
+        )
+        reopened = app.screen
+        assert not console._console_setup_modal_blocking()
+        assert _chat_pair(console) == ("openai", "gpt-5")
+        assert reopened._scope_copy == model_switcher.SCOPE_THIS_CHAT_AND_NEW_CHATS
+
+        await pilot.press(*"llama-x")
+        await _until(
+            pilot,
+            lambda: (
+                (row := reopened.highlighted_row()) is not None
+                and (row.kind, row.provider, row.model)
+                == ("typed", "cerebras", "llama-x")
+            ),
+            "the typed id's row to be the highlight",
+        )
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                app.screen is console
+                and _saved_config()["chat_defaults"].get("model") == "llama-x"
+            ),
+            "the pick to be saved as the new-chat default",
+        )
+        assert _chat_pair(console) == ("cerebras", "llama-x")
+        assert _saved_config()["chat_defaults"]["provider"] == "cerebras"
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_a_no_model_rows_enter_opens_settings_in_the_default_model_field(
     monkeypatch, request
 ):
