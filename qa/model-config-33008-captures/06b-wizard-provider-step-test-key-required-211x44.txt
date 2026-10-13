@@ -8,13 +8,10 @@
                                              │ Welcome            Provider           Model               Voice              Protect                  Summary        │
                                              │──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
                                              │                                                                                                                      │
-                                             │    Cloud providers need an API key. Local servers just need to be running — we'll look for them.                 ▂▂  │
-                                             │    ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐      │
-                                             │    │ Popular                                                                                                  │      │
-                                             │    │ OpenAI                                                                                                   │      │
                                              │    │ Anthropic                                                                                                │      │
                                              │    │ Ollama                                                                                                   │      │
                                              │    │ llama.cpp                                                                                                │      │
+                                             │    │ Cloud                                                                                                    │  ▅▅  │
                                              │    └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘      │
                                              │                                                                                                                      │
                                              │    Endpoint                                                                                                          │
@@ -29,9 +26,12 @@
                                              │                                                                                                                      │
                                              │                                                                                                                      │
                                              │                                                                                                                      │
-                                             │    ✗ llama.cpp needs an API key and none was set. Add one under Authentication, or continue anyway.              ▅▅  │
+                                             │    ✗ llama.cpp needs an API key and none was set. Add one under Authentication, or continue anyway.                  │
                                              │                                                                                                                      │
                                              │    ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────╮      │
+                                             │    │  ▶ Authentication                                                                                        │      │
+                                             │    │                                                                                                          │      │
+                                             │    ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────╯      │
                                              │                                                                                                                      │
                                              │                                                                                                                      │
                                              │  The last connection check failed: the server needs an API key and none was set. Add one under Authentication, or    │

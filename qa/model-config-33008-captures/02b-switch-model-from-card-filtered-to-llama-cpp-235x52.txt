@@ -21,9 +21,9 @@
                                                ╭─ Switch model · now: OpenAI · gpt-5.6-terra ─────────────────────────────────────────────────────────────────────────────────────────────╮
                                                │ Find llama.cpp                                                                                                                           │
                                                │ READY PROVIDERS · matches from every provider's catalog                                                                                  │
-                                               │ ▶ qwen3-8b-instruct-q4_k_m     llama.cpp                ?  Ready · reachable 05:48                                                       │
-                                               │   phi-4-mini-q8                llama.cpp                ?  Ready · reachable 05:48                                                       │
-                                               │   gemma-3-4b-it-q4             llama.cpp                ?  Ready · reachable 05:48                                                       │
+                                               │ ▶ qwen3-8b-instruct-q4_k_m     llama.cpp                ?  Ready · reachable 11:12                                                       │
+                                               │   phi-4-mini-q8                llama.cpp                ?  Ready · reachable 11:12                                                       │
+                                               │   gemma-3-4b-it-q4             llama.cpp                ?  Ready · reachable 11:12                                                       │
                                                │ Values for qwen3-8b-instruct-q4_k_m · llama.cpp                                                                                          │
                                                │ Temperature 0.6      Console Behavior  Max tokens 4096     provider          Streaming On    ▼  provider                                 │
                                                │  Enter apply to this chat and new chats  · Tab edit values ·  Ctrl+O chat settings  · Esc cancel                                         │
@@ -49,4 +49,4 @@
 
 
 
-  Ctrl+Shift+F focus | Enter continue setup | F1 help | Ctrl+P palette | Ctrl+Q quit
+  Ctrl+P palette | Ctrl+Q quit
