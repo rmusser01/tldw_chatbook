@@ -24,3 +24,10 @@ The LibraryMediaViewer.SpeakerRenamed handler calls db.get_media_by_id(media_id)
 - [x] Rename handler refreshes only what changed (targeted read or in-place patch of detail state)
 - [x] No full-content SELECT on the rename path (test)
 <!-- AC:END -->
+
+
+## Implementation Notes
+
+- The rename site already held the renamed transcript (it wrote it to the DB and swapped viewer.content) — `SpeakerRenamed` now carries `content` (optional; None = legacy shape) and the screen handler patches its memoized detail from the message with no DB read. The full-row `get_media_by_id` fallback remains only for legacy/missing content. Scope note: the viewer's own worker-side read (to repaint itself) necessarily remains — what was removed is the screen's redundant SECOND full-blob read.
+- Tests: `Tests/UI/test_library_speaker_rename_no_blob_read.py` (content-on-message path performs zero DB reads; legacy no-content event falls back). 2/2 pass. The pre-existing rename suite sits at its pre-existing error baseline.
+- ADR required: no — message payload extension with a compatible fallback.

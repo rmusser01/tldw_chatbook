@@ -24,3 +24,11 @@ Change-review _focus_leaf fetches notes_for_run (ALL run notes) then Python-filt
 - [x] Notes strip rebuilt with a single batched mount
 - [x] Per-focus note query narrowed to the focused file or run notes cached once per run
 <!-- AC:END -->
+
+
+## Implementation Notes
+
+- The strip rebuild builds every note row first and issues ONE `strip.mount(*rows)` instead of one `mount()` per note (each per-note mount returned an unawaited AwaitMount, leaving freshly-appended rows un-laid-out for up to a tick). Row-build failures are logged per row without aborting the batch.
+- Premise correction on the query half: `_notes_for_leaf` runs `notes_for_run` once per focus and the result feeds BOTH the diff markers and the strip (one query per focus, not two); the per-file pushdown would only save the Python-side filter over a small note set — not worth the seam change. The batched-mount change is the whole worthwhile fix.
+- Regression: the change-review suites 59/59 green after the change.
+- ADR required: no — mount batching inside one screen.

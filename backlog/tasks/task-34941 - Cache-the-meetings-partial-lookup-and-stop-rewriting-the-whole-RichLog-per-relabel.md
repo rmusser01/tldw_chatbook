@@ -24,3 +24,11 @@ Meetings _apply_event does query_one(#meetings-partial) on every ASR partial —
 - [x] Partial widget reference cached (no query_one per ASR partial)
 - [x] Relabel updates only affected lines or whole-log rewrite is bounded with a measured justification
 <!-- AC:END -->
+
+
+## Implementation Notes
+
+- `#meetings-partial` (the highest-frequency event stream in the app) and `#meetings-transcript` are cached refs with an is_attached staleness re-query — one DOM walk per rebuild instead of one per ASR partial/segment. All six query_one sites for the two ids converted.
+- Premise correction: `_render_segment` already carried the equality guard (`elif self.rendered_lines[idx] != line`) — the whole-log repaint only runs when a delivered segment's rendered line actually changed, and RichLog cannot rewrite one line in place. The residual O(all lines) repaint is bounded to genuine label changes, documented in-code as cheap at meeting sizes; no further change warranted.
+- Tests: `Tests/UI/test_meetings_widget_ref_cache.py` (ref cached across updates, staleness re-query after detach, ASR events reuse the cached ref). 3/3 pass.
+- ADR required: no — ref caching inside one screen.

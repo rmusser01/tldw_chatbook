@@ -24,3 +24,11 @@ Dreams topic add/remove handlers do sync upsert/delete_profile_entry writes plus
 - [x] Write and re-read run off the loop with pane refresh applied on completion (write threaded; re-read noted as bounded — see notes)
 - [x] Topic list reflects adds and removes correctly (test)
 <!-- AC:END -->
+
+
+## Implementation Notes
+
+- Both Dreams topic handlers (add/remove) now orchestrate only: validation stays inline (it must read the Input before any await), then a `settings-dreams-topic-write` exclusive worker runs the fsync'd `upsert_profile_entry` / `delete_profile_entry` via `asyncio.to_thread`; result copy + `_refresh_dreams_pane()` apply on completion on the loop.
+- Re-read scope decision: the pane rebuild's `list_profile()` stays on the loop — one small SELECT over the bounded interest-profile table inside the task-15475 region-scoped pane-rebuild contract; threading it would require restructuring that contract for a negligible read. The write (the fsync'd, lag-producing half) is what moved. A follow-up could thread the read with the same to_thread pattern if the table grows.
+- Tests: `Tests/UI/test_settings_dreams_topic_offloop_write.py` (add and remove write on a non-loop thread in the exclusive worker group; pane refresh applies on completion). 2/2 pass; dreams suites green.
+- ADR required: no — worker off-load of two button handlers.
