@@ -306,8 +306,10 @@ default for new chats works yet (none is saved, or the saved one cannot
 send), it also becomes that default, so the next new chat is not blocked
 again. The switcher's scope line says which before you press Enter:
 "Applies to: this chat · also the default for new chats", or "Applies to:
-this chat only". A pair that cannot send is refused there with the reason,
-and Esc returns to the card with nothing saved.
+this chat only", and the Enter key's label matches it: "Enter apply to this
+chat and new chats", or "Enter apply to this chat". A pair that cannot send
+is refused there with the reason, and Esc returns to the card with nothing
+saved.
 
 **Arriving from setup.** Finishing first-run setup with **Start chatting**
 opens one chat on the saved provider and model, with no notice. Notices that

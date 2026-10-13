@@ -139,6 +139,11 @@ def _scope(switcher: ConsoleModelPopover) -> str:
     return str(switcher.query_one("#console-popover-scope", Static).render())
 
 
+def _enter_key(switcher: ConsoleModelPopover) -> str:
+    """The key row's Enter label, which must say what the scope line says."""
+    return str(switcher.query_one("#console-popover-apply", Button).label)
+
+
 async def _composer_ready(harness: _Harness, console: ChatScreen, pilot) -> None:
     """The card is gone and the next key types into the composer."""
     composer = console.query_one("#console-native-composer")
@@ -307,6 +312,14 @@ async def test_card_choose_model_opens_switch_model_and_sets_the_new_chat_defaul
         # provider's row could come first, and Enter would make it the default.
         assert find.value == "llama.cpp "
         assert _scope(switcher) == model_switcher.SCOPE_THIS_CHAT_AND_NEW_CHATS
+        # Capture finding 4 (02b): Enter's label said "apply to this chat" under
+        # a scope line that also names the new-chat default.
+        assert _enter_key(switcher) == "Enter apply to this chat and new chats"
+        # The longer label still leaves the row's last key on screen.
+        box = switcher.query_one("#console-model-popover")
+        last_key = switcher.query_one("#console-popover-esc-key", Static)
+        assert box.region.contains_region(last_key.region)
+        assert last_key.region.width >= len("· Esc cancel")
         row = switcher.highlighted_row()
         assert (row.kind, row.provider, row.model) == ("pair", "llama_cpp", "model-a")
 
@@ -439,6 +452,7 @@ async def test_card_pick_applies_to_this_chat_only_while_a_new_chat_default_work
         await pilot.press("enter")
         switcher = await _switcher_ready(harness, pilot)
         assert _scope(switcher) == model_switcher.SCOPE_THIS_CHAT
+        assert _enter_key(switcher) == "Enter apply to this chat"
         # Choose model opens on the chat's provider (Ollama lists no model
         # here); clearing Find lists every provider again.
         find = switcher.query_one("#console-popover-find", Input)

@@ -642,7 +642,11 @@ def _open_switcher(
         QUICK_MODEL_DEFAULT_FIELDS,
         ConsoleSettingsAction,
     )
-    from ...Widgets.Console.console_model_popover import ConsoleModelPopover
+    from ...Widgets.Console.console_model_popover import (
+        APPLY_TO_CHAT_AND_NEW_CHATS_LABEL,
+        APPLY_TO_CHAT_LABEL,
+        ConsoleModelPopover,
+    )
 
     if not screen._owns_console_screen_stack():
         # A second press of a card action before the first one's Switch model
@@ -738,6 +742,10 @@ def _open_switcher(
             scope_copy=SCOPE_THIS_CHAT_AND_NEW_CHATS
             if sets_default
             else SCOPE_THIS_CHAT,
+            # Enter's label says what the scope line says it reaches.
+            apply_label=APPLY_TO_CHAT_AND_NEW_CHATS_LABEL
+            if sets_default
+            else APPLY_TO_CHAT_LABEL,
             durability_copy=(
                 "Temporary until this chat is promoted"
                 if session.ephemeral
