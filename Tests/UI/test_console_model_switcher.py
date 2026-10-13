@@ -1132,7 +1132,10 @@ async def test_the_needs_setup_overflow_line_counts_one_in_the_singular(
     "… 1 more providers need setup". Only these providers list a "zzq" id:
     three fill the group's eight rows, the rest are counted."""
     recorder = Recorder(ready=frozenset())
-    ahead = {name: [f"zzq-{name}-{number}" for number in range(3)] for name in _EIGHT_ROWS_AHEAD}
+    ahead = {
+        name: [f"zzq-{name}-{number}" for number in range(3)]
+        for name in _EIGHT_ROWS_AHEAD
+    }
     app = SwitcherHarness()
     async with app.run_test(size=(211, 44)) as pilot:
         switcher = await open_switcher(
