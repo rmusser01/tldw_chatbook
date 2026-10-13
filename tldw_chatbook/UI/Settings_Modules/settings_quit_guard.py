@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ...Widgets.confirmation_dialog import confirm_quit_discarding_edits
+from ...Widgets.settings_theme_editor import ThemeLeaveModal
 from ..Screens.settings_config_models import SettingsCategoryId
 
 if TYPE_CHECKING:
@@ -28,8 +29,11 @@ async def confirm_settings_quit(screen: SettingsScreen) -> bool:
 
     Returns:
         True when nothing is staged or the user chose Discard and quit; False
-        to stay, including when the prompt vanished.
+        to stay, including when the prompt vanished or a theme leave prompt
+        is already open.
     """
+    if screen._theme_leave_in_progress or isinstance(screen.app.screen, ThemeLeaveModal):
+        return False  # one prompt at a time, as confirm_navigation
     names = [
         summary.title
         for summary in screen._category_summaries()
