@@ -61,8 +61,8 @@ Three layers resolve a route string to a screen:
 The shell's routing message is `NavigateToScreen`. Beyond that, the codebase's event story has three tiers:
 
 - **Widget-local messages handled by `@on(...)` on the owning screen** — this is how the live Console works (e.g. `@on(WorkspaceTreeConversationSelected)` in `chat_screen.py`).
-- **Live shared event modules** — `Event_Handlers/TTS_Events/`, `STTS_Events/`, `media_events.py`, plus function-style handler modules (`ingest_events.py`, `notes_events.py`, `LLM_Management_Events/*` per backend, `eval_db_operations.py`, `Chat_Events/chat_rag_events.py`, `chat_image_events.py`).
-- **Dormant catalog** — `Event_Handlers/Chat_Events/chat_messages.py` defines ~45 message classes (`LLMResponseChunk`, `RAGSearchRequested`, …) that **nothing imports**; they are the aspirational target of an unfinished migration described by that package's `MIGRATION_GUIDE.md`. Do not wire new code to them.
+- **Live shared event modules** — `Event_Handlers/TTS_Events/`, `STTS_Events/`, `media_events.py`, plus function-style handler modules (`notes_events.py`, `LLM_Management_Events/*` per backend, `Chat_Events/chat_rag_events.py`, `chat_image_events.py`).
+- **Deleted catalog** — the aspirational `Event_Handlers/Chat_Events/chat_messages.py` catalog (~45 message classes) and its `MIGRATION_GUIDE.md` were deleted (task-34890); the migration they described never landed, and live chat events are widget-local messages on the owning screen.
 
 Worker completions funnel through one hook: `on_worker_state_changed` releases staggered-boot slots, persists `worker_failed` diagnostics (ADR-029), then delegates to `WorkerHandlerRegistry` (`Event_Handlers/worker_handlers/`). Only `Worker.name` may be persisted — `Worker.description` embeds worker arguments verbatim (prompts, API keys).
 
@@ -121,7 +121,7 @@ ADR-014 (retire legacy navigation chrome), ADR-015 (shell destination IA), ADR-0
 
 ## Verified gotchas
 
-1. `Event_Handlers/Chat_Events/chat_messages.py` message classes have zero importers — live chat events are widget-local messages in `chat_screen.py`.
+1. The `Chat_Events/chat_messages.py` catalog was deleted (task-34890) — live chat events are widget-local messages in `chat_screen.py`.
 2. Screens are never cached except the three `reusable=True` routes; reusing unmounted instances caused a reproducible total silent UI freeze.
 3. `self.screen` during navigation is an overlay, not the tab being left — the code uses `_navigation_outgoing_screen()` (stack index 1) everywhere it matters.
 4. Navigation dispatch must run as a worker, or an open confirm dialog deadlocks all input.

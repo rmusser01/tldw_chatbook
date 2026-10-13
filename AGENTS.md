@@ -53,7 +53,6 @@ Navigation is screen-based and exclusive (no legacy tab-window UI): every destin
 
 **Key Widgets**:
 - `Widgets/Console/console_transcript.py` - Live Console transcript and tool-result rendering, including file-write diffs
-- `Widgets/Chat_Widgets/chat_message_enhanced.py` - Rich messages for legacy Chat/CCP consumers; the former top-level widget is a compatibility shim
 - `Widgets/NewIngest/` - Unified media ingestion UI
 - `form_components.py` - Standardized form builders
 
@@ -61,7 +60,7 @@ Navigation is screen-based and exclusive (no legacy tab-window UI): every destin
 ### Business Logic
 
 - **`Chat/`** - `Chat_Functions.py` (conversation CRUD, `chat_api_call` provider dispatch), `console_chat_controller.py`/`console_chat_store.py` (Console engine), `document_generator.py` (LLM document generation)
-- **`Character_Chat/`** - `Character_Chat_Lib.py` (card parse/persist, prompt composer), `character_card_formats.py` (multi-format detection). `ccv3_parser.py` is an empty placeholder — V3 cards ride the lenient V2 path in `Character_Chat_Lib.py`
+- **`Character_Chat/`** - `Character_Chat_Lib.py` (card parse/persist, prompt composer), `character_card_formats.py` (multi-format detection). There is no V3 parser module — V3 cards ride the lenient V2 path in `Character_Chat_Lib.py`
 - **`Notes/`** - `notes_sync_runtime.py` / `notes_sync_reconciler.py` / `notes_sync_executor.py` (review-first bidirectional sync — there is no single `sync_engine.py`), `file_notes_service.py` (session file-notes), template system
 - **`RAG_Search/`** - `simplified/` for streamlined implementation, `chunking_service.py`, `ingestion_indexing.py` (shared service + daemon indexer)
 - **`Tools/`** - `tool_executor.py` (always-on builtins: DateTimeTool, CalculatorTool), `local_tool_impls.py` (fs_* family)
@@ -81,7 +80,7 @@ Navigation is screen-based and exclusive (no legacy tab-window UI): every destin
 
 Event flow: Widget → post_message() → @on() handler → workers → reactive updates → UI refresh
 
-Live shared event modules: `TTS_Events/`, `STTS_Events/`, `media_events.py`, plus function-style handler modules (ingest, notes, LLM management, evals). **Note:** `Chat_Events/chat_messages.py`'s message catalog (ChatEvent, StreamingChunk, …) is defined but unwired — the live Console uses widget-local messages handled in `UI/Screens/chat_screen.py`; do not build on the dormant catalog.
+Live shared event modules: `TTS_Events/`, `STTS_Events/`, `media_events.py`, plus function-style handler modules (ingest, notes, LLM management, evals). **Note:** the aspirational `Chat_Events/chat_messages.py` catalog was deleted (task-34890); the live Console uses widget-local messages handled in `UI/Screens/chat_screen.py`.
 
 ### Key Patterns
 

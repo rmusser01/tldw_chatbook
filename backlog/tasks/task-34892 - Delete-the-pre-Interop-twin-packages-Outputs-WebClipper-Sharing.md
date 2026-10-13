@@ -9,7 +9,7 @@ labels:
 priority: high
 assignee:
 - '@zcode'
-updated_date: 2026-10-12 19:49
+updated_date: 2026-10-13 02:04
 ---
 
 ## Description
@@ -34,7 +34,7 @@ Evidence (verified on dev df4985e): Verified: production imports only the *_Inte
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Deleted the pre-Interop originals Outputs/ WebClipper/ Sharing/ (~1.45k LOC). Re-verification at HEAD sharpened the review claim: app_service_wiring constructs same-named classes but imports them from Outputs_Interop/Sharing_Interop/Web_Clipper_Interop (app_service_wiring.py:172 247 300-303) - only the class NAMES collide; the core packages had zero importers outside their own tests. The three twin-parity test files were trimmed to Interop-only params (their behavioral coverage of the Interop services is retained; public halves + helpers removed). Outputs_Panel.py:75 now reads outputs_scope_service (the attribute wiring actually sets) with the legacy name as fallback, mirroring Sharing_Panel:81-84 - the seam is now exercisable instead of silently always-None; local mode behavior is unchanged (gating is server-mode only). Verification: 36 passed / 2 failed where both failures are the identical Interop from_config test ids that failed at baseline (config-bootstrap env issue).
+Deleted the pre-Interop originals Outputs/ WebClipper/ Sharing/ (~1.45k LOC). app_service_wiring constructs same-named classes but imports them from the Interop packages - only the class NAMES collide; the core packages had zero importers outside their own tests. The three twin-parity test files were trimmed to Interop-only. Outputs_Panel now reads outputs_scope_service (the attribute wiring sets) with the legacy name as fallback. CORRECTION (deletion-wave review, 2026-10-12): the first pass only fixed the attribute NAME - the panel still called the deleted twin's method names, so every server-mode operation would have raised AttributeError; the review round repointed all 12 operation names to the Interop API (list_templates create_template get/update/delete/preview_template list/list_deleted/get/create/update/delete_artifact) and added Tests/Outputs/test_outputs_panel_seam.py pinning each name against the real OutputsScopeService. Note: OutputsPanel itself has zero production importers (follow-up task filed).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

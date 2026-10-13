@@ -320,7 +320,6 @@ async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> 
                 name="tts_global_voice_confirmation",
             )
     else:
-        # Update widget state to ready with audio file
         if event.audio_file and event.audio_file.exists():
             if playback_lifecycle is not None and not playback_lifecycle.is_current():
                 return

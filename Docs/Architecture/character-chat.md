@@ -26,7 +26,7 @@ This document describes the roleplay stack: character card import (PNG/WebP/JPEG
    - PNG: card JSON in `tEXt`/`zTXt`/`iTXt` chunks under keys `chara` / `ccv3`. SillyTavern writes these chunks **after IDAT**, so a forced `img_obj.load()` re-probe is required; decode is pixel-bounded against decode bombs.
    - WebP/JPEG: base64 card JSON in the EXIF `UserComment` tag.
 3. **JSON parse** (`import_character_card_from_json_string`): V2 detection via `spec == "chara_card_v2"`, `spec_version` starting `"2."`, or a heuristic `data` node with `name`. Structural validation is advisory — parsing continues leniently; only `name` is strictly required. The field map normalizes to the DB schema (`first_mes` → `first_message`, `mes_example` → `message_example`, …). Fallback chain: V1 parser → the multi-format detector, with an explicit reject when the detector's "Unknown" placeholder is the only name (prevents merging nameless cards).
-4. **V3**: there is no dedicated v3 parser module (`ccv3_parser.py` is an empty placeholder). V3 support is implicit: `ccv3` chunks are read, `spec == "chara_card_v3"` is accepted, and V3 bodies ride the lenient V2 reader.
+4. **V3**: there is no dedicated v3 parser module (the empty `ccv3_parser.py` placeholder was deleted, task-34894). V3 support is implicit: `ccv3` chunks are read, `spec == "chara_card_v3"` is accepted, and V3 bodies ride the lenient V2 reader.
 5. **Embedded lorebook**: a V2 `character_book` (top-level or legacy `extensions.character_book`) converts into a managed character world-book snapshot; the legacy key is dropped only when at least one entry imported.
 6. **Persist**: `Chat_Functions.save_character` upserts by name with `expected_version` optimistic concurrency, normalizes alias keys, decodes base64 `image` to bytes.
 
@@ -73,7 +73,7 @@ ADR-037 (roleplay assistant identity / persona-user profile separation), ADR-046
 
 ## Verified gotchas
 
-1. `ccv3_parser.py` is an empty placeholder — do not cite it as the v3 parser; V3 rides the lenient V2 path.
+1. There is no v3 parser module; V3 rides the lenient V2 path.
 2. PNG card chunks live after IDAT; Pillow needs the forced `load()` re-probe or embedded cards look absent.
 3. `{{persona}}` is a character-side alias (the AI's name), not the user persona.
 4. Character sessions bypass the agent bridge (`force_plain`) — no tool calls in roleplay.

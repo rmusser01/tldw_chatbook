@@ -13,8 +13,8 @@ The fix: when a successful completion's message id is not claimed by any
 mounted legacy widget, the handler now posts `TTSPlaybackEvent(action="play",
 ...)` itself so the existing `@on(TTSPlaybackEvent)` -> `handler.
 handle_tts_playback` pipeline (already used by the legacy play button) plays
-the audio immediately. The legacy widget-found path is unchanged (pinned by
-the second test below).
+the audio immediately. The legacy widget-found branch was removed together
+with the widget family (task-34890); this path is the only one.
 
 Test level: these tests call `TldwCli.handle_tts_complete_event` directly
 against a minimal duck-typed stand-in for `self` (exposing only `query`,
