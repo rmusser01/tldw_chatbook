@@ -8570,6 +8570,15 @@ ConsoleSettingsModal.-conversation-settings-compact #console-settings-model-stat
     align-horizontal: right;
 }
 
+
+#console-settings-actions Button {
+    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-actions Button {
+    margin: $ds-space-0;
+}
+
 #console-settings-connection-actions {
     width: $ds-width-full;
     min-width: $ds-size-0;

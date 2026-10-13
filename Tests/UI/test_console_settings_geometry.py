@@ -327,6 +327,53 @@ async def test_every_field_help_line_is_whole_at_full_screen(
         assert not cut
 
 
+@pytest.mark.parametrize("size", ((211, 44), (235, 52)), ids=["211x44", "235x52"])
+@pytest.mark.parametrize("view", ["model", "context"])
+@pytest.mark.asyncio
+async def test_footer_hint_and_buttons_are_set_apart(
+    size: tuple[int, int], view: str
+) -> None:
+    """Capture finding 16 (08): the footer ran together, "Esc close Matches
+    saved defaults  Default for new chats (Ctrl+N)  Apply to this chat
+    (Ctrl+Enter)": the hint touched the first button and each button the
+    next. A blank panel cell now sits before every footer button.
+
+    Args:
+        size: Terminal size (columns, rows) the harness app runs at.
+        view: The view whose footer is measured.
+    """
+    app = GeometryHarness()
+    modal = build_geometry_modal(app, ready=True)
+
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._show_settings_view(view)
+        await pilot.pause()
+        await pilot.pause()
+
+        footer = modal.query_one("#console-settings-actions")
+        items = sorted(
+            (
+                widget
+                for widget in (
+                    modal.query_one("#console-settings-esc-hint"),
+                    *footer.query(Button),
+                )
+                if widget.display and widget.region.width
+            ),
+            key=lambda widget: widget.region.x,
+        )
+        assert len(items) >= 3
+        assert len({widget.region.y for widget in items}) == 1
+        touching = [
+            (str(left.id), str(right.id))
+            for left, right in zip(items, items[1:])
+            if right.region.x <= left.region.right
+        ]
+        assert not touching
+
+
 @pytest.mark.parametrize("size", GEOMETRY_SIZES)
 @pytest.mark.asyncio
 async def test_connection_and_completion_actions_are_keyboard_reachable(
