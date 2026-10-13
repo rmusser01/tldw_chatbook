@@ -50,7 +50,8 @@ def _quiet_when_swapped_out(action):
         action: An async controller method.
 
     Returns:
-        The method, ending on `NoMatches` instead of raising it.
+        The method, ending on a `NoMatches` raised once Flashcards is no
+        longer the sub-view; one raised while it is shown is a bug and raises.
     """
 
     @functools.wraps(action)
@@ -58,7 +59,10 @@ def _quiet_when_swapped_out(action):
         try:
             await action(self, *args, **kwargs)
         except NoMatches:
-            return
+            # Ask the window, not the DOM: a removal goes leaf first, so
+            # `#card-list` can outlive `#review-status` for a moment.
+            if self.window.current_view == "flashcards":
+                raise
 
     return guarded
 

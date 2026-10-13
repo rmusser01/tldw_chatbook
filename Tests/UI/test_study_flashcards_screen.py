@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from textual.css.query import NoMatches
 from textual.widgets import Button, Input, Label, ListView, Select, Static, TextArea
 
 from Tests.app_module_patches import set_app_global
@@ -1761,6 +1762,28 @@ async def test_an_action_held_across_the_sub_view_swap_ends_quietly(action, held
         await running  # NoMatches before the fix
         await pilot.pause()
         assert not window.query("#review-status")
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_lookup_that_misses_while_flashcards_is_shown_still_raises():
+    """Only a swap ends an action quietly (fix round 2, finding 6).
+
+    The guard swallowed every `NoMatches`, also one from a lookup that
+    misses while Flashcards is on screen (an id renamed in Study_Window.py),
+    and such a miss then failed no test.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, _card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+        await window.query_one("#new-deck-name-input", Input).remove()
+
+        with pytest.raises(NoMatches):
+            await window.flashcards_controller.create_deck()
 
 
 @pytest.mark.asyncio
