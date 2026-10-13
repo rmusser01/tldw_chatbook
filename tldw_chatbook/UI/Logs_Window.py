@@ -35,6 +35,12 @@ if TYPE_CHECKING:
 #: app's PersistentLogHandler via ``append_record``).
 MAX_LOG_RECORDS = 10000
 
+#: TASK-34928: newest records seeded synchronously at mount (paints within
+#: one refresh regardless of session uptime); the older backlog is rebuilt
+#: in worker chunks of this size with yields between them.
+_MOUNT_SEED_RECORDS = 1000
+_BACKFILL_CHUNK_RECORDS = 2000
+
 #: Debounce for the free-text filter `Input` -- mirrors the picker/filter
 #: family's 0.2 s shape (`console_prompt_picker_modal.py`). Every render
 #: pass rescans up to `MAX_LOG_RECORDS` buffered records, so it must not run
@@ -308,11 +314,45 @@ class LogsWindow(Container):
                 getattr(self.app_instance, "_log_records", ()) or ()
             )
             self._seeded_through = getattr(self.app_instance, "_log_records_seq", 0)
-        for entry in app_records:
+        # TASK-34928: seed only the newest slice synchronously so the mount
+        # paints within one refresh regardless of session uptime; the older
+        # backlog is rebuilt in worker chunks and spliced in front (the
+        # snapshot is immutable, so live appends during the backfill land
+        # after it and order is preserved).
+        backlog = app_records[:-_MOUNT_SEED_RECORDS]
+        tail = app_records[-_MOUNT_SEED_RECORDS:]
+        for entry in tail:
             level, name, message = entry
             self._records.append(LogRecord(level, name, message))
-        # The deque may have evicted oldest-first while seeding; rebuild the
-        # counts from the final buffer state (one pass, load-time only).
+        self._level_counts = Counter(record.level for record in self._records)
+        self._render_view()
+        if backlog:
+            self.run_worker(
+                self._backfill_records(backlog),
+                group="logs-mount-backfill",
+                exclusive=True,
+                exit_on_error=False,
+            )
+
+    async def _backfill_records(self, backlog: tuple[tuple, ...]) -> None:
+        """Reconstruct older buffered records off the mount path (TASK-34928)."""
+        pending: list[LogRecord] = []
+        for index in range(0, len(backlog), _BACKFILL_CHUNK_RECORDS):
+            pending.extend(
+                LogRecord(level, name, message)
+                for level, name, message in backlog[
+                    index : index + _BACKFILL_CHUNK_RECORDS
+                ]
+            )
+            await asyncio.sleep(0)  # yield: keep the message pump responsive
+        if not self.is_mounted:
+            return
+        # Splice in front of everything seeded or appended live since; the
+        # deque's maxlen then evicts from the FRONT of the spliced backlog,
+        # which is the oldest data by construction.
+        combined = pending + list(self._records)
+        self._records.clear()
+        self._records.extend(combined)
         self._level_counts = Counter(record.level for record in self._records)
         self._render_view()
 
