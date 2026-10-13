@@ -1514,7 +1514,7 @@ def _grep_relative_files(
     ci_near_total = 0
     ci_near_example: str | None = None
     try:
-        rx_ci = re.compile(pattern, re.IGNORECASE)
+        rx_ci = re.compile(display_pattern, re.IGNORECASE)
     except re.error:
         rx_ci = rx  # unreachable (validated above); keep the type narrow
     # review-B B27: resolve the workspace once for the whole walk instead of
