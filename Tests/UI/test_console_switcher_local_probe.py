@@ -470,7 +470,8 @@ async def test_an_untouched_mlx_lm_is_not_running_not_ready(servers, owned):
     # Round 2 finding 3: Find counts only the providers READY PROVIDERS lists.
     assert "local_mlx_lm" in ready_keys
     listed = len(ready_keys) - (0 if owned else 1)
-    assert f" in {listed} providers " in placeholder, placeholder
+    noun = "provider" if listed == 1 else "providers"
+    assert f" in {listed} {noun} " in placeholder, placeholder
     # Capture fix round 1: nothing checked it, so the line says so rather
     # than claim it is not running.
     assert ("MLX-LM (Apple silicon) (not checked)" in quiet) is not owned, quiet
@@ -509,6 +510,34 @@ async def test_the_not_running_line_wraps_so_every_name_shows_whole(servers, siz
     for text in quiet:
         assert line_with(lines, text.strip()), text  # painted whole, no "…"
     assert not any(line.endswith("…") for line in lines), lines
+
+
+async def test_find_counts_one_listed_provider_in_the_singular(servers):
+    """Round 2 finding 3, seen live after its fix: with MLX-LM out of the count
+    a profile with one cloud key read "14 models in 1 providers"."""
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+    config = {
+        "api_settings": {
+            "openai": {"api_key": "sk-cloud"},
+            "local_mlx_lm": deepcopy(
+                DEFAULT_CONFIG_FROM_TOML["api_settings"]["local_mlx_lm"]
+            ),
+        }
+    }
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            pair=("openai", "gpt-5.1"),
+            config=config,
+            providers_models={"openai": ["gpt-5.1"], "local_mlx_lm": []},
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        placeholder = switcher.query_one("#console-popover-find", Input).placeholder
+
+    assert placeholder.startswith("type to search 1 model in 1 provider · "), placeholder
 
 
 @pytest.mark.parametrize("owned_by", ("chat default", "edit"))

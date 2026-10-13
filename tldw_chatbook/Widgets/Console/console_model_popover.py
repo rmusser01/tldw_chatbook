@@ -713,7 +713,9 @@ class ConsoleModelPopover(
         if not ready:
             return f"type to search models · {enter}"
         count = sum(len(self._models_for(key)) for key in ready)
-        return f"type to search {count} models in {len(ready)} providers · {enter}"
+        models = "model" if count == 1 else "models"
+        providers = "provider" if len(ready) == 1 else "providers"
+        return f"type to search {count} {models} in {len(ready)} {providers} · {enter}"
 
     # -- compose --------------------------------------------------------
 
