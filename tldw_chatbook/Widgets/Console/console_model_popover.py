@@ -279,8 +279,6 @@ def context_copy(tokens: int, verified: bool) -> str:
     return size
 
 
-
-
 def _widget_screen_region(widget: Widget) -> Any:
     """Return one mounted widget's region in screen coordinates."""
 
