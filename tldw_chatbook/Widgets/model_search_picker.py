@@ -590,15 +590,24 @@ class ModelSearchPicker(Widget):
         return provider_config_key(self._provider) in self._provenance_provider_keys
 
     def _typed_provider_options(self) -> list[ResolvedProviderModelOption]:
+        cache_key = provider_config_key(self._provider)
+        served_now = cache_key in self._served_now_provider_keys
+        discovered = self._discovered_model_ids.get(cache_key, ())
         options = [
-            option
+            # Capture finding 9 (TASK-33007): an id the endpoint serves now
+            # is "Served now", also when the catalog or config lists it.
+            replace(
+                option,
+                provenance=ConsoleModelProvenance.SERVED_NOW,
+                verified_for_connection=True,
+            )
+            if served_now and option.model_id in discovered
+            else option
             for option in self._provider_options()
             if isinstance(option, ResolvedProviderModelOption)
         ]
         seen_model_ids = {option.model_id for option in options}
-        cache_key = provider_config_key(self._provider)
-        served_now = cache_key in self._served_now_provider_keys
-        for model_id in self._discovered_model_ids.get(cache_key, ()):
+        for model_id in discovered:
             if model_id in seen_model_ids:
                 continue
             options.append(

@@ -155,12 +155,14 @@ def _rows(results: OptionList) -> list[str]:
             (),
             ("gpt-4o", "gpt-4.1"),
             ("gpt-4.1", "o3-mini-new"),
+            # Capture finding 9 (TASK-33007), rewritten on purpose: gpt-4.1
+            # is served now, so it is listed there, not under the catalog.
             [
                 "Served now",
+                "gpt-4.1",
                 "o3-mini-new",
                 "Current catalog",
                 f"gpt-4o  {CURRENT_MARK}",
-                "gpt-4.1",
             ],
             id="cloud-catalog",
         ),

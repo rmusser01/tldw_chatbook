@@ -783,13 +783,51 @@ async def test_discovered_overlay_groups_as_served_now_only_when_its_host_says_s
         picker.focus_input()
         await pilot.pause()
 
-        prompts = _result_prompts(_results(app))
-        assert prompts[prompts.index(group) + 1] == "listed/model", prompts
-        assert prompts[prompts.index("Current catalog") + 1] == "catalog/model"
+        # Capture finding 9 (TASK-33007), rewritten on purpose: an id the
+        # endpoint serves now is "Served now" even when the catalog lists it.
+        assert _result_prompts(_results(app)) == (
+            [group, "catalog/model", "listed/model"]
+            if served_now
+            else ["Current catalog", "catalog/model", group, "listed/model"]
+        )
         assert picker.provenance_for_model("listed/model") == (
             ConsoleModelProvenance.SERVED_NOW
             if served_now
             else ConsoleModelProvenance.CUSTOM_UNVERIFIED
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_saved_model_the_endpoint_serves_is_listed_as_served_now() -> None:
+    """Capture finding 9 (TASK-33007, capture 10a): the saved default was
+    served too but listed only under Saved fallback, so Served now read as
+    if the server lacked it. A saved id the server lists moves to Served
+    now; a saved id it does not list stays a fallback."""
+    app = PickerTestApp({"OpenRouter": []}, ())
+    async with app.run_test() as pilot:
+        picker = app.query_one(ModelSearchPicker)
+        picker.set_provenance_options(
+            "OpenRouter",
+            (
+                _provenance_option("qwen3-8b", ConsoleModelProvenance.SAVED_FALLBACK),
+                _provenance_option("mistral-7b", ConsoleModelProvenance.SAVED_FALLBACK),
+            ),
+        )
+        picker.set_discovered_models(
+            "OpenRouter", ["gemma-4", "qwen3-8b"], served_now=True
+        )
+        picker.focus_input()
+        await pilot.pause()
+
+        assert _result_prompts(_results(app)) == [
+            "Served now",
+            "qwen3-8b",
+            "gemma-4",
+            "Saved fallback",
+            "mistral-7b",
+        ]
+        assert picker.provenance_for_model("qwen3-8b") == (
+            ConsoleModelProvenance.SERVED_NOW
         )
 
 
