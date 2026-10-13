@@ -879,6 +879,8 @@ class ConsoleStatusChips(Horizontal):
         self._apply_cost_chip_label(chip)
         chip.tooltip = Content(state.tooltip)
         chip.display = True
+        # A chip that was hidden has no place on the strip yet (x read 0).
+        self.call_after_refresh(self._refit_cost_chip)
         chip.set_class(state.alert, "console-chip-alert")
         chip.set_class(state.cold, "console-chip-cold")
         chip.set_class(not state.alert and not state.cold, "console-chip-dim")

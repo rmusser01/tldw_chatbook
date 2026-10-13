@@ -488,6 +488,22 @@ async def test_the_cost_chip_shows_an_ellipsis_when_no_form_fits(overrides) -> N
 
 
 @pytest.mark.asyncio
+async def test_the_cost_chip_fits_when_it_is_shown_after_layout() -> None:
+    """Capture fix 3 round 1 finding 3: a chip hidden at the strip's first
+    layout (no cost state, e.g. after the last tab closed) was labelled at
+    x 0 when a state arrived, so it got the full label and was cut at 211."""
+    app = _ProductionChipsApp(_capture_control_state(), cost_state=None)
+    async with app.run_test(size=(211, 8)) as pilot:
+        await pilot.pause()
+        app.query_one(ConsoleStatusChips).sync_cost_state(
+            _cost_state(**_CAPTURE_LABELS)
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert _cost_chip_drawn_whole(app) == "Ctx 0% · Now $0.00"
+
+
+@pytest.mark.asyncio
 async def test_cost_chip_click_posts_pressed_message():
     """A real ``pilot.click`` must dispatch through the normal message pump.
 
