@@ -13,7 +13,7 @@ from typing import ClassVar
 
 import pytest
 from textual.app import ComposeResult
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp, app_css_text
@@ -187,21 +187,29 @@ async def test_the_blocked_footer_names_only_keys_that_act_under_the_card(
         await _wait_for_selector(console, pilot, "#console-setup-modal")
         primary = await _card_focus_on(host, console, pilot, _PRIMARY)
         footer = console.query_one(AppFooterStatus)
+        drawn = footer.query_one("#footer-key-quit", Static)
         await _until(
-            pilot, lambda: "continue setup" in footer.shortcut_text, "blocked footer"
+            pilot, lambda: "continue setup" in str(drawn.render()), "blocked footer"
         )
-        hinted = {hint.split(" ", 1)[0] for hint in footer.shortcut_text.split(" | ")}
-        assert not {"Alt+M", "Ctrl+O"} & hinted, footer.shortcut_text
+        # Round 2 finding 1: read the footer as drawn, global cluster included
+        # ("F6 next pane · Ctrl+Q quit" is one " | " part, so split on both).
+        drawn_text = str(drawn.render())
+        hinted = {
+            hint.split(" ", 1)[0]
+            for part in drawn_text.split(" | ")
+            for hint in part.split(" · ")
+        }
+        assert not {"Alt+M", "Ctrl+O", "F6"} & hinted, drawn_text
 
-        for key, _label in CONSOLE_WORKBENCH_SHORTCUTS:
+        for key, *_label in CONSOLE_WORKBENCH_SHORTCUTS:
             if key in hinted:
                 continue
             await pilot.press(key.lower())
             await pilot.pause(0.2)
             assert host.screen is console and host.focused is primary, key
 
-        for key, _label in CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED:
-            if key == "Enter":
+        for key, *_label in CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED:
+            if key == "Enter" or key not in hinted:
                 continue
             await pilot.press(key.lower())
             await _until(pilot, lambda: host.screen is not console, f"{key} to act")

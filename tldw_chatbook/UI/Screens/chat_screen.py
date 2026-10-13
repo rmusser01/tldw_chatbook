@@ -1185,9 +1185,11 @@ CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE = (
 #: Capture finding 3 (ADR-031 rule 5): every other workbench key returns at
 #: once, or only puts focus back on the card, while the card blocks (Alt+M
 #: and Ctrl+O included, R10), so the blocked footer names only F1 and Ctrl+P.
+#: F6 is listed as unavailable so the app-wide cluster leaves it out too.
 CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = (
     ("Enter", "continue setup"),  # the real action leads, as collapsed's Esc does
     *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] in ("F1", "Ctrl+P")),
+    ("F6", "next pane", False),
 )
 
 #: TASK-25733: the same lie as the setup-blocked case above, from a different
