@@ -225,6 +225,9 @@ evidence backs it.
   235x52 the list grows to about 30 rows and the width stays the same.
 - **Chat settings:** 150x22. The whole Model view fits at 211x44 without
   scrolling.
+  - *Amended 2026-10-13 (controller ruling on TASK-33007 capture-fix B #15):*
+    176x22, the `$ds-chat-settings-width` token, at 211x44 and 235x52 (95% of
+    the viewport below that), so every help line shows whole.
 - **Settings ▸ Providers & Models:**
   - Panes are 32 | 143 | 36 columns at 211 columns wide.
   - The card ends at row 25 (today about 115 rows), and Model is Tab stop 5

@@ -177,4 +177,6 @@ The independent review of the whole PR (R4, tests / docs / CI) found criteria wh
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Rebased onto dev 2f37c1a478 (862 commits) on 2026-10-09. Dev's task-34384 Session summary on quit, added inside the card compose this phase moved, is ported into Advanced as a sixth one-row disclosure (0cd360a642). After the rebase: the 50 test files this branch changes show 3 head-only failures, all renamed-on-purpose tests that fail with ADR-126 RecoveryRequired exactly as the tests they replace; size ratchets fail the same 11 rows as dev; boot CSS, ui-ready census and pre-import payload ratchets pass (19 passed); preflight passes. Checkpoint review fixes: SettingsResultLine (no at-rest 'not saved' row), a blank row names its layer once, and a typed name prefix highlights the provider it starts. Captures re-taken on the rebased head (qa/model-config-33007-captures/).
+
+**Spec amendment (2026-10-13, controller ruling on capture-fix B #15 (a)):** Chat settings is 176 columns wide (`$ds-chat-settings-width`), not spec §6 / mock (b)'s 150, at 211x44 and 235x52 (95% of the viewport below that); the owner uses the app full-screen only, so whole help lines win over the 150x22 mock. Height stays 22 rows.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
