@@ -41,3 +41,20 @@ Reason: lasting permission UX and optional runtime-to-view observation contracts
 ## Report and review gate
 
 Use assigned ignored SDD progress/brief/report and external exactreceipts; one coherentTask1, nochildren. Return concisehead/report/concerns. Fullreport distinguishes currentfunctional/native/browser/model/Windows evidence and source0samples/qualifiedfalse. Both independent verdicts and actual applicableacceptance are required before publication. No performance pass from correctcopy/mountedtests, no historical count substitutes current physical paint/ownerretirement.
+
+
+## Current private planning preparation (2026-10-13)
+
+Accepted dev is actual Rules mergea7bde4e5e5a13a4b8325f094dbd968a4f96c60a7; its tree equals reviewed5c5e6a64. Font3020 is published and queue-armed at6ad961cf1fddc89b7738a7c3c71728610d0efb5b, not merged; its runtime tree equals previously reviewed private857b1e39, with47 current targeted tests passing. Approval governance alone was carried as78e5aff9b48e3c82539404c6f769da7f72c36be1 on6ad. All10 governance paths are new to this parent, with no task/ADR229 collision; no product/test/workflow change or approval implementation release. Existing six tasks stay In Progress with current ACs open and source history preserved.
+
+This is planning and original-control/measurement-contract preparation only. The actual post3023 merged base remains required before approval functional implementation release; the current snapshot lacks in-progress3023 preparation changes. Independently bind that eventual source and requalify affected launch/control/clock/artifact evidence. No private-code gate exception or publication/order/acceptance waiver is introduced here.
+
+Retain all152 source paths/134 owners. Current Rules and font owners preserve config-free bound-controller rule Stop, phase-only in-memory run chip, shared native/hook/Goal budget and physical helper/DB-task retirement, current tool-result observation and actual provider/capture parity. Future3023 current-owner changes must be freshly mapped. Current source-only Details/presentation/grant/feedback behavior is not already-qualified runtime.
+
+Shared redaction remains the existing MCP/redaction.py boundary: CLI argv display copies go through redact_args before mapping/stringification; query-shaped OAuth fragments need shared redact_url handling without losing ordinary anchors/state or source nested-URI behavior. Real admittedproducer privacy negatives and unchanged original matching arguments remain required. Do not create another redactor/permission policy.
+
+Current controller29342/cap29299, host6474/cap6471, screen25314 lines/cap25204 and762 methods/cap756 already exceed inherited caps. No cap or token increase is allowed; extract added responsibilities coherently and preserve late-bound/public test seams. Current UI census190 and P0 selection20/four processes/six lanes are the minimum eventual inherited boundaries, not the old180 count.
+
+The pre-edit supported private launch, original approval-control receipt and reviewed content-free input/clock contract remain hard prerequisites. CUA Terminal is safety-blocked; the user-approved textual-serve/CDP route established browser controls for3010, not native physical input/paint or3036 timing. Preparation may build a supported browser functional baseline, but cannot label it as OS/native timing. Existing human willingness to run native checks is not evidence. Keep native and browser distributions, original100ms/200ms limits,40 warm samples and all geometry/theme/Inspector/focus/largeDetails conditions separate and open until actually qualified.
+
+ADR required: no new ADR for this metadata refresh. Existing approval229 and listed current architecture/redaction/lifecycle contracts govern; amend existing decisions before behavior where required. No new IDs, source acceptance, task Done, API/key/provider/OS/native action or implementation release follows from this preparation.

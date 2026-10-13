@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-06 06:41'
-updated_date: '2026-10-12 03:56'
+updated_date: '2026-10-13 18:41'
 labels: []
 dependencies: []
 documentation:
@@ -72,6 +72,8 @@ Execution-order ruling:
 Ruling: Allow functional UX Tasks 2–5 after the supported private control and reviewed recorder, deferring unavailable native/browser presented-frame baseline qualification to the final gate — the binding spec requires evidence before choosing performance fixes and truthful final qualification, while the plan assumed an unavailable capture capability — cost if wrong: transport measurements may require later UX rework and final completion remains blocked; retain the unchanged source baseline and make no speed claim or speculative optimization.
 
 Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. ADR required: yes. ADR path: backlog/decisions/229-console-approval-interaction-and-feedback.md. Reason: preserve approved interaction/noncontrolling observations and shared credential masking under existing human-decision authority. Source history/checked qualification is retained above; current acceptance is reopened for actual sequential-base invocation/privacy/UI/native/browser qualification. No cap/clock/guard relaxation or headless-as-native claim.
+
+2026-10-13 current planning preparation only: actual Rules mergea7bde4e5; queue-armed font6ad961cf (not merged),47 source-bound tests; docs-only approval preparation78e5aff9. Follow appended current preparation in Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. Preserve152paths/134owners/six task histories/ADR229/current open AC. Actual post3023 merged source binding and pre-edit supported launch/original-control/input-clock contract remain prerequisites before functional release. Preserve config-free Rules Stop/chip/custody/provider seams, existing shared CLI/URL redaction, unchanged caps/census190/P0 selection20/fourprocess/sixlanes. BrowserCDP does not qualify native physical input/paint. ADR required:no new for metadata; existing decisions and required behavior amendments retained. No newID/Done/current acceptance/private-code exception/paid/key/native/publication waiver.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
