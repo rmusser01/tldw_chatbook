@@ -67,7 +67,8 @@ plain text instead:
   continue anyway." or "*Provider* needs an API key and none was set. Add one
   under Authentication, or continue anyway." In the second case the section is
   titled "Authentication", not "Authentication (optional)", while that provider
-  and address are selected.
+  and address are selected, until a check of that address that sends no key
+  gets through (the server was restarted without `--api-key`).
 - "Couldn't reach the server (*reason*). Check it's running, then Retry — or enter a model ID below." when the check failed for another reason, such as a timeout. Ollama and llama.cpp name the server and its address instead: "Ollama isn't running at *address*. Start it (ollama serve), then Retry — or enter a model ID below." and "The llama.cpp server isn't reachable at *address*. Start it, then Retry — or enter a model ID below." These three show **Retry**.
 
 The line is a message, not an option: it has no radio marker, and the arrow

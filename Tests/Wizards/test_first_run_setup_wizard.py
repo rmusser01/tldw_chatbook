@@ -13548,8 +13548,80 @@ async def test_a_401_to_a_test_that_sent_no_key_asks_for_a_key() -> None:
         assert str(auth.title) == "Authentication"
         # Another server has not asked for one.
         endpoint = step.query_one("#setup-provider-endpoint", Input)
+        checked_at = endpoint.value
         endpoint.value = "http://localhost:9090"
         await pilot.pause()
+        assert str(auth.title) == "Authentication (optional)"
+        # Capture fix 2 round 1 finding 3: back on the server that asked, the
+        # mark held for good, even once a Test that sent no key got through
+        # (the server restarted without --api-key).
+        endpoint.value = checked_at
+        step.query_one("#setup-provider-api-key", Input).value = ""
+        await pilot.pause()
+        assert str(auth.title) == "Authentication"
+        probe.return_value = SettingsEndpointProbeOutcome(
+            state="reachable", summary="reachable (1 models)", model_ids=("m",)
+        )
+        step.query_one("#setup-provider-test", Button).press()
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if str(status.render()).startswith("✓"):
+                break
+        assert probe.await_args.kwargs["credential_source"] == "none"
+        assert str(status.render()).startswith("✓")
+        assert str(auth.title) == "Authentication (optional)"
+
+
+@pytest.mark.asyncio
+async def test_a_listing_that_sent_no_key_and_got_through_makes_the_key_optional():
+    """Capture fix 2 round 1 finding 3, discovery's half: a 401 to a listing
+    that sent no key drops '(optional)'. Next asks a failed listing again;
+    once the server lists models with no key (restarted without --api-key),
+    the section is optional again."""
+    from types import SimpleNamespace
+
+    needs_key = ModelDiscoveryResult(
+        provider="llama_cpp",
+        provider_list_key="llama_cpp",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+            category="unauthorized",
+        ),
+    )
+    listed = _typed_model_discovery_result("llama_cpp", "m")
+    app_instance = MagicMock(app_config={})
+    app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(side_effect=[needs_key, listed])
+    )
+    wizard = SimpleNamespace(
+        app_instance=app_instance,
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if step._selected_discovery_state == "failed":
+                break
+        assert str(auth.title) == "Authentication"
+
+        assert await step.commit() == (True, "")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if step._selected_discovery_state == "complete":
+                break
+        assert step._selected_discovery_key.credential_source == "none"
         assert str(auth.title) == "Authentication (optional)"
 
 
