@@ -459,17 +459,19 @@ async def test_card_pick_applies_to_this_chat_only_while_a_new_chat_default_work
         await pilot.press("enter")
         switcher = await _switcher_ready(harness, pilot)
         assert _scope(switcher) == model_switcher.SCOPE_THIS_CHAT
-        assert _enter_key(switcher) == "Enter apply to this chat"
         # Choose model opens on the chat's provider (Ollama lists no model
         # here); clearing Find lists every provider again.
         find = switcher.query_one("#console-popover-find", Input)
         assert find.value == "Ollama "
         row = switcher.highlighted_row()
         assert (row.kind, row.provider) == ("setup", "ollama")
+        # Round 2 finding 4: Enter's label is the highlighted row's.
+        assert _enter_key(switcher) == "Enter set up in Settings"
         find.value = ""
         await pilot.pause()
         row = switcher.highlighted_row()
         assert (row.kind, row.provider, row.model) == ("pair", "llama_cpp", "model-a")
+        assert _enter_key(switcher) == "Enter apply to this chat"
         await pilot.press("down", "enter")
         await _until(pilot, lambda: harness.screen is console, "the switcher to close")
         await _drain(app)
