@@ -1380,9 +1380,11 @@ Button.settings-category-group-toggle:focus {
    template are free text, cut at 27 cells by it (the built-in template shown
    as the placeholder is 39): these take the rest of their row. Permission
    summaries' Model is a model id too (capture finding 21: its placeholder
-   read "empty = the provider's defaul"). */
+   read "empty = the provider's defaul"). Its Provider, beside it, lists
+   provider names up to 33 cells (#3057 capture finding 15). */
 #settings-console-behavior-card #settings-console-sidechat-model,
 #settings-console-behavior-card #settings-console-sidechat-prompt-template,
+#settings-console-behavior-card #settings-permission-summary-provider,
 #settings-console-behavior-card #settings-permission-summary-model {
     width: $ds-width-fill;
 }

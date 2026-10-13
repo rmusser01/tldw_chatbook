@@ -8386,9 +8386,9 @@ class SettingsScreen(BaseAppScreen):
             mode = self._select_text_value(
                 self.query_one("#settings-permission-summary-mode", Select).value
             )
-            provider = self.query_one(
-                "#settings-permission-summary-provider", Input
-            ).value
+            provider = self._select_text_value(
+                self.query_one("#settings-permission-summary-provider", Select).value
+            )
             model = self.query_one("#settings-permission-summary-model", Input).value
         except QueryError:
             return
@@ -19944,6 +19944,7 @@ class SettingsScreen(BaseAppScreen):
             # disclosure copy is the consent surface, so there is no staged
             # Save step between opting in and the egress it enables.
             summary_values = self._permission_summary_form_payload()
+            from ..Settings_Modules import settings_field_rows
             with Vertical(
                 id="settings-permission-summary-group",
                 classes="settings-instant-apply-group",
@@ -19975,13 +19976,17 @@ class SettingsScreen(BaseAppScreen):
                         allow_blank=False,
                         compact=True,
                     )
-                with Horizontal(classes="settings-input-row"):
+                with Horizontal(classes="settings-input-row settings-select-row"):
                     yield Static("Provider", classes="settings-input-label")
-                    yield Input(
-                        value=summary_values["provider"],
+                    yield Select(
+                        settings_field_rows.permission_summary_provider_options(
+                            self, summary_values["provider"]
+                        ),
+                        value=summary_values["provider"] or Select.NULL,
+                        prompt="not set",
                         id="settings-permission-summary-provider",
-                        classes="settings-compact-input",
-                        placeholder="e.g. OpenAI",
+                        classes="settings-compact-select",
+                        compact=True,
                     )
                 with Horizontal(classes="settings-input-row"):
                     yield Static("Model", classes="settings-input-label")
@@ -32502,8 +32507,8 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._persist_permission_summary_settings(retry=True)
 
-    @on(Input.Changed, "#settings-permission-summary-provider")
-    def handle_permission_summary_provider_changed(self, event: Input.Changed) -> None:
+    @on(Select.Changed, "#settings-permission-summary-provider")
+    def handle_permission_summary_provider_changed(self, event: Select.Changed) -> None:
         event.stop()
         self._persist_permission_summary_settings()
 

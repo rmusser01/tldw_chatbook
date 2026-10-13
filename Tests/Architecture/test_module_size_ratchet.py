@@ -179,9 +179,11 @@ _BUDGETS: dict[str, int] = {
     # Scope row names the card's sections, not config sections (-1): 33,911;
     # Reasoning replay override hides its controls until Console names a
     # local model (+8): 33,919; its checkboxes say their state in the glyph,
-    # a check or a blank (StateCheckbox, +1): 33,920.
-    # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 33,932.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33932,
+    # a check or a blank (StateCheckbox, +1): 33,920; Permission summaries'
+    # Provider is a list of providers, its options built in
+    # settings_field_rows.py (+5): 33,925.
+    # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 33,937.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33937,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -224,7 +226,9 @@ _BUDGETS: dict[str, int] = {
     # The capture fix wave (2026-10-12): Temperature's placeholder and
     # Validation line state the provider's own range (+38): 760. Capture fix
     # round 1: UNSET_FALLBACK_HELP's comment says 44 cells, not 45 (+0).
-    "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 760,
+    # Capture fix A2 round 2 (2026-10-13): Permission summaries' Provider
+    # list, holding a saved spelling or naming one it lacks (+34): 794.
+    "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 794,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.

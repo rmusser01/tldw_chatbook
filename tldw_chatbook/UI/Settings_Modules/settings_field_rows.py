@@ -47,6 +47,7 @@ from ...Chat.console_session_settings import (
 from ...Chat.provider_readiness import provider_config_key
 from ...Chat.sampling_params import temperature_range
 from ...config import coerce_bool_setting
+from ...Utils.input_validation import escape_markup
 from ...Widgets.Console.console_settings_field_row import (
     BLANK_CHOICE_PROMPT,
     BLANK_FIELD_HELP,
@@ -63,6 +64,7 @@ from ..Screens.settings_screen import (
     MODEL_PROFILE_INPUT_PLACEHOLDERS,
     MODEL_PROFILE_SELECT_FIELD_KEYS,
     MODEL_PROFILE_STREAMING_SELECT_OPTIONS,
+    PROVIDER_MANUAL_SELECT_VALUE,
 )
 
 if TYPE_CHECKING:
@@ -758,3 +760,35 @@ def refresh_console_fallbacks(screen: SettingsScreen) -> None:
         unset=NO_SAMPLER_SET,
     )
     sampling.title = Content(hidden_fields_line("", (), state=state))
+
+
+def permission_summary_provider_options(
+    screen: SettingsScreen, saved: str
+) -> list[tuple[str, str]]:
+    """Return Permission summaries' Provider choices (capture finding 15).
+
+    The field was free text. These are the providers Providers & Models
+    offers, by display name. The option a saved name means carries that
+    spelling, so opening writes nothing; a saved name the list does not hold
+    stays as "<name> (not in this list)".
+
+    Args:
+        screen: The Settings screen (it owns the provider list).
+        saved: The saved ``[permission_summary] provider``; "" for none.
+
+    Returns:
+        ``(label, value)`` pairs, one of them valued ``saved`` when it is set.
+    """
+    options = [
+        option
+        for option in screen._provider_select_options()
+        if option[1] != PROVIDER_MANUAL_SELECT_VALUE
+    ]
+    if not saved:
+        return options
+    wanted = provider_config_key(saved)
+    for index, (label, value) in enumerate(options):
+        if provider_config_key(value) == wanted:
+            options[index] = (label, saved)
+            return options
+    return [*options, (f"{escape_markup(saved)} (not in this list)", saved)]
