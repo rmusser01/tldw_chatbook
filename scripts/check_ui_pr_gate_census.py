@@ -282,7 +282,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # #3057, with the lanes report's worst local seconds x1.5 for the 53 entries no
 # CI log timed, gives 17.6 min of pytest at most as they were listed over seven
 # shards, 15.4 re-ordered (about 17 of the job's 20 with setup) and 13.5 over
-# eight, so the lane runs eight.
+# eight, so the lane went to eight. Its first CI run there (38458195175) timed
+# one shard out: on CI the new entries took up to 1.9x their local seconds.
+# Replayed over that run and the three before it (each file at its worst), the
+# lane is 125 pytest minutes: 15.6 at most over eight, 13.9 over nine (about 16
+# of 20 with setup), 12.5 over ten, so the lane runs nine. The rounds after the
+# rebase appended five entries (279); the block of 89 is dealt as a whole.
 # Round 4 after the rebase (ruling cf3r1-N1): one node appended after the
 # block, a snapshot edit whose Changed has not landed is kept: 275.
 # C16 for post-rebase round 1: +2 node ids after the block (leaving and

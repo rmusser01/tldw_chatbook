@@ -108,9 +108,9 @@ cron entry on `dev`.
   derived-artifact checks. As amended on 2026-09-27 that was two fast lanes
   (at most two runners at a time), three runners with the one routine
   path-scoped guard (perf-guard), instead of approximately thirteen. It has
-  grown since: the UI lane runs its census as shards (TASK-34353; eight since
+  grown since: the UI lane runs its census as shards (TASK-34353; nine since
   TASK-33007) and the Console P0 gate is a third lane (TASK-33621.27), so an
-  ordinary unlabeled, non-GGUF PR now runs ten test runners at once, eleven with
+  ordinary unlabeled, non-GGUF PR now runs eleven test runners at once, twelve with
   perf-guard (see the 2026-10-10 note below).
 - That figure is not a global maximum. The two path-scoped GGUF
   evidence matrices can add six jobs, and a synchronize event on a PR carrying
@@ -199,10 +199,10 @@ which then took 33m41s of its 35-min cap (run 38064483856). The required check
 now `needs` all three lanes and fails when any of them is not `success`. This is
 one more runner per PR: the PR Fast Lane, four UI shards and the P0 gate make
 six concurrent test runners, then the aggregate. (TASK-33007, PR #3057, then
-took the UI lane to eight shards: one of four neared its 20-minute cap once
-Phase 7's Settings files joined the census, and its 84 census entries in all
-replay at 15.4 pytest minutes a shard over seven. That makes ten concurrent test
-runners per PR, and the matrix sets no `max-parallel`.)
+took the UI lane to nine shards: one of four neared its 20-minute cap once
+Phase 7's Settings files joined the census, and with its 89 census entries in
+all the lane is 125 pytest minutes, which timed out one of eight shards on CI.
+That makes eleven concurrent test runners per PR, and the matrix sets no `max-parallel`.)
 `Tests/CI/test_console_p0_regression_gate.py` pins where each P0 test runs. The
 required context name, event cadence and dependency boundary are unchanged.
 
