@@ -839,6 +839,7 @@ async def test_workspace_conversation_row_click_on_open_tab_keeps_temporary_chip
     from Tests.UI.test_console_native_chat_flow import (
         _click_console_workspace_conversation_for_session,
         _configure_native_ready_console,
+        _workspace_conversation_row_by_id,
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -860,7 +861,11 @@ async def test_workspace_conversation_row_click_on_open_tab_keeps_temporary_chip
         normal = store.create_session(title="Normal chat")
         temp = store.create_session(title="Temp chat", ephemeral=True)
         await console._sync_native_console_chat_ui()
-        await pilot.pause()
+        # The rail rows are recomposed on a later screen tick than one pause.
+        for _ in range(40):
+            if _workspace_conversation_row_by_id(console, f"native:{temp.id}"):
+                break
+            await pilot.pause(0.05)
 
         chip = console.query_one("#console-temporary-chip", ConsoleTemporaryChip)
         # `temp` is active (created last). Establish a verified-correct
