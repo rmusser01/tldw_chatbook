@@ -20153,7 +20153,8 @@ class ChatScreen(BaseAppScreen):
         # takes the stop first -- it is not a controller "run", so
         # stop_active_run() would only toast "No active Console run to stop."
         # The cancel event wakes the adapter's poll loop immediately.
-        store = self._console_chat_store
+        runtime = getattr(self, "_console_runtime_ref", None)
+        store = runtime.chat_store if runtime is not None else None
         active_session_id = store.active_session_id if store is not None else None
         image_edit = (
             self._image._h3_image_edit_registry().request_cancel(active_session_id)
@@ -20186,12 +20187,19 @@ class ChatScreen(BaseAppScreen):
             stop_button.label = "Stopping…"
             stop_button.disabled = True
         try:
-            controller = self._ensure_console_chat_controller()
-            if not controller.stop_active_run():
+            controller = runtime.chat_controller if runtime is not None else None
+            rules = controller.response_rules if controller is not None else None
+            rule_check = rules is not None and rules.state(
+                active_session_id or ""
+            ).phase in {"drafting", "testing", "checking"}
+            if controller is None or not controller.stop_active_run():
                 self.app_instance.notify(
                     "No active Console run to stop.", severity="warning"
                 )
-            await self._sync_native_console_chat_ui()
+                return
+            # Rule cancellation projects its own controls without reading config.
+            if not rule_check:
+                await self._sync_native_console_chat_ui()
         finally:
             if stop_button is not None:
                 # The bar's sync governs visibility/variant but not the

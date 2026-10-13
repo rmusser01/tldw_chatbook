@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from textual.css.query import NoMatches
+
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_command_grammar import CommandParse
     from tldw_chatbook.Chat.response_rules.models import RuleRuntimeState, RuleScope
@@ -180,4 +182,10 @@ def refresh_rule_controls(screen: Any, session_id: str) -> None:
     """Refresh only the currently mounted Chat's disposable controls."""
     if screen.is_mounted and screen._console_chat_store.active_session_id == session_id:
         screen._sync_console_control_bar()
-        screen._sync_console_mode_bar()
+        # Phase copy is in memory; a full mode refresh can block on deferred config.
+        try:
+            chips = screen.query_one("#console-status-chips")
+        except NoMatches:
+            return
+        active_run_copy = screen._console_active_run_copy()
+        chips.sync_run_chip(bool(active_run_copy), active_run_copy)

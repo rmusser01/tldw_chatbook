@@ -314,8 +314,143 @@ async def test_mapped_learning_phase_and_stop_follow_live_helper(tmp_path, size)
 
 
 @pytest.mark.asyncio
-async def test_rule_phase_events_project_only_the_mounted_current_session(tmp_path):
+@pytest.mark.parametrize(
+    "deferral", ["none", "rebuild", "maintenance", "no-controller"]
+)
+async def test_rule_phase_events_project_only_the_mounted_current_session(
+    tmp_path, deferral
+):
+    if deferral == "no-controller":
+        from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+        app = _build_console_send_test_app()
+        console = ChatScreen(app)
+        owner = console._console_runtime()
+        assert owner.chat_controller is None
+        notices = []
+        app.notify = lambda message, **kwargs: notices.append(message)
+        try:
+            await console.action_stop_console_run()
+            assert owner.chat_controller is None
+            assert owner.chat_store is None
+            assert notices == ["No active Console run to stop."]
+        finally:
+            await owner.dispose()
+        return
     async with mounted_rules_console(tmp_path) as case:
+        other_session_id = case.chats.create_session(activate=False).id
+        if deferral != "none":
+            import sys
+            import threading
+            import time
+            import traceback
+
+            from tldw_chatbook import config
+
+            case.host.app_config = config.load_settings()
+            assert case.console._console_config_snapshot_is_disk_loaded(
+                case.host.app_config
+            )
+            seed_answer(case)
+            case.helper_entered, case.helper_release = asyncio.Event(), asyncio.Event()
+            complaint = "/omfg Include evidence in the answer"
+            case.composer.load_draft(complaint)
+            case.console.query_one("#console-send-message", Button).press()
+            async with asyncio.timeout(5):
+                await case.helper_entered.wait()
+            await case.pilot.pause()
+            source = case.rules._sources[case.session_id]
+            assert case.rules.acceptance_current(source)
+            stop = case.console.query_one("#console-stop-generation", Button)
+            assert stop.display and not stop.disabled
+            chip = case.console.query_one("#console-run-chip", Static)
+            held, release, expired = (
+                threading.Event(),
+                threading.Event(),
+                threading.Event(),
+            )
+            errors = []
+            blocked_stack = []
+
+            def hold_rebuild():
+                try:
+                    with config._settings_rebuild_lock():
+                        config._invalidate_config_caches()
+                        held.set()
+                        assert release.wait(5), "config holder was not released"
+                except BaseException as error:  # noqa: BLE001 - asserted after thread retirement.
+                    errors.append(error)
+
+            def unblock_failure():
+                blocked_stack.extend(
+                    traceback.format_stack(
+                        sys._current_frames()[threading.main_thread().ident]
+                    )
+                )
+                expired.set()
+                release.set()
+
+            holder = threading.Thread(target=hold_rebuild)
+            watchdog = threading.Timer(2, unblock_failure)
+            if deferral == "maintenance":
+                case.console._console_sync_maintenance_close_admission()
+            try:
+                holder.start()
+                assert held.wait(3)
+                watchdog.start()
+                started = time.monotonic()
+                case.rules._project(case.session_id, phase="testing")
+                elapsed = time.monotonic() - started
+                assert not expired.is_set(), (
+                    f"rule event blocked on the config rebuild for {elapsed:.3f}s"
+                )
+                assert chip.display and "Testing rule" in str(chip.render())
+                assert case.console._console_control_bar_sync_scheduled
+                case.rules._project(other_session_id, phase="repairing")
+                assert "Testing rule" in str(chip.render())
+                stop.press()
+                async with asyncio.timeout(1):
+                    while case.rules.state(case.session_id).phase != "idle":
+                        await asyncio.sleep(0.01)
+                assert not expired.is_set() and not release.is_set()
+                assert holder.is_alive()
+                assert "Testing rule" not in str(chip.render())
+                assert case.rules.state(other_session_id).phase == "repairing"
+                assert not case.rules.acceptance_current(source)
+                assert case.rules.helpers.unsettled_count == 1
+                assert case.composer.draft_text() == complaint
+            finally:
+                watchdog.cancel()
+                release.set()
+                holder.join(3)
+                if watchdog.ident is not None:
+                    watchdog.join(3)
+                case.console._console_sync_maintenance_resume()
+                assert not holder.is_alive() and not watchdog.is_alive()
+                assert not errors
+                if blocked_stack:
+                    print("Blocked UI stack:\n" + "".join(blocked_stack))
+                case.helper_release.set()
+                async with asyncio.timeout(5):
+                    await case.rules.helpers.wait_for_cleanup()
+                from textual.worker import WorkerCancelled
+
+                for worker in tuple(case.console.workers):
+                    try:
+                        await worker.wait()
+                    except WorkerCancelled:
+                        pass  # Stop/resume can replace a coalesced UI sync worker.
+            assert case.rules.helpers.unsettled_count == 0
+            assert case.composer.draft_text() == complaint
+            assert case.learning_results and case.learning_results[-1][0] != "active"
+            async with asyncio.timeout(5):
+                while case.console._console_control_bar_sync_scheduled:
+                    await case.pilot.pause(0.01)
+            assert "Testing rule" not in str(chip.render())
+            assert not stop.display
+            assert case.rules.state(case.session_id).phase == "idle"
+            # The following source-event checks start without a learning result.
+            case.rules._project(case.session_id, phase="idle", learning=None)
         for phase, label in (
             ("checking", "Checking rules"),
             ("drafting", "Drafting rule"),
@@ -326,7 +461,7 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(tmp_pa
             case.rules._project(case.session_id, phase=phase)
             chip = case.console.query_one("#console-run-chip", Static)
             assert chip.display and label in str(chip.render())
-            case.rules._project("other-session", phase="idle")
+            case.rules._project(other_session_id, phase="idle")
             assert label in str(chip.render())
         case.rules._project(case.session_id, phase="idle")
         assert not chip.display
