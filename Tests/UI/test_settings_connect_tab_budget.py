@@ -426,3 +426,46 @@ async def test_restored_openai_connection_row_shows_only_while_a_review_awaits(
         await _until(pilot, lambda: host.screen is screen and not row.display)
         assert recorded == [review]
         assert not row.display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_tab_leaves_the_model_row_after_custom_id_and_down_still_picks(request):
+    """Capture round 2, finding 24 (Phase 8's item 8): the Default model
+    picker opens its results list when the field takes focus, and Tab
+    stopped on that list, so leaving the Model row took an extra press
+    (field, Custom ID, results, ...). The list is not a Tab stop: Tab goes
+    from Custom ID to the next row; Down still enters the list and Enter
+    picks from it."""
+    from textual.widgets import OptionList
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": dict(_SAVED_KEY)}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        picker = screen.query_one("#settings-model-picker")
+        field = picker.query_one("#model-search-picker-input", Input)
+        results = picker.query_one("#model-search-picker-results", OptionList)
+        field.focus()
+        await _until(pilot, lambda: results.display)
+        assert results.display
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert getattr(host.focused, "id", None) == "model-search-picker-custom"
+        await pilot.press("tab")
+        await pilot.pause()
+        assert host.focused is not results
+        assert host.focused is not None and picker not in host.focused.ancestors
+
+        field.focus()
+        await _until(pilot, lambda: results.display)
+        await pilot.press("down")
+        await pilot.pause()
+        assert host.focused is results
+        await pilot.press("enter")
+        await pilot.pause()
+        assert host.focused is field and not results.has_focus
