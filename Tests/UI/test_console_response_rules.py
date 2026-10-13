@@ -415,11 +415,13 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                 assert not expired.is_set(), "credential timer blocked the UI loop"
                 stop.press()
                 async with asyncio.timeout(1):
-                    while case.rules.state(case.session_id).phase != "idle":
+                    while case.rules.state(case.session_id).phase != "idle" or (
+                        chip.display and "Testing rule" in str(chip.render())
+                    ):
                         await asyncio.sleep(0.01)
                 assert not expired.is_set() and not release.is_set()
                 assert holder.is_alive()
-                assert "Testing rule" not in str(chip.render())
+                assert not chip.display or "Testing rule" not in str(chip.render())
                 assert case.rules.state(other_session_id).phase == "repairing"
                 assert not case.rules.acceptance_current(source)
                 assert case.rules.helpers.unsettled_count == 1

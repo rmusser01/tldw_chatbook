@@ -11600,8 +11600,13 @@ class ChatScreen(BaseAppScreen):
             not self._console_attach_reconciled
             or not self.is_attached
             or not self.is_current
+            or getattr(self, "_console_sync_maintenance_paused", False)
         ):
             return
+        from contextlib import ExitStack
+
+        from tldw_chatbook import config
+
         from ..Console_Modules.config_sync import run_console_config_sync
 
         def sync() -> None:
@@ -11625,15 +11630,23 @@ class ChatScreen(BaseAppScreen):
                 )
                 if snapshot == self._console_credential_snapshot:
                     return
-                self._console_credential_snapshot = snapshot
                 self._sync_console_settings_summary()
-                self._sync_console_control_bar()
+                if self._sync_console_control_bar():
+                    self._console_credential_snapshot = snapshot
 
-        run_console_config_sync(
-            sync,
-            maintenance_paused=getattr(self, "_console_sync_maintenance_paused", False),
-            defer=lambda: None,  # The next credential tick retries with fresh state.
-        )
+        with ExitStack() as acquired:
+            for lock in (config._settings_rebuild_lock(), config._config_file_lock()):
+                if not lock.acquire(blocking=False):
+                    return  # The next credential tick retries with fresh state.
+                acquired.callback(lock.release)
+            if config._settings_cache_hit(config._get_effective_config_path()) is None:
+                run_console_config_sync(
+                    sync,
+                    maintenance_paused=False,
+                    defer=lambda: None,
+                )
+            else:
+                sync()
 
     def _stop_console_credential_poll_timer(self) -> None:
         """Stop completion polling when the mounted Console view goes away."""

@@ -594,3 +594,20 @@ Route the entire observer through the existing nonblocking checked config
 lifetime before it derives readiness. Preserve revision, time-based status and
 evidence gates, then prove the ordinary timer refreshes their fresh values after
 maintenance; increasing the Stop deadline would conceal the entry defect.
+
+**Same incident, hosted follow-up.** The first guarded poll at5fc passed Stop
+controls but reintroduced one config and two storage admissions on every warm
+tick. Perf Guard38454091568 measured57.5 native opens against Linux6.75×1.05.
+The ordinary5fc macOS census measured1/2 admissions and61.75 opens. A matched
+comparison installed the original poll only after the census seeded its config:
+both old and corrected callbacks paid0/0 admissions and zero native opens;
+3.75–10.5 opens per tick came entirely from existing cadence probes. An earlier
+autouse import changed startup, so its lower baseline was rejected. Preserve
+PERF06’s source/posture-checked
+warm read under nonblocking native lock probes; only a genuine cold miss needs
+the full checked lifetime. Publish the credential snapshot only after the real
+control refresh returns True: a native pause after summary but before controls
+otherwise consumes the evidence revision without publishing its controls.
+Idle hides the rule chip but keeps its old label; Stop tests must assert no
+visible active copy within the original deadline, rather than clearing hidden
+widget content.
