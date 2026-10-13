@@ -1205,9 +1205,11 @@ class _SettingsProviderPickerOption(Option):
         self.action = action
 
 
-MODEL_DISCOVERY_IDLE_COPY = "Discover models from configured endpoint"
-MODEL_DISCOVERY_EMPTY_COPY = (
-    "No discovered models yet. Use Discover models after endpoint is configured."
+#: Capture finding 8: the list's one line before any discovery (an
+#: instruction sat over an empty-state line saying the same thing).
+MODEL_DISCOVERY_IDLE_COPY = (
+    "No models discovered yet. Discover models lists what the configured "
+    "endpoint serves."
 )
 MODEL_DISCOVERY_CAPABILITY_WARNING = (
     "Capabilities unknown until saved or verified; text chat is assumed."
@@ -16534,12 +16536,6 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text(
             "#settings-model-discovery-status", self._model_discovery_status
         )
-        try:
-            self.query_one(
-                "#settings-model-discovery-empty", Static
-            ).display = not self._model_discovery_models
-        except QueryError:
-            pass
         available = self._model_discovery_available(self._provider_widget_value())
         try:
             discover_button = self.query_one(
@@ -16650,13 +16646,12 @@ class SettingsScreen(BaseAppScreen):
             return
         if str(getattr(result, "status", "")) == "success":
             models = tuple(getattr(result, "models", ()) or ())
-            provider_list_key = str(
-                getattr(result, "provider_list_key", None) or provider_key
-            )
             self._model_discovery_models = models
             self._model_discovery_selected_model_ids = set()
+            # Capture finding 7: the provider's name, not its config key.
             self._model_discovery_status = (
-                f"Discovered {len(models)} model(s) from {provider_list_key}."
+                f"Discovered {len(models)} model{'' if len(models) == 1 else 's'} "
+                f"from {self._provider_display_label(provider)}."
             )
             self._refresh_model_discovery_widgets()
             self._refresh_model_picker_discovered()

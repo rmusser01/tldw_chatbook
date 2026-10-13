@@ -61,7 +61,10 @@ from tldw_chatbook.Utils import input_validation as input_validation_module
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     resolve_effective_provider_model,
 )
-from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+from tldw_chatbook.UI.Screens.settings_screen import (
+    MODEL_DISCOVERY_IDLE_COPY,
+    SettingsScreen,
+)
 from tldw_chatbook.UI.Navigation.conversation_settings_navigation import (
     ConsoleSettingsReturnTarget,
     ConversationSettingsReturnIntent,
@@ -11272,10 +11275,9 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
         assert (
             "Endpoint: api_settings.ollama.api_url=http://localhost:11434" not in text
         )
-        assert (
-            "No discovered models yet. Use Discover models after endpoint is configured."
-            in text
-        )
+        # Capture finding 8 (TASK-33007), rewritten on purpose: one sentence
+        # before discovery, not an instruction and an empty-state line.
+        assert MODEL_DISCOVERY_IDLE_COPY in text
 
         screen.query_one("#settings-provider-endpoint-value", Input).focus()
         await pilot.pause()
@@ -11434,7 +11436,17 @@ async def test_settings_provider_model_discovery_controls_render_for_eligible_pr
         discover = screen.query_one("#settings-discover-provider-models", Button)
 
         assert discover.disabled is False
-        assert "Discover models from configured endpoint" in _visible_text(screen)
+        # Capture finding 8 (TASK-33007), rewritten on purpose: before any
+        # discovery the list says one thing once ("Discover models from
+        # configured endpoint" sat over "No discovered models yet. Use
+        # Discover models after endpoint is configured.").
+        assert screen._model_discovery_status == MODEL_DISCOVERY_IDLE_COPY
+        assert MODEL_DISCOVERY_IDLE_COPY == (
+            "No models discovered yet. Discover models lists what the "
+            "configured endpoint serves."
+        )
+        assert _visible_text(screen).count("discovered yet") == 1
+        assert "No discovered models yet" not in _visible_text(screen)
         assert (
             "Capabilities unknown until saved or verified; text chat is assumed."
             in _visible_text(screen)
@@ -11483,7 +11495,9 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
         await _wait_for_settings_text(
             screen,
             pilot,
-            "Discovered 2 model(s) from openai.",
+            # Capture finding 7 (TASK-33007), rewritten on purpose: the
+            # provider's display name, not its config key, and no "(s)".
+            "Discovered 2 models from OpenAI.",
         )
 
         discovered_models = screen.query_one(

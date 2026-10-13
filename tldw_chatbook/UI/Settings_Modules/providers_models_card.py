@@ -78,7 +78,6 @@ from ..Screens.settings_screen import (
     CONFIG_KEY_ROW_LABEL,
     INSTANT_APPLY_BEHAVIOR_COPY,
     MODEL_DISCOVERY_CAPABILITY_WARNING,
-    MODEL_DISCOVERY_EMPTY_COPY,
     OPENAI_RECONNECT_REVIEW_ID,
     PROVIDER_MANUAL_SELECT_VALUE,
     PROVIDER_TEST_GUIDANCE,
@@ -1991,13 +1990,6 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 classes="settings-status-row",
                 markup=False,  # it can name a provider key or quote the server
             )
-            empty_state = Static(
-                MODEL_DISCOVERY_EMPTY_COPY,
-                id="settings-model-discovery-empty",
-                classes="settings-status-row",
-            )
-            empty_state.display = not screen._model_discovery_models
-            yield empty_state
             yield Static(
                 MODEL_DISCOVERY_CAPABILITY_WARNING,
                 id="settings-model-discovery-capability-warning",
@@ -2031,8 +2023,8 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 classes="settings-discovered-models-list",
                 disabled=not screen._model_discovery_models,
             )
-            # Without its box an empty list is zero rows tall; the empty-state
-            # line above stands in for it.
+            # Without its box an empty list is zero rows tall; the status
+            # line above says why (capture finding 8: it alone says so).
             discovered_list.display = bool(screen._model_discovery_models)
             yield discovered_list
         # ADR-020: [model_catalog] auto-refresh toggles. Values initialize
