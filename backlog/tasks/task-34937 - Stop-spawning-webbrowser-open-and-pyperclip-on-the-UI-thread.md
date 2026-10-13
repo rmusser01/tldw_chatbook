@@ -20,5 +20,6 @@ Link handlers spawn the OS open command on the UI thread (settings_screen.py:236
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Link and copy actions dispatch subprocess spawns via to_thread or executor,No subprocess spawn on the event loop in the named handlers
+- [x] Link and copy actions dispatch subprocess spawns via to_thread or executor
+- [x] No subprocess spawn on the event loop in the named handlers
 <!-- AC:END -->
