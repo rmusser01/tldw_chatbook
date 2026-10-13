@@ -762,7 +762,9 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   pair and when each was last used.
 - **READY PROVIDERS**, the first three models of each provider with no known
   blocker, then an "… N more" row (Enter on it puts the provider's name in
-  Find, and what you type next is added after it).
+  Find, and what you type next is added after it). A provider with its key
+  saved and no model chosen is listed here too once its cached catalog lists
+  a model: it is checked again with the first one.
 - **NEEDS SETUP**, providers with a blocker such as a missing key. **Enter**
   on one never applies it: it closes the list and opens **Settings ▸
   Providers & Models** at that provider, with its key, endpoint or model
@@ -939,9 +941,11 @@ Settings offers no way back from there, so nothing reopens for it.
   highlight never lands on another provider's match for the name, so
   **Enter** cannot apply one by accident; once you type, it is Find's best
   match again.
-- **A provider that lists no models.** Its row named no model, so with the
-  key saved it has none to offer: READY PROVIDERS opens with that provider's
-  own line, "<name> · no models reported · type its name and an id". When no
+- **A provider that lists no models.** Its row named no model. When its
+  cached catalog lists models once the key is saved, they are READY rows,
+  the first of them is highlighted and **Enter** applies it. Otherwise it has
+  none to offer: READY PROVIDERS opens with that provider's own line,
+  "<name> · no models reported · type its name and an id". When no
   model is saved for it either, the provider stays under NEEDS SETUP, reading
   "Not ready · no model", with its row highlighted; **Enter** there opens
   Settings again with the **Model** field under **Default model for new

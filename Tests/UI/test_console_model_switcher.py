@@ -1454,6 +1454,69 @@ async def test_a_returned_provider_with_a_key_and_no_model_says_what_to_type() -
     assert recorder.setup == []
 
 
+@pytest.mark.parametrize("reopened", [False, True], ids=["any-open", "reopened"])
+async def test_a_provider_whose_only_blocker_is_its_model_lists_its_catalog(
+    reopened: bool,
+) -> None:
+    """Controller ruling of 2026-10-12 (final fix wave 1, item 1, Option A).
+
+    A provider with its key saved and no model (24 of the 60 shipped lists
+    are empty) read model_missing, and catalogs loaded for ready providers
+    only, so its models were never listed. Its catalog loads too, on every
+    open, and its readiness is asked again with the first model it lists:
+    its models are READY rows, and a list reopened on it highlights the first
+    and applies it on Enter. A provider with another blocker lists nothing."""
+    recorder = Recorder(ready=frozenset({"openrouter"}))
+    others = recorder.readiness
+
+    def readiness(provider: str, model: str | None) -> ConsoleSettingsReadiness:
+        verdict = others(provider, model)  # records the call
+        return (READY if model else NO_MODEL) if provider == "openai" else verdict
+
+    async def catalog(provider: str) -> list[str]:
+        recorder.catalog_calls.append(provider)
+        return {"openai": ["gpt-new", "gpt-old"], "groq": ["llama-g"]}.get(
+            provider, ["openai/gpt-y"]
+        )
+
+    recorder.readiness = readiness
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                draft=_draft("openrouter", "openai/gpt-y"),
+                providers_models={"OpenAI": [], "Groq": [], "OpenRouter": []},
+                catalog_loader=catalog,
+                **(
+                    {"query": "OpenAI ", "reopened_provider": "openai"}
+                    if reopened
+                    else {}
+                ),
+            ),
+        )
+        keys = _row_keys(switcher)
+        assert ("pair", "openai", "gpt-new") in keys
+        assert not any(key[:2] == ("setup", "openai") for key in keys)
+        assert ("openai", "gpt-new") in [call[:2] for call in recorder.readiness_calls]
+        # Another blocker: no catalog, no model rows.
+        assert "groq" not in recorder.catalog_calls
+        assert not any(key[1] == "groq" and key[0] != "setup" for key in keys)
+        if reopened:
+            row = switcher.highlighted_row()
+            assert (row.kind, row.provider, row.model) == ("pair", "openai", "gpt-new")
+            await pilot.press("enter")
+            await pilot.pause()
+    if reopened:
+        applied = [
+            (submission.draft.settings.provider, submission.draft.settings.model)
+            for submission in recorder.submissions
+        ]
+        assert applied == [("openai", "gpt-new")]
+
+
 async def test_a_query_the_list_opened_with_is_typed_after_not_over() -> None:
     """TASK-33008.2: the list reopens with the provider's name and a space in
     Find, and its "no models reported" line asks for an id after the name.

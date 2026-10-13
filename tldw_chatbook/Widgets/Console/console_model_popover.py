@@ -234,6 +234,12 @@ def _is_ready(readiness: ConsoleSettingsReadiness | None) -> bool:
     return readiness is not None and readiness.operability == "ready_to_send"
 
 
+def _only_needs_a_model(readiness: ConsoleSettingsReadiness | None) -> bool:
+    """Whether a model is all that keeps the provider from sending: every
+    blocker that outranks ``model_missing`` (a key, an endpoint) is clear."""
+    return readiness is not None and readiness.blocker == "model_missing"
+
+
 def provider_key(provider: object) -> str:
     """Canonical provider key; ``custom-ep:`` registry ids stay verbatim."""
     text = str(provider or "").strip()
@@ -958,7 +964,12 @@ class ConsoleModelPopover(
         targets = tuple(
             key
             for key in providers
-            if _is_ready(self._readiness.get(key))
+            # A key saved and no model: _load_catalogs asks again with the
+            # first model its catalog lists.
+            if (
+                _is_ready(self._readiness.get(key))
+                or _only_needs_a_model(self._readiness.get(key))
+            )
             and not key.startswith("custom-ep:")
             and key not in self._catalog_state
         )
@@ -995,6 +1006,16 @@ class ConsoleModelPopover(
                 self._catalogs[key] = models
         if not self.is_mounted:
             return
+        if self.is_attached:  # A popped screen stays "mounted".
+            self._request_readiness(
+                tuple(
+                    key
+                    for key in providers
+                    if key in self._catalogs
+                    and _only_needs_a_model(self._readiness.get(key))
+                ),
+                refresh=True,
+            )
         self._rebuild_rows()
         self._sync_find_placeholder()
 
