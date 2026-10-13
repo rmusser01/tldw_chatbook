@@ -933,9 +933,10 @@ class ConsoleStatusChips(Horizontal):
         """
         if event.widget.id == "console-cost-chip":
             scroll = event.widget.parent
+            start = event.widget.virtual_region.x
             if (
                 isinstance(scroll, HorizontalScroll)
-                and event.widget.virtual_region.x < scroll.scrollable_content_region.width
+                and start < scroll.scrollable_content_region.width
             ):
                 scroll.scroll_home(animate=False)
             self._refit_cost_chip()
