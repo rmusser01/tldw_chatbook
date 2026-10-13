@@ -145,6 +145,7 @@ _BUDGETS: dict[str, int] = {
     # quit summary's single-writer save and its Inspector guide (C8), the
     # staged credential source behind the Key check row, the deep link's
     # first edit (C1) and Save selected's own worker group and lock (C9).
+    # Fix round 1 of that review ends one line under it, at 33,880.
     "tldw_chatbook/UI/Screens/settings_screen.py": 33880,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
@@ -164,7 +165,9 @@ _BUDGETS: dict[str, int] = {
     # markup (the save result, the discovery status): +2. That review's
     # fixes (2026-10-11) re-pin it at the integrated head's 2,371: the API
     # key row follows an unsaved Env var edit and its sentences fit one line
-    # (R1 #10, #11), with the Source words as named constants (C3, C4).
+    # (R1 #10, #11), with the Source words as named constants (C3, C4). Fix
+    # round 1 lowers it to 2,367 (the custom-endpoint sentence is the
+    # screen's own; the quit summary's controls read the screen's values).
     "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2367,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
