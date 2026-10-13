@@ -126,6 +126,8 @@ class StudyDashboard(Widget):
                 "Source generation is unavailable until Study has selected source items.",
                 id="study-source-generation-status",
                 classes="study-dashboard-meta",
+                # Server pack titles and error text print as typed.
+                markup=False,
             )
 
     def update_scope_summary(self, summary: str) -> None:

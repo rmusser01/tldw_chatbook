@@ -812,6 +812,7 @@ class StudyScreen(BaseAppScreen):
                     notify(
                         status,
                         severity="error" if last_status == "failed" else "warning",
+                        markup=False,
                     )
                 return True
             if attempt + 1 < SOURCE_STUDY_PACK_STATUS_CHECKS:
