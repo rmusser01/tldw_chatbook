@@ -306,14 +306,14 @@
     padding: $ds-space-0;
 }
 /* TASK-32947: the off glyph was painted in the card's own fill (1.0:1), so
-   an unchecked box showed nothing. Off now shows Textual's own convention --
-   a dimmed X in the muted text tone -- and on keeps the success X; the
-   On/Off label still carries the state in words. */
+   an unchecked box showed nothing. It is a StateCheckbox now (#3057): a
+   check in the readable success tone when on ($success was 1.9:1 on a light
+   theme), a blank cell when off; the On/Off label says it in words too. */
 #settings-theme-dark-mode > .toggle--button {
     color: $ds-text-muted;
 }
 #settings-theme-dark-mode.-on > .toggle--button {
-    color: $success;
+    color: $text-success;
 }
 
 /* TASK-32947: theme-card action buttons. Textual's variant fills paint an

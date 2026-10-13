@@ -386,14 +386,21 @@ async def test_preset_swatches_have_edges_and_a_contrasting_focus_ring(theme, re
             )
 
         # The "Dark theme" checkbox's off glyph used to be painted in the
-        # card's own fill (1.0:1); off must now show a visible, non-success X.
+        # card's own fill (1.0:1). Rewritten on purpose (#3057 capture fix 2,
+        # finding 1): it is a StateCheckbox, so off paints no mark at all and
+        # on paints a check that must be visible.
         checkbox = editor.query_one("#settings-theme-dark-mode")
         checkbox.value = False
         await _show(pilot, checkbox)
         await pilot.pause(0.1)
-        glyph = next(s for _, c, s in _cells(host, checkbox.region) if c == "X")
+        assert "X" not in [c for _, c, _s in _cells(host, checkbox.region)]
+        assert checkbox._button.plain[1] == " "
+        checkbox.value = True
+        await pilot.pause(0.1)
+        mark = checkbox._button.plain[1]
+        glyph = next(s for _, c, s in _cells(host, checkbox.region) if c == mark)
         assert _contrast(glyph.color, glyph.bgcolor) >= 3.0, (
-            f"{theme} off glyph {glyph.color} on {glyph.bgcolor}"
+            f"{theme} on glyph {glyph.color} on {glyph.bgcolor}"
         )
 
 

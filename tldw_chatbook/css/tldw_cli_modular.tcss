@@ -5605,7 +5605,7 @@ StatCard:hover {
     color: $ds-text-muted;
 }
 #settings-theme-dark-mode.-on > .toggle--button {
-    color: $success;
+    color: $text-success;
 }
 
 
