@@ -3624,8 +3624,8 @@ class ConsoleCompactionPreflight:
             result = blocked(
                 (
                     "Conversation context reached its compaction threshold. "
-                    "Use Compact now in Conversation settings > Context and "
-                    "memory, then send again."
+                    "Use Compact now in Chat settings ▸ Context and memory "
+                    "(Ctrl+O), then send again."
                 )
             )
             return provider_messages, result

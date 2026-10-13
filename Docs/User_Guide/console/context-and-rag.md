@@ -109,7 +109,7 @@ and memory:
 
 A send that cannot show the card (a queued prompt, Retry or Regenerate) stops
 with a note instead: use **Compact now** in Chat settings ▸ Context and
-memory, then send again.
+memory (Ctrl+O), then send again.
 
 When compacting cannot make enough room, the message is not sent and the note
 says what fills the window and what to change:
