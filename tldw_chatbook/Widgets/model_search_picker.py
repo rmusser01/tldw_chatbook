@@ -347,10 +347,6 @@ class ModelSearchPicker(Widget):
             name="model-options",
         )
         results.tooltip = "Matching models; use arrow keys and Enter to select."
-        # Not a Tab stop (#3057 capture round 2, finding 24): the list opens
-        # under the focused field, and Tab stopped on it before the next row.
-        # Down lets it take focus; leaving it takes that back.
-        results.can_focus = False
         yield results
 
     def on_mount(self) -> None:
@@ -1012,7 +1008,15 @@ class ModelSearchPicker(Widget):
             )
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        if getattr(event.control, "id", None) != "model-search-picker-input":
+        control_id = getattr(event.control, "id", None)
+        if control_id == "model-search-picker-custom":
+            # #3057 capture round 2, finding 24: Tab from the field stopped on
+            # the open list after Custom ID. Closed here, Tab skips it, and
+            # the list stays focusable, so a press on a row still picks it.
+            self._hide_results()
+            self._render_catalog_status()  # no "Enter picks" without a list
+            return
+        if control_id != "model-search-picker-input":
             return
         if self._preserve_committed_on_next_input_focus:
             self._preserve_committed_on_next_input_focus = False
@@ -1023,8 +1027,6 @@ class ModelSearchPicker(Widget):
 
     def on_descendant_blur(self, event: events.DescendantBlur) -> None:
         """Restore committed copy after focus leaves the compound picker."""
-        if getattr(event.control, "id", None) == "model-search-picker-results":
-            event.control.can_focus = False  # a Tab stop only while Down holds it
         self.set_timer(
             _BLUR_RESTORE_DELAY_SECONDS,
             self._restore_committed_display_after_blur,
@@ -1131,7 +1133,6 @@ class ModelSearchPicker(Widget):
             results = self.query_one("#model-search-picker-results", OptionList)
             if results.has_focus:
                 return  # the list's own binding moves its cursor
-            results.can_focus = True
             results.focus()
             if self._highlight_typed_match(results):
                 event.stop()

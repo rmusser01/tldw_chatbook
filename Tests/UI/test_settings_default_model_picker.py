@@ -627,3 +627,35 @@ async def test_a_typed_filter_counts_matches_and_enter_picks_the_first(request):
         assert str(screen.query_one("#settings-model-source", Static).renderable) == (
             "edited *"
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("held", [False, True])
+async def test_a_click_on_a_listed_model_picks_it(request, held):
+    """Capture fix 2, finding 3: with the results list unfocusable (finding
+    24's fix), a press on a row focused the detail pane instead, the field's
+    blur collapsed the picker and hid the list, and nothing was picked (a
+    fast click opened an unrelated Select under the shifted rows). A press
+    puts focus in the list and keeps it open, and the click picks the row."""
+    app = _app("openai", "gpt-4o", catalog=("gpt-4o",), served=("o3-mini-new",))
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        picker, field, results, adapter = _widgets(screen)
+        await _press_discover(host, pilot, screen)
+        field.focus()
+        await pilot.pause()
+        row = (3, results.gutter.top + _rows(results).index("o3-mini-new"))
+        if held:  # an ordinary press lasts 80-150 ms
+            before = results.region
+            await pilot.mouse_down(results, offset=row)
+            await pilot.pause(0.12)
+            assert host.focused is results
+            assert results.display and results.region == before
+            return
+        await pilot.click(results, offset=row)
+        await pilot.pause(0.2)
+        assert adapter.value == field.value == picker.value == "o3-mini-new"

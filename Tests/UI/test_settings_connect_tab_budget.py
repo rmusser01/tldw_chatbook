@@ -456,6 +456,15 @@ async def test_tab_leaves_the_model_row_after_custom_id_and_down_still_picks(req
         await pilot.press("tab")
         await pilot.pause()
         assert getattr(host.focused, "id", None) == "model-search-picker-custom"
+        # Capture fix 2, finding 3: Custom ID closes the list (so Tab skips
+        # it while a click can still focus it); Shift+Tab reopens it.
+        assert not results.display
+        await pilot.press("shift+tab")
+        await _until(pilot, lambda: results.display)
+        assert host.focused is field
+        await pilot.press("tab")
+        await pilot.pause()
+        assert getattr(host.focused, "id", None) == "model-search-picker-custom"
         await pilot.press("tab")
         await pilot.pause()
         assert host.focused is not results
