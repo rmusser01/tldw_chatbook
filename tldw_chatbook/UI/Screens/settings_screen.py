@@ -1274,8 +1274,9 @@ def _session_summary_section_values(
 
 # task-1341: staged save is the default commit model; instant-apply is the
 # labeled exception. One copy pair shared by the inline hints and the
-# focused-field inspector "Save:" rows.
-STAGED_SAVE_BEHAVIOR_COPY = "staged - press s to save, r to revert"
+# focused-field inspector "Save:" rows. #3057 capture round 2 (finding 3):
+# the State line's words, never "staged", which read as an edit waiting.
+STAGED_SAVE_BEHAVIOR_COPY = "edits save with s · r reverts"
 # Mirrored (with an Enter-to-apply clause) in
 # Widgets/settings_splash_screen_viewer.py, which cannot import this module.
 INSTANT_APPLY_BEHAVIOR_COPY = "applies immediately - no Save needed"

@@ -165,7 +165,9 @@ _BUDGETS: dict[str, int] = {
     # Chat images become a Select and a Checkbox, the summary prompt's
     # button gets a labelled row (+2): 33,912. Capture fix round 1: those
     # two instant-apply rows' help leads with "Applies immediately." (+0).
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33912,
+    # Capture round 2 A1: the Inspector's Save row says how edits save,
+    # never "staged" (+1): 33,913.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33913,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

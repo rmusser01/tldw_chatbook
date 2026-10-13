@@ -322,7 +322,7 @@ async def test_console_rail_label_setting_is_searchable_and_has_focused_guidance
         assert "Saved as: console." in saved_as
         assert "stack_collapsed_rail_labels" in saved_as
         assert "Applies: After saving, when Console is next opened." in visible
-        assert "Save: staged - press s to save, r to revert" in visible
+        assert "Save: edits save with s · r reverts" in visible
 
 
 @pytest.mark.asyncio

@@ -107,7 +107,7 @@ async def test_console_side_chat_settings_are_searchable_and_have_focused_guidan
         assert _console_config_key_saved_as(screen) == (
             "Saved as: console.sidechat_model"
         )
-        assert "Save: staged - press s to save, r to revert" in visible
+        assert "Save: edits save with s · r reverts" in visible
 
 
 @pytest.mark.asyncio

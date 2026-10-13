@@ -13,8 +13,11 @@ These tests pin:
   staged fields (its own instant-apply group; TASK-33007.6 dropped that
   group's border, as the pane border is the card's only frame);
 * the focused-field inspector documents the per-field save behavior
-  ("Save: staged - press s to save, r to revert" vs
-  "Save: applies immediately - no Save needed").
+  ("Save: edits save with s · r reverts" vs
+  "Save: applies immediately - no Save needed"). #3057 capture round 2,
+  finding 3: the staged row read "Save: staged - press s to save, r to
+  revert", which claimed an edit was waiting when none was; it is rewritten
+  on purpose in the State line's words.
 """
 
 import pytest
@@ -35,7 +38,7 @@ from tldw_chatbook.UI.Screens.settings_screen import (
 )
 
 INSTANT_APPLY_LABEL = "applies immediately - no Save needed"
-STAGED_SAVE_ROW = "Save: staged - press s to save, r to revert"
+STAGED_SAVE_ROW = "Save: edits save with s · r reverts"
 INSTANT_SAVE_ROW = f"Save: {INSTANT_APPLY_LABEL}"
 
 
@@ -93,6 +96,27 @@ async def test_staged_fields_document_staged_save_in_the_inspector(request):
         screen.query_one("#settings-storage-chachanotes-db-path", Input).focus()
         await pilot.pause()
         assert STAGED_SAVE_ROW in _visible_text(screen)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_the_save_row_claims_no_staged_edit_when_none_is_staged(request):
+    """#3057 capture round 2, finding 3 (01, 05a, 09c, 10a-10c): with nothing
+    staged the Inspector said "Save: staged - press s to save, r to revert"
+    under "No unsaved changes". The row says how this field's edits save, in
+    the State line's words ("edits save with s"), not that one is waiting."""
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(160, 50)) as pilot:
+        await _click_settings_category(pilot, "providers-models")
+        screen = _active_destination_screen(host)
+        await pilot.pause()
+
+        text = _visible_text(screen)
+        assert "No unsaved changes" in text
+        assert STAGED_SAVE_ROW in text
+        assert "staged" not in text
 
 
 @pytest.mark.asyncio
