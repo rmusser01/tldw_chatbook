@@ -3389,12 +3389,12 @@ class GuardianRuleEditModal(SafeModalDismissMixin, ModalScreen[None]):
                 placeholder="Cooldown minutes after escalation (blank: none)",
                 id="grm-cooldown",
             )
-            yield Checkbox("Rule enabled", True, id="grm-enabled")
-            yield Checkbox(
+            yield StateCheckbox("Rule enabled", True, id="grm-enabled")
+            yield StateCheckbox(
                 "Crisis rule (always notify, with crisis resources)", False,
                 id="grm-is-crisis",
             )
-            yield Checkbox(
+            yield StateCheckbox(
                 "Feed this topic to Dreams discovery (aggregate counts only)",
                 False, id="grm-feeds-discovery",
             )

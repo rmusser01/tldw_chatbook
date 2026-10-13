@@ -31,10 +31,12 @@ def normalize_goal_setting(key, value):
 
 
 def compose_goal_policy(screen):
-    from textual.widgets import Checkbox, Input, Static
+    from textual.widgets import Input, Static
+
+    from ...Widgets.state_checkbox import StateCheckbox
 
     yield Static("Goal runs", classes="destination-section")
-    yield Checkbox(
+    yield StateCheckbox(
         "Enable goal runs",
         value=bool(screen._console_behavior_value("goal_runs_enabled")),
         id="settings-goal-runs-enabled",
