@@ -6,13 +6,17 @@ and the message-capture idiom in ``Tests/UI/test_console_shell_chip_actions.py``
 """
 
 import re
+from collections.abc import Callable
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from rich.cells import cell_len
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Input
+from textual.binding import Binding
+from textual.screen import ModalScreen
+from textual.widgets import Input, Static
 
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
@@ -502,6 +506,82 @@ async def test_the_cost_chip_fits_when_it_is_shown_after_layout() -> None:
         for _ in range(5):
             await pilot.pause()
         assert _cost_chip_drawn_whole(app) == "Ctx 0% · Now $0.00"
+
+
+class _SwitchModelStandIn(ModalScreen[None]):
+    """A dialog over the strip: Enter applies a pair while it is still the
+    active screen, as Switch model's live commit does; Esc closes it."""
+
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("enter", "apply", "Apply"),
+        Binding("escape", "dismiss", "Close"),
+    ]
+
+    def __init__(self, apply: Callable[[], None]) -> None:
+        super().__init__()
+        self._apply = apply
+
+    def compose(self) -> ComposeResult:
+        yield Static("Switch model")
+
+    def action_apply(self) -> None:
+        self._apply()
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "expected"),
+    (
+        (
+            {},
+            {
+                "provider_label": "Provider: llama.cpp",
+                "model_label": "Model: qwen3-8b-instruct-q4_k_m",
+            },
+            "Ctx 0%",
+        ),
+        (
+            {
+                "provider_label": "Provider: DeepSeek",
+                "model_label": "Model: deepseek-v4-flash",
+            },
+            {},
+            "Ctx 0% · Now $0.00",
+        ),
+    ),
+    ids=("wider-pair-02c", "narrower-pair"),
+)
+@pytest.mark.asyncio
+async def test_a_pair_applied_under_a_dialog_refits_the_cost_chip(
+    before: dict, after: dict, expected: str
+) -> None:
+    """Capture findings 4 (02c at 211x44): a model applied from Switch model
+    changed the Provider and Model chips' widths, and the cost chip kept the
+    fit for the old widths until a resize ("Ctx 0% · No", cut mid-figure;
+    "Context 0%" where "Ctx 0% · Now $0.00" fit). The refit the change
+    scheduled ran after the dialog's refresh, before the Console under it
+    laid the new widths out."""
+    app = _ProductionChipsApp(
+        _capture_control_state(**before), cost_state=_cost_state(**_CAPTURE_LABELS)
+    )
+    async with app.run_test(size=(211, 8)) as pilot:
+        for _ in range(3):
+            await pilot.pause()
+        chips = app.query_one(ConsoleStatusChips)
+        assert _cost_chip_drawn_whole(app) != expected
+        app.push_screen(
+            _SwitchModelStandIn(
+                lambda: chips.sync_state(_capture_control_state(**after))
+            )
+        )
+        await pilot.pause()
+        await pilot.press("enter")
+        for _ in range(3):
+            await pilot.pause()
+        await pilot.press("escape")
+        for _ in range(5):
+            await pilot.pause()
+        assert not isinstance(app.screen, _SwitchModelStandIn)
+        assert _cost_chip_drawn_whole(app) == expected
 
 
 class _ChipsAndComposerApp(_ProductionChipsApp):

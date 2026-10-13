@@ -247,6 +247,13 @@ async def test_cost_chip_shows_dollar_figure_after_priced_send():
 
         chip = console.query_one("#console-cost-chip")
         assert chip.display is True
+        # At 200 columns the chips before it leave no room for a figure, so
+        # at rest it reads "…" (it used to keep a label the strip cut to
+        # "Context"); with focus it shows every figure.
+        assert str(chip.render()) == "…"
+        chip.focus()
+        for _ in range(5):
+            await pilot.pause()
         rendered = str(chip.render())
         assert "$" in rendered
 

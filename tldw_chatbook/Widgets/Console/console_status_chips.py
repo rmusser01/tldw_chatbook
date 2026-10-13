@@ -436,6 +436,9 @@ class ConsoleStatusChips(Horizontal):
         self._cost_strip_end = 0.0
         self._cost_strip_width = 0
         self._cost_chip_width = 0
+        # The cost chip's x on the strip and the strip's width at the last
+        # layout of this screen (see _refit_after_layout).
+        self._cost_chip_place: tuple[int, int] | None = None
         self._run_chip_state: tuple[bool, str] = (bool(run_copy), run_copy)
         self._collapsed = bool(collapsed)
         self.remove_class(*(name for name in self.classes if name.startswith("h-")))
@@ -989,6 +992,32 @@ class ConsoleStatusChips(Horizontal):
             lambda: self.call_after_refresh(self._keep_cost_chip_in_view),
             init=False,
         )
+        self.screen.screen_layout_refresh_signal.subscribe(
+            self, self._refit_after_layout
+        )
+
+    def _refit_after_layout(self, _screen: object) -> None:
+        """Refit the cost chip after a layout of this screen moved it.
+
+        Capture findings 4 (02c): a refit scheduled by a change runs after
+        the ACTIVE screen's refresh. A pair applied from Switch model was
+        fitted while the Console, still under the dialog, had not laid out
+        the new chip widths, and nothing refitted once it had. Only a move
+        (the chip's x or the strip's width) refits, so the relabel's own
+        layout does not start another. Still deferred: relabelled straight
+        from here the chip kept its old width (a layout was pending on it).
+        """
+        try:
+            chip = self.query_one("#console-cost-chip", ConsoleCostChip)
+        except NoMatches:
+            return
+        scroll = chip.parent
+        if not isinstance(scroll, HorizontalScroll):
+            return
+        place = (chip.virtual_region.x, scroll.scrollable_content_region.width)
+        if place != self._cost_chip_place:
+            self._cost_chip_place = place
+            self.call_after_refresh(self._refit_cost_chip)
 
     def on_resize(self, _event: events.Resize) -> None:
         """Reapply width-aware cost copy without requiring a state change.
