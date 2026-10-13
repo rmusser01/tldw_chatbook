@@ -4737,8 +4737,12 @@ async def test_console_settings_modal_controls_render_one_row_tall(size) -> None
         _assert_one_row_controls(screen, "context")
         painted = _painted_rows(screen)
         paired = 0
+        # Only Selects inside the body's viewport paint: one just under its
+        # bottom edge still has a region (seen once the Context view became
+        # 85% tall, TASK-33007 capture finding 21, round 2).
+        viewport = screen.query_one("#console-settings-body").content_region
         for select in screen.query("#console-settings-context-view Select"):
-            if not select.region.area:
+            if not viewport.contains_region(select.region):
                 continue
             label = next(
                 child
