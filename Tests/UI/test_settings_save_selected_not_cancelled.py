@@ -56,11 +56,18 @@ class _HeldSaveScope(_CatalogScope):
 
 
 class _RefusingSaveScope(_HeldSaveScope):
-    """Save selected is held, then refused (``outcome`` is a status) or raises."""
+    """Save selected is held, then refused (``outcome`` is a status) or raises;
+    with ``clear_fails`` Clear raises too."""
 
-    def __init__(self, *args, outcome: str, **kwargs) -> None:
+    def __init__(self, *args, outcome: str, clear_fails: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
         self.outcome = outcome
+        self.clear_fails = clear_fails
+
+    async def clear_discovered_models(self, **kwargs):
+        self.clear_calls.append(kwargs)
+        if self.clear_fails:
+            raise OSError("the model cache is read-only")
 
     async def persist_discovered_models_to_settings(self, **kwargs):
         self.persist_calls.append(kwargs)
@@ -90,8 +97,8 @@ async def _save_then_press(monkeypatch, scope, interrupt):
     """Press Save selected, then ``interrupt`` (a button, or a provider to
     switch to) while the write is held.
 
-    Returns the app, the toasts as (message, severity) and the picker
-    syncs as (provider, reload).
+    Returns the app, the toasts as (message, severity), the picker syncs
+    as (provider, reload) and the ids still checked at the end.
     """
     app = _app("openai", "gpt-4o", catalog=("gpt-4o",), served=(_SERVED,))
     app.llm_provider_catalog_scope_service = scope
@@ -130,7 +137,14 @@ async def _save_then_press(monkeypatch, scope, interrupt):
         await pilot.pause()
         scope.release.set()
         await _settle(host, pilot)
-    return app, toasts, reloads
+        checked = [
+            str(model_id)
+            for listing in screen.query("#settings-discovered-models-list").results(
+                SelectionList
+            )
+            for model_id in listing.selected
+        ]
+    return app, toasts, reloads, checked
 
 
 @pytest.mark.asyncio
@@ -144,7 +158,9 @@ async def test_save_selected_is_not_cancelled_by_discover_or_clear(
     listing the ids as unsaved; after Clear the only toast read as if the
     save had been dropped."""
     scope = _HeldSaveScope("openai", catalog=("gpt-4o",), served=(_SERVED,))
-    app, toasts, reloads = await _save_then_press(monkeypatch, scope, interrupt)
+    app, toasts, reloads, _checked = await _save_then_press(
+        monkeypatch, scope, interrupt
+    )
 
     assert scope.saved == (_SERVED,)
     assert _SERVED in app.providers_models["OpenAI"]
@@ -170,17 +186,8 @@ async def test_save_selected_is_not_cancelled_by_discover_or_clear(
             ),
         ),
         ("error", "OpenAI: Could not save discovered models to the providers list."),
-        (
-            "raise",
-            (
-                "OpenAI: Could not save the discovered models (OSError). Discover "
-                "and select them again, then press Save selected; if it keeps "
-                "failing, check that your config file is writable. Details are "
-                "in Logs (F3)."
-            ),
-        ),
     ],
-    ids=["ambiguous", "error", "raise"],
+    ids=["ambiguous", "error"],
 )
 async def test_save_selected_refused_after_discover_or_clear_still_reports(
     request, monkeypatch, interrupt, outcome, expected
@@ -192,11 +199,63 @@ async def test_save_selected_refused_after_discover_or_clear_still_reports(
 
     Capture fix 3 round 3, rewritten on purpose: the toast names the provider
     the save was for (a provider change also takes the line, and "this
-    provider" then read as the form's new one), and a raised save's next step
-    can be followed: Discover, Clear and a provider change all drop the
-    checked rows, so "Try Save again" could not be."""
+    provider" then read as the form's new one). A raised save's next step
+    depends on what took the line: see the test below."""
     scope = _RefusingSaveScope(
         "openai", catalog=("gpt-4o",), served=(_SERVED,), outcome=outcome
+    )
+    app, toasts, _reloads, _checked = await _save_then_press(
+        monkeypatch, scope, interrupt
+    )
+
+    assert scope.saved == ()
+    assert _SERVED not in app.providers_models.get("OpenAI", ())
+    warnings = [message for message, severity in toasts if severity == "warning"]
+    assert warnings == [expected], toasts
+
+
+_CLEAR = "#settings-clear-discovered-provider-models"
+_RESELECT = (
+    "Select them again (Discover first if they are no longer listed), then press "
+    "Save selected"
+)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    ("interrupt", "clear_fails", "next_step", "still_checked"),
+    [
+        pytest.param(_INTERRUPTS[0], False, _RESELECT, [], id="discover"),
+        pytest.param(_CLEAR, False, _RESELECT, [], id="clear"),
+        pytest.param(_CLEAR, True, "Try Save again", [_SERVED], id="failed-clear"),
+        pytest.param(
+            _SWITCH_PROVIDER,
+            False,
+            "Switch back to OpenAI, Discover and select them again, then press "
+            "Save selected",
+            [],
+            id="provider-change",
+        ),
+    ],
+)
+async def test_save_selected_raised_after_another_action_names_a_true_next_step(
+    request, monkeypatch, interrupt, clear_fails, next_step, still_checked
+):
+    """Capture fix 3 round 4, finding 1 (the raise row above, rewritten on
+    purpose): round 3 picked "Discover and select them again" from the
+    revision alone, claiming every action that takes the line drops the
+    checked rows. A Clear that fails keeps them listed and checked, so the
+    toast told the user to re-discover rows still on screen; and after a
+    provider change "Discover" ran against the form's new provider. The step
+    now follows the rows and the provider the form holds when the save
+    fails."""
+    scope = _RefusingSaveScope(
+        "openai",
+        catalog=("gpt-4o",),
+        served=(_SERVED,),
+        outcome="raise",
+        clear_fails=clear_fails,
     )
     logs: list[str] = []
     handler = logging.Handler(logging.WARNING)
@@ -204,13 +263,21 @@ async def test_save_selected_refused_after_discover_or_clear_still_reports(
     screen_logger = logging.getLogger(settings_screen.__name__)
     screen_logger.addHandler(handler)
     try:
-        app, toasts, _reloads = await _save_then_press(monkeypatch, scope, interrupt)
+        app, toasts, _reloads, checked = await _save_then_press(
+            monkeypatch, scope, interrupt
+        )
     finally:
         screen_logger.removeHandler(handler)
 
     assert scope.saved == ()
     assert _SERVED not in app.providers_models.get("OpenAI", ())
+    assert checked == still_checked
     warnings = [message for message, severity in toasts if severity == "warning"]
-    assert warnings == [expected], toasts
-    if outcome == "raise":
-        assert any("persistence failed: OSError" in line for line in logs), logs
+    assert warnings == [
+        (
+            f"OpenAI: Could not save the discovered models (OSError). {next_step}; "
+            "if it keeps failing, check that your config file is writable. "
+            "Details are in Logs (F3)."
+        )
+    ], toasts
+    assert any("persistence failed: OSError" in line for line in logs), logs

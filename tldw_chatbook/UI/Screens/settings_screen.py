@@ -16862,13 +16862,26 @@ class SettingsScreen(BaseAppScreen):
             logger.warning(
                 f"Provider model discovery persistence failed: {type(exc).__name__}"
             )
-            # Discover, Clear or a provider change since the press dropped
-            # the checked rows, so Save cannot simply be pressed again.
-            retry = (
-                "Try Save again"
-                if revision == self._model_discovery_revision
-                else "Discover and select them again, then press Save selected"
+            # The step follows what is on screen now: Discover, a Clear that
+            # worked or a provider change since the press drop the checked
+            # rows; a Clear that failed keeps them.
+            same_provider = (
+                provider_config_key(self._provider_widget_value()) == provider_key
             )
+            if same_provider and set(selected_model_ids) <= (
+                self._model_discovery_selected_model_ids
+            ):
+                retry = "Try Save again"
+            elif same_provider:
+                retry = (
+                    "Select them again (Discover first if they are no longer "
+                    "listed), then press Save selected"
+                )
+            else:
+                retry = (
+                    f"Switch back to {self._provider_display_label(provider)}, "
+                    "Discover and select them again, then press Save selected"
+                )
             failure = failure_status_text(
                 "Could not save the discovered models",
                 exc,

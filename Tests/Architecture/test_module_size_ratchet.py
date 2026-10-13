@@ -204,7 +204,10 @@ _BUDGETS: dict[str, int] = {
     # Capture fix 3 round 3: that toast names the provider the save was for
     # (a provider change takes the line too), and a raised save's next step
     # is one the dropped rows leave possible (+12): 33,966.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33966,
+    # Capture fix 3 round 4: that step follows what is on screen (a failed
+    # Clear keeps the checked rows; a provider change says to switch back)
+    # (+13): 33,979.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33979,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
