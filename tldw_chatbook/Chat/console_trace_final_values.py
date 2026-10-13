@@ -748,7 +748,7 @@ def reconstruct_provider_gateway_kwargs(
     if supports_local_reasoning(provider, resolution.model or ""):
         kwargs["api_base_url"] = resolution.base_url or None
         kwargs["api_key_resolved"] = True
-    elif execution_key == "qwencloud":
+    elif execution_key in {"qwencloud", "deepseek"}:
         kwargs["api_mode"] = getattr(resolution, "api_mode")
         kwargs["api_base_url"] = getattr(resolution, "base_url") or None
     elif execution_key in {"moonshot", "zai"}:

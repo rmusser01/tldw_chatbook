@@ -1,5 +1,6 @@
 """Actual installed dispatch to a private loopback HTTP owner; no paid calls."""
 
+import asyncio
 import json
 import threading
 from contextlib import contextmanager
@@ -9,7 +10,10 @@ from time import monotonic
 import pytest
 
 from Tests.Chat.response_rules_fixtures import source
-from tldw_chatbook.Chat.console_chat_models import ConsoleProviderSelection
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleProviderSelection,
+    ConsoleRunStatus,
+)
 from tldw_chatbook.Chat.console_provider_gateway import (
     AuxiliaryCompletionRequest,
     ConsoleProviderGateway,
@@ -271,12 +275,18 @@ def test_deepseek_editor_support_matches_the_exact_adapter_values():
 
 
 @pytest.mark.asyncio
-async def test_deepseek_all_dispatch_builders_pin_resolved_mode():
-    settings = {
-        "api_key": "offline-fixture",
-        "model": "deepseek-flash",
-        "api_mode": "chat_completions",
-    }
+@pytest.mark.parametrize("base_url", [None, "https://deepseek.example.test/v1"])
+@pytest.mark.parametrize("effort", [None, "none"])
+@pytest.mark.parametrize("mode", [None, "chat_completions"])
+async def test_deepseek_all_dispatch_builders_pin_resolved_mode(base_url, effort, mode):
+    from Tests.Chat.test_console_provider_gateway import _capture_on_prepared_request
+    from tldw_chatbook.Chat.console_trace_final_values import (
+        reconstruct_provider_gateway_kwargs,
+    )
+
+    settings = {"api_key": "offline-fixture", "model": "deepseek-flash"}
+    if mode is not None:
+        settings["api_mode"] = mode
     gateway = ConsoleProviderGateway(
         environ={}, config_provider=lambda: {"api_settings": {"deepseek": settings}}
     )
@@ -285,18 +295,154 @@ async def test_deepseek_all_dispatch_builders_pin_resolved_mode():
             ConsoleProviderSelection(
                 provider="deepseek",
                 explicit_model="deepseek-flash",
-                reasoning_effort="none",
+                reasoning_effort=effort,
+                base_url=base_url,
+                streaming=False,
+                max_tokens=4096,
             )
         )
         assert resolution.ready
-        settings["api_mode"] = "responses"
+        settings.update(api_mode="responses", api_base_url="https://changed.test")
         messages = [{"role": "user", "content": "frozen fixture"}]
+        prepared = _capture_on_prepared_request(gateway, resolution, messages)
         request = AuxiliaryCompletionRequest(resolution, tuple(messages), None, 4096)
+        expected = reconstruct_provider_gateway_kwargs(resolution, prepared)
         for kwargs in (
             gateway._chat_api_kwargs(resolution, messages),
+            gateway._chat_api_kwargs_from_prepared(resolution, prepared),
             gateway._auxiliary_chat_api_kwargs(request, resolution),
         ):
-            assert kwargs.get("api_mode") == "chat_completions"
-            assert kwargs["reasoning_effort"] == "none"
+            assert kwargs["api_mode"] == "chat_completions"
+            assert kwargs["api_base_url"] == resolution.base_url
+            assert kwargs.get("reasoning_effort") == effort
+            assert ("reasoning_effort" in kwargs) == (effort is not None)
+            assert kwargs == expected
     finally:
         await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_deepseek_capture_on_stop_then_next_send_keeps_revision_surface(
+    tmp_path,
+    monkeypatch,
+):
+    """Real admission/SQLite/trace owners; only the external adapter is controlled."""
+    from Tests.Chat.test_console_first_send_atomicity import _controller
+    from Tests.Chat.test_console_trace_first_send_atomicity import _force_capture_on
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Chat.console_trace_runtime import ConsoleTraceBoundaryFactory
+
+    db, store, controller, _ = _controller(
+        tmp_path,
+        initial_settings=ConsoleSessionSettings(
+            provider="deepseek",
+            model="deepseek-flash",
+            streaming=True,
+            reasoning_effort="none",
+            max_tokens=4096,
+        ),
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def adapter(**kwargs):
+        calls.append(kwargs)
+
+        def chunks():
+            if len(calls) == 1:
+                entered.set()
+                assert release.wait(10), (
+                    "test must release the stopped physical adapter"
+                )
+            yield {"choices": [{"delta": {"content": "done"}}]}
+
+        return chunks()
+
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=adapter,
+        environ={},
+        config_provider=lambda: {
+            "api_settings": {
+                "deepseek": {
+                    "api_key": "offline-fixture",
+                    "model": "deepseek-flash",
+                }
+            }
+        },
+        trace_call_boundary_factory=ConsoleTraceBoundaryFactory(db),
+    )
+    controller.provider_gateway = gateway
+    _force_capture_on(monkeypatch)
+    first = None
+    try:
+        first = asyncio.create_task(
+            controller.submit_draft("first", session_id="session-1")
+        )
+        assert await asyncio.to_thread(entered.wait, 10)
+        assert controller.stop_active_run()
+        release.set()
+        await first
+        assert controller.run_state.status is ConsoleRunStatus.STOPPED
+        first_call = dict(
+            db.get_connection().execute("SELECT * FROM console_trace_calls").fetchone()
+        )
+        second = await controller.submit_draft("second", session_id="session-1")
+        rows = [
+            dict(row)
+            for row in db.get_connection().execute(
+                "SELECT * FROM console_trace_calls ORDER BY rowid"
+            )
+        ]
+        nodes = [
+            dict(row)
+            for row in db.get_connection().execute(
+                "SELECT * FROM console_trace_surface_nodes"
+            )
+        ]
+        assert first_call["integrity_state"] == "complete", first_call
+        # Before the first response chunk, Stop retains unknown transport outcome.
+        assert first_call["state"] == "dispatch_unknown", first_call
+        first_node = next(
+            node for node in nodes if node["node_id"] == first_call["surface_node_id"]
+        )
+        assert first_node["component_kind"] == "message"
+        assert first_node["reference_kind"] == "revision"
+        assert first_node["semantic_revision_id"] is not None
+        saved = (
+            db.get_connection()
+            .execute(
+                "SELECT m.content FROM console_trace_semantic_revisions r "
+                "JOIN messages m ON m.id = r.source_message_id WHERE r.revision_id = ?",
+                (first_node["semantic_revision_id"],),
+            )
+            .fetchone()
+        )
+        assert saved["content"] == "first"
+        assert second.accepted and second.provider_started, second
+        assert len(calls) == 2 and len(rows) == 2, rows
+        assert [item["content"] for item in calls[1]["messages_payload"]] == [
+            "first",
+            "second",
+        ]
+        assert store.get_message(second.assistant_message_id).content == "done"
+        assert all(row["integrity_state"] == "complete" for row in rows), rows
+        assert rows[1]["state"] == "complete"
+        assert rows[1]["dispatch_started_at"] is not None
+        assert rows[1]["reservation_provenance"] == "crash_durable_reserved"
+        second_node = next(
+            node for node in nodes if node["node_id"] == rows[1]["surface_node_id"]
+        )
+        assert second_node["predecessor_node_id"] == first_node["node_id"]
+        assert not any(node["reference_kind"] == "omission" for node in nodes), nodes
+    finally:
+        release.set()
+        if first is not None:
+            await asyncio.gather(first, return_exceptions=True)
+        try:
+            await controller.shutdown()
+        finally:
+            try:
+                await gateway.aclose()
+            finally:
+                db.close()
