@@ -1748,9 +1748,12 @@ def test_store_buffers_stream_chunks_until_messages_are_materialized():
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )
 
-    chunk_result = store.append_stream_chunk(message.id, "hel")
+    store.append_stream_chunk(message.id, "hel")
 
-    assert chunk_result.content == ""
+    # TASK-34923: the chunk no longer returns a snapshot copy; streamed
+    # content stays buffered (never written onto message.content) until
+    # materialization.
+    assert message.content == ""
     materialized = store.messages_for_session(session.id)[0]
     assert materialized.content == "hel"
     assert materialized.status == "streaming"
@@ -4432,10 +4435,9 @@ def test_store_drops_late_stream_chunks_for_stopped_message_silently():
     assert stopped.status == "stopped"
     assert stopped.content == "before stop"
 
-    result = store.append_stream_chunk(assistant.id, "late chunk")
-
-    assert result.status == "stopped"
-    assert result.content == "before stop"
+    # TASK-34923: no returned snapshot; the late chunk is dropped silently
+    # and the stored message stays exactly as Stop finalized it.
+    store.append_stream_chunk(assistant.id, "late chunk")
     unchanged = store.get_message(assistant.id)
     assert unchanged.status == "stopped"
     assert unchanged.content == "before stop"

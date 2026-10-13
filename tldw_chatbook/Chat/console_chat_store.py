@@ -14301,8 +14301,14 @@ class ConsoleChatStore:
                 )
             )
 
-    def append_stream_chunk(self, message_id: str, chunk: str) -> ConsoleChatMessage:
+    def append_stream_chunk(self, message_id: str, chunk: str) -> None:
         """Append streamed assistant content to an existing message.
+
+        Returns ``None`` on purpose (TASK-34923): this runs once per
+        streamed chunk and every production caller discarded the returned
+        snapshot copy, so the hot path no longer pays a full ~50-field
+        message copy per token. Callers wanting state read
+        ``get_message`` / ``messages_for_session``.
 
         A chunk arriving for a message already ``"stopped"`` is dropped
         silently rather than raising: the user's Stop already finalized and
@@ -14317,7 +14323,7 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._reject_quarantined_generation_mutation(message)
         if message.status == "stopped":
-            return self._snapshot(message)
+            return None
         self._validate_can_stream(message)
         capture = self._character_emote_captures.get(message.id)
         accepted_events: tuple[CharacterEmoteEvent, ...] = ()
@@ -14358,7 +14364,6 @@ class ConsoleChatStore:
             and stash.get("first_token_at") is None
         ):
             stash["first_token_at"] = time.time()
-        return self._snapshot(message)
 
     # --- Trajectory sidecar (schema v38) -----------------------------------
     #
