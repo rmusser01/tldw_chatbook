@@ -26,6 +26,7 @@ from textual.widgets import (
     Static,
 )
 
+from tldw_chatbook.Chat.console_context_budget_copy import MODEL_WINDOW_SETTING
 from tldw_chatbook.Chat.console_context_compaction import EffectiveMemoryKind
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
@@ -144,6 +145,7 @@ from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 from .console_context_controls import (
     ConsoleContextControlState,
     build_console_context_control_state,
+    context_token_row,
     format_context_tokens,
 )
 
@@ -194,8 +196,8 @@ ENDPOINT_NEW_BUTTON_LABEL = "New endpoint…"
 ENDPOINT_NEW_BUTTON_WIDTH = 17
 BASE_URL_ENTRY_HINT_ID = "console-settings-base-url-entry-hint"
 BASE_URL_ENTRY_HINT_COPY = (
-    "Managed by this endpoint entry — rename or edit it in F4 Settings › "
-    "Providers & Models."
+    "Managed by this endpoint entry — rename or edit it in Settings ▸ "
+    "Providers & Models (F4)."
 )
 MODEL_DISCOVER_SCOPE_COPY = (
     "Tests this endpoint by listing models; this does not test generation."
@@ -825,7 +827,7 @@ CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
     "Settings ▸ Providers & Models (F4)"
 )
 CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY = (
-    "Use: this conversation only. Defaults: F4 Settings > Console Behavior."
+    "Applies to this chat only · defaults live in Settings ▸ Console Behavior (F4)"
 )
 CONSOLE_SETTINGS_SCOPE_COPY = CONSOLE_SETTINGS_MODEL_SCOPE_COPY
 _FOCUS_REVEAL_SETTLE_DELAY_SECONDS = 0.06
@@ -1662,7 +1664,7 @@ class ConsoleSettingsModal(
                             id="console-settings-configure-credential",
                             tooltip=(
                                 "Configure this provider's credentials in "
-                                "F4 Settings > Providers & Models"
+                                "Settings ▸ Providers & Models (F4)"
                             ),
                         )
                         credential_action.display = (
@@ -1841,22 +1843,19 @@ class ConsoleSettingsModal(
                             markup=False,
                         )
                         yield Static(
-                            f"{MODEL_FIELD_LABELS['max_tokens']:<20}"
-                            f"{format_context_tokens(self._context_state.response_max_tokens)} tokens",
+                            context_token_row(MODEL_FIELD_LABELS["max_tokens"], self._context_state.response_max_tokens),
                             id="console-context-response-max",
                             classes="console-settings-modal-row",
                             markup=False,
                         )
                         yield Static(
-                            "Safety margin       "
-                            f"{format_context_tokens(self._context_state.safety_margin_tokens)} tokens",
+                            context_token_row("Safety margin", self._context_state.safety_margin_tokens),
                             id="console-context-safety-margin",
                             classes="console-settings-modal-row",
                             markup=False,
                         )
                         yield Static(
-                            "Safe input ceiling  "
-                            f"{format_context_tokens(self._context_state.safe_input_ceiling_tokens)} tokens",
+                            context_token_row("Safe input ceiling", self._context_state.safe_input_ceiling_tokens),
                             id="console-context-safe-input",
                             classes="console-settings-modal-row",
                             markup=False,
@@ -1896,22 +1895,19 @@ class ConsoleSettingsModal(
                                 classes="console-settings-control",
                             )
                         yield Static(
-                            "Effective           "
-                            f"{format_context_tokens(self._context_state.conversation_budget_tokens)} tokens",
+                            context_token_row("Effective", self._context_state.conversation_budget_tokens),
                             id="console-context-effective-budget",
                             classes="console-settings-modal-row",
                             markup=False,
                         )
                         yield Static(
-                            "Next request        "
-                            f"{format_context_tokens(self._context_state.request_tokens)} tokens",
+                            context_token_row("Next request", self._context_state.request_tokens),
                             id="console-context-next-request",
                             classes="console-settings-modal-row",
                             markup=False,
                         )
                         yield Static(
-                            "Request overhead    "
-                            f"{format_context_tokens(self._context_state.request_overhead_tokens)} tokens",
+                            context_token_row("Request overhead", self._context_state.request_overhead_tokens),
                             id="console-context-overhead",
                             classes="console-settings-modal-row",
                             markup=False,
@@ -5522,10 +5518,10 @@ class ConsoleSettingsModal(
         updates = {
             "console-settings-context-current": f"Current         {self._context_label()}",
             "console-context-model-window": self._model_window_row(result.source),
-            "console-context-safe-input": f"Safe input ceiling  {format_context_tokens(state.safe_input_ceiling_tokens)} tokens",
-            "console-context-effective-budget": f"Effective           {format_context_tokens(state.conversation_budget_tokens)} tokens",
-            "console-context-response-max": f"{MODEL_FIELD_LABELS['max_tokens']:<20}{format_context_tokens(state.response_max_tokens)} tokens",
-            "console-context-safety-margin": f"Safety margin       {format_context_tokens(state.safety_margin_tokens)} tokens",
+            "console-context-safe-input": context_token_row("Safe input ceiling", state.safe_input_ceiling_tokens),
+            "console-context-effective-budget": context_token_row("Effective", state.conversation_budget_tokens),
+            "console-context-response-max": context_token_row(MODEL_FIELD_LABELS["max_tokens"], state.response_max_tokens),
+            "console-context-safety-margin": context_token_row("Safety margin", state.safety_margin_tokens),
             "console-context-capacity-status": self._context_validation_label(),
         }
         for control_id, text in updates.items():
@@ -6047,11 +6043,11 @@ class ConsoleSettingsModal(
         if self._context_state.model_window_tokens is not None:
             return (
                 "Context window unknown; budgets use the assumed size. Enter the "
-                "model's documented limit in F4 Settings > Providers & Models."
+                f"model's documented limit in {MODEL_WINDOW_SETTING}."
             )
         return (
             "Model limit unknown; automatic safety cannot be verified. "
-            "Set the context window in F4 Settings > Providers & Models."
+            f"Set the context window in {MODEL_WINDOW_SETTING}."
         )
 
     def _model_window_row(self, source: str = "") -> str:

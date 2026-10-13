@@ -435,8 +435,11 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
         assert str(save_defaults.label) == "Save as model default"  # TASK-33006.5
         assert save_defaults.display is False
         scope = str(app.screen.query_one("#console-settings-scope", Static).renderable)
-        assert "this conversation" in scope
-        assert "F4 Settings > Console Behavior" in scope
+        # Rewritten on purpose by TASK-33007 capture finding 17: "this
+        # conversation" and "F4 Settings > Console Behavior" became the
+        # Model view's words.
+        assert "this chat only" in scope
+        assert "Settings ▸ Console Behavior (F4)" in scope
         context_labels = {
             "#console-context-custom-budget": "Conversation max tokens",
             "#console-context-trigger-percent": "Compact at (%)",
@@ -1067,6 +1070,51 @@ async def test_unverified_model_capacity_is_labeled_unknown() -> None:
         assert window.endswith("unknown, 8,001 assumed"), window
         assert "Context window unknown" in status
         assert "Providers & Models" in status
+
+
+@pytest.mark.asyncio
+async def test_context_view_names_settings_as_the_model_view_does() -> None:
+    """Capture finding 17 (08b): the Context view wrote "F4 Settings >
+    Providers & Models" where the Model view writes "Settings ▸ Providers &
+    Models (F4)", and an overhead nobody measured read "unknown tokens".
+    Both views spell the pointer one way, and an unknown count is "unknown"."""
+    estimate = ConsoleSettingsContextEstimate(
+        0,
+        32000,
+        "0 / 32,000 tokens (assumed; window unknown)",
+        token_limit_verified=False,
+        token_limit_source="provider fallback",
+    )
+    state = build_console_context_control_state(settings=_settings(), estimate=estimate)
+    assert state.request_overhead_tokens is None
+    app = _ContextHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=estimate,
+                context_state=state,
+                can_save=True,
+                focus_context=True,
+            )
+        )
+        await pilot.pause()
+
+        def text(selector: str) -> str:
+            return str(app.screen.query_one(selector, Static).content)
+
+        status = text("#console-context-capacity-status")
+        scope = text("#console-settings-scope")
+        assert "Settings ▸ Providers & Models (F4)" in status, status
+        assert scope == (
+            "Applies to this chat only · defaults live in Settings ▸ Console "
+            "Behavior (F4)"
+        )
+        for copy in (status, scope):
+            assert "F4 Settings" not in copy and " > " not in copy, copy
+        assert text("#console-context-overhead") == "Request overhead    unknown"
 
 
 @pytest.mark.asyncio

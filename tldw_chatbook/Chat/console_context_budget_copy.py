@@ -20,10 +20,12 @@ from __future__ import annotations
 from enum import Enum
 
 #: Where the response reservation is set (``MODEL_FIELD_LABELS["max_tokens"]``).
-MAX_TOKENS_SETTING = "Max tokens in Conversation settings > Model and generation"
-#: Where a model's real context window is set; the same destination the
-#: Context and memory view names for an assumed window.
-MODEL_WINDOW_SETTING = "F4 Settings > Providers & Models"
+#: The surface is Chat settings (Ctrl+O), spelled as Settings is below.
+MAX_TOKENS_SETTING = "Max tokens in Chat settings ▸ Model and generation (Ctrl+O)"
+#: Where a model's real context window is set. Chat settings' Context and
+#: memory view names it with this constant, in the words its Model view
+#: uses (TASK-33007 capture finding 17).
+MODEL_WINDOW_SETTING = "Settings ▸ Providers & Models (F4)"
 
 
 class ContextOverflowCause(str, Enum):

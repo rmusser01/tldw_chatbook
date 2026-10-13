@@ -137,8 +137,11 @@ async def test_footer_offers_the_four_actions_in_order(size) -> None:
             "console-settings-make-default",
         ):
             assert not modal.query_one(f"#{action}", Button).display, action
+        # Rewritten on purpose by TASK-33007 capture finding 17: the Context
+        # view's scope line uses the Model view's words.
         assert str(modal.query_one("#console-settings-scope", Static).content) == (
-            "Use: this conversation only. Defaults: F4 Settings > Console Behavior."
+            "Applies to this chat only · defaults live in Settings ▸ Console "
+            "Behavior (F4)"
         )
 
 

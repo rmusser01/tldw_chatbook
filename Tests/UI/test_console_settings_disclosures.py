@@ -449,15 +449,18 @@ async def test_name_summary_shows_the_name_this_chat_uses_and_follows_edits() ->
 @pytest.mark.asyncio
 async def test_settings_pointers_advertise_the_settings_key() -> None:
     """Parent AC#9 (R11): the Connection copy names F4, the key that opens
-    Settings, not F9."""
+    Settings, not F9. Rewritten on purpose by TASK-33007 capture finding 17:
+    it pinned "F4 Settings"; both now spell the pointer as the Model view's
+    scope line does, "Settings ▸ Providers & Models (F4)"."""
     app = CoreFirstHarness()
     app.app_config["api_settings"]["openai"] = {}
     modal = _modal(app, _settings("openai", "gpt-5", temperature=0.7))
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
         tooltip = str(modal.query_one("#console-settings-configure-credential").tooltip)
-        assert "F4 Settings" in tooltip and "F9" not in tooltip
-        assert "F4 Settings" in BASE_URL_ENTRY_HINT_COPY
+        pointer = "Settings ▸ Providers & Models (F4)"
+        assert pointer in tooltip and "F9" not in tooltip
+        assert pointer in BASE_URL_ENTRY_HINT_COPY
         assert "F9" not in BASE_URL_ENTRY_HINT_COPY
 
 

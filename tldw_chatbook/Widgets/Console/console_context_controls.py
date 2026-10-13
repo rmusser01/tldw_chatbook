@@ -61,6 +61,22 @@ def format_context_tokens(value: int | None) -> str:
     return "unknown" if value is None else f"{value:,}"
 
 
+def context_token_row(label: str, value: int | None) -> str:
+    """Return one Context view row: the label in 20 cells, then the count.
+
+    Args:
+        label: The row's label, e.g. ``"Safety margin"``.
+        value: The count, or None when nothing measured it.
+
+    Returns:
+        For example ``"Safety margin       640 tokens"``; an unknown count
+        reads ``"unknown"``, never "unknown tokens" (TASK-33007 capture
+        finding 17).
+    """
+    count = "unknown" if value is None else f"{value:,} tokens"
+    return f"{label:<20}{count}"
+
+
 @dataclass(frozen=True, slots=True)
 class ThinkingHistoryControlState:
     """Saved optional replay preference and its current effective state."""
@@ -486,5 +502,6 @@ __all__ = [
     "build_console_context_control_state",
     "build_console_context_cost_state",
     "build_console_next_send_spend_state",
+    "context_token_row",
     "format_context_tokens",
 ]

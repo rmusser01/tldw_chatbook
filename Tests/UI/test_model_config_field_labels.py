@@ -156,13 +156,21 @@ def test_labels_fit_the_existing_label_columns():
 def test_modal_settings_paths_name_real_settings_categories():
     """Captures flag 6: the Context view sent users to "F4 Settings > Console
     behavior", a category the Settings rail spells "Console Behavior".
-    Checked against the rail's own titles, in any case (gap review Minor 5)."""
+    Checked against the rail's own titles, in any case (gap review Minor 5).
+    Rewritten on purpose by TASK-33007 capture finding 17: the modal now
+    spells every pointer "Settings ▸ <category> (F4)", as its Model view did,
+    and the Context view's window pointer is the shared MODEL_WINDOW_SETTING."""
+    from tldw_chatbook.Chat import console_context_budget_copy
+
     screen = SettingsScreen.__new__(SettingsScreen)
     screen._internal_prompts_customized_count = 0
     categories = {summary.title for summary in screen._category_summaries()}
-    source = Path(console_settings_modal.__file__).read_text(encoding="utf-8")
-    paths = re.findall(r"F4 Settings > (\w[\w &]*\w)", source)
-    assert paths
+    paths = []
+    for module in (console_settings_modal, console_context_budget_copy):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        assert "F4 Settings >" not in source, module.__name__
+        paths += re.findall(r"Settings ▸ (\w[\w &]*\w)", source)
+    assert {"Console Behavior", "Providers & Models"} <= set(paths)
     assert set(paths) <= categories, set(paths) - categories
 
 
