@@ -14,7 +14,7 @@
 │    > Providers & Models      │  │  │  API key                 │ Paste to replace           Clear   saved in config  masked · (t) test · (ctrl+l) clear          │  │  │  Revert (r) — no changes                │
 │      Web Search              │  │  │  Env var                 │ OPENAI_API_KEY                     not set          safer: keeps keys out of config.toml        │  │  │ Local-only: saves write your config     │
 │      Speech & TTS            │  │  │  Endpoint                │ http://127.0.0.1:18431/v1          config           blank uses the provider default             │  │  │ file.                                   │
-│  Interface                   │  │  │  Key check                Ready · verified 01:28                                                              Test (t)     │  │  │  Focused setting: None — Tab to a       │
+│  Interface                   │  │  │  Key check                Ready · verified 05:50                                                              Test (t)     │  │  │  Focused setting: None — Tab to a       │
 │      Appearance              │  │  │   Provider settings saved: new chats and open chats nobody has used yet take them; chats with work keep their own          │  │  │  setting                                │
 │      Theme                   │  │  │   settings (change them in Console with Alt+M).                                                                            │  │  │  Purpose: Configure the default         │
 │      Splash Screen           │  │  │                                                                                                                            │  │  │  provider, model, endpoint, and         │
@@ -32,13 +32,13 @@
 │      Agents                  │  │  │  Reasoning summary       │ Inherit     ▼  provider         blank = provider default                                        │  │  │  provider's listing checks the API      │
 │  Expert                      │  │  │  Verbosity               │ Inherit     ▼  provider         blank = provider default                                        │  │  │  key, a local server's shows it         │
 │      Hooks                   │  │  │   ▶ Sampling · all inherit · OpenAI does not accept 4 fields (open to list them)                                           │  │  │  answers. Nothing is saved.             │
-│      Internal Prompts        │  │  │                                                                                                                            │  │  │ Readiness   Ready · verified 01:28      │
-│      Advanced Config         │  │  │   Advanced                                                                                                                 │  │  │ Config      OpenAI is configured        │
-│   Domain Defaults ▸ (11)     │  │  │   ▶ Context window · unknown, 32,000 assumed · enter the model's documented limit                                          │  │  │ Key         saved in config · key       │
-│                              │  │  │   ▶ Saved model list · 14 saved in config · none discovered                                                              ▅ │  │  │             accepted (3 models listed)  │
-│                              │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │ Endpoint    http://127.0.0.1:18431/v1   │
-│                              │  │  │   ▶ Session summary on quit · applies immediately · Off                                                                    │  │  │ ▼ more — scroll the inspector           │
-│                              │  │  │                                                                                                                            │  │  │                                         │
+│      Internal Prompts        │  │  │                                                                                                                            │  │  │ Readiness   Ready · verified 05:50      │
+│      Advanced Config         │  │  │   Advanced                                                                                                    ╭──────────────────────────────────────────────────────────╮ │
+│   Domain Defaults ▸ (11)     │  │  │   ▶ Context window · unknown, 32,000 assumed · enter the model's documented limit                             │                                                          │ │
+│                              │  │  │   ▶ Saved model list · 14 saved in config · none discovered                                                   │ Ready · verified 05:50 — key accepted (3 models listed)  │ │
+│                              │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect          │ · generation not tested.                                 │ │
+│                              │  │  │   ▶ Session summary on quit · applies immediately · Off                                                       │                                                          │ │
+│                              │  │  │                                                                                                               ╰──────────────────────────────────────────────────────────╯ │
 └──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
 
   s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -6,11 +6,11 @@
 
 
 
-
-
-
-                                                                        ┌────────────────────────────────────────────────────────────────┐
-                                                                        │                                                                │
+                                                                                                                                                     ╭──────────────────────────────────────────────────────────╮
+                                                                                                                                                     │                                                          │
+                                                                                                                                                     │ Settings category changes reverted.                      │
+                                                                        ┌────────────────────────────────────────────────────────────────┐           │                                                          │
+                                                                        │                                                                │           ╰──────────────────────────────────────────────────────────╯
                                                                         │  Get started                                                   │
                                                                         │                                                                │
                                                                         │  A provider is the AI service that answers your messages —     │
@@ -41,4 +41,4 @@
 
 
 
-  Ctrl+Shift+F focus | Enter continue setup | F1 help | Ctrl+P palette | F6 next pane · Ctrl+Q quit
+  Ctrl+Shift+F focus | Enter continue setup | F1 help | Ctrl+P palette | Ctrl+Q quit

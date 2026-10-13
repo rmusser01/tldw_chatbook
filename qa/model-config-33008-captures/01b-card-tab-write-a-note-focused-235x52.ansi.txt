@@ -49,4 +49,4 @@
 
 
 
-[48;2;33;49;62m  [38;2;166;172;177mCtrl+Shift+F focus | Enter continue setup | F1 help | Ctrl+P palette | F6 next pane · Ctrl+Q quit[39m
+[48;2;33;49;62m  [38;2;166;172;177mCtrl+Shift+F focus | Enter continue setup | F1 help | Ctrl+P palette | Ctrl+Q quit[39m

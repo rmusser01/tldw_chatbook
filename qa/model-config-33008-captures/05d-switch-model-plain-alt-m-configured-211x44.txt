@@ -6,28 +6,28 @@
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                     │ Conversation | Chat 1                                                                                                                                             │
                          Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                                                                 │
-   Terminal                         │                                                                                                                                                                   │
- ───────────────────────────────── ╭─ Switch model · now: OpenAI · gpt-5.6-terra ─────────────────────────────────────────────────────────────────────────────────────────────╮                         │
- Workspaces                    ▸   │ Find type to search 14 models in 2 providers · Enter applies                                                                             │                         │
- ───────────────────────────────── │ RECENT · your last 50 chats                                                                                                              │                         │
- Conversations                 ▾   │ ▶ gpt-5.6-terra                OpenAI                   ?  Ready · not tested           ● CURRENT                                        │                         │
-        Archive this chat          │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                                                  │                         │
-          Archived chats           │   gpt-5.6-sol                  OpenAI                   ?  Ready · not tested                                                            │                         │
-        Search all chats…          │   gpt-5.6-luna                 OpenAI                   ?  Ready · not tested                                                            │                         │
-   Chat 1                          │   gpt-4.1-2025-04-14           OpenAI                  1M  Ready · not tested                                                            │                         │
-                                   │     … 10 more OpenAI models                                                                                                              │                         │
-  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear   │ NEEDS SETUP · Enter opens the fix or explains it                                                                                         │                         │
-  ▊  Filter visible     ▎          │   (any model)                  Anthropic                   Not ready · no key           Enter: add key in Settings                       │                         │
-  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎          │   (any model)                  Arcee AI                    Not ready · no key           Enter: add key in Settings                       │                         │
-                                   │   (any model)                  Azure OpenAI                Not ready · no key           Enter: add key in Settings                       │                         │◂ Inspect
-   New conversation                │   (any model)                  Baidu Qianfan               Not ready · no key           Enter: add key in Settings                       │                         │
-  Chats                        ▾   │   (any model)                  Baseten                     Not ready · no key           Enter: add key in Settings                       │                         │
-   Chat 1                     💬   │   (any model)                  ByteDance Seed (…us)        Not ready · no key           Enter: add key in Settings                       │                         │
-                                   │   (any model)                  Cerebras                    Not ready · no key           Enter: add key in Settings                       │                         │
- ───────────────────────────────── │   (any model)                  Cloudflare Worke… AI        Not ready · no key           Enter: add key in Settings                       │                         │
- Character · No chats          ▸   │     … 39 more providers need setup · type a name to find one                                                                             │                         │
- ───────────────────────────────── │ NOT RUNNING · local servers never set up · rechecked on open                                                                             │                         │
- Model                         ▸   │   Aphrodite Engine · Ollama · TabbyAPI · vLLM · Custom OpenAI-compatible · Custom OpenAI-compatible #2 · MLX-LM (Apple silicon) (not ch… │                         │
+   Terminal                        ╭─ Switch model · now: OpenAI · gpt-5.6-terra ─────────────────────────────────────────────────────────────────────────────────────────────╮                         │
+ ───────────────────────────────── │ Find type to search 14 models in 1 provider · Enter applies                                                                              │                         │
+ Workspaces                    ▸   │ RECENT · your last 50 chats                                                                                                              │                         │
+ ───────────────────────────────── │ ▶ gpt-5.6-terra                OpenAI                   ?  Ready · not tested           ● CURRENT                                        │                         │
+ Conversations                 ▾   │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                                                  │                         │
+        Archive this chat          │   gpt-5.6-sol                  OpenAI                   ?  Ready · not tested                                                            │                         │
+          Archived chats           │   gpt-5.6-luna                 OpenAI                   ?  Ready · not tested                                                            │                         │
+        Search all chats…          │   gpt-4.1-2025-04-14           OpenAI                  1M  Ready · not tested                                                            │                         │
+   Chat 1                          │     … 10 more OpenAI models                                                                                                              │                         │
+                                   │ NEEDS SETUP · Enter opens the fix or explains it                                                                                         │                         │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear   │   (any model)                  Anthropic                   Not ready · no key           Enter: add key in Settings                       │                         │
+  ▊  Filter visible     ▎          │   (any model)                  Arcee AI                    Not ready · no key           Enter: add key in Settings                       │                         │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎          │   (any model)                  Azure OpenAI                Not ready · no key           Enter: add key in Settings                       │                         │
+                                   │   (any model)                  Baidu Qianfan               Not ready · no key           Enter: add key in Settings                       │                         │◂ Inspect
+   New conversation                │   (any model)                  Baseten                     Not ready · no key           Enter: add key in Settings                       │                         │
+  Chats                        ▾   │   (any model)                  ByteDance Seed (…us)        Not ready · no key           Enter: add key in Settings                       │                         │
+   Chat 1                     💬   │   (any model)                  Cerebras                    Not ready · no key           Enter: add key in Settings                       │                         │
+                                   │   (any model)                  Cloudflare Worke… AI        Not ready · no key           Enter: add key in Settings                       │                         │
+ ───────────────────────────────── │     … 39 more providers need setup · type a name to find one                                                                             │                         │
+ Character · No chats          ▸   │ NOT RUNNING · local servers never set up · rechecked on open                                                                             │                         │
+ ───────────────────────────────── │   Aphrodite Engine · Ollama · TabbyAPI · vLLM · Custom OpenAI-compatible · Custom OpenAI-compatible #2                                   │                         │
+ Model                         ▸   │   MLX-LM (Apple silicon) (not checked)                                                                                                   │                         │
  ───────────────────────────────── │ Values for gpt-5.6-terra · OpenAI                                                                                                        │                         │
  Agent                         ▸   │ Temperature 0.6      Console Behavior  Max tokens 4096     provider          Streaming Off   ▼  provider                                 │                         │
  ───────────────────────────────── │  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel                      │                         │

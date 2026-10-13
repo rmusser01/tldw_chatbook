@@ -1,7 +1,7 @@
          ╭──────────────╮
  ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Console — Chat, source handoffs, live runs, and control actions.                                                                                  Speak replies   ▌   Hands-free   ▌     Ready · reachable 01:25
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                  Speak replies   ▌   Hands-free   ▌     Ready · reachable 05:48
    New tab     Settings     ⚓      Context rail     Search Library     Help
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                     │ Conversation | Chat 1                                                                                                                                             │
@@ -20,7 +20,8 @@
   ▊  Filter visible     ▎           │                                                                                                                                                                   │
   ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │◂ Inspect
-  Chats                        ▾    │                                      Setup complete — llama.cpp · qwen3-8b-instruct-q4_k_m. Ready — type a message to begin.                                      │
+   New conversation                 │                                      Setup complete — llama.cpp · qwen3-8b-instruct-q4_k_m. Ready — type a message to begin.                                      │
+  Chats                        ▾    │                                                                                                                                                                   │
    Chat 1                     💬    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │
  ─────────────────────────────────  │                                                                                                                                                                   │
@@ -31,7 +32,6 @@
  Agent                         ▸    │                                                                                                                                                                   │
  ─────────────────────────────────  │                                                                                                                                                                   │
  Details                       ▸    │                                                                                                                                                                   │
-                                    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │
