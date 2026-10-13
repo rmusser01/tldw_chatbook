@@ -45,3 +45,27 @@ async def test_side_chat_free_text_fields_take_the_row_past_the_control_column(
             assert field.region.right <= card.region.right, (selector, field.region)
         assert template.placeholder == DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE
         assert template.content_region.width > cell_len(template.placeholder)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_approval_summary_model_takes_the_row_and_shows_its_placeholder(
+    request,
+):
+    """#3057 capture finding 21: Permission summaries' Model field, a model id
+    like Side chat's, sat in the 32-cell column and cut its placeholder to
+    "empty = the provider's defaul" at 211x44. It takes the row as the Side
+    chat fields do."""
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        _screen, card = await _open_card(host, pilot)
+        column = card.query_one("#settings-console-max-parallel-runs", Input)
+        field = card.query_one("#settings-permission-summary-model", Input)
+        field.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
+
+        assert field.region.width > column.region.width, field.region
+        assert field.region.x == column.region.x, field.region
+        assert field.region.right <= card.region.right, field.region
+        assert field.content_region.width > cell_len(field.placeholder)

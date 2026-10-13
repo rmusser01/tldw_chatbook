@@ -74,7 +74,8 @@ async def test_every_console_behavior_control_shares_one_width_and_shows_whole_l
     ("Default chat display name" was cut to "Default chat display").
 
     Rewritten on purpose (#3057 review R3 #10): the two free-text Side chat
-    fields leave the column (test_settings_console_side_chat_field_width.py).
+    fields leave the column (test_settings_console_side_chat_field_width.py);
+    so does Permission summaries' Model, a model id too (capture finding 21).
     """
     host = _SettingsCssHarness(_app(), "settings")
 
@@ -89,6 +90,7 @@ async def test_every_console_behavior_control_shares_one_width_and_shows_whole_l
         free_text = {
             "settings-console-sidechat-model",
             "settings-console-sidechat-prompt-template",
+            "settings-permission-summary-model",
         }
         assert free_text <= {control.id for control in controls}
         widths = {

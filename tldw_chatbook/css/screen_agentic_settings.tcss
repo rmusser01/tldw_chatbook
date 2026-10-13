@@ -1583,9 +1583,12 @@ Button.settings-category-group-toggle:focus {
 
 /* The column is for values off a short list. A model id and a prompt
    template are free text, cut at 27 cells by it (the built-in template shown
-   as the placeholder is 39): these two take the rest of their row. */
+   as the placeholder is 39): these take the rest of their row. Permission
+   summaries' Model is a model id too (capture finding 21: its placeholder
+   read "empty = the provider's defaul"). */
 #settings-console-behavior-card #settings-console-sidechat-model,
-#settings-console-behavior-card #settings-console-sidechat-prompt-template {
+#settings-console-behavior-card #settings-console-sidechat-prompt-template,
+#settings-console-behavior-card #settings-permission-summary-model {
     width: $ds-width-fill;
 }
 
