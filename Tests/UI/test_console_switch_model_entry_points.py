@@ -76,15 +76,15 @@ async def _switcher_ready(harness: _Harness, pilot) -> ConsoleModelPopover:
 
 
 async def _close_chat_settings(harness: _Harness, console: ChatScreen, pilot) -> None:
-    # TASK-33006.5: Cancel is the Context view's (spec mock (b)), so show
-    # that view first. Esc closes with the same focus result, but after it
-    # the last assertion below reads the rail-focus footer ("Esc composer ·
-    # F6 panes" first, which pushes Alt+A out at 211 columns) instead of the
-    # composer's; that footer refresh is outside this task.
+    # Rewritten on purpose by TASK-33007 capture finding 20 (round 2): no
+    # view has a Cancel button any more, so this runs the close Cancel ran
+    # (Esc and the backdrop use it too). After a real Esc key the last
+    # assertion below reads the rail-focus footer ("Esc composer · F6 panes"
+    # first, which pushes Alt+A out at 211 columns): a footer refresh
+    # outside this task.
     await pilot.pause()
-    harness.screen.query_one("#console-settings-view-context", Button).press()
-    await pilot.pause()
-    harness.screen.query_one("#console-settings-cancel", Button).press()
+    modal = harness.screen
+    modal.call_later(modal.request_safe_cancel, source="button")
     await _until(pilot, lambda: harness.screen is console, "Chat settings to close")
 
 

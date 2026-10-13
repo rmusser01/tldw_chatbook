@@ -364,7 +364,9 @@ async def test_footer_hint_and_buttons_are_set_apart(
             ),
             key=lambda widget: widget.region.x,
         )
-        assert len(items) >= 3
+        # The Context view's footer is "Esc close" and Apply since capture
+        # finding 20 (round 2) took its Cancel away.
+        assert len(items) >= (3 if view == "model" else 2)
         assert len({widget.region.y for widget in items}) == 1
         touching = [
             (str(left.id), str(right.id))

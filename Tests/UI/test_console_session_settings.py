@@ -6169,10 +6169,9 @@ async def test_console_settings_modal_cancel_discards_draft() -> None:
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
-        # TASK-33006.5: Cancel is the Context view's (spec mock (b)).
-        await pilot.click("#console-settings-view-context")
-        await pilot.pause()
-        await pilot.click("#console-settings-cancel")
+        # Rewritten on purpose by TASK-33007 capture finding 20 (round 2):
+        # no view has a Cancel button; Esc close is the close.
+        await pilot.press("escape")
 
     assert app.saved_settings is None
 

@@ -130,7 +130,9 @@ async def test_footer_offers_the_four_actions_in_order(size) -> None:
 
         modal.query_one("#console-settings-view-context", Button).press()
         await settle(pilot, app)
-        assert modal.query_one("#console-settings-cancel", Button).display
+        # Rewritten on purpose by TASK-33007 capture finding 20 (round 2):
+        # the footer's "Esc close" is the Context view's close too.
+        assert not modal.query_one("#console-settings-cancel", Button).display
         for action in (
             USE_SAVED_DEFAULTS_ID,
             "console-settings-save-default",

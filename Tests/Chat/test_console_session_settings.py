@@ -2953,9 +2953,9 @@ def _settings_close_modal(
 
 
 async def _request_settings_close(pilot, source: str) -> None:
-    if source == "visible-cancel":
-        await pilot.click("#console-settings-cancel")
-    elif source == "escape":
+    # Rewritten on purpose by TASK-33007 capture finding 20 (round 2): the
+    # Context view's footer has no Cancel; Esc close is its close.
+    if source == "escape":
         await pilot.press("escape")
     else:
         await pilot.click(offset=(0, 0))
@@ -3182,7 +3182,7 @@ async def test_settings_modal_min_p_for_anthropic_is_neither_sent_nor_saved() ->
     assert 0.13 not in projected.values()
 
 
-@pytest.mark.parametrize("source", ["visible-cancel", "escape", "backdrop"])
+@pytest.mark.parametrize("source", ["escape", "backdrop"])
 @pytest.mark.asyncio
 async def test_settings_memory_reset_close_sources_show_one_three_choice_guard(
     source: str,
@@ -3190,7 +3190,7 @@ async def test_settings_memory_reset_close_sources_show_one_three_choice_guard(
     """Show one three-choice reset guard for every close source.
 
     Args:
-        source: Visible control, Escape key, or backdrop dismissal source.
+        source: Escape key or backdrop dismissal source.
     """
     app = _SettingsCloseHarness()
     reset_calls = 0
@@ -3489,7 +3489,7 @@ async def test_settings_failed_reset_undo_stays_a_reset_guard_during_compaction(
         release.set()
 
 
-@pytest.mark.parametrize("source", ["visible-cancel", "escape", "backdrop"])
+@pytest.mark.parametrize("source", ["escape", "backdrop"])
 @pytest.mark.asyncio
 async def test_settings_active_compaction_close_sources_show_acknowledgement(
     source: str,

@@ -523,7 +523,7 @@ async def test_thinking_history_required_preserves_saved_value_and_disables_edit
         )
         assert "Effective: Required" in effective
         assert "provider continuation" in effective
-        await pilot.click("#console-settings-cancel")
+        await pilot.press("escape")  # no Cancel here: capture finding 20
 
 
 def test_thinking_history_required_copy_is_derived_from_effective_policy() -> None:
@@ -584,7 +584,7 @@ async def test_thinking_history_default_write_is_bounded_and_live_for_new_chats(
         assert isinstance(app.screen, ConsoleSettingsModal)
         status = app.screen.query_one("#console-context-action-status", Static)
         assert "new conversations only" in str(status.renderable)
-        await pilot.click("#console-settings-cancel")
+        await pilot.press("escape")  # no Cancel here: capture finding 20
 
     assert writes == [{"console": {"thinking_history_policy_default": "exclude"}}]
     assert app_config["console"] == {"thinking_history_policy_default": "exclude"}

@@ -593,8 +593,9 @@ defaults**, **Save as model default**, **Default for new chats (Ctrl+N)** and
 configuration. **Save as model default** shows only while the draft differs
 from the saved defaults, the same test that dims **Use saved defaults**, so
 the footer never offers a save beside **Matches saved defaults**. While the
-unsaved-changes prompt shows, **Alt+M** and **Ctrl+N** do nothing. The **Context and memory** view has a **Cancel** button in
-place of the default actions. The line above the footer names the button it
+unsaved-changes prompt shows, **Alt+M** and **Ctrl+N** do nothing. The
+**Context and memory** view's footer is the Esc hint and **Apply to this
+chat**, without the default actions. The line above the footer names the button it
 explains and where that default goes ("Save as model default: future chats on
 this Anthropic model use these values.") and shows only beside **Save as model
 default**, so the **Context and memory** view never shows it.
@@ -645,8 +646,8 @@ whose **Streaming** follows its default shows the value it inherits and where
 it comes from; picking On or Off pins it for this chat, which counts as an
 edit even when it matches the inherited value. Switching model can return it
 to following its default, which counts too.
-With edits, **Esc**, a click outside the modal, and
-the Context view's **Cancel** open a prompt that names the edited fields ("2 unsaved edits to
+With edits, **Esc** and a click outside the modal
+open a prompt that names the edited fields ("2 unsaved edits to
 this chat: Temperature, Max tokens.") and offers **Apply to this chat**
 (Enter), **Discard** (d) and **Keep editing** (Esc). Keep editing puts you
 back in the field you were editing. Apply goes through the same path as the

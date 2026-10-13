@@ -2198,7 +2198,7 @@ class ConsoleSettingsModal(
                     classes="console-settings-action-scope",
                     markup=False,
                 )
-                # TASK-33006.5 (spec mock (b)): Cancel is the Context view's;
+                # Cancel shows only in recovery (finding 20, round 2);
                 # _sync_action_copy sizes every button from its label.
                 with Horizontal(classes="console-settings-action-group"):
                     yield Button("Cancel", id="console-settings-cancel")
@@ -2811,7 +2811,9 @@ class ConsoleSettingsModal(
         self.query_one("#console-settings-scope", Static).update(self._scope_copy())
         self.query_one("#console-settings-make-default", Button).display = show_model
         self.query_one(f"#{USE_SAVED_DEFAULTS_ID}", Button).display = show_model
-        self.query_one("#console-settings-cancel", Button).display = not show_model
+        # Esc close is each view's close; Cancel only backs the recovery
+        # actions (TASK-33007 capture finding 20, round 2).
+        self.query_one("#console-settings-cancel", Button).display = recovery_active
         # Save as model default, Apply, the defaults line and the readiness
         # block follow the view from the draft (TASK-33006.6 AC#2).
         self._sync_default_readiness()

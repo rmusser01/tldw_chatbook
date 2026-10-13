@@ -125,13 +125,9 @@ async def _edit(pilot, modal: ConsoleSettingsModal, selector: str, value: str):
 
 
 async def _gesture(pilot, source: str) -> None:
-    if source == "cancel":
-        # TASK-33006.5 (spec mock (b)): Cancel is the Context view's; the
-        # Model view's footer offers the default actions instead.
-        await pilot.click("#console-settings-view-context")
-        await pilot.pause()
-        await pilot.click("#console-settings-cancel")
-    elif source == "escape":
+    # Rewritten on purpose by TASK-33007 capture finding 20 (round 2): no
+    # view has a Cancel button, so the gestures are Esc and the backdrop.
+    if source == "escape":
         await pilot.press("escape")
     else:
         await pilot.click(offset=(0, 0))
@@ -237,7 +233,7 @@ async def test_prompt_labels_match_the_labels_the_modal_renders() -> None:
     )
 
 
-@pytest.mark.parametrize("source", ["escape", "backdrop", "cancel"])
+@pytest.mark.parametrize("source", ["escape", "backdrop"])
 @pytest.mark.asyncio
 async def test_edited_draft_asks_before_each_close_gesture(source: str) -> None:
     app = _GuardHarness()
@@ -295,7 +291,7 @@ async def test_prompt_without_an_available_apply_offers_discard_and_keep() -> No
         assert not modal.query_one("#console-settings-close-guard", Vertical).display
 
 
-@pytest.mark.parametrize("source", ["escape", "backdrop", "cancel"])
+@pytest.mark.parametrize("source", ["escape", "backdrop"])
 @pytest.mark.asyncio
 async def test_unedited_draft_closes_immediately(source: str) -> None:
     app = _GuardHarness()
@@ -375,7 +371,7 @@ async def test_suspended_draft_round_trip_keeps_its_edits_unsaved(
         await _open(app, pilot, modal)
         assert modal._unsaved_field_labels() == labels
         assert _text(modal, "#console-settings-esc-hint") == esc_hint_copy(len(labels))
-        await _gesture(pilot, "cancel")
+        await _gesture(pilot, "escape")
 
         if not labels:
             assert app.results == [None]
@@ -427,7 +423,7 @@ async def test_discard_closes_without_applying(how: str) -> None:
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(app, pilot, modal)
         await _edit(pilot, modal, "#console-settings-temperature", "0.9")
-        await _gesture(pilot, "cancel")
+        await _gesture(pilot, "escape")
         assert app.results == []
         assert modal.query_one("#console-settings-close-guard", Vertical).display
 
@@ -832,7 +828,7 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         assert _text(returned, "#console-settings-esc-hint") == esc_hint_copy(
             len(labels)
         )
-        await _gesture(pilot, "cancel")
+        await _gesture(pilot, "escape")
 
         assert app.screen is returned
         assert _text(returned, "#console-settings-close-message").startswith(
