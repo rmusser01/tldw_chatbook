@@ -24225,6 +24225,9 @@ class SettingsScreen(BaseAppScreen):
         # (same guard as the image viewer modal).
         impact_body.add_class("h-fill")
         impact_body.styles.scrollbar_size_vertical = 1
+        self.watch(
+            impact_body, "scroll_y", self._update_inspector_overflow_hint, init=False
+        )
         with impact_body:
             yield from self._render_impact_pane_body()
         # task-1623: reserved fold-indicator row -- 8 of 26 critique captures
@@ -26172,42 +26175,18 @@ class SettingsScreen(BaseAppScreen):
             self._active_settings_field_id = previous
 
     def _scroll_impact_pane_to_field_guide(self, category: SettingsCategoryId) -> None:
-        """Scroll the Scope Inspector so the Focused field guide is visible.
+        """Scroll the Scope Inspector so the whole Focused field guide shows.
 
-        Fleet-UX expert review F6 (task-1234): focusing a guided field
-        already refreshes the guide row TEXT in place (the ``_refresh_*_
-        field_guidance`` methods above, no recompose) but never moved the
-        pane's own scroll position, so the guide block could sit below
-        ``#settings-impact-pane``'s fold with only a thin scrollbar sliver
-        hinting at it -- reported live as "focusing Max parallel shows only
-        Purpose:". Same disease task-1140 fixed for the fleet line, in a
-        second location.
-
-        Qodo PR #1074 finding 2: scrolling to only the FIRST row was
-        insufficient on its own -- ``scroll_to_widget`` no-ops once its
-        target is already fully inside the viewport, so a prior scroll
-        position that happens to leave the first row sitting flush with
-        the pane's own bottom edge (fully visible, technically) short-
-        circuits the whole call, leaving every row after it (Consequences/
-        Saved as/Applies, etc.) below the fold. Two passes fix this:
-        first reveal the LAST row (pulls the whole guide into view when it
-        fits the viewport), then re-target the FIRST row with ``top=True``
-        to force-pin it to the pane's top edge regardless of whether
-        anything actually needed to move. When the guide is short enough
-        to fit the viewport this second pass is a no-op in effect (the
-        first pass already made the whole block visible); when the guide
-        is TALLER than the viewport, it deliberately re-prioritizes the
-        first rows -- Purpose/Focused setting, the most load-bearing
-        content -- over the tail, maximizing visible coverage starting
-        from the top rather than the bottom.
-
-        ``call_after_refresh`` + ``force=True`` mirrors the pattern proven
-        in ``library_screen.LibraryScreen._preserve_library_rail_scroll``:
-        an unforced ``scroll_to_widget`` clamps to 0 when a container's
-        scroll bounds haven't been (re)computed yet -- relevant here
-        because a CATEGORY switch recomposes ``#settings-impact-pane``
-        from scratch (``_render_impact_pane``), and focus can land on the
-        new category's first field before that layout has settled.
+        Fleet-UX review F6 (task-1234): the guide's text changes in place on
+        focus, so the pane must move to it; Qodo PR #1074: from its first row
+        to its last. #3057 capture round 2 (findings 1, 2): pinning the first
+        row to the top hid the guide's own heading and every section above
+        it ("Applies to", "Next new chat will use") even when all of them
+        fit, and a kept offset left a section's tail on top. So the pane
+        scrolls from its top no further than the guide's last row needs,
+        never past the guide's heading, and stops on a heading. Run after a
+        refresh with ``force``: a category switch recomposes the pane, and
+        unsettled bounds clamp a scroll to 0.
 
         Args:
             category: The Settings category whose "Focused field guide"
@@ -26221,31 +26200,32 @@ class SettingsScreen(BaseAppScreen):
 
         def _scroll() -> None:
             try:
-                pane = self.query_one("#settings-impact-pane-body")
+                pane = self.query_one("#settings-impact-pane-body", VerticalScroll)
                 first_row = self.query_one(f"#{row_id}")
-            except Exception:
+            except QueryError:
                 return
-            # Guide rows are a fixed-length, contiguous block of Static
-            # widgets rendered unconditionally (see the per-category
-            # ``*_field_guidance_rows`` methods) -- find the last one by
-            # probing sequential ids rather than hardcoding a row count a
-            # future guidance edit would silently drift out of sync with.
+            # The guide's rows are contiguous ids; probe for the last one.
             last_row = first_row
             index = 1
             while True:
                 try:
                     last_row = self.query_one(f"#{row_prefix}-{index}")
-                except Exception:
+                except QueryError:
                     break
                 index += 1
-            # Pass 1: reveal the guide's tail. If the whole guide fits the
-            # viewport this already brings every row into view.
-            pane.scroll_to_widget(last_row, animate=False, force=True)
-            # Pass 2: force the first row to the pane's top edge -- see the
-            # docstring above for why this must run unconditionally (not
-            # only when pass 1 left it hidden) and why ``top=True`` beats a
-            # plain minimal-scroll re-target.
-            pane.scroll_to_widget(first_row, animate=False, force=True, top=True)
+            view = pane.scrollable_content_region
+            offset = round(pane.scroll_y) - view.y  # screen row -> content row
+            headings = [
+                child.region.y + offset
+                for child in pane.children
+                if child.display and child.has_class("destination-section")
+            ]
+            first = first_row.region.y + offset
+            guide_top = max((y for y in headings if y <= first), default=first)
+            y = min(guide_top, max(0, last_row.region.bottom + offset - view.height))
+            if y:
+                y = min((top for top in headings if y <= top <= guide_top), default=y)
+            pane.scroll_to(y=y, animate=False, force=True, immediate=True)
 
         self.call_after_refresh(_scroll)
         # Qodo PR #1139: focus-driven guidance refreshes change the body's
@@ -26472,6 +26452,16 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         hint.display = body.virtual_size.height > body.container_size.height
+        # #3057 capture round 2 (finding 1): say so when the rest is above.
+        above = round(body.scroll_y) > 0
+        below = round(body.scroll_y) < body.max_scroll_y
+        hint.update(
+            "▲ more above · ▼ more below"
+            if above and below
+            else "▲ more above — scroll the inspector"
+            if above
+            else "▼ more — scroll the inspector"
+        )
 
     def on_resize(self, event: Resize) -> None:
         """Re-resolve compact classes and the fold indicator on size changes.
@@ -26486,13 +26476,13 @@ class SettingsScreen(BaseAppScreen):
 
     def _reveal_settings_focus_after_refresh(self) -> None:
         """Keep the same attached control, and its field guide, visible after a layout change."""
+        # TASK-33003.9: a resize re-wraps the inspector but keeps its scroll
+        # offset, which slid the guide past the fold, and (#3057, focused or
+        # not) left a section's tail on top.
+        self._scroll_impact_pane_to_field_guide(self._active_category_id())
         focused = self.focused
         if focused is None:
             return
-        if focused.id and focused.id == self._active_settings_field_id:
-            # TASK-33003.9: a resize re-wraps the inspector but keeps its
-            # scroll offset, which slid the guide past the fold.
-            self._scroll_impact_pane_to_field_guide(self._active_category_id())
 
         def reveal_retained_focus() -> None:
             if self.is_current and focused is self.focused and focused.is_attached:
@@ -34345,6 +34335,8 @@ class SettingsScreen(BaseAppScreen):
             self._update_draft_status_widgets(category)
         else:
             self._update_draft_status_widgets(category)
+        if category is self._active_category_id():
+            self._scroll_impact_pane_to_field_guide(category)  # rows above it went
         self.app.notify("Settings category changes reverted.", severity="information")
 
     def action_settings_test_category(
