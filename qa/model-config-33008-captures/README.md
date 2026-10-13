@@ -3,7 +3,9 @@
 Live captures of the surfaces Phase 8 changed, keyboard only. The set was retaken
 2026-10-13 at `4f2bffa20f` (after the capture fix 2 wave and its two fix rounds); the
 captures the capture fix 3 wave changed were retaken the same day at `8b97eeb05f`
-(after that wave and its six fix rounds; see "Retaken at 8b97eeb05f" below).
+(after that wave and its six fix rounds; see "Retaken at 8b97eeb05f" below); the
+captures the capture fix 4 wave changed were retaken the same day at `e5e5855ab5`
+(after that wave and its four fix rounds; see "Retaken at e5e5855ab5" below).
 Each moment was captured at 211x44, the tmux window was resized to 235x52 and
 captured again, then resized back. `.txt` is `tmux capture-pane -p`; `.ansi.txt` is
 the same moment with `-e` colour escapes (focus shows there: a focused button is bold
@@ -11,8 +13,8 @@ and underlined on the accent colour).
 
 ## Key counts
 
-Re-measured at `4f2bffa20f` and again at `8b97eeb05f`; both are unchanged from the
-first set.
+Re-measured at `4f2bffa20f`, `8b97eeb05f` and `e5e5855ab5`; both are unchanged from
+the first set.
 
 - **Parent AC#1, local server: 2 key presses**, measured at 211x44. From the card
   with "Use detected llama.cpp (127.0.0.1:8080)" focused (`02a`): **Enter** opens
@@ -38,7 +40,7 @@ first set.
 | `01c-card-footer-after-alt-m-ctrl-o-f6` | The card after **Alt+M**, **Ctrl+O** and **F6**: none of them did anything (no dialog, no notice, focus still on Set up provider; text and colours equal `01a`). The footer names Enter continue setup, F1 help and Ctrl+P palette, and the app-wide cluster only Ctrl+Q quit. |
 | `02a-card-detected-local-server-focused` | Card with a loopback server found: "Use detected llama.cpp (127.0.0.1:8080)" added and focused; step 1 names the chat's own pair ("OpenAI: Not ready · no key"). |
 | `02b-switch-model-from-card-filtered-to-llama-cpp` | AC#1 key 1: Switch model with Find "llama.cpp", the server's three models, the first highlighted; the key line reads "Enter apply to this chat and new chats · Tab edit values · Ctrl+O chat settings · Esc cancel" (no Ctrl+N hint, since Enter already sets the new-chat default), matching "Applies to: this chat · also the default for new chats"; the Enter button is 40 cells, its label plus one each side. The footer under the dialog reads "Ctrl+P palette \| Ctrl+Q quit" (no "Enter continue setup"). |
-| `02c-console-ready-after-enter-enter` | AC#1 key 2: card gone, "Setup complete — llama.cpp · qwen3-8b-instruct-q4_k_m", "New conversation" in the Conversations tray, composer focused. "This chat updated" showed 1.5 s after the Enter and had timed out by the shot. The status row's cost chip at 211x44 reads "Ctx 0% · No": cut mid-figure (see "Retaken at 8b97eeb05f"); at 235x52 "Ctx 0% · Now $0.00 · Next —", whole. |
+| `02c-console-ready-after-enter-enter` | AC#1 key 2: card gone, "Setup complete — llama.cpp · qwen3-8b-instruct-q4_k_m", "New conversation" in the Conversations tray, composer focused. "This chat updated" showed 1.5 s after the Enter and had timed out by the shot. The status row's cost chip reads "Ctx 0%" at 211x44, whole, in a shot taken before any resize (it read "Ctx 0% · No", cut mid-figure, until `e5e5855ab5`), and "Ctx 0% · Now $0.00 · Next —" at 235x52, whole. |
 | `02d-composer-with-text-typed` | 211x44 only: the same Console with "What does a context window measure?" typed in the composer; the send button reads "Send \| $"; the cost chip reads "Ctx 0%" (taken after the 235x52 round trip of `02c`). Nothing was sent; the text was deleted. |
 | `03a-cloud-card-set-up-provider` | AC#2 start: card on OpenAI with no key ("OpenAI: Not ready · no key"). |
 | `03b-cloud-settings-api-key-focused-return-to-console` | AC#2 key 1: Settings ▸ Providers & Models on OpenAI, API key field focused, Return to Console shown on arrival. |
@@ -51,12 +53,14 @@ first set.
 | `04c-discard-returns-to-card` | **Tab**, **Enter** on Discard changes: back on the Get started card, Set up provider focused, nothing saved; "Settings category changes reverted." at 211x44 (timed out by the 235x52 capture). |
 | `05a-switch-model-needs-setup-row-deepseek` | Configured Console (OpenAI ready), **Alt+M**, "deepseek" typed, **Down** ×3 from Find's best match (Command Code's row) to DeepSeek's own NEEDS SETUP row; the key line reads "Enter set up in Settings" (a 26-cell button), the overflow line "… 1 more provider needs setup", the footer "Ctrl+P palette \| Ctrl+Q quit", and the cost chip "Ctx 0% · Now $0.00" (211x44) / "Context 0% · Current $0.00 · On next send —" (235x52). |
 | `05b-needs-setup-route-settings-deepseek` | **Enter** on that row: Settings on DeepSeek, API key focused, model deepseek-v4-flash, Return to Console shown. |
-| `05c-reopened-switch-model-after-save-deepseek` | Paste, **Esc**, **s**, **Enter** on Return to Console: Switch model reopened with Find "DeepSeek", deepseek-v4-flash highlighted and ● CURRENT, key line "Enter apply to this chat" in a 26-cell button (its label plus one each side), "… 1 more provider needs setup", footer "Ctrl+P palette \| Ctrl+Q quit". At 211x44 two notices are stacked at the bottom right: Settings' "Provider and model settings saved: …" (raised by **s**, still live) over the dialog's right edge, and "Console provider changed OpenAI → DeepSeek … (Settings ▸ Providers & Models)."; at 235x52 only the second. Both notices cover the cost chip (ruling B: notices stay at the default place). |
+| `05c-reopened-switch-model-after-save-deepseek` | Paste, **Esc**, **s**, **Enter** on Return to Console: Switch model reopened with Find "DeepSeek", deepseek-v4-flash highlighted and ● CURRENT, key line "Enter apply to this chat" in a 26-cell button (its label plus one each side), "… 1 more provider needs setup", footer "Ctrl+P palette \| Ctrl+Q quit". At 211x44 two notices are stacked at the bottom right: Settings' "Provider and model settings saved: …" (raised by **s**, still live) over the dialog's right edge, and "Console provider changed OpenAI → DeepSeek … (Settings ▸ Providers & Models)."; at 235x52 only the second. Both notices cover the cost chip (ruling B: notices stay at the default place); at 211x44 nothing of the chip shows past the notices' right edge (the `8b97eeb05f` shot showed a stale "0" there), and once they timed out it read "Context 0%", whole. |
 | `05d-switch-model-plain-alt-m-configured` | Configured Console, plain **Alt+M**: Find counts "14 models in 1 provider"; OpenAI under READY PROVIDERS, NEEDS SETUP, and NOT RUNNING on two rows, the second "MLX-LM (Apple silicon) (not checked)" uncut; "Enter apply to this chat" in a 26-cell button, footer "Ctrl+P palette \| Ctrl+Q quit", cost chip whole at both sizes. |
+| `05e-live-switch-deepseek-to-openai` | 211x44 only: after `05c`, **Enter** applied DeepSeek · deepseek-v4-flash (chip "Context 0%"), then **Alt+M**, "gpt-5.6-terra" typed, **Enter** on OpenAI's row. No resize before the shot: the cost chip reads "Ctx 0% · Now $0.00", whole, the same as after a 235x52 round trip. |
 | `06a-wizard-model-step-key-required` | First-run wizard, llama.cpp against a server that answered 401 to a request that sent no key, Model step: "llama.cpp needs an API key and none was set. Go Back to add one, or enter a model ID below." in a one-line status box. |
 | `06b-wizard-provider-step-test-key-required` | **Ctrl+B** back to Provider, **Tab** ×3 to Test connection, the step scrolled to its top with the mouse wheel (Authentication below the fold), **Enter** on Test connection: "✗ llama.cpp needs an API key and none was set. Add one under Authentication, or continue anyway.", with the inset pinned notice "The last connection check failed: … Add one under Authentication, or continue anyway.". The step scrolled so the whole Authentication section shows, titled "Authentication" (no "(optional)"), at both sizes; focus stays on Test connection. |
 
-`02d` is new in the `4f2bffa20f` set; every other file is retaken under its old name.
+`02d` is new in the `4f2bffa20f` set and `05e` in the `e5e5855ab5` set; every other
+file is retaken under its old name.
 
 ## Retaken at 8b97eeb05f
 
@@ -77,6 +81,34 @@ widths). Measured
 live: after the 235x52 round trip the same row reads "Ctx 0%"; switching a chat from
 DeepSeek · deepseek-v4-flash to OpenAI · gpt-5.6-terra left "Context 0%" with room
 for "Ctx 0% · Now $0.00" until a resize. `05c`'s cost chip sits under the notices.
+(Fixed by the capture fix 4 wave; see the next section.)
+
+## Retaken at e5e5855ab5
+
+The capture fix 4 wave changed only the status row's cost chip (it now refits after a
+layout moves it). Retaken: `02c`, `03f`, `05c`; new: `05e`. Driven again and compared
+with the committed files, unchanged and left as they were: `02a` and `03a` (text and
+colours equal), `02b`, `02d` and `03c`-`03e` (only clock times differ), `03b`, `05a`
+and `05b` (also an input's blinking cursor), and `05d` (see below). Not retaken: `01a`-`01c`,
+`04a`-`04c`, `06a` and `06b` (no status row). `03f` differs from its old files only in
+clock times and the composer's blinking cursor; it is retaken because the chip is its
+subject.
+
+Seen, all at 211x44 with no resize before the read:
+
+- `02c`: "Ctx 0%", whole, in place of "Ctx 0% · No"; the same after a 235x52 round
+  trip.
+- `05c`: no stale "0" right of the notices; "Context 0%" once they timed out.
+- Live, Switch model, DeepSeek · deepseek-v4-flash -> OpenAI · gpt-5.6-terra (`05e`):
+  "Ctx 0% · Now $0.00" from the first read 0.3 s after the **Enter**, unchanged by a
+  235x52 round trip. The reverse, OpenAI -> DeepSeek: "Context 0%", unchanged by a
+  round trip. Read every 0.1 s, the old fit showed for the first one or two reads
+  ("Context 0%" for OpenAI; "Ctx 0% · Now $0.00", whole, for DeepSeek), then the
+  refit.
+- `05d`'s first retake at 211x44 had one blank row under "MLX-LM (Apple silicon) (not
+  checked)" in Switch model's list. It was gone after the 235x52 round trip, and two
+  more fresh launches (read at 4 s and 9 s) matched the committed `05d`. That list is
+  not part of this wave's change.
 
 ## Procedure
 
@@ -88,14 +120,16 @@ for "Ctx 0% · Now $0.00" until a resize. `05c`'s cost chip sits under the notic
   reads and writes of the real profile directories.
 - **Profiles.** Each one is the shipped template (`CONFIG_TOML_CONTENT`, dumped by a
   process whose own `HOME`/`XDG_*` were scratch, under the same sandbox) with
-  `users_name = "verify_cap33008r_<profile>"`, the splash off, `[model_catalog]
+  `users_name = "verify_cap33008r_<profile>"` (`verify_cap33008r4_<profile>` in the
+  `e5e5855ab5` retake), the splash off, `[model_catalog]
   auto_refresh_enabled = false` and `[first_run] setup_completed = true`. No provider
   key, except: `05` adds a made-up OpenAI key and `[console.onboarding]
   first_send_completed = true`; `06` keeps the template's first-run state, so the
   wizard opens. `05d` is a fresh launch of the `05` profile.
 - **Stubs.** A loopback HTTP server answering `GET /v1/models`: on 127.0.0.1:8080
   with three model ids (qwen3-8b-instruct-q4_k_m, phi-4-mini-q8, gemma-3-4b-it-q4)
-  for `02`; on 127.0.0.1:8080 answering 401 for `06` (its log shows six requests, none
+  for `02` (13 requests over the `e5e5855ab5` retake's three launches, none with an
+  Authorization header); on 127.0.0.1:8080 answering 401 for `06` (its log shows six requests, none
   with an Authorization header; eight, none with one, in the `8b97eeb05f` retake); on
   127.0.0.1:18431 for `03`-`05`, where
   `[api_settings.openai] api_base_url` points at it so the key check (`t`) lists
@@ -105,9 +139,13 @@ for "Ctx 0% · Now $0.00" until a resize. `05c`'s cost chip sits under the notic
   `tmux paste-buffer -p` (bracketed paste, one action). Keys are made-up
   placeholders and never appear in a capture.
 - **Timing.** Notices time out: `05c` was taken about 2.5 s after the Enter and
-  about 4-5 s after the **s**. For `01c` the three keys were sent 1.5 s apart; on the
+  about 4-5 s after the **s**. In the `e5e5855ab5` retake `02c` and `03f` were taken
+  6.5 s after the last **Enter** (an earlier `02c` at 3 s still showed "This chat
+  updated"), and their 235x52 shot waited for the composer's blinking cursor to be
+  drawn. For `01c` the three keys were sent 1.5 s apart; on the
   first try the "m" of Alt+M reached the card as a typed key and it showed its
   "Typing is locked…" notice (not seen again in five more tries), so `01c` is from a
   later try.
 - **No key check or send reached a real provider.** No message was sent. The only
-  key check went to the 18431 stub (one authenticated `GET /v1/models`).
+  key check went to the 18431 stub (one authenticated `GET /v1/models`; the same in
+  the `e5e5855ab5` retake, and none from the `05` launches).

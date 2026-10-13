@@ -37,7 +37,7 @@
                                     │                                                                                                                │ Console provider changed OpenAI → DeepSeek: this unused  │
                                     │                                                                                                                │ session now follows your saved defaults (Settings ▸      │
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│ Providers & Models).                                     │──
- Status ▾   Library · Auto off · Agent access off     Provider: DeepSeek     Model: deepseek-v4-flash     System Prompt: off     Assistant: General  │                                                          │0
+ Status ▾   Library · Auto off · Agent access off     Provider: DeepSeek     Model: deepseek-v4-flash     System Prompt: off     Assistant: General  │                                                          │
                                                                                                                                                      ╰──────────────────────────────────────────────────────────╯
 █  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                    Send disabled: type a message       Send         Dictate
 
