@@ -1421,23 +1421,6 @@ _SUBSCRIPTIONS_SCHEMA += tuple(
     + _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS
     + _SUBSCRIPTIONS_SHIPPED_CHACHANOTES_SCHEMAS[1:]
 )
-# task-34399: the subscriptions constructor now also creates
-# idx_subscriptions_source (the exact-source lookups otherwise full-scan the
-# subscriptions table during OPML dedupe). Freshly created v2 catalogs carry
-# the index at its sorted catalog position; catalogs created before the index
-# remain the exact captured alternative above. Appended, never inserted:
-# _SUBSCRIPTIONS_SCHEMA[0] and [1] stay the captured plain and shipped
-# chachanotes catalogs that the stamp groups below select by identity.
-_SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA = list(_SUBSCRIPTIONS_SCHEMA[0][1])
-_SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA.insert(
-    _SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA.index(
-        "CREATE INDEX idx_subscriptions_tags ON subscriptions(tags)"
-    ),
-    "CREATE INDEX idx_subscriptions_source ON subscriptions(source)",
-)
-_SUBSCRIPTIONS_SCHEMA += (
-    (2, tuple(_SUBSCRIPTIONS_V2_SOURCE_INDEX_SCHEMA)),
-)
 
 
 def _subscriptions_chachanotes_stamps(schema):

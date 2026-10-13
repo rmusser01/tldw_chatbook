@@ -139,37 +139,6 @@ _MIGRATIONS = (
     ),
 )
 
-# task-34399: the constructor gained idx_eval_results_run_created
-# (eval_results (run_id, created_at)) and stamps user_version 7, so freshly
-# created and opened databases carry that catalog. The v5 and v6 catalogs
-# above stay exact for databases and archived candidates created before the
-# index; declared candidate restores migrate with the same statements the
-# runtime v6 -> v7 migration runs. The new index sits at its sorted catalog
-# position (idx_eval_results_run < idx_eval_results_run_created <
-# idx_eval_run_metrics_run), immediately after the plain run index.
-_EVALS_V7_SCHEMA = _SCHEMA[-1][1]
-_EVALS_V7_INSERT_AT = _EVALS_V7_SCHEMA.index(
-    "CREATE INDEX idx_eval_results_run ON eval_results (run_id)"
-) + 1
-_EVALS_V7_SCHEMA = (
-    *_EVALS_V7_SCHEMA[:_EVALS_V7_INSERT_AT],
-    "CREATE INDEX idx_eval_results_run_created ON eval_results (run_id, created_at)",
-    *_EVALS_V7_SCHEMA[_EVALS_V7_INSERT_AT:],
-)
-_SCHEMA += ((7, _EVALS_V7_SCHEMA),)
-_VERSIONS = (5, 6, 7)
-_MIGRATIONS += (
-    (
-        6,
-        7,
-        (
-            "CREATE INDEX IF NOT EXISTS idx_eval_results_run_created "
-            "ON eval_results (run_id, created_at)",
-            "PRAGMA user_version = 7",
-        ),
-    ),
-)
-
 
 @dataclass(frozen=True)
 class _Adapter:
