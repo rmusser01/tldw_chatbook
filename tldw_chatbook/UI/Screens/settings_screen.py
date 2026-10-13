@@ -17207,6 +17207,8 @@ class SettingsScreen(BaseAppScreen):
         dirty = (
             draft.dirty_keys if draft is not None else set()
         )  # dirty_keys is a @property
+        # Only a name typed here is the Env var field's fault.
+        typed_env_var = self._provider_draft_value("credential_env_var")
         readiness = get_provider_readiness(
             provider,
             self._provider_test_staged_config(provider),
@@ -17231,6 +17233,7 @@ class SettingsScreen(BaseAppScreen):
             readiness,
             draft_endpoint=draft_endpoint,
             dirty=dirty,
+            env_var_invalid=bool(self._validate_credential_env_var(typed_env_var)),
             evidence=probe if evidence is None else evidence,
             checking=checking,
         )
@@ -17243,6 +17246,7 @@ class SettingsScreen(BaseAppScreen):
         model: str,
         endpoint: str,
         dirty: set[str] | frozenset[str] = frozenset(),
+        env_var_invalid: bool = False,
         evidence: ProviderTestEvidence | ProviderProbeResult | None = None,
         checking: bool = False,
     ) -> tuple[tuple[str, str], ...]:
@@ -17262,6 +17266,7 @@ class SettingsScreen(BaseAppScreen):
             endpoint: The endpoint under test. Only its safe display is shown:
                 no user info, query or fragment (TASK-486).
             dirty: The draft's dirty field keys, to tag unsaved values.
+            env_var_invalid: The Env var being typed is no variable's name.
             evidence: Stored evidence, or a settled probe, for this draft.
             checking: A model-listing probe is in flight.
 
@@ -17290,7 +17295,7 @@ class SettingsScreen(BaseAppScreen):
                 "Unknown provider": " — choose a supported provider",
                 "Invalid provider settings": (
                     " — check the Env var field"  # most likely a typo made here
-                    if "credential_env_var" in dirty
+                    if env_var_invalid
                     else " — fix this provider's settings in Advanced Config"
                 ),
             }.get(readiness.reason, "")
@@ -17511,6 +17516,7 @@ class SettingsScreen(BaseAppScreen):
         *,
         draft_endpoint: str,
         dirty: set[str] | frozenset[str],
+        env_var_invalid: bool = False,
         evidence: ProviderTestEvidence | ProviderProbeResult | None = None,
         checking: bool = False,
     ) -> tuple[str, str, bool]:
@@ -17525,6 +17531,7 @@ class SettingsScreen(BaseAppScreen):
             readiness: ``ProviderReadiness`` from the draft-overlaid config.
             draft_endpoint: The endpoint the test used (draft widget, may be empty).
             dirty: The provider draft's dirty field keys.
+            env_var_invalid: The Env var being typed is no variable's name.
             evidence: Stored evidence, or a settled probe, for this draft.
             checking: A model-listing probe is in flight.
 
@@ -17546,6 +17553,7 @@ class SettingsScreen(BaseAppScreen):
             model=model,
             endpoint=draft_endpoint if entry is None else entry.base_url,
             dirty=dirty,
+            env_var_invalid=env_var_invalid,
             evidence=evidence,
             checking=checking,
         )

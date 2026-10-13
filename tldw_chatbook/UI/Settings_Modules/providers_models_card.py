@@ -538,7 +538,11 @@ def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
     typed = str(draft.values.get("credential_env_var") or "") if env_edit else ""
     if screen._validate_credential_env_var(typed):
         return "invalid", ENV_VAR_NOT_A_NAME_HELP
-    if readiness.reason == "Invalid provider settings" and not env_edit:
+    # A typed name stands in only for a saved one that is no name: another
+    # cause (a malformed table) is still there after Save.
+    saved_name = screen._provider_credential_env_var(provider)
+    replaced = env_edit and screen._validate_credential_env_var(saved_name)
+    if readiness.reason == "Invalid provider settings" and not replaced:
         return "invalid", API_KEY_INVALID_HELP
     if "api_key" in dirty:
         if str(draft.values.get("api_key") or "").strip():

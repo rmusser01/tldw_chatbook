@@ -148,8 +148,9 @@ _BUDGETS: dict[str, int] = {
     # Fix round 1 of that review ends one line under it, at 33,880; fix
     # round 2 sets the quit summary's field to the duration a write sends
     # (+1): 33,881; a linked pair reads "edited *" only beside an edit Save
-    # writes it with (+4): 33,885.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33885,
+    # writes it with (+4): 33,885; the Test result blames the Env var field
+    # only for a name typed there that is no name (+8): 33,893.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33893,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -171,7 +172,9 @@ _BUDGETS: dict[str, int] = {
     # (R1 #10, #11), with the Source words as named constants (C3, C4). Fix
     # round 1 lowers it to 2,367 (the custom-endpoint sentence is the
     # screen's own; the quit summary's controls read the screen's values).
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2367,
+    # Fix round 2: an Env var edit drops the "invalid" verdict only when the
+    # saved name is what is invalid (+4): 2,371.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2371,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 722,

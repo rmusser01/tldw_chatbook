@@ -120,24 +120,65 @@ async def test_the_api_key_row_follows_the_env_var_name_being_typed(
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
-    ("dirty", "next_step"),
+    ("env_var_invalid", "next_step"),
     [
-        (frozenset(), "fix this provider's settings in Advanced Config"),
+        (False, "fix this provider's settings in Advanced Config"),
         # Finding 4(b): a typo made in this form is not Advanced Config's.
-        (frozenset({"credential_env_var"}), "check the Env var field"),
+        (True, "check the Env var field"),
     ],
 )
-def test_the_test_result_sends_an_env_var_typo_to_its_own_field(dirty, next_step):
+def test_the_test_result_sends_an_env_var_typo_to_its_own_field(
+    env_var_invalid, next_step
+):
     readiness = get_provider_readiness(
         "openai", {"api_settings": {"openai": {"api_key_env_var": _NOT_A_NAME}}}
     )
 
     rows = dict(
         SettingsScreen._provider_test_rows(
-            readiness, display_name="OpenAI", model="gpt-4.1", endpoint="", dirty=dirty
+            readiness,
+            display_name="OpenAI",
+            model="gpt-4.1",
+            endpoint="",
+            dirty=frozenset({"credential_env_var"}),
+            env_var_invalid=env_var_invalid,
         )
     )
 
     assert rows["Config"] == (
         f"OpenAI is not ready: Invalid provider settings — {next_step}"
     )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_valid_name_typed_over_a_malformed_table_repairs_nothing(
+    request, monkeypatch
+):
+    """Fix round 2, findings 5 and 10: while Env var was edited, the API key
+    row dropped "invalid" and the Test result blamed the Env var field,
+    whatever made the settings invalid. A second [api_settings.Moonshot]
+    table is not the name's fault, and Save leaves it in place."""
+    monkeypatch.delenv("MOONSHOT_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "moonshot", "model": "kimi-k3"}
+    app.app_config["api_settings"] = {"moonshot": {}, "Moonshot": {}}
+    host = _SettingsCssHarness(app, "settings")
+    invalid = ("invalid", "repair it in Advanced Config")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        assert _key_row(screen) == invalid
+
+        env_var = screen.query_one("#settings-provider-credential-env-var", Input)
+        env_var.value = "MOONSHOT_KEY"
+        await pilot.pause()
+        await pilot.pause()
+
+        assert _key_row(screen) == invalid
+        rows, _toast, _passed = screen._provider_readiness_test_report()
+        assert (
+            "Invalid provider settings — fix this provider's settings in "
+            "Advanced Config"
+        ) in rows
