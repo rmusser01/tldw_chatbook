@@ -8149,9 +8149,6 @@ class SettingsScreen(BaseAppScreen):
             getattr(self.app_instance, "app_config", {}) or {}
         )
 
-    def _remote_images_button_label(self) -> str:
-        return "Enabled" if self._remote_images_enabled() else "Disabled"
-
     def _toggle_remote_images(self) -> bool:
         """Apply the choice immediately and reconcile it with the saved result."""
         next_value = not self._remote_images_enabled()
@@ -8170,13 +8167,6 @@ class SettingsScreen(BaseAppScreen):
 
         return resolve_status_chips_position(
             getattr(self.app_instance, "app_config", {}) or {}
-        )
-
-    def _status_row_position_button_label(self) -> str:
-        return (
-            "Above composer"
-            if self._status_row_position_value() == "above"
-            else "Below composer"
         )
 
     def _toggle_status_row_position(self) -> str:
@@ -8221,16 +8211,17 @@ class SettingsScreen(BaseAppScreen):
                 chat = app_config.get("chat")
                 if isinstance(chat, dict) and isinstance(chat.get("images"), dict):
                     chat["images"]["render_remote_images"] = value
-            label = self._remote_images_button_label()
         else:
             from ..Console_Modules.status_row import poke_console_setting
 
             poke_console_setting(app_config, "status_chips_position", value)
-            label = self._status_row_position_button_label()
+        # Capture finding 12: a Checkbox and a Select, not value-labelled Buttons.
         try:
-            self.query_one(f"#settings-console-{key}-toggle", Button).label = label
+            control = self.query_one(f"#settings-console-{key}-toggle")
         except QueryError:
-            pass
+            return
+        with control.prevent(Checkbox.Changed, Select.Changed):
+            control.value = value
 
     def _queue_console_toggle(
         self, key: str, value: bool | str, current: bool | str
@@ -19790,15 +19781,21 @@ class SettingsScreen(BaseAppScreen):
                 "Where the Console status chips sit relative to the composer.",
                 id="settings-console-status-row-position-label",
             )
-            yield Button(
-                self._status_row_position_button_label(),
-                id="settings-console-status-row-position-toggle",
-                tooltip=(
-                    "Place the Provider/Model/Tools status row above or "
-                    "below the composer input. Takes effect when you "
-                    "return to Console."
-                ),
-            )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Status row", classes="settings-input-label")
+                yield Select(
+                    (("Above composer", "above"), ("Below composer", "below")),
+                    value=self._status_row_position_value(),
+                    allow_blank=False,
+                    id="settings-console-status-row-position-toggle",
+                    classes="settings-compact-select",
+                    compact=True,
+                    tooltip=(
+                        "Place the Provider/Model/Tools status row above or "
+                        "below the composer input. Takes effect when you "
+                        "return to Console."
+                    ),
+                )
             yield Static(
                 "Above keeps the chips directly under the conversation; "
                 "below closes the shell as a bottom status row.",
@@ -19834,8 +19831,9 @@ class SettingsScreen(BaseAppScreen):
                 "Render images linked in assistant replies (remote fetch).",
                 id="settings-console-remote-images-label",
             )
-            yield Button(
-                self._remote_images_button_label(),
+            yield Checkbox(
+                "Render linked images",
+                value=self._remote_images_enabled(),
                 id="settings-console-remote-images-toggle",
                 tooltip=(
                     "Fetch and render http(s) image links found in replies. "
@@ -20164,11 +20162,13 @@ class SettingsScreen(BaseAppScreen):
                     allow_blank=False,
                     compact=True,
                 )
-            yield Button(
-                "Edit summary prompt…",
-                id="settings-console-context-edit-summary-prompt",
-                tooltip="Open the existing Internal Prompts editor filtered to the Console summary prompt.",
-            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Summary prompt", classes="settings-input-label")
+                yield Button(
+                    "Edit in Internal Prompts…",
+                    id="settings-console-context-edit-summary-prompt",
+                    tooltip="Open the existing Internal Prompts editor filtered to the Console summary prompt.",
+                )
             yield Static(
                 "Text summary and Hybrid make one extra model call and store generated "
                 "memory with provenance. Visual pages are rendered on-device for one "
@@ -28829,17 +28829,19 @@ class SettingsScreen(BaseAppScreen):
         )
         self._update_draft_status_widgets(SettingsCategoryId.CONSOLE_BEHAVIOR)
 
-    @on(Button.Pressed, "#settings-console-remote-images-toggle")
-    def handle_console_remote_images_toggle(self, event: Button.Pressed) -> None:
-        """Flip the remote-images toggle: immediate write, no category draft."""
+    @on(Checkbox.Changed, "#settings-console-remote-images-toggle")
+    def handle_console_remote_images_toggle(self, event: Checkbox.Changed) -> None:
+        """Apply the remote-images choice: immediate write, no category draft."""
         event.stop()
-        self._toggle_remote_images()
+        if event.value != self._remote_images_enabled():
+            self._toggle_remote_images()
 
-    @on(Button.Pressed, "#settings-console-status-row-position-toggle")
-    def handle_console_status_row_position_toggle(self, event: Button.Pressed) -> None:
-        """Flip the status-row placement: immediate write, no category draft."""
+    @on(Select.Changed, "#settings-console-status-row-position-toggle")
+    def handle_console_status_row_position_toggle(self, event: Select.Changed) -> None:
+        """Apply the status-row placement: immediate write, no category draft."""
         event.stop()
-        self._toggle_status_row_position()
+        if event.value != self._status_row_position_value():
+            self._toggle_status_row_position()
 
     @on(Input.Changed, "#settings-console-paste-collapse-threshold")
     def handle_console_paste_threshold_changed(self, event: Input.Changed) -> None:

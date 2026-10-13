@@ -395,6 +395,8 @@ def build_field_search_index() -> None:
                     "settings-console-context-carry-forward-mode",
                     "Keep after compaction",
                 ),
+                # Capture finding 12: its button sits in a labelled row now.
+                ("settings-console-context-edit-summary-prompt", "Summary prompt"),
                 # TASK-23109 completion sweep: labels mirror the rendered rows.
                 (
                     "settings-console-exchange-capture-enabled",
@@ -457,12 +459,13 @@ def build_field_search_index() -> None:
                     "settings-console-background-effect-fps",
                     "Background effect frame rate",
                 ),
-                # Review finding 5: bare Button toggle with no labeled row --
-                # invisible to the drift guard's heuristic, indexed by hand.
+                # Review finding 5: a toggle with no labeled row (a Checkbox
+                # since capture finding 12), indexed by hand.
                 (
                     "settings-console-remote-images-toggle",
                     "Render images linked in assistant replies",
                 ),
+                ("settings-console-remote-images-toggle", "Render linked images"),
                 ("settings-console-remote-images-toggle", "Remote images"),
             ),
             SettingsCategoryId.APPEARANCE: (

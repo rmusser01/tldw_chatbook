@@ -208,3 +208,35 @@ async def test_console_behavior_prose_starts_where_its_section_headers_do(reques
         }
         assert len(prose) >= 15, prose
         assert {name: x for name, x in prose.items() if x not in header_x} == {}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_status_row_chat_images_and_summary_prompt_read_as_controls(request):
+    """#3057 capture finding 12 (06b, 06c): "Above composer", "Disabled" and
+    "Edit summary prompt…" were Buttons standing alone at the prose indent,
+    bold on the same fill as the section headers above them, so nothing said
+    they could be pressed; two of them were values posing as labels. Status
+    row placement is a one-row Select in a labelled row, as Rail layout scope
+    is; Chat images is a Checkbox, as Collapse large pastes is; the summary
+    prompt's button sits in a labelled row and says where it goes."""
+    from textual.widgets import Button, Checkbox
+
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        _screen, card = await _open_card(host, pilot)
+        position = card.query_one("#settings-console-status-row-position-toggle")
+        images = card.query_one("#settings-console-remote-images-toggle")
+        prompt = card.query_one("#settings-console-context-edit-summary-prompt")
+
+        assert isinstance(position, Select) and position.value == "above"
+        assert _row_label(position) == "Status row"
+        assert isinstance(images, Checkbox) and images.value is False
+        assert str(images.label) == "Render linked images"
+        assert isinstance(prompt, Button)
+        assert str(prompt.label) == "Edit in Internal Prompts…"
+        assert _row_label(prompt) == "Summary prompt"
+        assert {position.parent, prompt.parent}.isdisjoint({card})
+        rail = card.query_one("#settings-console-rail-layout-scope", Select)
+        assert position.region.x == rail.region.x == prompt.region.x

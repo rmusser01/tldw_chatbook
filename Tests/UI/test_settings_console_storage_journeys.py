@@ -10,19 +10,27 @@ from Tests.UI.test_settings_overview_search_journeys import _category, _painted
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
 
 
-async def _press_again(pilot, button: Button) -> None:
-    """Press Enter on ``button`` once its previous press has finished.
+def _toggle(screen, setting: str):
+    return screen.query_one(f"#settings-console-{setting}-toggle", (Checkbox, Select))
 
-    Textual drops a press made during the previous one's 0.2 s effect (the
-    ``-active`` class), as it does a user's double press. Once Console
-    Behavior lost its nested frames (captures review note 9) Settings settled
-    fast enough for these second presses to land inside that window.
+
+async def _flip(pilot, control) -> None:
+    """Change an instant toggle's choice from the keyboard, as a user does.
+
+    Rewritten on purpose (#3057 capture finding 12): these were Buttons whose
+    label was the value, flipped by Enter. Chat images is now a Checkbox
+    (Enter flips it) and Status row placement a two-option Select (Enter
+    opens it, an arrow reaches the other option, Enter picks it).
     """
-    for _ in range(40):
-        if not button.has_class("-active"):
-            break
-        await pilot.pause(0.02)
-    await pilot.press("enter")
+    control.focus()
+    await pilot.pause()
+    if isinstance(control, Select):
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("down" if control.value == "above" else "up", "enter")
+    else:
+        await pilot.press("enter")
+    await pilot.pause()
 
 
 @pytest.mark.asyncio
@@ -134,13 +142,12 @@ async def test_console_instant_toggle_failed_save_rolls_back_and_retries(
     async with host.run_test(size=(190, 55)) as pilot:
         await _category(host, pilot, "Console Behavior")
         screen = host.screen
-        button = screen.query_one(f"#settings-console-{setting}-toggle", Button)
+        control = _toggle(screen, setting)
         before = path.read_bytes()
-        original_label = str(button.label)
-        button.focus()
-        await pilot.press("enter")
+        original = control.value
+        await _flip(pilot, control)
         await _settle(host, pilot)
-        assert str(button.label) == original_label
+        assert control.value == original
         assert path.read_bytes() == before
         value = (
             screen._remote_images_enabled()
@@ -155,8 +162,8 @@ async def test_console_instant_toggle_failed_save_rolls_back_and_retries(
         monkeypatch.setattr(
             module, "apply_settings_mutation_to_cli_config", real_writer
         )
-        assert host.screen.focused is button
-        await _press_again(pilot, button)
+        assert host.screen.focused is control
+        await _flip(pilot, control)
         await _settle(host, pilot)
         saved = tomllib.loads(path.read_text())
         if setting == "remote-images":
@@ -214,12 +221,11 @@ async def test_console_instant_toggle_latest_choice_survives_pending_write(
     monkeypatch.setattr(module, "apply_settings_mutation_to_cli_config", gated)
     async with host.run_test(size=(190, 55)) as pilot:
         await _category(host, pilot, "Console Behavior")
-        button = host.screen.query_one(f"#settings-console-{setting}-toggle", Button)
-        button.focus()
+        control = _toggle(host.screen, setting)
         try:
-            await pilot.press("enter")
+            await _flip(pilot, control)
             assert await asyncio.to_thread(entered.wait, 3)
-            await _press_again(pilot, button)
+            await _flip(pilot, control)
             await pilot.press("escape", "/", *"Storage", "enter")
             await pilot.pause()
         finally:
@@ -268,8 +274,7 @@ async def test_console_instant_toggle_keeps_replaced_file_value_on_cache_failure
     monkeypatch.setattr(module, "apply_settings_mutation_to_cli_config", partial)
     async with host.run_test(size=(190, 55)) as pilot:
         await _category(host, pilot, "Console Behavior")
-        host.screen.query_one(f"#settings-console-{setting}-toggle", Button).focus()
-        await pilot.press("enter")
+        await _flip(pilot, _toggle(host.screen, setting))
         await _settle(host, pilot)
         saved = tomllib.loads(Path(config.get_cli_config_path()).read_text())
         if setting == "remote-images":
@@ -423,15 +428,13 @@ async def test_console_instant_toggle_rebases_after_configuration_reload(
     host = _StyledDestinationHarness(app, "settings")
     async with host.run_test(size=(190, 55)) as pilot:
         await _category(host, pilot, "Console Behavior")
-        host.screen.query_one(f"#settings-console-{setting}-toggle", Button).focus()
-        await pilot.press("enter")
+        await _flip(pilot, _toggle(host.screen, setting))
         await _settle(host, pilot)
         config.apply_settings_mutation_to_cli_config({section: {key: original}})
         assert host.screen._reload_current_config() == "Config reload: loaded"
         await _category(host, pilot, "Overview")
         await _category(host, pilot, "Console Behavior")
-        host.screen.query_one(f"#settings-console-{setting}-toggle", Button).focus()
-        await pilot.press("enter")
+        await _flip(pilot, _toggle(host.screen, setting))
         await _settle(host, pilot)
         saved = tomllib.loads(Path(config.get_cli_config_path()).read_text())
         table = saved["chat"]["images"] if section == "chat.images" else saved[section]
@@ -484,12 +487,11 @@ async def test_console_instant_toggle_drains_across_settings_recreation(
     monkeypatch.setattr(module, "apply_settings_mutation_to_cli_config", gated)
     async with host.run_test(size=(190, 55)) as pilot:
         await _category(host, pilot, "Console Behavior")
-        button = host.screen.query_one(f"#settings-console-{setting}-toggle", Button)
-        button.focus()
+        control = _toggle(host.screen, setting)
         try:
-            await pilot.press("enter")
+            await _flip(pilot, control)
             assert await asyncio.to_thread(entered.wait, 3)
-            await _press_again(pilot, button)
+            await _flip(pilot, control)
             old_screen = host.screen
             await host.switch_screen(Screen())
             await pilot.pause()
@@ -501,10 +503,7 @@ async def test_console_instant_toggle_drains_across_settings_recreation(
             await pilot.pause()
             if edit_after_return:
                 host.screen._console_behavior_result = "Could not save earlier choice."
-                host.screen.query_one(
-                    f"#settings-console-{setting}-toggle", Button
-                ).focus()
-                await pilot.press("enter")
+                await _flip(pilot, _toggle(host.screen, setting))
         finally:
             release.set()
         assert await asyncio.to_thread(finished.wait, 5)

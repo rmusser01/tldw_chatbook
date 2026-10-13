@@ -12870,20 +12870,24 @@ def test_settings_source_labels_cover_every_resolvable_source():
 
 @pytest.mark.asyncio
 @private_profile_test
-def test_remote_images_toggle_label_reflects_config(request):
-    """The remote-images toggle label mirrors [chat.images].render_remote_images."""
+def test_remote_images_toggle_value_reflects_config(request):
+    """The remote-images Checkbox's value mirrors [chat.images].render_remote_images.
+
+    Rewritten on purpose (#3057 capture finding 12): the toggle was a Button
+    labelled "Enabled"/"Disabled"; it is a Checkbox built from this value.
+    """
     app = _build_test_app()
     app.app_config["COMPREHENSIVE_CONFIG_RAW"] = {
         "chat": {"images": {"render_remote_images": True}}
     }
     screen = SettingsScreen(app)
 
-    assert screen._remote_images_button_label() == "Enabled"
+    assert screen._remote_images_enabled() is True
 
     app.app_config["COMPREHENSIVE_CONFIG_RAW"]["chat"]["images"][
         "render_remote_images"
     ] = False
-    assert screen._remote_images_button_label() == "Disabled"
+    assert screen._remote_images_enabled() is False
 
 
 @pytest.mark.asyncio

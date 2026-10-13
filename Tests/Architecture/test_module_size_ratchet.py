@@ -161,8 +161,10 @@ _BUDGETS: dict[str, int] = {
     # Inspector prints no "Owns" list of raw keys (+4): 33,903.
     # Capture fix A2 (2026-10-12): Catalog refresh keeps its receipt for a
     # write and says nothing at rest (+4): 33,907; its focus-help line skips
-    # the nav bar's tooltips (+3): 33,910.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33910,
+    # the nav bar's tooltips (+3): 33,910; Console Behavior's Status row and
+    # Chat images become a Select and a Checkbox, the summary prompt's
+    # button gets a labelled row (+2): 33,912.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33912,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
