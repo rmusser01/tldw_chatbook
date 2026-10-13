@@ -472,7 +472,8 @@ class StudyScreen(BaseAppScreen):
     def _scope_summary_text(self) -> str:
         material_summary = self._material_context_summary_text()
         if self.scope_state.scope_type == StudyScopeType.WORKSPACE:
-            workspace_name = (
+            # Both scope lines read markup; the name prints as typed.
+            workspace_name = escape_markup(
                 self.scope_state.workspace_name
                 or self.scope_state.workspace_id
                 or "Workspace"

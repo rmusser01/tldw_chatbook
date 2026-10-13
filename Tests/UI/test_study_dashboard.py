@@ -470,3 +470,29 @@ async def test_study_quizzes_review_in_chat_preserves_workspace_scope_metadata()
         assert payload.backend_contracts == {
             "workspace_isolation": {"workspace_scope_id": "workspace-1"}
         }
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_workspace_name_with_brackets_is_shown_as_typed():
+    """#3057 review, fix round 5, finding 2: the workspace name in the
+    dashboard's and the Quiz Session's scope line was read as markup, so a
+    workspace named "Arr [/] x" raised `MarkupError` on every shell sync.
+    """
+    app_instance = _build_app_instance()
+    app_instance.current_runtime_backend = "server"
+    app_instance.scope_context = StudyScopeContext(
+        scope_type=StudyScopeType.WORKSPACE,
+        workspace_id="workspace-1",
+        workspace_name="Arr [/] x",
+    )
+    app = _build_full_study_app(app_instance)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        app.screen.sync_shell_from_window()  # MarkupError before the fix
+        shown = [
+            _text(app.screen.query_one(selector, Static))
+            for selector in ("#study-scope-summary", "#quiz-scope-summary")
+        ]
+        assert shown == ["Workspace: Arr [/] x | Backend: server"] * 2
