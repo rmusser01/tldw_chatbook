@@ -578,6 +578,7 @@ class StudyFlashcardsController:
             await asyncio.sleep(0.01)
         return False
 
+    @_quiet_when_swapped_out
     async def initialize_view(self) -> None:
         service = self._scope_service()
         if service is None:

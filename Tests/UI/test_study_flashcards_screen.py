@@ -1717,6 +1717,8 @@ _ACTION_SERVICE_CALLS = {
             for action in _ACTION_SERVICE_CALLS
             if action != "delete_selected_deck"
         ),
+        # Opening Flashcards awaits the deck list (fix round 2, finding 1).
+        ("initialize_view", "list_decks"),
     ],
 )
 async def test_an_action_held_across_the_sub_view_swap_ends_quietly(action, held):
