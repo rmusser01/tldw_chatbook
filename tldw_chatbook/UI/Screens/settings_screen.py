@@ -19663,7 +19663,12 @@ class SettingsScreen(BaseAppScreen):
                     markup=False,
                     classes="settings-detail-row",
                 )
-                with Horizontal(classes="settings-input-row settings-select-row"):
+                # Capture finding 14: with no model named above, its controls
+                # and their "this ... model" help stay hidden.
+                with Horizontal(
+                    classes="settings-input-row settings-select-row"
+                ) as replay_row:
+                    replay_row.display = target is not None
                     yield Static("This model's replay", classes="settings-input-label")
                     yield Select(
                         (("Use default", "inherit"), *REASONING_HISTORY_OPTIONS),
@@ -19674,7 +19679,7 @@ class SettingsScreen(BaseAppScreen):
                         classes="settings-compact-select",
                         compact=True,
                     )
-                yield Checkbox(
+                native_tools = Checkbox(
                     "Native tool support",
                     value=self._reasoning_native_override_value(),
                     disabled=target is None,
@@ -19684,11 +19689,14 @@ class SettingsScreen(BaseAppScreen):
                         "server's native tool parser before enabling this preference."
                     ),
                 )
-                yield Static(
+                remembered = Static(
                     "Remembered for this normalized endpoint and model. Native tool "
                     "support is configured separately from reasoning replay.",
                     classes="settings-detail-row",
                 )
+                native_tools.display = remembered.display = target is not None
+                yield native_tools
+                yield remembered
             yield Static(
                 self._reasoning_policy_status(),
                 id="settings-console-reasoning-status",

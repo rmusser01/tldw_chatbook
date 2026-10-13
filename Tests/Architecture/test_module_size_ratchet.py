@@ -176,9 +176,11 @@ _BUDGETS: dict[str, int] = {
     # fold row says when the rest is above (-8): 33,933; the unsaved names
     # move from the pinned draft line to the note (-9): 33,924.
     # Capture fix A2 round 2 (2026-10-13): Console Behavior's Inspector
-    # Scope row names the card's sections, not config sections (-1): 33,911.
-    # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 33,923.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33923,
+    # Scope row names the card's sections, not config sections (-1): 33,911;
+    # Reasoning replay override hides its controls until Console names a
+    # local model (+8): 33,919.
+    # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 33,931.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33931,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
