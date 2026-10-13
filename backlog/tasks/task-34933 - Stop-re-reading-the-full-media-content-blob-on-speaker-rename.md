@@ -1,15 +1,16 @@
 ---
 id: TASK-34933
 title: Stop-re-reading-the-full-media-content-blob-on-speaker-rename
-status: To Do
+status: Done
 assignee: []
-created_date: '2026-10-13 14:55'
+created_date: 2026-10-13 14:55
 labels:
-  - performance
-  - ui-perf
-  - wave-4-blocking-rebuilds
+- performance
+- ui-perf
+- wave-4-blocking-rebuilds
 dependencies: []
 priority: medium
+updated_date: 2026-10-13 18:58
 ---
 
 ## Description
@@ -20,5 +21,6 @@ The LibraryMediaViewer.SpeakerRenamed handler calls db.get_media_by_id(media_id)
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Rename handler refreshes only what changed (targeted read or in-place patch of detail state),No full-content SELECT on the rename path (test)
+- [x] Rename handler refreshes only what changed (targeted read or in-place patch of detail state)
+- [x] No full-content SELECT on the rename path (test)
 <!-- AC:END -->

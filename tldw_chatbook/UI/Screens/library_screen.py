@@ -6603,6 +6603,11 @@ class LibraryScreen(BaseAppScreen):
         db = getattr(self.app_instance, "media_db", None)
         if not isinstance(detail, Mapping) or db is None:
             return
+        if event.content is not None:
+            # TASK-34933: the renamed content rides the message -- no
+            # full-content re-read on the rename path.
+            self._media_state.detail = {**detail, "content": event.content}
+            return
         try:
             row = db.get_media_by_id(event.media_id)
         except Exception:  # noqa: BLE001 - a closed/failed DB just means no patch
