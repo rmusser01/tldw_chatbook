@@ -412,6 +412,11 @@ _SQLITE_OWNER_POLICIES = {
         _PRIVATE_OR_MEMORY,
         "RAG indexing supports private files and exact in-memory targets.",
     ),
+    "tests.store_kernel": SQLiteOwnerPolicy(
+        "Tests/DB/test_store_kernel",
+        _PRIVATE_OR_MEMORY,
+        "Kernel contract tests support private files and exact in-memory targets.",
+    ),
     "eval.orchestrator_parent": SQLiteOwnerPolicy(
         "tldw_chatbook/Evals/eval_orchestrator",
         _PRIVATE_FILE,

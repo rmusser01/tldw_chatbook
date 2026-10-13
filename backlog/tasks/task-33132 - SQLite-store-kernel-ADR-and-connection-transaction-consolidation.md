@@ -1,8 +1,9 @@
 ---
 id: TASK-33132
 title: SQLite store kernel ADR and connection-transaction consolidation
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@robert'
 created_date: '2026-09-27 19:46'
 labels: [refactor, db]
 dependencies: []
@@ -27,3 +28,14 @@ The DB layer carries 21 independent transaction() context managers and 9 verbati
 ## Renumbering provenance
 
 Filed 2026-09-27 as task-33087. origin/dev minted its own task-33087 before this branch merged, so per the landed-keeps-id rule this task moved to task-33132; every inbound reference moved with it.
+
+## Implementation Plan
+
+Premise re-verified against origin/dev (2026-10-12): 25 `transaction()` definitions (growing: 18→21→25), 10 held-connection copies. Two design-relevant discoveries: `Backup_Recovery/participants.py` already coordinates stores via `_core_*` hooks/decorators (the kernel must keep it observable by construction), and `RAG_Indexing_DB` is the hardened, best-documented reference port of the Workspace pattern (task-15465/15466/19566/3012/32801.5 lineage) — it becomes the pilot and the comment donor.
+
+1. ADR-228 (backlog/decisions/228-sqlite-store-kernel.md): kernel = `DB/store_kernel.py` mixin; canonical semantics from the hardened Workspace/RAG pattern (autocommit held connections, one-place PRAGMA configuration, BEGIN IMMEDIATE with BaseException rollback, fail-loud nesting, participants integration built in, per-store `:memory:` overrides). AC #1's original wording ("ChaChaNotes semantics canonical") is refined there: the fleet's de facto canonical is the fail-loud variant; ChaChaNotes' depth-tracked manager stays the documented exception.
+2. Implement `DB/store_kernel.py` with tests covering nesting failure, BaseException rollback, liveness replacement, and participants observability.
+3. Pilot-migrate RAG_Indexing_DB onto the kernel (comments move verbatim where they describe kernel behavior); run its test suite.
+4. Migrate remaining held-connection copyists one store per PR (Workspace, AgentRuns, Prompts, Client_Media, Library_Collections, event-state, client-notifications, notes-device, receipts...), 25 transaction() definitions shrinking accordingly.
+5. Stores with genuinely different contracts (Chunking_Lab durability, Client_Media blob layer) may consume the kernel without its policy — documented per store.
+

@@ -21,15 +21,12 @@ The module uses a simple schema that tracks:
 import sqlite3
 import json
 import sys
-import threading
 import time
 from array import array
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import (
     Iterable,
-    Iterator,
     List,
     Dict,
     Optional,
@@ -40,17 +37,9 @@ from typing import (
 )
 from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
-from .private_sqlite import connect_private_sqlite
+from .store_kernel import SQLiteStoreKernel
 from tldw_chatbook.Utils.private_paths import lexical_path
 from tldw_chatbook.Utils.timestamps import utc_now_iso
-from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access,
-    _core_cached_connection,
-    _core_closing,
-    _core_getter,
-    _core_transaction,
-    _register_core_connection,
-)
 
 
 #: Shared by the single-item and batch write paths so the two can never
@@ -115,7 +104,7 @@ def _decode_embedding_vector(blob: bytes) -> Optional[List[float]]:
     return packed.tolist()
 
 
-class RAGIndexingDB:
+class RAGIndexingDB(SQLiteStoreKernel):
     """
     Manages SQLite database for tracking RAG indexing state.
 
@@ -137,11 +126,9 @@ class RAGIndexingDB:
     the number of threads that touch this DB rather than by call volume.
     """
 
-    #: Liveness-ping gate (mirrors `Workspace_DB`/`ChaChaNotes_DB`,
-    #: task-261/3011): a per-call ``SELECT 1`` would double the statement
-    #: count on the per-item indexing path. A recently-used held
-    #: connection is known-good without a ping.
-    _LIVENESS_PING_IDLE_SECONDS = 30.0
+    #: private-sqlite connect owner (participants identity stays the class);
+    #: the liveness-gate rationale above moved to the kernel constant.
+    _kernel_sqlite_owner = "db.rag_indexing"
 
     def __init__(
         self,
@@ -175,26 +162,9 @@ class RAGIndexingDB:
 
         # Must precede _initialize_schema(): it already uses the held
         # connection.
-        self._thread_local = threading.local()
+        self._init_store_kernel()
 
         self._initialize_schema()
-
-    @_core_getter
-    def _get_connection(self) -> sqlite3.Connection:
-        """Open and configure a NEW database connection with row factory.
-
-        Callers wanting the thread's long-lived connection should use
-        ``connection``/``transaction``; this is the single place a
-        connection is created, so every per-connection property lives here.
-        """
-        _core_access(self)
-        conn = connect_private_sqlite("db.rag_indexing", self.db_path_str)
-        _register_core_connection(self, conn)
-        try:
-            return self._configure_connection(conn)
-        except BaseException:
-            conn.close()
-            raise
 
     def _configure_connection(self, conn):
         conn.row_factory = sqlite3.Row
@@ -235,113 +205,6 @@ class RAGIndexingDB:
         # connection holds no read snapshot and does not block checkpointing.
         return conn
 
-    @_core_getter
-    def _held_connection(self) -> sqlite3.Connection:
-        """Return this thread's held connection, opening or reviving it.
-
-        The liveness probe is a plain no-op statement; a connection another
-        component closed (or that SQLite invalidated) is transparently
-        replaced, mirroring `Workspace_DB._held_connection`.
-
-        ``:memory:`` asymmetry, deliberate: unlike ``ClientNotificationsDB``
-        -- whose in-memory branch keeps ONE shared connection because the
-        app really does fall back to an in-memory inbox -- this class stays
-        uniformly thread-local, matching the ``Workspace_DB`` template it
-        was ported from. The consequence is that with ``:memory:`` a SECOND
-        thread gets its own connection and therefore its own schema-less
-        database (an in-memory DB lives inside its connection, and
-        ``_initialize_schema`` only ran on the constructing thread's).
-        That is acceptable because production always constructs this DB
-        from ``get_rag_indexing_db_path()``; ``:memory:`` exists here only
-        for single-threaded tests. It is also not a regression -- before
-        this port EVERY call opened a fresh, empty in-memory database, so
-        no operation after construction could see the schema at all.
-        """
-        _core_access(self)
-        conn = getattr(self._thread_local, "conn", None)
-        conn = _core_cached_connection(self, conn)
-        if conn is not None:
-            last_used = getattr(self._thread_local, "conn_last_used", None)
-            if (
-                last_used is None
-                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
-            ):
-                try:
-                    conn.execute("SELECT 1")
-                except (sqlite3.ProgrammingError, sqlite3.OperationalError):
-                    try:
-                        sqlite3.Connection.in_transaction.__get__(conn)
-                    except sqlite3.ProgrammingError:
-                        conn.close()
-                    else:
-                        raise
-                    conn = None
-        if conn is None:
-            conn = self._get_connection()
-            self._thread_local.conn = conn
-        self._thread_local.conn_last_used = time.monotonic()
-        return conn
-
-    @_core_transaction
-    @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        """Yield the calling thread's held connection (no transaction).
-
-        In autocommit mode a single statement is its own transaction, so
-        reads and single-statement writes need nothing more than this.
-        """
-        yield self._held_connection()
-
-    @_core_transaction
-    @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Yield the held connection inside a write transaction.
-
-        Required for any block whose statements must land (or not land)
-        together: in autocommit mode each bare statement would otherwise
-        commit on its own.
-
-        Nesting: the explicit BEGIN runs on the ONE connection this thread
-        holds, so nesting a second ``transaction()`` inside one raises
-        ``sqlite3.OperationalError: cannot start a transaction within a
-        transaction``. Pre-port each block had its own connection and
-        nesting silently "worked"; the outer block still rolls back
-        cleanly, because the failure propagates through its ``except``.
-
-        Raises:
-            Exception: Re-raised after rolling back, on any error inside
-                the ``with`` block. On clean exit the transaction commits.
-        """
-        conn = self._held_connection()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            yield conn
-        # TASK-32801.5: BaseException, not Exception. A CancelledError or
-        # KeyboardInterrupt raised inside the block is not an Exception, so
-        # the rollback used to be skipped and the transaction stayed open --
-        # and because `transaction()` treats an already-open transaction as
-        # nested, every later write on that thread then rode it uncommitted
-        # and was lost at close. Proven on Prompts_DB: a write after an
-        # escaped KeyboardInterrupt did not survive close+reopen.
-        # Library_Collections_DB and Workflows_DB already do this.
-        except BaseException:
-            conn.rollback()
-            raise
-        else:
-            conn.commit()
-
-    def close(self) -> None:
-        """Close the current thread's held connection, if any."""
-        conn = getattr(self._thread_local, "conn", None)
-        if conn is not None:
-            with _core_closing(self, conn) as allowed:
-                if not allowed:
-                    return
-                try:
-                    conn.close()
-                except Exception:  # noqa: BLE001 - preserve retryable native cache
-                    return
-                self._thread_local.conn = None
 
     def _initialize_schema(self):
         """Initialize the database schema."""

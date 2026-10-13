@@ -542,6 +542,31 @@ def _qualified_file_notes_core_read(source_path, symbol, call):
                for node in ast.walk(tree))
 
 
+
+def _qualified_store_kernel_dispatch(source_path, symbol, call):
+    """Admit the store kernel's per-subclass owner dispatch (ADR-228).
+
+    The ONE qualified connect lives in SQLiteStoreKernel._get_connection;
+    each subclass declares a class-level _kernel_sqlite_owner that
+    _init_store_kernel validates non-empty and that must resolve to a
+    registered, documented owner policy at connect time (registry<->doc
+    parity). The allowance is tied to that validation being present.
+    """
+    if symbol != "SQLiteStoreKernel._get_connection" or not call.args:
+        return False
+    if ast.unparse(call.args[0]) != "self._kernel_sqlite_owner":
+        return False
+    tree = _parse_source(source_path)
+    qualified = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "connect_private_sqlite" and node.args
+        and not isinstance(node.args[0], ast.Constant)
+    ]
+    if len(qualified) != 1:
+        return False
+    return "if not self._kernel_sqlite_owner:" in source_path.read_text()
+
 def _private_sqlite_seam_violations(
     source_path: Path,
     production_module: str,
@@ -590,6 +615,8 @@ def _private_sqlite_seam_violations(
                 if production_module == "tldw_chatbook/DB/recovery_core" and _qualified_core_recovery_dispatch(source_path, symbol, call):
                     continue
                 if production_module == "tldw_chatbook/Notes/recovery" and _qualified_file_notes_core_read(source_path, symbol, call):
+                    continue
+                if production_module == "tldw_chatbook/DB/store_kernel" and _qualified_store_kernel_dispatch(source_path, symbol, call):
                     continue
                 violations.append(
                     f"{production_module}:{symbol}: non-literal {keyword_name}"
@@ -739,6 +766,8 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C92 owns local workflow definitions and recoverable authoring drafts.
         # C93/C94 own plugin registry and in-memory schema validation.
         # C95 validates the installed Guardian v1/v2 recovery catalogs.
+        # C97 is the SQLiteStoreKernel contract-test owner (TASK-33132;
+# renumbered after dev minted C95/C96 mid-flight).
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
@@ -747,7 +776,7 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
         # C08/C09 were the legacy settings window's VACUUM and integrity
         # workers; they left with the window (TASK-33244).
-        for number in range(1, 97) if number not in {8, 9, 10, 75}
+        for number in range(1, 98) if number not in {8, 9, 10, 75}
     ]
     assert [row["id"] for row in backup_rows] == [
         # B04-B09 were that window's six-owner bulk backup loop (TASK-33244).
