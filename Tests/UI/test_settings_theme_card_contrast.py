@@ -405,6 +405,32 @@ async def test_preset_swatches_have_edges_and_a_contrasting_focus_ring(theme, re
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("theme", ["textual-light", "catppuccin-latte", "solarized-light"])
+@private_profile_test
+async def test_image_gen_on_check_is_readable_on_light_themes(theme, request):
+    """#3057 capture fix 2 round 2, finding 2: Image Gen's switches are
+    StateCheckboxes too, so the check is the state, and a panel rule painted
+    it in $success (1.51:1 on textual-light). It must clear 3:1."""
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        host.theme = theme
+        await _category(host, pilot, "Image Gen")
+        await host.workers.wait_for_complete()
+        await pilot.pause(0.2)
+        host.screen.query_one("#settings-imagegen-context_llm_enabled").value = True
+        await pilot.pause(0.2)
+        box = host.screen.query_one("#settings-imagegen-context_llm_enabled")
+        host.set_focus(None)
+        await _show(pilot, box)
+        mark = box._button.plain[1]
+        assert mark.strip(), "on paints no mark"
+        glyph = next(s for _, c, s in _cells(host, box.region) if c == mark)
+        assert _contrast(glyph.color, glyph.bgcolor) >= 3.0, (
+            f"{theme} on glyph {glyph.color} on {glyph.bgcolor}"
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @private_profile_test
 async def test_theme_list_group_headers_meet_text_contrast(theme, request):

@@ -3861,13 +3861,6 @@ PromptBlockEditor #prompt-editor-lane-options Checkbox {
 .internal-prompt-editor-error { color: $error; }
 .internal-prompt-editor-actions { align-horizontal: right; height: auto; padding: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0; }
 
-ImageGenSettingsPanel Checkbox > .toggle--button {
-  color: $ds-surface-panel;
-}
-ImageGenSettingsPanel Checkbox.-on > .toggle--button {
-  color: $success;
-}
-
 
 LibraryIngestCanvas .type-group-contents {
   height: auto;
