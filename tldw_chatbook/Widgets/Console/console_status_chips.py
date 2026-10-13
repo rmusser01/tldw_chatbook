@@ -599,7 +599,6 @@ class ConsoleStatusChips(Horizontal):
         self.query_one(
             "#console-status-collapsed", Horizontal
         ).display = self._collapsed
-        self.call_after_refresh(self._refit_cost_chip)
 
     def _run_chip(self) -> ConsoleRunChip:
         label, tooltip, hidden = self._run_chip_render(*self._run_chip_state)
@@ -651,7 +650,6 @@ class ConsoleStatusChips(Horizontal):
         if next_state == self._run_chip_state:
             return
         self._run_chip_state = next_state
-        self.call_after_refresh(self._refit_cost_chip)
         try:
             chip = self.query_one("#console-run-chip", ConsoleRunChip)
         except NoMatches:
@@ -713,7 +711,6 @@ class ConsoleStatusChips(Horizontal):
         chip.update(label)
         chip.tooltip = tooltip
         chip.display = not hidden
-        self.call_after_refresh(self._refit_cost_chip)
 
     def _scope_chip(self) -> ConsoleScopeChip:
         label, tooltip, hidden, alert = self._scope_chip_render(self.scope_state)
@@ -812,7 +809,6 @@ class ConsoleStatusChips(Horizontal):
         chip.tooltip = tooltip
         chip.display = not hidden
         chip.set_class(alert, "console-chip-alert")
-        self.call_after_refresh(self._refit_cost_chip)
 
     def _cost_chip(self) -> ConsoleCostChip:
         label, tooltip, hidden, alert, cold = self._cost_chip_render(self._cost_state)
@@ -999,11 +995,13 @@ class ConsoleStatusChips(Horizontal):
     def _refit_after_layout(self, _screen: object) -> None:
         """Refit the cost chip after a layout of this screen moved it.
 
-        Capture findings 4 (02c): a refit scheduled by a change runs after
-        the ACTIVE screen's refresh. A pair applied from Switch model was
-        fitted while the Console, still under the dialog, had not laid out
-        the new chip widths, and nothing refitted once it had. Only a move
-        (the chip's x or the strip's width) refits, so the relabel's own
+        The one refit for a move: a chip before it that changes width, shows
+        or hides, and a strip that resizes or collapses. Capture findings 4
+        (02c): a refit the change scheduled itself runs after the ACTIVE
+        screen's refresh, which can come before this screen lays out the new
+        widths (under a dialog; or Switch model's result callback beating the
+        chips' Layout messages), so it fitted from the old places. Only a
+        move (the chip's x or the strip's width) refits, so the relabel's own
         layout does not start another. Still deferred: relabelled straight
         from here the chip kept its old width (a layout was pending on it).
         """
@@ -1020,15 +1018,12 @@ class ConsoleStatusChips(Horizontal):
             self.call_after_refresh(self._refit_cost_chip)
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Reapply width-aware cost copy without requiring a state change.
+        """Keep a focused cost chip in view; the layout's refit relabels it.
 
         Args:
             _event: Textual resize notification; width is read from the app.
         """
         self._keep_cost_chip_in_view()
-        # After the refresh: relabelled from here the chip kept its old width
-        # until some later layout (measured at 211 columns).
-        self.call_after_refresh(self._refit_cost_chip)
 
     def _refit_cost_chip(self) -> None:
         """Refit the cost chip: also run (after layout) when a chip before it
@@ -1085,7 +1080,6 @@ class ConsoleStatusChips(Horizontal):
             pass
         else:
             tools_chip.display = state.tools_active
-        self.call_after_refresh(self._refit_cost_chip)
 
     @on(ConsoleApprovalsChip.ReviewRequested)
     def on_approval_review_requested(

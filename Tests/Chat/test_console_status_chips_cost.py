@@ -19,7 +19,10 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
-from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+from tldw_chatbook.Chat.console_display_state import (
+    ConsoleControlState,
+    ConsoleRetrievalScopeState,
+)
 from tldw_chatbook.Widgets.Console.console_status_chips import (
     ConsoleCostChip,
     ConsoleStatusChips,
@@ -447,6 +450,62 @@ async def test_the_cost_chip_refits_when_a_chip_before_it_changes() -> None:
         await pilot.pause()
         await pilot.pause()
         assert _cost_chip_drawn_whole(app) == _CAPTURE_LABELS["label"]
+
+
+@pytest.mark.parametrize(
+    ("change", "expected"),
+    (
+        (
+            lambda chips: chips.sync_state(
+                _capture_control_state(model_label="Model: gpt-5.6-terra-mini")
+            ),
+            _CAPTURE_LABELS["compact_label"],
+        ),
+        (
+            lambda chips: chips.sync_run_chip(True, "Streaming response."),
+            "Context 0%",
+        ),
+        (lambda chips: chips.sync_temporary_chip(True), "Ctx 0% · Now $0.00"),
+        (
+            lambda chips: chips.sync_scope_chip(
+                ConsoleRetrievalScopeState(is_scoped=True, item_count=3)
+            ),
+            _CAPTURE_LABELS["compact_label"],
+        ),
+    ),
+    ids=("model-chip", "run-chip", "temporary-chip", "scope-chip"),
+)
+@pytest.mark.asyncio
+async def test_a_change_that_moves_the_cost_chip_refits_it_once(
+    change: Callable[[ConsoleStatusChips], None], expected: str
+) -> None:
+    """Capture fix 4 round 1 finding 3: each change also scheduled its own
+    refit, which can run before the layout that moves the chip (the stale
+    fit is drawn for a tick) and relabels it a second time after the layout
+    refit. Only the refit after the layout runs, at the chip's new place."""
+    app = _ProductionChipsApp(
+        _capture_control_state(), cost_state=_cost_state(**_CAPTURE_LABELS)
+    )
+    async with app.run_test(size=(235, 8)) as pilot:
+        for _ in range(3):
+            await pilot.pause()
+        chips = app.query_one(ConsoleStatusChips)
+        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
+        start = chip.virtual_region.x
+        apply_label = chips._apply_cost_chip_label
+        fitted_at: list[int] = []
+
+        def spy(target: ConsoleCostChip) -> None:
+            fitted_at.append(target.virtual_region.x)
+            apply_label(target)
+
+        chips._apply_cost_chip_label = spy
+        change(chips)
+        for _ in range(6):
+            await pilot.pause()
+        assert chip.virtual_region.x != start
+        assert fitted_at == [chip.virtual_region.x]
+        assert _cost_chip_drawn_whole(app) == expected
 
 
 @pytest.mark.parametrize(
