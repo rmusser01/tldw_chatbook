@@ -186,7 +186,10 @@ APPLIES_TO_INSPECTOR_ROWS = (
     ("work", "Chats with work", "keep their own; switch there with Alt+M"),
     ("switch", "Model defaults", "chats that switch to this model pick them up"),
 )
-UNSAVED_EDITS_NOTE = "Unsaved edits apply only after save (s)."
+#: Capture finding 1: one row in the Inspector at 211x44. It shows only
+#: while edits are unsaved, after the focus scroll has pinned the field
+#: guide, so a wrapped note left its tail "(s)." alone at the top.
+UNSAVED_EDITS_NOTE = "Edits apply only after save (s)."
 #: The card's old reference rows, now in the Inspector's config-key disclosure.
 MANUAL_ENTRY_POLICY_COPY = (
     "Choose a catalog provider (type in the open list to jump to one), "

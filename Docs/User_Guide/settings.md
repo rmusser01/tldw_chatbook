@@ -378,7 +378,7 @@ The inspector for this page reads top to bottom:
   switch to this model.
 - **Next new chat will use**: the provider · model and the core values
   ("T 0.7 · max 8192 · stream On") a new chat gets from the saved config. While
-  the page has unsaved edits it adds "Unsaved edits apply only after save (s)."
+  the page has unsaved edits it adds "Edits apply only after save (s)."
 - **Focused field guide**: the focused field's name, help, commit model and
   range. Its config key is not printed there: it sits in the closed **config
   key** disclosure under the guide ("Saved as: …"), together with the
