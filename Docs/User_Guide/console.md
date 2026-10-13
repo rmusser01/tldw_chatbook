@@ -276,6 +276,8 @@ While the card shows, the only Console keys the footer names are the ones
 that work under it: **Enter**, **F1** help and **Ctrl+P** palette (the
 app-wide Ctrl+Shift+F and Ctrl+Q stay). Alt+M, Ctrl+O, F6 and the other
 Console keys do nothing until setup is done, so they are not listed.
+While a dialog is open over the card (Switch model, for one), Enter acts on
+the dialog, so the footer leaves **Enter** out until the dialog closes.
 Its button follows the current
 step. **Set up provider** opens **Settings ▸ Providers & Models** on this chat's
 provider with the API key field in focus. Type or paste the key, press **Esc**

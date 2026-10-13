@@ -24,7 +24,7 @@ from Tests.UI.test_console_local_server_discovery_card import (
     _blocked_console_app,
     _detected_action_focused,
 )
-from Tests.UI.test_console_switch_model_entry_points import _until
+from Tests.UI.test_console_switch_model_entry_points import _switcher_ready, _until
 from Tests.UI.test_destination_shells import _wait_for_selector
 from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_SETUP_CARD_SUBTITLE,
@@ -215,6 +215,48 @@ async def test_the_blocked_footer_names_only_keys_that_act_under_the_card(
             await _until(pilot, lambda: host.screen is not console, f"{key} to act")
             host.pop_screen()
             await _until(pilot, lambda: host.screen is console, f"{key}'s screen to go")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_dialog_over_the_card_leaves_the_cards_enter_out_of_the_footer(
+    request,
+) -> None:
+    """Capture fix 3 finding 3 (02b): with Switch model open over the card the
+    footer still read "Enter continue setup", while Enter there applies the
+    dialog's highlighted model. While a dialog covers the card the footer
+    leaves the card's Enter out, a re-registration included; it is back when
+    the dialog closes."""
+    app = _blocked_console_app((_DETECTED_SERVER,))
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _detected_action_focused(host, console, pilot)
+        drawn = console.query_one(AppFooterStatus).query_one("#footer-key-quit", Static)
+        await _until(
+            pilot, lambda: "continue setup" in str(drawn.render()), "blocked footer"
+        )
+
+        await pilot.press("enter")
+        await _switcher_ready(host, pilot)
+        await _until(
+            pilot,
+            lambda: "continue setup" not in str(drawn.render()),
+            "the card's Enter to leave the footer",
+        )
+        console._register_console_footer_shortcuts()  # a sync while covered
+        await pilot.pause()
+        assert "continue setup" not in str(drawn.render())
+        assert "F1 help" in str(drawn.render())
+
+        await pilot.press("escape")
+        await _until(pilot, lambda: host.screen is console, "the dialog to close")
+        await _until(
+            pilot,
+            lambda: "continue setup" in str(drawn.render()),
+            "the card's Enter to come back",
+        )
 
 
 async def _card_focus_on(host, console, pilot, selector: str) -> Button:

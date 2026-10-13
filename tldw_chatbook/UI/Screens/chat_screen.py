@@ -5009,6 +5009,9 @@ class ChatScreen(BaseAppScreen):
         """
         if self._console_setup_modal_blocking():
             shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
+            if self._console_covered_by_dialog():
+                # Capture fix 3 finding 3 (02b): Enter acts on the dialog.
+                shortcuts = tuple(pair for pair in shortcuts if pair[0] != "Enter")
         elif self._console_composer_collapsed:
             # TASK-25733: same truthfulness rule as the setup-blocked branch --
             # with no composer mounted, "Enter send" names something the key
@@ -5047,6 +5050,11 @@ class ChatScreen(BaseAppScreen):
             shortcuts = (("Esc", "composer · F6 panes"), *shortcuts)
         shortcuts = run_controls.with_stop_shortcut(self, shortcuts)
         self.register_footer_shortcuts(source="console", shortcuts=shortcuts)
+
+    def _console_covered_by_dialog(self) -> bool:
+        """Return whether a modal screen sits above this one in the stack."""
+        stack = self.app.screen_stack
+        return self in stack[:-1] and stack[-1].is_modal
 
     def _console_rail_focus_active(self) -> bool:
         """Return whether live focus is inside either mounted rail (TASK-32322)."""
@@ -22684,6 +22692,8 @@ class ChatScreen(BaseAppScreen):
         # Textual shows the live ones here again on resume.
         for rack in self.query("ToastRack"):
             rack.display = False
+        # Capture fix 3 finding 3: a dialog over the card takes its Enter.
+        self._register_console_footer_shortcuts()
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""
