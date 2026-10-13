@@ -17120,7 +17120,9 @@ class SettingsScreen(BaseAppScreen):
         section_values = _session_summary_section_values(
             controls[0].value, controls[1].value
         )
-        if section_values == self._saved_session_summary():
+        # A write in flight is newer than config.toml until it lands.
+        pending = self._session_summary_pending_save
+        if section_values == (pending or self._saved_session_summary()):
             self._show_session_summary(section_values)  # "03" reads 3 again
             return
         controls[1].value = str(section_values["session_summary"]["duration_seconds"])

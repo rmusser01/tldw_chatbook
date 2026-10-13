@@ -289,3 +289,55 @@ async def test_a_write_the_checkbox_started_leaves_an_emptied_field_alone(
         await _settle(host, pilot)
         assert config.writes[2:] == [{"enabled": True, "duration_seconds": 3}]
         assert field.value == "3"
+
+
+async def _toggle_on_and_off(pilot, checkbox: Checkbox, _field: Input) -> None:
+    checkbox.focus()
+    await pilot.pause()
+    await pilot.press("space")  # the write of "on" starts and is held
+    await pilot.pause()
+    await pilot.press("space")
+    await pilot.pause()
+
+
+async def _commit_5_then_3(pilot, _checkbox: Checkbox, field: Input) -> None:
+    await _type_duration(pilot, field, "5")
+    await pilot.press("enter")  # the write of 5 starts and is held
+    await pilot.pause()
+    await _type_duration(pilot, field, "3")
+    await pilot.press("enter")
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("change_back", [_toggle_on_and_off, _commit_5_then_3])
+async def test_a_change_back_to_the_saved_values_during_a_write_is_saved(
+    request, monkeypatch, change_back
+):
+    """Fix round 3, finding 4: a change was compared with config.toml, which
+    still held the old values while a write ran. Changed back to them, it
+    queued nothing, and the write in flight then saved the value the user
+    had left ("on", or 5)."""
+    config = _Config(monkeypatch)
+    release = threading.Event()
+    fake_save = settings_screen.save_settings_to_cli_config
+
+    def held_save(section_values) -> bool:
+        release.wait(10)
+        return fake_save(section_values)
+
+    monkeypatch.setattr(settings_screen, "save_settings_to_cli_config", held_save)
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        _screen, checkbox, field = await _open_session_summary(host, pilot)
+        await change_back(pilot, checkbox, field)
+
+        release.set()
+        await _settle(host, pilot)
+
+        assert config.writes[-1] == {"enabled": False, "duration_seconds": 3}
+        assert config.saved == {"enabled": False, "duration_seconds": 3}
+        assert checkbox.value is False
+        assert field.value == "3"
