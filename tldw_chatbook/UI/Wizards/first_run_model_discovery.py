@@ -141,6 +141,22 @@ def _handed_off_failure_category(owner: object, discovery_key: object) -> str:
     return category or GENERIC_DISCOVERY_FAILURE_CATEGORY
 
 
+def probe_failure(outcome: object, provider_draft: object) -> str:
+    """Classify a discovery outcome as the Model step does, for the Provider step.
+
+    TASK-33008 (capture 06a): the two steps told one 401 two ways. A missing
+    or untyped outcome reads as a connection failure.
+    """
+
+    try:
+        _models, state, category = _model_discovery_ui_outcome(outcome)
+    except ValueError:
+        return wizard_state.PROVIDER_PROBE_CONNECTION
+    return wizard_state.classify_discovery_failure(
+        state, category, key_sent=wizard_state.discovery_sends_a_key(provider_draft)
+    )
+
+
 def _first_run_discovery_staged_settings(
     provider_draft: wizard_state.FirstRunProviderDraft,
     discovery_key: wizard_state.FirstRunModelDiscoveryKey,

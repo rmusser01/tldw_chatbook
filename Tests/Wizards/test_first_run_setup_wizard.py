@@ -13316,6 +13316,9 @@ async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
         model_step = container.steps[model_index]
         container.show_step(provider_index)
         provider_step.select_provider("custom")
+        # TASK-33008: a key is sent, so the 401 is a rejected key (with none
+        # sent it asks for one; see the test below).
+        provider_step.query_one("#setup-provider-api-key", Input).value = "sk-wrong"
         await pilot.pause(0.1)
         await container._advance()
         for _ in range(40):
@@ -13377,6 +13380,82 @@ async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
         strip = wizard.query_one("#setup-step-error-pinned", Static)
         assert "rejected" in str(strip.renderable)
         assert not strip.has_class("hidden")
+
+
+@pytest.mark.asyncio
+async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -> None:
+    """TASK-33008 capture 06a: llama.cpp with an empty Authentication section
+    answered the model listing with a 401. No key was sent, yet the Model step
+    said "this API key was rejected" while the Provider step said only that it
+    "Couldn't discover models". Every surface that reads the failed check now
+    says the server needs a key and none was set."""
+    import tldw_chatbook.config as config_module
+    from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+
+    monkeypatch.setattr(config_module, "get_cli_providers_and_models", lambda: {})
+    needs_key = ModelDiscoveryResult(
+        provider="llama_cpp",
+        provider_list_key="llama_cpp",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+            category="unauthorized",
+        ),
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=needs_key)
+    )
+    app = _HostApp(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        provider_step = container.steps[provider_index]
+        model_step = container.steps[container._step_index_for_id(STEP_MODEL)]
+        provider_step._local_discover = AsyncMock(return_value=())
+        container.show_step(provider_index)
+        provider_step.select_provider("llama_cpp")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if provider_step._selected_discovery_state == "failed":
+                break
+        provider_status = provider_step.query_one("#setup-provider-probe-status", Static)
+        assert str(provider_status.render()) == (
+            "llama.cpp needs an API key and none was set. Add one under "
+            "Authentication, or continue anyway."
+        )
+
+        await container._advance()
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if model_step.query("#setup-model-connection-failed"):
+                break
+        assert _model_status_line(model_step, "setup-model-connection-failed") == (
+            "llama.cpp needs an API key and none was set. Go Back to add one, or "
+            "enter a model ID below."
+        )
+        assert model_step.query_one("#setup-model-retry", Button).has_class("hidden")
+        assert model_step.confirm_before_advance() == (
+            "The server needs an API key and none was set, so this model setup "
+            "is unverified. Continue anyway?"
+        )
+        assert wizard_state.probe_failure_summary_detail(
+            container.provider_probe_failure()
+        ) == ("saved, but the server needs an API key and none was set")
+
+        container.show_step(provider_index)
+        await pilot.pause(0.1)
+        strip = wizard.query_one("#setup-step-error-pinned", Static)
+        assert str(strip.render()) == (
+            "The last connection check failed: the server needs an API key and "
+            "none was set. Add one under Authentication, then continue."
+        )
 
 
 @pytest.mark.asyncio

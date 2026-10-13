@@ -120,8 +120,8 @@ class ModelStep(SetupStep):
         self._model_id_from_custom_input: bool = False
         self._model_load_generation = 0
         # TASK-21143 (UAT S-1/M-2): the classified outcome of the discovery
-        # probe rendered for _rendered_discovery_key ("", "authentication",
-        # "connection"). Read via current_probe_failure(), which returns ""
+        # probe rendered for _rendered_discovery_key (a PROVIDER_PROBE_*
+        # value). Read via current_probe_failure(), which returns ""
         # whenever the rendered key no longer matches the live identity —
         # the same staleness discipline the rest of this step uses.
         self._rendered_probe_failure: str = ""
@@ -131,8 +131,8 @@ class ModelStep(SetupStep):
 
         Returns:
             "" when the probe succeeded, never ran, or belongs to a
-            superseded identity; otherwise "authentication" or
-            "connection" (wizard_state.PROVIDER_PROBE_*).
+            superseded identity; otherwise "authentication", "key_required"
+            or "connection" (wizard_state.PROVIDER_PROBE_*).
         """
         if self._rendered_discovery_key is None:
             return ""
@@ -147,18 +147,8 @@ class ModelStep(SetupStep):
     def confirm_before_advance(self) -> Optional[str]:
         """UAT M-2: a known-failed probe must not be Next-ed past silently."""
 
-        failure = self.current_probe_failure()
-        if failure == wizard_state.PROVIDER_PROBE_AUTH:
-            return (
-                "The API key failed an authentication check, so this model "
-                "setup is unverified. Continue anyway?"
-            )
-        if failure == wizard_state.PROVIDER_PROBE_CONNECTION:
-            return (
-                "The server couldn't be reached, so this model setup is "
-                "unverified. Continue anyway?"
-            )
-        return None
+        copy = wizard_state.PROBE_FAILURE_COPY.get(self.current_probe_failure())
+        return copy.confirm if copy else None
 
     def invalidate_credential_bound_selection(self) -> None:
         """Drop model state derived under a credential that has rotated."""
@@ -552,6 +542,10 @@ class ModelStep(SetupStep):
             return
         if discovery_key != self._current_discovery_key():
             return
+        key_sent = wizard_state.discovery_sends_a_key(self._current_provider_draft())
+        probe_failure = wizard_state.classify_discovery_failure(
+            discovery_state, failure_category, key_sent=key_sent
+        )
         if models:
             # TASK-1503: the first entry (curated-default / top discovery hit)
             # carries a "recommended" tag in its LABEL only; the clean model
@@ -587,16 +581,16 @@ class ModelStep(SetupStep):
             # TASK-21143 (UAT M-1/M-4): auth failures point at the fix (the
             # key lives one step Back — Retry cannot succeed there);
             # connection failures name the server the user has to start.
-            probe_failure = wizard_state.classify_discovery_failure(
-                discovery_state, category
-            )
-            if probe_failure == wizard_state.PROVIDER_PROBE_AUTH:
-                failed_text = (
-                    "Authentication failed — this API key was rejected. Go "
-                    "Back to fix it, or enter a model ID below."
+            # TASK-33008: a refusal with no key sent asks for one instead.
+            provider_key = getattr(discovery_key, "provider_key", "")
+            failed_text = wizard_state.probe_failure_copy(probe_failure).model_line
+            if failed_text:
+                from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+                failed_text = failed_text.format(
+                    display=provider_display_name(provider_key)
                 )
             else:
-                provider_key = getattr(discovery_key, "provider_key", "")
                 endpoint = ""
                 identity = getattr(discovery_key, "connection_identity", ())
                 if len(identity) > 1 and identity[1]:
@@ -641,19 +635,14 @@ class ModelStep(SetupStep):
         # TASK-21143: record the classified outcome for the trust chain
         # (tracker "!", Model-step confirm gate, Summary override) before
         # the retry-button lookup's early return can skip it.
-        self._rendered_probe_failure = wizard_state.classify_discovery_failure(
-            discovery_state, failure_category or "connection error"
-        )
+        self._rendered_probe_failure = probe_failure
         try:
             retry = self.query_one("#setup-model-retry", Button)
-            # Retry stays for connection failures (start the server, retry);
-            # it is hidden for auth failures — retrying cannot fix a
-            # rejected key, the fix lives one step Back (UAT M-1).
+            # Retry shows for connection failures only (start the server,
+            # retry); retrying cannot fix a refused or missing key, the fix
+            # lives one step Back (UAT M-1).
             retry.set_class(
-                discovery_state != "connection_failed"
-                or self._rendered_probe_failure
-                == wizard_state.PROVIDER_PROBE_AUTH,
-                "hidden",
+                probe_failure != wizard_state.PROVIDER_PROBE_CONNECTION, "hidden"
             )
         except NoMatches:
             return

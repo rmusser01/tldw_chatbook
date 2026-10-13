@@ -1706,7 +1706,8 @@ class ProviderStep(SetupStep):
             if models:
                 status.update(f"Found {len(models)} model(s) for {display}.")
             elif failed:
-                status.update(self._discovery_failure_status(display))
+                failure = model_discovery.probe_failure(model_outcome, provider_draft)
+                status.update(self._discovery_failure_status(display, failure))
             elif attempted:
                 status.update(f"Checked {display}; no models were reported.")
             else:
@@ -1716,16 +1717,14 @@ class ProviderStep(SetupStep):
             if done is not None and generation == self.probe_generation:
                 done.set()
 
-    def _discovery_failure_status(self, display: str) -> str:
+    def _discovery_failure_status(self, display: str, failure: str = "") -> str:
         """Failure copy that never promises what Next will refuse.
 
-        task-31820 (release UAT): with a keyed cloud provider and no
-        credential, this status said "You can continue anyway." while
-        commit() was simultaneously hard-blocking Next with "API key
-        required." -- both on screen at once. Promise continuation only
-        when the readiness gate would actually allow it; when it wouldn't,
-        name the unblock instead (the key input sits directly below, and
-        "go Back" matches the pinned refusal's vocabulary).
+        task-31820 (release UAT): a keyed cloud provider with no credential
+        said "You can continue anyway." while commit() hard-blocked Next with
+        "API key required." Continuation is promised only when the readiness
+        gate allows it; otherwise the copy names the unblock. TASK-33008:
+        ``failure`` names a refused key or a missing one, as Model does.
         """
         try:
             readiness = self._current_provider_readiness()
@@ -1733,7 +1732,8 @@ class ProviderStep(SetupStep):
         except Exception:
             return f"Couldn't discover models for {display}."
         if ready:
-            return f"Couldn't discover models for {display}. You can continue anyway."
+            copy = wizard_state.probe_failure_copy(failure)
+            return copy.provider_line.format(display=display)
         # Qodo (PR #2445): name the provider's OWN unblock -- "add an API
         # key" is wrong for auth modes that need a login instead (e.g. a
         # Claude subscription). readiness.recovery is the same string

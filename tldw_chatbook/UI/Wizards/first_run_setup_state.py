@@ -19,7 +19,7 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 from unicodedata import category as unicode_category
 
 from tldw_chatbook.Utils.Utils import elide_path_middle
@@ -536,19 +536,27 @@ def build_first_run_provider_commit(
 PROVIDER_PROBE_NONE = ""
 PROVIDER_PROBE_AUTH = "authentication"
 PROVIDER_PROBE_CONNECTION = "connection"
+#: TASK-33008 (capture 06a): the server refused a check that carried no key.
+#: Nothing was rejected; the server wants a key and none was set.
+PROVIDER_PROBE_KEY_REQUIRED = "key_required"
 
 
-def classify_discovery_failure(discovery_state: str, failure_category: str) -> str:
-    """Collapse a discovery UI outcome into the trust-chain's three states.
+def classify_discovery_failure(
+    discovery_state: str, failure_category: str, *, key_sent: bool = True
+) -> str:
+    """Collapse a discovery UI outcome into the trust-chain's states.
 
     Args:
         discovery_state: The model step's discovery state string
             ("available", "connection_failed", "listing_unavailable", ...).
         failure_category: The human category rendered with a failure
             ("authentication", "connection error", "request failed", ...).
+        key_sent: Whether the check carried a key (see
+            ``discovery_sends_a_key``).
 
     Returns:
-        PROVIDER_PROBE_AUTH for credential rejections,
+        PROVIDER_PROBE_AUTH for a key the server refused,
+        PROVIDER_PROBE_KEY_REQUIRED for a refusal when no key was sent,
         PROVIDER_PROBE_CONNECTION for any other failed probe, and
         PROVIDER_PROBE_NONE when discovery did not fail (including
         "listing_unavailable", which is a provider capability, not an
@@ -557,8 +565,75 @@ def classify_discovery_failure(discovery_state: str, failure_category: str) -> s
     if discovery_state != "connection_failed":
         return PROVIDER_PROBE_NONE
     if failure_category == "authentication":
-        return PROVIDER_PROBE_AUTH
+        return PROVIDER_PROBE_AUTH if key_sent else PROVIDER_PROBE_KEY_REQUIRED
     return PROVIDER_PROBE_CONNECTION
+
+
+def discovery_sends_a_key(provider_draft: object) -> bool:
+    """Whether model discovery for ``provider_draft`` carries a key.
+
+    The same rule as ``_first_run_discovery_staged_settings``: source "none",
+    or a typed draft with no text, sends an empty key. Without a draft the
+    answer is unknown and counts as sent, so the copy stays the rejected-key
+    wording it always was.
+    """
+    if type(provider_draft) is not FirstRunProviderDraft:
+        return True
+    credential = provider_draft.credential
+    if credential.source == "draft":
+        return bool(_credential_value_for_boundary(credential))
+    return credential.source != "none"
+
+
+class ProbeFailureCopy(NamedTuple):
+    """What each surface says about one failed check ({display}: the provider)."""
+
+    model_line: str  # the Model step's status line
+    provider_line: str  # the Provider step's status while its Next is allowed
+    confirm: str  # the Model step's Next asks this before it moves on
+    provider_notice: str  # pinned on Provider when you come back to it
+    summary_detail: str  # the Summary's Provider row
+
+
+PROBE_FAILURE_COPY: dict[str, ProbeFailureCopy] = {
+    PROVIDER_PROBE_AUTH: ProbeFailureCopy(
+        "Authentication failed — this API key was rejected. Go Back to fix it, "
+        "or enter a model ID below.",
+        "{display} rejected this API key. Update it, or continue anyway.",
+        "The API key failed an authentication check, so this model setup is "
+        "unverified. Continue anyway?",
+        "The last connection check failed: this API key was rejected. Update "
+        "it, then continue.",
+        "saved, but the key failed an authentication check",
+    ),
+    PROVIDER_PROBE_KEY_REQUIRED: ProbeFailureCopy(
+        "{display} needs an API key and none was set. Go Back to add one, or "
+        "enter a model ID below.",
+        "{display} needs an API key and none was set. Add one under "
+        "Authentication, or continue anyway.",
+        "The server needs an API key and none was set, so this model setup is "
+        "unverified. Continue anyway?",
+        "The last connection check failed: the server needs an API key and "
+        "none was set. Add one under Authentication, then continue.",
+        "saved, but the server needs an API key and none was set",
+    ),
+    PROVIDER_PROBE_CONNECTION: ProbeFailureCopy(
+        "",  # the Model step names the server it could not reach
+        "Couldn't discover models for {display}. You can continue anyway.",
+        "The server couldn't be reached, so this model setup is unverified. "
+        "Continue anyway?",
+        "The last connection check couldn't reach the server. Check it's "
+        "running, then continue.",
+        "saved, but the server couldn't be reached when models were checked",
+    ),
+}
+
+
+def probe_failure_copy(probe_failure: str) -> ProbeFailureCopy:
+    """Copy for a failed check; an unclassified one reads as a connection failure."""
+    return PROBE_FAILURE_COPY.get(
+        probe_failure, PROBE_FAILURE_COPY[PROVIDER_PROBE_CONNECTION]
+    )
 
 
 def probe_failure_summary_detail(probe_failure: str) -> str:
@@ -572,11 +647,8 @@ def probe_failure_summary_detail(probe_failure: str) -> str:
         no failure to describe.
     """
 
-    if probe_failure == PROVIDER_PROBE_AUTH:
-        return "saved, but the key failed an authentication check"
-    if probe_failure == PROVIDER_PROBE_CONNECTION:
-        return "saved, but the server couldn't be reached when models were checked"
-    return ""
+    copy = PROBE_FAILURE_COPY.get(probe_failure)
+    return copy.summary_detail if copy else ""
 
 
 def apply_probe_failure_to_summary_rows(

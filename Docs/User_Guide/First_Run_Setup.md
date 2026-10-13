@@ -59,7 +59,13 @@ plain text instead:
 - "Pick a provider first — or type a model name below" when no provider is chosen.
 - "(no models found — enter one below)" when the server lists none.
 - "Model listing unavailable; enter the model ID used by this endpoint." when the server has no model list.
-- "Authentication failed — this API key was rejected. Go Back to fix it, or enter a model ID below." when the key is rejected. This one shows no **Retry**, because retrying cannot fix a key.
+- "Authentication failed — this API key was rejected. Go Back to fix it, or enter a model ID below." when the key is rejected.
+- "*Provider* needs an API key and none was set. Go Back to add one, or enter a model ID below." when the server refused a check that carried no key (a llama.cpp server started with `--api-key`, say).
+
+  These two show no **Retry**, because retrying cannot fix a key. The Provider
+  step names the same cause: "*Provider* rejected this API key. Update it, or
+  continue anyway." or "*Provider* needs an API key and none was set. Add one
+  under Authentication, or continue anyway."
 - "Couldn't reach the server (*reason*). Check it's running, then Retry — or enter a model ID below." when the check failed for another reason, such as a timeout. Ollama and llama.cpp name the server and its address instead: "Ollama isn't running at *address*. Start it (ollama serve), then Retry — or enter a model ID below." and "The llama.cpp server isn't reachable at *address*. Start it, then Retry — or enter a model ID below." These three show **Retry**.
 
 The line is a message, not an option: it has no radio marker, and the arrow
@@ -216,7 +222,8 @@ Cloning for a consistent voice.
 
 The final summary shows a ✓/✗ line per area, read back from what was actually
 saved — and if the connection check failed while you were setting up (a
-rejected API key, an unreachable local server), the summary says so instead
+rejected API key, a server that needs a key you didn't set, an unreachable
+local server), the summary says so instead
 of showing a ✓, the progress tracker marks those steps with !, and moving
 past the model step asks for an explicit "Continue anyway". The Voice line names
 the voice replies use — service, model and voice (for example "✓ Voice —
