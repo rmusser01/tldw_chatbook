@@ -294,7 +294,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Ruling C16 (2026-10-12) raised it by 27, to 237: the Tests/UI files the
 # review's fix wave and rounds added, each 3 of 3 serial alone (tail +6 shards).
 # C16 for the capture fix wave (2026-10-13): +9 node ids, to 246 (tail +2).
-MINIMUM_FILES = 261
+# C16 for capture fix 2 and its rounds (2026-10-13): +12 node ids, to 258 (tail +5).
+MINIMUM_FILES = 273
 
 
 def read_census(path: Path) -> list[str]:
