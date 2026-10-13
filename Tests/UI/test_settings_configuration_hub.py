@@ -6191,6 +6191,45 @@ async def test_settings_focus_surfaces_tooltip_in_focus_help_line(request):
 
 
 @pytest.mark.asyncio
+@private_profile_test
+async def test_settings_focus_help_line_never_describes_the_nav_bar(request):
+    """#3057 capture finding 19 (05a, 08c): the line under the panes read
+    Home's description, "Open dashboard, notifications, and active work.".
+    Not a hover: Esc releases field focus, and when Settings resumes with
+    nothing focused (a dialog closing, F4 back from another screen) Textual's
+    auto-focus parks focus on the nav bar's first button, whose tooltip the
+    focus-help line then mirrored. The line describes Settings' own controls
+    only; Settings' Tab already treats a nav button as nothing focused."""
+    from textual.screen import ModalScreen
+
+    app = _build_test_app()
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+        help_line = screen.query_one("#settings-focus-help", Static)
+        home = screen.query_one("#nav-home")
+
+        screen.set_focus(None)
+        await pilot.pause()
+        await host.push_screen(ModalScreen())
+        await pilot.pause()
+        host.pop_screen()
+        await pilot.pause()
+        await pilot.pause()
+
+        assert screen.focused is home  # Textual's auto-focus, app-wide
+        assert str(home.tooltip).strip()
+        assert str(help_line.renderable) == ""
+
+        await pilot.press("tab")  # Settings' own Tab still leaves the bar
+        await pilot.pause()
+        assert pilot.app.focused.id == "settings-category-overview"
+        assert str(help_line.renderable) == str(pilot.app.focused.tooltip)
+
+
+@pytest.mark.asyncio
 async def test_settings_category_rail_renders_no_hidden_status_rows():
     """task-1377: the dead per-category Status: rows are gone from the rail."""
     app = _build_test_app()

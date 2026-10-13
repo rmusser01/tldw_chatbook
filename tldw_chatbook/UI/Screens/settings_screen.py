@@ -13082,10 +13082,13 @@ class SettingsScreen(BaseAppScreen):
         Textual 8.x renders tooltips on hover only; mirroring the focused
         widget's tooltip text into the shell's focus-help line makes the
         same content reachable by Tab/j/k without a second display for
-        mouse users (the line only changes on focus, never on hover).
+        mouse users (the line only changes on focus, never on hover). Only
+        Settings' own controls: Textual's auto-focus parks focus on the nav
+        bar when Settings resumes with none (capture finding 19).
         """
         tooltip = getattr(widget, "tooltip", None)
-        text = str(tooltip).strip() if tooltip else ""
+        ours = any(n.id == "settings-shell" for n in getattr(widget, "ancestors", ()))
+        text = str(tooltip).strip() if tooltip and ours else ""
         self._set_static_text("#settings-focus-help", text)
 
     def _run_diagnostics_validation(self) -> None:
