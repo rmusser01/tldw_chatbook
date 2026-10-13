@@ -477,6 +477,30 @@ locally). Run each new census file once in the lane's recipe too: that is how
 an app-building test with no `bootstrap_profile` mark was found red
 (`RecoveryRequired`) in a census file, under the real HOME and an empty one.
 
+**Again on #3057, 2026-10-13.** After the rebase onto dev, 53 of the PR's census
+entries had never run on CI. Charged their local seconds x1.5, the replay put
+eight shards at 13.5 min of pytest at most; the first CI run (38458195175)
+timed one shard out at 20 min, because CI ran those entries at up to 1.9 times
+the local seconds (one file 224 s against 120). Replayed from that run's logs,
+the lane was 125 min, not 108, and needed nine shards. With entries CI has not
+timed, run the lane once before choosing the count, or charge them at least
+twice their local seconds.
+
+## A lane test's child process imports with the lane's install set, not your venv's
+
+**#3057, 2026-10-13.** `test_settings_openai_reconnect.py::...[approve]` ran a
+child process whose script imported a fixture from
+`Tests/Backup_Recovery/test_restore_plan.py`, which imports `hypothesis` at the
+top. The venv has `hypothesis`, so the node passed in every local run; the UI
+Fast Lane installs only `-e . pytest pytest-asyncio pytest-timeout packaging`,
+so it failed on its first lane run with "older exists: .../chat_dicts". That
+was a debug line cut mid-word by the parent's `stderr[-6000:]`; the real error,
+`ModuleNotFoundError: No module named 'hypothesis'`, was further down. The
+census checker only collects tests, so it cannot see an import made inside a
+child. Before laning a test that spawns Python, run it with the lane's
+dependency set (or with the optional packages made unimportable), and read a
+child's whole stderr rather than its tail.
+
 ## A prompt that tells the model where things are must be tested by doing what it says
 
 **TASK-33940.1, 2026-10-02.** The workspace system-prompt note listed bound folders "relative
