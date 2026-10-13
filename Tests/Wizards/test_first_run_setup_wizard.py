@@ -13403,7 +13403,7 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
     import tldw_chatbook.config as config_module
     from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 
-    monkeypatch.setattr(config_module, "get_cli_providers_and_models", lambda: {})
+    monkeypatch.setattr(config_module, "get_cli_providers_and_models", dict)
     needs_key = ModelDiscoveryResult(
         provider="llama_cpp",
         provider_list_key="llama_cpp",
@@ -13436,16 +13436,20 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
             await pilot.pause(0.05)
             if provider_step._selected_discovery_state == "failed":
                 break
-        provider_status = provider_step.query_one("#setup-provider-probe-status", Static)
-        assert str(provider_status.render()) == (
+        status = provider_step.query_one("#setup-provider-probe-status", Static)
+        assert str(status.render()) == (
             "llama.cpp needs an API key and none was set. Add one under "
             "Authentication, or continue anyway."
         )
 
         await container._advance()
+        # The line mounts before the step records the outcome, and the step's
+        # repeated show can re-render the list once more: wait for both.
         for _ in range(40):
             await pilot.pause(0.05)
-            if model_step.query("#setup-model-connection-failed"):
+            if container.provider_probe_failure() and model_step.query(
+                "#setup-model-connection-failed"
+            ):
                 break
         assert _model_status_line(model_step, "setup-model-connection-failed") == (
             "llama.cpp needs an API key and none was set. Go Back to add one, or "
@@ -13460,8 +13464,10 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
             container.provider_probe_failure()
         ) == ("saved, but the server needs an API key and none was set")
 
+        # show_step pins the notice before it returns. No pause: Provider's
+        # show rebuilds widgets, and a pilot wait that lands on a removed one
+        # times out (Textual drops its call_later; the app is idle).
         container.show_step(provider_index)
-        await pilot.pause(0.1)
         strip = wizard.query_one("#setup-step-error-pinned", Static)
         assert str(strip.render()) == (
             "The last connection check failed: the server needs an API key and "
