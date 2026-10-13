@@ -268,6 +268,10 @@ dim fill with nothing drawn on it. Under its plain-language line about
 providers, the card says "Cloud setup opens Settings and comes back here,
 except for custom endpoints. Press Enter to use the highlighted action." —
 Enter is the only key the card names, matching the first hint in the footer.
+While the card shows, the only Console keys the footer names are the ones
+that work under it: **Enter**, **F1** help and **Ctrl+P** palette (the
+app-wide Ctrl+Shift+F and Ctrl+Q stay). Alt+M, Ctrl+O and the other Console
+keys do nothing until setup is done, so they are not listed.
 Its button follows the current
 step. **Set up provider** opens **Settings ▸ Providers & Models** on this chat's
 provider with the API key field in focus. Type or paste the key, press **Esc**

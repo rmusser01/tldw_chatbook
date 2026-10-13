@@ -1182,9 +1182,12 @@ CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE = (
 #: advertising "Enter send" is a lie -- Enter activates the focused setup-card
 #: action instead. The blocked variant hides the send hint and names the real
 #: action. `_register_console_footer_shortcuts` swaps between the two.
+#: Capture finding 3 (ADR-031 rule 5): every other workbench key returns at
+#: once, or only puts focus back on the card, while the card blocks (Alt+M
+#: and Ctrl+O included, R10), so the blocked footer names only F1 and Ctrl+P.
 CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = (
     ("Enter", "continue setup"),  # the real action leads, as collapsed's Esc does
-    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] != "Enter"),
+    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] in ("F1", "Ctrl+P")),
 )
 
 #: TASK-25733: the same lie as the setup-blocked case above, from a different

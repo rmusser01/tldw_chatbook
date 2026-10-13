@@ -31,8 +31,10 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     build_console_detected_server_action,
 )
 from tldw_chatbook.UI.Screens.chat_screen import (
+    CONSOLE_WORKBENCH_SHORTCUTS,
     CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED,
 )
+from tldw_chatbook.Widgets.AppFooterStatus import AppFooterStatus
 from tldw_chatbook.Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_ACTION_ID,
     CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID,
@@ -165,6 +167,46 @@ def test_card_copy_names_the_settings_round_trip_and_only_footer_keys() -> None:
     assert "Enter" in CONSOLE_SETUP_CARD_SUBTITLE
     for key in ("Tab", "Esc", "Shift", "Ctrl", "Alt", "Space", "F1", "F6"):
         assert key not in CONSOLE_SETUP_CARD_SUBTITLE, key
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_the_blocked_footer_names_only_keys_that_act_under_the_card(
+    request,
+) -> None:
+    """Capture finding 3 (ADR-031 rule 5): under the card the footer showed
+    "Alt+M switch model" and "Ctrl+O chat settings", and both did nothing (R10
+    keeps Alt+M off while the card blocks). Every workbench key the blocked
+    footer leaves out is pressed here and changes nothing; each one it names
+    opens what it says."""
+    app = _blocked_console_app(())
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        primary = await _card_focus_on(host, console, pilot, _PRIMARY)
+        footer = console.query_one(AppFooterStatus)
+        await _until(
+            pilot, lambda: "continue setup" in footer.shortcut_text, "blocked footer"
+        )
+        hinted = {hint.split(" ", 1)[0] for hint in footer.shortcut_text.split(" | ")}
+        assert not {"Alt+M", "Ctrl+O"} & hinted, footer.shortcut_text
+
+        for key, _label in CONSOLE_WORKBENCH_SHORTCUTS:
+            if key in hinted:
+                continue
+            await pilot.press(key.lower())
+            await pilot.pause(0.2)
+            assert host.screen is console and host.focused is primary, key
+
+        for key, _label in CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED:
+            if key == "Enter":
+                continue
+            await pilot.press(key.lower())
+            await _until(pilot, lambda: host.screen is not console, f"{key} to act")
+            host.pop_screen()
+            await _until(pilot, lambda: host.screen is console, f"{key}'s screen to go")
 
 
 async def _card_focus_on(host, console, pilot, selector: str) -> Button:
