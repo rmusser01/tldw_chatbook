@@ -508,12 +508,16 @@ async def test_every_row_paints_its_whole_help(request, size):
 
 
 def test_every_row_help_fits_console_behaviors_narrower_column():
-    """Console Behavior's fallback rows show the same help in 55 cells at
-    211x44 (Model defaults has 61), so no field's help may be longer."""
+    """Console Behavior's fallback rows show the same help in 45 cells at
+    211x44 (Model defaults has 61), so no field's help may be longer.
+
+    Rewritten on purpose (#3057 capture finding 13): it said 55, measured
+    before review note 9 widened that card's control column to 32 cells;
+    test_settings_console_fallback_rows.py paints every row to prove 45."""
     long = {
         name: len(MODEL_CONFIG_FIELDS[name].help)
         for name in CORE_FIELDS + SAMPLING_FIELDS
-        if len(MODEL_CONFIG_FIELDS[name].help) > 55
+        if len(MODEL_CONFIG_FIELDS[name].help) > 45
     }
     assert long == {}
 

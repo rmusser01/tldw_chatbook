@@ -273,6 +273,35 @@ async def test_each_fallback_says_its_source_and_a_blank_says_what_it_sends(requ
 
 @pytest.mark.asyncio
 @private_profile_test
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)], ids=["211x44", "235x52"])
+async def test_every_fallback_row_paints_its_whole_help(request, size):
+    """#3057 capture finding 13 (06c): Temperature's help was cut to "higher
+    makes th…" at 211x44. Review note 9's 32-cell control column leaves the
+    help 45 cells there, not the 55 the field table was written for. Every
+    saved fallback, painted in its row with Sampling open, shows its whole
+    help at both full-screen sizes."""
+    from Tests.UI.test_settings_model_defaults_rows import _EVERY_FIELD_SET
+    from Tests.UI.test_settings_narrow_layout import _region_rows
+
+    host = _SettingsCssHarness(_app(dict(_EVERY_FIELD_SET)), "settings")
+    cut: list[tuple[str, int, str]] = []
+    async with host.run_test(size=size) as pilot:
+        screen = await _open(host, pilot)
+        screen.query_one("#settings-console-sampling", Collapsible).collapsed = False
+        await pilot.pause()
+        for name in CORE_FIELDS + SAMPLING_FIELDS:
+            help_line = screen.query_one(f"#{_cid(name)}-help", Static)
+            assert _static_text(help_line) == MODEL_CONFIG_FIELDS[name].help, name
+            help_line.scroll_visible(animate=False, immediate=True)
+            await pilot.pause()
+            painted = "".join(_region_rows(screen, help_line)).rstrip()
+            if painted != MODEL_CONFIG_FIELDS[name].help:
+                cut.append((name, help_line.content_region.width, painted))
+    assert not cut, "\n".join(map(str, cut))
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_legacy_enable_streaming_is_still_read_and_shown(request):
     """AC#3: with only the legacy enable_streaming key the Select still shows
     its value (chat_defaults.streaming is read first when present)."""

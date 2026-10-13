@@ -182,27 +182,28 @@ class ModelConfigField:
 #: The one field table: every editor's label, help and range for each field
 #: (Alt+M popover, Chat settings, Settings model defaults and Console
 #: Behavior fallbacks). Labels stay within the modal's 23-cell label column;
-#: a model field's help stays within 55 cells, so Settings rows show it
-#: whole at 211x44 (Model defaults has 61, Console Behavior 55).
+#: a model field's help stays within 45 cells, so Settings rows show it
+#: whole at 211x44 (Model defaults has 61; Console Behavior 45, after its
+#: 32-cell control column).
 MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
     field.name: field
     for field in (
         ModelConfigField(
             "temperature",
             "Temperature",
-            "Lower keeps replies focused; higher makes them varied.",
+            "Lower stays focused; higher is more varied.",
             "0.0 to 2.0",
         ),
         ModelConfigField(
             "top_p",
             "Top P",
-            "Sample only from the top tokens whose chances sum to P.",
+            "Use only top tokens whose chances sum to P.",
             "0.0 to 1.0",
         ),
         ModelConfigField(
             "min_p",
             "Min P",
-            "Skip tokens far less likely than the top choice.",
+            "Skip tokens far less likely than the top.",
             "0.0 to 1.0",
         ),
         ModelConfigField(
@@ -220,31 +221,31 @@ MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
         ModelConfigField(
             "seed",
             "Seed",
-            "Fixed number for repeatable replies, where supported.",
+            "Same number, same reply, where supported.",
             "whole number, 0 or more",
         ),
         ModelConfigField(
             "presence_penalty",
             "Presence penalty",
-            "Higher values push the model toward new topics.",
+            "Higher pushes the model toward new topics.",
             "-2.0 to 2.0",
         ),
         ModelConfigField(
             "frequency_penalty",
             "Frequency penalty",
-            "Higher values make the model repeat words less.",
+            "Higher makes the model repeat words less.",
             "-2.0 to 2.0",
         ),
         ModelConfigField(
             "reasoning_effort",
             "Reasoning effort",
-            "How much a reasoning model thinks before it answers.",
+            "How much a reasoning model thinks first.",
             "a level from the list",
         ),
         ModelConfigField(
             "reasoning_summary",
             "Reasoning summary",
-            "How much of its reasoning the model summarizes for you.",
+            "How much of its reasoning the model sums up.",
             "auto, concise, detailed or none",
         ),
         ModelConfigField(
@@ -256,13 +257,13 @@ MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
         ModelConfigField(
             "thinking_effort",
             "Thinking",
-            "How much extended thinking comes before the answer.",
+            "How much extended thinking comes first.",
             "off, low, medium, high, xhigh or max",
         ),
         ModelConfigField(
             "thinking_budget_tokens",
             "Thinking budget",
-            "Tokens reserved for thinking when Thinking is on.",
+            "Tokens reserved for Thinking when it is on.",
             "whole number, 1,024 or more",
         ),
         ModelConfigField(
