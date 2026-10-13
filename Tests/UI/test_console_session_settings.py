@@ -14511,7 +14511,10 @@ async def test_console_settings_modal_active_run_reason_precedes_endpoint_recove
 
 @pytest.mark.asyncio
 async def test_console_settings_modal_exposes_selected_view_in_tab_copy_and_tooltips() -> None:
-    """Selected destination must remain legible without adding a layout row."""
+    """Selected destination must remain legible without adding a layout row.
+
+    Rewritten on purpose by TASK-33007 capture finding 16 (round 2): the
+    shown view's tab is marked "●", not with the printed word "Selected"."""
     app = ModalHarness()
     modal = _basic_modal(
         ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
@@ -14524,7 +14527,7 @@ async def test_console_settings_modal_exposes_selected_view_in_tab_copy_and_tool
         model_view = modal.query_one("#console-settings-view-model", Button)
         context_view = modal.query_one("#console-settings-view-context", Button)
         assert list(modal.query("#console-settings-selected-view")) == []
-        assert str(model_view.label) == "Model and generation · Selected"
+        assert str(model_view.label) == "● Model and generation"
         assert str(context_view.label) == "Context and memory"
         assert model_view.tooltip == "Selected view: Model and generation"
         assert context_view.tooltip == "Show Context and memory"
@@ -14533,7 +14536,7 @@ async def test_console_settings_modal_exposes_selected_view_in_tab_copy_and_tool
         await pilot.pause()
 
         assert str(model_view.label) == "Model and generation"
-        assert str(context_view.label) == "Context and memory · Selected"
+        assert str(context_view.label) == "● Context and memory"
         assert model_view.tooltip == "Show Model and generation"
         assert context_view.tooltip == "Selected view: Context and memory"
 

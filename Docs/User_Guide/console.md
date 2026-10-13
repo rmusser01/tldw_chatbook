@@ -613,7 +613,8 @@ While the draft already equals those defaults, the button is dimmed and reads
 
 The modal is a dense form: every field, dropdown and button in it (the
 **Model and generation** / **Context and memory** tabs included) is one row
-tall, with its label on the same row. A thin bar at a field's left edge marks
+tall, with its label on the same row. The tab of the view shown starts with
+"●". A thin bar at a field's left edge marks
 it as editable; the focused field's bar turns thick, its row fills with the
 focus colour and its value turns bold. The bars and the modal's frame are
 drawn at 3:1 or more against the background in every theme, so they stay

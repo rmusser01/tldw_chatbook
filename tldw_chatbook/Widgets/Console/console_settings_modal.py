@@ -237,6 +237,11 @@ PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
 COMPACTION_CLOSE_WARNING = "Provider work may continue and may still be billed."
 
 
+def _view_tab_label(name: str, selected: bool) -> str:
+    """A view tab's label; the shown view is marked without colour (finding 16)."""
+    return f"● {name}" if selected else name
+
+
 async def _default_generation_tester(
     _request: ConsoleGenerationTestRequest,
 ) -> ProviderGenerationProbeResult:
@@ -1564,10 +1569,8 @@ class ConsoleSettingsModal(
             )
             with Horizontal(id="console-settings-view-tabs"):
                 model_view = Button(
-                    (
-                        "Model and generation · Selected"
-                        if self._active_view == "model"
-                        else "Model and generation"
+                    _view_tab_label(
+                        "Model and generation", self._active_view == "model"
                     ),
                     id="console-settings-view-model",
                     classes=(
@@ -1583,10 +1586,8 @@ class ConsoleSettingsModal(
                 )
                 yield model_view
                 context_view = Button(
-                    (
-                        "Context and memory · Selected"
-                        if self._active_view == "context"
-                        else "Context and memory"
+                    _view_tab_label(
+                        "Context and memory", self._active_view == "context"
                     ),
                     id="console-settings-view-context",
                     classes=(
@@ -2789,14 +2790,8 @@ class ConsoleSettingsModal(
         )
         model_tab = self.query_one("#console-settings-view-model", Button)
         context_tab = self.query_one("#console-settings-view-context", Button)
-        model_tab.label = (
-            "Model and generation · Selected"
-            if model_selected
-            else "Model and generation"
-        )
-        context_tab.label = (
-            "Context and memory" if model_selected else "Context and memory · Selected"
-        )
+        model_tab.label = _view_tab_label("Model and generation", model_selected)
+        context_tab.label = _view_tab_label("Context and memory", not model_selected)
         model_tab.variant = "default"
         context_tab.variant = "default"
         model_tab.set_class(model_selected, "console-settings-view-active")
