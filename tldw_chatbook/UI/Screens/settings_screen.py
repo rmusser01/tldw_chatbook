@@ -4477,14 +4477,8 @@ class SettingsScreen(BaseAppScreen):
             else:
                 self._speech_tts_draft_snapshot = panel.draft_snapshot()
         if self._speech_tts_draft_snapshot is not None:
-            state["speech_tts_panel_draft"] = SpeechTTSPanelDraftSnapshot(
-                state=self._speech_tts_draft_snapshot.state,
-                original_state=self._speech_tts_draft_snapshot.original_state,
-                realtime_draft=self._speech_tts_draft_snapshot.realtime_draft,
-                realtime_original=self._speech_tts_draft_snapshot.realtime_original,
-                configure_provider=(self._speech_tts_draft_snapshot.configure_provider),
-                draft_revision=self._speech_tts_draft_snapshot.draft_revision,
-            )
+            # replace() copies every field, so a new one cannot be dropped.
+            state["speech_tts_panel_draft"] = replace(self._speech_tts_draft_snapshot)
         target = self._provider_return_target
         if target is not None and not self._provider_return_navigation_in_progress:
             state["provider_return_continuation"] = {
@@ -4573,14 +4567,7 @@ class SettingsScreen(BaseAppScreen):
         snapshot = state.get("speech_tts_panel_draft")
         if type(snapshot) is SpeechTTSPanelDraftSnapshot:
             try:
-                self._speech_tts_draft_snapshot = SpeechTTSPanelDraftSnapshot(
-                    state=snapshot.state,
-                    original_state=snapshot.original_state,
-                    realtime_draft=snapshot.realtime_draft,
-                    realtime_original=snapshot.realtime_original,
-                    configure_provider=snapshot.configure_provider,
-                    draft_revision=snapshot.draft_revision,
-                )
+                self._speech_tts_draft_snapshot = replace(snapshot)
             except (TypeError, ValueError):
                 self._speech_tts_draft_snapshot = None
 

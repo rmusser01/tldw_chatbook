@@ -2146,7 +2146,10 @@ async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_ret
 async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Real Settings save/restore retains global, provider, and Realtime drafts."""
+    """Real Settings save/restore retains global, provider, Realtime and
+    pipeline voice drafts. save_state and restore_state copied six fields by
+    hand and dropped the pipeline voice pair, so its edit came back as the
+    default with nothing unsaved (TASK-33007)."""
 
     from textual.widgets import Input, Select, Switch
 
@@ -2193,11 +2196,18 @@ async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
             "#settings-speech-realtime-model", Input
         ).value = "gpt-realtime-draft"
         screen.query_one("#settings-speech-realtime-voice", Input).value = "cedar"
+        eagerness = "#settings-speech-pipeline-response-eagerness-ms"
+        pipeline_edit = "2000"  # the saved default is 700
+        screen.query_one(eagerness, Input).value = pipeline_edit
         await pilot.pause()
 
         before = panel.draft_snapshot()
         saved = screen.save_state()
 
+    assert before.pipeline_voice_draft != before.pipeline_voice_original
+    assert saved["speech_tts_panel_draft"].pipeline_voice_draft == (
+        before.pipeline_voice_draft
+    ), "save_state dropped the pipeline voice edit"
     assert saved["speech_tts_panel_draft"] == before
     assert "18081" not in repr(saved["speech_tts_panel_draft"])
 
@@ -2230,6 +2240,11 @@ async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
         assert (
             restored_screen.query_one("#settings-speech-realtime-voice", Input).value
             == "cedar"
+        )
+        assert restored_screen.query_one(eagerness, Input).value == pipeline_edit
+        assert restored_panel.has_unsaved_changes()
+        assert restored_screen._category_has_unsaved_changes(
+            SettingsCategoryId.SPEECH_TTS
         )
 
 
