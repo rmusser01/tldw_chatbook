@@ -437,6 +437,20 @@ Tests/UI/test_settings_theme_picker_screen.py::test_quit_asks_about_staged_chang
 # Capture fix 2 round 2, finding 1: the quit prompt never stacks on the theme's.
 Tests/UI/test_settings_theme_picker_screen.py::test_quit_with_staged_changes_never_stacks_on_the_theme_prompt
 
+# Ruling C16 for capture fix 3 and its rounds (2026-10-13): the five tests
+# they added to files no lane runs, each 3 of 3 serial alone (seconds in the
+# p7-review-fix lanes report). Node ids; the tail moves five shards on.
+# Ruling C-N1: Ctrl+Q on another screen asks about a kept Settings draft.
+Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_from_another_screen_asks_about_a_kept_settings_draft
+# Ruling C-N1: back on Settings, Ctrl+Q never asks about its stale snapshot.
+Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_on_settings_never_asks_about_its_own_stale_snapshot
+# Capture fix 3 round 1, finding 1: Keep editing under a modal stays in it.
+Tests/UI/test_app_quit_under_modal.py::test_keep_editing_on_a_kept_draft_under_a_modal_keeps_the_modal
+# Capture fix 3 round 1, finding 2: a raw edit left before it lands is asked about.
+Tests/UI/test_app_quit_under_modal.py::test_a_raw_edit_left_before_its_change_lands_is_asked_about
+# Capture fix 3 round 1, findings 3 and 9: Ctrl+Q names only what Settings kept.
+Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_elsewhere_never_names_what_settings_did_not_keep
+
 # Phase 7's Settings files: about half of the lane's pytest minutes on CI. They sit
 # at the end, in this order, so round-robin over seven shards spreads them and no
 # other file's shard depends on them. Append new entries below this block: one
