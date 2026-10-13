@@ -754,6 +754,54 @@ async def test_discovery_reports_once_in_its_toast(request):
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_failed_discovery_reports_once_on_its_line(request):
+    """Capture fix 2, finding 2: a failed discovery reported twice, its reason
+    on the line above Discover models and the toast "Provider model discovery
+    failed.". The line beside the button just pressed is the one report."""
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        ModelDiscoveryError,
+    )
+
+    app = _app()
+    app.llm_provider_catalog_scope_service = FakeSettingsModelDiscoveryScope(
+        result=ModelDiscoveryResult(
+            provider="openai",
+            provider_list_key="OpenAI",
+            endpoint_fingerprint="fixture",
+            status="error",
+            error=ModelDiscoveryError(
+                kind="request_failed",
+                message="The endpoint refused the request.",
+                recovery_hint="Check the API key, then run Discover again.",
+            ),
+        )
+    )
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        screen.query_one("#settings-advanced-saved-models", Collapsible).collapsed = (
+            False
+        )
+        await pilot.pause()
+        screen.query_one("#settings-discover-provider-models", Button).press()
+        status = screen.query_one("#settings-model-discovery-status", Static)
+        await _until(pilot, lambda: "refused" in str(status.renderable))
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert status.display and str(status.renderable) == (
+            "The endpoint refused the request. "
+            "Check the API key, then run Discover again."
+        )
+        messages = [str(note.message) for note in host._notifications]
+        assert not any("discovery" in message.lower() for message in messages), (
+            messages
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_the_saved_model_list_names_every_saved_model(request):
     """Capture round 2, finding 5 (10a, 10b): the title said "2 saved in
     config", yet the open list showed only the saved model the server

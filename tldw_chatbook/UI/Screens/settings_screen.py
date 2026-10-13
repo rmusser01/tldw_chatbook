@@ -16679,9 +16679,9 @@ class SettingsScreen(BaseAppScreen):
 
         self._model_discovery_models = ()
         self._model_discovery_selected_model_ids = set()
+        # Capture fix 2, finding 2: the line beside Discover is the one report.
         self._model_discovery_status = self._discovery_status_from_error(result)
         self._refresh_model_discovery_widgets()
-        self.app.notify("Provider model discovery failed.", severity="warning")
 
     # Not in Discover and Clear's exclusive group: a press on either would
     # cancel this durable write mid-save. A second save waits its turn.
