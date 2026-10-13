@@ -8,6 +8,7 @@ the highlighted model; Esc saves nothing. The mounted tests are
 
 import asyncio
 import threading
+from dataclasses import replace
 
 import pytest
 from textual.app import ComposeResult
@@ -839,3 +840,65 @@ async def test_a_card_resumed_with_nothing_detected_runs_discovery_again(
         for _ in range(10):
             await pilot.pause(0.05)
         assert len(app._discovery_calls) == 2
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_card_unblocked_and_broken_while_away_runs_discovery_on_return(
+    monkeypatch,
+    request,
+) -> None:
+    """Final fix wave 3, item 2. Discovery left the card with nothing found;
+    the card then unblocked without a resume (an apply whose callback runs on
+    the screen) and broke again while the user was away (a key removed in
+    Settings). The return runs discovery again.
+
+    A plain return re-syncs the Console before the resume's own code runs
+    (the attach reconciliation), so the card already reads blocking there.
+    The resume's code read the card's state before its own sync, so where it
+    runs without that re-sync first it read "not blocking", kept discovery
+    spent, and the sync then found the card blocking. It no longer reads it."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _blocked_console_app(())
+    host = ConsoleHarness(app)
+    openai = app.app_config["api_settings"]["openai"]
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        await _until(pilot, lambda: len(app._discovery_calls) == 1, "discovery")
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+
+        async def unblock() -> None:
+            # An apply's callback: a key and a model, and the card's own sync.
+            openai["api_key"] = "sk-test-key-for-the-card"
+            store.replace_session_settings(
+                session_id,
+                replace(
+                    store.session_settings(session_id),
+                    provider="openai",
+                    model="gpt-x",
+                    source="user",
+                ),
+            )
+            console._sync_console_transcript_guidance()
+            await _until(pilot, lambda: not modal.is_blocking, "the card to unlock")
+
+        await unblock()
+        await host.push_screen(Screen())
+        await pilot.pause()
+        openai["api_key"] = ""  # the key removed in Settings
+        await host.pop_screen()
+        await _until(pilot, lambda: modal.is_blocking, "the card to block again")
+        await _until(
+            pilot, lambda: len(app._discovery_calls) == 2, "discovery to run again"
+        )
+
+        await unblock()
+        openai["api_key"] = ""
+        console.on_screen_resume()  # its own code, with no re-sync before it
+        await _until(
+            pilot, lambda: len(app._discovery_calls) == 3, "discovery on the resume"
+        )

@@ -22791,12 +22791,9 @@ class ChatScreen(BaseAppScreen):
         # `_restore_console_workbench_focus` below would just re-apply the
         # stale block and the modal could stick even after setup completed
         # elsewhere.
-        if (
-            not mount_already_refreshed
-            and self._console_detected_local_server is None
-            and self._console_setup_modal_blocking()
-        ):
-            # Back on the card with nothing found: a server may have started.
+        if not mount_already_refreshed and self._console_detected_local_server is None:
+            # Nothing found yet: a server may have started. The sync below
+            # starts discovery only if it finds the card blocking.
             self._console_local_discovery_started = False
         self._sync_console_transcript_guidance()
         if not mount_already_refreshed:
