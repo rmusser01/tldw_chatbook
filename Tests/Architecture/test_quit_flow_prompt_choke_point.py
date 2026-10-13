@@ -272,8 +272,10 @@ def test_the_scan_reaches_the_quit_flow_it_guards() -> None:
         # TASK-33007 (capture finding 22): Settings' staged-change prompt.
         "tldw_chatbook/UI/Settings_Modules/settings_quit_guard.py:confirm_settings_quit",
         # Ruling C-N1: the stand-in that asks about a kept Settings draft.
-        "tldw_chatbook/UI/Settings_Modules/settings_quit_guard.py:"
-        "KeptSettingsDraft.confirm_quit",
+        (
+            "tldw_chatbook/UI/Settings_Modules/settings_quit_guard.py:"
+            "KeptSettingsDraft.confirm_quit"
+        ),
     }
     missing = expected - set(roots)
     assert not missing, f"the scan no longer reaches: {sorted(missing)}"
