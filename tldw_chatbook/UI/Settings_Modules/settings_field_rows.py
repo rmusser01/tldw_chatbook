@@ -268,7 +268,7 @@ def row_copy(
         A set field: ``saved_word`` (or "edited *") and the field's help.
         A blank one: the layer it inherits from (or "edited *") and
         "inherits <value>" (the Source column names the layer once), or
-        "blank = provider default".
+        "the provider decides".
     """
     if shown:
         return (EDITED if edited else saved_word), MODEL_CONFIG_FIELDS[name].help

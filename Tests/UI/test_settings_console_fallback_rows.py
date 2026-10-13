@@ -175,6 +175,9 @@ async def test_fallbacks_use_model_defaults_rows_core_first_then_closed_sampling
                 name,
                 shown.region,
             )
+            # #3057 capture finding 12 (06c): the help gave the same state a
+            # second word ("blank = provider default" beside "default").
+            assert "blank" not in _row_copy(screen, name)[1], name
         for name, row in zip(CORE_FIELDS, rows):
             label, control, source, help_line = row.children
             assert _static_text(label) == MODEL_FIELD_LABELS[name]
@@ -243,10 +246,10 @@ async def test_each_fallback_says_its_source_and_a_blank_says_what_it_sends(requ
             MODEL_CONFIG_FIELDS["streaming"].help,
         )
         assert screen.query_one(f"#{_cid('streaming')}", Select).value == "false"
-        assert _row_copy(screen, "seed") == ("provider", "blank = provider default")
+        assert _row_copy(screen, "seed") == ("provider", "the provider decides")
         assert _row_copy(screen, "max_tokens") == (
             "provider",
-            "blank = provider default",
+            "the provider decides",
         )
 
         temperature = screen.query_one(f"#{_cid('temperature')}", Input)
@@ -461,7 +464,7 @@ async def test_a_cleared_required_fallback_says_it_needs_a_value_and_save_agrees
     request,
 ):
     """Review I2: Temperature and Top P cannot be blank here, so a cleared row
-    says so with its range (never "blank = provider default"), Save refuses
+    says so with its range (never "the provider decides"), Save refuses
     with the same range, and the Sampling title does not say "inherit".
 
     Review round 2 (1): the words are Chat settings' own ("Required: 0.0 to
@@ -499,7 +502,7 @@ async def test_a_cleared_required_fallback_says_it_needs_a_value_and_save_agrees
         )
         assert str(sampling.title) == "Sampling · none set"
         # An optional field keeps the provider-decides line.
-        assert _row_copy(screen, "seed") == ("provider", "blank = provider default")
+        assert _row_copy(screen, "seed") == ("provider", "the provider decides")
 
         screen.set_focus(None)
         await pilot.pause()
@@ -553,7 +556,7 @@ async def test_a_hand_edited_fallback_shows_the_value_and_word_a_new_chat_resolv
         assert screen.query_one(f"#{_cid('top_p')}", Input).value == "1.5"
         assert _row_copy(screen, "top_p")[0] == "Console Behavior"
         assert screen.query_one(f"#{_cid('top_k')}", Input).value == ""
-        assert _row_copy(screen, "top_k") == ("provider", "blank = provider default")
+        assert _row_copy(screen, "top_k") == ("provider", "the provider decides")
         assert _sampling_title(screen) == "Sampling · Top P 1.5"
         # Showing an out-of-range value stages nothing.
         assert not _dirty(screen)
@@ -592,7 +595,7 @@ async def test_a_hand_edited_choice_with_no_option_reads_saved_and_names_its_val
         )
         assert _row_copy(screen, "thinking_effort") == (
             "provider",
-            "blank = provider default",
+            "the provider decides",
         )
         assert not _dirty(screen)
 
@@ -623,8 +626,8 @@ async def test_default_after_an_option_stops_sending_a_choice_with_no_option(
 ):
     """Review round 5 (2), with the real writer on a private profile: a blank
     Select over a saved "bogus" is no edit at rest, but a blank chosen after
-    an option is "default". It reads "edited *" with "blank = provider
-    default", and Save writes it, so a new chat sends nothing."""
+    an option is "default". It reads "edited *" with "the provider
+    decides", and Save writes it, so a new chat sends nothing."""
     config_path = Path(os.environ["TLDW_CONFIG_PATH"])
     on_disk = toml.loads(config_path.read_text())
     on_disk.setdefault("chat_defaults", {})["verbosity"] = "bogus"
@@ -653,7 +656,7 @@ async def test_default_after_an_option_stops_sending_a_choice_with_no_option(
         assert _dirty(screen) == {"verbosity"}
         assert _row_copy(screen, "verbosity") == (
             "edited *",
-            "blank = provider default",
+            "the provider decides",
         )
         screen.set_focus(None)
         await pilot.pause()
@@ -696,7 +699,7 @@ async def test_a_shown_negative_integer_can_be_backspaced_away(request):
         await pilot.press("backspace")
         await pilot.pause()
         assert seed.value == ""
-        assert _row_copy(screen, "seed") == ("edited *", "blank = provider default")
+        assert _row_copy(screen, "seed") == ("edited *", "the provider decides")
 
 
 @pytest.mark.asyncio

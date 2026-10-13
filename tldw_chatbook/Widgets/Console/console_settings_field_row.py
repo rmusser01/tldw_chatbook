@@ -142,8 +142,8 @@ MODEL_CHANGE_LABEL = "Change Alt+M"
 #: Streaming at chat scope is a plain On/Off choice (ADR-095:75-81); the
 #: Source word, not a third option, says when it is inherited.
 STREAMING_OPTIONS = (("On", "on"), ("Off", "off"))
-#: What a blank optional field sends: nothing, so the provider's own default.
-BLANK_FIELD_HELP = "blank = provider default"
+#: A blank field or a "default" choice sends nothing, so the provider decides.
+BLANK_FIELD_HELP = "the provider decides"
 #: A control whose support is unknown stays visible and says so in its help
 #: line (TASK-30012 AC#3).
 GENERATION_CONTROL_UNKNOWN_COPY = "Support not verified for this model."

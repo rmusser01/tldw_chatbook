@@ -543,9 +543,9 @@ Every field row reads the same way: the label, the value, a word saying
 where the value comes from, and one line of help. The words are the ones
 **Switch model** uses: *edited \** (changed in this open), *this chat*,
 *model default*, *Console Behavior*, *provider* and *built-in*. A blank field
-says what a blank sends: "blank = provider default" (nothing is sent, so the
+says what a blank sends: "the provider decides" (nothing is sent, so the
 provider's own default applies), and its word reads *provider*; a blank
-dropdown, such as **Reasoning effort**, shows *default*. A blank **Temperature** or **Top P** shows
+dropdown, such as **Reasoning effort**, shows *default* with the same help. A blank **Temperature** or **Top P** shows
 its range instead, because Apply needs a value while the provider accepts the
 field. Labels match Settings, for
 example **Thinking budget**, and **Budget strategy** and **When limit nears**

@@ -331,6 +331,9 @@ async def test_blank_field_says_what_it_sends_and_no_placeholder_shows() -> None
         assert effort.value is Select.NULL
         line = await _painted_line(pilot, app, effort)
         assert BLANK_CHOICE_PROMPT in line and "Select" not in line, line
+        # #3057 capture finding 12 (08): one word for the state the Select
+        # shows; the help said "blank = provider default" beside "default".
+        assert "blank" not in line, line
         temperature = modal.query_one("#console-settings-temperature", Input)
         temperature.focus()
         temperature.clear()

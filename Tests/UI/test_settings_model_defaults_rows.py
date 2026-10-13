@@ -288,7 +288,7 @@ async def test_a_blank_field_says_what_it_inherits_and_from_where(request):
             MODEL_CONFIG_FIELDS["max_tokens"].help,
         )
         assert row("top_p") == ("built-in", "inherits 0.95")
-        assert row("thinking_budget_tokens") == ("provider", "blank = provider default")
+        assert row("thinking_budget_tokens") == ("provider", "the provider decides")
         for name in (
             "temperature",
             "max_tokens",
@@ -318,7 +318,7 @@ async def test_a_blank_field_says_what_it_inherits_and_from_where(request):
             "edited *",
             MODEL_CONFIG_FIELDS["temperature"].help,
         )
-        assert row("max_tokens") == ("edited *", "blank = provider default")
+        assert row("max_tokens") == ("edited *", "the provider decides")
 
 
 @pytest.mark.asyncio
@@ -632,7 +632,7 @@ async def test_a_hand_edited_choice_with_no_option_reads_saved_like_the_fallback
         )
         assert _row(screen, "reasoning_summary") == (
             "provider",
-            "blank = provider default",
+            "the provider decides",
         )
         assert not _dirty(screen)
 
@@ -743,7 +743,7 @@ async def test_a_shown_negative_integer_can_be_backspaced_away(request):
         await pilot.press("backspace")
         await pilot.pause()
         assert seed.value == ""
-        assert _row(screen, "seed") == ("edited *", "blank = provider default")
+        assert _row(screen, "seed") == ("edited *", "the provider decides")
 
 
 def _private_qwen_profile(qwen: dict) -> tuple[Path, dict, object]:
@@ -886,7 +886,7 @@ async def test_inherit_after_an_option_clears_a_choice_the_select_cannot_show(
         assert _dirty(screen) == {"model_profile_reasoning_effort"}
         assert _row(screen, "reasoning_effort") == (
             "edited *",
-            "blank = provider default",
+            "the provider decides",
         )
         await _save_providers_models(host, pilot, screen)
 
