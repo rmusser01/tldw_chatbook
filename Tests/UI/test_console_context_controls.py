@@ -774,6 +774,79 @@ async def test_current_memory_uses_typed_effective_display(
         assert expected_summary in review
 
 
+def _memory_lines(screen) -> list[str]:
+    """The Current memory section's shown lines, metadata then review."""
+    return [
+        str(static.renderable)
+        for static in screen.query(
+            "#console-context-memory-metadata, #console-settings-memory-review"
+        ).results(Static)
+        if static.display
+    ]
+
+
+@pytest.mark.asyncio
+async def test_no_memory_is_said_once() -> None:
+    """TASK-33007 capture finding 18 (round 2): with no memory, or after a
+    reset leaves none, Current memory says so on one line; the review line
+    shows only while there is a summary to review."""
+    app = _ContextHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(memory=None),
+                can_save=True,
+                focus_context=True,
+            )
+        )
+        await pilot.pause()
+        assert _memory_lines(app.screen) == [
+            "No conversation memory. Transcript remains authoritative."
+        ]
+
+    app = _ContextHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(memory=_memory()),
+                can_save=True,
+                focus_context=True,
+                reset_current_memory=app.reset_current,
+                undo_current_memory_reset=app.undo_current,
+                reset_all_memories=app.reset_all,
+            )
+        )
+        await pilot.pause()
+        summary = _memory().summary_text
+        assert _memory_lines(app.screen)[1] == summary
+        app.screen.query_one("#console-context-reset-current", Button).press()
+        await pilot.pause()
+        assert _memory_lines(app.screen) == [
+            "Current branch memory reset; transcript unchanged."
+        ]
+        app.screen.query_one("#console-context-undo-reset", Button).press()
+        await pilot.pause()
+        assert _memory_lines(app.screen)[1] == summary
+        app.screen.query_one("#console-context-reset-all", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#console-context-confirm-reset-all", Button).press()
+        await pilot.pause()
+        (line,) = _memory_lines(app.screen)
+        assert line.startswith("All generated and legacy conversation memory was")
+
+
 @pytest.mark.asyncio
 async def test_branch_reset_is_undoable_and_reset_all_is_separately_confirmed() -> None:
     app = _ContextHarness()

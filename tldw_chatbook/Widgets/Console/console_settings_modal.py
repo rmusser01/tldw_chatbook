@@ -2070,11 +2070,13 @@ class ConsoleSettingsModal(
                             classes="console-settings-modal-row",
                             markup=False,
                         )
-                        yield Static(
+                        review = Static(
                             self._memory_review_text(),
                             id="console-settings-memory-review",
                             markup=False,
                         )
+                        review.display = bool(self._memory_review_text())
+                        yield review
                         yield Static(
                             "",
                             id="console-context-action-status",
@@ -3736,9 +3738,7 @@ class ConsoleSettingsModal(
             status.update("Memory changed before it could be reset.")
             return
         self._memory_reset_token = token
-        self.query_one("#console-settings-memory-review", Static).update(
-            "No conversation memory is active on this branch."
-        )
+        self._show_memory_review("")
         self.query_one("#console-context-memory-metadata", Static).update(
             "Current branch memory reset; transcript unchanged."
         )
@@ -3839,9 +3839,7 @@ class ConsoleSettingsModal(
                 )
             return False
         self._memory_reset_token = None
-        self.query_one("#console-settings-memory-review", Static).update(
-            self._memory_review_text()
-        )
+        self._show_memory_review(self._memory_review_text())
         self.query_one("#console-context-memory-metadata", Static).update(
             self._memory_metadata_label()
         )
@@ -3886,9 +3884,7 @@ class ConsoleSettingsModal(
         undo = self.query_one("#console-context-undo-reset", Button)
         undo.display = False
         undo.disabled = True
-        self.query_one("#console-settings-memory-review", Static).update(
-            "No conversation memory is active."
-        )
+        self._show_memory_review("")
         self.query_one("#console-context-memory-metadata", Static).update(
             "All generated and legacy conversation memory was reset; transcript "
             f"unchanged. Generated records deactivated: {count}."
@@ -6094,7 +6090,12 @@ class ConsoleSettingsModal(
             return effective.memory.summary_text
         if effective.legacy is not None:
             return effective.legacy.summary_text
-        return "No conversation memory is active on this branch."
+        return ""  # the metadata line says there is none (finding 18)
+
+    def _show_memory_review(self, text: str) -> None:
+        review = self.query_one("#console-settings-memory-review", Static)
+        review.update(text)
+        review.display = bool(text)
 
     def _sources_label(self) -> str:
         if self._context_estimate.staged_context_summary.strip():
