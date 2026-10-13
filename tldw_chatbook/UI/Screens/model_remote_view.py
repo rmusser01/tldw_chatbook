@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -549,6 +550,7 @@ class RemoteView(Widget):
         self._selected_repository: str | None = None
         self._selected_candidate: RemoteGGUFCandidate | None = None
         self._variant_filter = ""
+        self._variant_filter_timer: Any | None = None
         self._variant_sort = "source"
         self._operation_reference: ArtifactRef | None = None
         self._completed_reference: ArtifactRef | None = None
@@ -1524,10 +1526,29 @@ class RemoteView(Widget):
             self._refresh_with_status(message)
         self.post_message(self.MachineMemoryRequested(force=False))
 
+    def _stop_variant_filter_timer(self) -> None:
+        if self._variant_filter_timer is not None:
+            self._variant_filter_timer.stop()
+            self._variant_filter_timer = None
+
     @on(Input.Changed, "#remote-variant-filter")
     def _variant_filter_changed(self, event: Input.Changed) -> None:
-        """Apply filename/quantization filtering without provider I/O."""
+        """Apply filename/quantization filtering without provider I/O.
+
+        TASK-34940: debounced -- the clear+remount of every variant row
+        runs once typing pauses, not per keystroke.
+        """
         self._variant_filter = event.value
+        if self._resolved is None:
+            return
+        self._stop_variant_filter_timer()
+        self._variant_filter_timer = self.set_timer(
+            0.2,
+            partial(self._apply_variant_filter),
+        )
+
+    def _apply_variant_filter(self) -> None:
+        self._variant_filter_timer = None
         resolved = self._resolved
         if resolved is None:
             return
@@ -1546,6 +1567,12 @@ class RemoteView(Widget):
             )
             self.query_one("#remote-model-install", Button).disabled = True
         self._refresh_variant_list()
+
+    @on(Input.Submitted, "#remote-variant-filter")
+    def _variant_filter_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self._stop_variant_filter_timer()
+        self._apply_variant_filter()
 
     @on(Select.Changed, "#remote-variant-sort")
     def _variant_sort_changed(self, event: Select.Changed) -> None:

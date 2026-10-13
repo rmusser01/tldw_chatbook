@@ -1,15 +1,16 @@
 ---
 id: TASK-34940
 title: Debounce-the-model-browser-variant-filter-and-diff-rows
-status: To Do
+status: Done
 assignee: []
-created_date: '2026-10-13 14:58'
+created_date: 2026-10-13 14:58
 labels:
-  - performance
-  - ui-perf
-  - wave-4-blocking-rebuilds
+- performance
+- ui-perf
+- wave-4-blocking-rebuilds
 dependencies: []
 priority: low
+updated_date: 2026-10-13 19:11
 ---
 
 ## Description
@@ -20,5 +21,5 @@ The model-browser variant filter rebuilds the variant list on every keystroke: r
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Variant filter debounced and rows filtered in place or batched rather than full destroy/rebuild per keystroke
+- [x] Variant filter debounced and rows filtered in place or batched rather than full destroy/rebuild per keystroke
 <!-- AC:END -->
