@@ -15937,6 +15937,8 @@ SmartContentTree Tree > .selected-node {
     background: $error 15%;
     text-style: bold;
     margin-top: $ds-space-1;
+
+    padding: $ds-space-0 $ds-space-2;
 }
 
 .setup-step-note { color: $text-muted; margin-top: $ds-space-1; }

@@ -2451,6 +2451,15 @@ class TestProviderTrustChain:
         )
         assert primary == "start_chatting"
 
+    def test_the_provider_notice_and_line_both_offer_to_continue(self):
+        """TASK-33008 capture 06b: back on Provider after a failed check, the
+        pinned notice said "Add one under Authentication, then continue."
+        while the step's own line said "…, or continue anyway." Next is
+        allowed there, so both say so, for every failure."""
+        for failure, copy_ in setup_state.PROBE_FAILURE_COPY.items():
+            assert copy_.provider_line.endswith("continue anyway."), failure
+            assert copy_.provider_notice.endswith(", or continue anyway."), failure
+
     def test_summary_actions_reject_non_bool_probe_state(self):
         with pytest.raises(ValueError):
             setup_state.build_first_run_summary_actions(

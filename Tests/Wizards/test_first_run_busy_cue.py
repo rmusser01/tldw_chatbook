@@ -683,8 +683,8 @@ async def test_a_server_fixed_after_a_failed_discovery_is_seen_on_continue(
     """Review round 2: a failed model list must not outlive the user's fix.
 
     The server is down, so discovery fails. The user starts the server and
-    continues from Provider, as its notice asks ("Check it's running, then
-    continue"). ``back_then_next``: the failure showed on Model, the user
+    continues from Provider, as its notice suggests ("Check it's running, or
+    continue anyway"). ``back_then_next``: the failure showed on Model, the user
     went Back and pressed Next. ``test_connection``: the failure showed on
     Provider, and a Test connection succeeded before Next. Either way the
     server must be asked again (since review round 3, coming Back to

@@ -1067,6 +1067,9 @@ SmartContentTree Tree > .selected-node {
     background: $error 15%;
     text-style: bold;
     margin-top: $ds-space-1;
+    /* TASK-33008 (capture 06b): keep the text off the wizard's frame, inset
+       like the busy line above the nav bar. */
+    padding: $ds-space-0 $ds-space-2;
 }
 /* TASK-21140 (UAT G-3): calm informational lines that previously borrowed
    the error class and rendered reassurance as a failure. */

@@ -603,7 +603,7 @@ PROBE_FAILURE_COPY: dict[str, ProbeFailureCopy] = {
         "The API key failed an authentication check, so this model setup is "
         "unverified. Continue anyway?",
         "The last connection check failed: this API key was rejected. Update "
-        "it, then continue.",
+        "it, or continue anyway.",
         "saved, but the key failed an authentication check",
     ),
     PROVIDER_PROBE_KEY_REQUIRED: ProbeFailureCopy(
@@ -614,7 +614,7 @@ PROBE_FAILURE_COPY: dict[str, ProbeFailureCopy] = {
         "The server needs an API key and none was set, so this model setup is "
         "unverified. Continue anyway?",
         "The last connection check failed: the server needs an API key and "
-        "none was set. Add one under Authentication, then continue.",
+        "none was set. Add one under Authentication, or continue anyway.",
         "saved, but the server needs an API key and none was set",
     ),
     PROVIDER_PROBE_CONNECTION: ProbeFailureCopy(
@@ -623,7 +623,7 @@ PROBE_FAILURE_COPY: dict[str, ProbeFailureCopy] = {
         "The server couldn't be reached, so this model setup is unverified. "
         "Continue anyway?",
         "The last connection check couldn't reach the server. Check it's "
-        "running, then continue.",
+        "running, or continue anyway.",
         "saved, but the server couldn't be reached when models were checked",
     ),
 }

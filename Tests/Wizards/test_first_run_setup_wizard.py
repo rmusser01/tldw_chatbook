@@ -13475,7 +13475,7 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
         strip = wizard.query_one("#setup-step-error-pinned", Static)
         assert str(strip.render()) == (
             "The last connection check failed: the server needs an API key and "
-            "none was set. Add one under Authentication, then continue."
+            "none was set. Add one under Authentication, or continue anyway."
         )
         assert str(auth.title) == "Authentication"
 
@@ -13551,6 +13551,22 @@ async def test_a_401_to_a_test_that_sent_no_key_asks_for_a_key() -> None:
         endpoint.value = "http://localhost:9090"
         await pilot.pause()
         assert str(auth.title) == "Authentication (optional)"
+
+
+@pytest.mark.asyncio
+async def test_the_pinned_notice_keeps_clear_of_the_frame():
+    """TASK-33008 capture 06b: the pinned notice strip drew its text against
+    the wizard's frame, with no room on either side."""
+    wizard = _make_wizard()
+    app = _StyledHostApp(wizard)  # the app's own CSS draws the strip
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.steps[container.current_step].show_step_error("Fix this first.")
+        await pilot.pause()
+        strip = wizard.query_one("#setup-step-error-pinned", Static)
+        assert strip.content_region.x > strip.region.x
+        assert strip.content_region.right < strip.region.right
 
 
 @pytest.mark.asyncio
