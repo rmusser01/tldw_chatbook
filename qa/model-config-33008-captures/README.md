@@ -5,7 +5,9 @@ Live captures of the surfaces Phase 8 changed, keyboard only. The set was retake
 captures the capture fix 3 wave changed were retaken the same day at `8b97eeb05f`
 (after that wave and its six fix rounds; see "Retaken at 8b97eeb05f" below); the
 captures the capture fix 4 wave changed were retaken the same day at `e5e5855ab5`
-(after that wave and its four fix rounds; see "Retaken at e5e5855ab5" below).
+(after that wave and its four fix rounds; see "Retaken at e5e5855ab5" below); the
+captures the capture fix 5 wave changed were retaken the same day at `7c260226ec`
+(after that wave and its one fix round; see "Retaken at 7c260226ec" below).
 Each moment was captured at 211x44, the tmux window was resized to 235x52 and
 captured again, then resized back. `.txt` is `tmux capture-pane -p`; `.ansi.txt` is
 the same moment with `-e` colour escapes (focus shows there: a focused button is bold
@@ -13,8 +15,8 @@ and underlined on the accent colour).
 
 ## Key counts
 
-Re-measured at `4f2bffa20f`, `8b97eeb05f` and `e5e5855ab5`; both are unchanged from
-the first set.
+Re-measured at `4f2bffa20f`, `8b97eeb05f`, `e5e5855ab5` and `7c260226ec`; both are
+unchanged from the first set.
 
 - **Parent AC#1, local server: 2 key presses**, measured at 211x44. From the card
   with "Use detected llama.cpp (127.0.0.1:8080)" focused (`02a`): **Enter** opens
@@ -108,7 +110,38 @@ Seen, all at 211x44 with no resize before the read:
 - `05d`'s first retake at 211x44 had one blank row under "MLX-LM (Apple silicon) (not
   checked)" in Switch model's list. It was gone after the 235x52 round trip, and two
   more fresh launches (read at 4 s and 9 s) matched the committed `05d`. That list is
-  not part of this wave's change.
+  not part of this wave's change. (The capture fix 5 wave changed it; see the next
+  section.)
+
+## Retaken at 7c260226ec
+
+The capture fix 5 wave changed only Switch model's list: each rebuild of its rows now
+makes the list measure itself again. Retaken: `02b`, `05a`, `05c` and `05d`, the
+captures that show Switch model. Compared with the old files, `05a` is byte-identical,
+`05c` and `05d` differ only in the Find input's blinking cursor, and `02b` only in clock
+times. These were driven again, compared with the committed files, found unchanged and
+left as they were: `02a`, `03a`-`03d` and `05b` (text equal), `03e` (clock times),
+`02c` and `03f` (clock times and the composer's blinking cursor), and `05e` (the
+composer's cursor). Not retaken: `01a`-`01c`, `04a`-`04c`, `06a` and `06b` (no Switch
+model).
+
+Seen:
+
+- `05d` on 16 fresh launches of the `05` profile: 13 opened Switch model at 211x44
+  (Alt+M 0, 1, 3 or 6 s after the composer drew) and 3 at 235x52. Each was read once
+  the probes had answered (2.5 to 4.5 s after the Alt+M), then at the other size, then
+  back at the first size. No read had a blank row under "MLX-LM (Apple silicon) (not
+  checked)", and every read's text equals the committed `05d` at its size.
+- The same steps on a `git archive` of `db641a08cc`, the wave's base, 18 launches at
+  211x44: no blank row there either. This live check cannot tell the two trees
+  apart; the wave's test, red at the base, can.
+- Read every 0.2 s or 0.04 s while the probes answer, both trees sometimes show one
+  read, about 0.4 s after the Alt+M, with two blank rows under the NOT RUNNING row
+  (head: 2 of 16 launches; base: 3 of 18). In that read one of the two custom
+  endpoints has answered and the other has not. The same two reads, one for each
+  endpoint answering first, appear on both trees, and the next read has no blank row
+  (0.04 s later where the reads were that close). It is not the resting list, and the
+  wave did not change it.
 
 ## Procedure
 
@@ -117,20 +150,25 @@ Seen, all at 211x44 with no resize before the read:
   `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `TLDW_CONFIG_PATH` in a fresh scratch
   directory per launch, the null keyring backend, `TERM=xterm-256color`,
   `COLORTERM=truecolor`, `LANG=en_US.UTF-8`, and a `sandbox-exec` profile denying
-  reads and writes of the real profile directories.
+  reads and writes of the real profile directories (in the `7c260226ec` retake it also
+  denied every outbound connection except to loopback; none of its 37 launch logs
+  shows a denial).
+  The `7c260226ec` retake's base launches ran a `git archive` of `db641a08cc` the same
+  way.
 - **Profiles.** Each one is the shipped template (`CONFIG_TOML_CONTENT`, dumped by a
   process whose own `HOME`/`XDG_*` were scratch, under the same sandbox) with
   `users_name = "verify_cap33008r_<profile>"` (`verify_cap33008r4_<profile>` in the
-  `e5e5855ab5` retake), the splash off, `[model_catalog]
-  auto_refresh_enabled = false` and `[first_run] setup_completed = true`. No provider
-  key, except: `05` adds a made-up OpenAI key and `[console.onboarding]
-  first_send_completed = true`; `06` keeps the template's first-run state, so the
+  `e5e5855ab5` retake, `verify_cap33008r5_<profile>` in the `7c260226ec` one), the
+  splash off, `[model_catalog] auto_refresh_enabled = false` and `[first_run]
+  setup_completed = true`. No provider key, except: `05` adds a made-up OpenAI key
+  and `[console.onboarding] first_send_completed = true`; `06` keeps the template's first-run state, so the
   wizard opens. `05d` is a fresh launch of the `05` profile.
 - **Stubs.** A loopback HTTP server answering `GET /v1/models`: on 127.0.0.1:8080
   with three model ids (qwen3-8b-instruct-q4_k_m, phi-4-mini-q8, gemma-3-4b-it-q4)
   for `02` (13 requests over the `e5e5855ab5` retake's three launches, none with an
-  Authorization header); on 127.0.0.1:8080 answering 401 for `06` (its log shows six requests, none
-  with an Authorization header; eight, none with one, in the `8b97eeb05f` retake); on
+  Authorization header; 4 over the `7c260226ec` retake's one launch, none with one);
+  on 127.0.0.1:8080 answering 401 for `06` (its log shows six requests, none with an
+  Authorization header; eight, none with one, in the `8b97eeb05f` retake); on
   127.0.0.1:18431 for `03`-`05`, where
   `[api_settings.openai] api_base_url` points at it so the key check (`t`) lists
   models without contacting OpenAI. That is why the Endpoint row reads
@@ -148,4 +186,5 @@ Seen, all at 211x44 with no resize before the read:
   later try.
 - **No key check or send reached a real provider.** No message was sent. The only
   key check went to the 18431 stub (one authenticated `GET /v1/models`; the same in
-  the `e5e5855ab5` retake, and none from the `05` launches).
+  the `e5e5855ab5` and `7c260226ec` retakes; none from the `05` launches, 28 of
+  which followed `03` in the `7c260226ec` retake).
