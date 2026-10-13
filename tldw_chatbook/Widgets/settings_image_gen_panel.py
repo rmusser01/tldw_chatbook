@@ -135,9 +135,8 @@ def switch_word(value: bool) -> str:
 
 
 def toggle_label(name: str, value: bool) -> str:
-    """Checkbox label that carries the state in TEXT (task-1561): the glyph
-    paints an "X" in both states and distinguishes them by color alone,
-    which reads as checked either way in reduced-color terminals."""
+    """Checkbox label that carries the state in TEXT too (task-1561), so the
+    row reads without the glyph."""
     return f"{name}: on" if value else f"{name}: off"
 
 
