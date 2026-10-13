@@ -1,16 +1,16 @@
 ---
 id: TASK-34941
-title: >-
-  Cache-the-meetings-partial-lookup-and-stop-rewriting-the-whole-RichLog-per-relabel
-status: To Do
+title: Cache-the-meetings-partial-lookup-and-stop-rewriting-the-whole-RichLog-per-relabel
+status: Done
 assignee: []
-created_date: '2026-10-13 14:59'
+created_date: 2026-10-13 14:59
 labels:
-  - performance
-  - ui-perf
-  - wave-4-blocking-rebuilds
+- performance
+- ui-perf
+- wave-4-blocking-rebuilds
 dependencies: []
 priority: low
+updated_date: 2026-10-13 19:13
 ---
 
 ## Description
@@ -21,5 +21,6 @@ Meetings _apply_event does query_one(#meetings-partial) on every ASR partial —
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Partial widget reference cached (no query_one per ASR partial),Relabel updates only affected lines or whole-log rewrite is bounded with a measured justification
+- [x] Partial widget reference cached (no query_one per ASR partial)
+- [x] Relabel updates only affected lines or whole-log rewrite is bounded with a measured justification
 <!-- AC:END -->
