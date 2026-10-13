@@ -204,6 +204,7 @@ SAMPLING_ROUTE_COPY = "Global fallbacks are in Console Behavior."
 ADVANCED_DISCLOSURE_CLASS = "settings-advanced-disclosure"
 CONTEXT_WINDOW_DISCLOSURE_ID = "settings-advanced-context-window"
 SAVED_MODELS_DISCLOSURE_ID = "settings-advanced-saved-models"
+SAVED_NOT_LISTED_ID = "settings-saved-models-not-listed"
 CATALOG_REFRESH_DISCLOSURE_ID = "settings-advanced-catalog-refresh"
 CUSTOM_ENDPOINTS_DISCLOSURE_ID = "settings-advanced-custom-endpoints"
 #: task-34384 (dev), ported into Advanced when Phase 7 was rebased onto it.
@@ -1165,6 +1166,30 @@ def saved_models_summary(screen: SettingsScreen) -> str:
     return " · ".join(parts)
 
 
+def saved_models_not_listed(screen: SettingsScreen) -> str:
+    """Name the saved models the open list does not show (capture round 2, 5).
+
+    The list holds discovered models only, so a saved model the server does
+    not serve appeared only in the picker, under "Saved fallback".
+
+    Args:
+        screen: The Settings screen that owns the discovery state.
+
+    Returns:
+        "Saved: a, b" before a discovery, "Saved, not served now: b" after
+        one, or "" when there is nothing more to name.
+    """
+    saved = screen._provider_saved_model_ids(screen._provider_widget_value())
+    if not screen._model_discovery_models:
+        return f"Saved: {', '.join(saved)}" if saved else ""
+    served = {
+        str(getattr(model, "model_id", "") or "").strip()
+        for model in screen._model_discovery_models
+    }
+    rest = [model for model in saved if model not in served]
+    return f"Saved, not served now: {', '.join(rest)}" if rest else ""
+
+
 def catalog_refresh_summary(screen: SettingsScreen) -> str:
     """Say whether startup refresh runs, how often, and for how many providers.
 
@@ -1355,6 +1380,13 @@ def refresh_advanced(screen: SettingsScreen) -> None:
     for child in card.children:
         if child.has_class(ADVANCED_DISCLOSURE_CLASS):
             child.title = advanced_title(screen, str(child.id))
+    try:
+        line = card.query_one(f"#{SAVED_NOT_LISTED_ID}", Static)
+    except QueryError:
+        pass
+    else:
+        line.update(not_listed := saved_models_not_listed(screen))
+        line.display = bool(not_listed)
     for checkbox in group.walk_children(Checkbox):
         if checkbox.id not in catalog_toggle_prefixes():
             continue
@@ -2024,12 +2056,14 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                     classes="settings-row-help",
                 )
         with advanced_disclosure(screen, SAVED_MODELS_DISCLOSURE_ID):
-            yield Static(
+            status = Static(
                 screen._model_discovery_status,
                 id="settings-model-discovery-status",
                 classes="settings-status-row",
                 markup=False,  # it can name a provider key or quote the server
             )
+            status.display = bool(screen._model_discovery_status)  # "" after a find
+            yield status
             yield Static(
                 MODEL_DISCOVERY_CAPABILITY_WARNING,
                 id="settings-model-discovery-capability-warning",
@@ -2067,6 +2101,15 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             # line above says why (capture finding 8: it alone says so).
             discovered_list.display = bool(screen._model_discovery_models)
             yield discovered_list
+            not_listed = saved_models_not_listed(screen)
+            line = Static(
+                not_listed,
+                id=SAVED_NOT_LISTED_ID,
+                classes="settings-status-row",
+                markup=False,  # model ids may hold "[" and "]"
+            )
+            line.display = bool(not_listed)
+            yield line
         # ADR-020: [model_catalog] auto-refresh toggles. Values initialize
         # inline from the saved config (the Connect block pattern) and
         # persist immediately on change via the screen's handlers.

@@ -705,3 +705,71 @@ async def test_session_summary_on_quit_is_a_one_row_disclosure_that_says_its_sta
         await pilot.pause()
         assert _title(screen, disclosure_id) == on
         assert config.writes and config.writes[-1]["enabled"] is True
+
+
+async def _discover(host, pilot, screen) -> None:
+    """Open the Saved model list, press Discover models, wait for the list."""
+    disclosure_id = "settings-advanced-saved-models"
+    screen.query_one(f"#{disclosure_id}", Collapsible).collapsed = False
+    await pilot.pause()
+    screen.query_one("#settings-discover-provider-models", Button).press()
+    await _until(pilot, lambda: bool(screen._model_discovery_models))
+    await host.workers.wait_for_complete()
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_discovery_reports_once_in_its_toast(request):
+    """Capture round 2, finding 6: a discovery reported twice, the card line
+    "Discovered 3 models from llama.cpp." and the toast "Provider model
+    discovery finished.". As for a revert (ruling F5 (a)), the toast is the
+    one report and says what was found; the card line is cleared (the
+    title already counts the listing)."""
+    app = _app(discovered=_DISCOVERED)
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        await _discover(host, pilot, screen)
+
+        messages = [str(note.message) for note in host._notifications]
+        assert "Provider model discovery finished." not in messages
+        assert messages.count("Discovered 3 models from OpenAI.") == 1
+        toast = next(
+            note
+            for note in host._notifications
+            if str(note.message) == "Discovered 3 models from OpenAI."
+        )
+        assert not toast.markup  # a custom endpoint's name may hold "["
+        status = screen.query_one("#settings-model-discovery-status", Static)
+        assert not status.display
+        assert "Discovered 3" not in str(status.renderable)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_the_saved_model_list_names_every_saved_model(request):
+    """Capture round 2, finding 5 (10a, 10b): the title said "2 saved in
+    config", yet the open list showed only the saved model the server
+    served; the other appeared only in the picker. The open disclosure names
+    the saved models it does not list: all of them before a discovery, then
+    the ones the server does not serve, in the picker's words."""
+    app = _app(discovered=_DISCOVERED)
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        line = screen.query_one("#settings-saved-models-not-listed", Static)
+        screen.query_one(
+            "#settings-advanced-saved-models", Collapsible
+        ).collapsed = False
+        await pilot.pause()
+        assert line.display
+        assert str(line.renderable) == "Saved: gpt-saved-a, gpt-saved-b"
+
+        await _discover(host, pilot, screen)
+        assert line.display
+        assert str(line.renderable) == "Saved, not served now: gpt-saved-b"
+        assert line.region.height >= 1
+

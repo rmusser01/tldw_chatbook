@@ -169,8 +169,10 @@ _BUDGETS: dict[str, int] = {
     # never "staged" (+1): 33,913; the Inspector's draft line names the
     # unsaved fields, one list behind it and the count (+23): 33,936; the
     # provider list's "Enter provider ID" has no heading of its own, and
-    # the guide calls it that, not "Manual" (+4): 33,940.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33940,
+    # the guide calls it that, not "Manual" (+4): 33,940; a discovery's
+    # one report is its toast, and its card line hides when empty (+1):
+    # 33,941.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33941,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -201,8 +203,9 @@ _BUDGETS: dict[str, int] = {
     # keyless provider's Env var reads optional (+39): 2,406. Capture fix
     # round 1: the API key help's width comment says what is measured (+0).
     # Capture round 2 A1: a filled Endpoint's help drops "required:" (+1):
-    # 2,407.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2407,
+    # 2,407; the Saved model list names the saved models it does not show,
+    # and the discovery line hides when a find leaves it empty (+43): 2,450.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2450,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and

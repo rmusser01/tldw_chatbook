@@ -16559,9 +16559,9 @@ class SettingsScreen(BaseAppScreen):
         return "Model discovery failed. Check provider endpoint settings and try again."
 
     def _refresh_model_discovery_widgets(self) -> None:
-        self._set_static_text(
-            "#settings-model-discovery-status", self._model_discovery_status
-        )
+        for status in self.query("#settings-model-discovery-status").results(Static):
+            status.update(self._model_discovery_status)
+            status.display = bool(self._model_discovery_status)
         available = self._model_discovery_available(self._provider_widget_value())
         try:
             discover_button = self.query_one(
@@ -16674,15 +16674,16 @@ class SettingsScreen(BaseAppScreen):
             models = tuple(getattr(result, "models", ()) or ())
             self._model_discovery_models = models
             self._model_discovery_selected_model_ids = set()
-            # Capture finding 7: the provider's name, not its config key.
-            self._model_discovery_status = (
-                f"Discovered {len(models)} model{'' if len(models) == 1 else 's'} "
-                f"from {self._provider_display_label(provider)}."
-            )
+            # Capture round 2 (finding 6): the toast is the one report, as for
+            # a revert; the title counts the listing. Finding 7: the name.
+            self._model_discovery_status = ""
             self._refresh_model_discovery_widgets()
             self._refresh_model_picker_discovered()
             self.app.notify(
-                "Provider model discovery finished.", severity="information"
+                f"Discovered {len(models)} model{'' if len(models) == 1 else 's'} "
+                f"from {self._provider_display_label(provider)}.",
+                severity="information",
+                markup=False,  # a custom endpoint's name may hold "["
             )
             return
 

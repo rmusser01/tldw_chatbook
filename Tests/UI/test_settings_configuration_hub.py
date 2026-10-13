@@ -11538,8 +11538,13 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
             pilot,
             # Capture finding 7 (TASK-33007), rewritten on purpose: the
             # provider's display name, not its config key, and no "(s)".
-            "Discovered 2 models from OpenAI.",
+            # Capture round 2, finding 6: that report is the toast now; the
+            # card shows the listing's count in the Saved model list title.
+            "2 discovered, 2 not saved",
         )
+        assert "Discovered 2 models from OpenAI." in [
+            str(note.message) for note in pilot.app._notifications
+        ]
 
         discovered_models = screen.query_one(
             "#settings-discovered-models-list",
