@@ -614,6 +614,8 @@ class StudyWindow(Container):
         super().__init__(**kwargs)
         self.app_instance = app_instance
         self.show_sidebar = show_sidebar
+        # Bumped on every sub-view swap; the Flashcards guard compares it.
+        self.view_swaps = 0
         self.flashcards_controller = StudyFlashcardsController(self)
         self.quizzes_controller = StudyQuizzesController(self)
 
@@ -808,6 +810,7 @@ class StudyWindow(Container):
 
     def watch_current_view(self, old_view: str, new_view: str) -> None:
         """Handle view changes"""
+        self.view_swaps += 1
         if old_view == "flashcards":
             self.run_worker(
                 self.flashcards_controller.end_review_session_if_needed(),

@@ -52,12 +52,14 @@ def _quiet_when_swapped_out(action):
 
     Returns:
         The method, ending on a `NoMatches` raised once Flashcards is no
-        longer the sub-view or the window is being removed (a tab switch);
-        one raised while it is shown is a bug and raises.
+        longer the sub-view, has been swapped out and back (the new panel
+        is not composed yet) or the window is being removed (a tab switch);
+        one raised while the same panel is shown is a bug and raises.
     """
 
     @functools.wraps(action)
     async def guarded(self, *args: Any, **kwargs: Any) -> None:
+        swaps = getattr(self.window, "view_swaps", 0)
         try:
             await action(self, *args, **kwargs)
         except NoMatches:
@@ -65,7 +67,11 @@ def _quiet_when_swapped_out(action):
             # `#card-list` can outlive `#review-status` for a moment. A tab
             # switch removes the window and leaves `current_view` alone;
             # `display` is False once the window is being removed.
-            if self.window.current_view == "flashcards" and self.window.display:
+            if (
+                self.window.current_view == "flashcards"
+                and self.window.display
+                and getattr(self.window, "view_swaps", 0) == swaps
+            ):
                 raise
 
     return guarded

@@ -1817,6 +1817,42 @@ async def test_an_action_held_while_the_study_window_goes_ends_quietly():
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+async def test_an_action_held_across_a_swap_away_and_back_ends_quietly():
+    """A swap away and back ends an action quietly (fix round 4, finding 2).
+
+    The new Flashcards panel has no `#review-status` until its compose has
+    run, a few loop turns after the swap back. The guard saw "flashcards"
+    shown and the window displayed, took the miss for a renamed id and
+    re-raised it out of the `study-start-review` worker.
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, _card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+        entered, release = _hold(scope, "get_next_review_candidate")
+        running = asyncio.ensure_future(window.flashcards_controller.start_review())
+        await _until(pilot, entered.is_set, "start_review to reach the service")
+        window.current_view = "structured_learning"
+        await _until(
+            pilot,
+            lambda: not window.query("#review-status"),
+            "Flashcards to be swapped out",
+        )
+
+        window.current_view = "flashcards"  # mounts a panel not yet composed
+        assert not window.query("#review-status")
+        release.set()
+        await running  # NoMatches before the fix
+        await _until(
+            pilot, lambda: bool(window.query("#review-status")), "the new panel"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_a_card_front_with_brackets_is_listed_as_typed():
     """A card's text is literal in the card list (fix round 1, finding 21).
 
