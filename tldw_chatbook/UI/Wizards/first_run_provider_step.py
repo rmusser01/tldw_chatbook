@@ -389,6 +389,7 @@ class ProviderStep(SetupStep):
         self._selected_discovery_generation = 0
         self._selected_discovery_state = "idle"
         self._listed_after_test = False  # models arrived after the last test
+        self._key_required_at: tuple[str, str] | None = None  # see auth_title
         self._selected_discovery_credential_decision: tuple[str, str | int] | None = (
             None
         )
@@ -1285,11 +1286,7 @@ class ProviderStep(SetupStep):
         readiness = self._current_provider_readiness()
         self._subscription_readiness_status = readiness.subscription_status
         auth = self.query_one("#setup-provider-auth-toggle", Collapsible)
-        auth.title = (
-            "Authentication"
-            if readiness.requires_api_key
-            else "Authentication (optional)"
-        )
+        auth.title = model_discovery.auth_title(self, readiness.requires_api_key)
         test_button = self.query_one("#setup-provider-test", Button)
         target = self._probe_target()
         identity = self._provider_current_draft_identity() if target else None
@@ -1708,6 +1705,7 @@ class ProviderStep(SetupStep):
             elif failed:
                 failure = model_discovery.probe_failure(model_outcome, provider_draft)
                 status.update(self._discovery_failure_status(display, failure))
+                model_discovery.note_probe_failure(self, failure, discovery_key)
             elif attempted:
                 status.update(f"Checked {display}; no models were reported.")
             else:
@@ -2345,10 +2343,10 @@ class ProviderStep(SetupStep):
         )
         detail = provider_readiness_verdict(snapshot).detail
         if evidence.category == "unauthorized" and identity.credential_source == "none":
-            detail = self._discovery_failure_status(  # TASK-33008: no key was sent
-                provider_display_name(identity.provider_key),
-                wizard_state.PROVIDER_PROBE_KEY_REQUIRED,
-            )
+            failure = wizard_state.PROVIDER_PROBE_KEY_REQUIRED  # TASK-33008: none sent
+            display = provider_display_name(identity.provider_key)
+            detail = self._discovery_failure_status(display, failure)
+            model_discovery.note_probe_failure(self, failure, identity)
         prefix = {"reachable": "✓ ", "unreachable": "✗ "}.get(evidence.endpoint, "")
         self.query_one("#setup-provider-probe-status", Static).update(prefix + detail)
 

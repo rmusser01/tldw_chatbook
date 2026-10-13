@@ -13432,6 +13432,8 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
         provider_step._local_discover = AsyncMock(return_value=())
         container.show_step(provider_index)
         provider_step.select_provider("llama_cpp")
+        auth = provider_step.query_one("#setup-provider-auth-toggle", Collapsible)
+        assert str(auth.title) == "Authentication (optional)"
         for _ in range(40):
             await pilot.pause(0.05)
             if provider_step._selected_discovery_state == "failed":
@@ -13441,6 +13443,8 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
             "llama.cpp needs an API key and none was set. Add one under "
             "Authentication, or continue anyway."
         )
+        # Capture 06b: the section that line points at is not optional now.
+        assert str(auth.title) == "Authentication"
 
         await container._advance()
         # The line mounts before the step records the outcome, and the step's
@@ -13473,6 +13477,7 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
             "The last connection check failed: the server needs an API key and "
             "none was set. Add one under Authentication, then continue."
         )
+        assert str(auth.title) == "Authentication"
 
 
 @pytest.mark.asyncio
@@ -13520,6 +13525,8 @@ async def test_a_401_to_a_test_that_sent_no_key_asks_for_a_key() -> None:
             await pilot.pause(0.05)
             if step._selected_discovery_state in {"failed", "complete"}:
                 break
+        auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
+        assert str(auth.title) == "Authentication (optional)"
         step.query_one("#setup-provider-test", Button).press()
         status = step.query_one("#setup-provider-probe-status", Static)
         for _ in range(40):
@@ -13532,6 +13539,18 @@ async def test_a_401_to_a_test_that_sent_no_key_asks_for_a_key() -> None:
             "✗ llama.cpp needs an API key and none was set. Add one under "
             "Authentication, or continue anyway."
         )
+        # Capture 06b: the section that line points at was still titled
+        # "Authentication (optional)".
+        assert str(auth.title) == "Authentication"
+        # A key typed there is still for the same server: the title holds.
+        step.query_one("#setup-provider-api-key", Input).value = "sk-local"
+        await pilot.pause()
+        assert str(auth.title) == "Authentication"
+        # Another server has not asked for one.
+        endpoint = step.query_one("#setup-provider-endpoint", Input)
+        endpoint.value = "http://localhost:9090"
+        await pilot.pause()
+        assert str(auth.title) == "Authentication (optional)"
 
 
 @pytest.mark.asyncio

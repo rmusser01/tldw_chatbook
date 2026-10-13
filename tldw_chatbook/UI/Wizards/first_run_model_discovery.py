@@ -157,6 +157,36 @@ def probe_failure(outcome: object, provider_draft: object) -> str:
     )
 
 
+def note_probe_failure(owner: Any, failure: str, checked: Any) -> None:
+    """Remember a check that sent no key and was refused (capture 06b).
+
+    ``checked`` is the discovery key or Test identity the check ran under.
+    From then on the Provider step's Authentication section is not called
+    optional while it shows that connection (see ``auth_title``).
+    """
+
+    if failure == wizard_state.PROVIDER_PROBE_KEY_REQUIRED:
+        owner._key_required_at = checked.connection_identity
+        owner._refresh_auth_readiness()
+
+
+def auth_title(owner: Any, requires_api_key: bool) -> str:
+    """The Provider step's Authentication title.
+
+    TASK-33008 (capture 06b): a keyless provider's section said "(optional)"
+    under a line saying its server needs a key. It drops the word when the
+    provider needs a key, or when a check against the connection on screen
+    was refused for want of one (``note_probe_failure``).
+    """
+
+    if not requires_api_key and owner._key_required_at is not None:
+        key = owner._model_discovery_key(owner._effective_provider_draft())
+        requires_api_key = getattr(key, "connection_identity", None) == (
+            owner._key_required_at
+        )
+    return "Authentication" if requires_api_key else "Authentication (optional)"
+
+
 def _first_run_discovery_staged_settings(
     provider_draft: wizard_state.FirstRunProviderDraft,
     discovery_key: wizard_state.FirstRunModelDiscoveryKey,
