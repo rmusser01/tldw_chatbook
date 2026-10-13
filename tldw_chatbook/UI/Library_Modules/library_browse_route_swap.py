@@ -39,6 +39,7 @@ from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from tldw_chatbook.Library.library_shell_state import build_library_shell_state
 from tldw_chatbook.Widgets.Library import (
     LIBRARY_BROWSE_ROUTE_MEDIA,
     LIBRARY_BROWSE_ROUTE_NOTES,
@@ -233,6 +234,86 @@ async def _apply_library_notes_source_strip(
         await strip.remove()
 
 
+async def leave_library_browse_shell_for_ordinary(
+    screen: "LibraryScreen", mounted_reader_selector: str
+) -> bool:
+    """Replace an adaptive reader shell with the ordinary shell, in place.
+
+    TASK-21243: the reverse of this module's arrival swap. A section
+    "Export…" press on a Notes/Media canvas crosses from the adaptive
+    reader shell (whose Library pane owns the rail) to an ORDINARY route
+    whose shell grid children are the rail handle, the rail, and the
+    canvas host -- until now that crossing always paid the structural
+    whole-screen ``Screen.recompose()``, rebuilding the largest screen in
+    the app for a routine per-click action. This helper swaps the grid's
+    one child for the ordinary trio built by the SAME constructor
+    ``compose_content`` uses (``_build_library_ordinary_shell_trio``), so
+    a leave cannot drift from a compose.
+
+    The destination's canvas child is deliberately NOT mounted here: the
+    caller falls through to the strict canvas-child replacement
+    (``_replace_library_canvas_child``), which projects the destination
+    into the fresh empty ``#library-canvas-route-content`` with the usual
+    generation/route guards.
+
+    Args:
+        screen: The Library screen leaving an adaptive reader shell.
+        mounted_reader_selector: The selector the caller resolved for the
+            MOUNTED adaptive shell (one of ``_apply_library_open_item_
+            surface``'s ``adaptive_shell_selectors`` values).
+
+    Returns:
+        True when the ordinary shell is mounted and the caller may take
+        the targeted path; False when the mounted shape was not the
+        expected single adaptive shell (the caller falls back to the
+        structural recompose).
+    """
+    from ..Navigation.surface_swap_guard import ensure_surface_swap_not_self_awaited
+
+    try:
+        grid = screen.query_one("#library-shell-grid", Widget)
+        shell_widget = screen.query_one(mounted_reader_selector, Widget)
+    except (NoMatches, QueryError):
+        return False
+    if shell_widget.parent is not grid or list(grid.children) != [shell_widget]:
+        # An unexpected grid shape (a leave already half-done, or chrome
+        # this helper does not know) is the structural arm's case.
+        return False
+    shell = build_library_shell_state(
+        screen._build_library_shell_input(),
+        selected_row_id=screen._library_selected_row_id,
+    )
+    (
+        rail_handle,
+        rail,
+        canvas_host,
+        emergency_return,
+        route_content,
+    ) = screen._build_library_ordinary_shell_trio(
+        shell, screen._library_single_notes_stage()
+    )
+    await _apply_library_notes_source_strip(screen, shell.canvas_kind)
+    if screen.is_running:
+        try:
+            screen.app.capture_mouse(None)
+        except Exception:
+            logger.debug(
+                "Mouse-capture release before Library shell leave skipped.",
+                exc_info=True,
+            )
+    ensure_surface_swap_not_self_awaited(
+        (shell_widget,), seam="LibraryScreen adaptive reader shell leave"
+    )
+    shell_widget.display = False
+    await grid.remove_children((shell_widget,))
+    await grid.mount(rail_handle, rail, canvas_host)
+    # The compose path nests these two inside the host with its yield
+    # contexts; a targeted mount appends them in the same order.
+    await canvas_host.mount(emergency_return, route_content)
+    screen.call_after_refresh(screen._sync_library_ordinary_rail_width_contract)
+    return True
+
+
 async def _adopt_library_browse_canvas(
     screen: "LibraryScreen",
     canvas_host: Vertical,
@@ -379,30 +460,61 @@ async def swap_library_browse_route(
         onboarding_all_empty=screen._library_onboarding_all_empty,
     )
     await _apply_library_notes_source_strip(screen, shell.canvas_kind)
-    if not same_route:
-        await shell_widget.swap_work(_build_library_browse_work_pane(screen, route))
-        shell_widget.apply_route(route)
-        shell_widget.adopt_route_layout(
-            screen._media_state.reader_layout
-            if route == LIBRARY_BROWSE_ROUTE_MEDIA
-            else screen._notes_state.reader_layout
-        )
-    # The resident canvas rebuilds asynchronously. Restore through its existing
-    # post-sync boundary, preserving the pre-detach Notes identity and the
-    # generic guard against a newer user focus move.
-    adopted = await _adopt_library_browse_canvas(
-        screen,
-        canvas_host,
-        route,
-        after_sync=restore_focus,
-        notes_focus_identity=capture.notes_identity if capture is not None else None,
+    # TASK-21242 gap 1: a route swap that leaves the Media route BUILDS the
+    # permanent Reader (``_build_library_browse_work_pane`` ->
+    # ``_build_library_media_reader``), and that builder CONSUMES two
+    # one-shot side effects (the ingest "Matched an existing item" arrival
+    # note and the composed-detail marker). If this swap then fails or is
+    # superseded, the caller's whole-screen fallback recompose rebuilds the
+    # reader -- but from already-consumed state, so the notice was lost and
+    # the detail was marked rendered by a widget that never mounted.
+    # Snapshot before the build; restore on every non-applied outcome below
+    # (both the explicit ``not adopted`` return and any exception that
+    # propagates to ``_replace_library_browse_canvas``'s fallback).
+    reader_side_effects = (
+        screen._media_controller._snapshot_library_media_reader_side_effects()
+        if not same_route and route == LIBRARY_BROWSE_ROUTE_MEDIA
+        else None
     )
+    try:
+        if not same_route:
+            await shell_widget.swap_work(_build_library_browse_work_pane(screen, route))
+            shell_widget.apply_route(route)
+            shell_widget.adopt_route_layout(
+                screen._media_state.reader_layout
+                if route == LIBRARY_BROWSE_ROUTE_MEDIA
+                else screen._notes_state.reader_layout
+            )
+        # The resident canvas rebuilds asynchronously. Restore through its
+        # existing post-sync boundary, preserving the pre-detach Notes
+        # identity and the generic guard against a newer user focus move.
+        adopted = await _adopt_library_browse_canvas(
+            screen,
+            canvas_host,
+            route,
+            after_sync=restore_focus,
+            notes_focus_identity=(
+                capture.notes_identity if capture is not None else None
+            ),
+        )
+    except Exception:
+        if reader_side_effects is not None:
+            screen._media_controller._restore_library_media_reader_side_effects(
+                reader_side_effects
+            )
+        raise
     if not adopted:
         # The resident canvas refused its in-place repaint, and we suppressed
         # its own whole-screen fallback (allow_screen_fallback=False). Report
         # the swap as not done so ``_select_library_rail_row_after_source_
         # admission`` takes its ``recompose()`` recovery, rather than leaving
-        # stale content behind a name-clean "success" (Qodo #7).
+        # stale content behind a name-clean "success" (Qodo #7). The reader
+        # build's side effects are re-armed first so that recovery recompose
+        # shows the arrival notice the discarded reader would have shown.
+        if reader_side_effects is not None:
+            screen._media_controller._restore_library_media_reader_side_effects(
+                reader_side_effects
+            )
         return False
     screen._apply_library_notes_stage_visibility()
     screen._apply_library_notes_footer_context()

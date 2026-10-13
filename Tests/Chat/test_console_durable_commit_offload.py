@@ -291,6 +291,16 @@ async def test_dispatch_begins_only_after_commit_is_durably_visible(
     Visibility is checked from an INDEPENDENT connection, so only committed
     data counts. This is the ordering barrier's regression guard: under the
     mutation "dispatch no longer waits for the commit" it must fail.
+
+    TASK-22502 (AC coverage note): the ``checkpoint_states`` clause below is
+    race-satisfiable in principle -- the gateway reads the checkpoint from
+    its own connection at stream entry, so a violated barrier COULD in some
+    interleavings still observe a just-committed row. The barrier's
+    dedicated atomicity proof lives in
+    ``Tests/Chat/test_console_first_send_atomicity.py`` (same-thread
+    observation of the checkpoint BEFORE any provider call, no independent
+    connection in the loop); this clause is the independent-connection
+    corroboration, not the load-bearing pin.
     """
 
     db = CharactersRAGDB(tmp_path / "controller.sqlite", client_id="task14-test")

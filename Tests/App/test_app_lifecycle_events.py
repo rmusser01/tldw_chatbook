@@ -118,6 +118,18 @@ async def test_speech_stack_diagnostic_fallback_names_both_providers(monkeypatch
     app = _build_test_app()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        # TASK-22504: the diagnostic is scheduled 0.1 s past `_ui_ready`
+        # (its `console_voice_input` import stays off the first-paint leg),
+        # so wait for ready first, then for the event, instead of assuming
+        # a mount-time emit.
+        for _ in range(100):
+            if getattr(app, "_ui_ready", False):
+                break
+            await pilot.pause(0.05)
+        for _ in range(50):
+            if _speech_stack_events(recorded):
+                break
+            await pilot.pause(0.05)
 
     events = _speech_stack_events(recorded)
     assert len(events) == 1, "startup must emit exactly one speech_stack_available"
@@ -160,6 +172,18 @@ async def test_speech_stack_diagnostic_records_vad_and_substitution_together(
     app = _build_test_app()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        # TASK-22504: the diagnostic is scheduled 0.1 s past `_ui_ready`
+        # (its `console_voice_input` import stays off the first-paint leg),
+        # so wait for ready first, then for the event, instead of assuming
+        # a mount-time emit.
+        for _ in range(100):
+            if getattr(app, "_ui_ready", False):
+                break
+            await pilot.pause(0.05)
+        for _ in range(50):
+            if _speech_stack_events(recorded):
+                break
+            await pilot.pause(0.05)
 
     events = _speech_stack_events(recorded)
     assert len(events) == 1
@@ -199,6 +223,18 @@ async def test_speech_stack_diagnostic_healthy_path_is_unchanged(monkeypatch):
     app = _build_test_app()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        # TASK-22504: the diagnostic is scheduled 0.1 s past `_ui_ready`
+        # (its `console_voice_input` import stays off the first-paint leg),
+        # so wait for ready first, then for the event, instead of assuming
+        # a mount-time emit.
+        for _ in range(100):
+            if getattr(app, "_ui_ready", False):
+                break
+            await pilot.pause(0.05)
+        for _ in range(50):
+            if _speech_stack_events(recorded):
+                break
+            await pilot.pause(0.05)
 
     events = _speech_stack_events(recorded)
     assert len(events) == 1

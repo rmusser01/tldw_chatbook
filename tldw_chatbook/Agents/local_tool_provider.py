@@ -4257,7 +4257,7 @@ def _default_specs(
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Path inside the repository, relative to the workspace root (default: the workspace root).",
+                        "description": "Limit the status to one path (file or directory), relative to the workspace root; also selects the repository. Omit for the whole repository.",
                     },
                 },
             },

@@ -479,6 +479,10 @@ DEFERRED_COLLECTIONS_CAPTURE_WIRING_DELAY_SECONDS = 0.1
 #: maintenance: a 0.1 s timer could expire while synchronous post-ready setup
 #: was still running and race the ADR-097 UI-ready module census.
 DEFERRED_NOTES_ORGANIZATION_WIRING_DELAY_SECONDS = 5.0
+#: The speech-stack environment diagnostic (one `persist_event` line) is
+#: post-ready work: its `console_voice_input` import pulls the STT stack,
+#: which must stay off the first-paint leg (TASK-22504).
+DEFERRED_SPEECH_STACK_DIAGNOSTICS_DELAY_SECONDS = 0.1
 #: Workspace agent provisioning (task-8) deferral: after `_ui_ready` so
 #: `Workspaces.agent_provisioning` stays out of the UI-ready census
 #: (ADR-097); same 0.1-0.2 s non-essential-startup window as audio.
@@ -3214,6 +3218,74 @@ class TldwCli(
     async def _close_owned_tts_resources(self) -> None:
         return await _speech()._close_owned_tts_resources(self)
 
+    def _record_speech_stack_diagnostics(self) -> None:
+        """Record this interpreter's speech-stack availability (one line).
+
+        Moved out of `on_mount` (TASK-22504): the `console_voice_input`
+        import this needs pulls the STT coordinator stack, and the
+        diagnostic is a persistent-diagnostics record, not first-frame
+        work -- `_post_mount_setup` schedules it past `_ui_ready`. The
+        body is unchanged; the function-body import below still reads the
+        LIVE module attribute, so tests that patch
+        `console_voice_input.resolve` before it runs keep reaching it.
+        """
+        # Which interpreter's speech stack this run actually has. Dictation
+        # degrades silently and differently per missing package -- without
+        # `webrtcvad` no segment can finalize mid-capture (so nothing appears
+        # until stop and no voice command can fire), and without the
+        # configured provider's package the resolver quietly picks another.
+        # Both were diagnosed only after several live rounds because the run
+        # left no record of its own environment (2026-08-01); one line here
+        # dates every future report to a specific interpreter.
+        #
+        # TASK-2110: a provider substitution is its own degradation, reported
+        # as such. The resolver's `was_overridden` (console_voice_input
+        # `resolve()`) means the configured provider's package is missing and
+        # another was substituted; recording only the substitute with
+        # `status=ok` is exactly the report that made the 2026-08-03 live gate
+        # read a degraded run as healthy. Status precedence: a substitution is
+        # `fallback` (VAD present) or `degraded-fallback` (both degradations);
+        # with no substitution the status keeps its original VAD-only meaning
+        # so the healthy path's shape is unchanged.
+        try:
+            from importlib.util import find_spec
+
+            from .Chat.console_voice_input import resolve as _resolve_dictation
+
+            # The provider dictation would actually use, not merely one that
+            # is installed: the resolver's config precedence is exactly what
+            # went wrong before, so recording its answer is the point.
+            _effective = _resolve_dictation()
+            _vad_available = find_spec("webrtcvad") is not None
+            _provider_substituted = (
+                _effective is not None and _effective.was_overridden
+            )
+            if _provider_substituted:
+                _status = "fallback" if _vad_available else "degraded-fallback"
+            else:
+                _status = "ok" if _vad_available else "degraded"
+            _speech_fields = {
+                "status": _status,
+                "provider": _effective.provider if _effective else "none",
+                "model": (_effective.model if _effective else None)
+                or "provider-default",
+            }
+            if _provider_substituted:
+                _speech_fields["configured_provider"] = (
+                    _effective.configured_provider
+                )
+            persist_event(
+                "dictation",
+                "speech_stack_available",
+                # WARNING, not ERROR: dictation still works, on a provider the
+                # user did not choose -- same severity the first-capture
+                # `VoiceProviderOverridden` toast uses for the same fact.
+                level=logging.WARNING if _provider_substituted else logging.INFO,
+                **_speech_fields,
+            )
+        except Exception:
+            pass
+
     def on_mount(self) -> None:
         """Configure logging and schedule post-mount setup."""
         self._start_persona_buddy_overlay()
@@ -3284,62 +3356,11 @@ class TldwCli(
         except Exception:
             pass
 
-        # Which interpreter's speech stack this run actually has. Dictation
-        # degrades silently and differently per missing package -- without
-        # `webrtcvad` no segment can finalize mid-capture (so nothing appears
-        # until stop and no voice command can fire), and without the
-        # configured provider's package the resolver quietly picks another.
-        # Both were diagnosed only after several live rounds because the run
-        # left no record of its own environment (2026-08-01); one line here
-        # dates every future report to a specific interpreter.
-        #
-        # TASK-2110: a provider substitution is its own degradation, reported
-        # as such. The resolver's `was_overridden` (console_voice_input
-        # `resolve()`) means the configured provider's package is missing and
-        # another was substituted; recording only the substitute with
-        # `status=ok` is exactly the report that made the 2026-08-03 live gate
-        # read a degraded run as healthy. Status precedence: a substitution is
-        # `fallback` (VAD present) or `degraded-fallback` (both degradations);
-        # with no substitution the status keeps its original VAD-only meaning
-        # so the healthy path's shape is unchanged.
-        try:
-            from importlib.util import find_spec
-
-            from .Chat.console_voice_input import resolve as _resolve_dictation
-
-            # The provider dictation would actually use, not merely one that
-            # is installed: the resolver's config precedence is exactly what
-            # went wrong before, so recording its answer is the point.
-            _effective = _resolve_dictation()
-            _vad_available = find_spec("webrtcvad") is not None
-            _provider_substituted = (
-                _effective is not None and _effective.was_overridden
-            )
-            if _provider_substituted:
-                _status = "fallback" if _vad_available else "degraded-fallback"
-            else:
-                _status = "ok" if _vad_available else "degraded"
-            _speech_fields = {
-                "status": _status,
-                "provider": _effective.provider if _effective else "none",
-                "model": (_effective.model if _effective else None)
-                or "provider-default",
-            }
-            if _provider_substituted:
-                _speech_fields["configured_provider"] = (
-                    _effective.configured_provider
-                )
-            persist_event(
-                "dictation",
-                "speech_stack_available",
-                # WARNING, not ERROR: dictation still works, on a provider the
-                # user did not choose -- same severity the first-capture
-                # `VoiceProviderOverridden` toast uses for the same fact.
-                level=logging.WARNING if _provider_substituted else logging.INFO,
-                **_speech_fields,
-            )
-        except Exception:
-            pass
+        # The speech-stack environment diagnostic (dictation/
+        # speech_stack_available) is scheduled PAST `_ui_ready` -- see
+        # `_record_speech_stack_diagnostics`, called from
+        # `_post_mount_setup` (TASK-22504: its `console_voice_input`
+        # import must stay off the first-paint leg).
 
         # Restore persisted Library ingest job history (self.library_ingest_jobs
         # already exists -- constructed store-less in __init__). Never raises:
@@ -4481,6 +4502,13 @@ class TldwCli(
         self._ui_ready = True
         ui_ready_time = time.perf_counter()
         freeze_long_lived_heap("ui_ready")  # ADR-198: keep the boot heap out of gen-2 scans
+
+        # TASK-22504: the speech-stack diagnostic's `console_voice_input`
+        # import stays off the first-paint leg; one timer tick past ready.
+        self.set_timer(
+            DEFERRED_SPEECH_STACK_DIAGNOSTICS_DELAY_SECONDS,
+            self._record_speech_stack_diagnostics,
+        )
 
         self.loguru_logger.info("App _post_mount_setup: Post-mount setup completed.")
 

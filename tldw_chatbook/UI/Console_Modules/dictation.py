@@ -90,59 +90,45 @@ needed zero edits: the attribute now lives on `self._dictation`, but
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
-from functools import partial
 import asyncio
 import logging
 import threading
 import time
 import uuid
-from typing import Any, Literal, TYPE_CHECKING
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from functools import partial
+from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
-from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.message import Message
 
-# Import-safe at module scope: `console_voice_input` reaches the optional
-# speech stack only through `importlib.util.find_spec` and a function-body
-# import inside `default_service_factory`, so nothing here drags
-# `tldw_chatbook.Audio` (and with it faster-whisper and NeMo) into app
-# start.
+from tldw_chatbook.Utils.input_validation import escape_markup
+
+# TASK-22504: `console_voice_input` (2,260 LOC + its closure: the STT
+# coordinator/registry/routing stack, config re-arm, Backup_Recovery
+# participants) used to ride the Chat first-paint leg through THIS module's
+# import. It is now loaded on FIRST VOICE USE by `_load_console_voice_input`
+# below, which imports the real module and binds every name this module
+# uses into its own globals -- so the call sites below keep using the bare
+# names unchanged (LOAD_GLOBAL cannot fall back to a module `__getattr__`,
+# so the names must be genuinely bound before use; every entry point that
+# touches one calls the loader first, and the loader is idempotent).
 #
-# The module itself is imported (not just the names below) so
-# `_sync_console_dictation_availability` can call `console_voice_input.
-# probe()` through the module's own namespace at call time -- the same
+# The module-level `console_voice_input` attribute stays a forwarding proxy
+# until the first load replaces it with the real module, so
+# `console_voice_input.probe()` keeps its call-time semantics -- the same
 # target tests already monkeypatch (`_patch_availability` in
 # `Tests/UI/test_console_dictation_streaming.py`) to make the controller's
-# own internal `probe()` call deterministic. Binding `probe` as a bare
-# name here instead would capture the unpatched function at import time
-# and silently stop tracking that monkeypatch. Moved verbatim from
-# `chat_screen.py`, which no longer references this import for itself.
-from ...Chat import console_voice_input
-from ...Chat.console_voice_input import (
-    NO_CAPTURE_MESSAGE,
-    NO_SPEECH_MESSAGE,
-    STATE_LISTENING,
-    TRANSCRIPTION_INCOMPLETE_REASON,
-    TRANSCRIPTION_INCOMPLETE_REMEDY,
-    VAD_UNAVAILABLE_MESSAGE,
-    ConsoleVoiceInputController,
-    VoiceCommand,
-    VoiceDictationModelDefaulted,
-    VoiceFailed,
-    VoiceFinal,
-    VoiceLocalSTTBusy,
-    VoiceModelPreparing,
-    VoiceModelWarmupFailed,
-    VoicePartial,
-    VoiceProviderOverridden,
-    VoiceSegmentNoFinal,
-    VoiceSegmentTranscribing,
-    VoiceSpeechResumed,
-    VoiceVadUnavailable,
-    default_service_factory,
-)
+# own internal `probe()` call deterministic. Binding `probe` as a bare name
+# instead would capture the unpatched function at load time and silently
+# stop tracking that monkeypatch.
+#
+# Import-safety of the real module is unchanged: it reaches the optional
+# speech stack only through `importlib.util.find_spec` and a function-body
+# import inside `default_service_factory`, so nothing drags
+# `tldw_chatbook.Audio` (and with it faster-whisper and NeMo) into app
+# start.
 from ...Chat.console_glyphs import GLYPH_VOICE_WORKING
 from ...STT.dispatch_coordinator import DICTATION_MAX_SECONDS, pcm_byte_limit
 from ...Utils.persistent_diagnostics import persist_event
@@ -150,7 +136,85 @@ from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console import ConsoleComposerBar
 from ...Widgets.glyph_fallback import resolve_glyph
 
+#: Every `console_voice_input` name this module uses at call time.
+_CONSOLE_VOICE_INPUT_NAMES = (
+    "NO_CAPTURE_MESSAGE",
+    "NO_SPEECH_MESSAGE",
+    "STATE_LISTENING",
+    "TRANSCRIPTION_INCOMPLETE_REASON",
+    "TRANSCRIPTION_INCOMPLETE_REMEDY",
+    "VAD_UNAVAILABLE_MESSAGE",
+    "ConsoleVoiceInputController",
+    "VoiceCommand",
+    "VoiceDictationModelDefaulted",
+    "VoiceFailed",
+    "VoiceFinal",
+    "VoiceLocalSTTBusy",
+    "VoiceModelPreparing",
+    "VoiceModelWarmupFailed",
+    "VoicePartial",
+    "VoiceProviderOverridden",
+    "VoiceSegmentNoFinal",
+    "VoiceSegmentTranscribing",
+    "VoiceSpeechResumed",
+    "VoiceVadUnavailable",
+    "default_service_factory",
+)
+
+
+class _LazyConsoleVoiceInput:
+    """Forward attribute access to the real module, loading it on first use.
+
+    Kept as a class (not a function call) so `console_voice_input.probe()`
+    keeps working through this name before any `_load_...` call --
+    attribute access on the proxy triggers the load itself, so no caller
+    can observe a half-bound state.
+    """
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(_load_console_voice_input(), name)
+
+
+console_voice_input = _LazyConsoleVoiceInput()
+
+
+def _load_console_voice_input():
+    """Import `console_voice_input` and bind its names here (first voice use).
+
+    Idempotent: after the first call the names live in this module's
+    globals and the `sys.modules` hit makes repeat calls cheap.
+    """
+    from ...Chat import console_voice_input as _module
+
+    module_globals = globals()
+    for name in _CONSOLE_VOICE_INPUT_NAMES:
+        module_globals[name] = getattr(_module, name)
+    module_globals["console_voice_input"] = _module
+    return _module
+
+
 if TYPE_CHECKING:
+    from ...Chat.console_voice_input import (
+        NO_CAPTURE_MESSAGE,
+        NO_SPEECH_MESSAGE,
+        STATE_LISTENING,
+        TRANSCRIPTION_INCOMPLETE_REASON,
+        TRANSCRIPTION_INCOMPLETE_REMEDY,
+        VAD_UNAVAILABLE_MESSAGE,
+        VoiceCommand,
+        VoiceDictationModelDefaulted,
+        VoiceFailed,
+        VoiceFinal,
+        VoiceLocalSTTBusy,
+        VoiceModelPreparing,
+        VoiceModelWarmupFailed,
+        VoicePartial,
+        VoiceProviderOverridden,
+        VoiceSegmentNoFinal,
+        VoiceSegmentTranscribing,
+        VoiceSpeechResumed,
+        VoiceVadUnavailable,
+    )
     from ..Screens.chat_screen import ChatScreen
 
 logger = logger.bind(module="ChatScreen")
@@ -341,7 +405,7 @@ class ConsoleStreamingDictationSession:
         self,
         *,
         on_event: Callable[[Any, Any], None],
-        service_factory: Callable[..., Any] = default_service_factory,
+        service_factory: Callable[..., Any] | None = None,
         max_buffer_bytes: int | None = CONSOLE_DICTATION_MAX_BYTES,
     ) -> None:
         """Build a session over a fresh controller.
@@ -350,6 +414,10 @@ class ConsoleStreamingDictationSession:
             on_event: Called with `(session, event)` for every controller
                 event, from whatever thread emitted it.
             service_factory: Builds the dictation service; injected by tests.
+                `None` (the default) resolves to `console_voice_input.
+                default_service_factory` at start time (TASK-22504) -- the
+                name is bound by `_load_console_voice_input` and this
+                constructor can run on the first-paint leg.
             max_buffer_bytes: Hard cap on the PCM the recorder retains for one
                 capture, passed through to the dictation service. `None`
                 leaves the recorder unbounded (the service default, which the
@@ -383,14 +451,29 @@ class ConsoleStreamingDictationSession:
         self._service_factory = service_factory
         self._max_buffer_bytes = max_buffer_bytes
         self._on_buffer_limit: Callable[[], None] | None = None
-        self._controller = ConsoleVoiceInputController(
-            emit=self._handle_event,
-            spawn=lambda thunk: thunk(),
-            # Not `service_factory` directly: the controller builds the service
-            # deep inside `start()`, long after the caller handed us its
-            # buffer-limit callback, so the bound has to be attached here.
-            service_factory=self._build_service,
-        )
+        # TASK-22504: the controller (and the `console_voice_input` import
+        # it names) is constructed lazily by the `_controller` property --
+        # sessions are created by the screen's controller on the
+        # first-paint leg, and only a real `start()` needs the machinery.
+        self._controller_impl: Any = None
+
+    @property
+    def _controller(self) -> Any:
+        """The voice controller, constructed on first use (TASK-22504)."""
+        controller = self._controller_impl
+        if controller is None:
+            controller = self._controller_impl = (
+                _load_console_voice_input().ConsoleVoiceInputController(
+                    emit=self._handle_event,
+                    spawn=lambda thunk: thunk(),
+                    # Not `service_factory` directly: the controller builds
+                    # the service deep inside `start()`, long after the
+                    # caller handed us its buffer-limit callback, so the
+                    # bound has to be attached here.
+                    service_factory=self._build_service,
+                )
+            )
+        return controller
 
     def _build_service(self, **kwargs: Any) -> Any:
         """Build the dictation service with this session's PCM bound attached.
@@ -406,7 +489,11 @@ class ConsoleStreamingDictationSession:
             kwargs.setdefault("max_buffer_bytes", self._max_buffer_bytes)
         if self._on_buffer_limit is not None:
             kwargs.setdefault("on_buffer_limit", self._on_buffer_limit)
-        service = self._service_factory(**kwargs)
+        service_factory = self._service_factory
+        if service_factory is None:
+            service_factory = _load_console_voice_input().default_service_factory
+            self._service_factory = service_factory
+        service = service_factory(**kwargs)
         # Custom service factories retain their existing protocol. Only the
         # installed lazy service owns the bounded-join processor tracked here.
         if type(service).__module__ == "tldw_chatbook.Audio.dictation_service_lazy":
@@ -454,6 +541,7 @@ class ConsoleStreamingDictationSession:
                 this is what closes the race for all four variants a stale
                 delivery can take: command, final, partial, and failed.
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         try:
             if generation is not None and generation != self._capture_generation:
                 logger.debug(
@@ -542,6 +630,7 @@ class ConsoleStreamingDictationSession:
         Raises:
             RuntimeError: The controller refused or could not start capture.
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         self._on_buffer_limit = on_buffer_limit
         with self._lock:
             self._segments.clear()
@@ -609,6 +698,7 @@ class ConsoleStreamingDictationSession:
                 and nothing was transcribed, or the transcription never
                 completed).
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         with self._blocking_call():
             self._controller.stop()
         failure = self._take_failure()
@@ -700,7 +790,7 @@ class ConsoleDictationController:
         run_pending_voice_action: Callable[[str | None], Any],
         undo_histories_accessor: Callable[[], dict[str, Any]],
         visible_draft_session_id_accessor: Callable[[], str | None],
-        dictation_service_factory: Callable[..., Any] = default_service_factory,
+        dictation_service_factory: Callable[..., Any] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -1138,6 +1228,18 @@ class ConsoleDictationController:
         probe cannot brick the button in a permanently unavailable-looking
         state with no way to recover.
         """
+        # TASK-22504: the probe pulls `console_voice_input` through the
+        # forwarding proxy, and this sync is scheduled from `on_mount`
+        # (twice: `call_after_refresh` and a 0.15s retry) -- inside the
+        # first-paint window this task keeps the module out of. The sync
+        # is the cosmetic tooltip half only (its own docstring: it never
+        # blocks starting dictation), so it waits for `_ui_ready` and
+        # re-arms on a short timer until then; the first activation
+        # attempt still re-probes synchronously regardless.
+        app = getattr(self._screen, "app", None)
+        if app is not None and not getattr(app, "_ui_ready", True):
+            self._screen.set_timer(0.1, self._sync_console_dictation_availability)
+            return
         composer = self._console_composer_or_none()
         if composer is None:
             return
@@ -1271,6 +1373,7 @@ class ConsoleDictationController:
         Args:
             message: The posted controller event.
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         if message.session is not self._console_dictation_session:
             # A session the screen has already discarded; its events are stale.
             return
@@ -1670,9 +1773,13 @@ class ConsoleDictationController:
         Constructing the controller costs nothing: the optional speech stack is
         only imported when `start()` actually reaches the service factory.
         """
+        service_factory = self._dictation_service_factory
+        if service_factory is None:
+            service_factory = _load_console_voice_input().default_service_factory
+            self._dictation_service_factory = service_factory
         return ConsoleStreamingDictationSession(
             on_event=self._emit_console_dictation_event,
-            service_factory=self._dictation_service_factory,
+            service_factory=service_factory,
             max_buffer_bytes=pcm_byte_limit(
                 sample_rate=CONSOLE_DICTATION_SAMPLE_RATE,
                 channels=CONSOLE_DICTATION_CHANNELS,

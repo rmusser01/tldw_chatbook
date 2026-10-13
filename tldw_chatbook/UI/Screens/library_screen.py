@@ -12551,11 +12551,18 @@ class LibraryScreen(BaseAppScreen):
                 projection_owned=True,
             ):
                 return LibraryEntryReconcileResult.FAILED
-        elif then is not None:
+        elif follow_up is not None:
             # No owner-driven sync recompose to order against (loading
             # Static, media viewer, collections): after-refresh is the
-            # settled point.
-            self.call_after_refresh(then)
+            # settled point. TASK-21242 gap 3: this branch used to run bare
+            # ``then``, discarding the ``follow_up`` composed above -- so a
+            # projection with a captured focus identity DROPPED
+            # ``restore_focus`` on this path (and when ``then`` was None
+            # the computed restore was discarded outright), leaving focus
+            # unreturned after the swap. The composed follow-up runs here:
+            # restore first, the caller's ``then`` after, preserving the
+            # restore's veto-relevant return for the seam contract.
+            self.call_after_refresh(follow_up)
         self._apply_library_notes_stage_visibility()
         self._apply_library_notes_footer_context()
         return LibraryEntryReconcileResult.APPLIED
@@ -12655,34 +12662,75 @@ class LibraryScreen(BaseAppScreen):
             None,
         )
         if strip_mounted != strip_needed or mounted_reader != destination_reader:
-            # task-31249: hold the projection marker across the structural
-            # recompose too. The seam is awaited, and a media detail worker
-            # (or any state sync) landing inside the window finds its
-            # viewer momentarily unmounted and fires the retired
-            # ``refresh(recompose=True)`` fallback -- a second whole-screen
-            # rebuild racing this one. The M3 rule in
-            # ``_sync_library_canvas`` suppresses exactly this for the
-            # canvas syncs; the marker extends the same protection here so
-            # ``_sync_library_media_surfaces_or_recompose`` can suppress
-            # and let the resync replay paint the state instead.
-            self._library_canvas_projection_depth += 1
-            try:
-                await self.recompose()
-            except SurfaceSwapSelfAwaitError as error:
-                # Awaited on the pump of a widget the recompose removes
-                # (TASK-34000.4): refused before any teardown. The same
-                # rebuild on the screen's own pump completes, and it is
-                # this seam's documented fallback already.
-                log_refused_surface_swap(error, fallback="whole-screen refresh")
-                self.refresh(recompose=True)
+            left_adaptive_shell = False
+            if (
+                destination_reader is None
+                and mounted_reader is not None
+                and not strip_needed
+            ):
+                # TASK-21243: LEAVING an adaptive reader shell for an
+                # ordinary route (a section "Export…" press on a Notes or
+                # Media canvas, an ingest hand-off from a reader route) is
+                # the reverse of the phase-C arrival swap and can be done
+                # in place: remove the route-owned strip, replace the
+                # shell grid's one adaptive child with the ordinary trio
+                # built by the SAME constructor compose uses, and let the
+                # strict canvas-child replacement below project the
+                # destination into the fresh route-content host. A refusal
+                # (unexpected grid shape) or a failure falls back to the
+                # structural recompose arm unchanged.
+                from ..Library_Modules.library_browse_route_swap import (  # noqa: PLC0415 -- lazy, same reason as the swap import below
+                    leave_library_browse_shell_for_ordinary,
+                )
+
+                self._library_canvas_projection_depth += 1
+                try:
+                    left_adaptive_shell = (
+                        await leave_library_browse_shell_for_ordinary(
+                            self, mounted_reader
+                        )
+                    )
+                except SurfaceSwapSelfAwaitError as error:
+                    log_refused_surface_swap(
+                        error, fallback="whole-screen refresh"
+                    )
+                except Exception:
+                    logger.debug(
+                        "Targeted Library adaptive-shell leave failed; taking "
+                        "the structural recompose arm.",
+                        exc_info=True,
+                    )
+                finally:
+                    self._finish_library_canvas_projection()
+            if not left_adaptive_shell:
+                # task-31249: hold the projection marker across the structural
+                # recompose too. The seam is awaited, and a media detail worker
+                # (or any state sync) landing inside the window finds its
+                # viewer momentarily unmounted and fires the retired
+                # ``refresh(recompose=True)`` fallback -- a second whole-screen
+                # rebuild racing this one. The M3 rule in
+                # ``_sync_library_canvas`` suppresses exactly this for the
+                # canvas syncs; the marker extends the same protection here so
+                # ``_sync_library_media_surfaces_or_recompose`` can suppress
+                # and let the resync replay paint the state instead.
+                self._library_canvas_projection_depth += 1
+                try:
+                    await self.recompose()
+                except SurfaceSwapSelfAwaitError as error:
+                    # Awaited on the pump of a widget the recompose removes
+                    # (TASK-34000.4): refused before any teardown. The same
+                    # rebuild on the screen's own pump completes, and it is
+                    # this seam's documented fallback already.
+                    log_refused_surface_swap(error, fallback="whole-screen refresh")
+                    self.refresh(recompose=True)
+                    if then is not None:
+                        then()
+                    return
+                finally:
+                    self._finish_library_canvas_projection()
                 if then is not None:
-                    then()
+                    self.call_after_refresh(then)
                 return
-            finally:
-                self._finish_library_canvas_projection()
-            if then is not None:
-                self.call_after_refresh(then)
-            return
         try:
             widget = build()
         except Exception:
@@ -15275,6 +15323,84 @@ class LibraryScreen(BaseAppScreen):
         )
         return widgets
 
+    def _library_single_notes_stage(self) -> bool:
+        """Whether the Notes compact/focused-task single-stage layout applies.
+
+        TASK-21243: extracted from ``compose_content`` (its single
+        computation site) so the targeted adaptive-shell leave builds the
+        ordinary shell with the SAME stage display rules the compose path
+        applies -- the two composers must not drift.
+        """
+        return (
+            self._notes_state.compact and self._library_notes_compact_stage_applies()
+        ) or (
+            not self._notes_state.compact and self._library_notes_focused_task_active()
+        )
+
+    def _build_library_ordinary_shell_trio(
+        self, shell: LibraryShellState, single_notes_stage: bool
+    ) -> tuple[
+        LibraryNavigationRailHandle,
+        LibraryRail,
+        Vertical,
+        LibraryEmergencyReturn,
+        Vertical,
+    ]:
+        """Build the ordinary (non-adaptive) shell's grid children.
+
+        TASK-21243: extracted verbatim from ``compose_content``'s ordinary
+        tail so the ONE construction serves both composers -- the screen
+        recompose and the targeted "leave the adaptive reader shell" swap
+        (``leave_library_browse_shell_for_ordinary``) -- and the two cannot
+        drift apart. The pieces are returned UNATTACHED: the compose
+        generator nests them with its own ``yield`` contexts, and the
+        leave helper mounts them onto the grid (host first, then the
+        host's always-present chrome inside it) in the same order.
+
+        Args:
+            shell: The freshly built shell state for the destination route.
+            single_notes_stage: The compact-notes single-stage flag the
+                display rules below read, computed by the caller (compose
+                derives it once for all of its branches).
+
+        Returns:
+            ``(rail_handle, rail, canvas_host, emergency_return,
+            route_content)`` in compose order.
+        """
+        rail_handle = LibraryNavigationRailHandle(id="library-rail-handle")
+        rail_handle.add_class("h-full")
+        rail_handle.display = self._library_rail_collapsed and not single_notes_stage
+        rail = LibraryRail(
+            shell,
+            self._library_rail_preferences(),
+            query=self._library_rail_search_value(),
+            search_placeholder=self._library_rail_search_placeholder(),
+            workspaces_body_factory=self._compose_workspaces_rail_body,
+            top_action_factory=self._compose_library_rail_top_action,
+            lifecycle=self._library_lifecycle,
+            onboarding_all_empty=self._library_onboarding_all_empty,
+            id="library-rail",
+            classes="destination-workbench-pane",
+        )
+        rail.add_class("h-full")
+        rail.display = (
+            not single_notes_stage or self._notes_state.stage == "rail"
+        ) and not (self._library_rail_collapsed and not single_notes_stage)
+        canvas_host = Vertical(id="library-canvas", classes="destination-workbench-pane")
+        canvas_host.add_class("w-13fr")
+        canvas_host.styles.min_width = 40
+        canvas_host.add_class("h-full")
+        canvas_host.set_class(self._notes_state.compact, "library-notes-compact")
+        canvas_host.display = (
+            not single_notes_stage or self._notes_state.stage == "notes"
+        )
+        emergency_return = LibraryEmergencyReturn(id="library-emergency-return")
+        emergency_return.display = False
+        route_content = Vertical(id="library-canvas-route-content")
+        route_content.add_class("h-fill")
+        route_content.styles.min_height = 0
+        return rail_handle, rail, canvas_host, emergency_return, route_content
+
     def compose_content(self) -> ComposeResult:
         # TASK-23025: every whole-screen recompose passes through here (the
         # task-2856 choke-point guarantee below), so this is the one place
@@ -15396,11 +15522,7 @@ class LibraryScreen(BaseAppScreen):
         shell_grid.styles.min_height = 12
         shell_grid.set_class(self._notes_state.compact, "library-notes-compact")
         self.call_after_refresh(self._sync_library_ordinary_rail_width_contract)
-        single_notes_stage = (
-            self._notes_state.compact and self._library_notes_compact_stage_applies()
-        ) or (
-            not self._notes_state.compact and self._library_notes_focused_task_active()
-        )
+        single_notes_stage = self._library_single_notes_stage()
         if (
             shell.canvas_kind
             in (LIBRARY_CANVAS_KIND_NOTES, LIBRARY_CANVAS_KIND_NOTES_CREATE)
@@ -15789,44 +15911,17 @@ class LibraryScreen(BaseAppScreen):
             self.call_after_refresh(self._hide_library_adaptive_reader_rail_collapse)
             return
         with shell_grid:
-            rail_handle = LibraryNavigationRailHandle(id="library-rail-handle")
-            rail_handle.add_class("h-full")
-            rail_handle.display = (
-                self._library_rail_collapsed and not single_notes_stage
+            (
+                rail_handle,
+                rail,
+                canvas_host,
+                emergency_return,
+                route_content,
+            ) = self._build_library_ordinary_shell_trio(
+                shell, single_notes_stage
             )
             yield rail_handle
-            rail = LibraryRail(
-                shell,
-                preferences,
-                query=self._library_rail_search_value(),
-                search_placeholder=self._library_rail_search_placeholder(),
-                workspaces_body_factory=self._compose_workspaces_rail_body,
-                top_action_factory=self._compose_library_rail_top_action,
-                lifecycle=self._library_lifecycle,
-                onboarding_all_empty=self._library_onboarding_all_empty,
-                id="library-rail",
-                classes="destination-workbench-pane",
-            )
-            rail.add_class("h-full")
-            rail.display = (
-                not single_notes_stage or self._notes_state.stage == "rail"
-            ) and not (self._library_rail_collapsed and not single_notes_stage)
             yield rail
-            canvas_host = Vertical(
-                id="library-canvas", classes="destination-workbench-pane"
-            )
-            canvas_host.add_class("w-13fr")
-            canvas_host.styles.min_width = 40
-            canvas_host.add_class("h-full")
-            canvas_host.set_class(self._notes_state.compact, "library-notes-compact")
-            canvas_host.display = (
-                not single_notes_stage or self._notes_state.stage == "notes"
-            )
-            emergency_return = LibraryEmergencyReturn(id="library-emergency-return")
-            emergency_return.display = False
-            route_content = Vertical(id="library-canvas-route-content")
-            route_content.add_class("h-fill")
-            route_content.styles.min_height = 0
             with canvas_host:
                 yield emergency_return
                 with route_content:

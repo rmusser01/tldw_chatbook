@@ -3178,6 +3178,43 @@ class LibraryMediaController:
         self._library_media_arrival_note = ""
         return note
 
+    def _snapshot_library_media_reader_side_effects(self) -> tuple[str, Any]:
+        """Capture the reader builder's one-shot side-effect state (TASK-21242).
+
+        ``_build_library_media_reader`` CONSUMES two pieces of state while
+        building: it pops the ingest "Matched an existing item" arrival
+        note (so the notice is shown exactly once) and marks
+        ``_library_media_composed_detail`` (so
+        ``_recompose_library_media_detail_if_unrendered`` can tell a
+        rendered detail from an unrendered one). A swap that builds the
+        reader and then FAILS or is SUPERSEDED discards the widget -- the
+        whole-screen fallback recompose rebuilds the reader from scratch,
+        but the note is already consumed and the composed marker already
+        advanced, so the notice is lost and the detail looks rendered.
+        Callers that can discard a freshly built reader snapshot BEFORE
+        the build and restore via the twin below on every non-applied
+        outcome.
+        """
+        return (self._library_media_arrival_note, self._library_media_composed_detail)
+
+    def _restore_library_media_reader_side_effects(
+        self, snapshot: tuple[str, Any]
+    ) -> None:
+        """Re-arm the side effects a discarded reader build had consumed.
+
+        The arrival note is restored only while the field is still empty:
+        a newer notice set after the snapshot wins. The composed-detail
+        marker is restored unconditionally -- the discarded build rendered
+        nothing, so whatever the marker said before the build is the
+        truthful "has this detail been composed" answer again, and the
+        worst case of the restore is one redundant (correct) repaint by
+        ``_recompose_library_media_detail_if_unrendered``.
+        """
+        note, composed = snapshot
+        if not self._library_media_arrival_note:
+            self._library_media_arrival_note = note
+        self._library_media_composed_detail = composed
+
     @on(Button.Pressed, "#library-media-export")
     def handle_library_media_export(self, event: Button.Pressed) -> None:
         """Open Export scoped to the list's type filter -- on the SCREEN's pump.

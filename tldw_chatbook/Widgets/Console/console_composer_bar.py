@@ -21,10 +21,9 @@ from bisect import bisect_right
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from rich.cells import cell_len, split_graphemes
-from tldw_chatbook.Utils.input_validation import escape_markup as escape
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -49,14 +48,38 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
+from tldw_chatbook.Utils.input_validation import escape_markup as escape
+
 from ...Chat.console_display_state import build_console_disabled_reason
 from ...Chat.console_glyphs import GLYPH_VOICE_RECORDING, GLYPH_VOICE_WORKING
-from ...Chat.console_voice_input import (
-    STATE_FINISHING,
-    STATE_IDLE,
-    STATE_LISTENING,
-    STATE_PREPARING,
+
+# TASK-22504: the dictation STATE_* constants are loaded on first voice
+# use (this widget rides the Chat first-paint leg and `console_voice_input`
+# must stay off it); bound into this module's globals by
+# `_load_console_voice_states` so the call sites keep the bare names.
+_CONSOLE_VOICE_STATE_NAMES = (
+    "STATE_FINISHING",
+    "STATE_IDLE",
+    "STATE_LISTENING",
+    "STATE_PREPARING",
 )
+
+if TYPE_CHECKING:  # static-only declarations of the lazily bound names
+    from ...Chat.console_voice_input import (
+        STATE_FINISHING,
+        STATE_IDLE,
+        STATE_LISTENING,
+        STATE_PREPARING,
+    )
+
+
+def _load_console_voice_states() -> None:
+    """Import `console_voice_input` and bind the state names (first use)."""
+    from ...Chat import console_voice_input as _module
+
+    module_globals = globals()
+    for name in _CONSOLE_VOICE_STATE_NAMES:
+        module_globals[name] = getattr(_module, name)
 from ...Chat.prompt_history import PromptHistory
 from ...config import (
     DEFAULT_CONSOLE_PASTE_COLLAPSE_THRESHOLD,
@@ -2572,6 +2595,7 @@ class ConsoleComposerBar(Horizontal):
         Args:
             state: Current one-shot dictation lifecycle state.
         """
+        _load_console_voice_states()  # TASK-22504
         entering_recording = (
             state == "recording" and self._dictation_state != "recording"
         )
@@ -2712,6 +2736,7 @@ class ConsoleComposerBar(Horizontal):
                 outside the `starting` lifecycle state, so a notice that drains
                 late cannot repaint a chip that has moved on.
         """
+        _load_console_voice_states()  # TASK-22504
         if self._dictation_state != "starting":
             return
         self._voice_preparing_message = text
@@ -2726,6 +2751,7 @@ class ConsoleComposerBar(Horizontal):
                 partial that drains after the capture already ended cannot
                 resurrect the chip.
         """
+        _load_console_voice_states()  # TASK-22504
         if self._dictation_state != "recording":
             return
         self._voice_partial = text
@@ -2758,6 +2784,7 @@ class ConsoleComposerBar(Horizontal):
                 no-op) outside the `recording` lifecycle state, the same
                 guard `set_voice_partial` uses.
         """
+        _load_console_voice_states()  # TASK-22504
         if self._dictation_state != "recording":
             return
         self._voice_segment_transcribing = transcribing
@@ -2776,6 +2803,7 @@ class ConsoleComposerBar(Horizontal):
         tick already queued for this frame can still land) cannot repaint a
         chip that has already collapsed.
         """
+        _load_console_voice_states()  # TASK-22504
         if self._dictation_state != "recording":
             return
         self._voice_elapsed_seconds += 1
@@ -6376,6 +6404,7 @@ class ConsoleComposerBar(Horizontal):
                 case; it just means the two are not mutually exclusive the
                 way an earlier version of this docstring claimed.
         """
+        _load_console_voice_states()  # TASK-22504
         try:
             chip = self.query_one("#console-voice-status", Static)
         except NoMatches:

@@ -1300,3 +1300,31 @@ before any production code was touched — cheap, but only because closing happe
 -- <module>` against dev for recent adoption; (2) read the module/class docstring; (3) read the tests
 that reference the target — a test that *pins* a structure is design intent, not dead weight.
 Reference counts verify reachability, not purpose.
+
+---
+
+## A rebase auto-merge can keep BOTH method bodies — last-def-wins runs the stale one, with no conflict markers (PR #3089, 2026-10-13)
+
+**What happened.** Rebasing TASK-22504's speech-diagnostics extraction (authored
+`fac0a2d74c`, against a pre-#3084 base whose `on_mount` started notes-sync
+ungated) onto current dev auto-merged `tldw_chatbook/app.py` **without
+conflict**: the commit's diff had closed dev's `on_mount` early and re-added a
+fully reassembled one, so the merge kept dev's gated head truncated and appended
+the commit's ungated body as a SECOND `def on_mount` in the `TldwCli` class. A
+Python class body keeps the last definition, so boot ran the ungated one — it
+read the lazy `notes_sync_runtime_owner` property on the mount leg, importing
+all five `Notes.notes_sync_*` modules before `_ui_ready`. No conflict markers,
+no runtime error, and nothing in the diff read as wrong; an orphaned `except`
+from the same mangled merge was only the first visible symptom. The ONLY signal
+was `Tests/Performance/test_ui_ready_module_census.py` going red while pure dev
+stayed green — the pinned census caught a shadowed method that nothing else
+could see.
+
+**What to do.** After any rebase over a commit that rewrote a large method body
+inside a class, count the definitions: `grep -c "def on_mount"
+tldw_chatbook/app.py` (any method that grew or moved). A count above 1 means
+the LAST body wins regardless of how plausible the merged diff looks — collapse
+to one and re-verify against the intended base version. Treat a clean
+auto-merge of a heavily edited class-body file as *unverified*, not verified,
+and trust the pinned census/ratchet tests over the shape of the diff: they are
+the one instrument that can see a silently shadowed method.

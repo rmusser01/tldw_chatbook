@@ -159,7 +159,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: against it at ~50 sites, so deferring it is lazy-import surgery in hot
 #: Console code for a microsecond-scale import -- the 1022 -> 1023 reasoning.
 #: The SSH locator module WAS deferred off this path (registry_service).
-MAX_TLDW_MODULES_AT_UI_READY = 1033
+# TASK-22504 (2026-10-11): `console_voice_input` (2,260 LOC) was deferred
+# off the Chat first-paint leg (dictation/hands_free/realtime lazy-load it
+# on first voice use; the composer's STATE_* constants and the app's
+# speech-stack diagnostic load past ready). Measured 1033 -> 1031: the
+# module itself plus `Utils.local_stt_providers`. Its heavier closure
+# (STT coordinator/registry/routing, Backup_Recovery, config) was already
+# resident through other boot legs, honestly attributed in the task notes.
+MAX_TLDW_MODULES_AT_UI_READY = 1031
 
 #: Families that must not be resident anywhere in the first-paint window.
 #: The two package prefixes are TASK-21731's; the exact module names are the
@@ -182,6 +189,10 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # TASK-22504: the 2,260-LOC voice-input module is first-voice-use work;
+    # the three Console_Modules seams and the composer's STATE_* constants
+    # lazy-load it, and the app's speech-stack diagnostic waits for ready.
+    "tldw_chatbook.Chat.console_voice_input",
     # Compaction failure copy is needed only when a compaction fails. Shed
     # this interaction-only edge to cover the chat-start resident (ADR-097).
     "tldw_chatbook.Chat.console_compaction_failure",

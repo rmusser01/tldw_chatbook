@@ -112,24 +112,89 @@ app-level dependency in this decomposition. That exception is over.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
 import asyncio
-from importlib import import_module
 import inspect
 import threading
 import time
-from typing import Any, TYPE_CHECKING
+from collections.abc import Callable
+from dataclasses import dataclass
+from importlib import import_module
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from ...Chat import console_voice_input
-from ...Chat.console_voice_input import (
-    acoustic_barge_in_enabled,
-    handsfree_send_delay_seconds,
-    resolve_handsfree_engine,
-    realtime_enabled,
+# TASK-22504: `console_voice_input` (and its STT-stack closure) is loaded
+# on FIRST VOICE USE, not at module import -- this module rides the Chat
+# first-paint leg. `console_voice_input.probe()` keeps working through the
+# forwarding proxy; the helpers are bound into this module's globals by
+# `_load_console_voice_input` so their call sites keep the bare names.
+if TYPE_CHECKING:
+    from ...Chat.console_voice_input import (
+        acoustic_barge_in_enabled,  # noqa: TC004
+        handsfree_send_delay_seconds,  # noqa: TC004
+        realtime_enabled,  # noqa: TC004
+        resolve_handsfree_engine,  # noqa: TC004
+    )
+
+_CONSOLE_VOICE_INPUT_NAMES = (
+    "acoustic_barge_in_enabled",
+    "handsfree_send_delay_seconds",
+    "resolve_handsfree_engine",
+    "realtime_enabled",
 )
+
+
+class _LazyConsoleVoiceInput:
+    """Forward attribute access to the real module, loading it on first use."""
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(_load_console_voice_input(), name)
+
+
+console_voice_input = _LazyConsoleVoiceInput()
+
+
+class _LazyVoiceFunction:
+    """Call-time lazy binding for one `console_voice_input` helper.
+
+    Bound under its real name at import so tests can ``monkeypatch.setattr``
+    this module's attribute exactly as before (the attribute exists from
+    import; a patched value is called directly and never triggers a load).
+    While still the stub, a call loads the real module, REBINDS every lazy
+    name still pointing at its stub, and then re-resolves the name -- so
+    the load cannot clobber a patch, and a patch cannot be mistaken for a
+    stub.
+    """
+
+    __slots__ = ("_name",)
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        _load_console_voice_input()
+        return globals()[self._name](*args, **kwargs)
+
+
+def _install_lazy_voice_stubs() -> None:
+    for name in _CONSOLE_VOICE_INPUT_NAMES:
+        globals()[name] = _LazyVoiceFunction(name)
+
+
+_install_lazy_voice_stubs()
+
+
+def _load_console_voice_input():
+    """Import `console_voice_input` and rebind the still-stubbed names."""
+    from ...Chat import console_voice_input as _module
+
+    module_globals = globals()
+    for name in _CONSOLE_VOICE_INPUT_NAMES:
+        current = module_globals.get(name)
+        if isinstance(current, _LazyVoiceFunction):
+            module_globals[name] = getattr(_module, name)
+    module_globals["console_voice_input"] = _module
+    return _module
 from ...Chat.console_chat_models import ConsoleMessageRole
 from ...Chat.console_hands_free import (
     CloseCapture,
@@ -149,15 +214,15 @@ from ...Widgets.Console import ConsoleComposerBar
 if TYPE_CHECKING:
     from ...Chat.console_voice_controls import ControlKind
     from ...TTS.profile_types import CharacterRef
-    from ...Widgets.Console.console_voice_preview import (
-        VoicePreviewProjection,
-        VoiceStatusAnnouncementThrottle,
-    )
     from ...Widgets.Console.console_control_bar import (
         ConsoleAutoSpeakResumeRequested,
         ConsoleAutoSpeakRetryRequested,
     )
     from ...Widgets.Console.console_speech_controls import ConsoleAutoSpeakChanged
+    from ...Widgets.Console.console_voice_preview import (
+        VoicePreviewProjection,
+        VoiceStatusAnnouncementThrottle,
+    )
     from ..Screens.chat_screen import ChatScreen
 
 logger = logger.bind(module="ChatScreen")
@@ -605,7 +670,9 @@ class ConsoleHandsFreeController:
             return
         try:
             if self._voice_status_announcer is None:
-                from ...Widgets.Console.console_voice_preview import VoiceStatusAnnouncementThrottle
+                from ...Widgets.Console.console_voice_preview import (
+                    VoiceStatusAnnouncementThrottle,
+                )
 
                 self._voice_status_announcer = VoiceStatusAnnouncementThrottle(
                     self._announce_qualified_voice_status
@@ -1210,6 +1277,7 @@ class ConsoleHandsFreeController:
                 is already open and should be adopted as the loop's first
                 turn; forwarded verbatim to whichever engine is selected.
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         if self._qualified_voice_startup_generation is not None:
             return
         if self._console_hands_free is not None:
@@ -1252,6 +1320,7 @@ class ConsoleHandsFreeController:
                 semantics trust its own `capture_open` bookkeeping instead
                 of a possibly-stale argument (see that method's docstring).
         """
+        _load_console_voice_input()  # TASK-22504: bind the names this body uses
         existing = self._console_hands_free
         if existing is not None:
             existing.controller.enter(capture_live=capture_live)
