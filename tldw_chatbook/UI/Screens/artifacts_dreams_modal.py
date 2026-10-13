@@ -609,30 +609,46 @@ class DreamsStoryModal(SafeModalDismissMixin, ModalScreen[None]):
         if story_id is None:
             self.notify(_NO_DB_NOTICE, severity="warning", markup=False)
             return
-        try:
-            export_dir = _dreams_export_dir()
-            export_dir.mkdir(parents=True, exist_ok=True)
-            filename = validate_filename(
-                f"{_slugify(str(self._story.get('title') or ''))}-{story_id}.md"
-            )
-            path = validate_path_simple(
-                export_dir / filename, require_exists=False
-            )
-            path.write_text(_export_markdown(self._story), encoding="utf-8")
-        except (OSError, ValueError) as exc:
-            logger.warning(f"Dreams export failed: {type(exc).__name__}")
-            self.notify(
-                f"Could not export this story: {type(exc).__name__}",
-                severity="error",
-                markup=False,
-            )
-            return
-        if not self._record_feedback("exported"):
-            return
-        # The filename embeds a title-derived slug (web-derived text), so
-        # this notice never parses markup.
-        self.notify(f"Exported to {path.name}", markup=False)
-        self._changed()
+
+        async def _write_story_export() -> None:
+            # task-34936: the markdown write runs off the click path; the
+            # feedback record and notices apply on completion, on the loop.
+            try:
+                export_dir = await asyncio.to_thread(_dreams_export_dir)
+                await asyncio.to_thread(
+                    export_dir.mkdir, parents=True, exist_ok=True
+                )
+                filename = validate_filename(
+                    f"{_slugify(str(self._story.get('title') or ''))}-{story_id}.md"
+                )
+                path = validate_path_simple(
+                    export_dir / filename, require_exists=False
+                )
+                await asyncio.to_thread(
+                    path.write_text,
+                    _export_markdown(self._story),
+                    encoding="utf-8",
+                )
+            except (OSError, ValueError) as exc:
+                logger.warning(f"Dreams export failed: {type(exc).__name__}")
+                self.notify(
+                    f"Could not export this story: {type(exc).__name__}",
+                    severity="error",
+                    markup=False,
+                )
+                return
+            if not self._record_feedback("exported"):
+                return
+            # The filename embeds a title-derived slug (web-derived text),
+            # so this notice never parses markup.
+            self.notify(f"Exported to {path.name}", markup=False)
+            self._changed()
+
+        self.run_worker(
+            _write_story_export,
+            exclusive=True,
+            group="dreams-story-export",
+        )
 
     async def action_ingest(self) -> None:
         """Submit the story URL to read-it-later, then record feedback.

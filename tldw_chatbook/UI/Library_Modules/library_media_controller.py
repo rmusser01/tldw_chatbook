@@ -4238,7 +4238,14 @@ class LibraryMediaController:
         detail = self._library_media_detail
         url = self._safe_text(detail.get("url")) if isinstance(detail, Mapping) else ""
         if url.startswith(("http://", "https://")):
-            webbrowser.open(url)
+            # TASK-34937: OS spawn off the UI thread.
+            self.run_worker(
+                webbrowser.open,
+                url,
+                thread=True,
+                exit_on_error=False,
+                name="open-link",
+            )
 
     def _capture_library_media_focus_identity(self) -> str | None:
         """Record what holds focus just before a media-path recompose.

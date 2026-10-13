@@ -20,5 +20,6 @@ image_gen_demo_screen._render_result (invoked via app.call_from_thread from the 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Decode/thumbnail/pixel conversion run in a thread with only the widget update on the loop,Demo still displays the generated image
+- [x] Decode/thumbnail/pixel conversion run in a thread with only the widget update on the loop
+- [x] Demo still displays the generated image
 <!-- AC:END -->

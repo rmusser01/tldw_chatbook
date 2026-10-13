@@ -2013,7 +2013,14 @@ class ConsoleMarkdownMessage(Vertical):
         if href.startswith(("http://", "https://")):
             import webbrowser
 
-            webbrowser.open(href)
+            # TASK-34937: the OS spawn can cost 50-150ms of UI freeze.
+            self.run_worker(
+                webbrowser.open,
+                href,
+                thread=True,
+                exit_on_error=False,
+                name="open-link",
+            )
             self.notify(f"Opened in browser: {href}", timeout=4)
         else:
             self.notify(

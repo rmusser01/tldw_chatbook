@@ -1907,7 +1907,14 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         try:
             import pyperclip
 
-            pyperclip.copy(text)
+            # TASK-34937: pbcopy spawn off the UI thread; copy runs whole.
+            self.run_worker(
+                pyperclip.copy,
+                text,
+                thread=True,
+                exit_on_error=False,
+                name="copy-json",
+            )
             self.notify("JSON copied to clipboard.")
         except Exception as exc:  # noqa: BLE001 - disclose only sanitized failure categories
             # No exception text: ``text`` in this frame's locals is the
@@ -1951,33 +1958,35 @@ class ConsoleConversationInspector(SafeModalDismissMixin, ModalScreen[None]):
         if validated_path is None:
             return
         path = validated_path
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8")
+
+        async def _write_export() -> None:
+            # task-34936: the export can be hundreds of KB -- write it off
+            # the click path; toasts marshal back onto the loop naturally.
+            def _write() -> None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+
+            try:
+                await asyncio.to_thread(_write)
+            except Exception as exc:  # noqa: BLE001 - sanitized categories only
+                # No exception text, no traceback -- ``text`` in this frame
+                # is the export-scrubbed next-send payload, and an OSError's
+                # own str() can embed the offending path. The log keeps only
+                # the failure class and a path fingerprint; the toast names
+                # the destination but not the raw exception body.
+                logger.error(
+                    "Failed to save context snapshot path_sha256={} "
+                    "exception_type={}",
+                    content_fingerprint(str(path)),
+                    type(exc).__name__,
+                )
+                self.notify(
+                    f"Save failed ({type(exc).__name__}): {path}", severity="error"
+                )
+                return
             self.notify(f"Saved to {path}")
-        except OSError as exc:
-            # No exception text, no traceback -- same rationale as this
-            # retired Exchange save path: ``text`` in this frame is
-            # the export-scrubbed next-send payload, and an OSError's own
-            # str() can also embed the offending path. The log keeps only the
-            # failure class and a path fingerprint. The user-facing toast
-            # intentionally names the selected destination, but excludes the
-            # raw exception body that the retired standalone context modal's
-            # own ``_save_json`` put in ``notify()`` (hard constraint 3).
-            logger.error(
-                "Failed to save context snapshot path_sha256={} exception_type={}",
-                content_fingerprint(str(path)),
-                type(exc).__name__,
-            )
-            self.notify(f"Save failed ({type(exc).__name__}): {path}", severity="error")
-        except Exception as exc:  # noqa: BLE001 - disclose only sanitized failure categories
-            logger.error(
-                "Unexpected error saving context snapshot path_sha256={} "
-                "exception_type={}",
-                content_fingerprint(str(path)),
-                type(exc).__name__,
-            )
-            self.notify(f"Save failed ({type(exc).__name__}): {path}", severity="error")
+
+        self.run_worker(_write_export, exclusive=True, group="inspector-export")
 
     def action_refresh(self) -> None:
         """ "r" binding: refresh the ACTIVE tab, when it has a live-reload

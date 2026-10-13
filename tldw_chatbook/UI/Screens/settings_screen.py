@@ -23621,7 +23621,14 @@ class SettingsScreen(BaseAppScreen):
         if href.startswith(("http://", "https://")):
             import webbrowser
 
-            webbrowser.open(href)
+            # TASK-34937: OS spawn off the UI thread.
+            self.run_worker(
+                webbrowser.open,
+                href,
+                thread=True,
+                exit_on_error=False,
+                name="open-link",
+            )
             self.notify(f"Opened in browser: {href}", timeout=4)
         else:
             self.notify(

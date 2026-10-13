@@ -1580,7 +1580,16 @@ class LibraryCollectionsController:
         if detail is None or not controller.state.identity_actions_enabled:
             return
         try:
-            webbrowser.open(detail.capture.canonical_url)
+            # TASK-34937: OS spawn off the UI thread; a thread-worker
+            # failure cannot reach the except below, so the notify for a
+            # failed spawn is handled by exit_on_error=False instead.
+            self.run_worker(
+                webbrowser.open,
+                detail.capture.canonical_url,
+                thread=True,
+                exit_on_error=False,
+                name="open-capture-url",
+            )
         except Exception:
             self._notify_library_collections_warning(
                 "Could not open the original capture URL."

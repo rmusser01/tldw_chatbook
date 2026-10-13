@@ -115,25 +115,36 @@ class ImageGenDemoScreen(BaseAppScreen):
                 image_format="png",
             )
             res = run_generation(req)  # blocking; we are in a worker thread
-            self.app.call_from_thread(self._render_result, res, req)
+            # task-34935: decode/thumbnail/pixel conversion also run on the
+            # worker thread; only the widget updates marshal to the loop.
+            pixels, meta = self._decode_result(res, req)
+            self.app.call_from_thread(self._apply_result, pixels, meta)
         except Exception as exc:  # surface any failure (incl. render/decode) as status
             logger.warning("Image Gen (dev) generation failed: {}", exc)
             # Marshal the DOM write onto the UI thread -- query_one() must not
             # run on the worker thread.
             self.app.call_from_thread(self._set_status, f"Error: {exc}")
 
-    def _render_result(self, res, req) -> None:
-        # Low-level render (rich-pixels), decoupled from the Console
-        # transcript/attachment path -- this panel has no message list.
+    def _decode_result(self, res, req):
+        """Decode + downscale + pixel-convert on the worker thread (TASK-34935).
+
+        Kept inside the worker's try/except: a decode failure surfaces as
+        the same status error as a generation failure.
+        """
         from rich_pixels import Pixels
         from PIL import Image as PILImage
         import io
 
         img = PILImage.open(io.BytesIO(res.content))
         img.thumbnail((80, 40))
-        self.query_one("#imagegen-status", Static).update("Done")
-        self.query_one("#imagegen-image", Static).update(Pixels.from_image(img))
-        self.query_one("#imagegen-meta", Static).update(
+        meta = (
             f"backend={req.backend} format={res.content_type} bytes={res.bytes_len} "
             f"seed={req.seed} prompt={req.prompt!r}"
         )
+        return Pixels.from_image(img), meta
+
+    def _apply_result(self, pixels, meta: str) -> None:
+        # UI-thread half: widget updates only.
+        self.query_one("#imagegen-status", Static).update("Done")
+        self.query_one("#imagegen-image", Static).update(pixels)
+        self.query_one("#imagegen-meta", Static).update(meta)

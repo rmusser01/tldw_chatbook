@@ -20,5 +20,6 @@ The inspector next-send-save handler does path.mkdir + path.write_text of the ex
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 File writes run via to_thread or a worker with handler only orchestrating and reporting status,Both the inspector export and the dreams modal export covered
+- [x] File writes run via to_thread or a worker with handler only orchestrating and reporting status
+- [x] Both the inspector export and the dreams modal export covered
 <!-- AC:END -->
