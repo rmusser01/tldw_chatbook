@@ -414,8 +414,13 @@ async def test_the_card_result_line_takes_no_row_until_there_is_a_result(
 ):
     """Checkpoint review (captures): every card opened with "… have not been
     saved this session." -- a row saying nothing happened, while the Inspector
-    already says "Save (s) — no changes". The line now shows only once a
-    revert (r, Discard changes) or a save (s) has something to report."""
+    already says "Save (s) — no changes". The line shows only once a save (s)
+    has something to report.
+
+    Capture findings 4 and 5, rewritten on purpose: a revert reported itself
+    twice, on this line and in a toast, and its line stayed beside the next
+    edit's "1 unsaved". The toast is the one report now, and the next edit
+    clears a save's line too."""
     from Tests.UI.test_settings_configuration_hub import (
         _capture_provider_settings_mutations,
     )
@@ -430,23 +435,32 @@ async def test_the_card_result_line_takes_no_row_until_there_is_a_result(
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
+        toasts: list[str] = []
+        notify = host.notify
+        host.notify = lambda message, **kwargs: (
+            toasts.append(str(message)),
+            notify(message, **kwargs),
+        )
         result = screen.query_one("#settings-provider-save-result", Static)
         assert result.display is False
         assert result.region.height == 0
 
-        screen.query_one("#settings-provider-endpoint-value", Input).focus()
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.focus()
         await pilot.pause()
         await pilot.press(*"https://first.invalid/v1")
         await pilot.pause()
         assert result.display is False
 
         await _revert(host, pilot, discard=True)
-        await _until(pilot, lambda: result.display)
-        assert result.display is True and result.region.height >= 1
-        assert "reverted" in _text(screen, "#settings-provider-save-result")
+        await _until(pilot, lambda: any("reverted" in toast for toast in toasts))
+        assert [toast for toast in toasts if "reverted" in toast] == [
+            "Settings category changes reverted."
+        ]
+        assert result.display is False and result.region.height == 0
         assert mutations == []
 
-        screen.query_one("#settings-provider-endpoint-value", Input).focus()
+        endpoint.focus()
         await pilot.pause()
         await pilot.press(*"https://second.invalid/v1", "escape", "s")
         await _until(pilot, lambda: len(mutations) == 1)
@@ -454,5 +468,14 @@ async def test_the_card_result_line_takes_no_row_until_there_is_a_result(
         await pilot.pause()
         assert len(mutations) == 1
         assert result.display is True and result.region.height >= 1
-        saved = _text(screen, "#settings-provider-save-result")
-        assert saved and "reverted" not in saved, saved
+        assert _text(screen, "#settings-provider-save-result").startswith(
+            "Provider settings saved"
+        )
+
+        # The next edit makes the saved report stale: it leaves the card.
+        endpoint.focus()
+        await pilot.pause()
+        await pilot.press("x")
+        await _until(pilot, lambda: not result.display)
+        assert screen._category_has_unsaved_changes(screen._active_category_id())
+        assert result.display is False and result.region.height == 0

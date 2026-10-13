@@ -1283,6 +1283,10 @@ PROVIDER_SAVE_SCOPE_COPY = (
     "new chats and open chats nobody has used yet take them; chats with work "
     "keep their own settings (change them in Console with Alt+M)."
 )
+#: Capture finding 4: the card's reports of a finished save. The next edit
+#: leaves them stale, so it clears them; an error stays until the next Save.
+PROVIDER_SAVED_COPY = f"Provider settings saved: {PROVIDER_SAVE_SCOPE_COPY}"
+PROVIDER_NO_CHANGES_COPY = "Provider settings: no changes to save."
 #: Value of the Scope Inspector's "Focused setting" row while focus sits on
 #: a container, an action button, or anything else that is not a setting.
 #: TASK-23192: the three categories that render the row each named their own
@@ -10219,6 +10223,12 @@ class SettingsScreen(BaseAppScreen):
             # dirty form says its edits wait for s.
             for note in self.query("#settings-provider-next-chat-note"):
                 note.display = has_unsaved_changes
+            if has_unsaved_changes and self._provider_save_result in (
+                PROVIDER_SAVED_COPY,
+                PROVIDER_NO_CHANGES_COPY,
+            ):
+                self._provider_save_result = ""
+                self._set_static_text("#settings-provider-save-result", "")
             # TASK-33007.6: the context window and snapshot drafts re-say
             # their Advanced titles here.
             self._refresh_advanced()
@@ -33482,7 +33492,7 @@ class SettingsScreen(BaseAppScreen):
                 self._restore_provider_api_mode_draft_snapshot(retained_api_mode_draft)
                 self._update_provider_dynamic_widgets()
                 self._update_draft_status_widgets(category)
-                self._provider_save_result = "Provider settings: no changes to save."
+                self._provider_save_result = PROVIDER_NO_CHANGES_COPY
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
@@ -33689,9 +33699,7 @@ class SettingsScreen(BaseAppScreen):
                 self._settings_drafts.pop(category, None)
                 self._provider_api_key_cleared = None
                 self._restore_provider_api_mode_draft_snapshot(retained_api_mode_draft)
-                self._provider_save_result = (
-                    f"Provider settings saved: {PROVIDER_SAVE_SCOPE_COPY}"
-                )
+                self._provider_save_result = PROVIDER_SAVED_COPY
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
@@ -34285,12 +34293,10 @@ class SettingsScreen(BaseAppScreen):
                 )
             except QueryError:
                 pass
-            self._provider_save_result = (
-                "Provider settings reverted to last loaded values."
-            )
-            self._set_static_text(
-                "#settings-provider-save-result", self._provider_save_result
-            )
+            # Capture finding 5: the toast below is the revert's one report;
+            # a line left from before went with the draft it described.
+            self._provider_save_result = ""
+            self._set_static_text("#settings-provider-save-result", "")
             # Only a discarded tested field voids the Test rows, and its
             # in-flight probe must not settle onto the saved identity.
             tested = {"provider", "model", "endpoint", "api_key", "credential_env_var"}
