@@ -19,6 +19,7 @@ from textual.widgets import Button
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Constants import LIBRARY_NAV_CONTEXT_MODE, TAB_HOME, TAB_LIBRARY
+from ...Utils.input_validation import escape_markup as escape_every_bracket
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import HandoffChannel
@@ -469,15 +470,18 @@ class StudyScreen(BaseAppScreen):
             return [item for item in payload if isinstance(item, dict)]
         return []
 
-    def _scope_summary_text(self) -> str:
+    def _scope_summary_text(self, *, markup: bool = True) -> str:
+        """The scope line; ``markup=False`` for a plain-text sink (chat handoff)."""
         material_summary = self._material_context_summary_text()
         if self.scope_state.scope_type == StudyScopeType.WORKSPACE:
-            # Both scope lines read markup; the name prints as typed.
-            workspace_name = escape_markup(
+            # The two scope Statics read markup: escape every "[", not only
+            # rich's tag shapes, so "[TODO] Q3 plan" prints as typed.
+            name = (
                 self.scope_state.workspace_name
                 or self.scope_state.workspace_id
                 or "Workspace"
             )
+            workspace_name = escape_every_bracket(name) if markup else name
             backend = self.scope_state.backend
             if self.scope_state.error_message:
                 return f"Workspace: {workspace_name} | {self.scope_state.error_message}"
@@ -1009,7 +1013,7 @@ class StudyScreen(BaseAppScreen):
 
         body_lines = [
             f"Quiz: {quiz_name}",
-            f"Scope: {self._scope_summary_text()}",
+            f"Scope: {self._scope_summary_text(markup=False)}",
             f"Quiz status: {status}",
         ]
         if attempt_questions:
@@ -1044,7 +1048,7 @@ class StudyScreen(BaseAppScreen):
             scope_type=scope_type,
             workspace_id=workspace_id,
             backend_contracts=backend_contracts,
-            metadata={"scope_summary": self._scope_summary_text()},
+            metadata={"scope_summary": self._scope_summary_text(markup=False)},
         )
 
     def sync_shell_from_window(self) -> None:
