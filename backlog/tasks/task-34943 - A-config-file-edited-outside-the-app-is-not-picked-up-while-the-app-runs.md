@@ -1,5 +1,5 @@
 ---
-id: TASK-34812
+id: TASK-34943
 title: A config file edited outside the app is not picked up while the app runs
 status: To Do
 created_date: 2026-10-12 05:26

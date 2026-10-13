@@ -19700,6 +19700,7 @@ Phase29 then proved a second lifetime error in the actual automatic collector lo
 ### PR3010: trusted recovery imports can acquire startup admission
 
 On 2026-10-12, all three hosted Eval recovery jobs failed the complete retained-definition rebackup case. The selected-import staging helper imported `Chat.response_rules.recovery`; Python executed `Chat.__init__`, reached runtime TLS/config initialization, and retained a process-lifetime startup lease. Isolated publication then waited on its own unbound holder. A complete actual-dev control passed, and a passive original-child trace identified the extra holder; importing test helpers in an earlier observer had contaminated that observer and was not valid causal evidence. Recovery helpers must live behind constructor-free installed DB recovery imports. Test populated/malformed candidates in fresh children as well as complete publication: ordinary pytest fixture imports already preload Chat/config and conceal this dependency regression. The fix preserves startup/admission ownership and original deadlines rather than releasing the holder or preloading runtime.
+
 ## A call that can defer returns whether it ran; a test that ignores it acts on stale state (TASK-34789, PR #3091)
 
 TASK-34415 made `ChatScreen._sync_console_control_bar` defer when another thread holds a config lock: it schedules
