@@ -25,6 +25,7 @@ from tldw_chatbook.config import (
 )
 from tldw_chatbook.Constants import (
     CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID,
+    LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_NOTE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
@@ -37,6 +38,7 @@ from tldw_chatbook.Constants import (
     WATCHLISTS_SECTION_NOTIFICATIONS,
     WATCHLISTS_SECTION_RUNS,
 )
+from tldw_chatbook.Home.active_work_adapter import ACTIVE_WORK_CACHE_TTL_SECONDS
 from tldw_chatbook.Home.dashboard_state import (
     HOME_OPEN_ITEM_CONTROL_ID,
     HOME_PRIMARY_ACTION_ID,
@@ -49,6 +51,7 @@ from tldw_chatbook.Home.dashboard_state import (
     LOCAL_MEDIA_ITEM_ID_PREFIX,
     LOCAL_NOTE_ITEM_ID_PREFIX,
     HomeActiveWorkItem,
+    HomeAction,
     HomeContentSnapshot,
     HomeControl,
     HomeDashboard,
@@ -114,6 +117,11 @@ def _home_primary_action_context(
     action_id = getattr(action, "action_id", None)
     if action_id == "fix_model_setup":
         return {"category": SettingsCategoryId.PROVIDERS_MODELS.value}
+    if action_id == "import_sources":
+        # The suggestion promises an importer ("Import Library sources") --
+        # land Library on its ingest canvas, the same navigation-context
+        # contract as app.py's ingest deep link (TASK-2765).
+        return {LIBRARY_NAV_CONTEXT_INGEST: True}
     if action_id == "resume_last_conversation":
         # The terminal suggestion deep-links the newest conversation into
         # Console via the resume-navigation seam (spec §4; the contract
@@ -143,6 +151,14 @@ def _home_primary_action_context(
 # control's Button label (truncated BEFORE markup-escaping so the escape
 # backslashes can never be cut mid-sequence).
 _HOME_RESUME_TITLE_MAX_CHARS = 40
+
+# TASK-2763: Home's auto-refresh poll cadence. Keyed to the active-work
+# adapter's cache TTL (not faster: a tick inside a fresh cache window can
+# only no-op; not slower: this is the bound on how stale the rail can get
+# between interactions). A module constant (not an inline literal) purely
+# so tests can shrink it -- the default is pinned to the adapter TTL by
+# ``test_home_auto_refresh_interval_follows_adapter_cache_ttl``.
+_HOME_AUTO_REFRESH_INTERVAL_SECONDS = ACTIVE_WORK_CACHE_TTL_SECONDS
 
 # Sections load_settings() always injects into a disk-loaded config but which
 # test fakes never carry -- the exact marker check Console's readiness
@@ -350,6 +366,23 @@ class HomeScreen(BaseAppScreen):
         # just the first failed item in the list). See
         # ``_activate_home_control``.
         self._current_canvas_controls: tuple[HomeControl, ...] = ()
+        # TASK-2760: the canvas's own ``next_action`` -- the action whose
+        # label the primary-action button and ``Next:`` callout render.
+        # Distinct from ``_current_dashboard.next_action`` whenever the H3
+        # suppression fires for the selected item (the canvas recomputes
+        # with exclusions; the dashboard summary does not), so the press
+        # handler must dispatch from THIS one or the button navigates to a
+        # route it never named.
+        self._current_canvas_next_action: HomeAction | None = None
+        # TASK-2763: auto-refresh state. ``_home_refresh_timer`` drives the
+        # periodic re-sync (created on first resume, paused while another
+        # route is on top); the live-work signature caches the last-seen
+        # ingest-feed state so a tick can detect an ingest-job change even
+        # while the adapter's seam cache is still fresh; the pending flag
+        # carries "re-sync needed" from the tick into the cache worker.
+        self._home_refresh_timer = None
+        self._home_live_active_work_signature: tuple | None = None
+        self._home_pending_live_active_work_sync = False
         # T190: cached content/readiness snapshot, refreshed by the
         # ``_refresh_home_content_snapshot`` worker off the compose path and
         # merged into every ``_build_dashboard_input``. Per-instance --
@@ -376,6 +409,69 @@ class HomeScreen(BaseAppScreen):
         self._refresh_home_chatbook_artifact_snapshot()
         self._refresh_home_content_snapshot()
         self._refresh_home_active_work_cache()
+        self._start_home_auto_refresh()
+
+    def on_screen_suspend(self) -> None:
+        """Pause the auto-refresh timer while another route is on top.
+
+        TASK-2763: Home is a reusable route, so it stays mounted when the
+        user navigates away -- an unpaused timer would keep re-reading the
+        active-work seams for an invisible surface. No super() call (same
+        MRO contract as ``on_screen_resume`` above).
+        """
+        timer = self._home_refresh_timer
+        if timer is not None:
+            timer.pause()
+
+    def _start_home_auto_refresh(self) -> None:
+        """Create (once) or resume the TASK-2763 auto-refresh timer.
+
+        The cadence is the adapter's cache TTL
+        (``_HOME_AUTO_REFRESH_INTERVAL_SECONDS``): a tick inside a fresh
+        cache window can only no-op, so a faster poll would be a busy-loop
+        and a slower one needlessly extends how stale the rail can get.
+        """
+        timer = self._home_refresh_timer
+        if timer is None:
+            self._home_refresh_timer = self.set_interval(
+                _HOME_AUTO_REFRESH_INTERVAL_SECONDS,
+                self._home_auto_refresh_tick,
+            )
+            return
+        timer.resume()
+
+    def _home_auto_refresh_tick(self) -> None:
+        """One auto-refresh beat: re-sync Home when something changed.
+
+        Runs only while Home is the current screen (a suspended reusable
+        screen must not churn seams for an invisible surface). The seam
+        re-read itself happens inside the existing cache worker, which
+        no-ops while the adapter cache is fresh; the ingest-feed signature
+        check is what catches a job progressing inside a fresh cache
+        window (ingest jobs are read live at every build, not cached).
+        """
+        try:
+            if not self.is_mounted or self.app.screen is not self:
+                return
+        except Exception:  # noqa: BLE001 -- a timer tick is never fatal
+            return
+        signature = self._home_live_active_work_signature_read()
+        if signature is not None and signature != self._home_live_active_work_signature:
+            self._home_live_active_work_signature = signature
+            self._home_pending_live_active_work_sync = True
+        self._refresh_home_active_work_cache()
+
+    def _home_live_active_work_signature_read(self) -> tuple | None:
+        """The adapter's live active-work signature, or None (no seam)."""
+        adapter = getattr(self.app_instance, "home_active_work_adapter", None)
+        signature = getattr(adapter, "active_work_change_signature", None)
+        if not callable(signature):
+            return None
+        try:
+            return tuple(signature() or ())
+        except Exception as exc:  # noqa: BLE001 -- optional seam, degrade quiet
+            logger.debug(f"Home live-work signature read failed: {exc}")
+            return None
 
     @work(exclusive=True, group="home-refresh-chatbook-artifact-snapshot", thread=True)
     def _refresh_home_chatbook_artifact_snapshot(self) -> None:
@@ -458,21 +554,25 @@ class HomeScreen(BaseAppScreen):
             # pure dead weight -- and for memory-backed seams the warm
             # compute runs inline on the event loop, where it measurably
             # delayed mount settling (phase6 power-user replay gate).
+            self._home_pending_live_active_work_sync = False
             return
         adapter = getattr(self.app_instance, "home_active_work_adapter", None)
         refresh = getattr(adapter, "refresh_active_work_cache_async", None)
         if not inspect.iscoroutinefunction(refresh):
+            self._home_pending_live_active_work_sync = False
             return
         try:
             refreshed = await refresh()
         except Exception as exc:
             logger.debug(f"Home active-work cache refresh failed: {exc}")
-            return
-        # Only re-sync when the adapter actually recomputed -- a fresh
-        # cache (the common on-mount case: compose just cold-computed and
-        # stored it) means nothing changed, and re-syncing would just burn
-        # a redundant triage rebuild during mount settling.
-        if refreshed and self.is_mounted:
+            refreshed = False
+        # TASK-2763: a re-sync is warranted when the adapter actually
+        # recomputed (a fresh cache means nothing changed) OR when the
+        # auto-refresh tick saw the live ingest feed move inside a fresh
+        # cache window (the pending flag).
+        pending_live_change = self._home_pending_live_active_work_sync
+        self._home_pending_live_active_work_sync = False
+        if (refreshed or pending_live_change) and self.is_mounted:
             self._sync_home_triage()
 
     async def _build_home_content_snapshot(self) -> HomeContentSnapshot:
@@ -732,7 +832,13 @@ class HomeScreen(BaseAppScreen):
         self._current_dashboard = summarize_home_dashboard(dashboard_input)
         self._current_dashboard_input = dashboard_input
         self._current_canvas_controls = triage.canvas.actions
+        self._current_canvas_next_action = triage.canvas.next_action
         self._home_selected_row_id = triage.selected_row_id
+        # Seed the live-work signature at compose so the first auto-refresh
+        # tick doesn't mistake the mount-time state for a change.
+        self._home_live_active_work_signature = (
+            self._home_live_active_work_signature_read()
+        )
 
         yield Static(
             triage.header_line,
@@ -882,6 +988,7 @@ class HomeScreen(BaseAppScreen):
         self._current_dashboard = summarize_home_dashboard(dashboard_input)
         self._current_dashboard_input = dashboard_input
         self._current_canvas_controls = triage.canvas.actions
+        self._current_canvas_next_action = triage.canvas.next_action
         self._home_selected_row_id = triage.selected_row_id
         try:
             self.query_one("#home-rail", HomeRail).sync_state(
@@ -925,14 +1032,25 @@ class HomeScreen(BaseAppScreen):
         self._activate_home_control(button_id)
 
     def _activate_home_primary_action(self) -> None:
-        dashboard = self._current_dashboard
-        if dashboard is None:
-            return
+        # TASK-2760: dispatch from the canvas's own ``next_action`` -- the
+        # SAME HomeAction whose label the pressed button displays. The
+        # unsuppressed ``_current_dashboard.next_action`` disagrees with it
+        # exactly when the H3 suppression fires for the selected item, and
+        # navigating from that one sent the user to a route the button never
+        # named (e.g. "Start a conversation" opening Library). The dashboard
+        # action is only a defensive fallback (canvas state is always set by
+        # compose/sync before a press can land).
+        action = self._current_canvas_next_action
+        if action is None:
+            dashboard = self._current_dashboard
+            if dashboard is None:
+                return
+            action = dashboard.next_action
         self.post_message(
             NavigateToScreen(
-                dashboard.next_action.target_route,
+                action.target_route,
                 screen_context=_home_primary_action_context(
-                    dashboard.next_action, self._current_dashboard_input
+                    action, self._current_dashboard_input
                 ),
             )
         )

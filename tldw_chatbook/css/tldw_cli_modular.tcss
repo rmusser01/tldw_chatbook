@@ -11177,6 +11177,9 @@ RecoveryPassphraseDialog {
 #home-canvas {
     border: solid $ds-column-line;
     background: $ds-surface-panel;
+
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .home-rail-row {

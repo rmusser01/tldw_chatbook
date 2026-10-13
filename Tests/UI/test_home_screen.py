@@ -192,7 +192,15 @@ async def test_home_rail_preferences_prefers_app_config_over_cli_config(monkeypa
     the ``get_cli_setting`` fallback must never be consulted.
     """
     app = _build_test_app()
-    app.app_config["home"] = {"rail_state": {"sections": {"details_open": True}}}
+    # setitem, not a bare assignment: ``app_config`` is the process-wide
+    # cached settings dict (see ``build_test_app_config``), so a bare write
+    # leaks ``details_open: True`` into every later test's app under the
+    # shared bootstrap profile (observed flipping
+    # test_home_triage_rail.py's details-section assertions once that suite
+    # was enrolled in ``keep_bootstrap_profile``). Teardown restores.
+    monkeypatch.setitem(
+        app.app_config, "home", {"rail_state": {"sections": {"details_open": True}}}
+    )
 
     def raising_get_cli_setting(*args, **kwargs):
         raise AssertionError(
@@ -214,8 +222,6 @@ async def test_home_screen_compacts_multi_module_readiness_summary():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
-        rag_ready=False,
-        mcp_ready=True,
         acp_ready=False,
         pending_approval_count=1,
         active_run_count=2,
@@ -229,11 +235,14 @@ async def test_home_screen_compacts_multi_module_readiness_summary():
 
         status_text = str(home.query_one("#home-details-body").renderable)
         assert "Model: Ready" in status_text
-        assert "RAG: Missing sources" in status_text
-        assert "MCP: Ready" in status_text
         assert "ACP: Blocked" in status_text
         assert "Active: 2" in status_text
         assert "Approvals: 1" in status_text
+        # TASK-2761: the RAG and MCP segments were hard-coded constants with
+        # no producer (RAG always "Missing sources", MCP always "Ready") --
+        # removed rather than shown as a lie.
+        assert "RAG:" not in status_text
+        assert "MCP:" not in status_text
 
 
 @pytest.mark.asyncio
@@ -242,8 +251,6 @@ async def test_home_screen_acp_readiness_uses_runtime_process_state():
     app.home_active_work_adapter = RecordingHomeActiveWorkAdapter(
         HomeDashboardInput(
             model_ready=True,
-            rag_ready=True,
-            mcp_ready=True,
             acp_ready=True,
         )
     )
@@ -267,8 +274,6 @@ async def test_home_system_status_groups_runtime_readiness_and_work_state():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
-        rag_ready=False,
-        mcp_ready=True,
         acp_ready=False,
         runtime_source="local",
         server_configured=False,
@@ -287,10 +292,11 @@ async def test_home_system_status_groups_runtime_readiness_and_work_state():
         assert "Runtime: Local" in system_text
         assert "Server sync: Not configured (local mode)" in system_text
         assert "Local mode is active. Server sync is optional." in system_text
-        assert (
-            "Agent readiness: Model ready, RAG needs sources, MCP ready, ACP blocked"
-            in system_text
-        )
+        # TASK-2761: RAG/MCP were constant no-producer fields -- the agent
+        # readiness line reports only the fields with a real producer.
+        assert "Agent readiness: Model ready, ACP blocked" in system_text
+        assert "RAG" not in system_text
+        assert "MCP" not in system_text
         assert "Work: 2 active, 1 approvals" in system_text
 
 
@@ -338,6 +344,29 @@ async def test_home_empty_state_inspector_explains_selected_primary_action():
         assert "Ctrl+P" not in selected_text
         primary = home.query_one("#home-primary-action")
         assert "Import Library sources" in str(primary.label)
+
+
+@pytest.mark.asyncio
+async def test_home_import_sources_primary_action_opens_library_ingest_canvas():
+    """TASK-2765: the fresh-install primary action promises an importer --
+    the press must carry LIBRARY_NAV_CONTEXT_INGEST so Library opens its
+    ingest surface (same contract as app.py's ingest deep link), not the
+    default rail row."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=False,
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        await pilot.click("#home-primary-action")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "library"
+    assert host.seen_contexts[-1] == {LIBRARY_NAV_CONTEXT_INGEST: True}
 
 
 @pytest.mark.asyncio
@@ -498,6 +527,64 @@ async def test_home_primary_action_opens_target_route():
 
 
 @pytest.mark.asyncio
+async def test_home_primary_action_routes_from_the_action_it_displays():
+    """TASK-2760: the primary-action button must navigate to the route of
+    the SAME HomeAction whose label it displays.
+
+    With a failed item selected on the top suggestion's own route, the
+    canvas's ``Next:`` hint is the H3-suppressed recomputation (the failed
+    item's canvas already offers its own recovery), so the button reads
+    "Start a conversation" -- but the press handler used to navigate from
+    the UNSUPPRESSED ``summarize_home_dashboard`` action ("Review failed
+    work" -> library), landing the user on a route the button never named.
+    """
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        console_ready=True,
+        active_work_items=(
+            HomeActiveWorkItem(
+                item_id="local:ingest:job-1",
+                title="failed_import.txt",
+                source="Library",
+                status="failed",
+                detail_route="library",
+            ),
+        ),
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        # The failed ingest job auto-selects (approval > failed > ...), and
+        # H3 suppresses the "Review failed work" suggestion for it -- the
+        # canvas falls through to the ready-Console suggestion.
+        primary = home.query_one("#home-primary-action")
+        assert "Start a conversation" in str(primary.label)
+        callout = str(home.query_one("#home-next-action-callout").renderable)
+        assert "Start a conversation" in callout
+        # The unsuppressed dashboard action still targets the failed item's
+        # route -- that is exactly the disagreement this test pins.
+        assert home._current_dashboard.next_action.action_id == "review_failed_work"
+        assert home._current_dashboard.next_action.target_route == "library"
+
+        await pilot.click("#home-primary-action")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "chat", (
+        "primary action navigated from a different HomeAction than the one "
+        "its label displays"
+    )
+    # start_console carries no nav context; asserting it pins that the press
+    # context is built from the SAME (suppressed) action too.
+    assert host.seen_contexts[-1] == {}
+
+
+@pytest.mark.asyncio
 async def test_home_screen_shows_lightweight_agent_and_schedule_controls():
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
@@ -575,6 +662,14 @@ async def test_home_notification_primary_action_opens_watchlists_notifications_c
 
 @pytest.mark.asyncio
 async def test_home_failed_watchlist_primary_action_opens_watchlist_runs_context():
+    """TASK-2760 companion: with a failed watchlist item selected on its own
+    route, the H3-suppressed canvas hint is the ready-Console fallback (the
+    failed canvas already offers that item's own Retry/Open-details), so the
+    primary button reads "Start in Console" and must navigate to Console --
+    NOT to the unsuppressed "Review failed work" action's subscriptions
+    route, which the button never named. (Pinned the old disagreeing
+    behavior before TASK-2760; the runs-section context stays covered by the
+    no-selection count-driven canvas.)"""
     app = _build_test_app()
     app._home_dashboard_test_input = HomeDashboardInput(
         model_ready=True,
@@ -594,6 +689,38 @@ async def test_home_failed_watchlist_primary_action_opens_watchlist_runs_context
 
     async with host.run_test(size=HOME_TEST_SIZE) as pilot:
         await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+        primary = home.query_one("#home-primary-action")
+        assert "Start in Console" in str(primary.label)
+        await pilot.click("#home-primary-action")
+        await pilot.pause(HOME_MOUNT_PAUSE)
+
+    assert seen[-1] == "chat"
+    assert host.seen_contexts[-1] == {}
+
+
+@pytest.mark.asyncio
+async def test_home_failed_count_primary_action_opens_watchlist_runs_context():
+    """Count-only input (no selectable row, so no H3 suppression): the
+    canvas IS the "Review failed work" suggestion, and the primary press
+    still lands on Watchlists with the runs-section context."""
+    app = _build_test_app()
+    app._home_dashboard_test_input = HomeDashboardInput(
+        model_ready=True,
+        has_library_content=True,
+        failed_run_count=2,
+        # No failed item row exists to source a route from, so the
+        # suggestion follows the adapter's declared detail route.
+        active_detail_route="subscriptions",
+    )
+    seen = []
+    host = HomeHarness(app, seen)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+        primary = home.query_one("#home-primary-action")
+        assert "Review failed work" in str(primary.label)
         await pilot.click("#home-primary-action")
         await pilot.pause(HOME_MOUNT_PAUSE)
 
@@ -2320,3 +2447,151 @@ async def test_home_model_badge_reports_ready_with_credential(monkeypatch, reque
         assert "Model: Ready" in status_text
         assert "Model: Not set up" not in status_text
         assert home._current_dashboard.next_action.action_id != "fix_model_setup"
+
+
+# --- TASK-2763: Home refreshes itself (no click needed) --------------------
+
+
+def _find_rail_row(home, row_id: str):
+    return next(
+        (
+            button
+            for button in home.query("Button.home-rail-row")
+            if str(getattr(button, "row_id", "")) == row_id
+        ),
+        None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_home_auto_refresh_updates_running_ingest_without_clicks(monkeypatch):
+    """TASK-2763 AC1+AC3: a Library ingest job progressing queued -> parsing
+    moves Home's rail on its own -- no click, no remount. Drives the REAL
+    adapter (no test-input override) with a live ingest-jobs provider; the
+    auto-refresh interval is shrunk via the module constant the production
+    timer reads (its default is pinned separately to the adapter's TTL)."""
+    import time as _time
+
+    from tldw_chatbook.Home.active_work_adapter import (
+        LocalNotificationHomeActiveWorkAdapter,
+    )
+    from tldw_chatbook.Library.library_ingest_jobs import (
+        IngestJobState,
+        LibraryIngestJob,
+    )
+
+    monkeypatch.setattr(home_screen_module, "_HOME_AUTO_REFRESH_INTERVAL_SECONDS", 0.2)
+
+    def _job(state: IngestJobState) -> LibraryIngestJob:
+        return LibraryIngestJob(
+            job_id="ingest-job-1",
+            source_path="/tmp/report.txt",
+            state=state,
+        )
+
+    jobs: list[LibraryIngestJob] = [_job(IngestJobState.QUEUED)]
+    app = _build_test_app()
+    app.home_active_work_adapter = LocalNotificationHomeActiveWorkAdapter(
+        ingest_jobs_provider=lambda: tuple(jobs)
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+
+        # The auto-selected job's canvas status line carries the state.
+        def canvas_lines() -> str:
+            return str(home.query_one("#home-canvas-lines").renderable)
+
+        assert _find_rail_row(home, "local:ingest:ingest-job-1") is not None
+        assert "queued" in canvas_lines()
+
+        # The job progresses with no user interaction on Home.
+        jobs[0] = _job(IngestJobState.PARSING)
+        updated = False
+        deadline = _time.monotonic() + 10.0
+        while _time.monotonic() < deadline:
+            await pilot.pause(0.2)
+            if "parsing" in canvas_lines():
+                updated = True
+                break
+        assert updated, "Home never reflected the ingest state change"
+
+
+@pytest.mark.asyncio
+async def test_home_auto_refresh_pauses_while_another_screen_is_on_top(monkeypatch):
+    """TASK-2763 AC2 companion: the tick must not churn (or re-sync) while
+    Home is suspended under another route; resuming re-enables it."""
+    import time as _time
+
+    from textual.screen import Screen as TextualScreen
+
+    from tldw_chatbook.Home.active_work_adapter import (
+        LocalNotificationHomeActiveWorkAdapter,
+    )
+    from tldw_chatbook.Library.library_ingest_jobs import (
+        IngestJobState,
+        LibraryIngestJob,
+    )
+
+    monkeypatch.setattr(home_screen_module, "_HOME_AUTO_REFRESH_INTERVAL_SECONDS", 0.2)
+
+    def _job(state: IngestJobState) -> LibraryIngestJob:
+        return LibraryIngestJob(
+            job_id="ingest-job-2",
+            source_path="/tmp/notes.txt",
+            state=state,
+        )
+
+    jobs: list[LibraryIngestJob] = [_job(IngestJobState.QUEUED)]
+    app = _build_test_app()
+    app.home_active_work_adapter = LocalNotificationHomeActiveWorkAdapter(
+        ingest_jobs_provider=lambda: tuple(jobs)
+    )
+    host = HomeHarness(app)
+
+    async with host.run_test(size=HOME_TEST_SIZE) as pilot:
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        home = _active_home_screen(host)
+        assert _find_rail_row(home, "local:ingest:ingest-job-2") is not None
+
+        await host.push_screen(TextualScreen())
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        jobs[0] = _job(IngestJobState.PARSING)
+        await pilot.pause(1.0)
+        # Home is suspended: the rail (read straight off the live widget
+        # tree) must not have re-synced while covered.
+        assert host.screen is not home
+
+        def canvas_lines() -> str:
+            return str(home.query_one("#home-canvas-lines").renderable)
+
+        assert _find_rail_row(home, "local:ingest:ingest-job-2") is not None
+        assert "queued" in canvas_lines(), (
+            "auto-refresh must not run while Home is suspended"
+        )
+
+        await host.pop_screen()
+        await pilot.pause(HOME_MOUNT_PAUSE)
+        updated = False
+        deadline = _time.monotonic() + 10.0
+        while _time.monotonic() < deadline:
+            await pilot.pause(0.2)
+            if "parsing" in canvas_lines():
+                updated = True
+                break
+        assert updated, "auto-refresh did not resume after popping back"
+
+
+def test_home_auto_refresh_interval_follows_adapter_cache_ttl():
+    """TASK-2763 AC2: the poll cadence IS the adapter's cache TTL -- no
+    busy-loop, no redundant seam queries."""
+    from tldw_chatbook.Home.active_work_adapter import (
+        ACTIVE_WORK_CACHE_TTL_SECONDS,
+    )
+
+    assert (
+        home_screen_module._HOME_AUTO_REFRESH_INTERVAL_SECONDS
+        == ACTIVE_WORK_CACHE_TTL_SECONDS
+    )

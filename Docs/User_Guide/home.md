@@ -13,10 +13,11 @@ Two things to know before trusting it:
 - **The app does not open on Home.** A normal launch lands on
   [Console](console.md) (the `default_tab` config default); Home greets you
   only on a first run, underneath the setup wizard. Reach it with **Ctrl+1**.
-- **Home is a snapshot, not a live dashboard.** It reads your work once, when
-  the screen mounts, and never refreshes on its own — an import progressing
-  while you watch does not move on screen. Click a row, or leave and come
-  back, to re-read (backlog task-2763).
+- **Home refreshes itself while you watch it.** Active work re-syncs on a
+  short timer (paced to the underlying data cache, a few seconds), so an
+  import progressing queued → parsing → writing moves on screen on its own;
+  the refresh pauses while another screen is on top (fixed, backlog
+  task-2763).
 
 ## Getting there
 
@@ -30,13 +31,15 @@ Two things to know before trusting it:
 
 | Region | What it shows |
 |---|---|
-| **Header line** | "Home \| Ready · Local" — "Ready"/"Not set up" is model readiness (see Quirks — it is optimistic), then "Local", or "Server: \<name\>" when a server is the runtime source. |
+| **Header line** | "Home \| Ready · Local" — "Ready"/"Not set up" is model readiness (the same send-path check Console enforces), then "Local", or "Server: \<name\>" when a server is the runtime source. |
 | **Rail** (left) | Four collapsible sections — **Needs Attention**, **Running**, **Recent**, **Details** — each headed by its title (plus " (N)" only when it has items) and a **▾**/**▸** toggle. Work items are two-line rows: a status glyph and title, then the owning source and age ("● g2_demo_article.txt" / "    Library - 6d"). The selected row is marked **▸**. Titles longer than 20 characters are cut with "..." — hover for the full title. |
 | **Canvas** (right) | The selected item's card: title, a status line ("● failed · Library"), the failure reason when there is one ("Interrupted by app restart · retry 1"), and "Opens: \<screen\>" — plus that item's action buttons. With nothing selected it shows the **next-action card** instead (see below). |
 | **Footer** | The global "Ctrl+Q quit \| Ctrl+P palette" hints and the token/DB read-outs — Home adds nothing of its own. |
 
-Section state survives restarts (collapsed/expanded is saved to your config);
-**Details starts collapsed**. Empty sections say so in plain words: "No
+Both panes scroll when their content is taller than the terminal, with a
+visible scrollbar — nothing is hidden past the fold on short terminals
+(task-2762). Section state survives restarts (collapsed/expanded is saved to
+your config); **Details starts collapsed**. Empty sections say so in plain words: "No
 approvals or failures pending.", "Nothing running right now.",
 "Conversations, notes, media, runs, chatbooks, and imports will appear here."
 
@@ -88,7 +91,7 @@ card) is the first match in a fixed priority order:
 
 | Priority | Suggestion | Goes to |
 |---|---|---|
-| 1 | "Set up Console model" — Console needs a working model before live AI tasks. | Settings (effectively never fires — see Quirks, task-2764) |
+| 1 | "Set up Console model" — Console needs a working model before live AI tasks. | Settings (fires whenever no usable credential+model resolves — readiness is honest, task-2764) |
 | 2 | "Review pending approvals" — Agent work is waiting for a decision. | Console |
 | 3 | "Review failed schedules" — Scheduled work needs recovery. | Schedules |
 | 4 | "Review failed work" — Failed work needs recovery. | the failed item's screen |
@@ -96,28 +99,29 @@ card) is the first match in a fixed priority order:
 | 6 | "Review notifications" — Unread notifications need review. | **Watchlists** (that is where notifications live) |
 | 7 | "Review eval runs" — Pending or failed eval runs need attention. | Evals |
 | 8 | "Read-it-later: N items" — Your saved reading queue is waiting. | Media |
-| 9 | "Import Library sources" — Library content makes Console and RAG more useful. | Library (its default view, not an import form — task-2765) |
-| 10 | "Search your Library" | unreachable today (task-2761) |
+| 9 | "Import Library sources" — Library content makes Console and RAG more useful. | Library, opened straight at its import surface (fixed, task-2765) |
 | 11 | "Resume last conversation" — Pick up where you left off. With a recent conversation, this replaces the plain start suggestion and deep-links that conversation into Console. | Console |
 | 12 | "Start a conversation" / "Start in Console" — Console is ready for a task (fresh profiles, or when the newest work wasn't a conversation). | Console |
 
-**The suggestion button can disagree with its own label** when a failed item
-is selected — see Quirks (task-2760).
+With a failed item selected, the "Next:" line and the suggestion button
+deliberately fall through to the next suggestion rather than repeating the
+item's own recovery controls — the button always goes where its label says
+(fixed, task-2760).
 
 ### Details — the readiness read-out
 
 ![Home with Details expanded](images/home/details.svg)
 
 Expanding **Details** shows one dense block: a summary line
-("Model: Ready | RAG: Missing sources | MCP: Ready | ACP: Blocked | Mode:
-Local | Server: Configured; local mode | Active: 1 | Approvals: 0"), then
-"Runtime:", "Server sync:", a one-line explanation ("Local mode is active.
-Server sync is optional."), "Agent readiness: …", "Server events: …", and
-"Work: N active, N approvals" (plus "Notifications: N unread" when any).
-Read it with the Quirks section open: two of the four readiness fields are
-hard-coded, and "Model: Ready" is optimistic. With no usable model (for
-example after skipping setup) the line reads "Model: Not set up", matching the
-header, and "Agent readiness" reads "Model not set up".
+("Model: Ready | ACP: Blocked | Mode: Local | Server: Configured; local mode
+| Active: 1 | Approvals: 0"), then "Runtime:", "Server sync:", a one-line
+explanation ("Local mode is active. Server sync is optional."), "Agent
+readiness: …", "Server events: …", and "Work: N active, N approvals" (plus
+"Notifications: N unread" when any). Every readiness field shown is real:
+"Model:" is driven by the same send-path check Console enforces (it reads
+"Not set up" until a usable credential+model resolves), and "ACP:" by the ACP
+runtime manager. The former "RAG:"/"MCP:" segments — hard-coded constants
+nothing ever updated — were removed rather than shown as lies (task-2761).
 
 ## Common tasks
 
@@ -125,8 +129,8 @@ header, and "Agent readiness" reads "Model not set up".
    or quit mid-import: Home's **Needs Attention** lists the job as "● failed ·
    Library" / "Interrupted by app restart". It is already selected — press
    **Retry** ("Retry queued for \<file\>.") and check progress in
-   [Library ▸ Import & export](library/import-and-export.md); Home itself
-   will not update while you watch (task-2763).
+   [Library ▸ Import & export](library/import-and-export.md); Home's own
+   row moves on its own as the job progresses (task-2763).
 2. **Pick up where you left off.** With nothing urgent, the canvas offers
    **Resume conversation/note/reading: \<title\> (\<age\>)** for the newest
    thing you touched, and the terminal suggestion itself becomes "Resume
@@ -170,30 +174,11 @@ Palette entries that land here: "Tab Navigation: Switch to Home".
 
 ## Quirks & troubleshooting
 
-- **It says "Ready" but nothing works.** The header's "Ready" and Details'
-  "Model: Ready" only mean the config's provider table is non-empty — the
-  shipped default config satisfies that with zero API keys. Console's own
-  readiness check is separate and stricter. Set up the provider in
-  [Settings](settings.md) regardless of what Home claims (backlog task-2764).
-- **"MCP: Ready" and "RAG: Missing sources" never change.** Both are
-  hard-coded defaults nothing ever updates — MCP is always "Ready" (even with
-  no server), RAG is always "Missing sources" (even fully configured). Only
-  the Model and ACP fields are real (backlog task-2761).
-- **The suggestion button went somewhere else.** With a failed item selected,
-  the button and the "Next:" line can promise one destination (e.g. "Start a
-  conversation" → Console) while the click routes by a different rule and
-  lands elsewhere (e.g. Library) (backlog task-2760).
 - **Approve/Reject/Pause/Resume did nothing.** By design today: they only
   toast "…is not connected to an active run service yet." Decide approvals on
   the owning screen — and note a Console approval waiting on you is **not**
   counted here: Home can show "Approvals: 0" and an empty Needs Attention
   while Console blocks on a decision.
-- **An import finished but Home still shows it running.** Home never
-  refreshes after it mounts. Click any row, or leave and return, to re-read
-  (backlog task-2763).
-- **More work exists than the rail shows.** Neither the rail nor the canvas
-  scrolls, and there is no overflow cue — on a short terminal, rows past the
-  fold are simply invisible and unreachable (backlog task-2762).
 - **"Review notifications" opened Watchlists.** Correct, if surprising —
   notifications live on the Watchlists screen.
 - **No "Conversations: … · Notes: …" line at all.** Either you truly have no
@@ -202,4 +187,5 @@ Palette entries that land here: "Tab Navigation: Switch to Home".
   suggestion for a full Library.
 
 —
-*Verified against dev @ 642567627 — 2026-08-10*
+*Verified against dev @ 642567627 — 2026-08-10; readiness/refresh/scroll/
+action-coherence quirks re-verified after tasks 2760–2765 — 2026-10-11*

@@ -1626,6 +1626,21 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_library_notes_w4_layout.py",
             "test_library_notes_riders_r_file_notes.py",
             "test_library_notes_wave_file_notes.py",
+
+            # TASK-2760..2765 (Home dashboard cluster, 2026-10-11): the
+            # three Home suites that mount the production app through
+            # _build_test_app -> load_settings hit the same ADR-126
+            # admission signature as the TASK-33370 Library batteries above
+            # -- every node in them fails fixture setup with
+            # RecoveryRequired("raw_source_selection_changed") in a plain
+            # worktree run against origin/dev (69 reds observed at
+            # 9f8533686c; pure-state suites like Tests/Home/ and the
+            # non-mounting UI Home files stay green). None of them
+            # re-selects a config itself, so they keep the bootstrap
+            # profile like the suites above.
+            "test_home_screen.py",
+            "test_home_triage_rail.py",
+            "test_home_dashboard_seams.py",
         }
     )
     test_data_dir = (

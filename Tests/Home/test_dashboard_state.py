@@ -1564,7 +1564,6 @@ def test_ladder_suggests_eval_runs_over_import_sources():
         HomeDashboardInput(
             model_ready=True,
             has_library_content=True,
-            rag_ready=True,
             console_ready=True,
             pending_eval_run_count=2,
         )
@@ -1578,7 +1577,6 @@ def test_ladder_never_counts_running_eval_runs():
         HomeDashboardInput(
             model_ready=True,
             has_library_content=True,
-            rag_ready=True,
             console_ready=True,
             pending_eval_run_count=0,
             failed_eval_run_count=0,
@@ -1592,7 +1590,6 @@ def test_ladder_suggests_read_later():
         HomeDashboardInput(
             model_ready=True,
             has_library_content=True,
-            rag_ready=True,
             console_ready=True,
             read_later_count=3,
         )
@@ -1624,6 +1621,49 @@ def test_ladder_terminal_falls_back_to_start_conversation_without_recents():
         )
     )
     assert action.action_id == "start_console"
+
+
+def test_status_summary_reports_only_fields_with_a_producer():
+    """TASK-2761: ``mcp_ready``/``rag_ready`` were hard-coded constants no
+    producer ever set (MCP always "Ready", RAG always "Missing sources") --
+    both fields and their Details segments were removed rather than shown
+    as a lie. The surviving readiness fields (model, ACP) report both
+    polarities, and ACP keeps its real producer (the ACP runtime manager
+    snapshot in HomeScreen)."""
+    ready_line = (
+        summarize_home_dashboard(HomeDashboardInput(model_ready=True, acp_ready=True))
+        .sections[0]
+        .lines[0]
+    )
+    assert "Model: Ready" in ready_line
+    assert "ACP: Ready" in ready_line
+    assert "RAG" not in ready_line
+    assert "MCP" not in ready_line
+
+    blocked_line = (
+        summarize_home_dashboard(HomeDashboardInput(model_ready=False, acp_ready=False))
+        .sections[0]
+        .lines[0]
+    )
+    assert "Model: Not set up" in blocked_line
+    assert "ACP: Blocked" in blocked_line
+    assert "RAG" not in blocked_line
+    assert "MCP" not in blocked_line
+
+
+def test_ladder_has_no_dead_search_library_branch():
+    """TASK-2761 companion: the ``search_library`` suggestion was gated on
+    the constant-False ``rag_ready`` and could never fire; it is deleted.
+    A content profile with a ready Console falls through to the terminal
+    Console suggestion instead."""
+    action = choose_next_best_action(
+        HomeDashboardInput(
+            model_ready=True,
+            has_library_content=True,
+            console_ready=True,
+        )
+    )
+    assert action.action_id in {"start_console", "resume_last_conversation"}
 
 
 def test_content_snapshot_marks_has_recent_work():
