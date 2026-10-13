@@ -371,6 +371,10 @@ async def test_a_focused_field_keeps_applies_to_and_next_new_chat_in_view(reques
         await _settle(pilot, 4)
         for step in ("focus", "edit"):
             route = f"Temperature {step}"
+            # Capture fix 2, finding 8: the edit pass must hold the note it
+            # is about, or it only repeats the focus pass.
+            note = screen.query_one("#settings-provider-next-chat-note")
+            assert note.display is (step == "edit"), route
             _assert_rows_in_view(screen, "provider", route)
             for title in (
                 "Applies to",
