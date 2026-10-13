@@ -12,7 +12,7 @@ labels:
 priority: high
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/3096
-updated_date: 2026-10-13 03:34
+updated_date: 2026-10-13 03:54
 ---
 
 ## Description
@@ -23,10 +23,10 @@ Integrate the already reviewed local structured-document checks and reversible f
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The PR branch is rebased onto the recorded current dev base, resolves its conflicts and retains the intended structured-Notes changes without deleting unrelated upstream behavior or documentation.
-- [ ] #2 Targeted verification of affected real storage, source and language preservation, recovery, native editor and import/export paths qualifies the integrated source; conflict resolutions do not weaken authority, exact-source or undo safeguards.
-- [ ] #3 Schema and migration allocations are compatible with current dev and scoped lint, formatting, type and security checks introduce no unexplained findings; real upgrade/bootstrap controls cover migration conflicts.
-- [ ] #4 An independent requesting-code-review review of the rebased PR range is recorded; Critical and Important findings are fixed or explicitly reconciled with technical evidence before publication.
+- [x] #1 The PR branch is rebased onto the recorded current dev base, resolves its conflicts and retains the intended structured-Notes changes without deleting unrelated upstream behavior or documentation.
+- [x] #2 Targeted verification of affected real storage, source and language preservation, recovery, native editor and import/export paths qualifies the integrated source; conflict resolutions do not weaken authority, exact-source or undo safeguards.
+- [x] #3 Schema and migration allocations are compatible with current dev and scoped lint, formatting, type and security checks introduce no unexplained findings; real upgrade/bootstrap controls cover migration conflicts.
+- [x] #4 An independent requesting-code-review review of the rebased PR range is recorded; Critical and Important findings are fixed or explicitly reconciled with technical evidence before publication.
 - [ ] #5 The existing PR is updated with the reviewed rebased head using an exact expected-head force-with-lease, retains dev as its base and documents actual checks and remaining qualification limits without enabling merge or claiming unverified physical coverage.
 <!-- AC:END -->
 
@@ -49,23 +49,24 @@ ADR required: no new ADR for rebase/direct existing-owner integration; ADR path:
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Rebased the structured programme onto dev 38654061, preserving unrelated upstream documents, prior migration bodies and the current lifecycle, Notes canvas/sync gates, import transaction/citation and atomic export owners. Removed the old publication cleanup that would delete upstream documents; retained feature server references to TASK-13586-13597 and ADR-070 through ADR-074.
+Integrated structured YAML/JSON/JSONL checks and explicit native-undo formatting with dev74cf92e2, preserving ChaCha81, Collections4/5 and Subscriptions2/3×embedded80/81 strict catalogs, unknown-schema refusal and device-private backup exclusions. ADR194/097/126/207 govern the feature; incoming ADR225/228 dependency and SQLite pilot remain intact without a new architectural decision.
 
-Note language follows current schema 80 as additive 80-to-81. ADR-194 / ADR-126 govern strict canonical/shared recovery catalogs; Subscriptions remains schema 2, runtime.sync_state has no DDL change, and device-private Notes DB/WAL remains excluded. Exact-source exports use the existing atomic owner, and recovery participates in its existing producer-drain fence. Targeted storage, source/language, recovery, migration/catalog, import/archive, native history, Format, CSS and real app-lifecycle evidence is recorded in c-rebase-report.md and c-evidence.
+CI corrections defer the single app-owned document worker until use, retain real child shutdown, fail the actual recovery boundary in refusal fixtures, and make the native form reveal fields through its existing scroll container. Real newest/empty recovery controls preserve exact source/language/base/keywords, dirty status and no Saved claim. Shared enum handling restores exact V1 semantic aliases without weakening unknown-version/pre-storage and V3/V4 atomic archive guards. Two feature-owned dimensions use existing identical fill tokens; canonical CSS and diagnostic inventory reproduce their owners.
 
-Independent full rebased-PR review found 0 Critical / 0 Important / 1 Minor: misleading guide wording about autosave. The one-paragraph correction was independently confirmed. Subsequent dev advancement replayed 45 feature commits conflict-free as reviewed source head 9fc204f1c04b7b13e739dd2d302fd053f7e1fb5c. Root and scoped review independently verified byte-identical feature diff and unchanged runtime tree; only two upstream test files changed. Their initial five-case run returned 3 passes / 2 editor-arm timeouts; the exact two failures then passed serially on unchanged source, runner and original 3s / 30s deadlines. Matching 8,456-entry manifests and log hashes were verified. Both attempts remain preserved; cause is not established.
+Independent CI review corrected I1 token dimensions and M1 import. Fresh selected controls passed6 original/worker,15 recovery/catalog,82 native/source,64 archive and14 form/token cases; counts overlap. Original39fail/118pass archive and3fail/41pass governance attempts remain immutable. Scoped comparisons attribute all emitted lint/type/security findings to exact inherited lines; commands stay nonzero, with whole-file format debt and reach limits disclosed.
 
-Published the reviewed source head to existing draft PR https://github.com/rmusser01/tldw_chatbook/pull/3096 with exact force-with-lease against original head 1d8ff566cfa8695a86012e272d7e02b984450cfd. The updated description records actual checks and limits. GitHub confirmed dev base, exact head, MERGEABLE, draft and no auto-merge; protection/CI gates remain separate. Subsequent task-only bookkeeping preserves the reviewed source and tests.
+Before publication, dev advanced49 paths with five feature overlaps. All44 incoming non-feature blobs remain exact; prior qualified source/artifacts remain immutable. Latest scoped review found I2: recovery attachment retried a contained lazy Sync build failure. It now reuses the captured safe owner. I3's connected attention/quit reads use the existing safe reader with legacy fallback, preserving healthy flush/retention and global getter policy. Actual failed-runtime Library mounts, displays failed/review_settings, reads the canonical note and quits with exactly one build. Four healthy attention/retention/legacy siblings passed on unchanged production source; the corrected exact fault/quit node passed separately. Fixture projection/helper errors are preserved.
 
-All integration acceptance criteria are accounted for. Status remains In Progress because repository static-analysis/formatting DoD is not wholly satisfied by the disclosed inherited feature/current-dev debt and analysis reach limits. No clean whole-file/type claim or waiver is made; broad debt repair was outside this rebase request. ProductionApp nested-fixture refusal, LibraryScreen mypy parser limit and FD/coroutine warnings remain qualified. Physical IME/spoken-output tasks remain open; durable Notes sync stays deferred to TASK-34818. Full report, static clarification, independent reviews and unchanged failed-case control are retained under /private/tmp/structured-notes-pr-rebase-2026-10-12. Existing testing-evidence lessons apply; no new architecture was introduced.
-Current published-head CI follow-up is in progress after the user requested continuation. Prior publication and reviews remain historical; current CI/root-cause evidence is under /private/tmp/structured-notes-pr-followup-2026-10-13. Verification, independent review and final expected-head publication are reopened for the new corrections. No merge, full sweep or physical waiver is authorized.
-Qualified CI-fix source fbb692c331 passed independent delta review with I1 token and M1 import findings corrected; inherited governance/static failures remain disclosed. Before publication, dev advanced to 74cf92e2f807250fbc07ff7a1ed272bd8d0a80a3. This task now tracks the bounded additional integration; original qualified source/report/hash receipts remain immutable.
-The scoped latest-dev review confirmed I2/I3: direct lazy-owner UI reads can retry a contained build failure during recovery attachment, attention refresh and clean quit. Existing safe reads will be reused; actual RED evidence and inherited RAG/raw-census failures are preserved. This updates the plan before the two additional connected-UI edits.
+The latest42-case batch remains39pass/3fail; two inherited failures remain RED: RAG strict recovery lacks existing ADR223 native embedding-cache objects, and the incoming raw SQLite census omits the read-only roots probe. No catalog/allowlist/pin repair or waiver. UI-ready measured1021/1033 with its existing pin. Main/spawn current-source binding, kernel/private-owner controls and canonical inventory guard passed. Latest four-path static comparison emits210lint/83type/16Bandit inherited rows; formatter identifies two existing files. No clean aggregate, type/security or full-suite claim.
+
+Independent final source review accepted159d19cc on pinned74cf with I2/I3 corrected and no unresolved finding in scope. Root verified8526 source hashes,163 feature paths,73 new artifacts and185 unchanged prior artifacts. Reports/manifests under /private/tmp/structured-notes-pr-followup-2026-10-13 preserve exact source/command/head correspondence. Source is ready for exact-lease publication; publication accounting remains pending.
+
+Status remains In Progress under repository DoD: inherited governance/static/recovery/census failures and current-head GitHub/human/merge gates remain. Physical tasks34570/34658 stay open; durable Notes sync34818 remains deferred after1602. No full sweep, physical waiver, merge or auto-merge; original worktrees, backups and evidence are retained.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Reviewed rebase published to draft PR3096 on dev38654061; no unresolved Critical/Important source finding. Guide correction and exact-source dev advancement confirmed. Incoming 3-pass/2-fail attempt and unchanged 2-pass retry retained; cause unproved. Merge, physical qualification and clean whole-file static DoD remain open.
+Reviewed structured Notes fixes and safe Library recovery/attention/quit are integrated on dev74cf92e2 at source159d19cc. Targeted controls and generated guards pass; inherited governance/static/RAG/census and physical/merge gates remain. Exact-head publication accounting is pending.
 <!-- SECTION:FINAL_SUMMARY:END -->
 ## Definition of Done
 <!-- DOD:BEGIN -->
