@@ -431,9 +431,10 @@ class ConsoleStatusChips(Horizontal):
         self.scope_state = scope_state
         self.ephemeral = ephemeral
         self._cost_state = cost_state
-        # The strip's max_scroll_x and the cost chip's width at the last
-        # layout check (see _keep_cost_chip_in_view).
+        # The strip's max_scroll_x and width, and the cost chip's width, at
+        # the last layout check (see _keep_cost_chip_in_view).
         self._cost_strip_end = 0.0
+        self._cost_strip_width = 0
         self._cost_chip_width = 0
         self._run_chip_state: tuple[bool, str] = (bool(run_copy), run_copy)
         self._collapsed = bool(collapsed)
@@ -927,12 +928,15 @@ class ConsoleStatusChips(Horizontal):
         laid out, read its old place and not scroll (measured in round 4).
         The chip is last on the strip, so it shows whole exactly when the
         strip sits at its end. The strip follows it when its width changed
-        since the last check (focus's "…" to the full label, a longer figure),
-        or when the strip sat at its end before this layout (a narrower
-        terminal, a wider chip before it); a Shift+wheel or swipe away from
-        the end stays where the user put it. A width, not a "relabelled" mark:
-        a relabel that keeps the width lays nothing out, so no check would
-        clear the mark before a later layout read it (round 5).
+        while the strip's did not (focus's "…" to the full label, a longer
+        figure), or when the strip sat at its end before this layout (a
+        narrower terminal, a wider chip before it); a Shift+wheel or swipe
+        away from the end stays where the user put it. A width, not a
+        "relabelled" mark: a relabel that keeps the width lays nothing out, so
+        no check would clear the mark before a later layout read it (round 5).
+        The strip's width too: a label wider than the strip is capped at it
+        (max-width 100%), so a resize changes that chip's width unrelabelled
+        (round 6).
         """
         try:
             chip = self.query_one("#console-cost-chip", ConsoleCostChip)
@@ -944,9 +948,11 @@ class ConsoleStatusChips(Horizontal):
         # -1: a scroll to the chip can stop short of the end (41.67 of 42).
         at_end = scroll.scroll_x >= self._cost_strip_end - 1
         self._cost_strip_end = scroll.max_scroll_x
-        width = chip.size.width
-        follow = width != self._cost_chip_width or at_end
-        self._cost_chip_width = width
+        width, strip_width = chip.size.width, scroll.size.width
+        follow = at_end or (
+            width != self._cost_chip_width and strip_width == self._cost_strip_width
+        )
+        self._cost_chip_width, self._cost_strip_width = width, strip_width
         if chip.has_focus and follow:
             chip.scroll_visible(animate=False)
 

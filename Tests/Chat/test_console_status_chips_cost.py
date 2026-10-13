@@ -699,6 +699,43 @@ async def test_a_same_width_relabel_does_not_undo_a_later_swipe(width: int) -> N
         assert scroll.scroll_x == 0
 
 
+@pytest.mark.parametrize(("start", "end"), ((60, 56), (52, 50)))
+@pytest.mark.asyncio
+async def test_a_capped_cost_chip_does_not_undo_a_swipe_on_resize(
+    start: int, end: int
+) -> None:
+    """Capture fix 3 round 6: a focused label wider than the strip is capped
+    at the strip's width, so a narrower terminal changed the chip's width
+    with no relabel and the check read that as a relabel: the strip the user
+    had swiped home scrolled back to the cost chip (scroll_x 0 to 194)."""
+    app = _ProductionChipsApp(
+        _capture_control_state(tools_label="Tools: 12 ready", tools_active=True),
+        cost_state=_cost_state(
+            label="Context 100%+ · Current $12,345.67 · On next send ~+$987.65",
+            compact_label="Ctx 100%+ · Now $12,345.67 · Next ~+$987.65",
+        ),
+    )
+    async with app.run_test(size=(start, 8)) as pilot:
+        await pilot.pause()
+        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
+        scroll = app.query_one("#console-status-chip-scroll")
+        chip.focus()
+        for _ in range(5):
+            await pilot.pause()
+
+        scroll.scroll_home(animate=False)
+        for _ in range(5):
+            await pilot.pause()
+        assert (scroll.scroll_x, app.focused) == (0, chip)
+
+        width = chip.size.width
+        await pilot.resize_terminal(end, 8)
+        for _ in range(5):
+            await pilot.pause()
+        assert chip.size.width < width
+        assert scroll.scroll_x == 0
+
+
 @pytest.mark.asyncio
 async def test_cost_chip_click_posts_pressed_message():
     """A real ``pilot.click`` must dispatch through the normal message pump.
