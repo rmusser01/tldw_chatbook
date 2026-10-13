@@ -2497,9 +2497,61 @@ def _provider_response_envelope(
     return envelope
 
 
-def _trace_response_item_bytes(item: ProviderStreamItem) -> int | None:
-    """Measure one normalized semantic item without retaining its raw value."""
+def _json_escaped_string_bytes(text: str) -> int | None:
+    """Length of ``text`` as a JSON string literal, without serializing.
 
+    TASK-34924: the per-token hot path must not build an envelope and run a
+    full ``json.dumps`` per chunk. With ``ensure_ascii=False`` only quotes,
+    backslashes and C0 control characters gain escape bytes (newline/tab/
+    carriage return -- the realistic ones in model text -- add exactly one
+    each); everything else serializes to its own UTF-8 bytes. ``+2`` covers
+    the surrounding quotes. Exotic control characters would undercount by
+    at most five bytes each -- immaterial for the accumulation bound.
+    Returns ``None`` for text JSON cannot encode.
+    """
+    try:
+        encoded = text.encode("utf-8")
+    except ValueError:
+        return None
+    escapes = (
+        text.count('"')
+        + text.count("\\")
+        + text.count("\n")
+        + text.count("\r")
+        + text.count("\t")
+    )
+    return len(encoded) + escapes + 2
+
+
+def _trace_response_item_bytes(item: ProviderStreamItem) -> int | None:
+    """Measure one normalized semantic item without retaining its raw value.
+
+    Text deltas (content and thinking -- the per-token cases) take the
+    cheap length-plus-escape path with a fixed envelope-wrapper allowance
+    (``{"content":...,"role":"assistant"}`` / the thinking evidence dict
+    keys). Structured items are rare per response and keep the exact
+    envelope serialization.
+    """
+    text_bytes: int | None
+    wrapper = 0
+    if isinstance(item, str):
+        text_bytes = _json_escaped_string_bytes(item)
+        wrapper = len('{"content":') + len(',"role":"assistant"}')  # 31
+    elif isinstance(item, ProviderThinkingDelta):
+        text_bytes = _json_escaped_string_bytes(item.text)
+        # thinking-evidence dict: fixed keys + the item's own short metadata
+        wrapper = (
+            len('{"role":"assistant","content":"","thinking":[{"text":')
+            + len(item.provider)
+            + len(item.model)
+            + len(item.protocol)
+            + len(item.source_format)
+            + len(',"provider":"","model":"","protocol":"","source_format":""}]}')
+        )
+    else:
+        text_bytes = None
+    if text_bytes is not None:
+        return text_bytes + wrapper
     try:
         envelope = _provider_response_envelope((item,))
         return len(
