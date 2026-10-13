@@ -1050,6 +1050,105 @@ async def test_a_snapshot_preference_edit_is_kept_and_asked_about_from_console(
     assert cleanups == []
 
 
+def _in_memory_snapshot_preferences(monkeypatch, enabled: bool, keep_count: int):
+    """Keep the snapshot preferences in a list instead of the config.
+
+    The save refuses a stale ``expected`` as the real one does. Returns the
+    one-item list holding the saved value.
+    """
+    from tldw_chatbook.LLM_Management import snapshot_settings as preferences
+
+    saved = [preferences.SnapshotPreferences(enabled=enabled, keep_count=keep_count)]
+
+    def save(value, *, expected=None):
+        if expected is not None and expected != saved[0]:
+            raise preferences.SnapshotPreferencesConflict("changed")
+        saved[0] = value
+        return True
+
+    monkeypatch.setattr(preferences, "load_snapshot_preferences", lambda: saved[0])
+    monkeypatch.setattr(preferences, "save_snapshot_preferences", save)
+    return saved
+
+
+async def _back_to_settings_snapshot_keep(app, pilot):
+    """Leave Settings for Home, come back, and return the Keep count field."""
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    await _go_home(app, pilot)
+    app.post_message(NavigateToScreen("settings"))
+    keep = await _settings_snapshot_keep(app, pilot)
+    await pilot.pause(0.2)
+    return keep
+
+
+@pytest.mark.parametrize("resolve", ["revert", "save"])
+async def test_a_kept_snapshot_edit_is_forgotten_once_saved_or_reverted(
+    monkeypatch, resolve
+):
+    """Capture 13c: once a leave kept a snapshot edit, every later return
+    restored it, even after it was reverted or saved. save_state started from
+    the dict the visit was restored from, and the kept pair is written only
+    while unsaved, so it outlived its Revert or Save: Settings came back
+    "Unsaved changes" on the old value, and Save said it changed elsewhere."""
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Settings_Modules.settings_quit_guard import (
+        KEPT_SNAPSHOT_PREFERENCES,
+    )
+
+    saved = _in_memory_snapshot_preferences(monkeypatch, True, 30)
+    app = _build_test_app(configured_default="settings")
+    async with app.run_test(size=(190, 55)) as pilot:
+        keep = await _settings_snapshot_keep(app, pilot)
+        assert keep.value == "30"
+        keep.value = "25"
+        await _until(
+            pilot, app.screen._snapshot_preferences_dirty, "the edit to be staged"
+        )
+        keep = await _back_to_settings_snapshot_keep(app, pilot)
+        assert keep.value == "25" and app.screen._snapshot_preferences_dirty()
+
+        settings = app.screen
+        if resolve == "revert":
+            settings.action_settings_revert_category(allow_text_entry_focus=True)
+            await _until(
+                pilot,
+                lambda: (
+                    app.screen in _dialogs_titled(app, "Revert Settings changes")
+                    and bool(app.screen.query("#confirm-button"))
+                ),
+                "the Revert confirmation",
+            )
+            await pilot.click("#confirm-button")
+            expected = "30"
+        else:
+            settings.action_settings_save_category(allow_text_entry_focus=True)
+            expected = "25"
+        await _until(
+            pilot,
+            lambda: (
+                not settings._snapshot_preferences_dirty()
+                and settings.query_one("#settings-snapshot-keep", Input).value
+                == expected
+            ),
+            f"the {resolve} to settle",
+        )
+        assert saved[0].keep_count == int(expected)
+
+        keep = await _back_to_settings_snapshot_keep(app, pilot)
+        settings = app.screen
+        state = settings.save_state()
+        assert keep.value == expected, "a resolved snapshot edit came back"
+        assert not settings._snapshot_preferences_dirty()
+        status = settings.query_one("#settings-selected-category-draft-status")
+        assert str(status.render()) == "No unsaved changes"
+        rail = settings.query_one(
+            f"#settings-category-{SettingsCategoryId.PROVIDERS_MODELS.value}"
+        )
+        assert not str(rail.label).endswith(" *"), rail.label
+    assert KEPT_SNAPSHOT_PREFERENCES not in state
+
+
 async def test_a_snapshot_edit_left_before_its_change_lands_is_kept():
     """Ruling cf3r1-N1 (b), as finding 2 of round 1 for the raw editor: left
     by a shortcut before Input.Changed lands, the typed keep count must still

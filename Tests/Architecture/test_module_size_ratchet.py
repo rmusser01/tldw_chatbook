@@ -219,7 +219,9 @@ _BUDGETS: dict[str, int] = {
     # settings_quit_guard.py (+4): 35,775.
     # Post-rebase round 1: leaving Settings waits for a snapshot Save still
     # writing; the wait lives in settings_quit_guard.py (+3): 35,778.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35778,
+    # Capture 13c: save_state starts from a fresh dict, so a kept snapshot
+    # edit is forgotten once saved or reverted (+1): 35,779.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35779,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

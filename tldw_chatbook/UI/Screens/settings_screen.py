@@ -4446,9 +4446,10 @@ class SettingsScreen(BaseAppScreen):
         Returns:
             Process-local state, including live raw and search editor sessions.
         """
-        state = super().save_state()
-        if not isinstance(state, dict):
-            state = {}
+        # Fresh, not super()'s: that is the dict this visit was restored from,
+        # so a key written only while unsaved (a kept snapshot edit, a Speech
+        # draft, a return continuation) outlived its Save or Revert (13c).
+        state: dict[str, object] = {}
         state["active_category"] = self.active_category
         state["category_search_query"] = self._sanitize_category_search_query(
             self.category_search_query
