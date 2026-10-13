@@ -390,7 +390,9 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
     service.study_pack_job_statuses = [
         {
             "job": {"id": 42, "status": "failed"},
-            "error": "<b>Embedding service unavailable</b> javascript: onerror=retry",
+            # "[/]" survives clean_material_text: the status Static and the
+            # error notify must both carry it literally (markup=False).
+            "error": "<b>Embedding service unavailable</b> [/] javascript: onerror=retry",
         }
     ]
     app = _build_test_app()
@@ -419,6 +421,7 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
 
         assert "failed" in _static_text(status).lower()
         assert "Embedding service unavailable" in _static_text(status)
+        assert "[/]" in _static_text(status)
         assert "<b>" not in _static_text(status)
         assert "javascript:" not in _static_text(status)
         assert "onerror=" not in _static_text(status)
@@ -436,6 +439,12 @@ async def test_server_study_dashboard_keeps_failed_source_pack_generation_recove
     assert all("<b>" not in message for message in error_notifications)
     assert all("javascript:" not in message for message in error_notifications)
     assert all("onerror=" not in message for message in error_notifications)
+    assert any("[/]" in message for message in error_notifications)
+    assert all(
+        call.kwargs.get("markup") is False
+        for call in notifications.call_args_list
+        if call.kwargs.get("severity") == "error"
+    )
 
 
 @pytest.mark.asyncio
