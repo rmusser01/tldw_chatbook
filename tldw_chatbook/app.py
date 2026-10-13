@@ -3218,61 +3218,6 @@ class TldwCli(
     async def _close_owned_tts_resources(self) -> None:
         return await _speech()._close_owned_tts_resources(self)
 
-    def on_mount(self) -> None:
-        """Configure logging and schedule post-mount setup."""
-        self._start_persona_buddy_overlay()
-        runtime = self.console_runtime
-        if runtime is not None:
-            runtime.start_async_lifecycles()
-        self._start_served_canvas_control()
-        self.watchlists_operation_coordinator = WatchlistsOperationCoordinator(
-            local_service=self.local_watchlists_service,
-            briefing_db=self.subscriptions_db,
-        )
-        self.watchlists_operation_coordinator.bind_running_loop()
-        self._wire_watchlists_command_service()
-        self._bind_tts_service()
-        self._start_backup_maintenance_monitor()
-        # TASK-21247: gate CONSTRUCTION, not only start. Reading the lazy
-        # property unconditionally paid the ~15-module notes-sync
-        # construction chain just before first paint on EVERY boot,
-        # including zero-profile ones -- exactly what TASK-21112 was filed
-        # to avoid. The predicate is the same TASK-21112 start-evidence gate
-        # the runtime's own start() evaluates (empty-store refinement per
-        # TASK-21240), evaluated BEFORE the property is touched; a broken
-        # probe fails OPEN (one full attempt) exactly as start() does.
-        try:
-            _notes_sync_start_evidence = _notes_sync_boot_start_evidence(self)
-        except Exception:
-            _notes_sync_start_evidence = True
-        if _notes_sync_start_evidence:
-            # PR #3084 review fix: a notes-sync BUILD failure on a
-            # configured profile must not escape on_mount (Textual's
-            # default crash) before the Library screen's safe reader can
-            # present it. Construct through the guarded reader; a failed
-            # build records `_notes_sync_runtime_build_failure` and skips
-            # start() entirely.
-            try:
-                _notes_sync_owner = self._read_notes_sync_runtime_owner_safe()
-            except Exception:
-                _notes_sync_owner = None
-            if _notes_sync_owner is not None:
-                self._notes_sync_runtime_start_task = asyncio.create_task(
-                    _notes_sync_owner.start(),
-                    name="start_notes_sync_runtime",
-                )
-                self._notes_sync_runtime_start_task.add_done_callback(
-                    self._observe_notes_sync_runtime_start
-                )
-        else:
-            # First-time setup force-starts the runtime on demand
-            # (`review_setup`), constructing it lazily at that point.
-            self.loguru_logger.debug(
-                "Notes-sync start gate: no configuration evidence; runtime "
-                "not constructed this boot."
-            )
-        mount_start = time.perf_counter()
-
     def _record_speech_stack_diagnostics(self) -> None:
         """Record this interpreter's speech-stack availability (one line).
 
@@ -3356,13 +3301,44 @@ class TldwCli(
         self._wire_watchlists_command_service()
         self._bind_tts_service()
         self._start_backup_maintenance_monitor()
-        self._notes_sync_runtime_start_task = asyncio.create_task(
-            self.notes_sync_runtime_owner.start(),
-            name="start_notes_sync_runtime",
-        )
-        self._notes_sync_runtime_start_task.add_done_callback(
-            self._observe_notes_sync_runtime_start
-        )
+        # TASK-21247: gate CONSTRUCTION, not only start. Reading the lazy
+        # property unconditionally paid the ~15-module notes-sync
+        # construction chain just before first paint on EVERY boot,
+        # including zero-profile ones -- exactly what TASK-21112 was filed
+        # to avoid. The predicate is the same TASK-21112 start-evidence gate
+        # the runtime's own start() evaluates (empty-store refinement per
+        # TASK-21240), evaluated BEFORE the property is touched; a broken
+        # probe fails OPEN (one full attempt) exactly as start() does.
+        try:
+            _notes_sync_start_evidence = _notes_sync_boot_start_evidence(self)
+        except Exception:
+            _notes_sync_start_evidence = True
+        if _notes_sync_start_evidence:
+            # PR #3084 review fix: a notes-sync BUILD failure on a
+            # configured profile must not escape on_mount (Textual's
+            # default crash) before the Library screen's safe reader can
+            # present it. Construct through the guarded reader; a failed
+            # build records `_notes_sync_runtime_build_failure` and skips
+            # start() entirely.
+            try:
+                _notes_sync_owner = self._read_notes_sync_runtime_owner_safe()
+            except Exception:
+                _notes_sync_owner = None
+            if _notes_sync_owner is not None:
+                self._notes_sync_runtime_start_task = asyncio.create_task(
+                    _notes_sync_owner.start(),
+                    name="start_notes_sync_runtime",
+                )
+                self._notes_sync_runtime_start_task.add_done_callback(
+                    self._observe_notes_sync_runtime_start
+                )
+        else:
+            # First-time setup force-starts the runtime on demand
+            # (`review_setup`), constructing it lazily at that point.
+            self.loguru_logger.debug(
+                "Notes-sync start gate: no configuration evidence; runtime "
+                "not constructed this boot."
+            )
         mount_start = time.perf_counter()
 
         # task-19561: hand the process-level SIGTERM/SIGINT handler this app
