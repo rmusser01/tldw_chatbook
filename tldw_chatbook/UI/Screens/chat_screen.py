@@ -7377,6 +7377,7 @@ class ChatScreen(BaseAppScreen):
         self._console_environment_poll_timer: Any | None = None
         self._console_credential_poll_timer: Any | None = None
         self._console_credential_snapshot: tuple[int, str | None, int] | None = None
+        self._console_credential_pre_gate: tuple[str, int, int] | None = None
         # The six Console controllers -- their construction and every
         # named dependency they take -- moved verbatim to
         # `Console_Modules/wiring.py` (wave-4 console decomposition,
@@ -11593,6 +11594,7 @@ class ChatScreen(BaseAppScreen):
     def _poll_console_credential_readiness(self) -> None:
         """Refresh send controls as background credentials complete or expire."""
         from tldw_chatbook.LLM_Calls.anthropic_subscription import (
+            subscription_credential_status,
             subscription_readiness_revision,
         )
 
@@ -11603,6 +11605,24 @@ class ChatScreen(BaseAppScreen):
             or getattr(self, "_console_sync_maintenance_paused", False)
         ):
             return
+        # TASK-34918: cheap pre-gate BEFORE the ~8ms derivation-scope
+        # build. Same signals the snapshot gate relies on -- status()
+        # reports a credential's time-based expiry with no revision bump,
+        # and version covers connection-evidence settlements. Provider and
+        # draft edits sync the send controls through their own watcher
+        # paths; this poll only owns background credential transitions.
+        # Reads no config, so it sits ahead of the maintenance locks.
+        version = getattr(
+            shared_connection_evidence(lambda: self.app), "version", 0
+        )
+        pre_gate = (
+            subscription_credential_status(background=True),
+            subscription_readiness_revision(),
+            version,
+        )
+        if pre_gate == self._console_credential_pre_gate:
+            return
+        self._console_credential_pre_gate = pre_gate
         from contextlib import ExitStack
 
         from tldw_chatbook import config
@@ -11619,9 +11639,6 @@ class ChatScreen(BaseAppScreen):
             with self._console_derivation_scope():
                 # TASK-33005.2/.5: a test settled on any surface refreshes once. Read
                 # before the build: a switcher probe settles off-thread mid-build.
-                version = getattr(
-                    shared_connection_evidence(lambda: self.app), "version", 0
-                )
                 _settings, readiness = self._active_console_settings_readiness()
                 snapshot = (
                     subscription_readiness_revision(),
@@ -11647,6 +11664,7 @@ class ChatScreen(BaseAppScreen):
                 )
             else:
                 sync()
+
 
     def _stop_console_credential_poll_timer(self) -> None:
         """Stop completion polling when the mounted Console view goes away."""
