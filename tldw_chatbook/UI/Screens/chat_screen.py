@@ -1192,11 +1192,12 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = (
     ("F6", "next pane", False),
 )
 
-#: Capture fix 3 finding 3 (02b): a dialog over the card (Switch model) takes
-#: Enter, and every app key but Ctrl+P and Ctrl+Q is inert under a modal
-#: (measured: F1, F6 and Ctrl+Shift+F do nothing there), so while one covers
-#: the card the footer names only the palette beside the app's Ctrl+Q.
-CONSOLE_WORKBENCH_SHORTCUTS_SETUP_COVERED = (
+#: Capture fix 3 finding 3 (02b): a dialog over the Console (Switch model, over
+#: the card or not) takes Enter, the Console's own keys do not reach it, and
+#: every app key but Ctrl+P and Ctrl+Q is inert under a modal (measured: F1, F6
+#: and Ctrl+Shift+F do nothing there), so while one covers the Console the
+#: footer names only the palette beside the app's Ctrl+Q.
+CONSOLE_WORKBENCH_SHORTCUTS_COVERED = (
     ("Ctrl+P", "palette"),
     ("F1", "help", False),
     ("F6", "next pane", False),
@@ -5017,13 +5018,12 @@ class ChatScreen(BaseAppScreen):
         replaced by "Enter continue setup", which is what Enter actually does
         with focus on the setup card's primary action.
         """
+        if self._console_covered_by_dialog():
+            self.register_footer_shortcuts(
+                source="console", shortcuts=CONSOLE_WORKBENCH_SHORTCUTS_COVERED
+            )
+            return
         if self._console_setup_modal_blocking():
-            if self._console_covered_by_dialog():
-                self.register_footer_shortcuts(
-                    source="console",
-                    shortcuts=CONSOLE_WORKBENCH_SHORTCUTS_SETUP_COVERED,
-                )
-                return
             shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
         elif self._console_composer_collapsed:
             # TASK-25733: same truthfulness rule as the setup-blocked branch --
@@ -22705,7 +22705,7 @@ class ChatScreen(BaseAppScreen):
         # Textual shows the live ones here again on resume.
         for rack in self.query("ToastRack"):
             rack.display = False
-        # Capture fix 3 finding 3: a dialog over the card takes its Enter.
+        # Capture fix 3 finding 3: a dialog over the Console takes its keys.
         self._register_console_footer_shortcuts()
 
     def on_screen_resume(self) -> None:
