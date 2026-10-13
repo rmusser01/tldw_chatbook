@@ -22675,6 +22675,11 @@ class ChatScreen(BaseAppScreen):
             asyncio.ensure_future(self._realtime.teardown()),
             asyncio.ensure_future(self._dictation.suspend()),
         ]
+        # Capture finding 7: the screen on top draws the app's notices, so a
+        # dialog's rack and this one (docked elsewhere) drew each twice.
+        # Textual shows the live ones here again on resume.
+        for rack in self.query("ToastRack"):
+            rack.display = False
 
     def on_screen_resume(self) -> None:
         """Called when returning to this screen."""

@@ -4834,9 +4834,9 @@ class ConsoleSessionController:
         notification failure must never break them.
         """
         copy = (
-            f"Console provider changed {previous_provider_name} -> "
+            f"Console provider changed {previous_provider_name} → "
             f"{next_provider_name}: this unused session now follows your saved "
-            "defaults (Settings > Providers & Models)."
+            "defaults (Settings ▸ Providers & Models)."
         )
         logger.info(
             "Stale-default refresh swapped session provider ({} -> {})",
@@ -4844,7 +4844,8 @@ class ConsoleSessionController:
             next_provider_key,
         )
         try:
-            self.app_instance.notify(copy, severity="warning")
+            # Display names are runtime text (a custom endpoint's own name).
+            self.app_instance.notify(copy, severity="warning", markup=False)
         except Exception:  # noqa: BLE001 -- display-only signal
             logger.debug("Provider-swap notice could not be shown", exc_info=True)
 
