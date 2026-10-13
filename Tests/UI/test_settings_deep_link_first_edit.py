@@ -271,9 +271,7 @@ async def test_api_mode_as_the_first_edit_after_a_deep_link_is_staged(request):
     host = _SettingsCssHarness(app, "settings")
 
     async with host.run_test(size=_SIZE) as pilot:
-        screen = await _deep_link_to_anthropic_key(
-            host, pilot, "qwencloud", "qwen-max"
-        )
+        screen = await _deep_link_to_anthropic_key(host, pilot, "qwencloud", "qwen-max")
         mode = screen.query_one("#settings-provider-api-mode", Select)
         assert mode.value == "responses"
 
@@ -330,7 +328,6 @@ async def test_a_value_equal_to_the_saved_default_s_is_staged_in_a_linked_form(
 
         assert screen._provider_draft_value("credential_env_var") == "SHARED_KEY_VAR"
         assert _staged_pair(screen) == _LINKED_PAIR
-
 
 
 @pytest.mark.asyncio

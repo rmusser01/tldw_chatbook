@@ -101,7 +101,11 @@ def _endpoint(fields):
         # ready, or the name is no name. The Test result's Key row says why.
         (_ENV, _NOT_READY, "not ready · Test (t) says why"),
         ({}, _NOT_READY, "not ready · Test (t) says why"),
-        ({"api_key_env": "gpu-key"}, _NOT_READY, "invalid Env var · edit this endpoint"),
+        (
+            {"api_key_env": "gpu-key"},
+            _NOT_READY,
+            "invalid Env var · edit this endpoint",
+        ),
     ],
 )
 def test_a_custom_endpoint_s_key_line_fits_the_row(

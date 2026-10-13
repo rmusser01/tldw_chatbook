@@ -1444,7 +1444,9 @@ async def _open_flashcards_deck(pilot, app, scope):
         The Study window, the deck Select and the card ListView.
     """
     await _until(
-        pilot, lambda: bool(app.screen.query("#view-flashcards-btn")), "the Study screen"
+        pilot,
+        lambda: bool(app.screen.query("#view-flashcards-btn")),
+        "the Study screen",
     )
     await pilot.click("#view-flashcards-btn")
     await _until(pilot, lambda: bool(app.screen.query("#deck-select")), "Flashcards")
@@ -1797,9 +1799,7 @@ async def test_two_awaited_card_list_rebuilds_do_not_interleave():
     app = _study_app_for(scope)
 
     async with app.run_test(size=(180, 60)) as pilot:
-        window, _deck_select, card_list = await _open_flashcards_deck(
-            pilot, app, scope
-        )
+        window, _deck_select, card_list = await _open_flashcards_deck(pilot, app, scope)
         controller = window.flashcards_controller
 
         # Hold both awaited rebuilds open together. The gate stops the one
