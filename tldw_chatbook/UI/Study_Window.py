@@ -381,10 +381,13 @@ class QuizzesWidget(Widget):
 
             with Vertical(classes="quiz-attempt-area"):
                 yield Label("Attempt Quiz:", classes="subsection-title")
+                # Quiz names, question text and answers print as typed.
                 yield Static(
-                    "Create a quiz to begin practicing.", id="quiz-attempt-status"
+                    "Create a quiz to begin practicing.",
+                    id="quiz-attempt-status",
+                    markup=False,
                 )
-                yield Static("", id="quiz-attempt-question")
+                yield Static("", id="quiz-attempt-question", markup=False)
                 yield Label("Attempt History:", classes="subsection-title")
                 with Horizontal(classes="form-row"):
                     yield Select(
@@ -394,7 +397,7 @@ class QuizzesWidget(Widget):
                         id="quiz-attempt-history-select",
                     )
                     yield Button("Load Attempt", id="load-quiz-attempt-history-button")
-                yield Static("", id="quiz-attempt-history-summary")
+                yield Static("", id="quiz-attempt-history-summary", markup=False)
                 with Horizontal(classes="form-row"):
                     yield Label("Your Answer:", classes="form-label")
                     yield Input(

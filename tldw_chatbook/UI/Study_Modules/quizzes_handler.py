@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
+from rich.text import Text
 from textual.widgets import Input, Label, ListItem, ListView, Select, Static, TextArea
 
 from ...Study_Interop import LocalQuizService, QuizScopeService, ServerQuizService
@@ -385,7 +386,7 @@ class StudyQuizzesController:
 
         quiz_select = self.window.query_one("#quiz-select", Select)
         options = [
-            (str(quiz.get("name") or "Unnamed quiz"), str(quiz.get("backing_id")))
+            (Text(str(quiz.get("name") or "Unnamed quiz")), str(quiz.get("backing_id")))
             for quiz in quizzes
             if quiz.get("backing_id") not in {None, ""}
         ]
@@ -451,7 +452,7 @@ class StudyQuizzesController:
         else:
             for question in questions:
                 label = str(question.get("question_text") or "Untitled question")
-                await list_view.append(ListItem(Label(label)))
+                await list_view.append(ListItem(Label(label, markup=False)))
             list_view.index = 0
 
         if self.current_attempt_id is None:
