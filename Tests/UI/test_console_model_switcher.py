@@ -1525,9 +1525,17 @@ async def test_a_reopened_list_highlights_nothing_while_its_providers_models_arr
     Enter applies it. Until then the list held the NEEDS SETUP "(any model)"
     row while the catalog loaded, then up to three NEEDS SETUP catalog rows
     while readiness was asked again, and a fast Enter on either opened
-    Settings again. Nothing is highlighted until both have answered."""
+    Settings again. Nothing is highlighted until both have answered.
+
+    Final fix wave 4: readiness is asked again as soon as the provider's own
+    catalog answers, not after every later provider's catalog, so a rebuild
+    in between (a local server's probe settling) highlights no NEEDS SETUP
+    catalog row. That early Enter says providers are still checked, and the
+    line goes when the list settles, as it does for the first readiness."""
     catalog_release = asyncio.Event()
+    later_release = asyncio.Event()  # the provider after it in the order
     readiness_release = threading.Event()
+    checking = "Still checking providers: press Enter again when the list fills."
     recorder = Recorder(ready=frozenset({"openrouter"}))
     others = recorder.readiness
 
@@ -1544,7 +1552,12 @@ async def test_a_reopened_list_highlights_nothing_while_its_providers_models_arr
         if provider == "openai":
             await catalog_release.wait()
             return ["gpt-new", "gpt-old"]
+        await later_release.wait()
         return ["openai/gpt-y"]
+
+    def error_line() -> str:
+        error = switcher.query_one("#console-popover-error")
+        return str(error.render()) if error.display else ""
 
     async def enter_does_nothing(pilot) -> None:
         assert switcher.highlighted_row() is None
@@ -1552,6 +1565,7 @@ async def test_a_reopened_list_highlights_nothing_while_its_providers_models_arr
         await pilot.pause()
         assert app.screen is switcher
         assert recorder.setup == [] and recorder.submissions == []
+        assert error_line() == checking
 
     recorder.readiness = readiness
     app = SwitcherHarness()
@@ -1578,19 +1592,33 @@ async def test_a_reopened_list_highlights_nothing_while_its_providers_models_arr
                 await pilot.pause()
                 if "openai" in switcher._catalogs:
                     break
-            assert "openai" in switcher._readiness_pending
+            # OpenRouter's catalog is still loading; a rebuild lands now.
+            assert switcher._catalog_state.get("openrouter") == "loading"
+            switcher._rebuild_rows()
             assert ("setup", "openai", "gpt-new") in _row_keys(switcher)
             await enter_does_nothing(pilot)
+            assert "openai" in switcher._readiness_pending
+
+            later_release.set()
+            for _ in range(40):
+                await pilot.pause()
+                if switcher._catalog_state.get("openrouter") == "ready":
+                    break
+            assert switcher._catalog_state.get("openrouter") == "ready"
+            assert switcher.highlighted_row() is None
+            assert error_line() == checking
 
             readiness_release.set()
             await _settle(app, pilot)
             row = switcher.highlighted_row()
             assert row is not None
             assert (row.kind, row.provider, row.model) == ("pair", "openai", "gpt-new")
+            assert error_line() == ""
             await pilot.press("enter")
             await pilot.pause()
     finally:
         catalog_release.set()
+        later_release.set()
         readiness_release.set()
 
     applied = [
@@ -1599,6 +1627,59 @@ async def test_a_reopened_list_highlights_nothing_while_its_providers_models_arr
     ]
     assert applied == [("openai", "gpt-new")]
     assert recorder.setup == []
+
+
+async def test_the_wait_line_goes_when_the_returned_catalog_lists_nothing() -> None:
+    """Final fix wave 4, item 2. An early Enter while the returned provider's
+    catalog loads says providers are still checked. A catalog that lists
+    nothing starts no second readiness, and the line still goes when it
+    settles."""
+    release = asyncio.Event()
+    recorder = Recorder(ready=frozenset({"openrouter"}))
+    others = recorder.readiness
+
+    def readiness(provider: str, model: str | None) -> ConsoleSettingsReadiness:
+        verdict = others(provider, model)
+        return NO_MODEL if provider == "openai" else verdict
+
+    async def catalog(provider: str) -> list[str]:
+        if provider == "openai":
+            await release.wait()
+            return []
+        return ["openai/gpt-y"]
+
+    recorder.readiness = readiness
+    app = SwitcherHarness()
+    try:
+        async with app.run_test(size=(211, 44)) as pilot:
+            switcher = build_switcher(
+                recorder,
+                draft=_draft("openrouter", "openai/gpt-y"),
+                providers_models={"OpenAI": [], "OpenRouter": []},
+                catalog_loader=catalog,
+                query="OpenAI ",
+                reopened_provider="openai",
+            )
+            app.push_screen(switcher, callback=lambda result: None)
+            for _ in range(40):
+                await pilot.pause()
+                if switcher._catalog_state.get("openai") == "loading":
+                    break
+            await pilot.press("enter")
+            await pilot.pause()
+            error = switcher.query_one("#console-popover-error")
+            assert error.display and str(error.render()) == (
+                "Still checking providers: press Enter again when the list fills."
+            )
+
+            release.set()
+            await _settle(app, pilot)
+            assert switcher._catalog_state.get("openai") == "empty"
+            assert not error.display and str(error.render()) == ""
+    finally:
+        release.set()
+
+    assert recorder.setup == [] and recorder.submissions == []
 
 
 @pytest.mark.parametrize(

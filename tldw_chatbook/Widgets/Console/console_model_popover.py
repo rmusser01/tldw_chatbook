@@ -916,8 +916,6 @@ class ConsoleModelPopover(
         if not self.is_mounted:
             return
         self._rebuild_rows()
-        if self._first_readiness_done and self._error == _CHECKING_ERROR:
-            self._set_error("")  # the wait is over; any other error still holds
         self._sync_find_placeholder()
         self._load_ready_catalogs(tuple(resolved))
         self._offer_probes(resolved)
@@ -1007,18 +1005,13 @@ class ConsoleModelPopover(
             self._catalog_state[key] = "ready" if models else "empty"
             if models:
                 self._catalogs[key] = models
+                # Asked again before the next provider's await, so it is
+                # pending, not "ready" and model_missing, while that loads.
+                # A popped screen stays "mounted".
+                if self.is_attached and _only_needs_a_model(self._readiness.get(key)):
+                    self._request_readiness((key,), refresh=True)
         if not self.is_mounted:
             return
-        if self.is_attached:  # A popped screen stays "mounted".
-            self._request_readiness(
-                tuple(
-                    key
-                    for key in providers
-                    if key in self._catalogs
-                    and _only_needs_a_model(self._readiness.get(key))
-                ),
-                refresh=True,
-            )
         self._rebuild_rows()
         self._sync_find_placeholder()
 
@@ -1523,6 +1516,12 @@ class ConsoleModelPopover(
                 for row in self._rows
             )
         self._set_highlight(self._highlight_target())
+        if (
+            self._error == _CHECKING_ERROR
+            and self._first_readiness_done
+            and not self._returned_models_arriving()
+        ):
+            self._set_error("")  # the wait is over; any other error still holds
         self._sync_list_height()
         self.call_after_refresh(self._sync_list_height)
 
@@ -1530,6 +1529,20 @@ class ConsoleModelPopover(
         """Headers and info rows never; NEEDS SETUP rows not while picking."""
         return row.kind not in {"header", "info"} and not (
             self._pick_only and row.kind == "setup"
+        )
+
+    def _returned_models_arriving(self) -> bool:
+        """Whether the returned provider's only blocker is its model while its
+        catalog, then its readiness with the catalog's first model, are on the
+        way: the settled list's Enter applies a READY row, not a NEEDS SETUP
+        row's trip to Settings, so nothing is highlighted until then."""
+        reopened = self._reopened
+        return bool(reopened) and (
+            _only_needs_a_model(self._readiness.get(reopened))
+            and (
+                self._catalog_state.get(reopened) == "loading"
+                or reopened in self._readiness_pending
+            )
         )
 
     def _highlight_target(self) -> int | None:
@@ -1553,17 +1566,7 @@ class ConsoleModelPopover(
                 # list a pair whatever its readiness: no row, so a fast Enter
                 # applies neither their copy nor Find's best match.
                 return None
-            if (
-                reopened
-                and _only_needs_a_model(self._readiness.get(reopened))
-                and (
-                    self._catalog_state.get(reopened) == "loading"
-                    or reopened in self._readiness_pending
-                )
-            ):
-                # Its catalog, then its readiness with the catalog's first
-                # model, are on the way: the settled list's Enter applies a
-                # READY row, not this NEEDS SETUP row's trip to Settings.
+            if self._returned_models_arriving():
                 return None
             own = [index for index in selectable if self._leads(self._rows[index])]
             if reopened and not own:
@@ -1759,7 +1762,7 @@ class ConsoleModelPopover(
         """Spec rule 1, worded in one place: with no pair, nothing applies or opens."""
         self._set_error(
             "Choose a model: type to search, then Enter."
-            if self._first_readiness_done
+            if self._first_readiness_done and not self._returned_models_arriving()
             else _CHECKING_ERROR,
             focus=self.query_one("#console-popover-find", Input),
         )

@@ -952,7 +952,8 @@ Settings offers no way back from there, so nothing reopens for it.
   the first of them is highlighted and **Enter** applies it. While that
   catalog and the check it starts are still answering, nothing is
   highlighted, so an early **Enter** neither applies a model nor opens
-  Settings. Otherwise it has
+  Settings; it answers "Still checking providers: press Enter again when
+  the list fills.", and that line goes when they have. Otherwise it has
   none to offer: READY PROVIDERS opens with that provider's own line,
   "<name> · no models reported · type its name and an id". When no
   model is saved for it either, the provider stays under NEEDS SETUP, reading
