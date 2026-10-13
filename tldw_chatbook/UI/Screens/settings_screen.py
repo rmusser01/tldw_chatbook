@@ -13750,7 +13750,7 @@ class SettingsScreen(BaseAppScreen):
         fields = self._provider_return_dirty_field_names()
         if not fields:
             return "No existing provider changes."
-        return f"Existing unsaved changes: {', '.join(fields)}."
+        return f"Unsaved changes: {', '.join(fields)}."  # this visit's too
 
     def _provider_navigation_conflict_copy(self) -> str:
         target = self._provider_navigation_conflict_target

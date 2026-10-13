@@ -1049,6 +1049,13 @@ async def test_recovery_return_without_saving_lands_on_the_same_chat_unchanged(
         )
         assert without_saving.display is True
         assert str(without_saving.label) == "Return without saving"
+        # Capture finding 10b (03c): a key typed on this visit is not an
+        # "existing" change; the summary names it plainly.
+        summary = settings.query_one(
+            "#settings-provider-existing-changes-summary", Static
+        )
+        assert summary.display is True
+        assert str(summary.renderable) == "Unsaved changes: API key."
 
         # R38: both returns that name a destination say Console, and follow
         # the target when it changes kind with no recompose.
