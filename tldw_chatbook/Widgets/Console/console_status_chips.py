@@ -1036,7 +1036,8 @@ class ConsoleStatusChips(Horizontal):
         """Keep a focused cost chip in view; the layout's refit relabels it.
 
         Args:
-            _event: Textual resize notification; width is read from the app.
+            _event: Textual resize notification; unused (the strip and chip
+                sizes are read from the widgets).
         """
         self._keep_cost_chip_in_view()
 
