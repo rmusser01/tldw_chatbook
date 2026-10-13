@@ -615,6 +615,7 @@ async def test_console_memory_save_routes_normalized_values_to_console_section(
         console_values,
         chat_default_values,
         workbench_scope_fallback=False,
+        agents_values=None,
     ) -> None:
         captured.append(
             (
