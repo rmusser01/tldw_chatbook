@@ -948,6 +948,8 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
             real_sync(),
         )
 
+        snapshot = console._console_credential_snapshot
+        console._console_sync_maintenance_close_admission()
         store = ProviderTestEvidenceStore(lambda: harness)
         store.settle(
             store.begin(
@@ -963,6 +965,11 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
             ),
             ProviderProbeResult("unreachable", (), "timeout"),
         )
+        for _ in range(3):
+            console._poll_console_credential_readiness()
+        assert not refreshes
+        assert console._console_credential_snapshot == snapshot
+        console._console_sync_maintenance_resume()
         for _ in range(3):
             console._poll_console_credential_readiness()
         assert len(refreshes) == 1  # Counted before any other tick can run.

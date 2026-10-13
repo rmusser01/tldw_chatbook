@@ -582,3 +582,15 @@ failed recovery clear refusal provenance. Keep closed outcomes and strict owner
 proofs unchanged. Live Active updates must refresh badges without silently
 erasing retained recovery, and a missing target must never donate Retry to its
 neighbor. Mounted evidence does not establish native quit or resource retirement.
+
+## Guard observer entry before fresh configuration reads
+
+**PR3020 required UI qualification / TASK-34807, 2026-10-13.** A real Rules
+maintenance/Stop case blocked in the credential timer before control-bar refresh
+reached its existing configuration guard. Forcing the armed timer with the real
+cold rebuild lock held reproduced both maintenance and rebuild failures; the
+watchdog stack reached provider selection, load_settings and native admission.
+Route the entire observer through the existing nonblocking checked config
+lifetime before it derives readiness. Preserve revision, time-based status and
+evidence gates, then prove the ordinary timer refreshes their fresh values after
+maintenance; increasing the Stop deadline would conceal the entry defect.
