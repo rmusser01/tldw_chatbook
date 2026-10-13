@@ -1,6 +1,9 @@
 ---
 id: TASK-21236
-title: Persona Buddy lazy-controller residue - unlocked setter and an untested ensure-fallbackstatus: Done
+title: >-
+  Persona Buddy lazy-controller residue - unlocked setter and an untested
+  ensure-fallback
+status: Done
 assignee: []
 created_date: '2026-08-23'
 updated_date: 2026-10-12 01:17
