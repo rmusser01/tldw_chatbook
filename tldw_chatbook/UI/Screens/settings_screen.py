@@ -31206,6 +31206,7 @@ class SettingsScreen(BaseAppScreen):
     @on(Button.Pressed, "#settings-provider-return-without-save")
     def handle_provider_return_without_saving(self, event: Button.Pressed) -> None:
         """Reuse the category discard guard before returning unsaved."""
+        from ..Settings_Modules.provider_return import discard_question
 
         event.stop()
         if (
@@ -31239,8 +31240,8 @@ class SettingsScreen(BaseAppScreen):
         try:
             self.app.push_screen(
                 ConfirmationDialog(
-                    title="Revert Settings changes",
-                    message="Discard all unsaved changes to Providers & Models?",
+                    title="Return without saving",
+                    message=discard_question(self),
                     confirm_label="Discard changes",
                     cancel_label="Keep editing",
                     confirm_callback=_return_after_revert,

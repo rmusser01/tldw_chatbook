@@ -801,6 +801,9 @@ async def _keep_editing(app, pilot, settings) -> None:
         ),
         "the discard confirmation, with focus on Keep editing",
     )
+    # It names where Discard goes: this Console chat, or Chat settings.
+    destination = settings._provider_return_destination()
+    assert app.screen.message.endswith(f"and return to {destination}?")
     await pilot.press("enter")
     await _until(
         pilot,
@@ -1073,6 +1076,12 @@ async def test_recovery_return_without_saving_lands_on_the_same_chat_unchanged(
             pilot,
             lambda: isinstance(app.screen, ConfirmationDialog),
             "the discard confirmation",
+        )
+        # Capture finding 9 (04b): the question says Discard also goes back.
+        assert (app.screen.title, app.screen.message) == (
+            "Return without saving",
+            "Discard all unsaved changes to Providers & Models and return to "
+            "Console?",
         )
         app.screen.query_one("#confirm-button", Button).press()
         await _until(

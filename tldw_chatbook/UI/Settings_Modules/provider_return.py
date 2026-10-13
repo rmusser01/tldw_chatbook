@@ -235,6 +235,23 @@ def can_return_without_saving(screen: SettingsScreen) -> bool:
     return screen._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS)
 
 
+def discard_question(screen: SettingsScreen) -> str:
+    """The question Return without saving asks before it discards.
+
+    Discard changes also goes back, so the question names where to.
+
+    Args:
+        screen: The Settings screen holding the return target.
+
+    Returns:
+        The confirmation's message.
+    """
+    return (
+        "Discard all unsaved changes to Providers & Models and return to "
+        f"{screen._provider_return_destination()}?"
+    )
+
+
 def console_return_lapsed(
     screen: SettingsScreen, target: ProviderSettingsNavigationTarget
 ) -> bool:
