@@ -31,7 +31,7 @@ from Tests.UI.test_settings_configuration_hub import (
     _discovered_model,
 )
 from Tests.UI.test_settings_connect_rows import _until
-from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
+from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 from Tests.UI.test_settings_session_summary_save import (
     _Config as _SessionSummaryConfig,
 )
@@ -773,3 +773,47 @@ async def test_the_saved_model_list_names_every_saved_model(request):
         assert str(line.renderable) == "Saved, not served now: gpt-saved-b"
         assert line.region.height >= 1
 
+
+_EDGED_BUTTONS = (
+    "model-search-picker-custom",
+    "settings-discover-provider-models",
+    "settings-save-discovered-provider-models",
+    "settings-clear-discovered-provider-models",
+)
+
+
+def _edged(button: Button) -> bool:
+    styles = button.styles
+    return styles.border_left[0] == "tall" and styles.border_right[0] == "tall"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_the_cards_buttons_draw_an_edge(request):
+    """Capture round 2, finding 10 (02a, 10b, 06c): "Custom ID", "Discover
+    models" and "Edit in Internal Prompts…" were flat blocks one shade
+    darker than the card with no edge, beside fields that draw one. Like
+    Textual's own buttons they draw an edge on both sides (an input's is on
+    its left only); Discover's row partners match it."""
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        for button_id in _EDGED_BUTTONS:
+            assert _edged(screen.query_one(f"#{button_id}", Button)), button_id
+        screen.query_one(
+            "#settings-advanced-saved-models", Collapsible
+        ).collapsed = False
+        await pilot.pause()
+        discover = screen.query_one("#settings-discover-provider-models", Button)
+        detail = screen.query_one("#settings-detail-pane-body")
+        detail.scroll_to_widget(discover, animate=False)
+        await pilot.pause()
+        painted = _region_rows(screen, discover)[0]
+        assert painted.startswith("▊") and painted.endswith("▎"), painted
+
+        await _click_settings_category(pilot, "console-behavior")
+        await pilot.pause()
+        screen = _active_destination_screen(host)
+        prompt = screen.query_one("#settings-console-context-edit-summary-prompt", Button)
+        assert _edged(prompt)
