@@ -329,6 +329,64 @@ Tests/UI/test_settings_custom_endpoint_default.py::test_revert_to_a_registry_def
 # no lane (8-11 s). With it the Phase 7 block moves five shards on (19 mod 7).
 Tests/UI/test_settings_provider_test_draft.py::test_discovery_row_labels_use_user_vocabulary_not_internal_jargon
 
+# Ruling C16 (2026-10-12): the 27 Tests/UI files the review's fix wave and its
+# rounds added, each 3 of 3 in serial runs alone (seconds in the p7-review-fix
+# lanes report). Whole files; the tail moves another six shards on (27 mod 7).
+# R2 F1 = R1 #12: a dropped Clear of the API key does not come back.
+Tests/UI/test_settings_api_key_clear_reset.py
+# R1 #10 (C4): the API key row follows an unsaved Env var edit.
+Tests/UI/test_settings_api_key_row_env_var.py
+# R1 #11: the API key row's fixed sentences fit its one line.
+Tests/UI/test_settings_api_key_row_fits.py
+# R1 #4 and #26 (C2, C5): the API key row names only the key that works there.
+Tests/UI/test_settings_api_key_row_help.py
+# R1 #2: an emptied Default model is not rebuilt as the text None.
+Tests/UI/test_settings_blank_model_card_rebuild.py
+# R1 #9, #18, #21 and #24 (C3): one Source word for one state on Connect.
+Tests/UI/test_settings_connect_source_words.py
+# R3 #10: the two free-text Side chat fields take their row.
+Tests/UI/test_settings_console_side_chat_field_width.py
+# R2 F6: a staged Context window Reset reads as an edit.
+Tests/UI/test_settings_context_window_staged_reset.py
+# R3 #3: fast typing keeps the Model field in Custom ID mode.
+Tests/UI/test_settings_custom_id_fast_typing.py
+# R1 #7: Model list over an invalid Custom ID puts the model back.
+Tests/UI/test_settings_custom_id_model_list_rollback.py
+# R1 #1 = R2 F2 (C1, f1-N1): a deep link's first edit keeps the linked provider.
+Tests/UI/test_settings_deep_link_first_edit.py
+# R3 #1 and #2: Down walks the open model list; Enter picks the id typed in full.
+Tests/UI/test_settings_default_model_list_keys.py
+# R2 F3: Revert and a deep link drop the discovery listing.
+Tests/UI/test_settings_discovery_listing_dropped.py
+# R1 #25 (C4, f1-N2): a key pasted into Env var is not repeated in other rows.
+Tests/UI/test_settings_env_var_not_echoed.py
+# R2 F4 and F5: the Key check and Endpoint key rows refresh as they were composed.
+Tests/UI/test_settings_inspector_rows_refresh.py
+# R1 #6: an env var name that is no name is invalid settings, not an exception.
+Tests/UI/test_settings_invalid_env_var_name.py
+# R2 card note (a2-N2): the Key check verdict reads the credential Save keeps.
+Tests/UI/test_settings_key_check_env_var_draft.py
+# R1 #23: a Model defaults field the provider does not accept is composed blank.
+Tests/UI/test_settings_model_defaults_hidden_field_blank.py
+# Fix round 1, finding 17: the picker sync ends quietly when its field is gone.
+Tests/UI/test_settings_model_picker_sync_teardown.py
+# R1 #29 (C6): Settings spells a number one way.
+Tests/UI/test_settings_number_spelling.py
+# R1 #3 and R3 #9 (a2-N1): the restored-OpenAI review row is read again.
+Tests/UI/test_settings_openai_reconnect_reread.py
+# R1 #13 and #14: literal rows print a provider's name without escaping it.
+Tests/UI/test_settings_plain_provider_names.py
+# R2 F10: arriving on the Provider control does not open its list.
+Tests/UI/test_settings_provider_list_arrival.py
+# R1 #5: Revert shows the saved provider's Model defaults rows.
+Tests/UI/test_settings_revert_model_defaults_rows.py
+# R2 "outside the diff" (C9): Discover and Clear never cancel Save selected.
+Tests/UI/test_settings_save_selected_not_cancelled.py
+# R3 #4 (C7): no assumed window for a server that reports its own.
+Tests/UI/test_settings_server_reported_window.py
+# R2 F8 (C8): the quit summary's duration saves on Enter or on leaving the field.
+Tests/UI/test_settings_session_summary_save.py
+
 # Phase 7's Settings files: about half of the lane's pytest minutes on CI. They sit
 # at the end, in this order, so round-robin over seven shards spreads them and no
 # other file's shard depends on them. Append new entries below this block: one

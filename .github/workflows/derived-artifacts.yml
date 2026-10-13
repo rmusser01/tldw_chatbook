@@ -177,6 +177,8 @@ jobs:
             'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/settings_screen.py]' \
             'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Settings_Modules/providers_models_card.py]' \
             'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Settings_Modules/settings_field_rows.py]' \
+            Tests/Chat/test_console_value_layers_skipped_model_defaults.py \
+            Tests/Widgets/test_model_search_picker_list_keys.py \
             --timeout=180 \
             --tb=short
 

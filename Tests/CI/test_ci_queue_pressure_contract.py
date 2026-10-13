@@ -121,6 +121,11 @@ FAST_LANE_TARGETS = (
     "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/settings_screen.py]",
     "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Settings_Modules/providers_models_card.py]",
     "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Settings_Modules/settings_field_rows.py]",
+    # Ruling C16 (2026-10-12): the review's fix wave added these two non-UI
+    # files and no lane ran them. R3 #15's Source-word resolver (pure, under a
+    # second) and R3 #1, #2, #5-#7's model picker keys (17 bare mounts, ~9 s).
+    "Tests/Chat/test_console_value_layers_skipped_model_defaults.py",
+    "Tests/Widgets/test_model_search_picker_list_keys.py",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

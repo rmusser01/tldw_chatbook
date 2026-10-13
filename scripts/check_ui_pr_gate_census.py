@@ -291,7 +291,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # tail's files four shards on (18 mod 7): the replay is re-run after them.
 # Integrating that review added one more, 210: the Saved model list's row-words
 # test, red in no lane since its rows became Text (five shards on, 19 mod 7).
-MINIMUM_FILES = 225
+# Ruling C16 (2026-10-12) raised it by 27, to 237: the Tests/UI files the
+# review's fix wave and rounds added, each 3 of 3 serial alone (tail +6 shards).
+MINIMUM_FILES = 252
 
 
 def read_census(path: Path) -> list[str]:
