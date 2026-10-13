@@ -12961,7 +12961,9 @@ class ChatScreen(BaseAppScreen):
 
         if _console_screen_is_torn_down(self) or not workspace_context.is_attached:
             return
-        state = self._workspace._build_console_workspace_context_state()
+        # The state the tray shows: this runs after every tray rebuild, and a
+        # fresh build here would queue work that pushes state again.
+        state = workspace_context.state
 
         if not self.query("#console-new-workspace-conversation"):
             new_button = Button(
