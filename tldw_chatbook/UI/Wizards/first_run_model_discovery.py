@@ -162,12 +162,22 @@ def note_probe_failure(owner: Any, failure: str, checked: Any) -> None:
 
     ``checked`` is the discovery key or Test identity the check ran under.
     From then on the Provider step's Authentication section is not called
-    optional while it shows that connection (see ``auth_title``).
+    optional while it shows that connection (see ``auth_title``), and the
+    section is scrolled into view: the line says "Add one under
+    Authentication", and at 211x44 it sat below the step's fold.
     """
 
     if failure == wizard_state.PROVIDER_PROBE_KEY_REQUIRED:
         owner._key_required_at = checked.connection_identity
         owner._refresh_auth_readiness()
+        auth = owner.query_one("#setup-provider-auth-toggle")
+        # After the refresh, so the line's new height is laid out first.
+        # ponytail: a check settled before the step's first layout (the app
+        # mid-batch) finds no size and does not scroll; checks are network
+        # round trips, so retry on the step's Resize only if that is seen.
+        owner.call_after_refresh(
+            lambda: auth.is_attached and auth.scroll_visible(animate=False)
+        )
 
 
 def note_probe_reached(owner: Any, checked: Any, endpoint: str = "reachable") -> None:

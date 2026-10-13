@@ -13573,6 +13573,77 @@ async def test_a_401_to_a_test_that_sent_no_key_asks_for_a_key() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("check", ["test", "listing"])
+async def test_a_check_that_asks_for_a_key_brings_authentication_into_view(check):
+    """TASK-33008 capture 06b at 211x44: Test said "Add one under
+    Authentication" while that section sat below the step's fold, only its
+    top border showing. The model listing that runs on picking the provider
+    says the same line and goes through the same mark."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+
+    needs_key = ModelDiscoveryResult(
+        provider="llama_cpp",
+        provider_list_key="llama_cpp",
+        endpoint_fingerprint="safe-fingerprint",
+        status="error",
+        error=ModelDiscoveryError(
+            kind="missing_credentials",
+            message="The models endpoint rejected the configured credentials.",
+            recovery_hint="Check the API key configured for this provider.",
+            category="unauthorized",
+        ),
+    )
+    listing = needs_key if check == "listing" else _typed_model_discovery_result(
+        "llama_cpp"
+    )
+    wizard = _make_wizard()
+    wizard.app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(return_value=listing)
+    )
+    app = _StyledHostApp(wizard)  # the step's fold comes from the app's CSS
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        step = container.steps[provider_index]
+        step._local_discover = AsyncMock(return_value=())
+        step._probe = AsyncMock(
+            return_value=SettingsEndpointProbeOutcome(
+                state="unreachable", summary="401 unauthorized", category="unauthorized"
+            )
+        )
+        container.show_step(provider_index)
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if step._selected_discovery_state in {"failed", "complete"}:
+                break
+        status = step.query_one("#setup-provider-probe-status", Static)
+        if check == "test":
+            test_button = step.query_one("#setup-provider-test", Button)
+            test_button.focus()
+            test_button.press()
+            for _ in range(40):
+                await pilot.pause(0.05)
+                if str(status.render()).startswith("✗"):
+                    break
+        await pilot.pause(0.1)
+
+        assert "needs an API key and none was set" in str(status.render())
+        auth = step.query_one("#setup-provider-auth-toggle", Collapsible)
+        assert str(auth.title) == "Authentication"
+        assert step.scrollable_content_region.contains_region(auth.region), (
+            auth.region,
+            step.scrollable_content_region,
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("model_ids", "line"),
     [
