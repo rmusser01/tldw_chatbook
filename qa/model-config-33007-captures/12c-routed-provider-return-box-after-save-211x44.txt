@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: No changes · edits save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)    │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │                                                                                                                            │  │  │ No unsaved changes                      │
+│  Core                        │  │  │   Connect                                                                                                                  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │  Provider                │ Groq                               new-chat default  4 of 60 configured · listed first          │  │  │  Save (s) — no changes                  │
+│    > Providers & Models      │  │  │  API key                 │ Paste to replace           Clear   saved in config   hidden · ctrl+l clears the saved key       │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │  Env var                 │ GROQ_API_KEY                       not set           safer: a variable's name, never the key    │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │  Endpoint                │ https://api.groq.com/openai/v1     built-in          blank uses the provider default            │  │  │ file.                                   │
+│  Interface                   │  │  │  Key check                Ready · not tested                                                                  Test (t)     │  │  │ Applies to                              │
+│      Appearance              │  │  │   Provider settings saved: new chats and open chats nobody has used yet take them; chats with work keep their own          │  │  │  New chats: yes (Ctrl+T, temporary,     │
+│      Theme                   │  │  │   settings (change them in Console with Alt+M).                                                                            │  │  │  workspace)                             │
+│      Splash Screen           │  │  │                                                                                                                            │  │  │  Unused open chats: follow the saved    │
+│      Console Behavior        │  │  │   Default model for new chats                                                                                              │  │  │  default                                │
+│  Data & Privacy              │  │  │  Model                   │ llama-3.3-70b-versatile            new-chat default  type to search · Custom ID for others      │  │  │  Chats with work: keep their own;       │
+│      Storage                 │  │  │  Applies to               new chats; open chat “Groq chat” keeps Groq · llama-3.3-70b-versatile.                           │  │  │  switch there with Alt+M                │
+│      Workspaces              │  │  │   Credential saved. Return to Chat settings to check readiness; provider acceptance is not yet verified.                   │  │  │  Model defaults: chats that switch to   │
+│      Tool Profiles           │  │  │   Return to Chat settings                                                                                                  │  │  │  this model pick them up                │
+│      Privacy & Security      │  │  │   Stay in Settings                                                                                                         │  │  │ Next new chat will use                  │
+│      Network                 │  │  │   ▼ Model defaults · Groq · llama-3.3-70b-versatile                                                                        │  │  │  Groq · llama-3.3-70b-versatile         │
+│      My Profile              │  │  │  Temperature             │ 0.0 - 2.0      Console Behavior  inherits 0.6                                                   │  │  │  T 0.6 · max 8192 · stream Off          │
+│  Troubleshooting             │  │  │  Max tokens              │ tokens         provider          inherits 8192                                                  │  │  │ Focused field guide                   ▃ │
+│      Diagnostics (view)      │  │  │  Streaming               │ Inherit     ▼  provider          inherits Off                                                   │  │  │  Focused setting: None — Tab to a       │
+│      About (view)            │  │  │   ▶ Sampling · all inherit · Groq does not accept 8 fields (open to list them)                                             │  │  │  setting                                │
+│      Agents                  │  │  │                                                                                                                            │  │  │  Purpose: Configure the default         │
+│  Expert                      │  │  │   Advanced                                                                                                                 │  │  │  provider, model, endpoint, and         │
+│      Hooks                   │  │  │   ▶ Context window · unknown, 32,000 assumed · enter the model's documented limit                                          │  │  │  credential source.                     │
+│      Internal Prompts        │  │  │   ▶ Saved model list · 6 saved in config · none discovered                                                                 │  │  │  Save: edits save with s · r reverts    │
+│      Advanced Config         │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │  Validation: test provider readiness    │
+│   Domain Defaults ▸ (11)     │  │  │   ▶ Session summary on quit · applies immediately · Off                                                                    │  │  │  before saving these defaults           │
+│                              │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  ▶ config key                           │
+│                              │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │ Key                                     │
+│                              │  │  │                                                                                                                            │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
