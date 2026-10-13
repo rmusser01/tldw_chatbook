@@ -173,8 +173,8 @@ _BUDGETS: dict[str, int] = {
     # round 1 lowers it to 2,367 (the custom-endpoint sentence is the
     # screen's own; the quit summary's controls read the screen's values).
     # Fix round 2: an Env var edit drops the "invalid" verdict only when the
-    # saved name is what is invalid (+4): 2,371.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2371,
+    # saved name is what is invalid, read only then (+5): 2,372.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2372,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 722,

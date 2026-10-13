@@ -540,8 +540,9 @@ def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
         return "invalid", ENV_VAR_NOT_A_NAME_HELP
     # A typed name stands in only for a saved one that is no name: another
     # cause (a malformed table) is still there after Save.
-    saved_name = screen._provider_credential_env_var(provider)
-    replaced = env_edit and screen._validate_credential_env_var(saved_name)
+    replaced = env_edit and screen._validate_credential_env_var(
+        screen._provider_credential_env_var(provider)
+    )
     if readiness.reason == "Invalid provider settings" and not replaced:
         return "invalid", API_KEY_INVALID_HELP
     if "api_key" in dirty:
