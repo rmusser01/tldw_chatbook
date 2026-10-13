@@ -167,8 +167,10 @@ _BUDGETS: dict[str, int] = {
     # two instant-apply rows' help leads with "Applies immediately." (+0).
     # Capture round 2 A1: the Inspector's Save row says how edits save,
     # never "staged" (+1): 33,913; the Inspector's draft line names the
-    # unsaved fields, one list behind it and the count (+23): 33,936.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33936,
+    # unsaved fields, one list behind it and the count (+23): 33,936; the
+    # provider list's "Enter provider ID" has no heading of its own, and
+    # the guide calls it that, not "Manual" (+4): 33,940.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33940,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

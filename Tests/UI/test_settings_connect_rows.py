@@ -543,3 +543,43 @@ async def test_a_typed_name_prefix_highlights_the_provider_it_starts(request):
         await pilot.press("enter")
         await _until(pilot, lambda: not picker.display)
         assert _held(screen) == "llama_cpp"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)], ids=["211x44", "235x52"])
+async def test_the_filtered_list_shows_enter_provider_id_and_the_guide_names_it(
+    request, monkeypatch, size
+):
+    """Capture round 2, finding 8 (09a, 09b): "llama" filled the ten-row
+    list down to an "Other" heading whose only row, "Enter provider ID", sat
+    below the fold, and the Inspector said "use Manual for custom aliases",
+    a name the list never shows. The action is the list's last row with no
+    heading of its own, and the guide calls it by that name."""
+    _no_provider_key_env(monkeypatch)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": dict(_SAVED_KEY)}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _type_filter(pilot, screen, "llama")
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+
+        prompts = [
+            str(picker.get_option_at_index(index).prompt)
+            for index in range(picker.option_count)
+        ]
+        assert "Other" not in prompts
+        assert prompts[-1] == "Enter provider ID"
+        painted = "\n".join(_region_rows(screen, picker))
+        assert "Enter provider ID" in painted, painted
+
+        validation = next(
+            str(row.renderable)
+            for row in screen.query(".settings-detail-row")
+            if str(row.id or "").startswith("settings-provider-field-guide-")
+            and str(row.renderable).startswith("Validation:")
+        )
+        assert "Enter provider ID" in validation and "Manual" not in validation

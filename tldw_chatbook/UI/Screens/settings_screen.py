@@ -15476,13 +15476,16 @@ class SettingsScreen(BaseAppScreen):
     ) -> list[Option]:
         options: list[Option] = []
         for group in groups:
-            options.append(
-                _SettingsProviderPickerOption(
-                    Text(group.label, style="bold"),
-                    option_id=f"provider-picker-group-{group.group_id}",
-                    heading=True,
+            # Capture round 2 (finding 8): "Enter provider ID" needs no
+            # heading, which sat alone at the fold with its row below.
+            if group.group_id != "actions":
+                options.append(
+                    _SettingsProviderPickerOption(
+                        Text(group.label, style="bold"),
+                        option_id=f"provider-picker-group-{group.group_id}",
+                        heading=True,
+                    )
                 )
-            )
             options.extend(
                 _SettingsProviderPickerOption(
                     Text(option.label),
@@ -18226,7 +18229,8 @@ class SettingsScreen(BaseAppScreen):
                 ("Saved as", "chat_defaults.provider"),
                 (
                     "Validation",
-                    "choose a catalog provider or use Manual for custom aliases",
+                    "choose one from the list, or its last row, Enter provider "
+                    "ID, for any other",
                 ),
             )
         if field_id == "settings-provider-manual-value":

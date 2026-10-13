@@ -3733,8 +3733,10 @@ async def test_settings_provider_category_lists_console_supported_catalog(reques
         assert "local_vllm" not in catalog_line
         assert "custom_2" not in catalog_line
         assert str(manual.renderable) == (
-            "Choose a catalog provider (type in the open list to jump to one), "
-            "or use Manual / custom provider for other keys."
+            # Capture round 2, finding 8, rewritten on purpose: the list
+            # calls the action "Enter provider ID", never "Manual".
+            "Choose a provider in the open list (type to filter it), or its "
+            "last row, Enter provider ID, for any other key."
         )
 
 

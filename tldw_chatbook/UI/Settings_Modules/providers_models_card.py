@@ -195,8 +195,8 @@ APPLIES_TO_INSPECTOR_ROWS = (
 UNSAVED_EDITS_NOTE = "Edits apply only after save (s)."
 #: The card's old reference rows, now in the Inspector's config-key disclosure.
 MANUAL_ENTRY_POLICY_COPY = (
-    "Choose a catalog provider (type in the open list to jump to one), "
-    "or use Manual / custom provider for other keys."
+    "Choose a provider in the open list (type to filter it), or its last "
+    "row, Enter provider ID, for any other key."
 )
 SAMPLING_ROUTE_COPY = "Global fallbacks are in Console Behavior."
 #: TASK-33007.6: Advanced follows Model defaults as closed one-row
