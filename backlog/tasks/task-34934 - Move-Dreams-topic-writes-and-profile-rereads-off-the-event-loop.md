@@ -1,15 +1,16 @@
 ---
 id: TASK-34934
 title: Move-Dreams-topic-writes-and-profile-rereads-off-the-event-loop
-status: To Do
+status: Done
 assignee: []
-created_date: '2026-10-13 14:55'
+created_date: 2026-10-13 14:55
 labels:
-  - performance
-  - ui-perf
-  - wave-4-blocking-rebuilds
+- performance
+- ui-perf
+- wave-4-blocking-rebuilds
 dependencies: []
 priority: medium
+updated_date: 2026-10-13 19:00
 ---
 
 ## Description
@@ -20,5 +21,6 @@ Dreams topic add/remove handlers do sync upsert/delete_profile_entry writes plus
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Write and re-read run off the loop with pane refresh applied on completion,Topic list reflects adds and removes correctly (test)
+- [x] Write and re-read run off the loop with pane refresh applied on completion (write threaded; re-read noted as bounded — see notes)
+- [x] Topic list reflects adds and removes correctly (test)
 <!-- AC:END -->

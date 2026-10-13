@@ -33034,24 +33034,34 @@ class SettingsScreen(BaseAppScreen):
             )
         except (QueryError, TypeError, ValueError):
             weight = float(DREAMS_TOPIC_DEFAULT_WEIGHT)
-        try:
-            dreams_db.upsert_profile_entry(
-                "topic",
-                text_value,
-                weight=weight,
-                searchable=1,
-                source="user",
+        async def _apply_topic_add() -> None:
+            # task-34934: the fsync'd write runs off the loop; the result
+            # copy and pane refresh apply on completion, on the loop.
+            try:
+                await asyncio.to_thread(
+                    dreams_db.upsert_profile_entry,
+                    "topic",
+                    text_value,
+                    weight=weight,
+                    searchable=1,
+                    source="user",
+                )
+            except Exception as error:  # noqa: BLE001 - surfaced in the result row
+                self._settings_dreams_result = f"Topic not added: {error}"
+                self._set_static_text(
+                    "#settings-dreams-result", self._settings_dreams_result
+                )
+                return
+            self._settings_dreams_result = (
+                f"Added '{text_value}' — yours; the cycle never overwrites it."
             )
-        except Exception as error:  # noqa: BLE001 - surfaced in the result row
-            self._settings_dreams_result = f"Topic not added: {error}"
-            self._set_static_text(
-                "#settings-dreams-result", self._settings_dreams_result
-            )
-            return
-        self._settings_dreams_result = (
-            f"Added '{text_value}' — yours; the cycle never overwrites it."
+            self._refresh_dreams_pane()
+
+        self.run_worker(
+            _apply_topic_add,
+            exclusive=True,
+            group="settings-dreams-topic-write",
         )
-        self._refresh_dreams_pane()
 
     @on(Button.Pressed)
     def handle_dreams_topic_remove_pressed(self, event: Button.Pressed) -> None:
@@ -33069,16 +33079,26 @@ class SettingsScreen(BaseAppScreen):
         dreams_db = self._dreams_db()
         if dreams_db is None or entry_id is None:
             return
-        try:
-            dreams_db.delete_profile_entry(int(entry_id))
-        except Exception as error:  # noqa: BLE001 - surfaced in the result row
-            self._settings_dreams_result = f"Topic not removed: {error}"
-            self._set_static_text(
-                "#settings-dreams-result", self._settings_dreams_result
-            )
-            return
-        self._settings_dreams_result = "Topic removed."
-        self._refresh_dreams_pane()
+        async def _apply_topic_remove() -> None:
+            # task-34934: the fsync'd write runs off the loop.
+            try:
+                await asyncio.to_thread(
+                    dreams_db.delete_profile_entry, int(entry_id)
+                )
+            except Exception as error:  # noqa: BLE001 - surfaced in the result row
+                self._settings_dreams_result = f"Topic not removed: {error}"
+                self._set_static_text(
+                    "#settings-dreams-result", self._settings_dreams_result
+                )
+                return
+            self._settings_dreams_result = "Topic removed."
+            self._refresh_dreams_pane()
+
+        self.run_worker(
+            _apply_topic_remove,
+            exclusive=True,
+            group="settings-dreams-topic-write",
+        )
 
     @on(Button.Pressed, "#settings-discover-provider-models")
     def handle_discover_provider_models(self, event: Button.Pressed) -> None:
