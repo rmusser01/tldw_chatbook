@@ -22,6 +22,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Static
 
 from tldw_chatbook.Chat.console_onboarding_state import (
+    CONSOLE_SETUP_CARD_CONTENT_CELLS,
     CONSOLE_SETUP_STEP_THREE_DETAIL,
     ConsoleSetupCardState,
     ConsoleSetupStep,
@@ -172,6 +173,12 @@ def test_a_long_provider_name_never_wraps_the_readiness_word(
     # Capture fix round 2: measured against the card's rule, not a copied 60,
     # so narrowing the card or widening its padding turns this red.
     assert max(cell_len(row) for row in rows) <= _card_content_width()
+
+
+def test_the_name_budget_constant_matches_the_card_rule():
+    """Capture fix round 3: the fit checks above only catch a narrower card;
+    a wider one kept cutting names to the old 60-cell budget, all green."""
+    assert CONSOLE_SETUP_CARD_CONTENT_CELLS == _card_content_width()
 
 
 def test_setup_card_is_wide_enough_for_the_step_three_line():
