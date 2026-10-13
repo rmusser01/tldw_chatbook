@@ -929,3 +929,42 @@ async def test_keep_editing_on_a_kept_draft_under_a_modal_keeps_the_modal(
         assert app.screen is modal
         assert app.screen_stack[-2] is home
         assert cleanups == []
+
+
+async def test_a_raw_edit_left_before_its_change_lands_is_asked_about():
+    """Capture fix 3 round 1, finding 2: leaving Settings by a shortcut before
+    the raw editor's TextArea.Changed lands, save_state named the unsaved
+    categories before it captured the editor's text, so Ctrl+Q from another
+    screen quit without asking about Advanced Config and the edit was lost."""
+    from textual.widgets import TextArea
+
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+    from tldw_chatbook.UI.Settings_Modules.settings_quit_guard import (
+        KEPT_UNSAVED_TITLES,
+    )
+
+    app = _build_test_app(configured_default="settings")
+    async with app.run_test(size=(190, 55)) as pilot:
+        await _until(
+            pilot,
+            lambda: type(app.screen).__name__ == "SettingsScreen",
+            "the Settings screen",
+        )
+        settings = app.screen
+        settings._select_category(SettingsCategoryId.ADVANCED_CONFIG.value)
+        await _until(
+            pilot,
+            lambda: (
+                bool(settings.query("#settings-advanced-config-editor"))
+                and settings._advanced_config_settings is not None
+                and not settings._advanced_config_settings.busy
+            ),
+            "the raw editor to load",
+        )
+        assert not settings._category_has_unsaved_changes(
+            SettingsCategoryId.ADVANCED_CONFIG
+        )
+        editor = settings.query_one("#settings-advanced-config-editor", TextArea)
+        editor.text = editor.text + "\n# typed, its Changed still queued\n"
+        state = settings.save_state()  # no await: Changed is not delivered
+    assert "Advanced Config" in state[KEPT_UNSAVED_TITLES]
