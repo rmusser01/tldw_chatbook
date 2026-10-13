@@ -362,7 +362,9 @@ async def test_switcher_lists_four_groups_of_one_line_pairs() -> None:
             if "Anthropic" in line and "Ready" in line
         ]
         assert len(anthropic_rows) == 3, anthropic_rows
-        assert any("… 1 more Anthropic models" in line for line in lines)
+        # Capture fix 3 finding 2: one more is "model", not "models".
+        assert any("… 1 more Anthropic model" in line for line in lines)
+        assert not any("… 1 more Anthropic models" in line for line in lines)
 
         setup = line_with(lines, "OpenAI", "Not ready · no key")
         assert "(any model)" in setup or "gpt-5.1" in setup
@@ -1077,7 +1079,12 @@ async def test_a_highlight_pair_past_the_match_cap_stays_listed(
             ("openai", kept),
         ]
         more = len(aggregator) + len(own_models) - 30
-        assert any(f"… {more} more matches" in row.text for row in switcher._rows)
+        # Capture fix 3 finding 2: "… 1 more matches" counts one in the singular.
+        matches = "match" if more == 1 else "matches"
+        assert any(
+            row.text == f"    … {more} more {matches} · keep typing"
+            for row in switcher._rows
+        )
         row = switcher.highlighted_row()
         assert row is not None and (row.kind, row.provider, row.model) == (
             "pair",
@@ -1105,6 +1112,40 @@ _EIGHT_ROWS_AHEAD = {
     name: [f"openai-{name}-{number}" for number in range(3)]
     for name in ("Anthropic", "DeepSeek", "Groq")
 }
+
+
+@pytest.mark.parametrize(
+    "more, line",
+    [
+        ({"OpenAI": ["zzq-x"]}, "… 1 more provider needs setup"),
+        (
+            {"OpenAI": ["zzq-x"], "OpenRouter": ["zzq-y"]},
+            "… 2 more providers need setup",
+        ),
+    ],
+    ids=["one", "two"],
+)
+async def test_the_needs_setup_overflow_line_counts_one_in_the_singular(
+    more, line
+) -> None:
+    """Capture fix 3 finding 2 (05a, 05c): NEEDS SETUP's last line read
+    "… 1 more providers need setup". Only these providers list a "zzq" id:
+    three fill the group's eight rows, the rest are counted."""
+    recorder = Recorder(ready=frozenset())
+    ahead = {name: [f"zzq-{name}-{number}" for number in range(3)] for name in _EIGHT_ROWS_AHEAD}
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                providers_models={**ahead, **more},
+                query="zzq",
+            ),
+        )
+        texts = [row.text for row in switcher._rows if row.kind == "info"]
+    assert f"    {line} · type a name to find one" in texts, texts
 
 
 @pytest.mark.parametrize(

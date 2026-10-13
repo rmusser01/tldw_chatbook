@@ -1323,7 +1323,8 @@ class ConsoleModelPopover(
                     ready_rows.append(
                         SwitcherRow(
                             "more",
-                            f"    … {more} more {self._display(key)} models",
+                            f"    … {more} more {self._display(key)} "
+                            + ("model" if more == 1 else "models"),
                             provider=key,
                         )
                     )
@@ -1356,11 +1357,10 @@ class ConsoleModelPopover(
                 [match[3] for match in matches], _MATCH_ROWS
             )
             if len(matches) > _MATCH_ROWS:
+                more = len(matches) - _MATCH_ROWS
+                word = "match" if more == 1 else "matches"
                 ready_rows.append(
-                    SwitcherRow(
-                        "info",
-                        f"    … {len(matches) - _MATCH_ROWS} more matches · keep typing",
-                    )
+                    SwitcherRow("info", f"    … {more} more {word} · keep typing")
                 )
             ready_rows.extend(
                 row
@@ -1370,10 +1370,12 @@ class ConsoleModelPopover(
                 for row in self._catalog_status_rows(key, False)
             )
         if setup_extra:
+            # Capture fix 3 finding 2: one more is counted in the singular.
+            need = "provider needs" if setup_extra == 1 else "providers need"
             setup_rows.append(
                 SwitcherRow(
                     "info",
-                    f"    … {setup_extra} more providers need setup · type a name to find one",
+                    f"    … {setup_extra} more {need} setup · type a name to find one",
                 )
             )
         group(
