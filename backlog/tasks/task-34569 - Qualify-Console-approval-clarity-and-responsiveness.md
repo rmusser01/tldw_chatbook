@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-06 06:42'
-updated_date: '2026-10-12 05:35'
+updated_date: '2026-10-13 18:41'
 labels: []
 dependencies:
   - TASK-34564
@@ -65,6 +65,8 @@ Current-dev PR3036 integration: follow Docs/superpowers/plans/2026-10-11-pr3036-
 
 Scoped dispatch-plan preflight correction: Ruling: preserve approved pre-edit launch/control/measurement prerequisites and finalize artifacts before final guards/paint timing — product changes cannot follow purported final qualification — costs baseline setup and only affected requalification after later repairs; unavailable actual paint stays open.
 Ruling: require bounded executable approval safety coverage in qualification-task acceptance and refreshed required lanes — local passes cannot protect omitted privacy/currentness/invocation contracts — costs recurring bounded CI within unchanged limits. Follow the revised current integration Task1 before product edits; preserve source-approved scopes and every historical receipt/acceptance record. No new ADR/ID or product boundary.
+
+2026-10-13 current planning preparation only: actual Rules mergea7bde4e5; queue-armed font6ad961cf (not merged),47 source-bound tests; docs-only approval preparation78e5aff9. Follow appended current preparation in Docs/superpowers/plans/2026-10-11-pr3036-current-dev-integration.md. Preserve152paths/134owners/six task histories/ADR229/current open AC. Actual post3023 merged source binding and pre-edit supported launch/original-control/input-clock contract remain prerequisites before functional release. Preserve config-free Rules Stop/chip/custody/provider seams, existing shared CLI/URL redaction, unchanged caps/census190/P0 selection20/fourprocess/sixlanes. BrowserCDP does not qualify native physical input/paint. ADR required:no new for metadata; existing decisions and required behavior amendments retained. No newID/Done/current acceptance/private-code exception/paid/key/native/publication waiver.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
