@@ -7,6 +7,8 @@ from pathlib import PurePath
 from typing import Any
 from urllib.parse import urlparse
 
+from rich.cells import cell_len, set_cell_size
+
 from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsReadiness,
@@ -255,7 +257,14 @@ def build_console_setup_card_state(
     # Capture finding 12: the word is this chat's provider's, so the step
     # names it; beside "Use detected <server>" an unnamed "Not ready · no
     # key" read as the server's. "Provider" is the callers' fallback, no name.
-    named_word = word if provider_name == "Provider" else f"{provider_name}: {word}"
+    # The card prints this on its own line, 5 cells in from a 60-cell content
+    # width (console_setup_modal._step_text): a long name is cut so the word
+    # is never split by a wrap (TASK-33005.3).
+    budget = 60 - 5 - 2 - cell_len(word)
+    name = provider_name
+    if cell_len(name) > budget:
+        name = set_cell_size(name, budget - 1).rstrip() + "…"
+    named_word = word if provider_name == "Provider" else f"{name}: {word}"
     step_one = ConsoleSetupStep(
         state="done" if provider_done else "active",
         label=(

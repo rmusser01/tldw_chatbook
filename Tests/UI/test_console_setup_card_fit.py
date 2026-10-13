@@ -72,6 +72,87 @@ def test_the_active_steps_readiness_word_gets_its_own_line():
     assert max(cell_len(row) for row in line.split("\n")) <= 60
 
 
+@pytest.mark.parametrize(
+    ("provider_key", "blocker", "category", "url", "word"),
+    [
+        (
+            "oobabooga",
+            "endpoint_unreachable",
+            "connection_refused",
+            "http://127.0.0.1:5000",
+            "Not ready · refused :5000",
+        ),
+        (
+            "oobabooga",
+            "endpoint_unreachable",
+            "connection_error",
+            None,
+            "Not ready · unreachable",
+        ),
+        ("local_llm", "endpoint_not_saved", None, None, "Not ready · endpoint unsaved"),
+    ],
+)
+def test_a_long_provider_name_never_wraps_the_readiness_word(
+    provider_key, blocker, category, url, word
+):
+    """TASK-33008 capture fix round 1: step 1 names the provider before its
+    word, and "Text Generation WebUI (Oobabooga): Not ready · refused :5000"
+    is 65 cells, so ":5000" wrapped alone onto a row, the TASK-33005.3
+    symptom. The name is cut so the word's line fits the card whole."""
+    from tldw_chatbook.Chat.console_onboarding_state import (
+        build_console_setup_card_state,
+    )
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
+    from tldw_chatbook.Chat.provider_catalog import provider_display_name
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderDraftIdentity
+
+    connection = (
+        ProviderDraftIdentity(
+            provider_key=provider_key,
+            connection_identity=canonical_connection_identity(provider_key, url),
+            credential_source="none",
+            credential_revision=0,
+            draft_generation=0,
+        )
+        if url
+        else None
+    )
+    readiness = ConsoleSettingsReadiness(
+        "Not ready",
+        "",
+        False,
+        operability="not_ready",
+        blocker=blocker,
+        recovery_action=(
+            "retry_connection" if blocker == "endpoint_unreachable" else "save_endpoint"
+        ),
+        configuration="configured",
+        credential="not_required",
+        endpoint="unreachable" if blocker == "endpoint_unreachable" else "not_tested",
+        endpoint_category=category,
+        model="unconfirmed",
+        connection=connection,
+    )
+    name = provider_display_name(provider_key)
+    state = build_console_setup_card_state(
+        readiness=readiness,
+        provider_label=name,
+        has_model=True,
+        first_send_completed=False,
+        has_messages=False,
+        guidance_dismissed=False,
+    )
+    rows = ConsoleSetupModal._step_text(1, state.steps[0]).split("\n")
+
+    assert rows[1].endswith(f": {word}")
+    assert rows[1].lstrip().startswith(name[:12])
+    # The card is $ds-size-66 wide: 60 content cells after border and padding.
+    assert max(cell_len(row) for row in rows) <= 60
+
+
 def test_setup_card_is_wide_enough_for_the_step_three_line():
     """AC#1: the full step-3 sentence fits inside the card's content width."""
     step_three = ConsoleSetupStep(
