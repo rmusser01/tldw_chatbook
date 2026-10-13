@@ -12,7 +12,7 @@ labels:
 priority: high
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/3096
-updated_date: 2026-10-13 03:54
+updated_date: 2026-10-13 03:59
 ---
 
 ## Description
@@ -27,7 +27,7 @@ Integrate the already reviewed local structured-document checks and reversible f
 - [x] #2 Targeted verification of affected real storage, source and language preservation, recovery, native editor and import/export paths qualifies the integrated source; conflict resolutions do not weaken authority, exact-source or undo safeguards.
 - [x] #3 Schema and migration allocations are compatible with current dev and scoped lint, formatting, type and security checks introduce no unexplained findings; real upgrade/bootstrap controls cover migration conflicts.
 - [x] #4 An independent requesting-code-review review of the rebased PR range is recorded; Critical and Important findings are fixed or explicitly reconciled with technical evidence before publication.
-- [ ] #5 The existing PR is updated with the reviewed rebased head using an exact expected-head force-with-lease, retains dev as its base and documents actual checks and remaining qualification limits without enabling merge or claiming unverified physical coverage.
+- [x] #5 The existing PR is updated with the reviewed rebased head using an exact expected-head force-with-lease, retains dev as its base and documents actual checks and remaining qualification limits without enabling merge or claiming unverified physical coverage.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -62,11 +62,12 @@ The latest42-case batch remains39pass/3fail; two inherited failures remain RED: 
 Independent final source review accepted159d19cc on pinned74cf with I2/I3 corrected and no unresolved finding in scope. Root verified8526 source hashes,163 feature paths,73 new artifacts and185 unchanged prior artifacts. Reports/manifests under /private/tmp/structured-notes-pr-followup-2026-10-13 preserve exact source/command/head correspondence. Source is ready for exact-lease publication; publication accounting remains pending.
 
 Status remains In Progress under repository DoD: inherited governance/static/recovery/census failures and current-head GitHub/human/merge gates remain. Physical tasks34570/34658 stay open; durable Notes sync34818 remains deferred after1602. No full sweep, physical waiver, merge or auto-merge; original worktrees, backups and evidence are retained.
+Published independently reviewed source159d19cc and accounting headd6632e1f to existing draft PR3096 using the exact expected-head lease against17264512. GitHub confirmed exact head, dev base, draft, no auto-merge and matching final validation notes. This task-only publication accounting preserves all reviewed source/tests; repository DoD limits keep status In Progress.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Reviewed structured Notes fixes and safe Library recovery/attention/quit are integrated on dev74cf92e2 at source159d19cc. Targeted controls and generated guards pass; inherited governance/static/RAG/census and physical/merge gates remain. Exact-head publication accounting is pending.
+Reviewed structured Notes CI fixes and safe Library owner integration published to draft PR3096 against dev74cf92e2. Targeted runtime and artifact checks pass; inherited governance/static/RAG/census failures, physical qualification and current-head GitHub/merge gates remain unwaived.
 <!-- SECTION:FINAL_SUMMARY:END -->
 ## Definition of Done
 <!-- DOD:BEGIN -->
