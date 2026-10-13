@@ -166,8 +166,9 @@ _BUDGETS: dict[str, int] = {
     # button gets a labelled row (+2): 33,912. Capture fix round 1: those
     # two instant-apply rows' help leads with "Applies immediately." (+0).
     # Capture round 2 A1: the Inspector's Save row says how edits save,
-    # never "staged" (+1): 33,913.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33913,
+    # never "staged" (+1): 33,913; the Inspector's draft line names the
+    # unsaved fields, one list behind it and the count (+23): 33,936.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33936,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -197,7 +198,9 @@ _BUDGETS: dict[str, int] = {
     # is a key to clear, one rule for the card and the screen, and a
     # keyless provider's Env var reads optional (+39): 2,406. Capture fix
     # round 1: the API key help's width comment says what is measured (+0).
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2406,
+    # Capture round 2 A1: a filled Endpoint's help drops "required:" (+1):
+    # 2,407.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2407,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and

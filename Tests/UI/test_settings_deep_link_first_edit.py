@@ -484,10 +484,12 @@ async def test_a_linked_pair_never_reads_new_chat_default(request, monkeypatch):
         await pilot.pause()
 
         assert _pair_words(screen) == ["edited *", "edited *"]
+        # Capture round 2, finding 7, rewritten on purpose: the Inspector now
+        # prints this list, so Provider and Model lead, as the card reads.
         assert screen._provider_return_dirty_field_names() == (
-            "API key",
-            "Model",
             "Provider",
+            "Model",
+            "API key",
         )
 
 

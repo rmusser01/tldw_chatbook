@@ -9371,8 +9371,7 @@ class SettingsScreen(BaseAppScreen):
         """
         snapshot = self._speech_tts_draft_snapshot
         if category is SettingsCategoryId.PROVIDERS_MODELS:
-            count = len(self._provider_return_dirty_field_names())
-            count += self._snapshot_preferences_dirty_count()
+            count = len(self._provider_unsaved_field_names())
         elif category is SettingsCategoryId.SPEECH_TTS and snapshot is not None:
             count = snapshot.unsaved_field_count()
         else:
@@ -9386,17 +9385,42 @@ class SettingsScreen(BaseAppScreen):
     )
 
     def _snapshot_preferences_dirty(self) -> bool:
-        return self._snapshot_preferences_dirty_count() > 0
+        return bool(self._snapshot_preferences_dirty_names())
 
-    def _snapshot_preferences_dirty_count(self) -> int:
-        """How many of the two snapshot fields (enabled, keep count) are unsaved."""
+    def _snapshot_preferences_dirty_names(self) -> tuple[str, ...]:
+        """The snapshot fields (enabled, keep count) that are unsaved."""
         loaded = getattr(self, "_snapshot_preferences_loaded", None)
         if loaded is None:
-            return 0
+            return ()
         saved = (loaded.enabled, str(loaded.keep_count))
-        return sum(
-            raw != value for raw, value in zip(self._snapshot_preferences_raw, saved)
+        names = ("Prompt-cache snapshots", "Snapshot keep count")
+        return tuple(
+            name
+            for name, raw, value in zip(names, self._snapshot_preferences_raw, saved)
+            if raw != value
         )
+
+    def _provider_unsaved_field_names(self) -> tuple[str, ...]:
+        """Every unsaved Providers & Models field: the count and the Inspector's list."""
+        return (
+            *self._provider_return_dirty_field_names(),
+            *self._snapshot_preferences_dirty_names(),
+        )
+
+    def _draft_status_copy(self, category: SettingsCategoryId) -> str:
+        """The Inspector's draft line; Providers & Models names what is unsaved.
+
+        #3057 capture round 2 (finding 7): a provider switch reads "2 unsaved"
+        (the provider and the model it cleared), so the line says which two.
+        """
+        if not self._category_has_unsaved_changes(category):
+            return "No unsaved changes"
+        names = (
+            self._provider_unsaved_field_names()
+            if category is SettingsCategoryId.PROVIDERS_MODELS
+            else ()
+        )
+        return f"Unsaved changes: {', '.join(names)}" if names else "Unsaved changes"
 
     @on(Input.Changed, "#settings-snapshot-keep")
     @on(Checkbox.Changed, "#settings-snapshot-enabled")
@@ -10203,10 +10227,9 @@ class SettingsScreen(BaseAppScreen):
 
     def _update_draft_status_widgets(self, category: SettingsCategoryId) -> None:
         has_unsaved_changes = self._category_has_unsaved_changes(category)
-        status = "Unsaved changes" if has_unsaved_changes else "No unsaved changes"
         try:
             self.query_one("#settings-selected-category-draft-status", Static).update(
-                status
+                self._draft_status_copy(category)
             )
         except QueryError:
             pass
@@ -13706,7 +13729,9 @@ class SettingsScreen(BaseAppScreen):
             == "settings_draft"
         }
         names: list[str] = []
-        for key in sorted(draft.dirty_keys | pinned):
+        # Provider, then Model, as the card reads; the rest alphabetically.
+        lead = {"provider": 0, "model": 1}
+        for key in sorted(draft.dirty_keys | pinned, key=lambda k: (lead.get(k, 2), k)):
             label = labels.get(key)
             if label is None and key.startswith("provider_api_mode:"):
                 label = "API mode"
@@ -23728,9 +23753,7 @@ class SettingsScreen(BaseAppScreen):
             f"Selected category: {summary.title}", classes="destination-section"
         )
         yield Static(
-            "Unsaved changes"
-            if self._category_has_unsaved_changes(summary.category)
-            else "No unsaved changes",
+            self._draft_status_copy(summary.category),
             id="settings-selected-category-draft-status",
             classes="destination-section",
         )

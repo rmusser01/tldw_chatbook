@@ -536,3 +536,66 @@ async def test_a_provider_that_needs_no_key_offers_no_clear_and_an_optional_env_
         await pilot.press("x")
         await _until(pilot, lambda: clear.visible)
         assert clear.visible and not clear.disabled
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    ("provider", "settings", "help_line"),
+    [
+        ("llama_cpp", {"api_url": "http://127.0.0.1:9099"}, "the server's base URL"),
+        (
+            "azure",
+            {**_SAVED_KEY, "api_base_url": "https://my-resource.openai.azure.com"},
+            "your resource host",
+        ),
+    ],
+)
+async def test_a_filled_required_endpoint_says_what_it_holds_not_required(
+    request, provider, settings, help_line
+):
+    """Capture round 2, finding 7 (09b): llama.cpp's Endpoint held a URL and
+    still said "required: the server's base URL", which reads as an error.
+    Once the field holds an address the help says what it is; "required:"
+    stays for the empty field (the test above)."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": provider, "model": "m-1"}
+    app.app_config["api_settings"] = {provider: settings}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+
+        assert screen.query_one("#settings-provider-endpoint-value", Input).value
+        assert _text(screen, "#settings-provider-endpoint-source") == (
+            "saved in config"
+        )
+        assert _text(screen, "#settings-provider-endpoint-help") == help_line
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_the_inspector_names_the_fields_a_provider_switch_leaves_unsaved(
+    request,
+):
+    """Capture round 2, finding 7 (09b): choosing one provider read "2
+    unsaved". Both are real (Save writes the provider and the model the
+    switch cleared), so the Inspector names them beside the count."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": dict(_SAVED_KEY)}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        status = "#settings-selected-category-draft-status"
+        assert _text(screen, status) == "No unsaved changes"
+
+        await _type_filter(pilot, screen, "llama")
+        await pilot.press("enter")
+        await _until(pilot, lambda: "llama" in _held(screen).lower())
+        await pilot.pause()
+
+        banner = _text(screen, "#settings-category-state-banner")
+        assert "· 2 unsaved" in banner, banner
+        assert _text(screen, status) == "Unsaved changes: Provider, Model"

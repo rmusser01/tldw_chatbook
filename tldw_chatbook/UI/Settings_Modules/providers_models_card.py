@@ -852,7 +852,8 @@ def endpoint_row_copy(
     else:
         word = BUILT_IN
     if required:
-        return word, f"required: {required}"
+        # A held address is not an error: "required:" is for the empty field.
+        return word, required if endpoint.strip() else f"required: {required}"
     return word, "blank uses the provider default"
 
 
