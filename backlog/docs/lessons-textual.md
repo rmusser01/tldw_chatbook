@@ -250,16 +250,24 @@ widget's own "built" message), and keep a refresh-count only as the bound on a b
 is already laid out and merely growing.
 
 **Recurred under a dialog, TASK-33008 capture fix 4, 2026-10-13 -- it is the ACTIVE
-screen's refresh.** `_on_invoke_later` hands the callback to `app.screen`, and a screen
-that is not current lays out nothing (`Screen._on_timer_update` checks `is_current`). A
-model applied from Switch model synced the Console's status chips while the dialog was
-on top; the cost chip's refit (scheduled with `call_after_refresh`) ran after the
-DIALOG's refresh, read the Console's old chip places, and nothing refitted once the
-dialog closed: 02c drew "Ctx 0% · No". The fix subscribes to the widget's OWN screen's
-`screen_layout_refresh_signal` (published at the end of every `_refresh_layout`) and
-refits when the chip has moved. Rule: for "after MY screen has laid out", use that
-signal, not `call_after_refresh`; a test needs a real `ModalScreen` on top while the
-change is made, or it never sees the gap.
+screen's refresh.** `_on_invoke_later` hands the callback to `app.screen`. The Console
+covered by a `ModalScreen` is still current (`Screen.is_current` counts
+`app._background_screens`, which always holds the screen right under the top one) and
+lays out under the dialog, but a tick after the dialog's own refresh has already run
+the callback: the dialog had nothing to lay out. A probe saw the covered screen report
+`is_current` True and its layout signal fire with the dialog still on top, after the
+callback had run. So the cost chip's refit (scheduled with `call_after_refresh` when
+the Provider and Model chips changed width) read the old chip places: 02c drew
+"Ctx 0% · No". In the real Switch model flow the strip syncs after dismiss, from
+`push_screen`'s result callback, and that callback can still beat the chips' `Layout`
+messages to the Console (red at the base in one of two probe runs). The fix subscribes
+to the widget's OWN screen's `screen_layout_refresh_signal` (published at the end of
+every `_refresh_layout`) and refits when the chip has moved; the per-change
+`call_after_refresh` refits were then deleted, since each one relabelled a second time
+and could draw the stale fit for a tick. Rule: for "after MY screen has laid out", use
+that signal, not `call_after_refresh`. A change made with a real `ModalScreen` on top
+loses the race every time, so that is the deterministic test; without a dialog it is
+lost only some of the time.
 
 ## A pane whose content just fits flips its scrollbar on focus — reserve the gutter
 

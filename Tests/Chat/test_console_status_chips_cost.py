@@ -569,7 +569,10 @@ async def test_the_cost_chip_fits_when_it_is_shown_after_layout() -> None:
 
 class _SwitchModelStandIn(ModalScreen[None]):
     """A dialog over the strip: Enter applies a pair while it is still the
-    active screen, as Switch model's live commit does; Esc closes it."""
+    active screen; Esc closes it. The deterministic stand-in for a refit that
+    runs before the layout that moves the chip: the dialog's refresh runs the
+    callback a tick before the Console under it lays out. (Switch model syncs
+    the strip after dismiss, where that race is lost only some of the time.)"""
 
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("enter", "apply", "Apply"),
