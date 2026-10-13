@@ -16072,6 +16072,11 @@ SmartContentTree Tree > .selected-node {
     border: solid $primary;
 }
 
+
+#setup-model-choice.-status {
+    min-height: $ds-size-0;
+}
+
 .setup-choice-list:focus {
     border: solid $ds-focus-accent;
     background: $ds-focus-bg;

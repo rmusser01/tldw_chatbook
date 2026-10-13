@@ -1239,6 +1239,13 @@ SmartContentTree Tree > .selected-node {
     border: solid $primary;
 }
 
+/* TASK-33008 (capture 06a): the Model step's list holding one status line
+ * (loading, a failure, nothing found) hugs it; the five-row floor drew two
+ * empty rows under the text. */
+#setup-model-choice.-status {
+    min-height: $ds-size-0;
+}
+
 .setup-choice-list:focus {
     border: solid $ds-focus-accent;
     background: $ds-focus-bg;

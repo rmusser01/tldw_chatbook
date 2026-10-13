@@ -183,7 +183,9 @@ class ModelStep(SetupStep):
         with Vertical(classes="setup-model"):
             yield Static("Pick a default model", classes="setup-title")
             yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
-            with SetupRadioSet(id="setup-model-choice", classes="setup-choice-list"):
+            with SetupRadioSet(
+                id="setup-model-choice", classes="setup-choice-list -status"
+            ):
                 yield _status_line("(loading models…)", "setup-model-loading")
             yield Label("Or enter a model name", classes="setup-field-label")
             yield Input(id="setup-model-custom", placeholder="model-id")
@@ -546,6 +548,7 @@ class ModelStep(SetupStep):
         probe_failure = wizard_state.classify_discovery_failure(
             discovery_state, failure_category, key_sent=key_sent
         )
+        radio_set.set_class(not models, "-status")  # the box hugs a status line
         if models:
             # TASK-1503: the first entry (curated-default / top discovery hit)
             # carries a "recommended" tag in its LABEL only; the clean model

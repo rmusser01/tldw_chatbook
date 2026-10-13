@@ -8744,9 +8744,14 @@ async def test_model_status_is_plain_text_that_space_and_enter_cannot_pick(
     Enter on the focused set must neither pick the status nor crash: Textual's
     ``RadioSet.action_toggle_button`` asserts its highlighted child is a
     RadioButton, so an enabled text child there exits the app.
+    TASK-33008 (capture 06a): with the app's CSS the box hugs the line; it
+    kept the model list's five-row floor, two empty rows under the text.
     """
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
+
+    class _StyledStepHost(_StepHost):
+        CSS_PATH = _StyledHostApp.CSS_PATH
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -8755,16 +8760,22 @@ async def test_model_status_is_plain_text_that_space_and_enter_cannot_pick(
         rerun=False,
     )
     step = _model_step(wizard)
-    app = _StepHost(step)
+    app = _StyledStepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
+        step.add_class("active")  # the wizard's CSS hides a step until it shows
         await pilot.pause(0.1)
         # Fence on_show's own no-provider render, so a slow one cannot land
         # after the state under test and replace it.
         step._cancel_model_discovery()
         await step._render_models([], **render_kwargs)
+        await pilot.pause()
         assert _model_status_line(step, line_id) == expected_copy
 
         radio_set = step.query_one("#setup-model-choice", RadioSet)
+        [line] = radio_set.children
+        assert radio_set.size.height == line.outer_size.height, (
+            "empty rows under the status line"
+        )
         radio_set.focus()
         await pilot.pause()
         assert app.focused is radio_set
