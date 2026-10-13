@@ -861,8 +861,8 @@ class ConsoleModelPopover(
             )
 
     def on_resize(self, _event: events.Resize) -> None:
-        """Re-check whether the list must fill the box after a resize."""
-        self.call_after_refresh(self._sync_list_height)
+        """Repack NOT RUNNING for the new width; the rebuild re-checks the fill."""
+        self.call_after_refresh(self._rebuild_rows)
 
     def _sync_list_height(self) -> None:
         """Let the pair list fill the box only once its rows outgrow it.
@@ -1425,8 +1425,8 @@ class ConsoleModelPopover(
         """NOT RUNNING's names in as many rows as the list's width needs.
 
         Round 2 finding 2: one row was cut at the dialog's edge. The width is
-        read when the rows are built (a resize repacks on the next rebuild),
-        less the scrollbar's cells in case the list starts to scroll.
+        read when the rows are built (``on_resize`` rebuilds them), less the
+        scrollbar's cells in case the list starts to scroll.
         """
         pairs = self.query_one("#console-popover-pairs", OptionList)
         width = pairs.content_region.width - pairs.styles.scrollbar_size_vertical

@@ -478,17 +478,36 @@ async def test_an_untouched_mlx_lm_is_not_running_not_ready(servers, owned):
     assert 5678 not in servers.ports  # Never contacted either way.
 
 
-@pytest.mark.parametrize("size", ((211, 44), (120, 44)))
-async def test_the_not_running_line_wraps_so_every_name_shows_whole(servers, size):
+_UNTOUCHED = (
+    *("ollama", "tabbyapi", "aphrodite", "vllm"),
+    *("custom", "custom_2", "local_mlx_lm"),
+)
+#: Without Ollama the names make one 132-cell row in the 134 cells the list
+#: has at 211, and two rows in the 114 it has at 120.
+_UNTOUCHED_BUT_OLLAMA = _UNTOUCHED[1:]
+
+
+@pytest.mark.parametrize(
+    ("opened", "size", "shipped", "rows"),
+    (
+        ((211, 44), (211, 44), _UNTOUCHED, 2),
+        ((120, 44), (120, 44), _UNTOUCHED, 2),
+        ((211, 44), (120, 44), _UNTOUCHED_BUT_OLLAMA, 2),
+        ((120, 44), (211, 44), _UNTOUCHED_BUT_OLLAMA, 1),
+    ),
+    ids=("211x44", "120x44", "211x44-shrunk-to-120x44", "120x44-widened-to-211x44"),
+)
+async def test_the_not_running_line_wraps_so_every_name_shows_whole(
+    servers, opened, size, shipped, rows
+):
     """Round 2 finding 2: seven untouched servers on one NOT RUNNING row were cut
     at the dialog's edge to "MLX-LM (Apple silicon) (not ch…" at both full
-    sizes. The names are packed into as many rows as the list's width needs."""
-    shipped = (
-        *("ollama", "tabbyapi", "aphrodite", "vllm"),
-        *("custom", "custom_2", "local_mlx_lm"),
-    )
+    sizes. The names are packed into as many rows as the list's width needs.
+    Capture fix 2 round 1 finding 2: they were packed only when the rows were
+    built, so a list opened at 211 and shrunk to 120 cut them again, and one
+    widened kept more rows than it needed; a resize repacks them."""
     app = _harness()
-    async with app.run_test(size=size) as pilot:
+    async with app.run_test(size=opened) as pilot:
         switcher = build(
             app,
             pair=("openai", "gpt-5.1"),  # 05d: an OpenAI chat
@@ -500,13 +519,17 @@ async def test_the_not_running_line_wraps_so_every_name_shows_whole(servers, siz
         )
         await app.push_screen(switcher)
         await _settle(app, pilot)
+        if size != opened:
+            await pilot.resize_terminal(*size)
+            await _settle(app, pilot)
         quiet = [row.text for row in _group(switcher, "NOT RUNNING")]
         lines = list_lines(app, switcher)
 
     joined = " · ".join(text.strip() for text in quiet)
-    names = ("Ollama", "TabbyAPI", "vLLM", "MLX-LM (Apple silicon) (not checked)")
-    for name in names:
+    names = ("TabbyAPI", "vLLM", "MLX-LM (Apple silicon) (not checked)")
+    for name in names + ("Ollama",) * ("ollama" in shipped):
         assert name in joined, quiet
+    assert len(quiet) == rows, quiet
     for text in quiet:
         assert line_with(lines, text.strip()), text  # painted whole, no "…"
     assert not any(line.endswith("…") for line in lines), lines
