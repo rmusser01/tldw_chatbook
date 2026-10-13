@@ -80,10 +80,15 @@ _INTERRUPTS = [
     "#settings-discover-provider-models",
     "#settings-clear-discovered-provider-models",
 ]
+# Capture fix 3 round 3: a provider change also takes the line (it resets
+# discovery) without cancelling the save, so the toast must name the
+# provider the save was for, not the one the form now holds.
+_SWITCH_PROVIDER = "llama_cpp"
 
 
 async def _save_then_press(monkeypatch, scope, interrupt):
-    """Press Save selected, then ``interrupt`` while the write is held.
+    """Press Save selected, then ``interrupt`` (a button, or a provider to
+    switch to) while the write is held.
 
     Returns the app, the toasts as (message, severity) and the picker
     syncs as (provider, reload).
@@ -117,7 +122,10 @@ async def _save_then_press(monkeypatch, scope, interrupt):
 
         screen.query_one("#settings-save-discovered-provider-models", Button).press()
         await asyncio.wait_for(scope.started.wait(), timeout=10)
-        screen.query_one(interrupt, Button).press()
+        if interrupt.startswith("#"):
+            screen.query_one(interrupt, Button).press()
+        else:
+            screen._apply_provider_value_change(interrupt)
         await pilot.pause()
         await pilot.pause()
         scope.release.set()
@@ -150,24 +158,25 @@ async def test_save_selected_is_not_cancelled_by_discover_or_clear(
 
 @pytest.mark.asyncio
 @private_profile_test
-@pytest.mark.parametrize("interrupt", _INTERRUPTS)
+@pytest.mark.parametrize("interrupt", [*_INTERRUPTS, _SWITCH_PROVIDER])
 @pytest.mark.parametrize(
     ("outcome", "expected"),
     [
         (
             "ambiguous_provider_key",
             (
-                "Multiple provider entries match this provider. Rename or remove "
-                "duplicates before saving discovered models."
+                "OpenAI: Multiple provider entries match this provider. Rename "
+                "or remove duplicates before saving discovered models."
             ),
         ),
-        ("error", "Could not save discovered models to the providers list."),
+        ("error", "OpenAI: Could not save discovered models to the providers list."),
         (
             "raise",
             (
-                "Could not save the discovered models (OSError). Try Save again; "
-                "if it keeps failing, check that your config file is writable. "
-                "Details are in Logs (F3)."
+                "OpenAI: Could not save the discovered models (OSError). Discover "
+                "and select them again, then press Save selected; if it keeps "
+                "failing, check that your config file is writable. Details are "
+                "in Logs (F3)."
             ),
         ),
     ],
@@ -179,7 +188,13 @@ async def test_save_selected_refused_after_discover_or_clear_still_reports(
     """Capture fix 3 round 2, finding 1: with Discover or Clear pressed while
     Save selected was writing, a save that failed said nothing at all (and a
     raised one logged nothing), so the user believed the models were saved.
-    Its one report is a warning toast in the line's words."""
+    Its one report is a warning toast in the line's words.
+
+    Capture fix 3 round 3, rewritten on purpose: the toast names the provider
+    the save was for (a provider change also takes the line, and "this
+    provider" then read as the form's new one), and a raised save's next step
+    can be followed: Discover, Clear and a provider change all drop the
+    checked rows, so "Try Save again" could not be."""
     scope = _RefusingSaveScope(
         "openai", catalog=("gpt-4o",), served=(_SERVED,), outcome=outcome
     )

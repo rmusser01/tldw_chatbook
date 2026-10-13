@@ -255,8 +255,9 @@ saved ID fills it as an unsaved draft; an existing Model value is kept.
 **Clear** removes discovered results (and their **Served now** rows in Model),
 while keeping the saved list. A failed save or clear keeps the checked rows for retry.
 A **Save selected** that has started always finishes: pressing **Discover models**
-or **Clear** meanwhile does not cancel it, and as that line is then theirs,
-its report is a toast with the same words when it lands.
+or **Clear**, or changing provider, meanwhile does not cancel it, and as that
+line is then theirs, its report is a toast that names the provider the save
+was for, such as "OpenAI: Could not save discovered models to the providers list."
 Changing provider, endpoint or credentials clears the old results; a delayed
 operation cannot replace the new form’s results or Model value.
 

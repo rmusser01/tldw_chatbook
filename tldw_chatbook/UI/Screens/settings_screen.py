@@ -16862,15 +16862,22 @@ class SettingsScreen(BaseAppScreen):
             logger.warning(
                 f"Provider model discovery persistence failed: {type(exc).__name__}"
             )
+            # Discover, Clear or a provider change since the press dropped
+            # the checked rows, so Save cannot simply be pressed again.
+            retry = (
+                "Try Save again"
+                if revision == self._model_discovery_revision
+                else "Discover and select them again, then press Save selected"
+            )
             failure = failure_status_text(
                 "Could not save the discovered models",
                 exc,
                 next_step=(
-                    "Try Save again; if it keeps failing, check that your "
-                    "config file is writable."
+                    f"{retry}; if it keeps failing, check that your config "
+                    "file is writable."
                 ),
             )
-            self._report_discovered_models_save_failure(failure, revision)
+            self._report_discovered_models_save_failure(failure, revision, provider)
             return
 
         message = str(getattr(result, "message", "") or "").strip()
@@ -16914,13 +16921,18 @@ class SettingsScreen(BaseAppScreen):
             if status == "ambiguous_provider_key"
             else redact_secret_text(message or "Could not save discovered models."),
             revision,
+            provider,
         )
 
-    def _report_discovered_models_save_failure(self, text: str, revision: int) -> None:
+    def _report_discovered_models_save_failure(
+        self, text: str, revision: int, provider: str
+    ) -> None:
         """Say once why Save selected saved nothing: on its line, or (once
-        Discover or Clear own that line) in a warning toast."""
+        Discover, Clear or a provider change own that line) in a warning
+        toast that names the provider the save was for."""
         if revision != self._model_discovery_revision:
-            self.app.notify(text, severity="warning", markup=False)
+            label = self._provider_display_label(provider)
+            self.app.notify(f"{label}: {text}", severity="warning", markup=False)
             return
         self._model_discovery_status = text
         self._refresh_model_discovery_widgets()
