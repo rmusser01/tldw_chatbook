@@ -49,7 +49,7 @@ def unsaved_settings_titles(screen: SettingsScreen) -> list[str]:
     ]
 
 
-async def _ask_to_discard(owner: Any, names: list[str]) -> bool:
+async def _ask_to_quit_discarding(owner: Any, names: list[str]) -> bool:
     return await confirm_quit_discarding_edits(
         owner,
         f"These Settings have unsaved changes: {', '.join(names)}.\n\n"
@@ -79,7 +79,7 @@ async def confirm_settings_quit(screen: SettingsScreen) -> bool:
     names = unsaved_settings_titles(screen)
     if not names:
         return True
-    return await _ask_to_discard(screen, names)
+    return await _ask_to_quit_discarding(screen, names)
 
 
 class KeptSettingsDraft:
@@ -100,7 +100,7 @@ class KeptSettingsDraft:
             True when the user chose Discard and quit; False to stay.
         """
         under_modal = getattr(self.app.screen, "is_modal", False)
-        if await _ask_to_discard(self, self._names):
+        if await _ask_to_quit_discarding(self, self._names):
             return True
         if not under_modal and not getattr(self.app.screen, "is_modal", False):
             self.app.post_message(NavigateToScreen(TAB_SETTINGS))

@@ -276,6 +276,12 @@ def test_the_scan_reaches_the_quit_flow_it_guards() -> None:
             "tldw_chatbook/UI/Settings_Modules/settings_quit_guard.py:"
             "KeptSettingsDraft.confirm_quit"
         ),
+        # Capture fix 3 round 1, finding 6: the prompt both of them hand off
+        # to; a module call is not followed, so its name must hold "quit".
+        (
+            "tldw_chatbook/UI/Settings_Modules/settings_quit_guard.py:"
+            "_ask_to_quit_discarding"
+        ),
     }
     missing = expected - set(roots)
     assert not missing, f"the scan no longer reaches: {sorted(missing)}"
