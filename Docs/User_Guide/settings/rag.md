@@ -199,7 +199,8 @@ not:
   active profile, or discard them?" (**Cancel** / **Discard** / **Save**),
   raised only when you press **Set active** with an unsaved draft. Leaving
   **Speech & TTS** with edits, or **Theme** with an edited theme, asks too,
-  and **Ctrl+Q** on Settings asks before discarding any staged draft;
+  and **Ctrl+Q** asks before discarding any staged draft, from Settings or
+  from any screen after you left it;
   leaving any other category keeps your draft silently.
 - **Delete profile** — 'Delete the "`<name>`" RAG profile? This cannot be
   undone.' (**Cancel** / **Delete**).

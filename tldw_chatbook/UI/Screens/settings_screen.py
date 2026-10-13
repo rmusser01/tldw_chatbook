@@ -4459,6 +4459,10 @@ class SettingsScreen(BaseAppScreen):
             panel.capture()
         state["hooks_snapshot"] = self._hooks_snapshot
         state["settings_drafts"] = copy.deepcopy(self._settings_drafts)
+        from ..Settings_Modules import settings_quit_guard as quit_guard
+
+        # C-N1: a quit from another screen asks about these (quit_guard).
+        state[quit_guard.KEPT_UNSAVED_TITLES] = quit_guard.unsaved_settings_titles(self)
         if self._advanced_config_settings is not None:
             try:
                 self._advanced_config_settings.edit(

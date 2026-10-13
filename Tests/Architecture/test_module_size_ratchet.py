@@ -190,7 +190,10 @@ _BUDGETS: dict[str, int] = {
     # the theme prompt, whose Discard undoes a Try (+0): 33,942.
     # Capture fix 3: Save selected's line names the provider and counts in
     # words, not "model(s) to <config key>" (+3): 33,945.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33945,
+    # Capture fix 3, group C (ruling C-N1): the snapshot Settings leaves
+    # names its unsaved categories, so a quit from another screen asks;
+    # the stand-in lives in settings_quit_guard.py (+4): 33,949 with both.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33949,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

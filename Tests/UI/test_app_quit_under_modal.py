@@ -19,7 +19,7 @@ before quitting -- a dirty ReminderForm, the generated-video choice and a
 memory-only profile interview -- and the walk reaches unsaved work on the
 destination BENEATH a hook-less modal (Settings' theme editor).
 
-The last group pins the orphaned-prompt hazard Ctrl+Q-under-a-modal exposes.
+The next group pins the orphaned-prompt hazard Ctrl+Q-under-a-modal exposes.
 ``Screen.dismiss()`` pops the app's TOP screen, whoever calls it, and
 ``App.pop_screen`` drops the popped screen's result callback unresolved. So a
 covered modal that closes itself from a timer or worker while a quit prompt
@@ -34,6 +34,10 @@ already spent, that modal's next close raised ``InvalidStateError`` and
 exited the app (review follow-up). A modal on ``SafeModalDismissMixin`` (the
 switcher, the video player, most Console modals) cannot pop the prompt at
 all: its covered dismiss is refused, which the switcher journey pins.
+
+The final pair pins ruling C-N1 (TASK-33007): a Settings draft kept after
+leaving Settings is asked about from any screen, and only while Settings is
+not open to ask for itself.
 """
 
 from __future__ import annotations
@@ -754,3 +758,131 @@ async def test_ctrl_q_survives_a_covered_modal_popping_settings_theme_prompt(
         await _until_exited(app, cleanups, "Discard to reach the approved shutdown")
     assert cleanups == [True]
     assert app.return_code == 0
+
+
+# --- A Settings draft kept after leaving Settings (TASK-33007, ruling C-N1) --
+
+_SETTINGS_QUIT_TITLE = "Quit and discard unsaved Settings changes?"
+
+
+async def _settings_with_a_kept_draft(app, pilot):
+    """Stage a Providers & Models change, then leave Settings for Home.
+
+    Leaving keeps the draft in ``app.screen_state_store`` (the rail's * shows
+    it on return); Home is not Settings, so nothing on screen holds it.
+    """
+    from tldw_chatbook.UI.Screens.settings_config_models import (
+        SettingsCategoryId,
+        SettingsDraft,
+    )
+
+    await _until(
+        pilot,
+        lambda: type(app.screen).__name__ == "SettingsScreen",
+        "the Settings screen",
+    )
+    draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+    draft.set_value("provider", "openai", "anthropic")
+    app.screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+    await _go_home(app, pilot)
+
+
+async def _go_home(app, pilot) -> None:
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    app.post_message(NavigateToScreen("home"))
+    await _until(
+        pilot, lambda: type(app.screen).__name__ == "HomeScreen", "the Home screen"
+    )
+
+
+def _kept_provider_draft(app):
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+    return app.screen._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
+
+
+async def test_ctrl_q_from_another_screen_asks_about_a_kept_settings_draft(
+    monkeypatch,
+):
+    """Ruling C-N1 (b): Ctrl+Q from Home quit at once and dropped a Settings
+    draft kept from an earlier visit. It now asks as a quit from Settings
+    does: Keep editing returns to Settings with the draft, Discard and quit
+    quits."""
+    app = _build_test_app(configured_default="settings")
+    cleanups: list[bool] = []
+    monkeypatch.setattr(
+        app, "_run_approved_quit_cleanup", _record_cleanup_then_exit(app, cleanups)
+    )
+    async with app.run_test(size=(190, 55)) as pilot:
+        await _settings_with_a_kept_draft(app, pilot)
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_dialogs_titled(app, _SETTINGS_QUIT_TITLE)) or bool(cleanups),
+            "Ctrl+Q on Home to ask about the kept Settings draft",
+            timeout=5.0,
+        )
+        assert cleanups == [], "quit straight past the kept Settings draft"
+        assert "Providers & Models" in app.screen.message
+
+        # Keep editing: back in Settings, the draft still staged.
+        await pilot.press("escape")
+        await _until(
+            pilot,
+            lambda: type(app.screen).__name__ == "SettingsScreen",
+            "Keep editing to return to Settings",
+        )
+        await _until(
+            pilot,
+            lambda: app._quit_in_progress is False,
+            "the quit guard to clear after Keep editing",
+        )
+        kept = _kept_provider_draft(app)
+        assert kept is not None and kept.is_dirty
+        assert cleanups == [] and app.is_running
+
+        # Discard and quit from another screen: the quit runs.
+        await _go_home(app, pilot)
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_dialogs_titled(app, _SETTINGS_QUIT_TITLE)),
+            "the second Ctrl+Q to ask again",
+            timeout=5.0,
+        )
+        await pilot.click("#confirm-button")
+        await _until_exited(app, cleanups, "Discard and quit to reach the shutdown")
+    assert cleanups == [True]
+
+
+async def test_ctrl_q_on_settings_never_asks_about_its_own_stale_snapshot(
+    monkeypatch,
+):
+    """Back on Settings the store still holds the snapshot it left with; once
+    the draft is gone (saved or discarded) Ctrl+Q must not ask about it."""
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    app = _build_test_app(configured_default="settings")
+    cleanups: list[bool] = []
+    monkeypatch.setattr(
+        app, "_run_approved_quit_cleanup", _record_cleanup_then_exit(app, cleanups)
+    )
+    async with app.run_test(size=(190, 55)) as pilot:
+        await _settings_with_a_kept_draft(app, pilot)
+        app.post_message(NavigateToScreen("settings"))
+        await _until(
+            pilot,
+            lambda: (
+                type(app.screen).__name__ == "SettingsScreen"
+                and _kept_provider_draft(app) is not None
+            ),
+            "Settings with the kept draft",
+        )
+        app.screen._settings_drafts.clear()  # as a Save leaves it
+
+        await pilot.press("ctrl+q")
+        # A prompt would hold the quit, so reaching the shutdown proves none.
+        await _until_exited(app, cleanups, "Ctrl+Q to quit without asking")
+    assert cleanups == [True]
