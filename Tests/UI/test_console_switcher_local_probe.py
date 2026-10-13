@@ -428,6 +428,35 @@ async def test_an_untouched_shipped_default_that_refuses_is_quietly_not_running(
     assert not any(f"refused :{TABBY}" in line or f"refused :{APHRODITE}" in line for line in lines)
 
 
+@pytest.mark.parametrize("owned", (False, True), ids=("untouched", "set-up"))
+async def test_an_untouched_mlx_lm_is_not_running_not_ready(servers, owned):
+    """Capture finding 11: a plain Alt+M listed "MLX-LM (Apple silicon) · no
+    models reported · type its name and an id" under READY PROVIDERS on a
+    profile that never set it up. MLX-LM is a server (chat_with_mlx_lm posts
+    to it), not an in-process engine, but no models route lets the switcher
+    probe it, so the shipped template's endpoint and placeholder model read
+    Ready. Still at the template and never used, it is listed as not running,
+    as a probed shipped default that refuses is; set up, it stays READY."""
+    config = _with_shipped("local_mlx_lm")
+    if owned:
+        config["api_settings"]["local_mlx_lm"]["model"] = "my-mlx-model"
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            config=config,
+            providers_models={**SHIPPED_MODELS, "local_mlx_lm": ["None"]},
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        ready = " ".join(row.text for row in _group(switcher, "READY PROVIDERS"))
+        quiet = " ".join(row.text for row in _group(switcher, "NOT RUNNING"))
+
+    assert ("MLX-LM" in ready) is owned, ready
+    assert ("MLX-LM (Apple silicon)" in quiet) is not owned, quiet
+    assert 5678 not in servers.ports  # Never contacted either way.
+
+
 @pytest.mark.parametrize("owned_by", ("chat default", "edit"))
 async def test_a_configured_default_that_refuses_still_reads_refused(
     servers, owned_by

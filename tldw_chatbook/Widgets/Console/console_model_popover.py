@@ -72,7 +72,10 @@ from tldw_chatbook.Chat.provider_catalog import (
     provider_display_name,
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import URL_BASED_PROVIDER_KEYS
-from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.provider_readiness import (
+    KEYLESS_PROVIDER_KEYS,
+    provider_config_key,
+)
 from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS, temperature_range
 from tldw_chatbook.Utils.input_validation import validate_text_input
 from tldw_chatbook.Widgets.Console.console_settings_unsaved import unsaved_prompt_copy
@@ -157,6 +160,9 @@ def _retries_in_place(readiness: ConsoleSettingsReadiness) -> bool:
 _TEST_FAILURES = frozenset({"endpoint_unreachable", "credential_rejected"})
 #: A local probe can change only these rows: Ready, or a failed test.
 _PROBED_BLOCKERS = _TEST_FAILURES | {None}
+#: Keyless servers with no models route (MLX-LM, local-llm): no probe ever
+#: checks them, so a shipped template's endpoint and model read Ready.
+_UNPROBED_SERVERS = KEYLESS_PROVIDER_KEYS - URL_BASED_PROVIDER_KEYS
 
 
 class DraftRebaser(Protocol):
@@ -1261,8 +1267,19 @@ class ConsoleModelPopover(
                 # TASK-33005.6 AC#3 (owner ruling): a shipped localhost default
                 # the user never set up or used is still probed, so a running
                 # one is found, but its refusal is no setup task.
-                readiness.endpoint_category == "connection_refused"
-                and _retries_in_place(readiness)
+                (
+                    (
+                        readiness.endpoint_category == "connection_refused"
+                        and _retries_in_place(readiness)
+                    )
+                    # Capture finding 11: one no probe can check is Ready from
+                    # the template alone; listing nothing, it is as unset.
+                    or (
+                        key in _UNPROBED_SERVERS
+                        and _is_ready(readiness)
+                        and not self._models_for(key)
+                    )
+                )
                 and key not in used
                 and provider_left_at_shipped_default(self._app_config, key)
             ):

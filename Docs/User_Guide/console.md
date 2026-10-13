@@ -791,7 +791,9 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   chat's provider. They are checked like any other local server, so one
   that is running reads "Ready · reachable" under READY PROVIDERS instead.
   Change a provider's settings or use it, and its refusal is a NEEDS SETUP
-  row again.
+  row again. MLX-LM is a server too, but no model listing can check it, so
+  while it is still at its shipped settings, unused and listing no models,
+  it is named here rather than under READY PROVIDERS.
 
 Each row shows the model, the provider's name, its context size, readiness
 and last use. A size no catalog knows reads `?` (unknown), never a guess;
