@@ -405,7 +405,9 @@ async def test_preset_swatches_have_edges_and_a_contrasting_focus_ring(theme, re
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("theme", ["textual-light", "catppuccin-latte", "solarized-light"])
+@pytest.mark.parametrize(
+    "theme", ["textual-light", "catppuccin-latte", "solarized-light"]
+)
 @private_profile_test
 async def test_image_gen_on_check_is_readable_on_light_themes(theme, request):
     """#3057 capture fix 2 round 2, finding 2: Image Gen's switches are

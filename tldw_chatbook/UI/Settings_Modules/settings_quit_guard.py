@@ -32,7 +32,9 @@ async def confirm_settings_quit(screen: SettingsScreen) -> bool:
         to stay, including when the prompt vanished or a theme leave prompt
         is already open.
     """
-    if screen._theme_leave_in_progress or isinstance(screen.app.screen, ThemeLeaveModal):
+    if screen._theme_leave_in_progress or isinstance(
+        screen.app.screen, ThemeLeaveModal
+    ):
         return False  # one prompt at a time, as confirm_navigation
     names = [
         summary.title
