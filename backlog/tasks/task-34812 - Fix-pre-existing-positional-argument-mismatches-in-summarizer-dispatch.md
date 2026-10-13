@@ -1,8 +1,9 @@
 ---
 id: TASK-34812
 title: Fix pre-existing positional-argument mismatches in summarizer dispatch (kobold, tabbyapi, ollama)
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@robert'
 created_date: '2026-10-12 10:05'
 labels: [bug, providers]
 dependencies: []
@@ -21,7 +22,28 @@ Found during the TASK-33245 dispatch-table review (verified mechanically against
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 All three routes pass every argument by its correct parameter (keyword or correctly-ordered positional), verified against each function's signature.
-- [ ] #2 Regression tests pin the corrected routing for all three providers through `_dispatch_to_api`/`analyze`.
-- [ ] #3 Targeted local-summarizer suites pass (kobold/tabby config tests included).
+- [x] #1 All three routes pass every argument by its correct parameter (keyword or correctly-ordered positional), verified against each function's signature.
+- [x] #2 Regression tests pin the corrected routing for all three providers through `_dispatch_to_api`/`analyze`.
+- [x] #3 Targeted local-summarizer suites pass (kobold/tabby config tests included).
 <!-- AC:END -->
+
+
+## Implementation Plan
+
+Discovered by the PR-3092 review (mechanically verified against the pre-refactor elif chain); fixed at the single site — the _SUMMARIZER_DISPATCH adapters (stacked on PR #3092's branch, which carries the table).
+
+1. Verify each signature against Local_Summarization_Lib (done: kobold system_message-before-temp; tabbyapi system_message-before-api_key; ollama api_url/model ordering).
+2. Correct the three adapters: kobold and tabbyapi positional-through-temp + streaming keyword; ollama fully keyword-driven with api_url/model left to their defaults.
+3. Pin routing with a parametrized regression test asserting exact (args, kwargs) per provider through _dispatch_to_api.
+4. Run the analyze suite plus the kobold/tabby config suites.
+
+ADR required: no
+ADR path: N/A
+Reason: bug fix at an existing dispatch site; no architectural decision.
+
+
+## Implementation Notes
+
+PR #3094 (stacked on #3092's table). All three adapters corrected and pinned by exact-(args, kwargs) regression tests through the real _dispatch_to_api entry. Review-verified downstream behavior: ollama now resolves model from config instead of receiving the streaming bool; kobold's streaming path is now actually reachable (its temp/system_message swap was behaviorally inert — the function never reads them; filed as follow-up); tabbyapi's api_key/system_message/temp now land where the payload reads them. No in-repo analyze() caller streams, so the newly-live streaming routes have no existing consumers. Two follow-ups filed from the review: kobold's dead parameters, and summarize_chunk's same-species argument rotation into analyze() (FIXME-marked, test-only caller).
+
+ADR: not required (bug fix at an existing site; no architectural decision).
