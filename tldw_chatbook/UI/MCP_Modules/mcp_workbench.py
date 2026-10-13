@@ -1129,7 +1129,7 @@ class MCPWorkbench(Container):
 
     # -- data loading ---------------------------------------------------------
 
-    async def reload(self) -> None:
+    async def reload(self, *, force: bool = False) -> None:
         self._reloading = True
         # Raised here, not only in `on_mount`: `reload()` always CLEARS this in
         # its `finally`, so every caller must also raise it or a direct reload
@@ -1161,7 +1161,9 @@ class MCPWorkbench(Container):
                             "MCP workbench context load failed", exc
                         ),
                     )
-            self._snapshots = await self._collect_snapshots()
+            self._snapshots = await self._collect_snapshots_stale_gated(
+                service, force=force
+            )
             self._preselect_single_problem_on_load()
             await self._sync_children()
             self._rebind_inspector_advanced_context(service)
@@ -1362,6 +1364,39 @@ class MCPWorkbench(Container):
             isinstance(a, Mapping) and a.get("name") == "external_server.create"
             for a in actions
         )
+
+    async def _collect_snapshots_stale_gated(
+        self, service: Any, *, force: bool = False
+    ) -> list[ReadinessSnapshot]:
+        """Snapshot walk gated on the catalog fingerprint (TASK-34927).
+
+        Re-entering the workbench re-collects every server snapshot on a
+        fresh widget each visit. The service already maintains a
+        governance-grade catalog fingerprint (``run_catalog_fingerprint``,
+        used to validate cached run compositions), so a revisit with an
+        unchanged fingerprint AND unchanged config reuses the cached
+        snapshots; ``_sync_children`` still rebuilds the fresh DOM from
+        them. Anything that changed (permissions, servers, lifecycle
+        runtime state, config) alters the fingerprint and forces the full
+        walk, as do server-source mode, admission refusals, and
+        ``force`` (the manual/runtime refresh paths).
+        """
+        if force or self._source != "local" or service is None:
+            return await self._collect_snapshots()
+        fingerprint_runner = getattr(service, "run_catalog_fingerprint", None)
+        if not callable(fingerprint_runner):
+            return await self._collect_snapshots()
+        try:
+            fingerprint = await fingerprint_runner()
+        except Exception:  # noqa: BLE001 - admission refusal: full load
+            return await self._collect_snapshots()
+        token = (fingerprint, current_config_identity())
+        cache = getattr(self.app_instance, "_mcp_workbench_snapshot_cache", None)
+        if cache is not None and cache[0] == token:
+            return cache[1]
+        snapshots = await self._collect_snapshots()
+        self.app_instance._mcp_workbench_snapshot_cache = (token, snapshots)
+        return snapshots
 
     async def _collect_snapshots(self) -> list[ReadinessSnapshot]:
         snapshots: list[ReadinessSnapshot] = []
