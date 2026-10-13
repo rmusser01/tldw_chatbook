@@ -387,6 +387,28 @@ Tests/UI/test_settings_server_reported_window.py
 # R2 F8 (C8): the quit summary's duration saves on Enter or on leaving the field.
 Tests/UI/test_settings_session_summary_save.py
 
+# Ruling C16 for the capture fix wave and its rounds (2026-10-13): the nine
+# tests they added to files no lane runs, each 3 of 3 serial alone (seconds in
+# the p7-review-fix lanes report). Node ids; the tail moves two shards on.
+# Capture finding 17: Chat settings' Context view names Settings as Model does.
+Tests/UI/test_console_context_controls.py::test_context_view_names_settings_as_the_model_view_does
+# Capture round 1, finding 1: an unknown window reads "unknown", not "tokens".
+Tests/UI/test_console_context_controls.py::test_unknown_model_window_reads_unknown_not_unknown_tokens
+# Capture round 1, findings 2 and 7: Chat settings holds the provider's range.
+Tests/UI/test_console_session_settings.py::test_console_settings_modal_holds_anthropic_temperature_to_its_own_range
+# Capture finding 15 (B #15): Chat settings is its width token (176) by 22.
+Tests/UI/test_console_settings_geometry.py::test_chat_settings_size_is_its_width_token_by_22_capped_to_the_viewport
+# Capture finding 15: every Chat settings help line is whole at full screen.
+Tests/UI/test_console_settings_geometry.py::test_every_field_help_line_is_whole_at_full_screen
+# Capture finding 16: Chat settings' footer sets its hint and buttons apart.
+Tests/UI/test_console_settings_geometry.py::test_footer_hint_and_buttons_are_set_apart
+# Capture finding 19: Settings' focus-help line never describes the nav bar.
+Tests/UI/test_settings_configuration_hub.py::test_settings_focus_help_line_never_describes_the_nav_bar
+# Capture finding 12: Render linked images is a Checkbox read from config.
+Tests/UI/test_settings_configuration_hub.py::test_remote_images_toggle_value_reflects_config
+# Capture finding 6: Catalog refresh says nothing until a choice is saved.
+Tests/UI/test_settings_model_catalog_save_journeys.py::test_catalog_says_nothing_until_a_choice_is_saved
+
 # Phase 7's Settings files: about half of the lane's pytest minutes on CI. They sit
 # at the end, in this order, so round-robin over seven shards spreads them and no
 # other file's shard depends on them. Append new entries below this block: one

@@ -126,6 +126,17 @@ FAST_LANE_TARGETS = (
     # second) and R3 #1, #2, #5-#7's model picker keys (17 bare mounts, ~9 s).
     "Tests/Chat/test_console_value_layers_skipped_model_defaults.py",
     "Tests/Widgets/test_model_search_picker_list_keys.py",
+    # Ruling C16 for the capture fix wave (2026-10-13): six tests it added to
+    # files no lane runs (node ids; each under a second, 3 of 3 serial alone).
+    # Capture round 2 finding 1: Make default checks the default it writes.
+    "Tests/Chat/test_console_settings_defaults.py::test_make_default_gate_validates_the_temperature_the_write_saves",
+    "Tests/Chat/test_console_settings_defaults.py::test_make_default_gate_refuses_a_cleared_value_that_leaves_an_invalid_one",
+    # Capture finding 11: Temperature's range is the provider's own.
+    "Tests/Chat/test_sampling_params.py::test_temperature_range_is_the_providers_own",
+    # Capture findings 9 and 20, round 1 finding 4: the model picker's lists.
+    "Tests/Widgets/test_model_search_picker.py::test_a_saved_model_the_endpoint_serves_is_listed_as_served_now",
+    "Tests/Widgets/test_model_search_picker.py::test_saved_only_list_says_catalog_refresh_is_off_when_it_is",
+    "Tests/Widgets/test_model_search_picker.py::test_an_unreadable_catalog_setting_is_logged_by_type",
 )
 
 # PR2921: source-bound additions leave the original fast/admission argv intact.

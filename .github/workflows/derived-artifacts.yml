@@ -179,6 +179,12 @@ jobs:
             'Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/UI/Settings_Modules/settings_field_rows.py]' \
             Tests/Chat/test_console_value_layers_skipped_model_defaults.py \
             Tests/Widgets/test_model_search_picker_list_keys.py \
+            Tests/Chat/test_console_settings_defaults.py::test_make_default_gate_validates_the_temperature_the_write_saves \
+            Tests/Chat/test_console_settings_defaults.py::test_make_default_gate_refuses_a_cleared_value_that_leaves_an_invalid_one \
+            Tests/Chat/test_sampling_params.py::test_temperature_range_is_the_providers_own \
+            Tests/Widgets/test_model_search_picker.py::test_a_saved_model_the_endpoint_serves_is_listed_as_served_now \
+            Tests/Widgets/test_model_search_picker.py::test_saved_only_list_says_catalog_refresh_is_off_when_it_is \
+            Tests/Widgets/test_model_search_picker.py::test_an_unreadable_catalog_setting_is_logged_by_type \
             --timeout=180 \
             --tb=short
 

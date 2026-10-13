@@ -6,6 +6,7 @@ import threading
 import pytest
 from textual.widgets import Button, Checkbox, Input, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_settings_configuration_hub import _open_settings_category
 from Tests.UI.test_settings_model_catalog_toggles import _build_settings_app
 from Tests.UI.test_settings_provider_keyboard_journeys import (
@@ -127,8 +128,11 @@ async def test_catalog_keyboard_failure_retry_and_fractional_interval(
         )
 
 
+# The real Settings app reads config under the per-test sandbox, which refuses
+# it (RecoveryRequired); a private profile lets it run in the UI lane (C16).
 @pytest.mark.asyncio
-async def test_catalog_says_nothing_until_a_choice_is_saved(monkeypatch):
+@private_profile_test
+async def test_catalog_says_nothing_until_a_choice_is_saved(monkeypatch, request):
     """#3057 capture finding 6 (10c): opened with nothing changed, Catalog
     refresh said "Saved. Applies at next startup." under its "applies
     immediately - no Save needed" hint. A control posting the value it was
