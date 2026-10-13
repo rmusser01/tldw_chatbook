@@ -90,8 +90,8 @@ chats; changing only Streaming does not reset other fields.
 
 ### When a chat reaches its context limit
 
-What happens depends on **When limit nears** in Conversation settings >
-Context and memory:
+What happens depends on **When limit nears** in Chat settings ▸ Context
+and memory:
 
 - **Ask** (the default). When a message you send would take the chat past its
   compaction threshold, the message is held before anything is sent or saved.
@@ -108,13 +108,13 @@ Context and memory:
 - **Off** never compacts.
 
 A send that cannot show the card (a queued prompt, Retry or Regenerate) stops
-with a note instead: use **Compact now** in Conversation settings > Context
-and memory, then send again.
+with a note instead: use **Compact now** in Chat settings ▸ Context and
+memory, then send again.
 
 When compacting cannot make enough room, the message is not sent and the note
 says what fills the window and what to change:
 
-- **Max tokens** (Conversation settings > Model and generation) plus the
+- **Max tokens** (Chat settings ▸ Model and generation, Ctrl+O) plus the
   safety margin already use the whole window: lower Max tokens.
 - The system prompt, tools and attached context need more than the window
   leaves: remove attached sources or tools, or lower Max tokens.
@@ -122,9 +122,9 @@ says what fills the window and what to change:
   shorten it or its attachments, lower Max tokens, or start a new chat.
 
 If no catalog knows the model's context window, the app assumes a size (the
-**Model window** row in Chat settings > Context and memory reads "unknown,
+**Model window** row in Chat settings ▸ Context and memory reads "unknown,
 32,000 assumed"), and the card and the note say so. Set the real value in
-**F4 Settings > Providers & Models**, under Advanced > Context window.
+**Settings ▸ Providers & Models (F4)**, under Advanced ▸ Context window.
 
 ### Per-turn micro-compaction
 
