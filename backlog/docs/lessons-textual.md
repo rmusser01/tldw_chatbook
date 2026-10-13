@@ -249,6 +249,18 @@ about layout. To wait for geometry, wait for the event that produces it (`Resize
 widget's own "built" message), and keep a refresh-count only as the bound on a body that
 is already laid out and merely growing.
 
+**Recurred under a dialog, TASK-33008 capture fix 4, 2026-10-13 -- it is the ACTIVE
+screen's refresh.** `_on_invoke_later` hands the callback to `app.screen`, and a screen
+that is not current lays out nothing (`Screen._on_timer_update` checks `is_current`). A
+model applied from Switch model synced the Console's status chips while the dialog was
+on top; the cost chip's refit (scheduled with `call_after_refresh`) ran after the
+DIALOG's refresh, read the Console's old chip places, and nothing refitted once the
+dialog closed: 02c drew "Ctx 0% · No". The fix subscribes to the widget's OWN screen's
+`screen_layout_refresh_signal` (published at the end of every `_refresh_layout`) and
+refits when the chip has moved. Rule: for "after MY screen has laid out", use that
+signal, not `call_after_refresh`; a test needs a real `ModalScreen` on top while the
+change is made, or it never sees the gap.
+
 ## A pane whose content just fits flips its scrollbar on focus — reserve the gutter
 
 **TASK-33007.6, 2026-10-04.** Folding the rarely used Providers & Models controls

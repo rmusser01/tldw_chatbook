@@ -3754,6 +3754,15 @@ through five pilot pauses even with `chip.refresh(layout=True)`; a second
 refresh, or running the relabel through `call_after_refresh`, took. Cause not
 traced further.
 
+**Traced, TASK-33008 capture fix 4, 2026-10-13.** `Widget.refresh(layout=True)` bumps
+`_layout_updates` (part of the box-model cache key) only when no layout is already
+pending on that widget. The cost chip still had one pending from its mount when it was
+relabelled, and a layout had already used that bump, so the next layout reused the
+cached box model: a spy saw `_layout_required` True and `_layout_updates` 1 before the
+relabel, no `get_content_width` call in the layout after it, and width 43 for an
+18-cell label. A deferred relabel works because by then the chip's idle has cleared the
+pending flag.
+
 **What to do.** Same as above, and when a relabel depends on geometry, run it
 after the refresh rather than inside the resize handler, then assert the
 region, not the string.
