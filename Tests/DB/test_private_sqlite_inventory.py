@@ -502,7 +502,7 @@ def _qualified_core_recovery_dispatch(source_path, symbol, call):
 
 def _qualified_fixed_validation_dispatch(source_path, production_module, symbol, call):
     """Admit the six reviewed restore sites only with their fixed declarations."""
-    if production_module == "tldw_chatbook/Chat/response_rules/recovery":
+    if production_module == "tldw_chatbook/DB/recovery_response_rules":
         if symbol != "prepare_imported_candidate" or ast.unparse(call) != (
             "open_recovery_validation(owner.owner_id, candidate, writable=True, "
             "with_restrictions=True, cancel=cancel)"
@@ -1901,9 +1901,9 @@ def test_plugins_registry_is_private_readonly_and_memory_without_backup() -> Non
 
 @pytest.mark.parametrize("damage", ["owner", "path", "namespace", "validation", "guard", "reassign", "order"])
 def test_response_rule_import_dispatch_is_exact_and_validated(tmp_path, damage):
-    path = PROJECT_ROOT / "tldw_chatbook/Chat/response_rules/recovery.py"
+    path = PROJECT_ROOT / "tldw_chatbook/DB/recovery_response_rules.py"
     source = path.read_text()
-    module = "tldw_chatbook/Chat/response_rules/recovery"
+    module = "tldw_chatbook/DB/recovery_response_rules"
     _, clean = _private_sqlite_seam_violations(path, module)
     assert clean == []
     if damage == "owner":

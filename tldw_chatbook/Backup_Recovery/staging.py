@@ -805,7 +805,7 @@ def stage_restore(
                 ):
                     # This loop contains selected archive payloads only. Retained
                     # local owners and exact rollback snapshots bypass this route.
-                    from tldw_chatbook.Chat.response_rules.recovery import (
+                    from tldw_chatbook.DB.recovery_response_rules import (
                         prepare_imported_candidate,
                     )
 

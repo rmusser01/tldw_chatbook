@@ -1,8 +1,13 @@
 """Imported activations are inert; rollback keeps the original SQLite state."""
 
+import json
+import os
 import sqlite3
+import subprocess
+import sys
 from contextlib import closing
 from dataclasses import replace
+from pathlib import Path
 from threading import Event
 
 import pytest
@@ -61,25 +66,166 @@ def test_installed_recovery_policy_migrates_only_disposable_candidate(
     assert validate_candidate(owner, db.db_path, Event(), migrate=False) == ()
 
 
+# This child intentionally imports no test fixtures or runtime constructors.
+# The producer runs in pytest's process; recovery starts with a fresh interpreter.
+_COLD_IMPORT = r"""
+import json
+import sqlite3
+import sys
+from contextlib import contextmanager
+from pathlib import Path
+from threading import Event
+
+from tldw_chatbook.DB.recovery_response_rules import prepare_imported_candidate
+from tldw_chatbook.DB import private_sqlite
+from tldw_chatbook.Backup_Recovery.sqlite_validation import _active_restrictions
+
+def assert_cold():
+    assert 'tldw_chatbook.config' not in sys.modules, 'recovery imported startup config'
+    assert 'tldw_chatbook.Chat' not in sys.modules, 'recovery imported Chat runtime'
+
+assert_cold()
+candidate, outcome = Path(sys.argv[1]), sys.argv[2]
+cancel = Event()
+if outcome == 'cancelled':
+    cancel.set()
+opened = []
+original = private_sqlite.open_recovery_validation
+@contextmanager
+def observe(*args, **kwargs):
+    with original(*args, **kwargs) as value:
+        connection, restrictions = value
+        opened.append((connection, restrictions))
+        if outcome == 'interrupted' and kwargs.get('writable'):
+            def trace(sql):
+                if sql.startswith('SELECT assessment_id,assessment_json'):
+                    assert connection.total_changes > 0
+                    cancel.set()
+                    connection.set_progress_handler(restrictions.progress, 1)
+            connection.set_trace_callback(trace)
+        yield value
+private_sqlite.open_recovery_validation = observe
+try:
+    prepare_imported_candidate(candidate, cancel)
+except (TypeError, ValueError, sqlite3.DatabaseError) as error:
+    assert outcome != 'valid', repr(error)
+    if outcome == 'malformed':
+        assert isinstance(error, TypeError), repr(error)
+    elif outcome == 'invalid_json':
+        # SQLite versions may detect this in quick_check or the JSON transform.
+        assert isinstance(error, json.JSONDecodeError) or (
+            isinstance(error, ValueError) and str(error) == 'invalid_sqlite_integrity'
+        ), repr(error)
+    elif outcome == 'cancelled':
+        assert isinstance(error, ValueError) and str(error) == 'cancelled', repr(error)
+    else:
+        assert cancel.is_set() and isinstance(error, sqlite3.DatabaseError), repr(error)
+else:
+    assert outcome == 'valid', outcome
+assert_cold()
+assert _active_restrictions.get() is None
+assert len(opened) in ({0} if outcome == 'cancelled' else {1, 2} if outcome == 'invalid_json' else {2})
+for connection, restrictions in opened:
+    assert not restrictions.preparing_response_rules
+    try:
+        connection.execute('SELECT 1')
+    except sqlite3.ProgrammingError:
+        pass
+    else:
+        raise AssertionError('recovery connection remained physically open')
+print(json.dumps({'outcome': outcome, 'closed_connections': len(opened), 'constructor_free': True}))
+"""
+
+
+@pytest.mark.parametrize(
+    "outcome", ["valid", "malformed", "invalid_json", "cancelled", "interrupted"]
+)
 def test_restricted_import_preparation_disables_only_qualified_selected_payload(
-    rule_store, tmp_path
+    rule_store, tmp_path, outcome
 ):
-    from tldw_chatbook.Chat.response_rules.recovery import prepare_imported_candidate
     from tldw_chatbook.DB.private_sqlite import copy_private_sqlite
 
     store, db, origin = rule_store
     binding = activate(store, origin)
+    assessment = replace(aggregate_checks(origin, (), inputs=inputs()), state="pending")
+    store.save_assessment(assessment)
     candidate = tmp_path / "import.sqlite"
     copy_private_sqlite("recovery.core.chachanotes", db.db_path, candidate)
-    prepare_imported_candidate(candidate, Event())
+    with closing(sqlite3.connect(candidate)) as connection, connection:
+        document = json.loads(
+            connection.execute(
+                "SELECT assessment_json FROM console_response_rule_assessments"
+            ).fetchone()[0]
+        )
+        document["recovery_unicode_witness"] = "証拠 café"
+        stored = "[]" if outcome == "malformed" else json.dumps(document)
+        if outcome == "invalid_json":
+            connection.execute("PRAGMA ignore_check_constraints=ON")
+            stored = "{broken"
+        connection.execute(
+            "UPDATE console_response_rule_assessments SET assessment_json=?", (stored,)
+        )
+    before = candidate.read_bytes()
+    source_before = Path(db.db_path).read_bytes()
+    env = os.environ.copy()
+    for key in list(env):
+        if key.startswith(("TLDW_", "PYTEST_")):
+            env.pop(key)
+    home = tmp_path / "cold-home"
+    home.mkdir()
+    root = Path(__file__).resolve().parents[2]
+    env.update(
+        HOME=str(home),
+        USERPROFILE=str(home),
+        XDG_CONFIG_HOME=str(home / "config"),
+        XDG_DATA_HOME=str(home / "data"),
+        XDG_CACHE_HOME=str(home / "cache"),
+        TLDW_TEST_CONFIG_ROOT=str(home / "bootstrap"),
+        PYTHONPATH=os.pathsep.join(
+            (str(root), str(root / "packages/tldw_profile_core/src"))
+        ),
+        PYTHONDONTWRITEBYTECODE="1",
+        PYTHONNOUSERSITE="1",
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", _COLD_IMPORT, str(candidate), outcome],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    receipt = json.loads(result.stdout.splitlines()[-1])
+    assert receipt["constructor_free"] is True
     assert store.list_bindings(binding.scope) == (binding,)
+    assert Path(db.db_path).read_bytes() == source_before
     with closing(sqlite3.connect(candidate)) as connection:
+        state, revision = connection.execute(
+            "SELECT state,binding_revision FROM console_response_rule_bindings"
+        ).fetchone()
+        assessment_state, encoded = connection.execute(
+            "SELECT state,assessment_json FROM console_response_rule_assessments"
+        ).fetchone()
         assert (
             connection.execute(
-                "SELECT state FROM console_response_rule_bindings"
+                "SELECT COUNT(*) FROM console_machine_followup_receipts"
             ).fetchone()[0]
-            == "disabled"
+            == 0
         )
+    if outcome == "valid":
+        assert (state, revision) == ("disabled", binding.binding_revision + 1)
+        assert assessment_state == "cancelled"
+        document["state"] = "cancelled"
+        assert encoded == json.dumps(
+            document, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+        )
+    else:
+        assert candidate.read_bytes() == before
+        assert (state, revision) == ("enabled", binding.binding_revision)
+        assert (assessment_state, encoded) == ("pending", stored)
 
 
 def test_restricted_import_preparation_refuses_an_unknown_table(rule_store, tmp_path):
