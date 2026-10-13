@@ -11,8 +11,8 @@
 │                              │  │  │                                                                                                                            │  │  │ No unsaved changes                      │
 │  Core                        │  │  │   Connect                                                                                                                  │  │  │  Guided edits: change a field first.    │
 │      Overview (view)         │  │  │  Provider                │ Azure OpenAI                       new-chat default 3 of 60 configured · listed first           │  │  │  Save (s) — no changes                  │
-│ █  > Providers & Models      │  │  │  API key                 │ Paste to replace           Clear   saved in config  masked · (t) test · (ctrl+l) clear          │  │  │  Revert (r) — no changes                │
-│      Web Search              │  │  │  Env var                 │ AZURE_OPENAI_API_KEY               not set          safer: keeps keys out of config.toml        │  │  │ Local-only: saves write your config     │
+│ █  > Providers & Models      │  │  │  API key                 │ Paste to replace           Clear   saved in config  hidden · ctrl+l clears the saved key        │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │  Env var                 │ AZURE_OPENAI_API_KEY               not set          safer: a variable's name, never the key     │  │  │ Local-only: saves write your config     │
 │      Speech & TTS            │  │  │  Endpoint                │ Enter your resource host           not set          required: your resource host                │  │  │ file.                                   │
 │  Interface                   │  │  │  Key check                Not ready · no URL                                                                  Test (t)     │  │  │ Applies to                              │
 │      Appearance              │  │  │                                                                                                                            │  │  │  New chats: yes (Ctrl+T, temporary,     │
@@ -22,7 +22,7 @@
 │  Data & Privacy              │  │  │   ▼ Model defaults · Azure OpenAI · my-gpt-deployment                                                                      │  │  │  Chats with work: keep their own;       │
 │      Storage                 │  │  │  Temperature             │ 0.0 - 2.0      Console Behavior inherits 0.6                                                    │  │  │  switch there with Alt+M                │
 │      Workspaces              │  │  │  Max tokens              │ tokens         provider         blank = provider default                                        │  │  │  Model defaults: chats that switch to   │
-│      Tool Profiles           │  │  │  Streaming               │ Inherit     ▼  provider         inherits On                                                     │  │  │  this model pick them up              ▂ │
+│      Tool Profiles           │  │  │  Streaming               │ Inherit     ▼  provider         inherits On                                                     │  │  │  this model pick them up              ▁ │
 │      Privacy & Security      │  │  │   ▶ Sampling · all inherit · Azure OpenAI does not accept 10 fields (open to list them)                                    │  │  │ Next new chat will use                  │
 │      Network                 │  │  │                                                                                                                            │  │  │  Azure OpenAI · my-gpt-deployment       │
 │      My Profile              │  │  │   Advanced                                                                                                                 │  │  │  T 0.6 · max not set · stream On        │

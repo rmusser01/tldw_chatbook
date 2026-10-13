@@ -12,13 +12,13 @@
 │  Core                        │  │  │   Connect                                                                                                                  │  │  │  Guided edits: Save or Revert changes.  │
 │      Overview (view)         │  │  │  Provider                █ llama.cpp                          edited *         3 of 60 configured · listed first           │  │  │     Save (s)                            │
 │    > Providers & Models *    │  │  │  API key                 │ No credential required     Clear   not required     this provider needs no key                  │  │  │    Revert (r)                           │
-│      Web Search              │  │  │  Env var                 │ LLAMA_CPP_API_KEY                  not set          safer: keeps keys out of config.toml        │  │  │ Local-only: saves write your config     │
-│      Speech & TTS            │  │  │  Endpoint                │ http://localhost:8080              config           required: the server's base URL             │  │  │ file.                                   │
+│      Web Search              │  │  │  Env var                 │ LLAMA_CPP_API_KEY                  not set          safer: a variable's name, never the key     │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │  Endpoint                │ http://localhost:8080              saved in config  required: the server's base URL             │  │  │ file.                                   │
 │  Interface                   │  │  │  Key check                Not ready · no model                                                                Test (t)     │  │  │  (s).                                   │
 │      Appearance              │  │  │                                                                                                                            │  │  │ Focused field guide                     │
 │      Theme                   │  │  │   Default model for new chats                                                                                              │  │  │  Focused setting: Provider              │
 │      Splash Screen           │  │  │  Model                   │ Choose or search models            edited *         type to search · Custom ID for others       │  │  │  Purpose: Sets the provider new chats   │
-│      Console Behavior        │  │  │  Applies to               new chats; open chat “Chat 1” is unused and will use llama.cpp · no model.                       │  │  │  start with; open chats nobody has    ▃ │
+│      Console Behavior        │  │  │  Applies to               new chats; open chat “Chat 1” is unused and will use llama.cpp · no model.                       │  │  │  start with; open chats nobody has    ▂ │
 │  Data & Privacy              │  │  │   ▼ Model defaults · llama.cpp · no model                                                                                  │  │  │  used yet follow it.                    │
 │      Storage                 │  │  │  Temperature             │ 0.0 - 2.0      Console Behavior inherits 0.6                                                    │  │  │  Save: staged - press s to save, r to   │
 │      Workspaces              │  │  │  Max tokens              │ tokens         provider         inherits 4096                                                   │  │  │  revert                                 │
@@ -27,7 +27,7 @@
 │      Network                 │  │  │  Thinking budget         │ >= 1024        provider         blank = provider default                                        │  │  │  aliases                                │
 │      My Profile              │  │  │   ▶ Sampling · all inherit · llama.cpp does not accept 3 fields (open to list them)                                        │  │  │  ▶ config key                           │
 │  Troubleshooting             │  │  │                                                                                                                            │  │  │ Key                                     │
-│      Diagnostics (view)      │  │  │   Advanced                                                                                                                 │  │  │  Provider readiness: llama.cpp / not  ▇ │
+│      Diagnostics (view)      │  │  │   Advanced                                                                                                                 │  │  │  Provider readiness: llama.cpp / not  ▅ │
 │      About (view)            │  │  │   ▶ Context window · choose a model first                                                                                  │  │  │  selected                               │
 │      Agents                  │  │  │   ▶ Saved model list · 0 saved in config · none discovered                                                                 │  │  │  Checks the settings, then lists        │
 │  Expert                      │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │  models without generating: a cloud     │

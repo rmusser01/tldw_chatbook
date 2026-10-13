@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │                                                                                                                            │  │  │ No unsaved changes                      │
+│  Core                        │  │  │   Connect                                                                                                                  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │  Provider                │ llama.cpp                          new-chat default 4 of 60 configured · listed first           │  │  │  Save (s) — no changes                  │
+│    > Providers & Models      │  │  │  API key                 │ No credential required     Clear   not required     this provider needs no key                  │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │  Env var                 │ LLAMA_CPP_API_KEY                  not set          safer: a variable's name, never the key     │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │  Endpoint                │ http://127.0.0.1:18791             saved in config  required: the server's base URL             │  │  │ file.                                   │
+│  Interface                   │  │  │  Key check                Ready · not tested                                                                  Test (t)     │  │  │  Focused setting: None — Tab to a       │
+│      Appearance              │  │  │                                                                                                                            │  │  │  setting                                │
+│      Theme                   │  │  │   Default model for new chats                                                                                              │  │  │  Purpose: Configure the default         │
+│      Splash Screen           │  │  │  Model                   │ qwen3-8b-q4                        new-chat default type to search · Custom ID for others       │  │  │  provider, model, endpoint, and         │
+│      Console Behavior        │  │  │  Applies to               new chats; open chat “Chat 1” is unused and will use llama.cpp · qwen3-8b-q4.                    │  │  │  credential source.                   ▁ │
+│  Data & Privacy              │  │  │   ▼ Model defaults · llama.cpp · qwen3-8b-q4                                                                               │  │  │  Save: staged - press s to save, r to   │
+│      Storage                 │  │  │  Temperature             │ 0.0 - 2.0      Console Behavior inherits 0.6                                                    │  │  │  revert                                 │
+│      Workspaces              │  │  │  Max tokens              │ tokens         provider         inherits 4096                                                   │  │  │  Validation: test provider readiness    │
+│      Tool Profiles           │  │  │  Streaming               │ Inherit     ▼  provider         inherits On                                                     │  │  │  before saving these defaults           │
+│      Privacy & Security      │  │  │  Reasoning effort        │ Inherit     ▼  provider         blank = provider default                                        │  │  │  ▶ config key                           │
+│      Network                 │  │  │  Thinking budget         │ >= 1024        provider         blank = provider default                                        │  │  │ Key                                     │
+│      My Profile              │  │  │   ▶ Sampling · all inherit · llama.cpp does not accept 3 fields (open to list them)                                        │  │  │  Provider readiness: llama.cpp /        │
+│  Troubleshooting             │  │  │                                                                                                                            │  │  │  qwen3-8b-q4                            │
+│      Diagnostics (view)      │  │  │   Advanced                                                                                                                 │  │  │  Checks the settings, then lists      ▂ │
+│      About (view)            │  │  │   ▶ Context window · unknown here · the Console reads it from the server                                                   │  │  │  models without generating: a cloud     │
+│      Agents                  │  │  │   ▼ Saved model list · 2 saved in config · 3 discovered, 2 not saved                                                       │  │  │  provider's listing checks the API      │
+│  Expert                      │  │  │   Discovered 3 model(s) from Llama_cpp.                                                                                    │  │  │  key, a local server's shows it         │
+│      Hooks                   │  │  │   Capabilities unknown until saved or verified; text chat is assumed.                                                      │  │  │  answers. Nothing is saved.             │
+│      Internal Prompts        │  │  │   Discover models  Save selected       Clear                                                                               │  │  │ Configuration check has not run.        │
+│      Advanced Config         │  │  │  │ ▐X▌ not selected · qwen3-8b-q4 · saved · discovered · capabilities unknown                                              │  │  │  Runtime owner: Settings persisted      │
+│   Domain Defaults ▸ (11)     │  │  │  │ ▐X▌ not selected · gemma-4-26B-A4B-it-ultra.Q4_K_M.gguf · not saved · discovered · capabilities unknown                 │  │  │  defaults; Console runtime selection    │
+│                              │  │  │  │ ▐X▌ not selected · llama-4-scout-17b-16e.Q4_K_M.gguf · not saved · discovered · capabilities unknown                  ▅ │  │  │  Writes allowed: Yes                    │
+│                              │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │  Owns: chat_defaults.provider           │
+│                              │  │  │   ▶ Session summary on quit · applies immediately · Off                                                                    │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Query the configured OpenAI-compatible provider endpoint for available models.
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

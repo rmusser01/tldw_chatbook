@@ -12,8 +12,8 @@
 │  Core                        │  │  │   Connect                                                                                                                  │  │  │  Guided edits: change a field first.    │
 │      Overview (view)         │  │  │  Provider                │ Anthropic                          new-chat default 3 of 60 configured · listed first           │  │  │  Save (s) — no changes                  │
 │ █  > Providers & Models      │  │  │  Sign in with            │ API key                         ▼  built-in         bills API credits through your key          │  │  │  Revert (r) — no changes                │
-│      Web Search              │  │  │  API key                 │ Paste to replace           Clear   saved in config  masked · (t) test · (ctrl+l) clear          │  │  │ Local-only: saves write your config     │
-│      Speech & TTS            │  │  │  Env var                 │ ANTHROPIC_API_KEY                  not set          safer: keeps keys out of config.toml        │  │  │ file.                                   │
+│      Web Search              │  │  │  API key                 │ Paste to replace           Clear   saved in config  hidden · ctrl+l clears the saved key        │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │  Env var                 │ ANTHROPIC_API_KEY                  not set          safer: a variable's name, never the key     │  │  │ file.                                   │
 │  Interface                   │  │  │  Endpoint                │ https://api.anthropic.com          built-in         blank uses the provider default             │  │  │ Applies to                              │
 │      Appearance              │  │  │  Key check                Ready · not tested                                                                  Test (t)     │  │  │  New chats: yes (Ctrl+T, temporary,     │
 │      Theme                   │  │  │                                                                                                                            │  │  │  workspace)                             │
@@ -22,7 +22,7 @@
 │  Data & Privacy              │  │  │  Applies to               new chats; open chat “Chat 1” is unused and will use Anthropic · claude-sonnet-4-5.              │  │  │  Chats with work: keep their own;       │
 │      Storage                 │  │  │   ▼ Model defaults · Anthropic · claude-sonnet-4-5                                                                         │  │  │  switch there with Alt+M                │
 │      Workspaces              │  │  │  Temperature             │ 0.0 - 2.0      Console Behavior inherits 0.6                                                    │  │  │  Model defaults: chats that switch to   │
-│      Tool Profiles           │  │  │  Max tokens              │ tokens         provider         inherits 4096                                                   │  │  │  this model pick them up              ▂ │
+│      Tool Profiles           │  │  │  Max tokens              │ tokens         provider         inherits 4096                                                   │  │  │  this model pick them up              ▁ │
 │      Privacy & Security      │  │  │  Streaming               │ Inherit     ▼  provider         inherits Off                                                    │  │  │ Next new chat will use                  │
 │      Network                 │  │  │  Thinking                │ Inherit     ▼  provider         blank = provider default                                        │  │  │  Anthropic · claude-sonnet-4-5          │
 │      My Profile              │  │  │  Thinking budget         │ >= 1024        provider         blank = provider default                                        │  │  │  T 0.6 · max 4096 · stream Off          │
