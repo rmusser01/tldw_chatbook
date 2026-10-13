@@ -382,3 +382,148 @@ async def test_popup_anchor_clears_composer_with_chips_below():
         assert popup_bottom <= chips.region.y, (
             f"popup {popup.region} overlaps status chips {chips.region}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TASK-18921: usage-ranked suggestions (display-only; filtering unchanged)
+# ---------------------------------------------------------------------------
+
+from tldw_chatbook.Chat.console_command_grammar import (
+    KIND_COMMAND,
+    CommandParse,
+)
+from tldw_chatbook.Chat.console_command_suggestions import suggestions_for_draft
+from tldw_chatbook.Chat.prompt_history import PromptHistory
+
+
+def _seeded_history(*inputs: str) -> PromptHistory:
+    """Build a history store with in-memory entries only (no file IO)."""
+    history = PromptHistory("/nonexistent/t18921_prompt_history.jsonl")
+    history._entries = [{"input": text, "timestamp": 0.0} for text in inputs]
+    history._loaded = True
+    return history
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_popup_orders_most_used_command_first():
+    app = _build_test_app()
+    history = _seeded_history(
+        "/model",
+        "/model",
+        "/help",
+        "an ordinary prompt",
+    )
+    app.console_prompt_history_factory = lambda: history
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+
+        await pilot.press("/")
+        await pilot.pause()
+        labels = _popup_labels(popup)
+        # Most-used first, then alphabetical ties: /model (2 uses) leads,
+        # /help (1) follows, everything else stays alphabetical within the
+        # zero tier.
+        assert labels[0] == "/model"
+        assert labels[1] == "/help"
+        assert labels[2:] == sorted(labels[2:], key=str.lower)
+        # The full registered set is still offered — ranking reorders, it
+        # never drops or adds rows. The live screen's registry (which
+        # registers the console-action commands on top of the defaults) and
+        # its skill candidates are the source of truth, not a fresh
+        # default registry.
+        expected_labels = [
+            s.label
+            for s in suggestions_for_draft(
+                "/", console._console_command_registry, console._console_skill_candidates
+            )
+        ]
+        assert sorted(labels) == sorted(expected_labels)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_popup_order_is_registry_order_with_no_usage_data():
+    # AC#3 at the UI seam: zero usage data (a fresh install's history) keeps
+    # today's ordering byte-identical.
+    app = _build_test_app()
+    app.console_prompt_history_factory = lambda: _seeded_history("hello world")
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        popup = console.query_one("#console-command-popup", ConsoleCommandPopup)
+
+        await pilot.press("/")
+        await pilot.pause()
+        # Expected order is what the unranked provider yields for the live
+        # screen's own registry + skill candidates (the harness profile
+        # carries an installed skill), so the claim is "no reordering",
+        # not a hardcoded list.
+        expected = [
+            s.label
+            for s in suggestions_for_draft(
+                "/", console._console_command_registry, console._console_skill_candidates
+            )
+        ]
+        assert _popup_labels(popup) == expected
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_command_dispatch_records_usage_token(tmp_path):
+    app = _build_test_app()
+    history = PromptHistory(tmp_path / "prompt_history.jsonl")
+    app.console_prompt_history_factory = lambda: history
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        # A dispatched command records its minimal token fire-and-forget;
+        # give the loop a beat to land the append.
+        await console._dispatch_console_command(
+            CommandParse(kind=KIND_COMMAND, name="help")
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert "/help" in history.entry_texts()
+
+        # The /skills form keeps the invoked skill's name; free-form args
+        # beyond it are never recorded.
+        await console._dispatch_console_command(
+            CommandParse(kind=KIND_COMMAND, name="skills", args="web-search and more")
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert "/skills web-search" in history.entry_texts()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_unknown_command_dispatch_records_nothing(tmp_path):
+    app = _build_test_app()
+    history = PromptHistory(tmp_path / "prompt_history.jsonl")
+    app.console_prompt_history_factory = lambda: history
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+
+        await console._dispatch_console_command(
+            CommandParse(kind=KIND_COMMAND, name="not-a-command")
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert history.entry_texts() == ()

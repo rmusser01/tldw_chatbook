@@ -2164,6 +2164,53 @@ _MAX_GREP_FILE_BYTES = 2 * 1024 * 1024
 _MAX_WRITE_DIFF_CHARS = 12 * 1024
 _WRITE_LOCKS_GUARD = threading.Lock()
 _WRITE_LOCKS: dict[str, threading.Lock] = {}
+HINT_LABEL = 'hint (tool-generated)'
+_MAX_HINT_CHARS = 600
+_MAX_HINT_CANDIDATES = 3
+_HINT_SIMILARITY_CUTOFF = 0.6
+_MAX_HINT_LINE_CHARS = 100
+_MAX_HINT_NAME_POOL = 2000
+
+def _visualize_whitespace(text: str) -> str:
+    """Render a snippet with visible whitespace (TASK-18927 AC#2)."""
+    return text.replace('\t', '\\t').replace('\r', '\\r').replace(' ', '·')
+
+def _bound_hint(text: str) -> str:
+    """Clamp a hint block to ``_MAX_HINT_CHARS``."""
+    if len(text) <= _MAX_HINT_CHARS:
+        return text
+    return text[:_MAX_HINT_CHARS - 1] + '…'
+
+def _closest_lines(needle: str, haystack: list[str], limit: int=_MAX_HINT_CANDIDATES) -> list[tuple[int, str]]:
+    """Return up to ``limit`` ``(index, line)`` near misses for ``needle``.
+
+    Exact bodies first (the text exists, just not where expected), then
+    difflib-similar bodies above ``_HINT_SIMILARITY_CUTOFF``.
+    """
+    import difflib
+    stripped = needle.strip()
+    if not stripped:
+        return []
+    found: list[tuple[int, str]] = []
+    for index, line in enumerate(haystack):
+        if line.strip() == stripped:
+            found.append((index, line))
+            if len(found) >= limit:
+                return found
+    if found:
+        return found
+    matcher = difflib.SequenceMatcher(b=stripped)
+    scored: list[tuple[float, int, str]] = []
+    for index, line in enumerate(haystack):
+        body = line.strip()
+        if not body:
+            continue
+        matcher.set_seq1(body)
+        ratio = matcher.ratio()
+        if ratio >= _HINT_SIMILARITY_CUTOFF:
+            scored.append((ratio, index, line))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [(index, line) for _, index, line in scored[:limit]]
 
 class LocalToolError(ValueError):
     """Model-actionable failure from a local tool (path, not-found, …)."""
@@ -2463,6 +2510,9 @@ def _write_relative_file(relative: Path, content: str, *, workspace: Path, displ
         if dry_run:
             return _write_preview_json(shown=shown, current=current, current_digest=current_digest, replacement=data)
         _atomic_write_target(target, data, shown=shown, expected_sha256=expected_sha256, expected_absent=expected_absent)
+        verified = _read_write_target(target, shown)
+        if verified != data:
+            raise LocalToolError(f'write verification failed for {shown}: on-disk bytes differ from the intended content (read back {(len(verified) if verified is not None else 0)} of {len(data)} bytes) — the file may be torn or modified concurrently; re-read it before retrying')
     summary = f'wrote {len(content)} characters to {shown}'
     if content_stamps and (not dry_run):
         summary += f'\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}'
@@ -2751,7 +2801,23 @@ def _edit_relative_file(relative: Path, old_string: str, new_string: str, *, wor
         raise LocalToolError(f"'{shown}' is not valid UTF-8; fs_edit only edits text files") from exc
     count = content.count(old_string)
     if count == 0:
-        raise LocalToolError(f'old_string not found in {shown}')
+        if new_string:
+            occurrences = content.count(new_string)
+            distinctive = len(new_string.strip()) >= 8
+            if distinctive and (occurrences == 1 or (replace_all and occurrences)):
+                return f"edit already applied to {shown}: the replacement text is present ({occurrences} occurrence{('s' if occurrences != 1 else '')}) and the old text is absent (0 replacements, no change made)"
+        parts: list[str] = []
+        if new_string:
+            occurrences = content.count(new_string)
+            if occurrences:
+                parts.append(f'new_string is already present {occurrences} time(s) — ambiguous evidence the edit was already applied; refine old_string or verify the current file state')
+        hint = _edit_no_match_hint(content, old_string)
+        if hint:
+            parts.append(hint)
+        message = f'old_string not found in {shown}'
+        if parts:
+            message += f'\n{HINT_LABEL}: ' + _bound_hint(' | '.join(parts))
+        raise LocalToolError(message)
     if count > 1 and (not replace_all):
         raise LocalToolError(f'old_string appears {count} times in {shown}; provide more context to make it unique, or set replace_all=true')
     updated = content.replace(old_string, new_string)
@@ -2765,6 +2831,39 @@ def _edit_relative_file(relative: Path, old_string: str, new_string: str, *, wor
     if content_stamps:
         summary += f'\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}'
     return summary
+
+def _edit_no_match_hint(content: str, old_string: str) -> str | None:
+    """Diagnose an unmatched ``old_string`` (TASK-18927 AC#2), or ``None``.
+
+    Two probes, cheapest first:
+
+    1. Whitespace-insensitive containment — if collapsing all whitespace
+       runs makes ``old_string`` appear in the file, the text IS there and
+       only indentation, spacing, or line endings differ; say so.
+    2. Nearest line — the closest body lines to ``old_string``'s first
+       line (exact bodies first, then difflib similarity), shown with
+       visible whitespace so the difference is readable at a glance.
+
+    Bounded to ``_MAX_HINT_CHARS``; adversarial inputs (huge files, odd
+    content) can only shrink the hint, never grow it, and any internal
+    failure yields ``None`` (the plain error survives).
+    """
+    try:
+        collapsed_content = ' '.join(content.split())
+        collapsed_old = ' '.join(old_string.split())
+        if collapsed_old and collapsed_old in collapsed_content:
+            return _bound_hint('the same text IS present with different whitespace (indentation, spacing, or line endings) — re-read the exact region and copy its literal whitespace')
+        content_lines = content.splitlines()
+        old_lines = [line for line in old_string.splitlines() if line.strip()]
+        if not old_lines:
+            return None
+        near = _closest_lines(old_lines[0], content_lines)
+        if not near:
+            return None
+        rendered = '; '.join((f'line {index + 1}: {_visualize_whitespace(line.strip())[:_MAX_HINT_LINE_CHARS]}' for index, line in near))
+        return _bound_hint(f'closest candidate lines (whitespace shown as · for space, \\t for tab): {rendered}')
+    except Exception:
+        return None
 
 def glob_files(pattern: str, *, workspace_root: Path, max_results: int=MAX_GLOB_RESULTS) -> str:
     """Match ``pattern`` under the workspace, newest-mtime first, capped.
@@ -2793,6 +2892,7 @@ def _glob_relative_files(pattern: str, *, workspace: Path, max_results: int, sen
     """Glob from the pinned working directory using only relative I/O paths."""
     heap: list[tuple[float, Path]] = []
     total = 0
+    name_pool: list[str] = []
     try:
         resolved_workspace: Path | None = workspace.resolve()
     except (OSError, RuntimeError, ValueError):
@@ -2814,6 +2914,8 @@ def _glob_relative_files(pattern: str, *, workspace: Path, max_results: int, sen
         except OSError:
             continue
         total += 1
+        if len(name_pool) < _MAX_HINT_NAME_POOL:
+            name_pool.append(rendered.as_posix())
         if len(heap) < max_results:
             heapq.heappush(heap, (mtime, rendered))
         elif mtime > heap[0][0]:
@@ -2822,7 +2924,82 @@ def _glob_relative_files(pattern: str, *, workspace: Path, max_results: int, sen
     lines = [str(relative) for _, relative in best]
     if total > max_results:
         lines.append(f'… ({total - max_results} more, truncated)')
-    return '\n'.join(lines) if lines else f'(no files matching {pattern!r})'
+    if lines:
+        return '\n'.join(lines)
+    if not name_pool:
+        name_pool = _bounded_admissible_name_pool(workspace, sensitive_exclusions, resolved_workspace, validate_targets)
+    empty = f'(no files matching {pattern!r})'
+    hint = _glob_near_miss_hint(pattern, name_pool)
+    if hint:
+        return f'{empty}\n{HINT_LABEL}: {hint}'
+    return empty
+
+def _bounded_admissible_name_pool(workspace: Path, sensitive_exclusions: tuple[SensitiveExclusion, ...], resolved_workspace: Path | None, validate_targets: bool) -> list[str]:
+    """Collect a bounded pool of admissible names for near-miss hints.
+
+    Considers at most ``_MAX_HINT_NAME_POOL`` entries and stops; the probe
+    is best-effort, never a second full walk. Applies the exact
+    admissibility checks the glob walk uses, so a name a match would have
+    been refused on (sensitive, escaping) can never enter a hint.
+    """
+    pool: list[str] = []
+    examined = 0
+    try:
+        for p in workspace.rglob('*'):
+            examined += 1
+            if examined > MAX_SCAN_ENTRIES or len(pool) >= _MAX_HINT_NAME_POOL:
+                break
+            try:
+                if not p.is_file():
+                    continue
+                rendered = p.relative_to(workspace)
+                if validate_targets:
+                    if not _relative_target_is_safe(rendered, workspace, sensitive_exclusions, is_directory=False, resolved_workspace=resolved_workspace):
+                        continue
+                elif _is_relative_sensitive_path(rendered, sensitive_exclusions, is_directory=False):
+                    continue
+                pool.append(rendered.as_posix())
+            except (OSError, ValueError):
+                continue
+    except (OSError, RuntimeError):
+        return pool
+    return pool
+
+def _glob_near_miss_hint(pattern: str, name_pool: list[str]) -> str | None:
+    """Suggest close existing names for a zero-match pattern (TASK-18927).
+
+    Extracts the longest literal (wildcard-free) segment of the pattern and
+    difflib-matches it against the pool's segments and full paths. Purely
+    advisory and bounded; ``None`` when there is nothing close or nothing
+    literal to probe (e.g. ``**/*``).
+    """
+    import difflib
+    try:
+        literals: list[str] = []
+        for segment in pattern.split('/'):
+            if not segment or any((ch in segment for ch in '*?[')):
+                continue
+            literals.append(segment)
+        if not literals:
+            return None
+        needle = max(literals, key=len)
+        if len(needle) < 3:
+            return None
+        segment_example: dict[str, str] = {}
+        for name in name_pool:
+            for segment in name.split('/'):
+                if segment not in segment_example:
+                    segment_example[segment] = name
+        close_segments = difflib.get_close_matches(needle, list(segment_example), n=_MAX_HINT_CANDIDATES, cutoff=_HINT_SIMILARITY_CUTOFF)
+        if close_segments:
+            rendered = '; '.join((f'"{segment}" (e.g. {segment_example[segment]})' for segment in close_segments))
+            return _bound_hint(f'closest existing names: {rendered}')
+        close_paths = difflib.get_close_matches(needle, name_pool, n=_MAX_HINT_CANDIDATES, cutoff=_HINT_SIMILARITY_CUTOFF)
+        if close_paths:
+            return _bound_hint('closest existing paths: ' + '; '.join((f'"{p}"' for p in close_paths)))
+        return None
+    except Exception:
+        return None
 
 def grep_files(pattern: str, *, workspace_root: Path, mode: str='content', max_results: int=MAX_GREP_RESULTS) -> str:
     """Regex search under the workspace.
@@ -2867,6 +3044,12 @@ def _grep_relative_files(pattern: str, *, workspace: Path, mode: str, max_result
         raise LocalToolError('max_results must be >= 1')
     shown: list[str] = []
     total = 0
+    ci_near_total = 0
+    ci_near_example: str | None = None
+    try:
+        rx_ci = re.compile(pattern, re.IGNORECASE)
+    except re.error:
+        rx_ci = rx
     try:
         resolved_workspace: Path | None = workspace.resolve()
     except (OSError, RuntimeError, ValueError):
@@ -2885,7 +3068,14 @@ def _grep_relative_files(pattern: str, *, workspace: Path, mode: str, max_result
         except (UnicodeDecodeError, OSError):
             continue
         rel = str(relative)
-        hits = [f'{i}:{line}' for i, line in enumerate(text.splitlines(), 1) if rx.search(line)]
+        hits = []
+        for i, line in enumerate(text.splitlines(), 1):
+            if rx.search(line):
+                hits.append(f'{i}:{line}')
+            elif rx_ci.search(line):
+                ci_near_total += 1
+                if ci_near_example is None:
+                    ci_near_example = f'{rel}:{i}'
         if not hits:
             continue
         if mode == 'content':
@@ -2899,7 +3089,12 @@ def _grep_relative_files(pattern: str, *, workspace: Path, mode: str, max_result
                 shown.append(rel if mode == 'files' else f'{rel}:{len(hits)}')
     if total > max_results:
         shown.append(f'… ({total - max_results} more, truncated)')
-    return '\n'.join(shown) if shown else f'(no matches for {pattern!r})'
+    if shown:
+        return '\n'.join(shown)
+    empty = f'(no matches for {pattern!r})'
+    if ci_near_total:
+        return f'{empty}\n{HINT_LABEL}: ' + _bound_hint(f'{ci_near_total} line(s) match case-insensitively (e.g. {ci_near_example}) — prefix the pattern with (?i) if that is intended')
+    return empty
 
 def _relative_target_is_safe(relative: Path, workspace: Path, exclusions: tuple[SensitiveExclusion, ...], *, is_directory: bool, resolved_workspace: Path | None=None) -> bool:
     """Require both lexical and resolved targets to be admissible for I/O.
@@ -4093,11 +4288,17 @@ _NO_NEWLINE_MARKER = '\\ No newline at end of file'
 _HEADER_TIMESTAMP_METADATA = re.compile('\\s+\\d{4}-\\d{2}-\\d{2}(?:[ T]\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?)?(?:\\s*(?:[+-]\\d{4}|[+-]\\d{2}:?\\d{2}|Z))?$')
 
 class FilesystemPatchError(ValueError):
-    """Raised when a unified diff cannot be parsed or applied safely."""
+    """Raised when a unified diff cannot be parsed or applied safely.
 
-    def __init__(self, reason_code: str) -> None:
+    ``reason_code`` is kept in lockstep with the tldw_server reference.
+    ``detail`` (TASK-18927) is an optional bounded, tool-generated recovery
+    hint carried alongside the code — never a change to the code contract.
+    """
+
+    def __init__(self, reason_code: str, detail: str | None=None) -> None:
         super().__init__(reason_code)
         self.reason_code = reason_code
+        self.detail = detail
 
 @dataclass(frozen=True, slots=True)
 class PatchHunkLine:
@@ -4180,6 +4381,32 @@ def parse_patch_targets(diff_text: str) -> tuple[PatchFile, ...]:
     """Parse the bounded create/modify plans shared by preflight and execution."""
     return parse_unified_diff(diff_text, max_files=PATCH_MAX_FILES, max_hunks=PATCH_MAX_HUNKS, max_bytes=PATCH_MAX_BYTES)
 
+def _patch_mismatch_detail(original_lines: list[str], hunk: 'PatchHunk', expected_text: str | None, cursor: int) -> str | None:
+    """Name the nearest candidate location for a context mismatch (18927).
+
+    Pure text diagnosis, bounded to the shared hint budget: first where the
+    expected line actually sits in the file (exact body match), then the
+    closest similar lines. Returns ``None`` whenever there is nothing
+    useful to say — the bare reason code survives unchanged.
+    """
+    try:
+        needle = expected_text
+        if needle is None:
+            needle = next((line.text for line in hunk.lines if line.kind in ('context', 'remove') and line.text.strip()), None)
+        if not needle or not needle.strip():
+            return None
+        near = _closest_lines(needle, original_lines)
+        if not near:
+            return None
+        index, line = near[0]
+        if line.strip() == needle.strip():
+            where = f'the expected text is at line {index + 1}'
+        else:
+            where = 'closest candidate lines (whitespace shown as · for space, \\t for tab): ' + '; '.join((f'line {i + 1}: {_visualize_whitespace(l.strip())[:_MAX_HINT_LINE_CHARS]}' for i, l in near))
+        return _bound_hint(f'patch context mismatched at line {cursor + 1}; {where}')
+    except Exception:
+        return None
+
 def apply_patch_to_text(original: str, patch_file: PatchFile) -> str:
     """Apply one parsed file patch to original text without touching the filesystem."""
     original_lines = original.splitlines(keepends=True)
@@ -4193,7 +4420,7 @@ def apply_patch_to_text(original: str, patch_file: PatchFile) -> str:
             hunk_start = hunk.old_start - 1
         hunk_start = max(0, hunk_start)
         if hunk_start < cursor or hunk_start > len(original_lines):
-            raise FilesystemPatchError('patch_context_mismatch')
+            raise FilesystemPatchError('patch_context_mismatch', detail=_patch_mismatch_detail(original_lines, hunk, None, hunk_start))
         output.extend(original_lines[cursor:hunk_start])
         cursor = hunk_start
         for hunk_line in hunk.lines:
@@ -4203,11 +4430,11 @@ def apply_patch_to_text(original: str, patch_file: PatchFile) -> str:
                     output.append(newline)
                 continue
             if cursor >= len(original_lines):
-                raise FilesystemPatchError('patch_context_mismatch')
+                raise FilesystemPatchError('patch_context_mismatch', detail=_patch_mismatch_detail(original_lines, hunk, hunk_line.text, cursor))
             if _line_body(original_lines[cursor]) != hunk_line.text:
-                raise FilesystemPatchError('patch_context_mismatch')
+                raise FilesystemPatchError('patch_context_mismatch', detail=_patch_mismatch_detail(original_lines, hunk, hunk_line.text, cursor))
             if _line_has_trailing_newline(original_lines[cursor]) != hunk_line.has_trailing_newline:
-                raise FilesystemPatchError('patch_context_mismatch')
+                raise FilesystemPatchError('patch_context_mismatch', detail=_bound_hint(f"line {cursor + 1} matches but its line ending differs from the patch's (CRLF vs LF)"))
             if hunk_line.kind == 'context':
                 output.append(original_lines[cursor])
             cursor += 1
@@ -4355,7 +4582,10 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool=False) ->
             target = resolve_workspace_path(rel_path, workspace_root, intent='write', context=sensitive_ctx)
             _patch_relative_file(patch_file, target.relative_to(Path(workspace_root).resolve()), workspace=Path(workspace_root).resolve(), dry_run=dry_run)
         except FilesystemPatchError as exc:
-            raise LocalToolError(f'fs_patch failed [{exc.reason_code}]: {rel_path}') from exc
+            message = f'fs_patch failed [{exc.reason_code}]: {rel_path}'
+            if getattr(exc, 'detail', None):
+                message += f' — {HINT_LABEL}: {exc.detail}'
+            raise LocalToolError(message) from exc
         summaries.append(f"{('would patch' if dry_run else 'patched')} {rel_path}")
     return '\n'.join(summaries)
 
@@ -4387,7 +4617,10 @@ def patch_validated_files(plans: tuple[PatchFile, ...], *, root: PinnedWorkspace
         except WorkspaceRootPinError as exc:
             raise LocalToolError('fs_patch failed [invalid_patch_path]') from exc
         except FilesystemPatchError as exc:
-            raise LocalToolError(f'fs_patch failed [{exc.reason_code}]: {rel_path}') from exc
+            message = f'fs_patch failed [{exc.reason_code}]: {rel_path}'
+            if getattr(exc, 'detail', None):
+                message += f' — {HINT_LABEL}: {exc.detail}'
+            raise LocalToolError(message) from exc
         summaries.append(f"{('would patch' if dry_run else 'patched')} {rel_path}")
         if content_stamps and (not dry_run):
             stamp_lines.append(f'sha256 {relative.as_posix()}: {written[0]} size: {written[1]}')
@@ -5329,4 +5562,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("2873ee9cdf369ff64c059f79021dadf22e9550379f11edb022bb8d20c7974285")
+BUNDLE_SHA256 = _enter_worker_exchange("0ddd83736eb716211776f5924cc45d1020bbc614b0195b486cefbdaf055d77f4")

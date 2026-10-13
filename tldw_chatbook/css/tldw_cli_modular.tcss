@@ -8035,6 +8035,12 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 }
 
 
+.console-conversation-browser-date-divider {
+    color: $ds-text-muted;
+    padding-left: $ds-space-2;
+}
+
+
 .console-workspace-conversation-row-broken {
     color: $ds-text-muted;
     text-style: italic;

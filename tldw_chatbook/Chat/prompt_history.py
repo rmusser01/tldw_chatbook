@@ -97,6 +97,16 @@ class PromptHistory:
         """The stashed live-draft text, or an empty string when not stashed."""
         return self._current or ""
 
+    def entry_texts(self) -> tuple[str, ...]:
+        """Return the stored entry texts as an immutable snapshot.
+
+        Synchronous and IO-free: returns whatever is in memory (empty before
+        the first ``load()`` completes). TASK-18921's suggestion usage
+        ranking consumes this on the UI path, keyed on ``revision`` for
+        cheap invalidation — it must never trigger or await a load.
+        """
+        return tuple(entry["input"] for entry in self._entries)
+
     def stash_draft(self, text: str) -> None:
         """Stash in-progress text so history recall never loses it.
 

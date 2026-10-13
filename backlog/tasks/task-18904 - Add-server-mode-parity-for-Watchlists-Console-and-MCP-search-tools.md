@@ -35,3 +35,33 @@ Replace the current server-mode unsupported outcome for watchlists_search_items 
 - [ ] #7 The existing local:__local__ permission, kill-switch, approval, definition-hash, and external MCP exposure gates remain authoritative with no new principal or mutation capability.
 - [ ] #8 Tests cover Console and external MCP invocation, local/server switching, auth and transport failures, malformed cursors, scope ambiguity, parity fixtures, no event-loop blocking, and unchanged local-mode results.
 <!-- AC:END -->
+
+## Deferral note (2026-10-11, dev `9f8533686c`)
+
+DEFERRED — the cross-repo dependency this task names does not exist. Verified
+against rmusser01/tldw_server:
+
+1. **tldw_server TASK-13022 is not a watchlists task.** Its actual title is
+   "Definition run-now endpoint + capabilities honesty" — a scheduled-tasks
+   endpoint, part of the server-offload execution seam (tldw_server PR #2803,
+   merged 2026-08-22, with PR #2796 filing the 13020-13022 family under
+   tldw_chatbook ADR-077 / TASK-18940). The reference in this task's
+   frontmatter appears to be a cross-repo ID mixup.
+2. **No server-side watchlists search API exists.** Code search over
+   rmusser01/tldw_server for `watchlists_search_items` returns zero
+   occurrences. The only implementation is chatbook's local tool
+   (`tldw_chatbook/Agents/local_tool_provider.py`, the `local:__local__` hub),
+   whose server-mode outcome is the current "unsupported" path this task was
+   meant to replace.
+
+To unblock: a new tldw_server task must first define and ship the
+watchlists items/collections search HTTP surface (collection scope mapping,
+human source/watchlist resolution, status/date vocabularies, cursor
+continuation) that ACs #3-#5 would then wrap. Until that lands, AC #1 has
+nothing to consume. Suggested owner action: file the server-side task and
+re-point this task's reference at it.
+
+Also relevant to sequencing: tldw_chatbook PR #3080 (open at audit time)
+restores the MCP watchlists provider contract tests (TASK-19642.16) — land
+that first so the contract fixtures this task's parity tests would build on
+are green at base.

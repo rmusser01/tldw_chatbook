@@ -1145,9 +1145,17 @@ run, use **Stop**, **Ctrl+G**, or `/stop` instead.
 - **Console didn't appear on first launch.** The first-run wizard's skip
   path lands on Home; with `default_tab = "chat"` set, the next launch
   opens Console directly.
-- **Alt+M does nothing.** Some terminal/multiplexer setups deliver Alt
-  chords as a separate Esc + letter, which Console reads as Escape then a
-  typed character. Switch model is always reachable via `/model` or
+- **Alt+M does nothing.** Alt chords arrive in one of three forms, and
+  only the slowest one breaks the chord: kitty-keyboard-protocol terminals
+  (kitty, Ghostty, WezTerm — negotiated automatically at startup) deliver
+  Alt+M as a single key event, and a legacy `Esc` + `M` pair is merged
+  back into Alt+M by the input parser whenever the two bytes arrive within
+  a tenth of a second — including inside tmux, which forwards the pair
+  together (verified on tmux 3.6a, default and extended-keys configs). The
+  chord only fails when the `Esc` and the letter are delivered more than
+  ~100 ms apart, which happens on slow SSH links or behind a multiplexer
+  escape delay longer than that (in tmux, `set -s escape-time 10` keeps
+  the pair together). Switch model is always reachable via `/model` or
   **Ctrl+P** → "Console: Switch model…".
 
 —

@@ -92,6 +92,80 @@ _MAX_WRITE_DIFF_CHARS = 12 * 1024
 _WRITE_LOCKS_GUARD = threading.Lock()
 _WRITE_LOCKS: dict[str, threading.Lock] = {}
 
+# --- TASK-18927: self-recovery hints -------------------------------------
+#
+# Recovery messages are bounded, clearly machine-generated hints -- never
+# instructions the model must obey. Every hint line is prefixed with
+# ``HINT_LABEL`` so a transcript reader can always tell a tool-authored
+# suggestion apart from a tool's factual result.
+
+HINT_LABEL = "hint (tool-generated)"
+#: Hard cap on any single hint block. Diagnoses are advisory scaffolding
+#: around a failure, never a channel for replaying file content back.
+_MAX_HINT_CHARS = 600
+#: Cap on near-miss candidates offered in one hint.
+_MAX_HINT_CANDIDATES = 3
+#: difflib similarity cutoff for a line/name to qualify as a near miss.
+_HINT_SIMILARITY_CUTOFF = 0.6
+#: Cap on characters of one candidate line shown in a hint.
+_MAX_HINT_LINE_CHARS = 100
+#: Cap on workspace names collected during a glob walk for near-miss
+#: probing (memory bound independent of workspace size).
+_MAX_HINT_NAME_POOL = 2_000
+
+
+def _visualize_whitespace(text: str) -> str:
+    """Render a snippet with visible whitespace (TASK-18927 AC#2)."""
+    return (
+        text.replace("\t", "\\t")
+        .replace("\r", "\\r")
+        .replace(" ", "·")
+    )
+
+
+def _bound_hint(text: str) -> str:
+    """Clamp a hint block to ``_MAX_HINT_CHARS``."""
+    if len(text) <= _MAX_HINT_CHARS:
+        return text
+    return text[: _MAX_HINT_CHARS - 1] + "…"
+
+
+def _closest_lines(
+    needle: str, haystack: list[str], limit: int = _MAX_HINT_CANDIDATES
+) -> list[tuple[int, str]]:
+    """Return up to ``limit`` ``(index, line)`` near misses for ``needle``.
+
+    Exact bodies first (the text exists, just not where expected), then
+    difflib-similar bodies above ``_HINT_SIMILARITY_CUTOFF``.
+    """
+    import difflib
+
+    stripped = needle.strip()
+    if not stripped:
+        return []
+    found: list[tuple[int, str]] = []
+    for index, line in enumerate(haystack):
+        if line.strip() == stripped:
+            found.append((index, line))
+            if len(found) >= limit:
+                return found
+    if found:
+        return found
+    # Needle pinned as seq2 so its b-side match cache survives the loop;
+    # each candidate line swaps in as seq1 only.
+    matcher = difflib.SequenceMatcher(b=stripped)
+    scored: list[tuple[float, int, str]] = []
+    for index, line in enumerate(haystack):
+        body = line.strip()
+        if not body:
+            continue
+        matcher.set_seq1(body)
+        ratio = matcher.ratio()
+        if ratio >= _HINT_SIMILARITY_CUTOFF:
+            scored.append((ratio, index, line))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [(index, line) for _, index, line in scored[:limit]]
+
 
 class LocalToolError(ValueError):
     """Model-actionable failure from a local tool (path, not-found, …)."""
@@ -577,6 +651,19 @@ def _write_relative_file(
             expected_sha256=expected_sha256,
             expected_absent=expected_absent,
         )
+        # TASK-18927 AC#3: verify on-disk bytes against the intended
+        # content and report any mismatch honestly. Still under the write
+        # lock, so a concurrent writer through this process cannot slip in
+        # between write and verification.
+        verified = _read_write_target(target, shown)
+        if verified != data:
+            raise LocalToolError(
+                f"write verification failed for {shown}: on-disk bytes "
+                f"differ from the intended content (read back "
+                f"{len(verified) if verified is not None else 0} of "
+                f"{len(data)} bytes) — the file may be torn or modified "
+                "concurrently; re-read it before retrying"
+            )
     summary = f"wrote {len(content)} characters to {shown}"
     if content_stamps and not dry_run:
         summary += f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
@@ -1009,7 +1096,51 @@ def _edit_relative_file(
         ) from exc
     count = content.count(old_string)
     if count == 0:
-        raise LocalToolError(f"old_string not found in {shown}")
+        # TASK-18927 AC#1: an edit whose change is already present is a
+        # success no-op, not a match error — the model retrying an already
+        # applied edit (a common re-run after a lost race or a re-sent
+        # turn) no longer burns an approval cycle on it. Evidence must be
+        # strong, though: a new_string that appears exactly once (the
+        # signature of a completed single replace), or any presence under
+        # replace_all (whose retry leaves N occurrences). A short or
+        # coincidentally-present new_string stays an error, with the
+        # ambiguity said out loud.
+        if new_string:
+            occurrences = content.count(new_string)
+            # Review fix (PR #3086): presence alone is NOT proof the edit
+            # landed — a coincidental short new_string ("x" inside "item_x")
+            # produced false successes. Require distinctive evidence: a
+            # stripped length of at least 8, or any presence under
+            # replace_all (whose completed retry leaves N occurrences of a
+            # distinctive-enough string). Weaker evidence falls through to
+            # the ambiguity note below.
+            distinctive = len(new_string.strip()) >= 8
+            if distinctive and (
+                occurrences == 1 or (replace_all and occurrences)
+            ):
+                return (
+                    f"edit already applied to {shown}: the replacement text "
+                    f"is present ({occurrences} occurrence"
+                    f"{'s' if occurrences != 1 else ''}) and the old text is "
+                    "absent (0 replacements, no change made)"
+                )
+        # TASK-18927 AC#2: diagnose the near miss instead of a bare error.
+        parts: list[str] = []
+        if new_string:
+            occurrences = content.count(new_string)
+            if occurrences:
+                parts.append(
+                    f"new_string is already present {occurrences} time(s) — "
+                    "ambiguous evidence the edit was already applied; "
+                    "refine old_string or verify the current file state"
+                )
+        hint = _edit_no_match_hint(content, old_string)
+        if hint:
+            parts.append(hint)
+        message = f"old_string not found in {shown}"
+        if parts:
+            message += f"\n{HINT_LABEL}: " + _bound_hint(" | ".join(parts))
+        raise LocalToolError(message)
     if count > 1 and not replace_all:
         raise LocalToolError(
             f"old_string appears {count} times in {shown}; "
@@ -1039,6 +1170,50 @@ def _edit_relative_file(
     if content_stamps:
         summary += f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
     return summary
+
+
+def _edit_no_match_hint(content: str, old_string: str) -> str | None:
+    """Diagnose an unmatched ``old_string`` (TASK-18927 AC#2), or ``None``.
+
+    Two probes, cheapest first:
+
+    1. Whitespace-insensitive containment — if collapsing all whitespace
+       runs makes ``old_string`` appear in the file, the text IS there and
+       only indentation, spacing, or line endings differ; say so.
+    2. Nearest line — the closest body lines to ``old_string``'s first
+       line (exact bodies first, then difflib similarity), shown with
+       visible whitespace so the difference is readable at a glance.
+
+    Bounded to ``_MAX_HINT_CHARS``; adversarial inputs (huge files, odd
+    content) can only shrink the hint, never grow it, and any internal
+    failure yields ``None`` (the plain error survives).
+    """
+    try:
+        collapsed_content = " ".join(content.split())
+        collapsed_old = " ".join(old_string.split())
+        if collapsed_old and collapsed_old in collapsed_content:
+            return _bound_hint(
+                "the same text IS present with different whitespace "
+                "(indentation, spacing, or line endings) — re-read the "
+                "exact region and copy its literal whitespace"
+            )
+        content_lines = content.splitlines()
+        old_lines = [line for line in old_string.splitlines() if line.strip()]
+        if not old_lines:
+            return None
+        near = _closest_lines(old_lines[0], content_lines)
+        if not near:
+            return None
+        rendered = "; ".join(
+            f"line {index + 1}: {_visualize_whitespace(line.strip())[:_MAX_HINT_LINE_CHARS]}"
+            for index, line in near
+        )
+        return _bound_hint(
+            "closest candidate lines (whitespace shown as · for space, "
+            f"\\t for tab): {rendered}"
+        )
+    except Exception:
+        return None
 
 
 def glob_files(
@@ -1085,6 +1260,11 @@ def _glob_relative_files(
     """Glob from the pinned working directory using only relative I/O paths."""
     heap: list[tuple[float, Path]] = []  # min-heap of (mtime, normpath)
     total = 0
+    # TASK-18927 AC#4: bounded pool of admissible names collected during
+    # the SAME filtered walk, for near-miss probing on a zero-match
+    # result. Only names this walk was already willing to disclose can
+    # enter a hint — the probe can never surface a sensitive path.
+    name_pool: list[str] = []
     # review-B B27: one workspace resolution per walk (None falls back to the
     # old per-entry resolution when even this fails).
     try:
@@ -1118,6 +1298,8 @@ def _glob_relative_files(
         except OSError:
             continue  # racy/unreadable entry — skip it, not the whole search
         total += 1
+        if len(name_pool) < _MAX_HINT_NAME_POOL:
+            name_pool.append(rendered.as_posix())
         if len(heap) < max_results:
             heapq.heappush(heap, (mtime, rendered))
         elif mtime > heap[0][0]:
@@ -1126,7 +1308,115 @@ def _glob_relative_files(
     lines = [str(relative) for _, relative in best]
     if total > max_results:
         lines.append(f"… ({total - max_results} more, truncated)")
-    return "\n".join(lines) if lines else f"(no files matching {pattern!r})"
+    if lines:
+        return "\n".join(lines)
+    # Zero matches: ``Path.glob`` yields only matches, so the pool collected
+    # during the walk is empty here — take ONE bounded supplementary walk
+    # (entry-capped, same admissibility checks) for near-miss probing.
+    if not name_pool:
+        name_pool = _bounded_admissible_name_pool(
+            workspace, sensitive_exclusions, resolved_workspace, validate_targets
+        )
+    empty = f"(no files matching {pattern!r})"
+    hint = _glob_near_miss_hint(pattern, name_pool)
+    if hint:
+        return f"{empty}\n{HINT_LABEL}: {hint}"
+    return empty
+
+
+def _bounded_admissible_name_pool(
+    workspace: Path,
+    sensitive_exclusions: tuple[SensitiveExclusion, ...],
+    resolved_workspace: Path | None,
+    validate_targets: bool,
+) -> list[str]:
+    """Collect a bounded pool of admissible names for near-miss hints.
+
+    Considers at most ``_MAX_HINT_NAME_POOL`` entries and stops; the probe
+    is best-effort, never a second full walk. Applies the exact
+    admissibility checks the glob walk uses, so a name a match would have
+    been refused on (sensitive, escaping) can never enter a hint.
+    """
+    pool: list[str] = []
+    examined = 0
+    try:
+        for p in workspace.rglob("*"):
+            examined += 1
+            if examined > MAX_SCAN_ENTRIES or len(pool) >= _MAX_HINT_NAME_POOL:
+                break
+            try:
+                if not p.is_file():
+                    continue
+                rendered = p.relative_to(workspace)
+                if validate_targets:
+                    if not _relative_target_is_safe(
+                        rendered,
+                        workspace,
+                        sensitive_exclusions,
+                        is_directory=False,
+                        resolved_workspace=resolved_workspace,
+                    ):
+                        continue
+                elif _is_relative_sensitive_path(
+                    rendered, sensitive_exclusions, is_directory=False
+                ):
+                    continue
+                pool.append(rendered.as_posix())
+            except (OSError, ValueError):
+                continue
+    except (OSError, RuntimeError):
+        return pool
+    return pool
+
+
+def _glob_near_miss_hint(pattern: str, name_pool: list[str]) -> str | None:
+    """Suggest close existing names for a zero-match pattern (TASK-18927).
+
+    Extracts the longest literal (wildcard-free) segment of the pattern and
+    difflib-matches it against the pool's segments and full paths. Purely
+    advisory and bounded; ``None`` when there is nothing close or nothing
+    literal to probe (e.g. ``**/*``).
+    """
+    import difflib
+
+    try:
+        literals: list[str] = []
+        for segment in pattern.split("/"):
+            if not segment or any(ch in segment for ch in "*?["):
+                continue
+            literals.append(segment)
+        if not literals:
+            return None
+        needle = max(literals, key=len)
+        if len(needle) < 3:
+            return None
+        segment_example: dict[str, str] = {}
+        for name in name_pool:
+            for segment in name.split("/"):
+                if segment not in segment_example:
+                    segment_example[segment] = name
+        close_segments = difflib.get_close_matches(
+            needle,
+            list(segment_example),
+            n=_MAX_HINT_CANDIDATES,
+            cutoff=_HINT_SIMILARITY_CUTOFF,
+        )
+        if close_segments:
+            rendered = "; ".join(
+                f'"{segment}" (e.g. {segment_example[segment]})'
+                for segment in close_segments
+            )
+            return _bound_hint(f"closest existing names: {rendered}")
+        close_paths = difflib.get_close_matches(
+            needle, name_pool, n=_MAX_HINT_CANDIDATES, cutoff=_HINT_SIMILARITY_CUTOFF
+        )
+        if close_paths:
+            return _bound_hint(
+                "closest existing paths: " + "; ".join(f'"{p}"' for p in close_paths)
+            )
+        return None
+    except Exception:
+        return None
 
 
 def grep_files(
@@ -1199,6 +1489,17 @@ def _grep_relative_files(
     # skip the entry rather than failing the whole search.
     shown: list[str] = []
     total = 0
+    # TASK-18927 AC#4: single-pass near-miss probe. Any line an exact
+    # case-sensitive search matches is also a case-insensitive match (for
+    # ordinary patterns), so counting the ci-only lines during the same
+    # walk costs one extra `search` per line and never needs a second
+    # walk. Only used when the exact search found nothing.
+    ci_near_total = 0
+    ci_near_example: str | None = None
+    try:
+        rx_ci = re.compile(pattern, re.IGNORECASE)
+    except re.error:
+        rx_ci = rx  # unreachable (validated above); keep the type narrow
     # review-B B27: resolve the workspace once for the whole walk instead of
     # once per entry. If even the workspace resolution fails (pathological
     # ancestry), None falls back to the old per-entry behavior exactly.
@@ -1226,11 +1527,14 @@ def _grep_relative_files(
         except (UnicodeDecodeError, OSError):
             continue  # binary/unreadable — skip
         rel = str(relative)
-        hits = [
-            f"{i}:{line}"
-            for i, line in enumerate(text.splitlines(), 1)
-            if rx.search(line)
-        ]
+        hits = []
+        for i, line in enumerate(text.splitlines(), 1):
+            if rx.search(line):
+                hits.append(f"{i}:{line}")
+            elif rx_ci.search(line):
+                ci_near_total += 1
+                if ci_near_example is None:
+                    ci_near_example = f"{rel}:{i}"
         if not hits:
             continue
         if mode == "content":
@@ -1244,7 +1548,19 @@ def _grep_relative_files(
                 shown.append(rel if mode == "files" else f"{rel}:{len(hits)}")
     if total > max_results:
         shown.append(f"… ({total - max_results} more, truncated)")
-    return "\n".join(shown) if shown else f"(no matches for {pattern!r})"
+    if shown:
+        return "\n".join(shown)
+    empty = f"(no matches for {pattern!r})"
+    if ci_near_total:
+        # Review fix (PR #3086 Minor-2): route through _bound_hint so the
+        # path-bearing example respects the same cap as every other hint
+        # (AC#5's blanket bound claim).
+        return f"{empty}\n{HINT_LABEL}: " + _bound_hint(
+            f"{ci_near_total} line(s) match case-insensitively "
+            f"(e.g. {ci_near_example}) — prefix the pattern with "
+            "(?i) if that is intended"
+        )
+    return empty
 
 
 def _relative_target_is_safe(

@@ -2232,6 +2232,15 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     color: $ds-text-muted;
 }
 
+/* TASK-18924: date dividers between conversation rows in the Chats
+   section (Today / Yesterday / This week / Older). Composes the shared
+   dim-copy color with a one-level indent so the label reads as a
+   sub-header of the section, not a row. */
+.console-conversation-browser-date-divider {
+    color: $ds-text-muted;
+    padding-left: $ds-space-2;
+}
+
 /* TASK-717: conversation rows whose record is proven missing render dim and
    inert instead of impersonating openable chats. */
 .console-workspace-conversation-row-broken {
