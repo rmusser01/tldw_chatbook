@@ -848,7 +848,8 @@ class ConsoleStatusChips(Horizontal):
         Returns:
             ``label``: chip text (the full ``state.label``; the strip
             hasn't been laid out yet at compose time, so the width-aware
-            compact form applies on the first resize or ``sync_cost_state``).
+            compact form applies after the first layout
+            (``_refit_after_layout``) or on ``sync_cost_state``).
             ``tooltip``: hover/focus text. ``hidden``: ``True`` when
             ``state`` is ``None``. ``alert``/``cold``: ``state.alert``/
             ``state.cold``.
