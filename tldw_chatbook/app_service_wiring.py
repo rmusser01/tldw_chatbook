@@ -133,11 +133,13 @@ from tldw_chatbook.Feedback_Interop import (
 from tldw_chatbook.Home.active_work_adapter import (
     LocalNotificationHomeActiveWorkAdapter,
 )
-from tldw_chatbook.Kanban_Interop import (
-    KanbanScopeService,
-    LocalKanbanService,
-    ServerKanbanService,
-)
+# TASK-21107 / TASK-21239: Kanban_Interop is deliberately NOT imported at
+# module scope. `server_kanban_service.py`'s module-level 31-name import
+# from `..tldw_api` forces the 76-pydantic-model `kanban_schemas` module
+# through the package's otherwise-lazy PEP-562 facade, and the subsystem
+# has zero in-app consumers -- so both its construction and its import are
+# deferred to first property access (see the `kanban_scope_service`
+# property below).
 from tldw_chatbook.Library import LocalLibraryCollectionsService
 from tldw_chatbook.Library.library_local_rag_search_service import (
     LibraryLocalRagSearchService,
@@ -491,6 +493,84 @@ def _install_deferred_notes_sync_facades(app: Any) -> bool:
         manual.notes_organization_sync_service = service
         manual.notes_repository = repository
     return True
+
+
+def _notes_sync_state_db_has_configured_roots(state_path: Any) -> bool:
+    """Whether the notes-sync state DB on disk carries real configuration.
+
+    TASK-21240: the TASK-21112 start gate's second clause was a bare
+    ``state_path.exists()``, which an ABANDONED first-time setup satisfies
+    forever -- opening setup force-starts the runtime (creating and
+    schema-initializing the file), and abandoning it without configuring a
+    sync directory leaves an empty store that re-arms the gate on every
+    subsequent boot. The honest evidence is a configured ROOT in
+    ``notes_sync_roots``.
+
+    Side-effect free by construction (the TASK-21112 rule): read-only URI
+    open, SELECT only. Never creates the file, never opens for write, never
+    migrates. Raises on a corrupt/unopenable store -- callers treat that as
+    fail-open (start attempt), the same safe direction the runtime's own
+    ``_start_once`` probe handling takes.
+
+    Args:
+        state_path: The state DB path from ``get_notes_sync_state_db_path()``.
+
+    Returns:
+        True when at least one sync root is configured; False when the file
+        is absent, schema-only (the abandoned-setup case), or missing the
+        roots table entirely.
+    """
+    from pathlib import Path as _Path
+
+    path = _Path(state_path)
+    if not path.exists():
+        return False
+    import sqlite3
+
+    connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+    try:
+        row = connection.execute(
+            "SELECT 1 FROM notes_sync_roots LIMIT 1"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        # No such table: a store whose schema never reached root creation.
+        return False
+    finally:
+        connection.close()
+    return row is not None
+
+
+def _notes_sync_boot_start_evidence(app: Any) -> bool:
+    """The TASK-21112 start gate, shared by start() and boot construction.
+
+    TASK-21247: the same predicate that decides whether the runtime should
+    START now also decides whether ``on_mount`` may CONSTRUCT it -- reading
+    the lazy property unconditionally relocated the ~15-module construction
+    chain from boot to just before first paint, paying it on every boot
+    including zero-profile ones. Both call sites must evaluate the SAME
+    evidence or construction and start drift apart.
+
+    Exceptions propagate: a broken probe must fail OPEN (a full start
+    attempt), never silently disable a configured user's sync -- the
+    runtime's ``_start_once`` catches and does exactly that, and the boot
+    caller wraps this the same way.
+
+    Args:
+        app: The ``TldwCli`` (or harness double) carrying ``app_config``.
+
+    Returns:
+        True when configuration evidence exists (legacy ``[notes]``
+        sync-directory key, or a configured root in the on-disk state DB).
+    """
+    from tldw_chatbook.Notes.notes_sync_legacy import (
+        legacy_sync_directory_configured,
+    )
+
+    if legacy_sync_directory_configured(app.app_config):
+        return True
+    return _notes_sync_state_db_has_configured_roots(
+        get_notes_sync_state_db_path()
+    )
 
 
 def _wire_notes_sync_services(app: Any) -> None:
@@ -850,42 +930,58 @@ class ServiceWiringMixin:
             build_notes_sync_runtime_owner,
         )
 
+        # TASK-21249: THE single read point for every value the owner is
+        # built from. All of them are captured HERE — inside the construct,
+        # under the property's lock — and flow only into the build call
+        # below; nothing is re-read at start() or at use time. That is what
+        # makes "moving the property's first access" (TASK-21247 gated the
+        # boot read; the Library screen reads it at its own mount) unable to
+        # change WHAT the owner is built with: whenever construction fires,
+        # it reads the same slots, once, atomically.
         notes_sync_state_path = get_notes_sync_state_db_path()
+        local_user_id = self.notes_user_id
+        app_config = self.app_config
+        notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
+            get_notes_sync_watcher_intervals(app_config)
+        )
         notes_sync_migrator = build_notes_sync_legacy_migrator(
             database_path=notes_sync_state_path,
             legacy_connection=lambda: self.chachanotes_db.get_connection(),
-            settings=self.app_config,
+            settings=app_config,
             note_scope_id=ScopeType.LOCAL_NOTE.value,
             file_notes_binding=self._notes_sync_file_notes_binding,
             private_paths=(notes_sync_state_path, get_chachanotes_db_path()),
         )
-        notes_sync_watcher_interval, notes_sync_watcher_max_interval = (
-            get_notes_sync_watcher_intervals(self.app_config)
-        )
         return build_notes_sync_runtime_owner(
             notes_scope_service=self._notes_sync_scope_service,
             cutover_admitted=True,
+            # Read live here (the restart-cutover fence pins this shape):
+            # the sole-process flag is read once, at construction, under the
+            # property's lock -- part of the same single read point above.
             profile_process_is_sole=self._instance_lock_status.acquired,
             database_path=notes_sync_state_path,
             migrate_legacy=notes_sync_migrator,
             file_notes_binding=self._notes_sync_file_notes_binding,
-            local_user_id=self.notes_user_id,
+            local_user_id=local_user_id,
             recovery_capacity_bytes=get_notes_sync_recovery_capacity_bytes(
-                self.app_config
+                app_config
             ),
             # TASK-21112 boot gate: start only on actual configuration — the
             # legacy [notes] sync-directory key (one-time migration path) or
-            # a state DB already on disk. Path.exists() never opens or
-            # creates the database; a zero-profile boot therefore creates no
-            # notes-sync state at all. First-time setup (review_setup)
-            # force-starts the runtime on demand. On Python 3.12
-            # Path.exists() RAISES PermissionError (pathlib no longer
-            # swallows EACCES); on a sandboxed profile that deliberately
-            # rides the gate's fail-open path — one full start attempt,
-            # which is the safe direction and is memoized.
+            # a configured root in the state DB already on disk. The
+            # read-only roots probe never opens or creates the database for
+            # write; a zero-profile boot therefore creates no notes-sync
+            # state at all, and — TASK-21240 — neither does the EMPTY store
+            # an abandoned first-time setup leaves behind re-arm this gate.
+            # First-time setup (review_setup) force-starts the runtime on
+            # demand. On Python 3.12 Path.exists() RAISES PermissionError
+            # (pathlib no longer swallows EACCES); on a sandboxed profile
+            # that deliberately rides the gate's fail-open path — one full
+            # start attempt, which is the safe direction and is memoized.
             start_evidence=(
-                lambda settings=self.app_config, state_path=notes_sync_state_path: (
-                    legacy_sync_directory_configured(settings) or state_path.exists()
+                lambda settings=app_config, state_path=notes_sync_state_path: (
+                    legacy_sync_directory_configured(settings)
+                    or _notes_sync_state_db_has_configured_roots(state_path)
                 )
             ),
             watcher_interval_seconds=notes_sync_watcher_interval,
@@ -923,6 +1019,115 @@ class ServiceWiringMixin:
         """
         with self._notes_sync_runtime_owner_lock:
             self._notes_sync_runtime_owner = owner
+            # A substituted double (tests, recovery) supersedes any recorded
+            # build failure -- the safe reader must not keep shadowing it.
+            self.__dict__.pop("_notes_sync_runtime_build_failure", None)
+
+    def _build_kanban_services(self) -> None:
+        """Construct the Kanban trio on first access (TASK-21239, keep path).
+
+        The owner decision recorded in that task: the Kanban interop surface
+        is KEPT (retiring a filed subsystem is the owner's call, not this
+        burn-down's), but its boot-time construction is deferred to first
+        use exactly like the other lazy stores, because nothing in the app
+        consumes it -- no screen reads these services, and the only other
+        references are the Backup/Recovery participant registry (module-path
+        strings) and tests. Building the trio also drags in
+        `tldw_api.kanban_schemas` (76 pydantic models, TASK-21107), which is
+        why the imports are function-local, not module-level: an unused
+        subsystem must cost neither construction nor import at boot.
+
+        Idempotent under the lock; the trio is built as ONE unit because
+        the scope service composes the other two.
+        """
+        with self._kanban_services_lock:
+            if self._kanban_scope_service is not None:
+                return
+            from tldw_chatbook.Kanban_Interop import (  # noqa: PLC0415
+                KanbanScopeService,
+                LocalKanbanService,
+                ServerKanbanService,
+            )
+
+            try:
+                server_service = ServerKanbanService.from_config(
+                    self.app_config,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
+            except ValueError:
+                server_service = ServerKanbanService(
+                    client=None,
+                    policy_enforcer=self.service_policy_enforcer,
+                )
+            local_service = LocalKanbanService(
+                db_path=get_user_data_dir() / "tldw_chatbook_kanban.db",
+                policy_enforcer=self.service_policy_enforcer,
+            )
+            self._server_kanban_service = server_service
+            self._local_kanban_service = local_service
+            self._kanban_scope_service = KanbanScopeService(
+                local_service=local_service,
+                server_service=server_service,
+                policy_enforcer=self.service_policy_enforcer,
+            )
+
+    @property
+    def kanban_scope_service(self) -> Any:
+        """The Kanban scope service, built lazily with its trio (TASK-21239)."""
+        if self._kanban_scope_service is None:
+            self._build_kanban_services()
+        return self._kanban_scope_service
+
+    @property
+    def server_kanban_service(self) -> Any:
+        """The server Kanban service, built lazily with its trio (TASK-21239)."""
+        if self._server_kanban_service is None:
+            self._build_kanban_services()
+        return self._server_kanban_service
+
+    @property
+    def local_kanban_service(self) -> Any:
+        """The local Kanban service, built lazily with its trio (TASK-21239).
+
+        First access creates `tldw_chatbook_kanban.db` in the user data dir
+        -- deliberately: only a consumer that actually touches Kanban pays
+        for the store, instead of every profile getting the file at boot.
+        """
+        if self._local_kanban_service is None:
+            self._build_kanban_services()
+        return self._local_kanban_service
+
+    def _read_notes_sync_runtime_owner_safe(self) -> "NotesSyncRuntimeOwner | None":
+        """Read the runtime owner WITHOUT letting a build failure vanish.
+
+        TASK-21249: the Library screen used to read this through
+        ``getattr(app, "notes_sync_runtime_owner", None)`` -- which is right
+        for harness doubles that lack the property, but once the name became
+        a lazily-BUILDING property the getattr default also swallowed an
+        exception raised INSIDE the build, painting a construction failure
+        to the user as "awaiting cutover" (feature not available yet).
+        This reader distinguishes the two: a real build failure is recorded
+        on ``_notes_sync_runtime_build_failure`` (and logged once) so the UI
+        can show a distinct, honest state; the owner slot stays None.
+
+        Returns:
+            The built (or substituted) owner, or None when the property is
+            absent, unbuildable, or previously failed to build.
+        """
+        if self.__dict__.get("_notes_sync_runtime_build_failure") is not None:
+            return None
+        descriptor = getattr(type(self), "notes_sync_runtime_owner", None)
+        if not isinstance(descriptor, property):
+            return getattr(self, "notes_sync_runtime_owner", None)
+        try:
+            return self.notes_sync_runtime_owner
+        except Exception as error:  # noqa: BLE001 - UI read must not crash
+            self._notes_sync_runtime_build_failure = error
+            logger.opt(exception=True).error(
+                "notes-sync runtime construction failed; the Library screen "
+                "will report a runtime error rather than feature-unavailable."
+            )
+            return None
 
     def _build_rag_admin_services(self) -> None:
         """Construct the RAG admin service trio on first access (task-254).
@@ -1108,6 +1313,14 @@ class ServiceWiringMixin:
     @persona_buddy_controller.setter
     def persona_buddy_controller(self, controller: Any | None) -> None:
         """Inject or clear the controller slot (tests and skeletal doubles).
+
+        TASK-21236: takes the SAME lock as the builder. An unlocked write
+        could interleave with a concurrent first build -- losing the
+        assignment, or replacing a controller another caller already holds
+        -- and that safety currently rests only on "every setter caller is
+        on the UI thread", a caller property nothing enforces. The lock is
+        non-reentrant-safe here because the build never assigns through
+        this property.
 
         Args:
             controller: The controller instance to install, or None to make
@@ -2920,25 +3133,13 @@ class ServiceWiringMixin:
             server_service=self.server_prompt_studio_service,
             policy_enforcer=self.service_policy_enforcer,
         )
-        try:
-            self.server_kanban_service = ServerKanbanService.from_config(
-                self.app_config,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        except ValueError:
-            self.server_kanban_service = ServerKanbanService(
-                client=None,
-                policy_enforcer=self.service_policy_enforcer,
-            )
-        self.local_kanban_service = LocalKanbanService(
-            db_path=get_user_data_dir() / "tldw_chatbook_kanban.db",
-            policy_enforcer=self.service_policy_enforcer,
-        )
-        self.kanban_scope_service = KanbanScopeService(
-            local_service=self.local_kanban_service,
-            server_service=self.server_kanban_service,
-            policy_enforcer=self.service_policy_enforcer,
-        )
+        # TASK-21239: the Kanban trio used to be constructed here, at boot,
+        # paying the module import chain (76 pydantic models in
+        # `tldw_api.kanban_schemas`, TASK-21107) and creating
+        # `tldw_chatbook_kanban.db` in the user data dir for a subsystem
+        # with zero in-app consumers. It is now a lazy property trio -- see
+        # `kanban_scope_service` -- so an unused subsystem costs nothing at
+        # boot and no Kanban DB file is created until first access.
         try:
             self.server_translation_service = ServerTranslationService.from_config(
                 self.app_config,

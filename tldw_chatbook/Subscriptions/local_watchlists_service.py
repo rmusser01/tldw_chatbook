@@ -156,6 +156,7 @@ def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
         REASON_BELOW_CHANGE_THRESHOLD,
         REASON_EXTRACTION_SETTINGS_CHANGED,
         REASON_FIRST_CHECK,
+        _BS4_INSTALL_HINT,
     )
 
     return {
@@ -172,6 +173,12 @@ def _disposition_count_keys() -> dict[tuple[str, str | None], str]:
         # URLs errored", not "which exception", so it needs exactly one
         # stable pair rather than one per exception type.
         (DISPOSITION_ERROR, None): "error",
+        # TASK-21230: the ONE non-None error reason -- the TASK-21104 bs4
+        # install hint, a module constant with no user data, carried so the
+        # disposition (and, on an all-error run, the run's error message)
+        # can tell a `url_list`/`sitemap` user what to install instead of a
+        # bare, reason-less error. Counts into the same "error" counter.
+        (DISPOSITION_ERROR, _BS4_INSTALL_HINT): "error",
         # task-16838: a URL this run never checked because a concurrent
         # check of the same (subscription, url) pair was already in flight.
         (DISPOSITION_SKIPPED_IN_FLIGHT, None): "skipped",
@@ -2244,39 +2251,67 @@ class LocalWatchlistsService:
             run_stats: dict[str, Any] = {"dispositions": disposition_counts}
             all_error_message = _all_error_check_message(disposition_counts, len(items))
             if all_error_message is not None:
-                failures = [
-                    failure
+                # TASK-21230: a PERMANENT install failure (every error
+                # disposition carries the same module-constant hint, the only
+                # non-None reason `_check_url_isolated` can produce) is
+                # surfaced verbatim BEFORE the failure-classification
+                # aggregate: "connection failed"-shaped copy about a missing
+                # package would send the user debugging their network for a
+                # `pip install` problem. The single-`url` arm surfaces the
+                # same ImportError message via `record_run_failure`.
+                from .monitoring_engine import DISPOSITION_ERROR
+
+                error_reasons = {
+                    disposition.get("reason")
                     for disposition in dispositions
-                    if (failure := watchlist_failure_from_stats(disposition))
-                    is not None
-                ]
-                categories = {failure.category for failure in failures}
-                error_count = int(disposition_counts.get("error", 0) or 0)
-                if len(failures) == error_count and len(categories) == 1:
-                    category = next(iter(categories))
-                    aggregate = watchlist_failure_from_stats(
-                        {"failure_category": category.value}
-                    )
-                    assert aggregate is not None
-                    aggregate_stats = watchlist_failure_stats(aggregate)
-                    statuses = {failure.http_status for failure in failures}
-                    retry_delays = {failure.retry_after_seconds for failure in failures}
-                    if len(statuses) == 1:
-                        aggregate_stats["http_status"] = next(iter(statuses))
-                    if len(retry_delays) == 1:
-                        aggregate_stats["retry_after_seconds"] = next(
-                            iter(retry_delays)
-                        )
-                    # Category, status, and delay are aggregate facts only
-                    # when every failed URL agrees. Never select per-URL
-                    # recovery metadata by input or exception order.
-                    run_stats.update(aggregate_stats)
-                    result_payload["error_msg"] = aggregate.message
-                    result_payload["log_text"] = (
-                        f"{aggregate.message} {aggregate.next_action}"
-                    )
+                    if disposition.get("kind") == DISPOSITION_ERROR
+                }
+                shared_permanent_reason = (
+                    next(iter(error_reasons))
+                    if error_reasons
+                    and len(error_reasons) == 1
+                    and None not in error_reasons
+                    else None
+                )
+                if shared_permanent_reason is not None:
+                    result_payload["error_msg"] = shared_permanent_reason
+                    result_payload["log_text"] = str(shared_permanent_reason)
                 else:
-                    result_payload["error_msg"] = LEGACY_FAILURE_MESSAGE
+                    failures = [
+                        failure
+                        for disposition in dispositions
+                        if (failure := watchlist_failure_from_stats(disposition))
+                        is not None
+                    ]
+                    categories = {failure.category for failure in failures}
+                    error_count = int(disposition_counts.get("error", 0) or 0)
+                    if len(failures) == error_count and len(categories) == 1:
+                        category = next(iter(categories))
+                        aggregate = watchlist_failure_from_stats(
+                            {"failure_category": category.value}
+                        )
+                        assert aggregate is not None
+                        aggregate_stats = watchlist_failure_stats(aggregate)
+                        statuses = {failure.http_status for failure in failures}
+                        retry_delays = {
+                            failure.retry_after_seconds for failure in failures
+                        }
+                        if len(statuses) == 1:
+                            aggregate_stats["http_status"] = next(iter(statuses))
+                        if len(retry_delays) == 1:
+                            aggregate_stats["retry_after_seconds"] = next(
+                                iter(retry_delays)
+                            )
+                        # Category, status, and delay are aggregate facts only
+                        # when every failed URL agrees. Never select per-URL
+                        # recovery metadata by input or exception order.
+                        run_stats.update(aggregate_stats)
+                        result_payload["error_msg"] = aggregate.message
+                        result_payload["log_text"] = (
+                            f"{aggregate.message} {aggregate.next_action}"
+                        )
+                    else:
+                        result_payload["error_msg"] = LEGACY_FAILURE_MESSAGE
             # A sibling key rather than a sixth entry inside `dispositions`,
             # which is a dict of counters and stays one: a float in among the
             # integers would break every whole-dict comparison of the counts.
@@ -2501,9 +2536,24 @@ class LocalWatchlistsService:
             # sensitive data.
             logger.debug(f"watchlist URL check failed, isolated: {type(exc).__name__}")
             failure = classify_watchlist_failure(exc)
+            # TASK-21230: a PERMANENT ImportError (the TASK-21104 bs4 guard)
+            # must not be suppressed the way transient failures are -- a
+            # `url_list`/`sitemap` user whose install lacks the extra would
+            # otherwise see DISPOSITION_ERROR rows with no reason text and
+            # never learn the install hint the single-`url` arm surfaces
+            # verbatim. The hint is a module constant containing no user
+            # data, so surfacing it does not violate the task-1394 privacy
+            # rule the suppression exists for; anything else (timeouts,
+            # SSRF blocks, HTTP errors, parser failures) keeps reason=None.
+            reason: str | None = None
+            if isinstance(exc, ImportError):
+                from .monitoring_engine import _BS4_INSTALL_HINT
+
+                if str(exc) == _BS4_INSTALL_HINT:
+                    reason = _BS4_INSTALL_HINT
             return None, {
                 "kind": DISPOSITION_ERROR,
-                "reason": None,
+                "reason": reason,
                 "withheld_percentage": None,
                 **watchlist_failure_stats(failure),
             }

@@ -3856,8 +3856,29 @@ class LibraryScreen(BaseAppScreen):
         )
         # TASK-19010 is presentation-only. The app owns runtime lifecycle;
         # harnesses without it receive an honest inert structural adapter.
-        app_lasting_runtime = getattr(app_instance, "notes_sync_runtime_owner", None)
-        lasting_runtime = app_lasting_runtime or InertLastingSyncRuntime()
+        # TASK-21249: a runtime that FAILED to build is not
+        # "feature-unavailable" -- read through the app's safe reader so a
+        # build failure surfaces as a distinct failed status (and is logged
+        # at ERROR by the reader) instead of the cutover pair.
+        safe_runtime_reader = getattr(
+            app_instance, "_read_notes_sync_runtime_owner_safe", None
+        )
+        if callable(safe_runtime_reader):
+            app_lasting_runtime = safe_runtime_reader()
+        else:
+            app_lasting_runtime = getattr(
+                app_instance, "notes_sync_runtime_owner", None
+            )
+        if app_lasting_runtime is not None:
+            lasting_runtime = app_lasting_runtime
+        elif getattr(
+            app_instance, "_notes_sync_runtime_build_failure", None
+        ) is not None:
+            lasting_runtime = InertLastingSyncRuntime(
+                status="failed", next_action="review_settings"
+            )
+        else:
+            lasting_runtime = InertLastingSyncRuntime()
         self._library_notes_sync_controller = LibraryNotesSyncController(
             runtime=lasting_runtime,
             import_controller=self._library_note_import_controller,
@@ -3976,9 +3997,17 @@ class LibraryScreen(BaseAppScreen):
             clock=lambda: datetime.now(timezone.utc),
             # task-32604: the note side's change producer for lasting sync.
             # Read late, like every other app-owned service here -- the
-            # runtime is built during a detached startup step.
-            notes_sync_runtime=lambda: getattr(
-                app_instance, "notes_sync_runtime_owner", None
+            # runtime is built during a detached startup step. TASK-21249:
+            # through the safe reader, so a build failure is logged rather
+            # than silently swallowed by a getattr default on every call.
+            notes_sync_runtime=lambda: (
+                app_instance._read_notes_sync_runtime_owner_safe()
+                if callable(
+                    getattr(
+                        app_instance, "_read_notes_sync_runtime_owner_safe", None
+                    )
+                )
+                else getattr(app_instance, "notes_sync_runtime_owner", None)
             ),
         )
         self._library_note_session = DatabaseNoteSessionCoordinator(
@@ -28366,7 +28395,17 @@ class LibraryScreen(BaseAppScreen):
         answers False -- the recognition line then simply omits the clause,
         which is what "we do not know of a root here" means.
         """
-        runtime = getattr(self.app_instance, "notes_sync_runtime_owner", None)
+        runtime = (
+            self.app_instance._read_notes_sync_runtime_owner_safe()
+            if callable(
+                getattr(
+                    self.app_instance,
+                    "_read_notes_sync_runtime_owner_safe",
+                    None,
+                )
+            )
+            else getattr(self.app_instance, "notes_sync_runtime_owner", None)
+        )
         probe = getattr(runtime, "folder_is_sync_root", None)
         if not callable(probe):
             return False

@@ -380,6 +380,7 @@ from tldw_chatbook.app_service_wiring import (
     _build_terminal_backend,  # noqa: F401 -- re-export
     _extract_collections_article,  # noqa: F401 -- re-export
     _install_deferred_notes_sync_facades,
+    _notes_sync_boot_start_evidence,
     _read_app_raw_cli_permitted,
     _resolve_collections_media_reference,  # noqa: F401 -- re-export
     _resolve_collections_note_reference,  # noqa: F401 -- re-export
@@ -1588,6 +1589,14 @@ class TldwCli(
         self._notes_sync_runtime_start_task: asyncio.Task[None] | None = None
         self._notes_sync_runtime_shutdown_task: asyncio.Task[None] | None = None
         self._recover_inflight_transfers_task: asyncio.Task[None] | None = None
+        # Kanban trio (server/local/scope) is built lazily on first access
+        # (TASK-21239): zero in-app consumers, and building it drags the
+        # 76-model `tldw_api.kanban_schemas` import chain (TASK-21107), so
+        # an unused subsystem costs neither construction nor import at boot.
+        self._server_kanban_service: Any = None
+        self._local_kanban_service: Any = None
+        self._kanban_scope_service: Any = None
+        self._kanban_services_lock = threading.Lock()
         # RAG admin trio (server/local/scope) is built lazily on first access
         # (task-254): its legacy UI consumers were deleted and nothing reads
         # these services at startup, so eager construction only added launch
@@ -3220,13 +3229,44 @@ class TldwCli(
         self._wire_watchlists_command_service()
         self._bind_tts_service()
         self._start_backup_maintenance_monitor()
-        self._notes_sync_runtime_start_task = asyncio.create_task(
-            self.notes_sync_runtime_owner.start(),
-            name="start_notes_sync_runtime",
-        )
-        self._notes_sync_runtime_start_task.add_done_callback(
-            self._observe_notes_sync_runtime_start
-        )
+        # TASK-21247: gate CONSTRUCTION, not only start. Reading the lazy
+        # property unconditionally paid the ~15-module notes-sync
+        # construction chain just before first paint on EVERY boot,
+        # including zero-profile ones -- exactly what TASK-21112 was filed
+        # to avoid. The predicate is the same TASK-21112 start-evidence gate
+        # the runtime's own start() evaluates (empty-store refinement per
+        # TASK-21240), evaluated BEFORE the property is touched; a broken
+        # probe fails OPEN (one full attempt) exactly as start() does.
+        try:
+            _notes_sync_start_evidence = _notes_sync_boot_start_evidence(self)
+        except Exception:
+            _notes_sync_start_evidence = True
+        if _notes_sync_start_evidence:
+            # PR #3084 review fix: a notes-sync BUILD failure on a
+            # configured profile must not escape on_mount (Textual's
+            # default crash) before the Library screen's safe reader can
+            # present it. Construct through the guarded reader; a failed
+            # build records `_notes_sync_runtime_build_failure` and skips
+            # start() entirely.
+            try:
+                _notes_sync_owner = self._read_notes_sync_runtime_owner_safe()
+            except Exception:
+                _notes_sync_owner = None
+            if _notes_sync_owner is not None:
+                self._notes_sync_runtime_start_task = asyncio.create_task(
+                    _notes_sync_owner.start(),
+                    name="start_notes_sync_runtime",
+                )
+                self._notes_sync_runtime_start_task.add_done_callback(
+                    self._observe_notes_sync_runtime_start
+                )
+        else:
+            # First-time setup force-starts the runtime on demand
+            # (`review_setup`), constructing it lazily at that point.
+            self.loguru_logger.debug(
+                "Notes-sync start gate: no configuration evidence; runtime "
+                "not constructed this boot."
+            )
         mount_start = time.perf_counter()
 
         # task-19561: hand the process-level SIGTERM/SIGINT handler this app

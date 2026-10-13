@@ -2132,3 +2132,27 @@ def test_published_video_bytes_are_fsynced_before_the_rename(store, monkeypatch)
     published = target.stat()
     assert (published.st_dev, published.st_ino) in synced
     assert target.read_bytes() == b"video-bytes"
+
+
+# --- TASK-21109: a never-used store must not be created at boot -----------------
+
+
+def test_boot_retention_creates_no_lock_file_for_a_never_used_store(tmp_path):
+    """TASK-21109's honest small win: the boot retention pass must not
+    create `.generated_videos.capacity.lock` (nor the store root) in the
+    data dir of a user who has never generated a video. The pass returns
+    an empty report before taking the interprocess lease.
+    """
+    from tldw_chatbook.Video_Generation.video_store import VideoStore
+
+    root = tmp_path / "data" / "generated_videos"
+    store = VideoStore(root=root)
+
+    report = store.enforce_retention()
+
+    assert report.removed_files == 0
+    assert report.evicted == ()
+    assert not (tmp_path / "data" / ".generated_videos.capacity.lock").exists(), (
+        "boot retention created the capacity lock file for a never-used store"
+    )
+    assert not root.exists(), "boot retention created the store root dir"

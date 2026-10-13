@@ -6883,7 +6883,9 @@ def migrate_config_file_if_needed() -> Optional[Path]:
         )
         persisted = _config_data_for_persistence(migrated)
         raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
-        _publish_runtime_config_unlocked(raw_config=raw_written)
+        _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         return backup_path
 
 
@@ -7600,6 +7602,7 @@ def _commit_serialized_cli_config_unlocked(
 
 def _install_bootstrap_cache_from_raw(
     raw_config: Mapping[str, Any],
+    config_path: Optional[Path] = None,
 ) -> Optional[Dict[str, Any]]:
     """Install the bootstrap cache from an already-parsed raw config mapping.
 
@@ -7609,6 +7612,14 @@ def _install_bootstrap_cache_from_raw(
     failure) without re-reading or re-parsing the file. Used by
     `_publish_runtime_config_unlocked` with the verify parse-back a write
     just produced. Must be called with `_config_file_lock` held.
+
+    TASK-21235: ``config_path`` is the path the CALLER's read/write used.
+    It used to be recomputed here via `_get_effective_config_path()` at
+    publish time, so a ``TLDW_CONFIG_PATH`` flip between the caller's read
+    and this publish would label path-A data as the path-B cache
+    (``_CONFIG_CACHE_SOURCE`` is exactly what the fast path's cache
+    identity re-check compares against). Callers that hold a path pass it;
+    the fallback recompute covers only callers with no path of their own.
 
     Returns:
         The installed merged+decrypted config, or ``None`` when strict
@@ -7620,7 +7631,8 @@ def _install_bootstrap_cache_from_raw(
     global _CONFIG_CACHE, _CONFIG_CACHE_SOURCE, _LAST_CONFIG_LOAD_FAILURE
     global _CONFIG_FILE_STAMP, _CONFIG_STAT_CHECKED_MONOTONIC
 
-    config_path = _get_effective_config_path()
+    if config_path is None:
+        config_path = _get_effective_config_path()
     merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(raw_config))
     decryption = _decrypt_config_section_with_status(merged, strict=True)
     if not decryption.succeeded:
@@ -7652,6 +7664,7 @@ def _install_bootstrap_cache_from_raw(
 @_config_participants.guarded
 def _publish_runtime_config_unlocked(
     raw_config: Mapping[str, Any] | None = None,
+    config_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Reload caches and publish one complete in-process config generation.
 
@@ -7663,6 +7676,11 @@ def _publish_runtime_config_unlocked(
             that just-primed cache (`reload_bootstrap=False`) -- TASK-21124
             takes one write from four TOML parses to two (the inherent
             read-modify-write read plus the TASK-13157 verify parse).
+        config_path: TASK-21235: the path the caller's read/write used, so
+            the bootstrap cache is published under the path its data was
+            actually read from even if ``TLDW_CONFIG_PATH`` flips mid-write.
+            Omitted by callers with no path of their own (the raw-less
+            reload path recomputes it under the same lock).
 
     The `_CONFIG_GENERATION` bump is kept last for consistency, but the
     ordering is not load-bearing: the fast path's soundness rests on its
@@ -7676,7 +7694,9 @@ def _publish_runtime_config_unlocked(
 
     loaded: Optional[Dict[str, Any]] = None
     if raw_config is not None:
-        loaded = _install_bootstrap_cache_from_raw(raw_config)
+        loaded = _install_bootstrap_cache_from_raw(
+            raw_config, config_path=config_path
+        )
     if loaded is None:
         bootstrap = _load_cli_config_bootstrap_unlocked(force_reload=True)
         if not bootstrap.succeeded:
@@ -8211,7 +8231,9 @@ def _replace_cli_config_serialized(
             if saved_serialized is None:
                 raise OSError("The committed config snapshot is unavailable.")
             saved_snapshot = ConfigFileSnapshot(config_path, saved_serialized)
-            loaded = _publish_runtime_config_unlocked(raw_config=raw_written)
+            loaded = _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         except Exception:  # Post-commit errors must retain the successful disk outcome.
             raise ConfigPostCommitError(saved_snapshot, backup_path) from None
         return loaded, backup_path, saved_snapshot
@@ -8239,7 +8261,9 @@ def persist_cli_config_for_shutdown() -> bool:
             current = bootstrap.config
             persisted = _config_data_for_persistence(current)
             raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         return True
     except (OSError, TypeError, ValueError, toml.TomlDecodeError) as exc:
         logger.warning(
@@ -8301,7 +8325,9 @@ def replace_cli_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
         _enforce_existing_encryption(current, replacement)
         persisted = _config_data_for_persistence(replacement)
         raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
-        return _publish_runtime_config_unlocked(raw_config=raw_written)
+        return _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
 
 
 def _config_snapshot_path(config_path: Path, timestamp: str) -> Path:
@@ -8496,7 +8522,9 @@ def replace_revisioned_settings_section_to_cli_config(
             return ConfigMutationResult(False, False, "before_replace")
 
         try:
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         except Exception as error:
             logger.error(
                 "Revisioned configuration replacement failed "
@@ -8894,7 +8922,9 @@ def _apply_literal_settings_transaction_locked(
                 return LiteralConfigMutationResult(changed, False, None, "cache_reload")
 
         try:
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
             settings_view = _current_settings_view()
         except Exception as error:
             logger.error(
@@ -8942,7 +8972,7 @@ def refresh_runtime_config_from_cli_config() -> LiteralConfigMutationResult:
         with _config_write_lock(config_path):
             raw = _read_raw_cli_config_unlocked(config_path)
             _invalidate_config_caches()
-            _publish_runtime_config_unlocked(raw_config=raw)
+            _publish_runtime_config_unlocked(raw_config=raw, config_path=config_path)
             return LiteralConfigMutationResult(
                 False,
                 True,
@@ -10140,7 +10170,9 @@ def _commit_encryption_change_unlocked(
     try:
         raw_written = _write_raw_cli_config_unlocked(config_path, document)
         _set_session_encryption_password(session_password)
-        _publish_runtime_config_unlocked(raw_config=raw_written)
+        _publish_runtime_config_unlocked(
+                raw_config=raw_written, config_path=config_path
+            )
         return True
     except Exception as error:
         logger.error(

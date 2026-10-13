@@ -2374,3 +2374,117 @@ async def test_resolve_watchlist_name_keeps_unicode_case_insensitive_reuse(tmp_p
     assert [row["name"] for row in WatchlistBundleService(db).list_watchlists()] == [
         "ÄI"
     ]
+
+
+# --- TASK-21230: the permanent bs4 ImportError must not be suppressed ------------
+#
+# These drive `_check_url_isolated` and `_default_run_executor` DIRECTLY
+# (monkeypatched monitor, stub db) rather than through `create_source` ->
+# `launch_run` -> `execute_run`: the DB-write path reads app config
+# (`Subscriptions_DB._default_auto_pause_threshold` -> `get_cli_setting`),
+# which under the local shared-profile sandbox fails closed with
+# RecoveryRequired before the behaviour under test is reached (the
+# documented Tests/UI lesson; the existing task-1394 flow tests carry the
+# same local caveat and pass in CI). The executor-level drive covers the
+# full surfacing path -- per-URL disposition -> `_disposition_counts` ->
+# the all-error `error_msg` -- with no app-config read.
+
+
+@pytest.mark.asyncio
+async def test_url_list_surfaces_bs4_install_hint_on_permanent_import_error(
+    tmp_path, monkeypatch
+):
+    """TASK-21230: a missing `beautifulsoup4` is a PERMANENT install problem.
+
+    The task-1394 per-URL suppression reduces every exception to a
+    reason-less DISPOSITION_ERROR, which is right for transient/network
+    failures (their messages can carry fetched content or query strings) but
+    wrong for the TASK-21104 guard: a `url_list`/`sitemap` user without the
+    extra would see unexplained errors forever and never learn what to
+    install, while the single-`url` arm surfaces the same ImportError
+    verbatim. The hint is a module constant containing no user data, so
+    carrying it as the disposition's reason (and as the all-error run's
+    error message) does not conflict with the privacy rule.
+    """
+
+    class Bs4MissingMonitor:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_url(self, subscription):
+            raise ImportError(monitoring_engine._BS4_INSTALL_HINT)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
+        Bs4MissingMonitor,
+    )
+    db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    payload = await service._default_run_executor(
+        {
+            "id": 1,
+            "name": "Docs",
+            "type": "url_list",
+            "extraction_rules": {
+                "urls": ["https://example.com/a", "https://example.com/b"],
+            },
+        },
+        db,
+    )
+
+    # The run payload still completes (task-1394 isolation unchanged) and
+    # counts both URLs as errors -- the new (kind, reason) pair registers.
+    assert payload["stats"]["dispositions"]["error"] == 2
+    # ...and the permanent install failure is named, not suppressed.
+    assert payload["error_msg"] == monitoring_engine._BS4_INSTALL_HINT
+
+
+@pytest.mark.asyncio
+async def test_url_list_transient_failures_still_carry_no_reason(monkeypatch):
+    """TASK-21230 AC#3: the suppression is unchanged for transient failures."""
+
+    class FlakyMonitor:
+        def __init__(self, db):
+            self.db = db
+
+        async def check_url(self, subscription):
+            raise TimeoutError("connect timed out to https://example.com/a?q=secret")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Subscriptions.monitoring_engine.URLMonitor",
+        FlakyMonitor,
+    )
+    db = SubscriptionsDB(":memory:", "test")
+    service = LocalWatchlistsService(db_factory=lambda: db)
+
+    payload = await service._default_run_executor(
+        {
+            "id": 1,
+            "name": "Docs",
+            "type": "url_list",
+            "extraction_rules": {"urls": ["https://example.com/a"]},
+        },
+        db,
+    )
+
+    assert payload["stats"]["dispositions"]["error"] == 1
+    # No exception text, no URL, no query string -- anywhere user-visible.
+    dumped = json.dumps(payload)
+    assert "secret" not in dumped
+    assert "connect timed out" not in dumped
+    # The transient disposition pair itself stays reason-less (unit-level
+    # pin on the isolated arm, independent of the run-level aggregate).
+    item, disposition = await service._check_url_isolated(
+        FlakyMonitor(db), {"id": 1}, "https://example.com/a"
+    )
+    assert item is None
+    assert disposition["reason"] is None
+
+
+def test_monitoring_engine_imports_logger_exactly_once():
+    """TASK-21230: pre-existing hygiene -- no duplicate logger import."""
+    import inspect
+
+    source = inspect.getsource(monitoring_engine)
+    assert source.count("from loguru import logger") == 1
