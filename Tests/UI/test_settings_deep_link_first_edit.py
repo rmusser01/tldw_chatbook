@@ -455,6 +455,14 @@ async def test_the_key_check_row_is_composed_for_the_linked_provider(
         assert said and all(word.startswith("Not ready") for word in said), said
 
 
+def _pair_words(screen) -> list[str]:
+    """The Provider and Model rows' Source words."""
+    return [
+        str(screen.query_one(selector, Static).renderable)
+        for selector in ("#settings-provider-source", "#settings-model-source")
+    ]
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_a_linked_pair_never_reads_new_chat_default(request, monkeypatch):
@@ -468,22 +476,57 @@ async def test_a_linked_pair_never_reads_new_chat_default(request, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     host = _SettingsCssHarness(_app(), "settings")
 
-    def words() -> list[str]:
-        return [
-            str(screen.query_one(selector, Static).renderable)
-            for selector in ("#settings-provider-source", "#settings-model-source")
-        ]
-
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _deep_link_to_anthropic_key(host, pilot)
-        assert words() == [SELECTION_SOURCE_WORDS["navigation"]] * 2
+        assert _pair_words(screen) == [SELECTION_SOURCE_WORDS["navigation"]] * 2
 
         await pilot.press("x")
         await pilot.pause()
 
-        assert words() == ["edited *", "edited *"]
+        assert _pair_words(screen) == ["edited *", "edited *"]
         assert screen._provider_return_dirty_field_names() == (
             "API key",
             "Model",
             "Provider",
         )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_edit_save_does_not_make_the_default_leaves_the_pair_unedited(
+    request, monkeypatch
+):
+    """Fix round 2, finding 4: any draft marked the linked pair "edited *"
+    and listed it unsaved, but Save writes chat_defaults only for a
+    connection edit. Sign in with alone wrote auth_source and left the
+    default where it was, and both rows read "not the default" again."""
+    from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+        SELECTION_SOURCE_WORDS,
+    )
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    host = _SettingsCssHarness(_app(), "settings")
+    linked = [SELECTION_SOURCE_WORDS["navigation"]] * 2
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _deep_link_to_anthropic_key(host, pilot)
+        screen.query_one(
+            "#settings-provider-auth-source", Select
+        ).value = "claude_subscription"
+        await pilot.pause()
+
+        assert _pair_words(screen) == linked
+        assert screen._provider_return_dirty_field_names() == ("Sign in with",)
+        assert screen._category_unsaved_count(PROVIDERS_MODELS) == 1
+
+        await pilot.press("escape", "s")
+        await _settle(host, pilot)
+
+        assert len(mutations) == 1, mutations
+        values, _deleted = mutations[0]
+        assert "chat_defaults" not in values
+        assert values["api_settings.anthropic"]["auth_source"] == (
+            "claude_subscription"
+        )
+        assert _pair_words(screen) == linked

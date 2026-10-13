@@ -13474,14 +13474,18 @@ class SettingsScreen(BaseAppScreen):
 
     def _provider_selection_source(self, key: str, shown: object) -> str:
         """Name the shown provider's or model's source: "chat_defaults" when it
-        is the saved default's, else "settings_draft" beside a draft (Save
-        writes it) or "navigation" in a linked form nobody has edited. The
-        draft pins both beside any edit, so one elsewhere marks neither."""
+        is the saved default's, else "settings_draft" beside a draft Save
+        writes it with or "navigation" in a linked form. Save writes the pair
+        only with a connection edit (its setup mutation): Sign in with, API
+        mode or a model default alone leaves the default where it is."""
         saved = getattr(resolve_effective_provider_model(self._chat_defaults()), key)
         normal = provider_config_key if key == "provider" else str.strip
         if normal(str(shown or "")) == normal(str(saved or "")):
             return "chat_defaults"
-        return "settings_draft" if self._provider_draft() is not None else "navigation"
+        draft = self._provider_draft()
+        connection = {"provider", "model", "endpoint", "api_key", "credential_env_var"}
+        written = draft is not None and draft.dirty_keys & connection
+        return "settings_draft" if written else "navigation"
 
     def _provider_loaded_setting_values(self) -> dict[str, object]:
         resolved = resolve_effective_provider_model(self._chat_defaults())
@@ -13679,13 +13683,13 @@ class SettingsScreen(BaseAppScreen):
                 for draft_key, name in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
             },
         }
-        # A linked form's pin is not the saved pair, and Save writes it.
+        # A linked form's pin, when Save writes it (a connection edit).
         pinned = {
             key
             for key in ("provider", "model")
             if key in draft.values
             and self._provider_selection_source(key, draft.values[key])
-            != "chat_defaults"
+            == "settings_draft"
         }
         names: list[str] = []
         for key in sorted(draft.dirty_keys | pinned):

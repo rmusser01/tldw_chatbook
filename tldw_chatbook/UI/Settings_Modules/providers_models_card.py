@@ -112,8 +112,8 @@ if TYPE_CHECKING:
 
 #: TASK-33007.2: the Provider and Model rows' Source words (spec §6 row
 #: grammar), by how the shown value stands against the saved default
-#: (``_provider_selection_source``): the saved one, one a draft holds, or
-#: a linked form's that nobody has edited (Save has nothing to write yet).
+#: (``_provider_selection_source``): the saved one, one Save writes, or a
+#: linked form's before a connection edit (until then Save does not write it).
 SELECTION_SOURCE_WORDS = {
     "settings_draft": EDITED,
     "chat_defaults": "new-chat default",

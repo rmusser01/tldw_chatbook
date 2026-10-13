@@ -147,8 +147,9 @@ _BUDGETS: dict[str, int] = {
     # first edit (C1) and Save selected's own worker group and lock (C9).
     # Fix round 1 of that review ends one line under it, at 33,880; fix
     # round 2 sets the quit summary's field to the duration a write sends
-    # (+1): 33,881.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33881,
+    # (+1): 33,881; a linked pair reads "edited *" only beside an edit Save
+    # writes it with (+4): 33,885.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33885,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
