@@ -270,7 +270,7 @@ Tests/UI/test_library_dreams_reader.py
 # PR3010 live phase/Stop event regression; bounded native owner and view guards.
 Tests/UI/test_console_response_rules.py::test_mapped_learning_phase_and_stop_follow_live_helper
 Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the_mounted_current_session
-# TASK-33007 (PR #3057, Phase 7 of the model-configuration redesign): the 89
+# TASK-33007 (PR #3057, Phase 7 of the model-configuration redesign): the 91
 # entries below are this PR's. They sit last, so no earlier entry's shard
 # depends on them, in the order that spreads them most evenly when they are
 # dealt round-robin over nine shards (scripts/ui_lane_shard_replay.py; see
@@ -464,3 +464,7 @@ Tests/UI/test_settings_model_defaults_hidden_field_blank.py
 # p7-review-fix lanes report). Node ids; the tail moves five shards on.
 # Ruling C-N1: Ctrl+Q on another screen asks about a kept Settings draft.
 Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_from_another_screen_asks_about_a_kept_settings_draft
+# Review of #3057, finding 2: the unsaved-work check reads a kept Settings visit (10 s).
+Tests/UI/test_app_quit_under_modal.py::test_the_unsaved_work_check_reads_a_kept_settings_visit
+# Review of #3057, finding 3: a pipeline voice edit survives a Settings save/restore (5 s).
+Tests/UI/test_audio_cpp_model_library_handoff.py::test_mounted_settings_snapshot_preserves_complete_speech_tts_draft

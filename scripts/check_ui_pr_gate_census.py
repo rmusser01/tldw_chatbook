@@ -294,7 +294,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Ctrl+Q wait for a snapshot Save still writing): 277.
 # Capture 13c: +2 node ids after the block (a kept snapshot edit is
 # forgotten once it is saved or reverted): 279.
-MINIMUM_FILES = 279
+# Review of #3057, findings 2 and 3: +2 node ids after the block (the
+# unsaved-work check reads a kept Settings visit; a pipeline voice edit
+# survives a Settings save/restore): 281.
+MINIMUM_FILES = 281
 
 
 def read_census(path: Path) -> list[str]:

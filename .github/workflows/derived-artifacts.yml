@@ -185,6 +185,7 @@ jobs:
             Tests/Widgets/test_model_search_picker.py::test_a_saved_model_the_endpoint_serves_is_listed_as_served_now \
             Tests/Widgets/test_model_search_picker.py::test_saved_only_list_says_catalog_refresh_is_off_when_it_is \
             Tests/Widgets/test_model_search_picker.py::test_an_unreadable_catalog_setting_is_logged_by_type \
+            Tests/Backup_Recovery/test_unsaved_editors.py::test_retained_settings_check_knows_every_key_settings_save_state_writes \
             --timeout=180 \
             --tb=short
 
