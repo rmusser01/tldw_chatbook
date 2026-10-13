@@ -315,6 +315,13 @@ async def test_card_choose_model_opens_switch_model_and_sets_the_new_chat_defaul
         # Capture finding 4 (02b): Enter's label said "apply to this chat" under
         # a scope line that also names the new-chat default.
         assert _enter_key(switcher) == "Enter apply to this chat and new chats"
+        # Round 2 finding 5 (02b): "Ctrl+N default for new chats" beside it named
+        # nothing Enter does not; Ctrl+N's hint is left out here.
+        make_default = switcher.query_one("#console-popover-make-new-chat-default")
+        assert not make_default.display
+        assert "Ctrl+N" not in "\n".join(
+            strip.text for strip in harness.screen._compositor.render_strips()
+        )
         # The longer label still leaves the row's last key on screen.
         box = switcher.query_one("#console-model-popover")
         last_key = switcher.query_one("#console-popover-esc-key", Static)

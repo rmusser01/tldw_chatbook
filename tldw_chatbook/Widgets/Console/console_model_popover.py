@@ -111,10 +111,14 @@ _VALUE_ERRORS = {
 #: No pair to act on while providers are checked: nothing to type or choose yet.
 _CHECKING_ERROR = "Still checking providers: press Enter again when the list fills."
 
-#: The key row's Enter label; an opener whose pick also sets the new-chat
-#: default passes ``APPLY_TO_CHAT_AND_NEW_CHATS_LABEL`` (capture finding 4).
+#: The key row's Enter label on a pair; an opener whose pick also sets the
+#: new-chat default passes ``enter_sets_default`` (capture finding 4).
 APPLY_TO_CHAT_LABEL = "Enter apply to this chat"
 APPLY_TO_CHAT_AND_NEW_CHATS_LABEL = "Enter apply to this chat and new chats"
+#: Round 2 finding 4: Enter's label follows the highlighted row's kind.
+SET_UP_LABEL = "Enter set up in Settings"
+EXPLAIN_LABEL = "Enter explain"
+SHOW_MORE_LABEL = "Enter show them"
 #: Spec §2 / mockup (a): READY PROVIDERS shows this many models per provider.
 TOP_MODELS_PER_PROVIDER = 3
 #: Row caps that keep one open to a screenful; typing searches everything.
@@ -474,7 +478,7 @@ class ConsoleModelPopover(
         served_models: Mapping[str, Sequence[str]] | None = None,
         highlight_pair: tuple[str, str] | None = None,
         reopened_provider: str | None = None,
-        apply_label: str = APPLY_TO_CHAT_LABEL,
+        enter_sets_default: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize one exact-origin Switch model transaction.
@@ -487,9 +491,9 @@ class ConsoleModelPopover(
             providers_models: Saved model list per provider key; the in-memory
                 catalog until ``catalog_loader`` resolves a provider.
             scope_copy: Exact conversation scope label.
-            apply_label: The key row's Enter label; it says what the scope
-                line says Enter reaches (a pick that also sets the new-chat
-                default names both).
+            enter_sets_default: Enter's pick also sets the new-chat default:
+                its label names both, as the scope line does, and Ctrl+N's
+                hint is left out (Enter already does what it does).
             durability_copy: Exact unsaved or temporary durability label.
             draft_rebaser: Controller-owned provider/model rebase callback.
             live_committer: Synchronous exact-origin live commit callback.
@@ -554,7 +558,12 @@ class ConsoleModelPopover(
         self._draft = initial_draft
         self._providers_models = providers_models
         self._scope_copy = scope_copy
-        self._apply_label = apply_label
+        self._enter_sets_default = enter_sets_default
+        self._apply_label = (
+            APPLY_TO_CHAT_AND_NEW_CHATS_LABEL
+            if enter_sets_default
+            else APPLY_TO_CHAT_LABEL
+        )
         self._durability_copy = durability_copy
         self._draft_rebaser = draft_rebaser
         self._live_committer = live_committer
@@ -768,12 +777,16 @@ class ConsoleModelPopover(
                     compact=True,
                 )
                 yield Static("· Tab edit values ·", markup=False)
-                yield Button(
+                make_default = Button(
                     "Ctrl+N default for new chats",
                     id="console-popover-make-new-chat-default",
                     compact=True,
                 )
-                yield Static("·", markup=False)
+                after = Static("·", markup=False)
+                # Round 2 finding 5: Enter already sets the default here.
+                make_default.display = after.display = not self._enter_sets_default
+                yield make_default
+                yield after
                 yield Button(
                     "Ctrl+O chat settings",
                     id="console-popover-full-settings",
@@ -1695,6 +1708,20 @@ class ConsoleModelPopover(
         )
         if model and not self._pick_only:
             self._rebase_to(provider, model)
+        if not self._pick_only:
+            apply = self.query_one("#console-popover-apply", Button)
+            apply.label = self._enter_label(row)
+
+    def _enter_label(self, row: SwitcherRow | None) -> str:
+        """What Enter does on this row, as ``_activate`` does it."""
+        if row is not None and row.kind == "more":
+            return SHOW_MORE_LABEL
+        if row is not None and row.kind == "setup":
+            readiness = self._readiness.get(provider_key(row.provider))
+            if readiness is not None and _retries_in_place(readiness):
+                return EXPLAIN_LABEL
+            return SET_UP_LABEL
+        return self._apply_label
 
     def highlighted_row(self) -> SwitcherRow | None:
         """The row Enter acts on, or None when nothing is selectable."""

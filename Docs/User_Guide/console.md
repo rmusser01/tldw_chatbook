@@ -311,7 +311,9 @@ send), it also becomes that default, so the next new chat is not blocked
 again. The switcher's scope line says which before you press Enter:
 "Applies to: this chat · also the default for new chats", or "Applies to:
 this chat only", and the Enter key's label matches it: "Enter apply to this
-chat and new chats", or "Enter apply to this chat". A pair that cannot send
+chat and new chats", or "Enter apply to this chat". When Enter also sets the
+default, the **Ctrl+N** hint is left out of the key row, since Enter already
+does what it would. A pair that cannot send
 is refused there with the reason, and Esc returns to the card with nothing
 saved.
 
@@ -862,7 +864,10 @@ The keys, printed under the values, work while you type in Find:
 
 - **Enter** applies the highlighted pair and its values to this chat only
   ("Applies to: this chat only"), then closes and returns you to the
-  composer; nothing is written to `config.toml`.
+  composer; nothing is written to `config.toml`. Its label follows the
+  highlighted row: "Enter set up in Settings" on a NEEDS SETUP row, "Enter
+  explain" on a server that did not answer, and "Enter show them" on a
+  "… N more" row.
 - **Ctrl+N** makes the highlighted pair the default for new chats, with its
   Temperature, Max tokens and Streaming. **Save as model default** (no key;
   Shift+Tab from Find reaches it) saves those three as the model's defaults.

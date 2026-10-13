@@ -14,7 +14,7 @@ from copy import deepcopy
 
 import httpx
 import pytest
-from textual.widgets import Input, Static
+from textual.widgets import Button, Input, Static
 
 import tldw_chatbook.UI.Screens.settings_endpoint_probe as probe_module
 import tldw_chatbook.Widgets.Console.console_model_popover as popover_module
@@ -340,6 +340,9 @@ async def test_enter_on_a_server_that_did_not_answer_stays_in_place(servers):
         await pilot.pause()
         row = switcher.highlighted_row()
         assert (row.kind, row.provider) == ("setup", "llama_cpp")
+        # Round 2 finding 4: the key row says what Enter does on this row.
+        apply = switcher.query_one("#console-popover-apply", Button)
+        assert str(apply.label) == "Enter explain"
         await pilot.press("enter")
         await pilot.pause()
         assert app.screen is switcher

@@ -2911,6 +2911,29 @@ async def test_the_key_rows_print_every_key_the_switcher_binds() -> None:
             assert key.region.height == 1 and box.region.contains_region(key.region)
 
 
+async def test_the_enter_label_follows_the_highlighted_rows_kind() -> None:
+    """Round 2 finding 4 (05a): with a NEEDS SETUP row highlighted the key row
+    said "Enter apply to this chat", but Enter there opens Settings; on a
+    "… N more" row it lists that provider's models. The label is the row's."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(app, pilot, build_switcher(recorder))
+        apply = switcher.query_one("#console-popover-apply", Button)
+        labels: dict[str, set[str]] = {}
+        for _ in switcher._rows:
+            row = switcher.highlighted_row()
+            labels.setdefault(row.kind, set()).add(str(apply.label))
+            await pilot.press("down")
+            await pilot.pause()
+
+    assert labels == {
+        "pair": {"Enter apply to this chat"},
+        "more": {"Enter show them"},
+        "setup": {"Enter set up in Settings"},
+    }, labels
+
+
 @pytest.mark.parametrize("key", ["enter", "tab", "ctrl+n", "ctrl+o", "escape"])
 async def test_every_printed_key_works_while_find_has_focus(key) -> None:
     """AC#16: each printed accelerator acts from Find, on the highlighted pair."""
