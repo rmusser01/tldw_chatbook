@@ -503,7 +503,10 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   macOS it needs the Option key set to send Meta, so the **Change** button is
   there for every keyboard.
 - The core fields: **Temperature**, **Max tokens**, **Streaming** (On or Off)
-  and the reasoning or thinking controls the model takes.
+  and the reasoning or thinking controls the model takes. Temperature takes
+  the provider's own range: 0.0 to 2.0 for most, 0.0 to 1.0 for Anthropic.
+  A cleared one says so ("Required: 0.0 to 1.0."), and Apply refuses a value
+  outside it.
 - Then four closed disclosures, each title one row: **Sampling** (Top P, Min P, Top K,
   Seed, Presence penalty, Frequency penalty), **Connection**, **Request
   estimate** and **Your name in this chat**. **Enter** on a title opens it.

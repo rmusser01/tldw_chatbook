@@ -76,6 +76,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     provider_readiness_verdict,
 )
 from tldw_chatbook.Chat.sampling_params import (
+    TEMPERATURE_RANGE,
     _is_blank_value,
     _parse_optional_int,
     _string_value,
@@ -84,6 +85,7 @@ from tldw_chatbook.Chat.sampling_params import (
     optional_float_setting_from_sources as _optional_float_setting_from_sources,
     optional_int_setting_from_sources as _optional_int_setting_from_sources,
     optional_string_setting_from_sources as _optional_string_setting_from_sources,
+    temperature_range,
 )
 # The enum sets canonicalize in sampling_params.py (ADR-147's shared leaf)
 # so presets, registry entries, and Console settings validate against ONE
@@ -1710,6 +1712,7 @@ def _console_session_settings_structural_errors(
     settings: ConsoleSessionSettings,
     *,
     blank_ok: Collection[str] = (),
+    temperature_bounds: tuple[float, float] = TEMPERATURE_RANGE,
 ) -> list[str]:
     """Return pure shape/range errors shared by live and persisted settings.
 
@@ -1717,6 +1720,8 @@ def _console_session_settings_structural_errors(
         settings: The settings to check.
         blank_ok: Required samplers that may be blank: the ones the provider
             does not accept, which the draft rebase commits blank.
+        temperature_bounds: The Temperature range to hold it to; the
+            provider's own range when the caller knows the provider.
 
     Returns:
         User-facing errors, empty when the settings are well formed.
@@ -1731,10 +1736,11 @@ def _console_session_settings_structural_errors(
     if settings.source not in CONSOLE_SESSION_SETTINGS_SOURCES:
         errors.append("Settings source must be derived or user.")
 
+    low, high = temperature_bounds
     if not (
         settings.temperature is None and "temperature" in blank_ok
-    ) and not _float_in_range(settings.temperature, 0.0, 2.0):
-        errors.append("Temperature must be between 0 and 2.")
+    ) and not _float_in_range(settings.temperature, low, high):
+        errors.append(f"Temperature must be between {low:g} and {high:g}.")
     if not (settings.top_p is None and "top_p" in blank_ok) and not _float_in_range(
         settings.top_p, 0.0, 1.0
     ):
@@ -1809,10 +1815,14 @@ def validate_console_session_settings(
     unaccepted = {"temperature", "top_p"} - supported_generation_fields(
         settings.provider, settings.model, app_config
     )
-    errors = _console_session_settings_structural_errors(
-        settings, blank_ok=unaccepted
-    )
     provider_key = provider_config_key(settings.provider)
+    # Capture finding 11: the provider's own Temperature range (Anthropic's
+    # is 0 to 1), as Settings ▸ Providers & Models holds it.
+    errors = _console_session_settings_structural_errors(
+        settings,
+        blank_ok=unaccepted,
+        temperature_bounds=temperature_range(provider_key),
+    )
     provider_settings = console_provider_settings(app_config, provider_key)
 
     if provider_key not in NATIVE_CONSOLE_PROVIDER_KEYS and not _string_value(

@@ -8455,6 +8455,48 @@ async def test_console_settings_modal_invalid_temperature_stays_open_and_renders
 
 
 @pytest.mark.asyncio
+async def test_console_settings_modal_holds_anthropic_temperature_to_its_own_range() -> (
+    None
+):
+    """Capture fix round 1, findings 2 and 7: Ctrl+O held Temperature to
+    0-2 for every provider, so 1.5 on an Anthropic chat was applied and the
+    Messages API refused the next send. The blank row's help and Apply both
+    use the provider's own range, as Settings ▸ Providers & Models does."""
+    app = ModalHarness()
+    app.app_config["api_settings"]["anthropic"] = {"api_key": "sk-ant-test"}
+    settings = ConsoleSessionSettings(provider="anthropic", model="claude-sonnet-4-5")
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config=app.app_config,
+                providers_models={"anthropic": ["claude-sonnet-4-5"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        temperature = app.screen.query_one("#console-settings-temperature", Input)
+        temperature.value = ""
+        await pilot.pause()
+        help_line = app.screen.query_one("#console-settings-temperature-help", Static)
+        assert "Required: 0.0 to 1.0." in str(help_line.content), help_line.content
+
+        temperature.value = "1.5"
+        await pilot.click("#console-settings-save")
+        await pilot.pause()
+
+        assert app.screen.query_one("#console-settings-modal") is not None
+        assert "Temperature must be between 0 and 1." in str(
+            app.screen.query_one("#console-settings-error", Static).content
+        )
+
+    assert app.saved_settings is None
+
+
+@pytest.mark.asyncio
 async def test_console_settings_modal_blank_temperature_stays_open_and_renders_error() -> (
     None
 ):

@@ -65,6 +65,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
 )
+from tldw_chatbook.Chat.sampling_params import temperature_range
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
 from .console_model_popover import context_copy
@@ -861,6 +862,9 @@ class ConsoleSettingsFieldRowsMixin:
         field = MODEL_CONFIG_FIELDS[name]
         if not _is_blank(control):
             text = field.help
+        elif name == "temperature":  # the provider's own range (finding 11)
+            low_high = temperature_range(provider_config_key(self._active_provider))
+            text = "Required: {:.1f} to {:.1f}.".format(*low_high)
         elif name in REQUIRED_FIELDS:
             text = f"Required: {field.valid_range}."
         else:
