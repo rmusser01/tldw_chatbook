@@ -870,3 +870,25 @@ async def test_the_cards_buttons_draw_an_edge(request):
             "#settings-console-context-edit-summary-prompt", Button
         )
         assert _edged(prompt)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [_SIZE, (235, 52)])
+@private_profile_test
+async def test_custom_id_keeps_its_edge_on_one_row(request, size):
+    """Capture fix 3, finding 1 (02a, 02, 10a): the edges finding 10 added
+    took two of Custom ID's twelve cells, so its label wrapped to "Custom" /
+    "ID" and the open picker grew a row. With its edges the label still
+    reads on one row."""
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open(host, pilot)
+        screen.query_one("#model-search-picker-input", Input).focus()
+        await pilot.pause()
+        custom = screen.query_one("#model-search-picker-custom", Button)
+        await _until(pilot, lambda: custom.region.height > 0)
+        painted = _region_rows(screen, custom)
+        assert custom.region.height == 1, painted
+        assert "Custom ID" in painted[0], painted
+        assert painted[0].startswith("▊") and painted[0].endswith("▎"), painted

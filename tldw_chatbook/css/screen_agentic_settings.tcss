@@ -1084,6 +1084,14 @@ Button.settings-category-group-toggle:focus {
     border-right: tall $ds-control-edge !important;
 }
 
+/* Capture fix 3 (finding 1): the two edges take two of the picker's 12
+   cells for Custom ID, which wrapped its label onto a second row. Two cells
+   wider, it reads on one row. */
+#settings-model-picker Button {
+    width: $ds-size-14;
+    min-width: $ds-size-14;
+}
+
 /* Capture fix 3: Review is the restored-connection row's control, in the
    Connect control column, so its Source word lines up with the others. */
 #settings-openai-reconnect-review {
