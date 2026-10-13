@@ -332,8 +332,8 @@ Tests/UI/test_settings_save_selected_not_cancelled.py
 Tests/UI/test_settings_api_key_clear_reset.py
 # Capture round 2, finding 22: Ctrl+Q with a staged Settings change asks first.
 Tests/UI/test_settings_theme_picker_screen.py::test_quit_with_a_staged_settings_change_asks_first
-# Capture fix 3 round 1, findings 3 and 9: Ctrl+Q names only what Settings kept.
-Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_elsewhere_never_names_what_settings_did_not_keep
+# Ruling cf3r1-N1 (b): Settings keeps unsaved snapshot preferences; Ctrl+Q names them.
+Tests/UI/test_app_quit_under_modal.py::test_a_snapshot_preference_edit_is_kept_and_asked_about_from_console
 # Capture round 2, finding 14: replay override controls sit beside a named model.
 Tests/UI/test_settings_console_reasoning_history.py::test_override_controls_show_only_beside_the_model_they_remember
 # R3 #10: the two free-text Side chat fields take their row.

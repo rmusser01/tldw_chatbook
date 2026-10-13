@@ -15,6 +15,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from textual.css.query import QueryError
+from textual.widgets import Checkbox, Input
+
 from ...Constants import TAB_SETTINGS
 from ...Widgets.confirmation_dialog import confirm_quit_discarding_edits
 from ...Widgets.settings_theme_editor import ThemeLeaveModal
@@ -27,9 +30,60 @@ if TYPE_CHECKING:
 #: The snapshot key ``SettingsScreen.save_state`` names its unsaved
 #: categories under, for ``kept_settings_draft``.
 KEPT_UNSAVED_TITLES = "unsaved_titles"
+#: Unsaved Prompt-cache snapshot preferences, kept as the (loaded, raw) pair
+#: so Save still refuses a value changed elsewhere since (ruling cf3r1-N1).
+KEPT_SNAPSHOT_PREFERENCES = "snapshot_preferences"
 
 
-def unsaved_settings_titles(screen: SettingsScreen, *, kept: bool = False) -> list[str]:
+def keep_snapshot_preferences(screen: SettingsScreen, state: dict) -> None:
+    """Keep unsaved Prompt-cache snapshot preferences in ``state``.
+
+    The fields are read first: a value typed just before leaving may not
+    have reached the screen yet.
+
+    Args:
+        screen: The Settings screen being left.
+        state: Its ``save_state`` snapshot.
+    """
+    try:
+        screen._snapshot_preferences_raw = (
+            screen.query_one("#settings-snapshot-enabled", Checkbox).value,
+            screen.query_one("#settings-snapshot-keep", Input).value,
+        )
+    except QueryError:  # the card is not open
+        pass
+    if screen._snapshot_preferences_dirty():
+        state[KEPT_SNAPSHOT_PREFERENCES] = (
+            screen._snapshot_preferences_loaded,
+            screen._snapshot_preferences_raw,
+        )
+
+
+def restore_snapshot_preferences(screen: SettingsScreen, state: dict) -> None:
+    """Put kept snapshot preferences back; the card then skips its reload.
+
+    Args:
+        screen: The fresh Settings screen.
+        state: The snapshot ``keep_snapshot_preferences`` wrote to.
+    """
+    from ...LLM_Management.snapshot_settings import SnapshotPreferences
+
+    kept = state.get(KEPT_SNAPSHOT_PREFERENCES)
+    if not isinstance(kept, tuple) or len(kept) != 2:
+        return
+    loaded, raw = kept
+    if (
+        isinstance(loaded, SnapshotPreferences)
+        and isinstance(raw, tuple)
+        and len(raw) == 2
+        and type(raw[0]) is bool
+        and isinstance(raw[1], str)
+    ):
+        screen._snapshot_preferences_loaded = loaded
+        screen._snapshot_preferences_raw = raw
+
+
+def unsaved_settings_titles(screen: SettingsScreen) -> list[str]:
     """Name every category with unsaved changes, Theme aside.
 
     Theme is left out: its editor's prompt asks on its own, and leaving
@@ -37,25 +91,15 @@ def unsaved_settings_titles(screen: SettingsScreen, *, kept: bool = False) -> li
 
     Args:
         screen: The Settings screen holding the drafts.
-        kept: Name only what ``save_state`` keeps. Providers & Models also
-            counts its Prompt-cache snapshot preferences, which leaving
-            Settings does not keep, so only its draft counts here.
 
     Returns:
         The categories' titles, in rail order.
     """
-
-    def unsaved(category: SettingsCategoryId) -> bool:
-        if kept and category is SettingsCategoryId.PROVIDERS_MODELS:
-            draft = screen._settings_drafts.get(category)
-            return bool(draft and draft.is_dirty)
-        return screen._category_has_unsaved_changes(category)
-
     return [
         summary.title
         for summary in screen._category_summaries()
         if summary.category is not SettingsCategoryId.THEME
-        and unsaved(summary.category)
+        and screen._category_has_unsaved_changes(summary.category)
     ]
 
 

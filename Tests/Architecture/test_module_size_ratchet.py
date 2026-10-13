@@ -214,7 +214,10 @@ _BUDGETS: dict[str, int] = {
     # since this PR's base (the Guardian rule editor and Personal Context
     # owners, among others), and this PR's net change is the same as before:
     # 35,771.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 35771,
+    # Round 4 after the rebase (ruling cf3r1-N1): leaving Settings keeps
+    # unsaved snapshot preferences; the keep and restore live in
+    # settings_quit_guard.py (+4): 35,775.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35775,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

@@ -4497,9 +4497,10 @@ class SettingsScreen(BaseAppScreen):
             }
         from ..Settings_Modules import settings_quit_guard as quit_guard
 
-        # C-N1: a quit from another screen asks about these (quit_guard),
-        # named after every capture above (the raw editor's queued input).
-        titles = quit_guard.unsaved_settings_titles(self, kept=True)
+        # C-N1: a quit from another screen asks about these (quit_guard), named
+        # after every capture, the snapshot preferences' too (cf3r1-N1).
+        quit_guard.keep_snapshot_preferences(self, state)
+        titles = quit_guard.unsaved_settings_titles(self)
         state[quit_guard.KEPT_UNSAVED_TITLES] = titles
         return state
 
@@ -4582,6 +4583,9 @@ class SettingsScreen(BaseAppScreen):
             except (TypeError, ValueError):
                 self._speech_tts_draft_snapshot = None
 
+        from ..Settings_Modules import settings_quit_guard as quit_guard
+
+        quit_guard.restore_snapshot_preferences(self, state)
         continuation = state.get("provider_return_continuation")
         if not isinstance(continuation, Mapping) or set(continuation) != {
             "target",
