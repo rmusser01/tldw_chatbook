@@ -114,7 +114,8 @@ def test_binding_compare_and_swap_and_prewrite_invalidation(rule_store):
         store.set_binding(
             replace(binding, state="disabled"), expected_binding_revision=1
         )
-    assert seen == [(binding.scope, "rule")]
+    # Destructive intent revokes before admission and fences again before write.
+    assert seen and set(seen) == {(binding.scope, "rule")}
     assert store.list_bindings(binding.scope)[0].state == "enabled"
     with pytest.raises(RuleBindingConflict):
         store.set_binding(

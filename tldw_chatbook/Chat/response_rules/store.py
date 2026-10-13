@@ -311,6 +311,23 @@ class ResponseRuleStore:
             self._invalidate(scope, rule.rule_id)
             return binding
 
+    def _revoke_binding_work(
+        self,
+        scope: RuleScope,
+        rule_id: str,
+        current: Callable[[], bool] | None,
+    ) -> None:
+        """Fence destructive user intent before waiting for a SQLite writer.
+
+        Currentness here belongs to the user's scope, not the assessment being
+        revoked. The mutation rechecks that scope and CAS after writer admission.
+        """
+        with self._lock:
+            if current is not None and not current():
+                raise RuleBindingConflict("rule_scope_changed")
+            self._assert_not_adopting(scope)
+            self._invalidate(scope, rule_id)
+
     def set_binding(
         self,
         binding: RuleBinding,
@@ -319,6 +336,8 @@ class ResponseRuleStore:
         current: Callable[[], bool] | None = None,
     ) -> RuleBinding:
         """Change a reviewed pin/state using compare-and-swap."""
+        if binding.state in {"disabled", "excluded"}:
+            self._revoke_binding_work(binding.scope, binding.rule_id, current)
         with ExitStack() as fence:
             with self._write_cursor(fence) as cursor:
                 if current is not None and not current():
@@ -471,6 +490,7 @@ class ResponseRuleStore:
         current: Callable[[], bool] | None = None,
     ) -> None:
         """Remove one binding; promoted or independently drafted revisions survive."""
+        self._revoke_binding_work(scope, rule_id, current)
         with ExitStack() as fence:
             with self._write_cursor(fence) as cursor:
                 if current is not None and not current():
