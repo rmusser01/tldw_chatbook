@@ -2963,7 +2963,9 @@ def _not_ready_words(
     elif blocker == "credential_missing" and subscription in _SUBSCRIPTION_REASONS:
         reason = _SUBSCRIPTION_REASONS[subscription]
     elif blocker == "endpoint_invalid" and issue == "endpoint_missing":
-        reason = "no URL"
+        # The row to fill, as "no key" and "no model" do: "no URL" read as
+        # something else beside Azure's "your resource host" (#3057).
+        reason = "no endpoint"
     return f"Not ready · {reason}"
 
 

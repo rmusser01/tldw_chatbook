@@ -343,7 +343,11 @@ async def test_an_endpoint_with_no_shipped_default_reads_required(
 ):
     """Capture 01c (fix 1): with no base URL the Key check reads "Not ready",
     yet the Endpoint row said built-in and "blank uses the provider default".
-    These three ship no default, so the row says the URL is required."""
+    These three ship no default, so the row says the URL is required.
+
+    Capture round 2, finding 9: the Key check said "no URL" where the row
+    asks for "your resource host"; it names the row to fill, "no endpoint".
+    """
     from tldw_chatbook.Chat.provider_readiness import default_api_key_env_var
 
     monkeypatch.delenv(default_api_key_env_var(provider), raising=False)
@@ -358,7 +362,9 @@ async def test_an_endpoint_with_no_shipped_default_reads_required(
         help_line = f"required: your {target}"
 
         assert endpoint.value == ""
-        assert _text(screen, "#settings-provider-readiness").startswith("Not ready")
+        assert _text(screen, "#settings-provider-readiness") == (
+            "Not ready · no endpoint"
+        )
         assert _text(screen, "#settings-provider-endpoint-source") == "not set"
         assert _text(screen, "#settings-provider-endpoint-help") == help_line
         assert endpoint.placeholder == f"Enter your {target}"
