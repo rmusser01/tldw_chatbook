@@ -847,6 +847,40 @@ async def test_no_memory_is_said_once() -> None:
         assert line.startswith("All generated and legacy conversation memory was")
 
 
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_memory_action_buttons_are_separated(size: tuple[int, int]) -> None:
+    """TASK-33007 capture finding 19 (round 2): "Reset overrides" and "Reset
+    all conversation memory…" shared one shaded bar and read as one button.
+    Each memory action row leaves a blank cell between its buttons."""
+    app = _ContextHarness()
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=ConsoleSettingsContextEstimate(
+                    42_000, 100_000, "42,000 / 100,000 tokens"
+                ),
+                context_state=_state(memory=_memory()),
+                can_save=True,
+                focus_context=True,
+                reset_current_memory=app.reset_current,
+                compact_now=lambda: None,
+                reset_all_memories=app.reset_all,
+            )
+        )
+        await pilot.pause()
+        rows = list(app.screen.query(".console-context-action-row"))
+        assert len(rows) == 2
+        for row in rows:
+            shown = [b for b in row.query(Button) if b.display]
+            assert len(shown) == 2, [b.id for b in shown]
+            first, second = (b.virtual_region for b in shown)
+            assert first.right < second.x, (shown[0].label, shown[1].label)
+
+
 @pytest.mark.asyncio
 async def test_branch_reset_is_undoable_and_reset_all_is_separately_confirmed() -> None:
     app = _ContextHarness()

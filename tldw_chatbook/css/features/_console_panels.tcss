@@ -135,6 +135,13 @@ ConsoleSettingsModal .console-context-action-row {
     min-height: $ds-control-height-compact;
 }
 
+/* TASK-33007 capture finding 19 (round 2): a row shows two buttons (the
+   second swaps with Undo or Confirm), so the first keeps one cell clear. */
+#console-context-compact-now,
+#console-context-reset-overrides {
+    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+}
+
 .console-settings-control {
     width: $ds-width-fill;
     min-width: $ds-size-0;
