@@ -1444,6 +1444,7 @@ class PersonasScreen(BaseAppScreen):
         self._conversation_search_debounce_timer: Timer | None = None
         self._console_readiness_poll_timer: Timer | None = None
         self._console_readiness_block_reason: str | None = None
+        self._console_handoff_readiness_gate: tuple[Any, ...] | None = None
         self._header_inputs: frame_state.RoleplayHeaderInputs | None = None
         self._character_tts_request_generation = 0
         self._character_tts_snapshot: _CharacterTTSControlSnapshot | None = None
@@ -7302,12 +7303,38 @@ class PersonasScreen(BaseAppScreen):
         """
         if not self.is_mounted or not self.is_active:
             return
+        header_inputs = self._gather_header_inputs()
+        # Cheap gate BEFORE provider resolution (task-34914): the block
+        # reason can only change when the action gate, entity kind, header
+        # inputs, or the chat_defaults selection changes, or the shared
+        # background subscription snapshot goes stale/completes. Selection
+        # syncs re-render directly; the poll only covers background
+        # credential transitions (the Settings poll gates the same way).
+        from ...LLM_Calls.anthropic_subscription import (
+            subscription_credential_status,
+            subscription_readiness_revision,
+        )
+
+        chat_defaults = (
+            getattr(self.app_instance, "app_config", {}) or {}
+        ).get("chat_defaults") or {}
+        gate = (
+            self._console_action_allowed(),
+            self.state.selected_entity_kind,
+            header_inputs,
+            (chat_defaults.get("provider"), chat_defaults.get("model")),
+            subscription_credential_status(background=True),
+            subscription_readiness_revision(),
+        )
+        if gate == self._console_handoff_readiness_gate:
+            return
+        self._console_handoff_readiness_gate = gate
         reason = self._provider_send_block_reason()
         # A background read can complete between header and inspector paints;
         # the header also follows the draft aggregate and the destination block.
         if (
             reason == self._console_readiness_block_reason
-            and self._gather_header_inputs() == self._header_inputs
+            and header_inputs == self._header_inputs
         ):
             return
         self._sync_title_and_console_actions()

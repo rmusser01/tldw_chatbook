@@ -288,3 +288,4 @@ async def test_unmount_stops_handoff_refresh_before_credential_completion(
                 await asyncio.sleep(0.01)
         await pilot.pause(0.3)
         screen._poll_console_handoff_readiness()
+
