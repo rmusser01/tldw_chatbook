@@ -408,6 +408,7 @@ $ds-duration-slow: 0.5s;
  * (reads as absent, not unavailable) — disabled uses $ds-disabled-bg +
  * $ds-text-disabled-readable with full opacity. */
 $ds-opacity-dim: 70%;
+$ds-opacity-full: 100%;
 
 /* ========================================
  * TYPOGRAPHY EMPHASIS (ADR-150)
@@ -497,3 +498,7 @@ $ds-conversation-action-width: 4;
 $ds-conversation-action-ascii-width: 9;
 $ds-inspector-usage-list-width: 60;
 $ds-conversation-menu-width: 30;
+/* Shared Notes/File Notes structured-source controls. */
+$ds-document-language-width: 14;
+$ds-document-problems-height: 5;
+$ds-document-button-min-width: 5;

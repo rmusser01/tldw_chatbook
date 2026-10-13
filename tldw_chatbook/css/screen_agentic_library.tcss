@@ -214,6 +214,7 @@ $ds-duration-medium: 0.3s;
 $ds-duration-slow: 0.5s;
 
 $ds-opacity-dim: 70%;
+$ds-opacity-full: 100%;
 
 $ds-text-strong: bold;
 $ds-text-emphasis: italic;
@@ -279,6 +280,9 @@ $ds-conversation-action-width: 4;
 $ds-conversation-action-ascii-width: 9;
 $ds-inspector-usage-list-width: 60;
 $ds-conversation-menu-width: 30;
+$ds-document-language-width: 14;
+$ds-document-problems-height: 5;
+$ds-document-button-min-width: 5;
 
 
 .tldw-agentic-split-preamble-end { }
@@ -1285,7 +1289,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     min-height: $ds-size-0;
     margin: $ds-space-0;
     overflow-x: hidden;
-    overflow-y: hidden;
+    overflow-y: auto;
 }
 
 #library-shell-grid.library-notes-compact #library-note-title-row,
@@ -1322,14 +1326,6 @@ with stray left-edge border fragments), and padding 0 1 so the full
     max-height: $ds-size-1;
     margin: $ds-space-0;
     padding: $ds-space-0 $ds-space-1;
-}
-
-#library-shell-grid.library-notes-compact #library-note-body {
-    height: $ds-height-fill;
-    min-height: $ds-size-0;
-    max-height: $ds-height-full;
-    margin: $ds-space-0;
-    overflow-x: hidden;
 }
 
 #library-shell-grid.library-notes-compact #library-note-preview-region {

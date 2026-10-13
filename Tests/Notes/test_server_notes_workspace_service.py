@@ -822,3 +822,194 @@ async def test_workspace_note_delete_does_not_advertise_a_guard_it_cannot_honour
         ("workspace", "workspace-1", 11),
         ("server", "note-1", 4),
     ]
+
+@pytest.mark.parametrize("language", [None, "json", " Future/😀 "])
+def test_server_note_projection_preserves_present_language(language):
+    service = ServerNotesWorkspaceService(client=None)
+    row = service.normalize_server_note(
+        {"id": "n", "content": "a&b <tag>  ", "content_language": language}
+    )
+    assert "content_language" in row
+    assert row["content_language"] == language
+    assert row["content"] == "a&b <tag>  "
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", [None, "json", " Future/😀 "])
+async def test_explicit_server_language_refuses_incapable_peer_before_write(language):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Sync_Interop.sync_state import NotesLanguageCapability
+
+    client = Mock()
+    client.get_notes_language_capability = AsyncMock(
+        return_value=NotesLanguageCapability(False, "unsupported_server")
+    )
+    client.create_server_note = AsyncMock(
+        return_value={"id": "n", "content": "a&b <tag>", "version": 1}
+    )
+    service = ServerNotesWorkspaceService(client)
+    with pytest.raises(ValueError, match="language"):
+        await service.save_server_note(
+            title="Draft", content="a&b <tag>", content_language=language
+        )
+    client.create_server_note.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {},
+        {"content_language": "json"},
+        {"content_language": None},
+        {"content_language": "json", "content": "changed"},
+        {"content_language": "json", "id": "other"},
+        {"content_language": "json", "version": 0},
+        {"content_language": "json", "version": 1},
+        {"content_language": "json", "version": True},
+    ],
+)
+async def test_explicit_server_language_requires_complete_acknowledgement(patch):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Sync_Interop.sync_state import NotesLanguageCapability
+
+    source = '{"n":900719925474099312345}  '
+    client = Mock()
+    client.get_notes_language_capability = AsyncMock(
+        return_value=NotesLanguageCapability(True, None)
+    )
+    client.update_server_note = AsyncMock(
+        return_value={
+            "id": "n",
+            "content": source,
+            "version": 2,
+            **patch,
+        }
+    )
+    service = ServerNotesWorkspaceService(client)
+    if patch == {"content_language": "json"}:
+        row = await service.save_server_note(
+            note_id="n", version=1, content=source, content_language="json"
+        )
+        assert (row["content"], row["content_language"]) == (source, "json")
+    else:
+        with pytest.raises(ValueError, match="acknowledge"):
+            await service.save_server_note(
+                note_id="n", version=1, content=source, content_language="json"
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change_during", ["capability", "ack"])
+async def test_explicit_language_rechecks_existing_client_owner(change_during):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Sync_Interop.sync_state import NotesLanguageCapability
+
+    client = Mock()
+    replacement = Mock()
+    provider = Mock()
+    provider.build_client.return_value = client
+
+    async def capability():
+        if change_during == "capability":
+            provider.build_client.return_value = replacement
+        return NotesLanguageCapability(True)
+
+    async def save(_request):
+        if change_during == "ack":
+            provider.build_client.return_value = replacement
+        return {"id": "n", "version": 1, "content": "draft", "content_language": "json"}
+
+    client.get_notes_language_capability = AsyncMock(side_effect=capability)
+    client.create_server_note = AsyncMock(side_effect=save)
+    service = ServerNotesWorkspaceService(None, client_provider=provider)
+    with pytest.raises(ValueError, match="changed"):
+        await service.save_server_note(
+            title="T", content="draft", content_language="json"
+        )
+    assert client.create_server_note.await_count == (change_during == "ack")
+    replacement.create_server_note.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_omitted_legacy_write_does_not_require_language_capability():
+    from unittest.mock import AsyncMock
+
+    client = Mock()
+    client.update_server_note = AsyncMock(
+        return_value={"id": "n", "version": 2, "content": "body"}
+    )
+    service = ServerNotesWorkspaceService(client)
+    row = await service.save_server_note(note_id="n", version=1, content="body")
+    assert "content_language" not in row
+    client.get_notes_language_capability.assert_not_called()
+    request = client.update_server_note.call_args.args[1]
+    assert "content_language" not in request.model_fields_set
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change_during", ["capability", "ack", "unchanged"])
+async def test_explicit_language_rejects_same_client_away_and_back(change_during):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Sync_Interop.sync_state import NotesLanguageCapability
+
+    client = Mock()
+    generation = 1
+    provider = SimpleNamespace(
+        build_client=lambda: client,
+        runtime_context=SimpleNamespace(
+            snapshot=lambda: ("same final target", generation)
+        ),
+    )
+
+    async def capability():
+        nonlocal generation
+        if change_during == "capability":
+            generation += 2
+        return NotesLanguageCapability(True)
+
+    async def save(_request):
+        nonlocal generation
+        if change_during == "ack":
+            generation += 2
+        return {"id": "n", "version": 1, "content": "draft", "content_language": "json"}
+
+    client.get_notes_language_capability = AsyncMock(side_effect=capability)
+    client.create_server_note = AsyncMock(side_effect=save)
+    service = ServerNotesWorkspaceService(None, client_provider=provider)
+    if change_during == "unchanged":
+        saved = await service.save_server_note(
+            title="T", content="draft", content_language="json"
+        )
+        assert saved["content_language"] == "json"
+    else:
+        with pytest.raises(ValueError, match="changed"):
+            await service.save_server_note(
+                title="T", content="draft", content_language="json"
+            )
+    assert client.create_server_note.await_count == (change_during != "capability")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["authentication_required", "transport_unavailable"])
+async def test_language_probe_failure_does_not_claim_an_incapable_peer(reason):
+    from unittest.mock import AsyncMock
+
+    from tldw_chatbook.Sync_Interop.sync_state import NotesLanguageCapability
+
+    client = Mock()
+    client.get_notes_language_capability = AsyncMock(
+        return_value=NotesLanguageCapability(False, reason)
+    )
+    client.create_server_note = AsyncMock()
+    service = ServerNotesWorkspaceService(client)
+    with pytest.raises(ValueError, match="Cannot verify.*retry Save"):
+        await service.save_server_note(
+            title="T", content="exact source  ", content_language="json"
+        )
+    client.create_server_note.assert_not_called()

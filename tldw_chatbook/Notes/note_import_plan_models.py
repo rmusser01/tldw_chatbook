@@ -367,6 +367,12 @@ def _validate_import_item_id(value: object) -> str:
     return value
 
 
+class OmittedNoteLanguage(Enum):
+    """Legacy import omission, distinct from an explicit portable null."""
+
+    UNSET = "omitted"
+
+
 @dataclass(frozen=True, slots=True)
 class ParsedNotePayload:
     """One parsed note produced by a source file."""
@@ -391,6 +397,10 @@ class ParsedNotePayload:
     once it lives in the Library database.
     """
 
+    content_language: str | None | OmittedNoteLanguage = field(
+        default=OmittedNoteLanguage.UNSET, repr=False
+    )
+
     def __post_init__(self) -> None:
         if not isinstance(self.title, str) or not isinstance(self.content, str):
             raise TypeError("Parsed note title and content must be text.")
@@ -398,6 +408,14 @@ class ParsedNotePayload:
             raise ValueError("Parsed note title and content must be non-blank.")
         if len(self.title) > MAX_IMPORT_TITLE_LENGTH:
             raise ValueError("Parsed note title exceeds its absolute safety ceiling.")
+        if self.content_language is not OmittedNoteLanguage.UNSET and (
+            self.content_language is not None
+            and (
+                not isinstance(self.content_language, str)
+                or not 1 <= len(self.content_language) <= 100
+            )
+        ):
+            raise ValueError("content_language must be null or bounded nonempty text.")
         keywords = _as_tuple(self.keywords, field_name="keywords")
         if not all(isinstance(keyword, str) for keyword in keywords):
             raise ValueError("keywords must contain only text values.")

@@ -41,6 +41,7 @@ from Tests.UI.library_quit_guard_support import (
     _no_autosave,
     _open_note,
     _prompt_title,
+    _refuse_draft_recovery,
     _record_toasts,
     _scaled_autosave,
     _settings_without_splash,
@@ -123,7 +124,7 @@ async def test_ctrl_q_on_a_new_note_with_only_a_blank_title_discards_it(
 
 
 async def test_a_failed_write_asks_instead_of_exiting(tmp_path, monkeypatch):
-    """Write failure: the note's text is never silently dropped."""
+    """Canonical and recovery writes fail: no lossless exit is possible."""
     _no_autosave(monkeypatch)
     events: list = []
     app, profile = _library_app(
@@ -137,6 +138,7 @@ async def test_a_failed_write_asks_instead_of_exiting(tmp_path, monkeypatch):
         async with app.run_test(size=SIZE) as pilot:
             screen = await _library(app, pilot)
             body = await _open_note(screen, pilot, _TITLE, profile.note_id)
+            _refuse_draft_recovery(monkeypatch, screen)
             await _type_at_end(pilot, body, " unsaved")
             monkeypatch.setattr(profile.scope_service, "save_note", _disk_full)
 

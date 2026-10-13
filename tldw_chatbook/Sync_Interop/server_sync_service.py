@@ -184,6 +184,88 @@ class ServerSyncService:
             return self.client_provider.build_client()
         raise ValueError("TLDW API client is required for server sync operations.")
 
+    async def capture_notes_authority(
+        self,
+        server_profile_id: str,
+        *,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        device_id: str,
+    ) -> tuple[Any, Any]:
+        """Pin one existing runtime client and reject context changes through cleanup."""
+        provider = self.client_provider
+        if self.client is not None or provider is None:
+            raise ValueError("notes_authority_unavailable")
+        client = provider.build_client()
+        context = provider.get_active_context()
+        runtime = getattr(provider, "runtime_context", None)
+        revision = runtime.snapshot()[1] if runtime is not None else None
+        if context is None:
+            raise ValueError("notes_authority_unavailable")
+        if context.active_server_id != server_profile_id:
+            raise ValueError("notes_authority_changed")
+
+        def assert_current() -> None:
+            if (
+                self.client is not None
+                or self.client_provider is not provider
+                or provider.build_client() is not client
+                or provider.get_active_context() != context
+                or (runtime is not None and runtime.snapshot()[1] != revision)
+            ):
+                raise ValueError("notes_authority_changed")
+
+        assert_current()
+        if authenticated_principal_id is None:
+            raise ValueError("notes_authority_unavailable")
+        identity = self._dump(await client.get_sync_v2_profile(device_id=device_id))
+        assert_current()
+        actual_principal = identity.get("user_id")
+        if not isinstance(actual_principal, str) or not actual_principal:
+            raise ValueError("notes_authority_unavailable")
+        if actual_principal != authenticated_principal_id:
+            raise ValueError("notes_authority_changed")
+        manifest = self._dump(
+            await client.get_sync_v2_restore_manifest(dataset_ids=[dataset_id])
+        )
+        assert_current()
+        matches = [
+            entry
+            for entry in manifest.get("datasets", [])
+            if entry.get("dataset_id") == dataset_id
+        ]
+        if len(matches) != 1:
+            raise ValueError("notes_authority_unavailable")
+        dataset = matches[0]
+        if "workspace_id" not in dataset or "scope_type" not in dataset:
+            raise ValueError("notes_authority_unavailable")
+        expected_scope = "workspace" if workspace_scope is not None else "personal"
+        if (
+            dataset.get("scope_type") != expected_scope
+            or dataset.get("workspace_id") != workspace_scope
+        ):
+            raise ValueError("notes_authority_changed")
+        return client, assert_current
+
+    async def get_v2_capabilities(
+        self, *, dataset_id: str, notes_authority: Any = None
+    ) -> dict[str, Any]:
+        """Probe current authenticated dataset writability immediately before publication."""
+        client = (
+            notes_authority[0]
+            if notes_authority is not None
+            else self._require_client()
+        )
+        if notes_authority is not None:
+            notes_authority[1]()
+        response = self._dump(
+            await client.get_sync_v2_capabilities(dataset_id=dataset_id)
+        )
+        if notes_authority is not None:
+            notes_authority[1]()
+        return response
+
     def _enforce(self, action_id: str) -> None:
         if self.policy_enforcer is None:
             return
@@ -341,7 +423,10 @@ class ServerSyncService:
             device_name=display_name,
             client_profile_id=bootstrap_identity,
             requested_domains=requested,
-            supported_adapter_versions={domain: [1] for domain in requested},
+            supported_adapter_versions={
+                domain: [1, 2] if domain == "notes.note" else [1]
+                for domain in requested
+            },
         )
         response = self._dump(await client.bootstrap_sync_v2_profile(request))
         self._validate_notes_organization_capability(response)
@@ -596,6 +681,10 @@ class ServerSyncService:
                 supported_domains=sync_domains,
                 capabilities={
                     "dry_run": True,
+                    "supported_adapter_versions": {
+                        domain: [1, 2] if domain == "notes.note" else [1]
+                        for domain in sync_domains
+                    },
                     "protocol_version": "sync-v2-m1",
                 },
             )
@@ -905,6 +994,7 @@ class ServerSyncService:
         domains: list[str] | None = None,
         idempotency_key: str | None = None,
         last_known_cursor: str | None = None,
+        notes_authority: Any = None,
     ) -> dict[str, Any]:
         """Push non-Personal-Context envelopes through the public transport.
 
@@ -945,6 +1035,7 @@ class ServerSyncService:
             domains=domains,
             idempotency_key=idempotency_key,
             last_known_cursor=last_known_cursor,
+            notes_authority=notes_authority,
         )
 
     async def _push_v2_envelopes(
@@ -956,12 +1047,20 @@ class ServerSyncService:
         domains: list[str] | None = None,
         idempotency_key: str | None = None,
         last_known_cursor: str | None = None,
+        notes_authority: Any = None,
     ) -> dict[str, Any]:
         """Validate and dispatch one push after its caller proves domain authority."""
 
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SyncV2Envelope, SyncV2PushRequest
 
+        if notes_authority is not None:
+            notes_authority[1]()
+        client = (
+            notes_authority[0]
+            if notes_authority is not None
+            else self._require_client()
+        )
         self._enforce("sync.v2.push.server")
         coerced_envelopes = [
             envelope
@@ -986,9 +1085,7 @@ class ServerSyncService:
             idempotency_key=idempotency_key,
             last_known_cursor=last_known_cursor,
         )
-        response = self._dump(
-            await self._require_client().push_sync_v2_envelopes(request)
-        )
+        response = self._dump(await client.push_sync_v2_envelopes(request))
         validate_push_response_scope(
             dataset_id=dataset_id,
             response_dataset_id=response.get("dataset_id"),
@@ -999,6 +1096,8 @@ class ServerSyncService:
             rejected=response.get("rejected", []),
             conflicts=response.get("conflicts", []),
         )
+        if notes_authority is not None:
+            notes_authority[1]()
         return response
 
     @_sync_call
@@ -1027,6 +1126,7 @@ class ServerSyncService:
         domains: list[str] | None = None,
         page_size: int | None = None,
         include_own_changes: bool = False,
+        notes_authority: Any = None,
     ) -> dict[str, Any]:
         """Pull non-Personal-Context envelopes through the public transport.
 
@@ -1058,6 +1158,7 @@ class ServerSyncService:
             domains=domains,
             page_size=page_size,
             include_own_changes=include_own_changes,
+            notes_authority=notes_authority,
         )
 
     async def _pull_v2_envelopes(
@@ -1069,15 +1170,23 @@ class ServerSyncService:
         domains: list[str] | None = None,
         page_size: int | None = None,
         include_own_changes: bool = False,
+        notes_authority: Any = None,
     ) -> dict[str, Any]:
         """Validate and dispatch one pull after its caller proves domain authority."""
 
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import SyncV2Envelope
 
+        if notes_authority is not None:
+            notes_authority[1]()
+        client = (
+            notes_authority[0]
+            if notes_authority is not None
+            else self._require_client()
+        )
         self._enforce("sync.v2.restore.pull.server")
         response = self._dump(
-            await self._require_client().pull_sync_v2_envelopes(
+            await client.pull_sync_v2_envelopes(
                 dataset_id=dataset_id,
                 device_id=device_id,
                 cursor=cursor,
@@ -1102,6 +1211,8 @@ class ServerSyncService:
             next_cursor=response.get("next_cursor"),
             envelope_count=len(envelopes),
         )
+        if notes_authority is not None:
+            notes_authority[1]()
         return response
 
     @_sync_call

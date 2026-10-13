@@ -82,3 +82,16 @@ ADR-021 (file-backed notes disk authority and recovery), ADR-029 (file-notes dis
 2. The watcher is polling-only (no FS events dependency); hints drive reconciliation timing.
 3. Executor worker coroutines run one loop per worker thread — an earlier per-call `asyncio.run` leaked SQLite connections.
 4. `duplicate_authority` pauses the root rather than picking a winner, because two bindings claiming one note cannot be reconciled safely.
+
+## Structured source and local checking (ADR-194)
+
+Canonical notes carry nullable opaque `content_language` in schema 81. Library
+draft recovery keeps exact rejected/empty source and its original conflict base in
+the device-state store; that whole store remains excluded from portable backup
+(`Notes/recovery.py`). The app-owned `DocumentWorker` performs bounded local
+checks and explicit native-history format proposals, with teardown in
+`app_lifecycle.py`. Structured File Notes expose whole source while retaining
+the 200k-character interactive limit and disk/frontmatter authority. Source and
+portable-note exports use the current atomic replace-confirmed Library export
+owner with explicit newline preservation. Durable server-readable Notes sync
+remains deferred to TASK-34818.

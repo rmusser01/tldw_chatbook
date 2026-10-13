@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -10,7 +11,7 @@ from functools import partial
 from pathlib import Path, PurePosixPath
 from threading import Event, Lock, RLock
 from time import monotonic
-from typing import Any, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from uuid import uuid4
 
 from loguru import logger
@@ -28,6 +29,13 @@ from textual.widget import Widget
 from textual.worker import Worker
 from textual.widgets import Button, Input, ListView, OptionList, Static, TextArea, Tree
 from textual.widgets.option_list import Option
+
+from tldw_chatbook.Document_Editing.models import (
+    DocumentRequest,
+    FormatResult,
+    RequestKey,
+)
+from tldw_chatbook.Widgets.document_diagnostics import DocumentDiagnostics
 
 from tldw_chatbook.config import (
     apply_settings_mutation_to_cli_config,
@@ -146,6 +154,11 @@ from tldw_chatbook.Widgets.Library.library_file_notes_events import (
     FileNotesReloadConfirmationChanged,
     FileNotesRootChanged,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Document_Editing.editor_controller import (
+        DocumentEditorController,
+    )
 
 FileNotesPathTask = Literal["none", "new", "move", "save_copy"]
 FileNotesWorkMode = Literal["edit", "manage"]
@@ -1614,6 +1627,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._folder_children: dict[str, tuple[_FolderItem, ...]] = {}
         self._search_paths: tuple[str, ...] = ()
         self._restore_expanded_folders: set[str] = set()
+        self._document_editor: DocumentEditorController | None = None
+        self._document_revision = 0
+        self._document_language_revision = 0
+        self._document_language: str | None = None
         self._opened: OpenedFileNote | None = None
         self._current_path = ""
         self._selected_deleted_path = ""
@@ -1869,6 +1886,7 @@ class LibraryFileNotesWorkspace(Vertical):
             Static("", id="file-notes-action-status", markup=False),
             preview_status,
             Vertical(
+                DocumentDiagnostics(temporary=True, id="file-notes-document-tools"),
                 self._editor_widget,
                 Horizontal(
                     Button("Restore", id="file-notes-restore", compact=True),
@@ -2045,6 +2063,121 @@ class LibraryFileNotesWorkspace(Vertical):
             return None
         return Path(value).expanduser().resolve(strict=False)
 
+    def retire_document_editor(self) -> None:
+        """Permanently revoke pending source work before losing file authority."""
+        if self._document_editor is not None:
+            self._document_editor.retire()
+            self._document_editor = None
+
+    def _document_snapshot(self) -> DocumentRequest | None:
+        opened, binding = self._opened, self._session_binding
+        suspended = getattr(self.screen, "_library_screen_suspended", False)
+        if (
+            not self._active
+            or not self.is_attached
+            or any(
+                not node.display or not node.visible
+                for node in self.ancestors_with_self
+            )
+            or not self._editor_widget.is_attached
+            or suspended
+            or opened is None
+            or binding is None
+            or binding != self._session_owner.current_binding()
+            or self._root_transitioning
+            or self._path_transitioning
+            or self._save_state == "conflict"
+            or (
+                opened.editable
+                and (self._editor_widget.read_only or self._editor_widget.is_disabled)
+            )
+        ):
+            return None
+        return DocumentRequest(
+            RequestKey(
+                hashlib.sha256(binding.root_key.encode()).hexdigest(),
+                self._session_key,
+                binding.generation,
+                self._document_revision,
+                self._document_language_revision,
+                0,
+            ),
+            self._editor_widget.text,
+            self._document_language,
+            newline=opened.newline,
+            has_bom=opened.preserved_prefix.startswith(b"\xef\xbb\xbf"),
+            is_excerpt=opened.is_excerpt,
+        )
+
+    def _document_editable(self) -> bool:
+        return bool(
+            self._document_snapshot() is not None
+            and self._save_state != "conflict"
+            and not self._editor_widget.read_only
+            and not self._editor_widget.is_disabled
+        )
+
+    def synchronize_document_editor(self) -> None:
+        """Use original representation facts and the incumbent file draft."""
+        from tldw_chatbook.Document_Editing.editor_controller import (
+            DocumentEditorController,
+        )
+
+        if self._document_snapshot() is None:
+            self.retire_document_editor()
+            return
+        app_owner = getattr(self.app, "app_instance", self.app)
+        worker = getattr(app_owner, "document_worker", None)
+        if worker is None:
+            return
+        controls = self.query_one("#file-notes-document-tools", DocumentDiagnostics)
+        if self._document_editor is None:
+            self._document_editor = DocumentEditorController(
+                worker,
+                self._editor_widget,
+                snapshot=self._document_snapshot,
+                editable=self._document_editable,
+                publish=controls.present,
+                map_format=self._map_document_format,
+            )
+        self._document_editor.synchronize()
+        if self._document_editor.retired:
+            self._document_editor = None
+
+    @staticmethod
+    def _map_document_format(
+        result: FormatResult, request: DocumentRequest
+    ) -> FormatResult:
+        """Map only the incumbent File LF view; disk facts stay request-owned."""
+        if (
+            result.replacement is None
+            or request.newline != "\r\n"
+            or "\r" in request.text
+        ):
+            return result
+        replacement = result.replacement.replace("\r\n", "\n")
+        if replacement == request.text:
+            return FormatResult(result.key, "unchanged", None, result.check)
+        return FormatResult(result.key, "formatted", replacement, result.check)
+
+    @on(DocumentDiagnostics.Action)
+    async def _document_action(self, event: DocumentDiagnostics.Action) -> None:
+        event.stop()
+        self.synchronize_document_editor()
+        controller = self._document_editor
+        if controller is None:
+            return
+        if event.action == "language" and self._document_editable():
+            self._document_language = event.value
+            self._document_language_revision += 1
+            controller.check()
+        elif event.action == "check":
+            controller.check()
+        elif event.action == "format":
+            await controller.format()
+        elif event.action == "navigate":
+            controller.navigate(event.value)
+
     @property
     def root(self) -> Path | None:
         """Return the canonical configured root."""
@@ -2126,6 +2259,7 @@ class LibraryFileNotesWorkspace(Vertical):
         lease = self._session_owner.try_acquire_transition(binding, kind)
         if lease is None:
             return False
+        self.retire_document_editor()
         return lease.release
 
     @property
@@ -2680,6 +2814,7 @@ class LibraryFileNotesWorkspace(Vertical):
     def on_unmount(self) -> None:
         """Pause timers; Textual cancels node workers during removal."""
         self._pairing_review_generation += 1
+        self.retire_document_editor()
         self._active = False
         # Source and breakpoint transitions keep this workspace mounted, but
         # an explicit host removal still lets Textual prune the composed shell.
@@ -2718,6 +2853,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     async def shutdown(self) -> None:
         """Permanently close this workspace's owned replica once."""
+        self.retire_document_editor()
         with self._runtime_lock:
             if self._shutdown:
                 return
@@ -5540,6 +5676,8 @@ class LibraryFileNotesWorkspace(Vertical):
     def _set_save_state(self, state: SaveState, detail: str = "") -> None:
         self._save_state = state
         self._save_detail = detail
+        if state == "conflict":
+            self.retire_document_editor()
         if state != "conflict":
             self._conflict_resolution_active = False
         if self._active and self.is_mounted:
@@ -5595,6 +5733,7 @@ class LibraryFileNotesWorkspace(Vertical):
             not lease._released and lease.editor is editor and lease.binding == binding
             for lease in self._editor_read_only_leases.values()
         )
+        was_read_only = editor.read_only
         editor.read_only = (
             self._root_transitioning
             or self._path_transitioning
@@ -5603,6 +5742,10 @@ class LibraryFileNotesWorkspace(Vertical):
             or self.reload_confirmation_active
             or leased
         )
+        if editor.read_only and not was_read_only:
+            self.retire_document_editor()
+        if self.is_attached:
+            self.synchronize_document_editor()
 
     async def _settle_commit_editor(
         self,
@@ -5750,6 +5893,7 @@ class LibraryFileNotesWorkspace(Vertical):
     def _update_controls(self) -> None:
         if not self._active or not self.is_mounted:
             return
+        self.synchronize_document_editor()
         self._update_static_content(
             self.query_one("#file-notes-path-label", Static),
             self._path_field_label_copy(),
@@ -6462,6 +6606,17 @@ class LibraryFileNotesWorkspace(Vertical):
         if not self._active:
             return
         self._dismiss_reload_confirmation(focus_opener=False)
+        self.retire_document_editor()
+        self._document_revision = 0
+        self._document_language_revision = 0
+        self._document_language = {
+            ".yaml": "yaml",
+            ".yml": "yaml",
+            ".json": "json",
+            ".jsonl": "jsonl",
+            ".md": "markdown",
+            ".markdown": "markdown",
+        }.get(Path(opened.relative_path).suffix.lower(), "text")
         self._opened = opened
         self._current_path = opened.relative_path
         self._selected_deleted_path = ""
@@ -6506,6 +6661,7 @@ class LibraryFileNotesWorkspace(Vertical):
         keep_restore_path: bool = False,
         announce_identity_cleared: bool = True,
     ) -> None:
+        self.retire_document_editor()
         had_identity = self._opened is not None
         self._dismiss_reload_confirmation(focus_opener=False)
         self._opened = None
@@ -6953,6 +7109,8 @@ class LibraryFileNotesWorkspace(Vertical):
             or self._save_state == "conflict"
         ):
             return
+        self._document_revision += 1
+        self.synchronize_document_editor()
         self._set_delete_confirmation()
         self._set_save_state("dirty")
         self._arm_autosave()

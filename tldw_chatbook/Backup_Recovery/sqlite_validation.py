@@ -102,6 +102,7 @@ class _Restrictions:
         self.shipped_checkpoint_rename = False
         self.fleet_progress_migration = False
         self.browse_order_migration = False
+        self.note_language_migration = False
         self.sargable_migration = False
         self.canvas_schema = False
         self.changing_schema_trust = False
@@ -393,6 +394,36 @@ class _Restrictions:
                         or action == sqlite3.SQLITE_UPDATE
                         and first == "sqlite_master"
                         and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    )
+                )
+                # ADR-194: only the installed note column/trigger migration.
+                allowed |= (
+                    self.note_language_migration
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_ALTER_TABLE
+                        and (first, second, database) == ("main", "notes", None)
+                        or database == "main"
+                        and (
+                            action
+                            in {
+                                sqlite3.SQLITE_CREATE_TRIGGER,
+                                sqlite3.SQLITE_DROP_TRIGGER,
+                            }
+                            and first
+                            in {
+                                "notes_sync_create",
+                                "notes_sync_update",
+                                "notes_sync_undelete",
+                            }
+                            and second == "notes"
+                            or action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE}
+                            and first == "sqlite_master"
+                            or action == sqlite3.SQLITE_UPDATE
+                            and first == "sqlite_master"
+                            and second
+                            in {"type", "name", "tbl_name", "rootpage", "sql"}
+                        )
                     )
                 )
                 # ADR-224 v78->v79: the two normalization UPDATEs, the two
@@ -735,6 +766,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V78_SCHEMAS,
         CHACHANOTES_V79_SCHEMAS,
         CHACHANOTES_V80_SCHEMAS,
+        CHACHANOTES_V81_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -756,6 +788,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V78_SCHEMAS,
         *CHACHANOTES_V79_SCHEMAS,
         *CHACHANOTES_V80_SCHEMAS,
+        *CHACHANOTES_V81_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -981,6 +1014,7 @@ def _validate_candidate(
                         CHACHANOTES_V77_SCHEMAS,
                         CHACHANOTES_V78_SCHEMAS,
                         CHACHANOTES_V79_SCHEMAS,
+                        CHACHANOTES_V80_SCHEMAS,
                     )
 
                     actual_sql = tuple(
@@ -994,6 +1028,7 @@ def _validate_candidate(
                         or version == 77 and actual_sql in CHACHANOTES_V77_SCHEMAS
                         or version == 78 and actual_sql in CHACHANOTES_V78_SCHEMAS
                         or version == 79 and actual_sql in CHACHANOTES_V79_SCHEMAS
+                        or version == 80 and actual_sql in CHACHANOTES_V80_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -1011,16 +1046,19 @@ def _validate_candidate(
                             return (("unsupported_schema_migration",), None)
                         expected, statements = choices[0]
                         if (
-                            shipped_checkpoint and version == 76
+                            shipped_checkpoint
+                            and version == 76
                             or installed.owner_id == "db.chachanotes.primary"
-                            and version in (77, 78, 79)
+                            and version in (77, 78, 79, 80)
                         ):
                             migration = (
                                 Path(__file__).resolve().parents[1]
                                 / "DB"
                                 / "migrations"
                                 / (
-                                    "chachanotes_v77_to_v78_fleet_progress.sql"
+                                    "chachanotes_v80_to_v81_note_content_language.sql"
+                                    if version == 80
+                                    else "chachanotes_v77_to_v78_fleet_progress.sql"
                                     if version == 77
                                     else "chachanotes_v78_to_v79_sargable_timestamp_normalization.sql"
                                     if version == 78
@@ -1033,6 +1071,7 @@ def _validate_candidate(
                             restrictions.fleet_progress_migration = version == 77
                             restrictions.sargable_migration = version == 78
                             restrictions.browse_order_migration = version == 79
+                            restrictions.note_language_migration = version == 80
                             try:
                                 pending = ""
                                 for line in migration.read_text(
@@ -1065,6 +1104,7 @@ def _validate_candidate(
                                 restrictions.fleet_progress_migration = False
                                 restrictions.sargable_migration = False
                                 restrictions.browse_order_migration = False
+                                restrictions.note_language_migration = False
                         for statement in statements:
                             if restrictions.expired():
                                 raise InterruptedError

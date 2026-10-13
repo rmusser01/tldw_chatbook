@@ -19570,6 +19570,7 @@ async def test_library_note_normalized_adapter_combines_detail_and_keywords():
                 "title": "  Exact [title]  ",
                 "content": "body\n<script>kept as note text</script>",
                 "version": "2",
+                "content_language": "future-mode",
                 "created_at": "2026-07-01T10:00:00+00:00",
                 "last_modified": "2026-07-02T11:00:00+00:00",
             }
@@ -19589,6 +19590,7 @@ async def test_library_note_normalized_adapter_combines_detail_and_keywords():
     assert reply.detail.title == "  Exact [title]  "
     assert reply.detail.body == "body\n<script>kept as note text</script>"
     assert reply.detail.keywords == ("First Tag", "second-tag")
+    assert reply.detail.content_language == "future-mode"
     assert reply.detail.version == 2
     assert reply.detail.created_at == "2026-07-01T10:00:00+00:00"
     assert reply.detail.modified_at == "2026-07-02T11:00:00+00:00"
@@ -19671,6 +19673,7 @@ async def test_library_note_save_reply_normalization_matrix(
         body="exact\nbody",
         keywords=("First Tag", "second-tag"),
         revision=7,
+        content_language="yaml",
     )
 
     reply = await port.save_note("n-1", 2, payload)
@@ -19682,6 +19685,7 @@ async def test_library_note_save_reply_normalization_matrix(
             "scope": "local_note",
             "title": "  Exact title  ",
             "content": "exact\nbody",
+            "content_language": "yaml",
             "note_id": "n-1",
             "version": 2,
             "user_id": "test-user",

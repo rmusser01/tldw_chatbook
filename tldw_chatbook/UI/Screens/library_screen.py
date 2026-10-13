@@ -848,6 +848,7 @@ from ..Library_Modules.screen_support_types import (
     _ParakeetV2NoPendingReportError,
 )
 from ..Library_Modules.note_session_port import _LibraryDatabaseNoteSessionPort
+from ...Widgets.document_diagnostics import DocumentDiagnostics
 from ..Library_Modules.canvas_sync import (
     _move_library_list_row_focus,
     _patch_library_disabled_marker_label,
@@ -3381,6 +3382,7 @@ class LibraryScreen(BaseAppScreen):
         self._notes_controller = LibraryNotesController(
             self,
             notes_state_accessor=lambda: self._notes_state,
+            document_authority_accessor=lambda: self._library_document_authority(),
             # -- shared shell state this cluster READS (getter-only).
             library_canvas_projection_depth_accessor=(
                 lambda: self._library_canvas_projection_depth
@@ -3989,11 +3991,30 @@ class LibraryScreen(BaseAppScreen):
         # A Library screen may be replaced while the accepted mutation keeps
         # running, so screen construction must never reset that shared receipt.
         self._skills_state.reader_mode = coerce_skill_reader_mode(None)
+        note_service = getattr(app_instance, "notes_service", None)
+        note_principal = getattr(app_instance, "notes_user_id", None) or "default_user"
+        note_template = getattr(note_service, "unified_db_template", None)
+        note_database_path = getattr(note_template, "db_path_str", None)
+
+        def note_authority_is_current() -> bool:
+            return (
+                getattr(app_instance, "notes_service", None) is note_service
+                and (getattr(app_instance, "notes_user_id", None) or "default_user")
+                == note_principal
+                and getattr(
+                    getattr(note_service, "unified_db_template", None),
+                    "db_path_str",
+                    None,
+                )
+                == note_database_path
+            )
+
         note_session_port = _LibraryDatabaseNoteSessionPort(
             run_service_call=self._run_library_service_call,
             notes_scope_service=getattr(app_instance, "notes_scope_service", None),
-            notes_service=getattr(app_instance, "notes_service", None),
-            user_id=getattr(app_instance, "notes_user_id", None) or "default_user",
+            notes_service=note_service,
+            user_id=note_principal,
+            is_current=note_authority_is_current,
             clock=lambda: datetime.now(timezone.utc),
             # task-32604: the note side's change producer for lasting sync.
             # Read late, like every other app-owned service here -- the
@@ -4010,8 +4031,26 @@ class LibraryScreen(BaseAppScreen):
                 else getattr(app_instance, "notes_sync_runtime_owner", None)
             ),
         )
+        from ...Notes.note_draft_recovery import NoteDraftScope
+
+        recovery_scope = None
+        if isinstance(note_database_path, str):
+            try:
+                recovery_scope = NoteDraftScope.local(
+                    note_database_path, note_principal
+                )
+            except ValueError:
+                pass
+        self._library_document_authority = lambda: (
+            recovery_scope.key()
+            if recovery_scope is not None and note_authority_is_current()
+            else None
+        )
+        recovery = getattr(app_lasting_runtime, "draft_recovery", None)
         self._library_note_session = DatabaseNoteSessionCoordinator(
             note_session_port,
+            recovery=recovery,
+            recovery_scope=recovery_scope,
             clock=lambda: datetime.now(timezone.utc),
         )
         self._library_rail_collapsed: bool = False
@@ -6077,6 +6116,10 @@ class LibraryScreen(BaseAppScreen):
         """
         self._notes_state.stage_applied_signature = None
         self._apply_library_notes_stage_legs()
+        self._notes_controller.synchronize_document_editor()
+        workspace = self._notes_state.file_notes_workspace
+        if workspace is not None:
+            workspace.synchronize_document_editor()
         self._notes_state.stage_applied_signature = (
             self._library_notes_stage_signature()
         )
@@ -9437,6 +9480,10 @@ class LibraryScreen(BaseAppScreen):
         self._artifacts_share_controller.suspend()
         if self._artifacts_controller is not None:
             self._artifacts_controller.suspend()
+        self._notes_controller.retire_document_editor()
+        workspace = self._notes_state.file_notes_workspace
+        if workspace is not None:
+            workspace.retire_document_editor()
         self._unavailable_navigation.clear_character_return(self)
         self._disarm_library_list_entry_focus()
         self._stop_library_media_selection_debounce()
@@ -9482,6 +9529,10 @@ class LibraryScreen(BaseAppScreen):
         self.call_after_refresh(self._artifacts_navigation.resume)
         if self._artifacts_controller is not None:
             self._artifacts_controller.resume()
+        self._notes_controller.synchronize_document_editor()
+        workspace = self._notes_state.file_notes_workspace
+        if workspace is not None:
+            workspace.synchronize_document_editor()
         # task-32039 AC#1: a new visit's auto-refresh (below) re-issues the
         # same scope; the fault episode must not read that as a consecutive
         # Retry and prepend the reopen recovery step on a first failure.
@@ -9843,6 +9894,7 @@ class LibraryScreen(BaseAppScreen):
         ``False`` after removal) -- so this call is what actually closes
         the window, not the guard.
         """
+        self._notes_controller.retire_document_editor()
         if self._media_state.analyze_running:
             # task-28007 AC#4: this screen owns the bulk-Analyze worker, so
             # Textual cancels it here (Widget._on_unmount -> cancel_node),
@@ -11789,7 +11841,7 @@ class LibraryScreen(BaseAppScreen):
             # (fix round 1) A read that failed in 20 ms must not tell the
             # user it waited five seconds, so the KIND is recorded, not just
             # the fact. (fix round 2) By the CLOCK, not by the exception
-            # type: since 3.10 ``socket.timeout is TimeoutError`` and the
+            # type, since 3.10 ``socket.timeout is TimeoutError`` and the
             # OSError family raises it for ETIMEDOUT, so an isinstance check
             # let a transport timeout that fired instantly claim the
             # deadline's copy -- and ``wait_for`` propagates an inner
@@ -19972,6 +20024,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         self._notes_state.editor_armed = True
+        self._notes_controller.synchronize_document_editor()
 
     @on(LibraryNoteWorkPane.EditorReady)
     def handle_library_note_work_pane_editor_ready(
@@ -21296,6 +21349,10 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_note_title_changed(self, event: Input.Changed) -> None:
         return self._notes_controller.handle_library_note_title_changed(event)
 
+    @on(DocumentDiagnostics.Action)
+    async def handle_document_action(self, event: DocumentDiagnostics.Action) -> None:
+        await self._notes_controller.handle_document_action(event)
+
     @on(TextArea.Changed, "#library-note-body")
     def handle_library_note_body_changed(self, event: TextArea.Changed) -> None:
         return self._notes_controller.handle_library_note_body_changed(event)
@@ -21600,6 +21657,8 @@ class LibraryScreen(BaseAppScreen):
         keywords_text: str,
         note_id: str,
         operation: LibraryNotesOperationState | None = None,
+        *,
+        content_language: str | None = None,
     ) -> None:
         """Write the exported note content to the path chosen via ``FileSave``.
 
@@ -21624,7 +21683,7 @@ class LibraryScreen(BaseAppScreen):
         Args:
             selected_path: The chosen destination, or ``None`` if the
                 dialog was cancelled.
-            export_format: ``"markdown"`` or ``"text"`` (see
+            export_format: Source, portable note, Markdown, or text (see
                 ``build_note_export_content``).
             title: The note title captured when Export was pressed.
             content: The note body captured when Export was pressed.
@@ -21670,10 +21729,21 @@ class LibraryScreen(BaseAppScreen):
             keywords_text,
             note_id,
             active_operation,
+            content_language=content_language,
         )
 
-    @on(Button.Pressed, "#library-note-context-export-md")
-    @on(Button.Pressed, "#library-note-export-md")
+    @on(Button.Pressed, "#library-note-context-export-source")
+    @on(Button.Pressed, "#library-note-export-source")
+    async def handle_library_note_download_source(self, event: Button.Pressed) -> None:
+        return await self._notes_controller.handle_library_note_download_source(event)
+
+    @on(Button.Pressed, "#library-note-context-export-portable")
+    @on(Button.Pressed, "#library-note-export-portable")
+    async def handle_library_note_export_portable(self, event: Button.Pressed) -> None:
+        return await self._notes_controller.handle_library_note_export_portable(event)
+
+    @on(Button.Pressed, '#library-note-context-export-md')
+    @on(Button.Pressed, '#library-note-export-md')
     async def handle_library_note_export_markdown(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_note_export_markdown(event)
 
@@ -28649,6 +28719,12 @@ class LibraryScreen(BaseAppScreen):
         self, event: LibraryNoteImportCanvas.CheckRequested
     ) -> None:
         return self._notes_controller.handle_library_note_import_check(event)
+
+    @on(LibraryNoteImportCanvas.SourceModeToggled)
+    def handle_library_note_import_source_mode(
+        self, event: LibraryNoteImportCanvas.SourceModeToggled
+    ) -> None:
+        return self._notes_controller.handle_library_note_import_source_mode(event)
 
     @on(LibraryNoteImportCanvas.ObsidianModeToggled)
     def handle_library_note_import_obsidian_mode(

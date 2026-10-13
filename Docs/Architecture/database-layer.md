@@ -80,3 +80,12 @@ Database helpers in `config.py` resolve explicit path overrides first, then prof
 - [chat-pipeline.md](./chat-pipeline.md) — the messages/conversations consumers
 - [notes-sync.md](./notes-sync.md) — the notes tables' sync authority
 - [media-ingestion.md](./media-ingestion.md) — the Media DB write seam
+
+ADR-194 adds nullable note source language at v80→v81 after all current upstream
+migrations. Its exact four changed catalog objects also extend the existing
+ADR-126 recovery policy; frozen v80 catalogs remain admitted and migrate through
+the installed SQL step under the restricted validator. Unknown catalogs still
+refuse. Shared Subscriptions v2 and v3 catalogs admit the exact embedded
+ChaChaNotes v80/v81 shapes and stamps. Subscriptions' own v2→v3 step is the
+ADR-207 conservative URL-provenance migration with unchanged DDL. The
+device-local Notes draft database remains excluded from portability.

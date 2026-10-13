@@ -42,6 +42,7 @@ from Tests.UI.library_quit_guard_support import (
     _no_autosave,
     _open_note,
     _prompt_title,
+    _refuse_draft_recovery,
     _scaled_autosave,
     _settings_without_splash,
     _type,
@@ -123,7 +124,7 @@ async def test_ctrl_q_on_a_new_note_keeps_its_typed_title_and_body(
 async def test_a_refused_save_keeps_the_typist_in_place_and_ctrl_q_asks(
     tmp_path, monkeypatch
 ):
-    """A title the save refuses (a trailing space) vetoes every save.
+    """Failed draft storage vetoes saves and lossless exit.
 
     The steady typing runs past the scaled max wait, so autosaves fire, and
     are vetoed, while the user is still typing (review N-07). If a veto moved
@@ -145,6 +146,7 @@ async def test_a_refused_save_keeps_the_typist_in_place_and_ctrl_q_asks(
         async with app.run_test(size=SIZE) as pilot:
             screen = await _library(app, pilot)
             body = await _open_note(screen, pilot, _TITLE, profile.note_id)
+            _refuse_draft_recovery(monkeypatch, screen)
             title = screen.query_one("#library-note-title", Input)
             title.focus()
             title.cursor_position = len(title.value)
@@ -156,13 +158,13 @@ async def test_a_refused_save_keeps_the_typist_in_place_and_ctrl_q_asks(
             burst = "abcdefghijkl"  # ~3 s of steady keys: past the 2 s max wait
             await _type_steadily(pilot, burst, lambda: None)
             # Typing stopped, so the armed autosave fires and is vetoed; its
-            # "validation" state then stays until the next key. Stop waiting
+            # "error" state then stays until the next key. Stop waiting
             # early if focus already left the body (or keys reached the title):
             # that is the defect itself, and the asserts below name it.
             await _until(
                 pilot,
                 lambda: (
-                    screen._notes_state.autosave_state == "validation"
+                    screen._notes_state.autosave_state == "error"
                     or screen.focused is not body
                     or title.value != _TITLE + " "
                 ),
@@ -178,11 +180,11 @@ async def test_a_refused_save_keeps_the_typist_in_place_and_ctrl_q_asks(
             assert title.value == _TITLE + " ", (
                 f"keys typed into the body landed in the title: {title.value!r}"
             )
-            assert screen._notes_state.autosave_state == "validation", (
+            assert screen._notes_state.autosave_state == "error", (
                 "no autosave was vetoed: the focus guard was never exercised"
             )
             status = screen._library_note_session.snapshot.status_message
-            assert "whitespace" in status, status
+            assert "draft storage failed" in status, status
             await _type(pilot, "xyz")
             assert body.text == _BODY + burst + "xyz", (
                 "keys typed during the burst landed outside the body"

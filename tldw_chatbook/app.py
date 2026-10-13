@@ -1536,6 +1536,8 @@ class TldwCli(
 
         self._wire_chat_conversation_services()
 
+        self._document_worker = None
+        self._document_worker_closed = False
         self.server_notes_workspace_service = (
             ServerNotesWorkspaceService.from_server_context_provider(
                 self.server_context_provider,

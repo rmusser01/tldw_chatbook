@@ -16,6 +16,9 @@ async def test_push_updates_mirror_from_accepted():
     )
     env = builder.build_notes_note_upsert(note_id="n1", title="T", content="B")
     client = AsyncMock()
+    client.get_sync_v2_capabilities = AsyncMock(
+        return_value={"writable_adapter_versions": {"notes.note": [1]}}
+    )
     client.push_sync_v2_envelopes = AsyncMock(
         return_value=type(
             "R",
@@ -69,6 +72,9 @@ async def test_push_updates_mirror_from_idempotent_acknowledgement():
     )
     env = builder.build_notes_note_upsert(note_id="n1", title="T", content="B")
     client = AsyncMock()
+    client.get_sync_v2_capabilities = AsyncMock(
+        return_value={"writable_adapter_versions": {"notes.note": [1]}}
+    )
     client.push_sync_v2_envelopes = AsyncMock(
         return_value=type(
             "R",
@@ -122,6 +128,9 @@ async def test_push_skips_mirror_update_when_ack_hash_cannot_be_resolved():
     )
     env = builder.build_notes_note_upsert(note_id="n1", title="T", content="B")
     client = AsyncMock()
+    client.get_sync_v2_capabilities = AsyncMock(
+        return_value={"writable_adapter_versions": {"notes.note": [1]}}
+    )
     client.push_sync_v2_envelopes = AsyncMock(
         return_value=type(
             "R",
@@ -175,6 +184,9 @@ async def test_push_does_not_downgrade_existing_mirror_when_ack_metadata_is_miss
     )
     env = builder.build_notes_note_upsert(note_id="n1", title="T", content="B")
     client = AsyncMock()
+    client.get_sync_v2_capabilities = AsyncMock(
+        return_value={"writable_adapter_versions": {"notes.note": [1]}}
+    )
     client.push_sync_v2_envelopes = AsyncMock(
         return_value=type(
             "R",
@@ -229,6 +241,9 @@ async def test_pull_applies_and_advances_cursor():
         dataset_id="ds_1", device_id="dev_2", dataset_key=b"x" * 32, notes_mirror=mirror
     )
     client = AsyncMock()
+    client.get_sync_v2_capabilities = AsyncMock(
+        return_value={"writable_adapter_versions": {"notes.note": [1]}}
+    )
     pulled_env = SyncV2Envelope(
         client_envelope_id="c",
         dataset_id="ds_1",

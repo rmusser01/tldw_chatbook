@@ -15694,6 +15694,14 @@ that test asserts against the scaffold and would pass with the migration's DDL
 deleted. The tell that you need this: your new code writes to the table from a
 method a fixture calls, not only from the migration.
 
+**Follow-up, TASK-34571 (2026-10-06).** The new nullable language column
+needed the same scaffold. Migration rollback/replay calls the scaffold twice,
+so an unconditional ALTER failed with duplicate-column errors; inspect existing
+columns before adding it. Two older tests also compared a *fully upgraded* notes
+table against its historical column set. Update that current-schema census,
+while keeping declaring migration/old-backup fixtures genuinely column-absent.
+The corrected bootstrap/atomicity/v73 selection passed96 tests.
+
 ## `cursor.execute()` returns the cursor, so a follow-up write rewrites the `rowcount` you were about to check (TASK-32186, 2026-09-11)
 
 **What happened.** Adding note-link maintenance to
@@ -19685,3 +19693,29 @@ process performs the actual first URLMonitor check. Do not reset admission or
 participants, increase the timeout, or call the setup timeout a product privacy
 failure. Retained evidence: restored-first-fetch-1 four admission timeouts;
 restored-first-fetch-4 four passing native restored-fetch cases with Dreams off.
+
+## F5 draft recovery: pause storage and requests before trusting currentness
+
+Task-34652 / task-13516 F5 review found that new recovery awaits reused captured
+snapshots after typing or changing sessions, and browser queue completion read
+note B's live editor while acknowledging note A. Immediate storage/API mocks had
+missed those windows. Fix-round deferred-owner controls produced seven C failures
+and five browser failures: generation/revision loss, A-to-B completion, overlapping
+ordinary-save/queue POST and PUT, and mode-baseline errors. Pause the actual
+coordinator's storage boundary or hook's request, edit or navigate while paused,
+then release it and assert both the editor identity/revision and queued source.
+Checking only the acknowledgement status would have missed the cross-note write.
+
+
+## A round-trip parser label is not proof of source preservation
+
+During E2 / TASK-34654 qualification (2026-10-07), ruamel.yaml 0.19.1's actual
+round-trip load/dump changed `-0` to `0`, `1e400` to `.inf`, and a high-precision
+decimal's digits. The accepted engine instead compares raw scalar tokens,
+comments, and symbolic parse events after whitespace edits. A separate nested
+sequence probe caught zero-width EOF tokens inserting indentation after the final
+newline, breaking idempotence. Keep real numeric/comment/graph positive controls,
+explicit refusal cases, and exact EOF/idempotence checks when qualifying a formatter;
+plain object equality or a library's “round-trip” description misses these losses.
+See `Docs/superpowers/reviews/2026-09-27-document-engine-python.md` for the fixture
+outcomes and resource observations.

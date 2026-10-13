@@ -147,6 +147,7 @@ class NoteImportWorkflowSnapshot:
     decision_item_ids: frozenset[str] = frozenset()
     collision_rename_input: str = field(default="", repr=False)
     collision_rename_error: str = ""
+    source_mode: bool = False
     obsidian_mode: bool = True
     vault_detected: bool = False
     revision: int = 0
@@ -299,6 +300,7 @@ class LibraryNoteImportSnapshot:
     retry_label: str = ""
     can_cancel: bool = False
     obsidian_available: bool = False
+    source_mode: bool = False
     obsidian_mode: bool = True
     obsidian_reason: str = ""
     #: task-32641: what the selected FOLDER was recognised as, stated on the
@@ -1031,6 +1033,7 @@ def project_library_note_import_snapshot(
         retryable_failures=receipt.retryable if receipt else 0,
         retry_available=state.can_retry,
         obsidian_available=state.vault_detected,
+        source_mode=state.source_mode,
         obsidian_mode=state.obsidian_mode,
         obsidian_reason=_obsidian_reason(state),
         retry_label=(

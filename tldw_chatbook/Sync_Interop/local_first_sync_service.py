@@ -55,8 +55,12 @@ class LocalFirstSyncService:
         personal_context_outbox_dispatcher: Any = None,
         personal_context_service: Any = None,
         personal_context_runtime_loader: Any = None,
+        notes_mirror: Any = None,
+        notes_mirror_scope: tuple[str, str | None, str | None] | None = None,
     ) -> None:
         self._producer_lifetime = ProducerLifetime()
+        self.notes_mirror = notes_mirror
+        self.notes_mirror_scope = notes_mirror_scope
         self.server_service = server_service
         self.state_repository = state_repository
         self.local_store = local_store
@@ -101,6 +105,11 @@ class LocalFirstSyncService:
         """
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from tldw_chatbook.tldw_api import SyncV2Envelope
+        from tldw_chatbook.tldw_api.exceptions import (
+            APIConnectionError,
+            APIResponseError,
+            AuthenticationError,
+        )
 
         profile = self.state_repository.get_sync_v2_profile_state(
             server_profile_id=server_profile_id,
@@ -118,6 +127,61 @@ class LocalFirstSyncService:
             raise ValueError(
                 "local_first Sync v2 profile requires device_id and dataset_id"
             )
+
+        if "notes.note" in domains and (
+            self.notes_mirror is None
+            or self.notes_mirror_scope
+            != (server_profile_id, authenticated_principal_id, workspace_scope)
+        ):
+            raise ValueError("notes_mirror_scope_unavailable")
+        notes_authority = None
+        if any(domain in {"notes", "notes.note"} for domain in domains):
+            capture = getattr(self.server_service, "capture_notes_authority", None)
+            try:
+                if not callable(capture):
+                    raise TypeError("notes_authority_unavailable")
+                notes_authority = await capture(
+                    server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    dataset_id=str(dataset_id),
+                    device_id=str(device_id),
+                )
+                if (
+                    not isinstance(notes_authority, tuple)
+                    or len(notes_authority) != 2
+                    or notes_authority[0] is None
+                    or not callable(notes_authority[1])
+                ):
+                    raise TypeError("notes_authority_unavailable")
+                notes_authority[1]()
+            except (
+                TypeError,
+                ValueError,
+                APIConnectionError,
+                APIResponseError,
+                AuthenticationError,
+            ) as exc:
+                reason = (
+                    str(exc)
+                    if str(exc)
+                    in {"notes_authority_unavailable", "notes_authority_changed"}
+                    else "notes_authority_unavailable"
+                )
+                self._persist_profile_state(
+                    profile=profile,
+                    dataset_cursors=dict(profile.get("dataset_cursors") or {}),
+                    last_error=reason,
+                )
+                raise ValueError(reason) from exc
+            if profile.get("last_error") in {
+                "notes_authority_unavailable",
+                "notes_authority_changed",
+            }:
+                profile = {**profile, "last_error": None}
+        authority_fields = (
+            {"notes_authority": notes_authority} if notes_authority is not None else {}
+        )
 
         uses_personal_context = any(
             domain.startswith("personal_context.") for domain in domains
@@ -149,10 +213,22 @@ class LocalFirstSyncService:
                 dataset_id=str(dataset_id),
             )
             if "notes" in domains:
-                self.notes_organization_sync_service.drain_pending_note_intents(
-                    server_profile_id=server_profile_id,
-                    authenticated_principal_id=authenticated_principal_id,
-                    workspace_scope=workspace_scope,
+                drained_notes = (
+                    self.notes_organization_sync_service.drain_pending_note_intents(
+                        server_profile_id=server_profile_id,
+                        authenticated_principal_id=authenticated_principal_id,
+                        workspace_scope=workspace_scope,
+                    )
+                )
+                if drained_notes.get("blocked"):
+                    raise ValueError(drained_notes["reason"])
+                profile = (
+                    self.state_repository.get_sync_v2_profile_state(
+                        server_profile_id=server_profile_id,
+                        authenticated_principal_id=authenticated_principal_id,
+                        workspace_scope=workspace_scope,
+                    )
+                    or profile
                 )
         if self.notes_organization_sync_service is not None and any(
             domain in NOTES_ORGANIZATION_DOMAINS for domain in domains
@@ -266,6 +342,72 @@ class LocalFirstSyncService:
         except Exception as exc:
             self._record_sync_error(profile=profile, stage="push", exc=exc)
             raise
+        note_envelopes = [
+            envelope
+            for envelope in [*outbox_parsed, *outgoing_parsed]
+            if envelope.domain in {"notes", "notes.note"}
+        ]
+        if note_envelopes:
+            probe = getattr(self.server_service, "get_v2_capabilities", None)
+            try:
+                capabilities = (
+                    self._dump(
+                        await probe(dataset_id=str(dataset_id), **authority_fields)
+                    )
+                    if callable(probe)
+                    else {}
+                )
+                writable = capabilities.get("writable_adapter_versions", {})
+                unsafe = [
+                    envelope
+                    for envelope in note_envelopes
+                    if (
+                        envelope.domain == "notes"
+                        and (
+                            2 not in writable.get("notes", [])
+                            or (
+                                envelope.payload_ciphertext
+                                and envelope.adapter_version != 2
+                            )
+                        )
+                    )
+                    or envelope.adapter_version not in writable.get(envelope.domain, [])
+                ]
+            except Exception as exc:
+                self._record_outbox_push_failure(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    dataset_id=str(dataset_id),
+                    outbox_entries=outbox_entries,
+                    exc=exc,
+                )
+                self._record_sync_error(profile=profile, stage="capability", exc=exc)
+                raise
+            if unsafe:
+                error = "notes_language_upgrade_required"
+                self.state_repository.mark_sync_v2_outbox_push_results(
+                    server_profile_id=server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    dataset_id=str(dataset_id),
+                    accepted=[],
+                    conflicts=[],
+                    rejected=[
+                        {
+                            "client_envelope_id": envelope.client_envelope_id,
+                            "error_code": error,
+                        }
+                        for envelope in unsafe
+                    ],
+                )
+                self._persist_profile_state(
+                    profile=profile,
+                    dataset_cursors=dict(profile.get("dataset_cursors") or {}),
+                    last_error=error,
+                )
+                raise ValueError(error)
+
         outbox_payloads = [
             envelope.model_dump(mode="json") for envelope in outbox_parsed
         ]
@@ -322,6 +464,7 @@ class LocalFirstSyncService:
                                 envelopes=batch_payloads,
                             ),
                             last_known_cursor=push_cursor,
+                            **authority_fields,
                         )
                     )
                     batch_outbox_entries = [
@@ -363,6 +506,8 @@ class LocalFirstSyncService:
                     self._record_sync_error(profile=profile, stage="push", exc=exc)
                     raise
 
+                if notes_authority is not None:
+                    notes_authority[1]()
                 for result_key in ("accepted", "rejected", "conflicts"):
                     push_record[result_key].extend(batch_record.get(result_key, []))
                 if batch_record.get("next_cursor") is not None:
@@ -413,6 +558,7 @@ class LocalFirstSyncService:
                     domains=list(domains),
                     page_size=page_size,
                     include_own_changes=False,
+                    **authority_fields,
                 )
             )
         except Exception as exc:
@@ -421,6 +567,8 @@ class LocalFirstSyncService:
         applier = SyncEnvelopeApplier(
             dataset_key=key,
             local_store=self.local_store,
+            notes_mirror=self.notes_mirror,
+            dataset_id=str(dataset_id),
             notes_organization_repository=self.notes_organization_repository,
             notes_organization_server_profile_id=server_profile_id,
             personal_context_adapter=(
@@ -447,6 +595,8 @@ class LocalFirstSyncService:
                 next_cursor=pulled.get("next_cursor"),
                 envelope_count=len(envelopes),
             )
+            if notes_authority is not None:
+                notes_authority[1]()
             results = [applier.apply(envelope) for envelope in envelopes]
             for envelope, result in zip(envelopes, results):
                 if (
@@ -930,6 +1080,13 @@ class LocalFirstSyncService:
         dataset_cursors: Mapping[str, str | int],
         last_error: str | None,
     ) -> dict[str, Any]:
+        if last_error is None and profile.get("last_error") in {
+            "notes_origin_scope_unproved",
+            "notes_origin_scope_mismatch",
+            "notes_authority_unavailable",
+            "notes_authority_changed",
+        }:
+            last_error = profile["last_error"]
         return self.state_repository.set_sync_v2_profile_state(
             server_profile_id=str(profile["server_profile_id"]),
             authenticated_principal_id=profile.get("authenticated_principal_id"),

@@ -471,7 +471,7 @@ def test_v24_upgrade_reaches_v28_and_uses_exact_citation_sql_schema(
         notes_columns = {
             row["name"] for row in cursor.execute("PRAGMA table_info(notes)")
         }
-    assert notes_columns == HISTORICAL_NOTES_COLUMNS
+    assert notes_columns == HISTORICAL_NOTES_COLUMNS | {"content_language"}
     conversation_columns = {
         row["name"]
         for row in connection.execute("PRAGMA table_info(conversations)").fetchall()

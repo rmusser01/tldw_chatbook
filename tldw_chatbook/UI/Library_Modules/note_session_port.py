@@ -9,7 +9,7 @@ unchanged; later decomposition tasks import directly from this module.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from loguru import logger
@@ -39,6 +39,7 @@ class _LibraryDatabaseNoteSessionPort:
         user_id: str,
         clock: Any,
         notes_sync_runtime: Any = None,
+        is_current: Callable[[], bool] = lambda: True,
     ) -> None:
         self._run_service_call = run_service_call
         self._notes_scope_service = notes_scope_service
@@ -48,6 +49,7 @@ class _LibraryDatabaseNoteSessionPort:
         #: task-32604: a zero-argument accessor for the app-owned lasting-sync
         #: runtime, or None in a harness that has no runtime at all.
         self._notes_sync_runtime = notes_sync_runtime
+        self._is_current = is_current
 
     @staticmethod
     def _keyword_strings(records: Any) -> tuple[str, ...]:
@@ -68,6 +70,10 @@ class _LibraryDatabaseNoteSessionPort:
 
     async def load_note(self, note_id: str) -> DatabaseNotePortLoadReply:
         """Fetch detail plus keywords and return one coherent typed reply."""
+        if not self._is_current():
+            return DatabaseNotePortLoadReply.failed(
+                "Local note owner changed. Reopen the note."
+            )
         get_note_detail = getattr(self._notes_scope_service, "get_note_detail", None)
         if not callable(get_note_detail):
             return DatabaseNotePortLoadReply.failed("Note loading is unavailable.")
@@ -113,6 +119,7 @@ class _LibraryDatabaseNoteSessionPort:
                 title=raw_title if isinstance(raw_title, str) else str(raw_title or ""),
                 body=raw_body if isinstance(raw_body, str) else str(raw_body or ""),
                 keywords=keywords,
+                content_language=detail.get("content_language"),
                 version=int(detail.get("version", 0)),
                 created_at=(
                     created_at if isinstance(created_at, str) else str(created_at or "")
@@ -134,6 +141,10 @@ class _LibraryDatabaseNoteSessionPort:
                     if failure_detail
                     else "Unable to load note. Press Retry."
                 )
+            )
+        if not self._is_current():
+            return DatabaseNotePortLoadReply.failed(
+                "Local note owner changed. Reopen the note."
             )
         return DatabaseNotePortLoadReply.loaded(normalized)
 
@@ -209,6 +220,10 @@ class _LibraryDatabaseNoteSessionPort:
         payload: DatabaseNoteSavePayload,
     ) -> DatabaseNotePortSaveReply:
         """Persist one exact versioned payload and normalize the service reply."""
+        if not self._is_current():
+            return DatabaseNotePortSaveReply.failed(
+                "Local note owner changed; draft kept locally."
+            )
         save_note = getattr(self._notes_scope_service, "save_note", None)
         if not callable(save_note):
             return DatabaseNotePortSaveReply.failed("Note saving is unavailable.")
@@ -230,6 +245,7 @@ class _LibraryDatabaseNoteSessionPort:
                 # helper instead of two independently-typed literals.)
                 title=library_note_persisted_title(payload.title),
                 content=payload.body,
+                content_language=payload.content_language,
                 note_id=note_id,
                 version=expected_version,
                 user_id=self._user_id,
@@ -244,6 +260,10 @@ class _LibraryDatabaseNoteSessionPort:
             )
             return DatabaseNotePortSaveReply.failed(str(error))
 
+        if not self._is_current():
+            return DatabaseNotePortSaveReply.failed(
+                "Local note owner changed; draft kept locally."
+            )
         if result is False:
             return DatabaseNotePortSaveReply.conflict()
         modified_at = self._clock().isoformat()

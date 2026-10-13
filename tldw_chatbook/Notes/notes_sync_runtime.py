@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 from uuid import uuid4
 
 from loguru import logger
@@ -37,6 +37,11 @@ from tldw_chatbook.Notes.notes_device_state_store import (
     NotesSyncStoreSetting,
 )
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService, ScopeType
+from tldw_chatbook.Notes.notes_sync_authority import (
+    NotesScopeSyncAuthority,
+    NotesSyncAuthorityError,
+    NotesSyncNoteSnapshot,
+)
 from tldw_chatbook.Notes.notes_sync_conflicts import (
     ConflictApplyResult,
     ConflictComparison,
@@ -51,25 +56,9 @@ from tldw_chatbook.Notes.notes_sync_conflicts import (
     conflict_root_folder_id,
     eligible_conflict_reason,
 )
-from tldw_chatbook.Notes.notes_sync_authority import (
-    NotesScopeSyncAuthority,
-    NotesSyncAuthorityError,
-    NotesSyncNoteSnapshot,
-)
 from tldw_chatbook.Notes.notes_sync_coordinator import (
     NotesSyncRootCoordinator,
     RootAdmissionState,
-)
-from tldw_chatbook.Notes.notes_sync_models import (
-    NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
-    NotesSyncAction,
-    NotesSyncActionKind,
-    NotesSyncBindingState,
-    NotesSyncDirection,
-    NotesSyncOperationState,
-    NotesSyncRootState,
-    normalize_notes_sync_relative_path,
-    validate_notes_sync_opaque_id,
 )
 from tldw_chatbook.Notes.notes_sync_executor import (
     CONFLICT_RECOVERY_RETENTION_NS,
@@ -96,6 +85,17 @@ from tldw_chatbook.Notes.notes_sync_legacy import (
     plan_legacy_notes_sync_migration,
     snapshot_legacy_notes_sync,
 )
+from tldw_chatbook.Notes.notes_sync_models import (
+    NOTES_SYNC_MANUAL_APPLY_ACTION_KINDS,
+    NotesSyncAction,
+    NotesSyncActionKind,
+    NotesSyncBindingState,
+    NotesSyncDirection,
+    NotesSyncOperationState,
+    NotesSyncRootState,
+    normalize_notes_sync_relative_path,
+    validate_notes_sync_opaque_id,
+)
 from tldw_chatbook.Notes.notes_sync_reconciler import (
     BindingObservation,
     ReconciliationAttention,
@@ -109,6 +109,7 @@ from tldw_chatbook.Notes.notes_sync_reconciler import (
 from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
 
 if TYPE_CHECKING:  # ADR-097: annotation-only, never on the boot path.
+    from tldw_chatbook.Notes.note_draft_recovery import NoteDraftRecovery
     from tldw_chatbook.Notes.note_import_planner import PriorImportObservation
 
 
@@ -1877,6 +1878,30 @@ class NotesSyncRuntimeOwner:
         self._maintenance_closed = False
         if not self._closing:
             self._start_watcher()
+
+    @property
+    def draft_recovery(self) -> NoteDraftRecovery:
+        """Expose draft operations without starting filesystem synchronization."""
+        from tldw_chatbook.Notes.note_draft_recovery import NoteDraftRecovery
+
+        return NoteDraftRecovery(self._store, self._run_draft_recovery)
+
+    @producer_call
+    async def _run_draft_recovery(
+        self, operation: Callable[..., Any], *args: object
+    ) -> Any:
+        if self._closing:
+            raise RuntimeError("Draft recovery is shutting down.")
+        task = self._register_task("note_drafts")
+        worker = asyncio.create_task(asyncio.to_thread(operation, *args))
+        try:
+            try:
+                return await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                await worker
+                raise
+        finally:
+            self._finish_task("note_drafts", task)
 
     def _mutation_lock(self, root_id: str) -> asyncio.Lock:
         """Return the one live in-process mutation lock for a root."""

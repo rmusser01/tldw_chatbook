@@ -1425,6 +1425,8 @@ _SUBSCRIPTIONS_SCHEMA += tuple(
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_LANGUAGE_SCHEMAS:
+        return ((81,),)
     if schema in _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS:
         return ((80,),)
     if schema in _SUBSCRIPTIONS_SARGABLE_SCHEMAS:
@@ -1578,6 +1580,17 @@ _SUBSCRIPTIONS_SCHEMA += tuple(
     (2, schema) for schema in _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS
 )
 
+
+# ADR-194: embedded language catalogs join v2 before ADR-207 derives v3 below.
+from .recovery_core_schema import _CHACHANOTES_LANGUAGE_REPLACEMENTS
+
+_SUBSCRIPTIONS_LANGUAGE_SCHEMAS = tuple(
+    tuple(_CHACHANOTES_LANGUAGE_REPLACEMENTS.get(sql, sql) for sql in schema)
+    for schema in _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS
+)
+_SUBSCRIPTIONS_SCHEMA += tuple(
+    (2, schema) for schema in _SUBSCRIPTIONS_LANGUAGE_SCHEMAS
+)
 
 from .recovery_goal_schema import GOAL_MIGRATION, goal_catalog
 

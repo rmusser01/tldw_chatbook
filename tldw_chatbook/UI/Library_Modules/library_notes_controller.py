@@ -619,6 +619,7 @@ from .screen_support_types import (
 
 if TYPE_CHECKING:
     from ...Notes.note_import_executor import NoteImportExecutor
+    from ...Document_Editing.editor_controller import DocumentEditorController
     from ...Notes.note_import_receipts import NoteImportReceiptRepository
     from ..Screens.library_screen import LibraryScreen
 
@@ -634,8 +635,8 @@ LibraryNotesTreeMutationReconciler = Callable[..., Awaitable[None]]
 class LibraryNotesController:
     """Owns the Library Notes cluster (185 methods).
 
-    Holds no state of its own beyond what it reads and writes through
-    ``LibraryNotesState`` (via the injected accessor) and the shared
+    Owns an ephemeral source-check controller lease, never a note/save copy.
+    Other state is read and written through ``LibraryNotesState`` (via the injected accessor) and the shared
     shell/framework/wiring bindings below. ``LibraryScreen`` constructs
     exactly one of these, in ``__init__`` right after
     ``self._media_controller``, and keeps a one-line delegator for every one
@@ -660,6 +661,7 @@ class LibraryNotesController:
         screen: "LibraryScreen",
         *,
         notes_state_accessor,
+        document_authority_accessor,
         # -- shared shell state this cluster READS (group (b), getter-only).
         library_canvas_projection_depth_accessor,
         library_lifecycle_accessor,
@@ -793,6 +795,8 @@ class LibraryNotesController:
         self._library_lifecycle_accessor = library_lifecycle_accessor
         self._library_note_dirty_accessor = library_note_dirty_accessor
         self._library_note_version_accessor = library_note_version_accessor
+        self._document_authority_accessor = document_authority_accessor
+        self._document_editor: DocumentEditorController | None = None
         self._library_onboarding_all_empty_accessor = library_onboarding_all_empty_accessor
         self._library_rail_collapsed_accessor = library_rail_collapsed_accessor
         self._library_snapshot_state_generation_accessor = library_snapshot_state_generation_accessor
@@ -1447,6 +1451,153 @@ class LibraryNotesController:
         if snapshot.status_message:
             return snapshot.status_message
         return "Unsaved changes" if snapshot.dirty else "Saved"
+
+    def retire_document_editor(self) -> None:
+        """Revoke the active local source lease before an owner transition."""
+        if self._document_editor is not None:
+            self._document_editor.retire()
+            self._document_editor = None
+
+    def _document_snapshot(self):
+        from ...Document_Editing.models import DocumentRequest, RequestKey
+
+        snapshot = self._library_note_session.snapshot
+        authority = self._document_authority_accessor()
+        if (
+            snapshot is None
+            or authority is None
+            or not self._library_note_editor_active()
+            or self._notes_state.preview
+            or self._notes_state.context
+            or getattr(self._screen, "_library_screen_suspended", False)
+            or not self._screen.is_attached
+        ):
+            return None
+        try:
+            editor = self.query_one("#library-note-body", TextArea)
+        except (NoMatches, QueryError):
+            return None
+        if not editor.is_attached or any(
+            not node.display or not node.visible for node in editor.ancestors
+        ):
+            return None
+        return DocumentRequest(
+            RequestKey(
+                authority,
+                snapshot.note_id,
+                snapshot.session_generation,
+                snapshot.draft_revision,
+                snapshot.draft_revision,
+                0,
+            ),
+            snapshot.body,
+            snapshot.draft.content_language,
+        )
+
+    def _document_source_exact(self) -> bool:
+        from ...Widgets.Library.library_notes_canvas import native_note_source_is_exact
+
+        snapshot = self._library_note_session.snapshot
+        return snapshot is not None and native_note_source_is_exact(snapshot.body)
+
+    def _document_editable(self) -> bool:
+        snapshot = self._library_note_session.snapshot
+        try:
+            editor = self.query_one("#library-note-body", TextArea)
+        except (NoMatches, QueryError):
+            return False
+        return bool(
+            self._document_snapshot() is not None
+            and snapshot is not None
+            and self._document_source_exact()
+            and not snapshot.in_conflict
+            and not self._notes_state.select_mode
+            and not self._library_note_session.destructive_running
+            and not self._notes_state.confirming_delete
+            and self._notes_state.editor_armed
+            and not editor.read_only
+            and not editor.is_disabled
+        )
+
+    def synchronize_document_editor(self) -> None:
+        """Use the canonical draft and retained widget; never a parallel body."""
+        from ...Document_Editing.editor_controller import DocumentEditorController
+        from ...Widgets.document_diagnostics import DocumentDiagnostics
+
+        if self._document_snapshot() is None:
+            self.retire_document_editor()
+            return
+        try:
+            editor = self.query_one("#library-note-body", TextArea)
+            controls = self.query_one(
+                "#library-note-document-tools", DocumentDiagnostics
+            )
+            check_button = controls.query_one(".document-check", Button)
+        except (NoMatches, QueryError):
+            self.retire_document_editor()
+            return
+        if not self._document_source_exact():
+            self.retire_document_editor()
+            controls.present(
+                self._document_snapshot(),
+                None,
+                "Unsupported native representation — exact source only",
+                False,
+            )
+            check_button.disabled = True
+            return
+        check_button.disabled = False
+        if not self._document_editable():
+            self.retire_document_editor()
+            controls.present(self._document_snapshot(), None, "Read-only", False)
+            return
+        worker = getattr(self.app_instance, "document_worker", None)
+        if worker is None:
+            return
+        if self._document_editor is None or self._document_editor.editor is not editor:
+            self.retire_document_editor()
+            self._document_editor = DocumentEditorController(
+                worker,
+                editor,
+                snapshot=self._document_snapshot,
+                editable=self._document_editable,
+                publish=controls.present,
+            )
+        self._document_editor.synchronize()
+        if self._document_editor.retired:
+            self._document_editor = None
+
+    async def handle_document_action(self, event) -> None:
+        """Route source actions into canonical metadata and native edit history."""
+        event.stop()
+        if event.control.id != "library-note-document-tools":
+            return
+        self.synchronize_document_editor()
+        controller = self._document_editor
+        snapshot = self._library_note_session.snapshot
+        metadata_editable = bool(
+            self._document_snapshot() is not None
+            and snapshot
+            and not snapshot.in_conflict
+            and not self._notes_state.select_mode
+            and not self._library_note_session.destructive_running
+            and not self._notes_state.confirming_delete
+            and self._notes_state.editor_armed
+        )
+        if event.action == "language" and metadata_editable:
+            if self._library_note_session.mutate(content_language=event.value):
+                self._library_note_pending_blank_gc_id = None
+                self._schedule_library_note_autosave()
+                self._apply_library_note_presentation_state()
+        elif controller is None:
+            return
+        elif event.action == "check":
+            controller.check()
+        elif event.action == "format":
+            await controller.format()
+        elif event.action == "navigate":
+            controller.navigate(event.value)
+
     def _library_note_presentation_state(self) -> LibraryNotePresentationState:
         """Project the canonical session into presentation-only canvas state."""
         snapshot = self._library_note_session.snapshot
@@ -1682,6 +1833,7 @@ class LibraryNotesController:
 
         self._apply_library_notes_stage_visibility()
         self._apply_library_notes_footer_context()
+        self.synchronize_document_editor()
     def _library_notes_focus_region(
         self,
     ) -> Literal[
@@ -1863,7 +2015,11 @@ class LibraryNotesController:
             return
         try:
             title = self.query_one("#library-note-title", Input).value
-            body = self.query_one("#library-note-body", TextArea).text
+            body = (
+                self.query_one("#library-note-body", TextArea).text
+                if self._document_source_exact()
+                else self._library_note_session.snapshot.body
+            )
             keywords_selector = (
                 "#library-note-context-keywords"
                 if self._library_note_context
@@ -3435,8 +3591,10 @@ class LibraryNotesController:
     ) -> None:
         """Reset presentation, invalidate old work, and start one editor load."""
         navigation_generation = self._supersede_library_notes_navigation()
-        self._library_note_session.close_session()
+        if not self._library_note_session.close_session():
+            return
         self._clear_finished_library_notes_operation()
+        self.retire_document_editor()
         self._selected_note_id = note_id
         self._library_notes_view = "editor"
         self._library_note_load_state = "loading"
@@ -3630,8 +3788,10 @@ class LibraryNotesController:
         selection so every exit from the editor leaves save/autosave/
         conflict tracking in a clean ``idle`` state for the next note.
         """
+        if not self._library_note_session.close_session():
+            return
+        self.retire_document_editor()
         self._dispatch_database_note_identity_cleared()
-        self._library_note_session.close_session()
         if self._library_notes_view != "import":
             self._library_notes_view = "list"
         self._selected_note_id = ""
@@ -3722,6 +3882,13 @@ class LibraryNotesController:
             self._library_note_presentation_syncing
             or not self._library_note_editor_armed
         ):
+            return
+        if not self._document_source_exact():
+            return
+        try:
+            if event.text_area is not self.query_one("#library-note-body", TextArea):
+                return
+        except (NoMatches, QueryError):
             return
         if self._library_note_session.mutate(body=event.text_area.text):
             self._library_note_pending_blank_gc_id = None
@@ -4260,9 +4427,9 @@ class LibraryNotesController:
         Mirrors the retired standalone Notes screen's export dialog flow --
         a ``FileSave`` prompt pre-filled with a sanitized default filename,
         whose callback writes the built export content once a path is
-        chosen. The export reads the *live* editor widgets (via
-        ``_read_library_note_editor_fields``), never the DB, so unlike
-        Save there is nothing to flush first.
+        chosen. The export captures the canonical coordinator snapshot,
+        including retained source behind native representation fences.
+        Source and language travel together; there is nothing to flush first.
 
         Note: the real ``Third_Party.textual_fspicker.FileSave`` dialog
         only accepts ``location``/``title``/``default_file`` (not the
@@ -4273,8 +4440,10 @@ class LibraryNotesController:
         Args:
             export_format: ``"markdown"`` for the frontmatter export
                 (Export .md), or ``"text"`` for the plain-text export
-                (Export .txt).
+                (Export .txt); "source" downloads the exact body and "portable"
+                exports its existing versioned envelope.
         """
+
         if self._library_notes_view != "editor" or not self._selected_note_id:
             return
         fields = self._read_library_note_editor_fields()
@@ -4285,6 +4454,7 @@ class LibraryNotesController:
             return
         title, content, keywords_text = fields
         note_id = self._selected_note_id
+        content_language = self._library_note_session.snapshot.draft.content_language
         safe_title = (
             "".join(
                 char
@@ -4293,12 +4463,26 @@ class LibraryNotesController:
             ).rstrip()
             or "note"
         )
-        default_filename = f"{safe_title}.{'md' if export_format == 'markdown' else 'txt'}"
-        dialog_title = (
-            "Export Note as Markdown"
-            if export_format == "markdown"
-            else "Export Note as Text"
-        )
+        extension = {
+            "text": "txt",
+            "markdown": "md",
+            "yaml": "yaml",
+            "json": "json",
+            "jsonl": "jsonl",
+        }.get(content_language, "txt")
+        suffix = {
+            "markdown": "md",
+            "text": "txt",
+            "portable": "note.json",
+            "source": extension,
+        }[export_format]
+        default_filename = f"{safe_title}.{suffix}"
+        dialog_title = {
+            "markdown": "Export Note as Markdown",
+            "text": "Export Note as Text",
+            "source": "Download source",
+            "portable": "Export note",
+        }[export_format]
         from .library_file_export import library_export_picker_location  # lazy, TASK-34000.3
 
         await self.app.push_screen(
@@ -4316,8 +4500,24 @@ class LibraryNotesController:
                 keywords_text,
                 note_id,
                 operation,
+                content_language=content_language,
             ),
         )
+
+    @on(Button.Pressed, "#library-note-context-export-source")
+    @on(Button.Pressed, "#library-note-export-source")
+    async def handle_library_note_download_source(self, event: Button.Pressed) -> None:
+        """Download captured canonical source without document conversion."""
+        event.stop()
+        await self._export_library_note("source")
+
+    @on(Button.Pressed, "#library-note-context-export-portable")
+    @on(Button.Pressed, "#library-note-export-portable")
+    async def handle_library_note_export_portable(self, event: Button.Pressed) -> None:
+        """Export the captured source and language in the reviewed envelope."""
+        event.stop()
+        await self._export_library_note("portable")
+
     @on(Button.Pressed, "#library-note-context-export-md")
     @on(Button.Pressed, "#library-note-export-md")
     async def handle_library_note_export_markdown(self, event: Button.Pressed) -> None:
@@ -5477,6 +5677,17 @@ class LibraryNotesController:
             exclusive=True,
             group="library_note_import_check",
         )
+
+    @on(LibraryNoteImportCanvas.SourceModeToggled)
+    def handle_library_note_import_source_mode(
+        self, event: LibraryNoteImportCanvas.SourceModeToggled
+    ) -> None:
+        event.stop()
+        try:
+            self._library_note_import_controller.set_source_mode(event.enabled)
+        except (TypeError, ValueError):
+            self._notify_library_note_import_failure()
+
     @on(LibraryNoteImportCanvas.ObsidianModeToggled)
     def handle_library_note_import_obsidian_mode(
         self, event: LibraryNoteImportCanvas.ObsidianModeToggled

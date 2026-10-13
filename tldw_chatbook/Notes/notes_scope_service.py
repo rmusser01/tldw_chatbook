@@ -29,6 +29,8 @@ from tldw_chatbook.Notes.note_folder_models import (
 )
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 
+_LANGUAGE_UNSET = object()
+
 
 class ScopeType(str, Enum):
     LOCAL_NOTE = "local_note"
@@ -1340,6 +1342,7 @@ class NotesScopeService:
         scope: ScopeType | str,
         title: str,
         content: str,
+        content_language: Any = _LANGUAGE_UNSET,
         note_id: Any = None,
         version: Optional[int] = None,
         user_id: Optional[str] = None,
@@ -1350,6 +1353,13 @@ class NotesScopeService:
         internal_research_owner_proof: Optional[str] = None,
     ) -> Any:
         normalized_scope = self._normalize_scope(scope)
+        language_fields = (
+            {}
+            if content_language is _LANGUAGE_UNSET
+            else {"content_language": content_language}
+        )
+        if normalized_scope == ScopeType.WORKSPACE and language_fields:
+            raise ValueError("Workspace note source language is not supported.")
         if create_note_id is not None:
             if normalized_scope != ScopeType.LOCAL_NOTE or note_id is not None:
                 raise ValueError(
@@ -1388,9 +1398,18 @@ class NotesScopeService:
                     updated = self.local_notes_service.update_note(
                         local_user_id,
                         note_id,
-                        {"title": title, "content": content},
+                        {"title": title, "content": content, **language_fields},
                         version,
                     )
+                    captured = (
+                        self.local_notes_service.get_note_by_id(local_user_id, note_id)
+                        if updated
+                        else None
+                    )
+                    if captured is not None:
+                        self._capture_local_note_intent(
+                            owner_cursor, captured, sync_v2_profile, version
+                        )
                     if updated and keywords is not None:
                         keyword_result = self._sync_local_note_keywords(
                             user_id=local_user_id,
@@ -1405,6 +1424,11 @@ class NotesScopeService:
                         note_id=str(note_id),
                         title=title,
                         content=content,
+                        content_language=(
+                            captured.get("content_language")
+                            if captured is not None
+                            else None
+                        ),
                         status="active",
                         tag_ids=self._tag_ids_for_sync_v2(keywords),
                         base_version=version,
@@ -1428,7 +1452,19 @@ class NotesScopeService:
                     title,
                     content,
                     note_id=create_note_id,
+                    **language_fields,
                 )
+                captured = (
+                    self.local_notes_service.get_note_by_id(
+                        local_user_id, created_note_id
+                    )
+                    if created_note_id
+                    else None
+                )
+                if captured is not None:
+                    self._capture_local_note_intent(
+                        owner_cursor, captured, sync_v2_profile, None
+                    )
                 if created_note_id and keywords is not None:
                     keyword_result = self._sync_local_note_keywords(
                         user_id=local_user_id,
@@ -1462,6 +1498,9 @@ class NotesScopeService:
                 note_id=str(created_note_id),
                 title=title,
                 content=content,
+                content_language=(
+                    captured.get("content_language") if captured is not None else None
+                ),
                 status="active",
                 tag_ids=self._tag_ids_for_sync_v2(keywords),
                 base_version=None,
@@ -1479,6 +1518,7 @@ class NotesScopeService:
 
         if normalized_scope == ScopeType.SERVER_NOTE:
             return await self.server_service.save_server_note(
+                **language_fields,
                 note_id=note_id,
                 title=title,
                 content=content,
@@ -1726,11 +1766,25 @@ class NotesScopeService:
             )
         self._enforce_policy(self._note_action_id(normalized_scope, "update"))
         local_user_id = self._require_user_id(user_id)
-        restored = self.local_notes_service.restore_note(
-            local_user_id,
-            note_id,
-            version,
+        transaction_factory = getattr(
+            self.local_notes_service, "note_transaction", None
         )
+        with (
+            transaction_factory(local_user_id)
+            if callable(transaction_factory)
+            else nullcontext()
+        ) as owner_cursor:
+            restored = self.local_notes_service.restore_note(
+                local_user_id, note_id, version
+            )
+            if restored:
+                captured = self.local_notes_service.get_note_by_id(
+                    local_user_id, note_id
+                )
+                if captured is not None:
+                    self._capture_local_note_intent(
+                        owner_cursor, captured, sync_v2_profile, version
+                    )
         if not restored:
             raise RuntimeError("The note could not be restored.")
 
@@ -1754,12 +1808,25 @@ class NotesScopeService:
             note_id=str(note_id),
             title=str(record.get("title") or ""),
             content=str(record.get("content") or ""),
+            content_language=record.get("content_language"),
             status="active",
             tag_ids=self._tag_ids_for_sync_v2(restored_keywords),
             base_version=version,
             entity_version=entity_version,
         )
         return record
+
+    def _capture_local_note_intent(
+        self,
+        cursor: Any,
+        note: Mapping[str, Any],
+        sync_v2_profile: Mapping[str, Any] | None,
+        base_version: int | None,
+    ) -> None:
+        scope = self._sync_v2_profile_scope(sync_v2_profile)
+        capture = getattr(self.sync_v2_notes_producer, "capture_note_intent", None)
+        if scope is not None and cursor is not None and callable(capture):
+            capture(cursor=cursor, note=note, base_version=base_version, **scope)
 
     def _enqueue_local_note_upsert(
         self,
@@ -1768,6 +1835,7 @@ class NotesScopeService:
         note_id: str,
         title: str,
         content: str,
+        content_language: Any = _LANGUAGE_UNSET,
         status: str,
         tag_ids: Optional[list[str]],
         base_version: Optional[int],
@@ -1784,6 +1852,11 @@ class NotesScopeService:
                 note_id=note_id,
                 title=title,
                 content=content,
+                **(
+                    {"content_language": content_language}
+                    if content_language is not _LANGUAGE_UNSET
+                    else {}
+                ),
                 status=status,
                 tag_ids=tag_ids,
                 base_version=base_version,

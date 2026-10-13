@@ -45,6 +45,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportSource,
     ImportSourceKind,
     NoteImportPlan,
+    OmittedNoteLanguage,
     ParsedNotePayload,
     ProposedFolderMembership,
     RootCollisionChoice,
@@ -166,6 +167,11 @@ def _private_payload_fingerprint(
             "keywords": list(payload.keywords),
             "template_name": payload.template_name,
             "title": payload.title,
+            **(
+                {"content_language": payload.content_language}
+                if payload.content_language is not OmittedNoteLanguage.UNSET
+                else {}
+            ),
         }
         for payload in copied
     ]

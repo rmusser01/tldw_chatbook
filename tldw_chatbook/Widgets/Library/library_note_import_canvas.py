@@ -482,6 +482,13 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     class CheckRequested(Message):
         """Request read-only discovery and planning."""
 
+    class SourceModeToggled(Message):
+        """Choose exact source instead of the default note-container reader."""
+
+        def __init__(self, enabled: bool) -> None:
+            super().__init__()
+            self.enabled = enabled
+
     class ObsidianModeToggled(Message):
         """Report the requested Obsidian-vault reading mode."""
 
@@ -855,6 +862,13 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
                 yield view
 
     def _compose_selection(self, state: LibraryNoteImportSnapshot) -> ComposeResult:
+        yield Button(
+            _choice_label(selected=state.source_mode, text="Import exact source"),
+            id="note-import-source-mode",
+            classes="library-canvas-action",
+            compact=True,
+            tooltip="Off: read note containers. On: one exact source note per file; mode comes from its extension.",
+        )
         count = len(state.selected_names)
         yield Static(
             _selection_summary(state),
@@ -1329,6 +1343,11 @@ class LibraryNoteImportCanvas(PostRecomposeCallback, Vertical):
     def _check(self, event: Button.Pressed) -> None:
         event.stop()
         self.post_message(self.CheckRequested())
+
+    @on(Button.Pressed, "#note-import-source-mode")
+    def _toggle_source_mode(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.post_message(self.SourceModeToggled(not self.snapshot.source_mode))
 
     @on(Button.Pressed, "#note-import-obsidian-mode")
     def _toggle_obsidian_mode(self, event: Button.Pressed) -> None:

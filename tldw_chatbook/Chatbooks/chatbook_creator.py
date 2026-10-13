@@ -55,12 +55,15 @@ from ..Utils.paths import get_user_data_dir
 from ..Utils.private_paths import secure_private_directory
 from ..Utils.text import sanitize_filename
 from .chatbook_models import (
+    PORTABLE_NOTE_FORMAT_VERSION,
     ChatbookContent,
     ChatbookManifest,
     ChatbookVersion,
     ContentItem,
     ContentType,
     Relationship,
+    select_chatbook_version,
+    validate_portable_note_record,
 )
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
@@ -499,7 +502,10 @@ class ChatbookCreator:
                     canvas_db.close_connection()
                 if canvas_archive is not None:
                     manifest.canvas_archive = canvas_archive
-                    manifest.version = ChatbookVersion.V3
+            manifest.version = select_chatbook_version(
+                has_canvas_records=manifest.canvas_archive is not None,
+                has_note_records=bool(content.notes),
+            )
 
             # Write manifest
             manifest_path = work_dir / "manifest.json"
@@ -525,7 +531,8 @@ class ChatbookCreator:
                     work_dir,
                     output_path,
                     partial_path,
-                    deterministic=manifest.version is ChatbookVersion.V3,
+                    deterministic=manifest.version
+                    in {ChatbookVersion.V3, ChatbookVersion.V4},
                 )
             except OSError as error:
                 # task-32251 AC#4, narrowed by review F6: ONLY the packaging
@@ -1409,7 +1416,7 @@ class ChatbookCreator:
         manifest: ChatbookManifest,
         content: ChatbookContent,
     ) -> None:
-        """Collect notes and export as markdown."""
+        """Collect exact source and metadata in portable note records."""
         db_path = self.db_paths.get("ChaChaNotes")
         if not db_path:
             return
@@ -1445,31 +1452,30 @@ class ChatbookCreator:
                     last_modified = last_modified.isoformat()
 
                 note_data = {
+                    "format_version": PORTABLE_NOTE_FORMAT_VERSION,
                     "id": note["id"],
                     "title": note["title"],
                     "content": note["content"],
+                    "content_language": note["content_language"],
                     "created_at": created_at,
                     "updated_at": last_modified,
-                    "tags": note.get("keywords", "").split(",")
-                    if note.get("keywords")
-                    else [],
+                    "tags": (
+                        note.get("keywords", "").split(",")
+                        if note.get("keywords")
+                        else []
+                    ),
                 }
 
-                # Write markdown file
-                note_file = notes_dir / f"{sanitize_filename(note['title'])}.md"
-                with open(note_file, "w", encoding="utf-8") as f:
-                    # Write frontmatter
-                    f.write("---\n")
-                    f.write(f"id: {note['id']}\n")
-                    f.write(f"title: {note['title']}\n")
-                    f.write(f"created_at: {note_data['created_at']}\n")
-                    f.write(f"updated_at: {note_data['updated_at']}\n")
-                    if note_data["tags"]:
-                        f.write(f"tags: {', '.join(note_data['tags'])}\n")
-                    f.write("---\n\n")
-
-                    # Write content
-                    f.write(note["content"])
+                note_data["keywords"] = [
+                    row["keyword"] for row in db.get_keywords_for_note(note_id)
+                ]
+                note_data["tags"] = note_data["keywords"]
+                validate_portable_note_record(note_data)
+                filename = f"note_{note['id']}.json"
+                validate_filename(filename)
+                note_file = notes_dir / filename
+                with open(note_file, "w", encoding="utf-8", newline="") as handle:
+                    json.dump(note_data, handle, ensure_ascii=False, indent=2)
 
                 # Add to content
                 content.notes.append(note_data)

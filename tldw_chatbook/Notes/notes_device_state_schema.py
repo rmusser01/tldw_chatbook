@@ -319,10 +319,26 @@ _LASTING_INDEX_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_notes_sync_recovery_expiry ON notes_sync_recovery(expires_at, recovery_id)",
 )
 
-LATEST_NOTES_DEVICE_SCHEMA_VERSION = 2
+_DRAFT_TABLE_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS note_drafts (
+        scope TEXT NOT NULL,
+        note_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL,
+        keywords_text TEXT NOT NULL,
+        content_language TEXT CHECK (content_language IS NULL OR length(content_language) BETWEEN 1 AND 100),
+        revision INTEGER NOT NULL CHECK (revision >= 0),
+        base_version INTEGER NOT NULL CHECK (base_version >= 0),
+        PRIMARY KEY (scope, note_id)
+    )
+    """,
+)
+LATEST_NOTES_DEVICE_SCHEMA_VERSION = 3
 _V1_TABLES = HISTORICAL_V1_IMPORT_TABLE_STATEMENTS
 _V1_INDEXES = HISTORICAL_V1_IMPORT_INDEX_STATEMENTS
-_CURRENT_TABLES = (*_V1_TABLES, *_LASTING_TABLE_STATEMENTS)
+_V2_TABLES = (*_V1_TABLES, *_LASTING_TABLE_STATEMENTS)
+_CURRENT_TABLES = (*_V2_TABLES, *_DRAFT_TABLE_STATEMENTS)
 _CURRENT_INDEXES = (*_V1_INDEXES, *_LASTING_INDEX_STATEMENTS)
 
 
@@ -443,7 +459,7 @@ def migrate_v1_to_current(connection: sqlite3.Connection) -> None:
         connection.execute(statement)
     for statement in _LASTING_INDEX_STATEMENTS:
         connection.execute(statement)
-    connection.execute(f"PRAGMA user_version = {LATEST_NOTES_DEVICE_SCHEMA_VERSION}")
+    connection.execute("PRAGMA user_version = 2")
 
 
 def initialize_notes_device_schema(connection: sqlite3.Connection) -> None:
@@ -451,7 +467,7 @@ def initialize_notes_device_schema(connection: sqlite3.Connection) -> None:
 
     try:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-        if version not in {0, 1, LATEST_NOTES_DEVICE_SCHEMA_VERSION}:
+        if version not in {0, 1, 2, LATEST_NOTES_DEVICE_SCHEMA_VERSION}:
             raise NotesDeviceSchemaError(
                 "Unsupported private Notes device schema version."
             )
@@ -484,6 +500,20 @@ def initialize_notes_device_schema(connection: sqlite3.Connection) -> None:
             )
             _repair_and_validate_indexes(connection, _V1_INDEXES)
             migrate_v1_to_current(connection)
+            version = 2
+        if version == 2:
+            _validate_user_object_census(
+                connection, _V2_TABLES, _CURRENT_INDEXES, version_name="v2"
+            )
+            _validate_objects(
+                connection, _V2_TABLES, object_type="table", allow_missing=False
+            )
+            _repair_and_validate_indexes(connection, _CURRENT_INDEXES)
+            for statement in _DRAFT_TABLE_STATEMENTS:
+                connection.execute(statement)
+            connection.execute(
+                f"PRAGMA user_version = {LATEST_NOTES_DEVICE_SCHEMA_VERSION}"
+            )
         _validate_user_object_census(
             connection,
             _CURRENT_TABLES,

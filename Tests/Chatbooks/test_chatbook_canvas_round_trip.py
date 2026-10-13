@@ -30,6 +30,9 @@ from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
+# Real import/export holds the collection-bound private config selection.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _digest(source: str) -> str:
     return sha256(source.encode("utf-8")).hexdigest()

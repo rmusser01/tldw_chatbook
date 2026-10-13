@@ -140,9 +140,18 @@ def _add_forward_write_dependencies(db: CharactersRAGDB, version: int) -> None:
     that PINS the declaring migration must drop it first (the same discipline
     this module's header states for the artifacts that pre-exist their step).
 
+    * ``content_language`` (task-34571, V80->V81) -- current note INSERTs
+      always name this nullable column. Its migration test uses the bare
+      historical constructor, proving the column is genuinely absent.
     * ``note_links`` (task-32186, V72->V73) -- every note writer records the
       note's outgoing ``(note://<id>)`` links.
     """
+    if version < 81:
+        with db.transaction() as cursor:
+            if "content_language" not in {
+                row["name"] for row in cursor.execute("PRAGMA table_info(notes)")
+            }:
+                cursor.execute("ALTER TABLE notes ADD COLUMN content_language TEXT")
     if version < 73:
         with db.transaction() as cursor:
             cursor.execute(

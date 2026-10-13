@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from html import escape as html_escape
-from typing import Any, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
-from tldw_chatbook.Utils.input_validation import sanitize_string
+from tldw_chatbook.Sync_Interop.notes_local_store import NotesMaterializationUnsupported
+from tldw_chatbook.Sync_Interop.sync_state import validate_note_language
+
+NOTES_NOTE_TITLE_MAX_CHARS = 255
+NOTES_NOTE_CONTENT_MAX_CHARS = 5_000_000
 
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import SyncV2Envelope
@@ -21,6 +24,12 @@ class NotesM1SyncAdapter:
         dataset_id: str,
         record_conflict: Callable[..., dict[str, Any]],
     ) -> dict[str, Any]:
+        if (envelope.adapter_version, envelope.schema_version) not in {(1, 1), (2, 2)}:
+            return record_conflict(
+                envelope,
+                conflict_type="notes_language_upgrade_required",
+                message="Unsupported Notes snapshot version.",
+            )
         if notes_mirror is None or dataset_id is None:
             raise ValueError(
                 "notes_mirror and dataset_id must be provided to NotesM1SyncAdapter"
@@ -51,13 +60,32 @@ class NotesM1SyncAdapter:
             local_store.soft_delete_note(object_id, object_revision=revision)
         else:
             payload = self._validated_note_payload(envelope.payload)
+            if envelope.adapter_version == 2 and set(envelope.payload) != {
+                "title",
+                "content",
+                "conversation_id",
+                "message_id",
+                "content_language",
+            }:
+                payload = None
             if payload is None:
                 return record_conflict(
                     envelope,
                     conflict_type="invalid_notes_payload",
-                    message="notes.note upsert payload requires non-empty title and content strings.",
+                    message=(
+                        "notes.note requires a nonblank title of at most 255 characters "
+                        "and nonempty content of at most 5,000,000 characters; "
+                        "both must be strings without control characters other than tab, CR, or LF."
+                    ),
                 )
-            local_store.upsert_note(object_id, payload, object_revision=revision)
+            try:
+                local_store.upsert_note(object_id, payload, object_revision=revision)
+            except NotesMaterializationUnsupported:
+                return record_conflict(
+                    envelope,
+                    conflict_type="notes_materialization_unsupported",
+                    message="The Notes materializer cannot retain complete snapshot backlinks.",
+                )
         notes_mirror.record(
             dataset_id,
             object_id,
@@ -73,11 +101,27 @@ class NotesM1SyncAdapter:
         content = payload.get("content", payload.get("body"))
         if not isinstance(title, str) or not isinstance(content, str):
             return None
-        title = sanitize_string(title, max_length=500).strip()
-        content = sanitize_string(content, max_length=100_000)
-        if not title or not content.strip():
+        if (
+            not title.strip()
+            or not content
+            or len(title) > NOTES_NOTE_TITLE_MAX_CHARS
+            or len(content) > NOTES_NOTE_CONTENT_MAX_CHARS
+        ):
             return None
-        return {
-            "title": html_escape(title, quote=False),
-            "content": html_escape(content, quote=False),
-        }
+        # Reject unsafe controls rather than silently deleting source characters.
+        if any(ord(char) < 32 and char not in "\t\n\r" for char in title + content):
+            return None
+        result = {"title": title, "content": content}
+        if "content_language" in payload:
+            try:
+                validate_note_language(payload["content_language"])
+            except ValueError:
+                return None
+            result["content_language"] = payload["content_language"]
+        for backlink in ("conversation_id", "message_id"):
+            if backlink in payload:
+                value = payload[backlink]
+                if value is not None and not isinstance(value, str):
+                    return None
+                result[backlink] = value
+        return result

@@ -48,6 +48,11 @@ pytestmark = pytest.mark.asyncio
 
 
 class FakeLocalFirstServer:
+
+    async def capture_notes_authority(self, server_profile_id, **scope):
+        """Trusted fixture peer explicitly pins this test transport."""
+        return self, lambda: None
+
     def __init__(
         self,
         *,
@@ -66,6 +71,15 @@ class FakeLocalFirstServer:
         self.push_error = push_error
         self.pull_error = pull_error
 
+    async def get_v2_capabilities(self, *, dataset_id, notes_authority=None):
+        return {
+            "writable_adapter_versions": {
+                "notes": [1, 2],
+                "chat": [1],
+                "workspaces": [1],
+            }
+        }
+
     async def push_v2_envelopes(
         self,
         *,
@@ -75,6 +89,7 @@ class FakeLocalFirstServer:
         idempotency_key=None,
         last_known_cursor=None,
         domains=None,
+        notes_authority=None,
     ):
         self.calls.append(
             (
@@ -94,7 +109,14 @@ class FakeLocalFirstServer:
         return {
             "dataset_id": dataset_id,
             "accepted": [
-                {"client_envelope_id": envelope["client_envelope_id"]}
+                {
+                    "client_envelope_id": envelope["client_envelope_id"],
+                    "domain": envelope["domain"],
+                    "object_id": envelope["object_id"],
+                    "object_revision": (envelope.get("base_object_revision") or 0) + 1,
+                    "server_cursor": 8,
+                    "apply_status": "applied",
+                }
                 for envelope in envelopes
             ],
             "next_cursor": "8",
@@ -113,6 +135,7 @@ class FakeLocalFirstServer:
         domains=None,
         page_size=None,
         include_own_changes=False,
+        notes_authority=None,
     ):
         self.calls.append(
             (
@@ -442,16 +465,19 @@ async def test_organization_sync_scopes_heads_and_reviews_by_runtime_profile(
 async def test_local_first_sync_once_pushes_pulls_applies_and_persists_cursor(tmp_path):
     dataset_key = generate_dataset_key()
     local_builder = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
     )
     remote_builder = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-2",
         dataset_key=dataset_key,
     )
     incoming = remote_builder.build_note_upsert(
+        content_language=None,
         note_id="note-1",
         title="Remote title",
         body="remote private body",
@@ -486,6 +512,7 @@ async def test_local_first_sync_once_pushes_pulls_applies_and_persists_cursor(tm
     assert store.note_content["note-1"] == {
         "body": "remote private body",
         "title": "Remote title",
+        "content_language": None,
     }
     assert server.calls[0][0] == "push"
     assert server.calls[0][3][0]["client_envelope_id"] == outgoing.client_envelope_id
@@ -545,6 +572,7 @@ async def test_local_first_sync_once_accepts_canonical_profile_mode(tmp_path):
 async def test_local_first_sync_once_chunks_pushes_by_server_max_batch_size(tmp_path):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -585,6 +613,7 @@ async def test_local_first_sync_once_drains_persisted_outbox_and_records_push_fa
 ):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -783,6 +812,7 @@ async def test_local_first_sync_once_rejects_duplicate_outgoing_ids_before_push(
 ):
     dataset_key = generate_dataset_key()
     outgoing = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -849,6 +879,7 @@ async def test_local_first_sync_once_rejects_mismatched_push_response_dataset_be
 ):
     dataset_key = generate_dataset_key()
     pending = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -933,6 +964,7 @@ async def test_local_first_sync_once_rejects_unknown_push_response_envelope_ids_
 ):
     dataset_key = generate_dataset_key()
     pending = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -1017,6 +1049,7 @@ async def test_local_first_sync_once_rejects_incomplete_push_response_before_dis
 ):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -1113,6 +1146,7 @@ async def test_local_first_sync_once_rejects_duplicate_push_response_envelope_id
 ):
     dataset_key = generate_dataset_key()
     pending = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -1203,11 +1237,13 @@ async def test_local_first_sync_once_preserves_push_and_apply_attention_statuses
 ):
     dataset_key = generate_dataset_key()
     local_builder = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
     )
     remote_builder = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="remote-device",
         dataset_key=dataset_key,
@@ -1216,6 +1252,7 @@ async def test_local_first_sync_once_preserves_push_and_apply_attention_statuses
         note_id="note-1", status="archived"
     )
     incoming = remote_builder.build_note_upsert(
+        content_language=None,
         note_id="note-2",
         title="Remote title",
         body="remote private body",
@@ -1330,6 +1367,7 @@ async def test_local_first_sync_once_uses_stable_push_idempotency_key_for_retry(
 ):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -1384,6 +1422,7 @@ async def test_local_first_sync_once_uses_stable_push_idempotency_key_for_retry(
 async def test_local_first_sync_once_records_outbox_transport_failure_attempt(tmp_path):
     dataset_key = generate_dataset_key()
     pending = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -1436,11 +1475,13 @@ async def test_local_first_sync_once_changes_push_idempotency_key_when_batch_cha
 ):
     dataset_key = generate_dataset_key()
     first = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
     ).build_note_metadata_update(note_id="note-1", status="archived")
     second = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -1487,6 +1528,7 @@ async def test_local_first_sync_once_rejects_outgoing_domain_outside_requested_d
 ):
     dataset_key = generate_dataset_key()
     outgoing = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -1543,6 +1585,7 @@ async def test_local_first_sync_once_rejects_outgoing_dataset_mismatch_before_pu
 ):
     dataset_key = generate_dataset_key()
     outgoing = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="other-dataset",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -1594,6 +1637,7 @@ async def test_local_first_sync_once_rejects_outgoing_device_mismatch_before_pus
 ):
     dataset_key = generate_dataset_key()
     outgoing = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-2",
         dataset_key=dataset_key,
@@ -1645,6 +1689,7 @@ async def test_local_first_sync_once_records_push_failure_without_advancing_curs
 ):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -1737,11 +1782,13 @@ async def test_local_first_sync_once_records_apply_failure_without_advancing_cur
     dataset_key = generate_dataset_key()
     wrong_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-2",
         dataset_key=dataset_key,
     )
     incoming = builder.build_note_upsert(
+        content_language=None,
         note_id="note-1",
         title="Remote title",
         body="remote private body",
@@ -1790,6 +1837,7 @@ async def test_local_first_sync_once_records_apply_failure_without_advancing_cur
 async def test_local_first_sync_once_rejects_wrong_dataset_pull_before_apply(tmp_path):
     dataset_key = generate_dataset_key()
     incoming = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="other-dataset",
         device_id="remote-device",
         dataset_key=dataset_key,
@@ -1841,6 +1889,7 @@ async def test_local_first_sync_once_rejects_out_of_scope_pull_domain_before_app
 ):
     dataset_key = generate_dataset_key()
     incoming = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="remote-device",
         dataset_key=dataset_key,
@@ -1898,6 +1947,7 @@ async def test_local_first_sync_once_rejects_duplicate_pull_envelope_ids_before_
 ):
     dataset_key = generate_dataset_key()
     incoming = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="remote-device",
         dataset_key=dataset_key,
@@ -1954,6 +2004,7 @@ async def test_local_first_sync_once_rejects_has_more_pull_without_next_cursor_b
 ):
     dataset_key = generate_dataset_key()
     incoming = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="remote-device",
         dataset_key=dataset_key,
@@ -2012,6 +2063,7 @@ async def test_local_first_sync_once_rejects_nonempty_pull_without_next_cursor_b
 ):
     dataset_key = generate_dataset_key()
     incoming = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="remote-device",
         dataset_key=dataset_key,
@@ -2068,6 +2120,7 @@ async def test_local_first_sync_once_rejects_nonempty_pull_without_next_cursor_b
 async def test_local_first_sync_once_rejects_own_device_pull_before_apply(tmp_path):
     dataset_key = generate_dataset_key()
     incoming = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="device-1",
         dataset_key=dataset_key,
@@ -2184,11 +2237,13 @@ async def test_local_first_sync_once_persists_apply_conflict_status_and_advances
 ):
     dataset_key = generate_dataset_key()
     builder = SyncEnvelopeBuilder(
+        notes_adapter_versions={"notes": [2]},
         dataset_id="dataset-1",
         device_id="remote-device",
         dataset_key=dataset_key,
     )
     incoming = builder.build_note_upsert(
+        content_language=None,
         note_id="note-1",
         title="Remote title",
         body="remote private body",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, TYPE_CHECKING
 
 from tldw_chatbook.Sync_Interop.envelope_applier import SyncEnvelopeApplier
@@ -11,9 +12,19 @@ if TYPE_CHECKING:
 
 
 class NotesM1SyncFlow:
+
     def __init__(
-        self, *, client, builder, mirror, local_store, dataset_id: str, device_id: str
+        self,
+        *,
+        client,
+        builder,
+        mirror,
+        local_store,
+        dataset_id: str,
+        device_id: str,
+        assert_authority_current: Callable[[], None] | None = None,
     ) -> None:
+        self.assert_authority_current = assert_authority_current
         self.client = client
         self.builder = builder
         self.mirror = mirror
@@ -26,19 +37,56 @@ class NotesM1SyncFlow:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from tldw_chatbook.tldw_api import SyncV2PushRequest
 
+        client = self.client
+        if (
+            any(env.adapter_version == 2 for env in envelopes)
+            and self.assert_authority_current is None
+        ):
+            raise ValueError("notes_authority_unavailable")
+        self._assert_current(client)
+        capabilities = await client.get_sync_v2_capabilities(dataset_id=self.dataset_id)
+        self._assert_current(client)
+        capability_record = (
+            capabilities.model_dump()
+            if hasattr(capabilities, "model_dump")
+            else capabilities
+        )
+        writable = (
+            capability_record.get("writable_adapter_versions", {})
+            if isinstance(capability_record, dict)
+            else {}
+        )
+        if any(
+            env.domain != "notes.note"
+            or env.adapter_version not in writable.get("notes.note", [])
+            for env in envelopes
+        ):
+            raise ValueError("notes_language_upgrade_required")
+        self.builder.notes_adapter_versions = writable
         for env in envelopes:
             self._client_sequence += 1
             env.client_sequence = self._client_sequence
         request = SyncV2PushRequest(
             dataset_id=self.dataset_id, device_id=self.device_id, envelopes=envelopes
         )
-        response = await self.client.push_sync_v2_envelopes(request)
+        self._assert_current(client)
+        response = await client.push_sync_v2_envelopes(request)
+        self._assert_current(client)
         payload_hashes = {env.client_envelope_id: env.payload_hash for env in envelopes}
+        submitted = {env.client_envelope_id: env for env in envelopes}
         mirror_errors = 0
         for acknowledgement in [
             *response.accepted,
             *(getattr(response, "idempotent", []) or []),
         ]:
+            env = submitted.get(getattr(acknowledgement, "client_envelope_id", ""))
+            if (
+                env is not None
+                and env.adapter_version == 2
+                and not self._complete_acknowledgement(env, acknowledgement)
+            ):
+                mirror_errors += 1
+                continue
             if not self._record_acknowledgement(acknowledgement, payload_hashes):
                 mirror_errors += 1
         return {
@@ -52,12 +100,15 @@ class NotesM1SyncFlow:
         }
 
     async def pull(self, *, cursor: int) -> dict[str, Any]:
-        response = await self.client.pull_sync_v2_envelopes(
+        client = self.client
+        self._assert_current(client)
+        response = await client.pull_sync_v2_envelopes(
             dataset_id=self.dataset_id,
             device_id=self.device_id,
             cursor=str(cursor),
             domains=["notes.note"],
         )
+        self._assert_current(client)
         applier = SyncEnvelopeApplier(
             local_store=self.local_store,
             notes_mirror=self.mirror,
@@ -79,6 +130,30 @@ class NotesM1SyncFlow:
             "next_cursor": response.next_cursor,
             "has_more": response.has_more,
         }
+
+    def _assert_current(self, client: Any) -> None:
+        if self.client is not client:
+            raise ValueError("notes_authority_changed")
+        if self.assert_authority_current is not None:
+            self.assert_authority_current()
+
+    @staticmethod
+    def _complete_acknowledgement(
+        envelope: SyncV2Envelope, acknowledgement: Any
+    ) -> bool:
+        revision = getattr(acknowledgement, "object_revision", None)
+        cursor = getattr(acknowledgement, "server_cursor", None)
+        if cursor is None:
+            cursor = getattr(acknowledgement, "server_sequence", None)
+        return (
+            getattr(acknowledgement, "domain", None) == "notes.note"
+            and getattr(acknowledgement, "object_id", None) == envelope.object_id
+            and getattr(acknowledgement, "apply_status", None) == "applied"
+            and type(revision) is int
+            and revision == (envelope.base_object_revision or 0) + 1
+            and type(cursor) is int
+            and cursor > 0
+        )
 
     def _record_acknowledgement(
         self, acknowledgement: Any, payload_hashes: dict[str, str]

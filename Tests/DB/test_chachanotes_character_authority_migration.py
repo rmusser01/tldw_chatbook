@@ -266,7 +266,7 @@ def test_local_authority_accessor_fails_closed_for_unavailable_or_ambiguous_stat
         notes_columns = {
             row["name"] for row in cursor.execute("PRAGMA table_info(notes)")
         }
-    assert notes_columns == HISTORICAL_NOTES_COLUMNS
+    assert notes_columns == HISTORICAL_NOTES_COLUMNS | {"content_language"}
 
     with pytest.raises(
         CharactersRAGDBError,

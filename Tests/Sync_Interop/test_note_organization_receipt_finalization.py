@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
+from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.notes_organization_repository import (
     NotesOrganizationRepository,
     NotesOrganizationRepositoryError,
@@ -20,7 +20,6 @@ from tldw_chatbook.Sync_Interop.notes_organization_sync_service import (
 )
 from tldw_chatbook.Sync_Interop.notes_outbox_producer import NotesSyncV2OutboxProducer
 from tldw_chatbook.Sync_Interop.sync_state_repository import SyncStateRepository
-
 
 PROFILE = "server-a"
 DATASET = "dataset-a"
@@ -75,7 +74,12 @@ def _services(tmp_path: Path, *, ready: bool = False, failure_injector=None):
     return notes, state, library, organization, producer
 
 
-def _save_pending(library: NotesInteropService, *, receipt_id: str = "receipt-a"):
+def _save_pending(
+    library: NotesInteropService,
+    *,
+    receipt_id: str = "receipt-a",
+    capture_scope: bool = True,
+):
     return library.save_note_with_organization(
         "user-a",
         title="Pending lesson",
@@ -83,6 +87,11 @@ def _save_pending(library: NotesInteropService, *, receipt_id: str = "receipt-a"
         folder="Agent_Lessons",
         ensure_keywords=("agent-lesson",),
         receipt_id=receipt_id,
+        source_scope=(
+            {"authenticated_principal_id": None, "workspace_scope": None}
+            if capture_scope
+            else None
+        ),
         server_profile_id=PROFILE,
         dataset_id=DATASET,
     )
@@ -404,9 +413,11 @@ def test_finalized_intent_is_retained_until_general_outbox_acknowledgement(
         accepted=[
             {
                 "client_envelope_id": outbox["client_envelope_id"],
-                "server_cursor": 1,
+                "domain": "notes",
+                "object_id": saved["id"],
                 "object_revision": 1,
                 "apply_status": "applied",
+                "server_cursor": 1,
             }
         ],
         rejected=[],
@@ -459,6 +470,7 @@ def test_finalized_update_preserves_immutable_base_and_entity_versions(
         receipt_id="receipt-update",
         server_profile_id=PROFILE,
         dataset_id=DATASET,
+        source_scope={"authenticated_principal_id": None, "workspace_scope": None},
     )
     _make_ready(notes)
 
@@ -510,6 +522,7 @@ def _finalize_two_versions_with_reversed_clocks(
         receipt_id="receipt-version-2",
         server_profile_id=PROFILE,
         dataset_id=DATASET,
+        source_scope={"authenticated_principal_id": None, "workspace_scope": None},
     )
     _make_ready(notes)
     organization.finalize_pending_note_organization_receipts(
@@ -648,6 +661,7 @@ def test_finalized_create_receipt_rejects_mismatched_retry_before_mutation(
             receipt_id="receipt-create-conflict",
             server_profile_id=PROFILE,
             dataset_id=DATASET,
+            source_scope={"authenticated_principal_id": None, "workspace_scope": None},
         )
 
     assert error.value.reason_code == "receipt_conflict"
@@ -1167,6 +1181,7 @@ def test_finalizer_cancellation_keeps_deleted_create_receipt_id_terminal(
             receipt_id="receipt-finalizer-cancelled-create",
             server_profile_id=PROFILE,
             dataset_id=DATASET,
+            source_scope={"authenticated_principal_id": None, "workspace_scope": None},
         )
 
     assert mismatch.value.reason_code == "receipt_conflict"
@@ -1187,6 +1202,14 @@ def test_finalizer_cancellation_keeps_deleted_create_receipt_id_terminal(
 
 
 class _RecordingServer:
+
+    async def capture_notes_authority(self, server_profile_id, **scope):
+        """Trusted fixture captures its fixed transport, independent of real auth."""
+        return self, lambda: None
+
+    async def get_v2_capabilities(self, **kwargs):
+        return {"writable_adapter_versions": {"notes": [1, 2]}}
+
     def __init__(self) -> None:
         self.pushed: list[dict] = []
 
@@ -1195,7 +1218,14 @@ class _RecordingServer:
         return {
             "dataset_id": kwargs["dataset_id"],
             "accepted": [
-                {"client_envelope_id": item["client_envelope_id"]}
+                {
+                    "client_envelope_id": item["client_envelope_id"],
+                    "domain": item["domain"],
+                    "object_id": item["object_id"],
+                    "object_revision": 1,
+                    "server_cursor": 1,
+                    "apply_status": "applied",
+                }
                 for item in kwargs["envelopes"]
             ],
             "next_cursor": "1",
@@ -1245,6 +1275,7 @@ async def test_general_outbox_drain_filters_an_already_enqueued_blocking_note(
         receipt_id="receipt-existing-outbox",
         server_profile_id=PROFILE,
         dataset_id=DATASET,
+        source_scope={"authenticated_principal_id": None, "workspace_scope": None},
     )
     server = _RecordingServer()
     service = LocalFirstSyncService(
@@ -1331,3 +1362,143 @@ async def test_local_first_submits_reversed_clock_lineage_once_in_version_order(
     assert [item["envelope"]["entity_version"] for item in dispatched] == [1, 2]
     assert first["outbox_dispatched"] == 2
     assert second["outbox_drained"] == 0
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        {"authenticated_principal_id": "p", "workspace_scope": "w"},
+        {"authenticated_principal_id": None, "workspace_scope": None},
+    ],
+)
+def test_new_receipt_captures_origin_through_fingerprint_finalization(tmp_path, origin):
+    notes, state, library, organization, _producer = _services(tmp_path)
+    library.save_note_with_organization(
+        "user-a",
+        title="T",
+        content="Exact",
+        folder="Folder",
+        receipt_id="origin-receipt",
+        server_profile_id=PROFILE,
+        dataset_id=DATASET,
+        source_scope=origin,
+    )
+    with notes.transaction() as cursor:
+        receipt = cursor.execute(
+            "SELECT * FROM note_organization_receipts WHERE receipt_id = ?",
+            ("origin-receipt",),
+        ).fetchone()
+        binding = organization._receipt_request_binding(receipt)
+    assert binding["source_scope"] == origin
+    with pytest.raises(NotesOrganizationRepositoryError):
+        library.save_note_with_organization(
+            "user-a",
+            title="T",
+            content="Exact",
+            folder="Folder",
+            receipt_id="origin-receipt",
+            server_profile_id=PROFILE,
+            dataset_id=DATASET,
+            source_scope={
+                "authenticated_principal_id": "foreign",
+                "workspace_scope": None,
+            },
+        )
+    _make_ready(notes)
+    organization.finalize_pending_note_organization_receipts(
+        server_profile_id=PROFILE, dataset_id=DATASET
+    )
+    payload = json.loads(
+        notes.list_latest_dispatchable_note_sync_entries(
+            server_profile_id=PROFILE, dataset_id=DATASET
+        )[0]["payload"]
+    )
+    assert payload["_source_scope"] == origin
+    state.set_sync_v2_profile_state(
+        server_profile_id=PROFILE,
+        **origin,
+        profile_mode="local_first",
+        device_id="device-a",
+        dataset_id=DATASET,
+    )
+    assert (
+        organization.drain_pending_note_intents(server_profile_id=PROFILE, **origin)[
+            "copied"
+        ]
+        == 1
+    )
+    notes.close_connection()
+
+
+def test_historical_unproved_receipt_refusal_has_durable_reason(tmp_path):
+    notes, _state, library, organization, _producer = _services(tmp_path)
+    _save_pending(library, capture_scope=False)
+    _make_ready(notes)
+    result = organization.drain_pending_note_intents(**SCOPE)
+    assert result["blocked"] == 1
+    assert result["reason"] == "notes_origin_scope_unproved"
+    restarted = SyncStateRepository(tmp_path / "sync.sqlite", client_id="receipt-tests")
+    assert (
+        restarted.get_sync_v2_profile_state(**SCOPE)["last_error"]
+        == "notes_origin_scope_unproved"
+    )
+    assert not restarted.list_sync_v2_outbox_entries(**SCOPE, dataset_id=DATASET)
+    notes.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_unrelated_success_does_not_clear_unproved_note_reason(tmp_path):
+    from tldw_chatbook.Sync_Interop.notes_local_store import InMemoryNotesStore
+
+    notes, state, library, organization, producer = _services(tmp_path)
+    _save_pending(library, capture_scope=False)
+    _make_ready(notes)
+    assert organization.drain_pending_note_intents(**SCOPE)["blocked"] == 1
+
+    class Peer:
+        async def pull_v2_envelopes(self, **kwargs):
+            return {
+                "dataset_id": DATASET,
+                "envelopes": [],
+                "next_cursor": 0,
+                "has_more": False,
+            }
+
+    service = LocalFirstSyncService(
+        server_service=Peer(),
+        state_repository=state,
+        local_store=InMemoryNotesStore(),
+        dataset_keys=producer.dataset_keys,
+    )
+    await service.sync_once(**SCOPE, domains=["chat"])
+    restarted = SyncStateRepository(tmp_path / "sync.sqlite", client_id="receipt-tests")
+    assert (
+        restarted.get_sync_v2_profile_state(**SCOPE)["last_error"]
+        == "notes_origin_scope_unproved"
+    )
+    notes.close_connection()
+
+
+def test_ready_organization_save_captures_supplied_scope_in_existing_intent(tmp_path):
+    notes, _state, library, organization, _producer = _services(tmp_path, ready=True)
+    library.save_note_with_organization(
+        "user-a",
+        title="T",
+        content="Exact",
+        folder="Folder",
+        receipt_id="ready-origin",
+        server_profile_id=PROFILE,
+        dataset_id=DATASET,
+        source_scope={"authenticated_principal_id": None, "workspace_scope": None},
+    )
+    rows = notes.list_latest_dispatchable_note_sync_entries(
+        server_profile_id=PROFILE, dataset_id=DATASET
+    )
+    assert len(rows) == 1
+    payload = json.loads(rows[0]["payload"])
+    assert payload["_source_scope"] == {
+        "authenticated_principal_id": None,
+        "workspace_scope": None,
+    }
+    assert organization.drain_pending_note_intents(**SCOPE)["copied"] == 1
+    notes.close_connection()

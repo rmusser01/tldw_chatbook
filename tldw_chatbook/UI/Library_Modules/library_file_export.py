@@ -179,7 +179,11 @@ def export_destination_exists(destination: Path) -> bool:
 
 
 def write_export_text(
-    destination: Path, content: str, *, overwrite: bool = True
+    destination: Path,
+    content: str,
+    *,
+    overwrite: bool = True,
+    exact_source: bool = False,
 ) -> None:
     """Write ``content`` to ``destination`` atomically (same-directory temp + replace).
 
@@ -192,6 +196,7 @@ def write_export_text(
         destination: The file to write (already resolved through
             ``resolve_export_destination`` by the seam's callers).
         content: The text to write.
+        exact_source: Preserve newline bytes for source and portable exports.
         overwrite: ``False`` publishes no-clobber instead of replacing, so
             a file that appeared since the caller looked is never silently
             overwritten -- ``FileExistsError`` is raised and the caller
@@ -217,6 +222,7 @@ def write_export_text(
         preserve_existing_mode=True,
         privacy_safe_log=True,
         overwrite=overwrite,
+        newline="" if exact_source else None,
     )
 
 
@@ -350,6 +356,8 @@ def export_library_note_file(
     keywords_text: str,
     note_id: str,
     operation: Any,
+    *,
+    content_language: str | None = None,
 ) -> None:
     """Write (after a replace check) the note export ``LibraryScreen`` validated.
 
@@ -361,12 +369,13 @@ def export_library_note_file(
     Args:
         screen: The Library screen that owns the notes operation.
         validated_path: The destination, already through ``validate_path_simple``.
-        export_format: ``"markdown"`` or ``"text"`` (``build_note_export_content``).
+        export_format: Converter, source, or portable format supported by the builder.
         title: The note title captured when Export was pressed.
         content: The note body captured when Export was pressed.
         keywords_text: The note's keywords as a comma-separated string.
         note_id: The note's id.
         operation: The claimed ``LibraryNotesOperationState`` token.
+        content_language: Opaque nullable language captured with the note source.
     """
     from ...Library.library_notes_state import build_note_export_content
 
@@ -378,9 +387,19 @@ def export_library_note_file(
             write_export_text(
                 target,
                 build_note_export_content(
-                    title, content, keywords_text, note_id, export_format
+                    title,
+                    content,
+                    keywords_text,
+                    note_id,
+                    export_format,
+                    content_language=content_language,
                 ),
                 overwrite=overwrite,
+                **(
+                    {"exact_source": True}
+                    if export_format in {"source", "portable"}
+                    else {}
+                ),
             )
         except FileExistsError:
             raise  # the seam asks instead of overwriting a file that appeared

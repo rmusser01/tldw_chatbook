@@ -14,7 +14,8 @@
 - "Syntax errors never add a save veto."
 - "Run targeted checks only unless the user explicitly authorizes a full suite."
 - ADR required: yes. ADR path: `C/backlog/decisions/194-structured-note-language-and-local-editor-validation.md`; server ADR-031 and the F3 extension govern metadata transport.
-- Status: Not Started. No whole-editor replacement is approved. A failed history qualification returns a concrete proposal for review before adopting a replacement widget.
+- Server extension allocated during F2: `S/Docs/ADR/070-portable-note-language-and-negotiated-structured-editing.md` extends locked ADR-031 and governs the additive field and negotiated clear/private snapshots.
+- Status: In Progress. No whole-editor replacement is approved. A failed history qualification returns a concrete proposal for review before adopting a replacement widget.
 
 ## I1: Qualify formatting in native undo history
 
@@ -125,7 +126,7 @@ same-key control so a bridge that refuses every format cannot pass.
 
 **Dependencies:** F6, I2, I3.
 **Files C:** modify `tldw_chatbook/Widgets/Library/library_notes_canvas.py`, `tldw_chatbook/UI/Library_Modules/library_notes_controller.py`; add `Docs/User_Guide/structured-document-editing.md`, `Tests/UI/test_structured_note_export_actions.py`.
-**Files U:** modify `src/components/Notes/NotesEditorHeader.tsx`, `hooks/useNotesExport.tsx`; add `src/components/Notes/__tests__/NotesEditorHeader.structured-export.test.tsx`. Add corresponding server user-guide documentation in `S/Docs/User_Guide/structured-document-editing.md` under a server task.
+**Files U:** modify `src/components/Notes/NotesEditorHeader.tsx`, `hooks/useNotesExport.tsx`; add `src/components/Notes/__tests__/NotesEditorHeader.structured-export.test.tsx`. Add corresponding server user-guide documentation in `S/Docs/User_Guides/WebUI_Extension/Notes_Structured_Source.md` under a server task.
 **Interfaces:** F6 `buildStructuredSource` and `buildPortableNote`; C export controller invokes the equivalent existing archive/raw-export boundaries without adding formatting to either path.
 
 - [ ] Add action tests asserting Download source produces exactly `{"x":9007199254740993}\n` for a JSON note while Export note produces an envelope containing that exact string and language.

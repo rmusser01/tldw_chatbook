@@ -73,7 +73,12 @@ from ..Prompt_Management.prompt_chatbook_record import (
 from ..Utils.path_validation import validate_filename, validate_path_simple
 from ..Utils.paths import get_user_data_dir
 from ..Utils.private_paths import secure_private_directory
-from .chatbook_models import ChatbookManifest, ChatbookVersion, ContentType
+from .chatbook_models import (
+    ChatbookManifest,
+    ChatbookVersion,
+    ContentType,
+    validate_portable_note_record,
+)
 from .conflict_resolver import ConflictResolution, ConflictResolver
 from tldw_chatbook.Utils.timestamps import utc_now_iso
 
@@ -569,6 +574,12 @@ class ChatbookImporter:
                     manifest_data = self._strict_archive_json(manifest_bytes)
                 except (UnicodeDecodeError, json.JSONDecodeError):
                     raise ValueError("Invalid chatbook manifest.") from None
+                if not isinstance(manifest_data, dict):
+                    raise TypeError("Invalid chatbook manifest.")
+                try:
+                    ChatbookVersion(manifest_data.get("version"))
+                except (TypeError, ValueError):
+                    raise ValueError("Unsupported Chatbook format version.") from None
                 try:
                     manifest = ChatbookManifest.from_dict(manifest_data)
                 except CanvasArchiveValidationError:
@@ -645,6 +656,22 @@ class ChatbookImporter:
                                 "source_identity_mismatch"
                             )
 
+                if manifest.version is ChatbookVersion.V4:
+                    for item in manifest.content_items:
+                        if item.type is not ContentType.NOTE:
+                            continue
+                        member = by_name.get(item.file_path or "")
+                        if member is None or member.is_dir():
+                            raise ValueError("Portable note source is missing.")
+                        record = validate_portable_note_record(
+                            self._strict_archive_json(
+                                self._stream_member_bytes(
+                                    archive, member, maximum=_MAX_ARCHIVE_MEMBER_BYTES
+                                )
+                            )
+                        )
+                        if record.get("id") != item.id or record["title"] != item.title:
+                            raise ValueError("Portable note identity mismatch.")
                 self._preflight_canvas_origins(archive, by_name, manifest)
                 return manifest, manifest_data
         except (zipfile.BadZipFile, RuntimeError, OSError):
@@ -1164,6 +1191,7 @@ class ChatbookImporter:
                 ChatbookVersion.V1,
                 ChatbookVersion.V2,
                 ChatbookVersion.V3,
+                ChatbookVersion.V4,
             }:
                 status.add_warning(
                     f"Chatbook version {manifest.version.value} may not be fully compatible"
@@ -1463,7 +1491,7 @@ class ChatbookImporter:
                         conv_data = json.load(f)
 
                     graph_messages = None
-                    if manifest.version in {ChatbookVersion.V2, ChatbookVersion.V3}:
+                    if manifest.version in {ChatbookVersion.V2, ChatbookVersion.V3, ChatbookVersion.V4}:
                         if (
                             not isinstance(conv_data, dict)
                             or type(conv_id) is not str
@@ -2651,21 +2679,19 @@ class ChatbookImporter:
                     status.record_failure(ContentType.NOTE)
                     continue
 
-                # Parse markdown with frontmatter
-                with open(note_file, "r", encoding="utf-8") as f:
-                    content = f.read()
-
-                # Extract frontmatter if present
-                if content.startswith("---"):
-                    parts = content.split("---", 2)
-                    if len(parts) >= 3:
-                        # Parse frontmatter
-                        parts[1].strip()
-                        note_content = parts[2].strip()
+                portable = None
+                if manifest.version is ChatbookVersion.V4:
+                    with open(note_file, "r", encoding="utf-8", newline="") as handle:
+                        portable = validate_portable_note_record(json.load(handle))
+                    note_content = portable["content"]
+                else:
+                    with open(note_file, "r", encoding="utf-8") as handle:
+                        content = handle.read()
+                    if content.startswith("---"):
+                        parts = content.split("---", 2)
+                        note_content = parts[2].strip() if len(parts) >= 3 else content
                     else:
                         note_content = content
-                else:
-                    note_content = content
 
                 # Check for existing note with same title
                 note_title = note_item.title
@@ -2691,7 +2717,18 @@ class ChatbookImporter:
 
                 # Create note
                 # Note: keywords/tags are not stored in the notes table
-                new_note_id = db.add_note(title=note_title, content=note_content)
+                new_note_id = db.add_note(
+                    title=note_title,
+                    content=note_content,
+                    **(
+                        {"content_language": portable["content_language"]}
+                        if portable is not None
+                        else {}
+                    ),
+                )
+                if new_note_id and portable is not None:
+                    for keyword in portable.get("keywords", []):
+                        db.link_note_to_keyword(new_note_id, db.add_keyword(keyword))
 
                 if new_note_id:
                     status.record_success(ContentType.NOTE)

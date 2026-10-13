@@ -765,7 +765,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 80  # ADR-224 sargable timestamp normalization, then browse-order index.
+    _CURRENT_SCHEMA_VERSION = 81  # Canonical nullable note source language.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -7855,6 +7855,38 @@ DELETE FROM keywords
             if changed.rowcount != 1:
                 raise SchemaError("V76→V77 version update failed")
 
+    def _migrate_from_v80_to_v81(self, conn: sqlite3.Connection) -> None:
+        """Add canonical note language without rewriting historical source."""
+        self._require_migration_entry_version(conn, 80, "V80→V81")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v80_to_v81_note_content_language.sql"
+        )
+        with self.transaction() as cursor:
+            if "content_language" not in {
+                row["name"] for row in cursor.execute("PRAGMA table_info(notes)")
+            }:
+                cursor.execute("ALTER TABLE notes ADD COLUMN content_language TEXT")
+            migration_sql = migration_path.read_text(encoding="utf-8").replace(
+                "ALTER TABLE notes ADD COLUMN content_language TEXT;", ""
+            )
+            self._execute_migration_statements(cursor, migration_sql, "V80→V81")
+            cursor.execute(
+                "UPDATE db_schema_version SET version = 81 WHERE schema_name = ? AND version = 80",
+                (self._SCHEMA_NAME,),
+            )
+
+    @staticmethod
+    def _validate_note_content_language(value: object) -> None:
+        """Keep future mode identifiers opaque within the metadata boundary."""
+        if value is not None and (
+            not isinstance(value, str) or not 1 <= len(value) <= 100
+        ):
+            raise InputError(
+                "content_language must be null or a string of 1 to 100 characters."
+            )
+
     def _migrate_from_v72_to_v73(self, conn: sqlite3.Connection) -> None:
         """Persist the note-link relation and backfill it from existing bodies."""
 
@@ -8375,6 +8407,7 @@ DELETE FROM keywords
                     77: self._migrate_from_v77_to_v78,
                     78: self._migrate_from_v78_to_v79,
                     79: self._migrate_from_v79_to_v80,
+                    80: self._migrate_from_v80_to_v81,
                 }
 
                 if current_db_version == 0:
@@ -18063,29 +18096,32 @@ DELETE FROM keywords
         title: str,
         content: str,
         note_id: Optional[str] = None,
+        content_language: str | None = None,
     ) -> str:
         """Insert one note through a caller-owned Notes transaction."""
 
-        if not title or not title.strip():
-            raise InputError("Note title cannot be empty.")
+        if not isinstance(title, str) or not title.strip() or len(title) > 255:
+            raise InputError("Note title must be nonblank and at most 255 characters.")
         if content is None:  # Allow empty string for content
             raise InputError("Note content cannot be None.")
 
+        self._validate_note_content_language(content_language)
         final_note_id = note_id or self._generate_uuid()
         now = self._get_current_utc_timestamp_iso()
         client_id_to_use = self.client_id  # Notes use the instance's client_id directly
 
         query = """
-            INSERT INTO notes (id, title, content, last_modified, client_id, version, deleted, created_at)
-            VALUES (?, ?, ?, ?, ?, 1, 0, ?)
+            INSERT INTO notes (id, title, content, last_modified, client_id, version, deleted, created_at, content_language)
+            VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)
         """
         params = (
             final_note_id,
-            title.strip(),
+            title,
             content,
             now,
             client_id_to_use,
             now,
+            content_language,
         )  # created_at is also now
 
         cursor.execute(query, params)
@@ -18099,6 +18135,7 @@ DELETE FROM keywords
         content: str,
         note_id: Optional[str] = None,
         *,
+        content_language: str | None = None,
         cursor: sqlite3.Cursor | None = None,
     ) -> Optional[str]:
         try:
@@ -18113,6 +18150,7 @@ DELETE FROM keywords
                     title=title,
                     content=content,
                     note_id=note_id,
+                    content_language=content_language,
                 )
         except sqlite3.IntegrityError as e:
             if "unique constraint failed: notes.id" in str(e).lower():
@@ -18200,8 +18238,12 @@ DELETE FROM keywords
             )
         return result.rowcount == 1
 
-    def get_note_by_id(self, note_id: str) -> Optional[Dict[str, Any]]:
-        query = "SELECT * FROM notes WHERE id = ? AND deleted = 0"
+    def get_note_by_id(
+        self, note_id: str, *, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        query = "SELECT * FROM notes WHERE id = ?"
+        if not include_deleted:
+            query += " AND deleted = 0"
         cursor = self.execute_query(query, (note_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
@@ -19565,16 +19607,19 @@ DELETE FROM keywords
         fields_to_update_sql = []
         params_for_set_clause = []
 
-        allowed_to_update = ["title", "content"]
+        if "content_language" in update_data:
+            self._validate_note_content_language(update_data["content_language"])
+        if "title" in update_data:
+            title = update_data["title"]
+            if not isinstance(title, str) or not title.strip() or len(title) > 255:
+                raise InputError(
+                    "Note title must be nonblank and at most 255 characters."
+                )
+        allowed_to_update = ["title", "content", "content_language"]
         for key, value in update_data.items():
             if key in allowed_to_update:
                 fields_to_update_sql.append(f"{key} = ?")
-                # Title might need stripping, content is as-is
-                params_for_set_clause.append(
-                    value.strip()
-                    if key == "title" and isinstance(value, str)
-                    else value
-                )
+                params_for_set_clause.append(value)
             elif key not in [
                 "id",
                 "created_at",

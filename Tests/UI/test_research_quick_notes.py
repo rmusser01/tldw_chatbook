@@ -5,7 +5,8 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Input, Markdown, Static, TextArea
+from textual.widgets import Button, Input, Static, TextArea
+from textual.containers import VerticalScroll
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Research_Workspace import (
@@ -80,7 +81,7 @@ async def test_studio_mounts_compose_once_quick_notes_parity_controls() -> None:
             "Previous",
             "Next",
             "Edit",
-            "Markdown Preview",
+            "Source preview",
             "Save",
             "Delete",
             "Download .md",
@@ -126,7 +127,7 @@ async def test_quick_note_load_preview_clear_and_undo_patch_in_place() -> None:
         section.query_one("#research-quick-note-preview-mode", Button).press()
         await pilot.pause()
         assert not body.display
-        assert section.query_one("#research-quick-note-preview", Markdown).display
+        assert section.query_one("#research-quick-note-preview", VerticalScroll).display
 
         section.query_one("#research-quick-note-edit-mode", Button).press()
         section.query_one("#research-quick-note-clear", Button).press()
@@ -824,3 +825,249 @@ async def test_switch_and_conflict_recovery_modals_offer_no_force_overwrite() ->
         labels = {str(button.label) for button in app.screen.query(Button)}
         assert labels == {"Reload", "Copy as new", "Cancel"}
         assert not any("overwrite" in label.lower() for label in labels)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source",
+    [
+        "**Markdown**  \n",
+        "---\na: &anchor value\nb: *anchor\n",
+        '{"text":"a&b <tag>","n":9007199254740993}',
+        '{\r\n"a":1\r\n}',
+        '{\r"a":1\r}',
+    ],
+)
+async def test_secondary_source_preview_keeps_exact_canonical_body(source):
+    from dataclasses import replace
+
+    from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
+        ResearchQuickNotesSection,
+    )
+
+    app = _StudioHarness()
+    async with app.run_test(size=(72, 44)) as pilot:
+        section = app.screen.query_one(ResearchQuickNotesSection)
+        section.sync_note(replace(note(), content=source))
+        button = section.query_one("#research-quick-note-preview-mode", Button)
+        assert str(button.label) == "Source preview"
+        button.press()
+        await pilot.pause()
+        preview = section.query_one(
+            "#research-quick-note-preview", VerticalScroll
+        ).query_one(Static)
+        assert str(preview.renderable) == source
+        section.query_one("#research-quick-note-edit-mode", Button).press()
+        await pilot.pause()
+        assert section.query_one("#research-quick-note-body", TextArea).text == source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source", ['{\r\n"a":1\n}', "# Title\r\n[bold]source[/bold]\n"]
+)
+async def test_secondary_mixed_source_fence_survives_queued_changes_and_navigation(
+    source,
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
+        ResearchQuickNotesSection,
+    )
+
+    app = _StudioHarness()
+    async with app.run_test(size=(72, 44)) as pilot:
+        section = app.screen.query_one(ResearchQuickNotesSection)
+        section.sync_note(replace(note(), content=source))
+        body = section.query_one("#research-quick-note-body", TextArea)
+        section.query_one("#research-quick-note-preview-mode", Button).press()
+        await pilot.pause()
+        preview = section.query_one("#research-quick-note-preview", VerticalScroll)
+        assert str(preview.query_one(Static).renderable) == source
+        assert body.read_only
+        assert section.query_one("#research-quick-note-edit-mode", Button).disabled
+        assert section.query_one("#research-quick-note-clear", Button).disabled
+        assert "Unsupported native representation" in str(
+            section.query_one("#research-quick-note-status", Static).renderable
+        )
+        assert not section.is_dirty
+        native_before = body.text
+        body.action_delete_right()
+        assert body.text == native_before
+        section.show_edit()
+        assert preview.display and not body.display
+        section.clear_editor()
+        assert section.capture_save_request()[1].content == source
+
+        # A queued/programmatic native change has no authority over fenced source.
+        body.text = "unsafe queued body"
+        body.post_message(TextArea.Changed(body))
+        section.query_one("#research-quick-note-title", Input).value = "Title only"
+        await pilot.pause()
+        section.show_preview()
+        assert str(preview.query_one(Static).renderable) == source
+        assert section.capture_save_request()[1].content == source
+        assert section.is_dirty
+
+        old_change = TextArea.Changed(body)
+        section.sync_workspace(SERVER_REF)
+        section.sync_note(
+            replace(note(SERVER_REF, note_id="supported"), content="Fresh")
+        )
+        body.post_message(old_change)
+        await pilot.pause()
+        assert not body.read_only
+        assert not section.query_one("#research-quick-note-edit-mode", Button).disabled
+        assert not section.query_one("#research-quick-note-clear", Button).disabled
+        assert "Unsupported native representation" not in str(
+            section.query_one("#research-quick-note-status", Static).renderable
+        )
+        section.show_edit()
+        body.focus()
+        body.move_cursor((0, 5))
+        await pilot.press("x")
+        section.show_preview()
+        assert str(preview.query_one(Static).renderable) == "Freshx"
+        captured_ref, request = section.capture_save_request()
+        assert captured_ref == SERVER_REF
+        assert request.note_id == "supported"
+        assert request.content == "Freshx"
+
+        section.sync_note(replace(note(SERVER_REF), content=source))
+        assert body.read_only
+        section.new_draft()
+        assert not body.read_only
+        assert section.capture_save_request()[1].content == ""
+        assert not section.is_dirty
+
+
+@pytest.mark.asyncio
+async def test_secondary_source_fence_real_sqlite_title_save_and_supported_edit(
+    tmp_path,
+):
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Notes.Notes_Library import NotesInteropService
+    from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+    from tldw_chatbook.Research_Workspace import ResearchNoteSaveRequest
+    from tldw_chatbook.Research_Workspace.local_adapter import (
+        LocalResearchWorkspaceAdapter,
+    )
+    from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
+        ResearchQuickNotesSection,
+    )
+    from tldw_chatbook.UI.Screens.research_workspace_screen import (
+        ResearchWorkspaceScreen,
+    )
+    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
+
+    notes_db = CharactersRAGDB(str(tmp_path / "notes.sqlite"), client_id="fix1")
+    registry_db = WorkspaceDB(tmp_path / "workspace.sqlite", client_id="fix1")
+    interop = None
+    try:
+        interop = NotesInteropService(
+            base_db_directory=tmp_path,
+            api_client_id="fix1",
+            global_db_to_use=notes_db,
+        )
+        notes_scope = NotesScopeService(
+            local_notes_service=interop,
+            server_service=None,
+            policy_enforcer=None,
+        )
+        registry = LocalWorkspaceRegistryService(registry_db)
+        registry.create_workspace(workspace_id=LOCAL_REF.workspace_id, name="Research")
+        adapter = LocalResearchWorkspaceAdapter(
+            registry, notes_scope_service=notes_scope, notes_user_id="fix1-user"
+        )
+        source = '{\r\n"a":1\n}'
+        created = await adapter.save_note(
+            LOCAL_REF, ResearchNoteSaveRequest(title="Mixed", content=source)
+        )
+        await notes_scope.save_note(
+            scope="local_note",
+            user_id="fix1-user",
+            note_id=created.note_id,
+            title="Mixed",
+            content=source,
+            content_language="json",
+            version=created.version,
+            keywords=(),
+        )
+        loaded = await adapter.get_note(LOCAL_REF, created.note_id)
+        assert loaded is not None
+        controller = ResearchWorkspaceController({WorkspaceDataSource.LOCAL: adapter})
+        screen = ResearchWorkspaceScreen(SimpleNamespace(), controller=controller)
+        app = _ResearchHarness(screen)
+        async with app.run_test(size=(160, 44)) as pilot:
+            for _ in range(60):
+                await pilot.pause(0.02)
+                if controller.visible_note_page is not None:
+                    break
+            assert controller.selected_ref == LOCAL_REF
+            section = screen.query_one(ResearchQuickNotesSection)
+            section.sync_note(loaded)
+            section.query_one("#research-quick-note-title", Input).value = "Title saved"
+            # Capture before Changed delivery as the host does on save/navigation.
+            assert section.capture_save_request()[1].content == source
+            section.query_one("#research-quick-note-save", Button).press()
+            for _ in range(60):
+                await pilot.pause(0.02)
+                if not section.is_dirty:
+                    break
+            canonical = await notes_scope.get_note_detail(
+                scope="local_note", user_id="fix1-user", note_id=created.note_id
+            )
+            assert canonical["title"] == "Title saved"
+            assert canonical["content"] == source
+            assert canonical["content_language"] == "json"
+            assert canonical["version"] == loaded.version + 1
+            body = section.query_one("#research-quick-note-body", TextArea)
+            body.text = "queued normalized draft has no source authority"
+            section.query_one("#research-quick-note-title", Input).value = (
+                "Navigation saved"
+            )
+            assert await screen.flush_pending_work()
+            canonical = await notes_scope.get_note_detail(
+                scope="local_note", user_id="fix1-user", note_id=created.note_id
+            )
+            assert canonical["title"] == "Navigation saved"
+            assert canonical["content"] == source
+            assert canonical["content_language"] == "json"
+            assert canonical["version"] == loaded.version + 2
+
+            supported = await adapter.save_note(
+                LOCAL_REF,
+                ResearchNoteSaveRequest(title="Supported", content="**Markdown**"),
+            )
+            section.sync_note(supported)
+            section.show_edit()
+            body = section.query_one("#research-quick-note-body", TextArea)
+            assert not body.read_only
+            body.focus()
+            body.move_cursor((0, len(body.text)))
+            await pilot.press("!")
+            section.show_preview()
+            assert (
+                str(
+                    section.query_one("#research-quick-note-preview", VerticalScroll)
+                    .query_one(Static)
+                    .renderable
+                )
+                == "**Markdown**!"
+            )
+            section.query_one("#research-quick-note-save", Button).press()
+            for _ in range(60):
+                await pilot.pause(0.02)
+                if not section.is_dirty:
+                    break
+            canonical = await notes_scope.get_note_detail(
+                scope="local_note", user_id="fix1-user", note_id=supported.note_id
+            )
+            assert canonical["content"] == "**Markdown**!"
+            assert canonical["version"] == supported.version + 1
+    finally:
+        if interop is not None:
+            interop.close_all_user_connections()
+        registry_db.close()
+        notes_db.close_connection()

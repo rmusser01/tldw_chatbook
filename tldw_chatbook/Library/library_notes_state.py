@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -55,6 +56,7 @@ class NormalizedDatabaseNote:
     version: int
     created_at: str
     modified_at: str
+    content_language: str | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,7 @@ class DatabaseNoteDraft:
     body: str
     keywords_text: str
     revision: int
+    content_language: str | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +87,7 @@ class DatabaseNoteSavePayload:
     body: str
     keywords: tuple[str, ...]
     revision: int
+    content_language: str | None = None
 
 
 @dataclass(frozen=True)
@@ -279,6 +283,7 @@ def validate_database_note_draft(
         body=body,
         keywords=tuple(keywords),
         revision=draft.revision,
+        content_language=draft.content_language,
     )
 
 
@@ -888,6 +893,7 @@ def build_note_export_content(
     export_format: str,
     *,
     now: datetime | None = None,
+    content_language: str | None = None,
 ) -> str:
     """Render a note's export text, mirroring the retired standalone Notes screen's export builder.
 
@@ -900,7 +906,9 @@ def build_note_export_content(
         note_id: The note's id, interpolated as-is (``str()``-coerced by
             the format strings below).
         export_format: ``"markdown"`` for the frontmatter + ``# title``
-            shape; any other value renders the plain-text shape.
+            shape; "source" returns the exact body and "portable" returns the
+            validated tldw.note.v1 carrier; "text" renders the plain-text shape.
+        content_language: Captured canonical metadata for portable export.
         now: Timestamp to stamp the export with. Defaults to
             ``datetime.now()`` (naive, local time) -- matching the
             original's un-timezoned stamp -- so callers can pin it in tests.
@@ -908,6 +916,27 @@ def build_note_export_content(
     Returns:
         The rendered export text.
     """
+    if export_format == "source":
+        return content
+    if export_format == "portable":
+        from tldw_chatbook.Chatbooks.chatbook_models import (
+            PORTABLE_NOTE_FORMAT_VERSION,
+            validate_portable_note_record,
+        )
+
+        record = validate_portable_note_record(
+            {
+                "format_version": PORTABLE_NOTE_FORMAT_VERSION,
+                "id": note_id,
+                "title": title,
+                "content": content,
+                "content_language": content_language,
+                "keywords": [
+                    word.strip() for word in keywords_text.split(",") if word.strip()
+                ],
+            }
+        )
+        return json.dumps(record, ensure_ascii=False, indent=2)
     current_title = (title or "").strip() or "Untitled Note"
     timestamp = (now if now is not None else datetime.now()).strftime(
         "%Y-%m-%d %H:%M:%S"

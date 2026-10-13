@@ -466,3 +466,58 @@ async def test_a_second_open_supersedes_the_older_locator_not_its_own_load(tmp_p
                 )
     finally:
         db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_real_library_wiring_recovers_exact_source_and_language(
+    real_notes_app, monkeypatch
+):
+    from tldw_chatbook.Library.library_notes_session import (
+        DatabaseNoteSessionCoordinator,
+        NoteFlushOutcomeKind,
+    )
+
+    app, note_id = real_notes_app
+    screen = library_screen_module.LibraryScreen(app)
+    owner = screen._library_note_session
+    await owner.open_session(note_id)
+    assert owner._recovery is not None
+    assert owner._recovery_scope.principal == app.notes_user_id
+    assert owner._recovery_scope.workspace is None
+    original_save = app.notes_scope_service.save_note
+
+    async def reject_empty(**kwargs):
+        if kwargs["content"] == "":
+            raise ValueError("Empty body rejected")
+        return await original_save(**kwargs)
+
+    monkeypatch.setattr(app.notes_scope_service, "save_note", reject_empty)
+    owner.mutate(body="", content_language="future-mode")
+    assert (await owner.flush()).kind is NoteFlushOutcomeKind.PERMITTED
+    assert owner.close_session()
+    reopened = DatabaseNoteSessionCoordinator(
+        owner._port,
+        recovery=app.notes_sync_runtime_owner.draft_recovery,
+        recovery_scope=owner._recovery_scope,
+    )
+    await reopened.open_session(note_id)
+    assert (reopened.snapshot.draft.body, reopened.snapshot.draft.content_language) == (
+        "",
+        "future-mode",
+    )
+    assert reopened.snapshot.baseline.body == NOTE_BODY
+    reopened.mutate(body="<>&\n雪")
+    await reopened.request_save(explicit=True)
+    stored = app.notes_service.get_note_by_id(app.notes_user_id, note_id)
+    assert (stored["content"], stored["content_language"]) == ("<>&\n雪", "future-mode")
+    assert await owner._recovery.load(owner._recovery_scope, note_id) is None
+    from tldw_chatbook.Library.library_notes_session import NoteSaveOutcomeKind
+
+    reopened.mutate(body="pending before account change")
+    app.notes_user_id = "another-local-principal"
+    assert (
+        await reopened.request_save(explicit=True)
+    ).kind is NoteSaveOutcomeKind.FAILED
+    pending = await owner._recovery.load(owner._recovery_scope, note_id)
+    assert pending[0].body == "pending before account change"
+    await app.notes_sync_runtime_owner.shutdown()

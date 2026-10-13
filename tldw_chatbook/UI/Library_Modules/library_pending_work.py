@@ -11,8 +11,10 @@ awaited ``flush_pending_work``.
   Database note session, prompt and skill drafts -- so a quit persists what
   a tab switch would. After a clean flush it also waits, bounded, for the
   lasting-sync pass that flush hinted, so a synced note's file holds the last
-  edit when the app exits. When the flush is vetoed (validation, conflict, a
-  failed write), raises, or outlasts its wait, it asks
+  edit when the app exits. A canonical save refusal may still permit
+  exit after the coordinator proves its exact draft is durably kept locally.
+  When the flush cannot save or retain the draft, conflicts, raises, or
+  outlasts its wait, it asks
   'Quit and discard unsaved changes to "<title>"?' through the quit flow's
   one prompt choke point, ``await_quit_prompt`` (TASK-33622.10), with Keep
   editing as the default. It never exits silently past unsaved work.
@@ -196,8 +198,12 @@ async def _settle_lasting_sync(screen: LibraryScreen) -> None:
     delays the quit by that much at most and is never cancelled mid-write.
     With nothing in flight it returns at once.
     """
-    runtime = getattr(
-        getattr(screen, "app_instance", None), "notes_sync_runtime_owner", None
+    app = getattr(screen, "app_instance", None)
+    safe_reader = getattr(app, "_read_notes_sync_runtime_owner_safe", None)
+    runtime = (
+        safe_reader()
+        if callable(safe_reader)
+        else getattr(app, "notes_sync_runtime_owner", None)
     )
     if runtime is None:
         return
@@ -210,8 +216,8 @@ async def _flush_for_quit(screen: LibraryScreen) -> str | None:
     """Run the screen's pending-work flush, bounded like navigation's.
 
     Returns:
-        None when everything was persisted; otherwise the sentence the quit
-        prompt opens with.
+        None when work was saved or its exact draft retained locally; otherwise
+        the sentence the quit prompt opens with.
     """
     task = asyncio.ensure_future(screen.flush_pending_work(quitting=True))
     _retain(task)

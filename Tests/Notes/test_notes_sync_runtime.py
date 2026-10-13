@@ -4154,3 +4154,30 @@ async def test_start_failure_records_a_bounded_diagnostic(tmp_path: Path) -> Non
     assert "legacy migration" in logged
     assert "RuntimeError" in logged
     assert "/private/path/leaks/here" not in logged
+
+
+@pytest.mark.asyncio
+async def test_draft_recovery_is_inert_and_participates_in_shutdown(tmp_path):
+    from tldw_chatbook.Library.library_notes_state import DatabaseNoteDraft
+    from tldw_chatbook.Notes.note_draft_recovery import NoteDraftScope
+
+    path = tmp_path / "draft-device.db"
+    store = NotesDeviceStateStore(path)
+    owner, coordinator, watcher = _owner(
+        store=store, admitted=True, adapter=_Adapter([])
+    )
+    recovery = owner.draft_recovery
+    assert not path.exists()
+    scope = NoteDraftScope("profile", "alice", None)
+    draft = DatabaseNoteDraft("n", "Title", "", "", 1, "yaml")
+    await recovery.save(scope, draft, 1)
+    assert not watcher.started.is_set()
+    assert coordinator.acquire_calls == 0
+    await owner.shutdown()
+    with pytest.raises(RuntimeError, match="shutting down"):
+        await recovery.save(scope, draft, 1)
+    reopened = NotesDeviceStateStore(path)
+    from tldw_chatbook.Notes.note_draft_recovery import NoteDraftRecovery
+
+    assert await NoteDraftRecovery(reopened).load(scope, "n") == (draft, 1)
+    reopened.close()

@@ -319,6 +319,7 @@ from tldw_chatbook.Writing_Interop import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Document_Editing.worker import DocumentWorker
     from tldw_chatbook.Library.collections_capture_models import (
         ExternalMediaReference,
         ExternalNoteReference,
@@ -844,6 +845,11 @@ class ServiceWiringMixin:
     through ``self``, and it lists this class before ``App`` in its bases.
     """
 
+    _document_worker: "DocumentWorker | None"
+    _document_worker_closed: bool
+    _shutting_down: bool
+    _exit: bool
+
     @property
     def terminal_session_manager(self) -> "TerminalSessionManager":
         """Return the single app-owned Terminal manager, creating it on use.
@@ -987,6 +993,21 @@ class ServiceWiringMixin:
             watcher_interval_seconds=notes_sync_watcher_interval,
             watcher_max_interval_seconds=notes_sync_watcher_max_interval,
         )
+
+    @property
+    def document_worker(self) -> "DocumentWorker | None":
+        """Build one document lane on first editor use, never after shutdown."""
+        worker = self._document_worker
+        if (
+            worker is None
+            and not self._document_worker_closed
+            and not self._shutting_down
+            and not self._exit
+        ):
+            from .Document_Editing.worker import DocumentWorker
+
+            worker = self._document_worker = DocumentWorker()
+        return worker
 
     @property
     def notes_sync_runtime_owner(self) -> "NotesSyncRuntimeOwner":

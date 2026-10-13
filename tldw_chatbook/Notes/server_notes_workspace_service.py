@@ -172,6 +172,11 @@ class ServerNotesWorkspaceService:
             "id": note.get("id"),
             "title": note.get("title") or "",
             "content": note.get("content") or "",
+            **(
+                {"content_language": note["content_language"]}
+                if "content_language" in note
+                else {}
+            ),
             "keywords": self._normalize_keywords(note.get("keywords")),
             "version": int(note.get("version") or 1),
         }
@@ -232,12 +237,14 @@ class ServerNotesWorkspaceService:
         title: str,
         content: str,
         note_id: Optional[str] = None,
+        content_language: Any = _UNSET,
         keywords: Optional[Sequence[str]] = None,
     ) -> NoteCreateRequest:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import NoteCreateRequest
 
         return NoteCreateRequest(
+            **self._with_optional_update_fields(content_language=content_language),
             id=note_id,
             title=title,
             content=content,
@@ -249,12 +256,15 @@ class ServerNotesWorkspaceService:
         *,
         title: Any = _UNSET,
         content: Any = _UNSET,
+        content_language: Any = _UNSET,
         keywords: Any = _UNSET,
     ) -> NoteUpdateRequest:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import NoteUpdateRequest
 
-        payload = self._with_optional_update_fields(title=title, content=content)
+        payload = self._with_optional_update_fields(
+            title=title, content=content, content_language=content_language
+        )
         if keywords is not _UNSET and keywords is not None:
             payload["keywords"] = self._normalize_keywords(keywords)
         return NoteUpdateRequest(**payload)
@@ -492,6 +502,7 @@ class ServerNotesWorkspaceService:
         title: Any = _UNSET,
         content: Any = _UNSET,
         note_id: Optional[str] = None,
+        content_language: Any = _UNSET,
         keywords: Any = _UNSET,
         version: Optional[int] = None,
     ) -> dict[str, Any]:
@@ -502,11 +513,32 @@ class ServerNotesWorkspaceService:
             )
         )
         client = self._require_client()
+        runtime_context = getattr(self.client_provider, "runtime_context", None)
+        runtime_snapshot = (
+            runtime_context.snapshot() if runtime_context is not None else None
+        )
+        if content_language is not _UNSET:
+            capability = await client.get_notes_language_capability()
+            if self._require_client() is not client or (
+                runtime_context is not None
+                and runtime_context.snapshot() != runtime_snapshot
+            ):
+                raise ValueError(
+                    "Server note client changed during language admission."
+                )
+            if not capability.available:
+                if capability.reason == "unsupported_server":
+                    raise ValueError("Server does not support content language writes.")
+                raise ValueError(
+                    "Cannot verify server content language support; "
+                    "check the connection and sign-in, then retry Save."
+                )
         if note_id:
             if version is None:
                 raise ValueError("Version is required when updating a server note.")
             request = self.build_server_note_update_payload(
                 title=title,
+                content_language=content_language,
                 content=content,
                 keywords=keywords,
             )
@@ -520,12 +552,33 @@ class ServerNotesWorkspaceService:
                 title=self._require_value(title, "title"),
                 content=self._require_value(content, "content"),
                 note_id=note_id,
+                content_language=content_language,
                 keywords=None if keywords is _UNSET else keywords,
             )
             response = await client.create_server_note(request)
-        return self.normalize_server_note(
-            self._coerce_resource(response, "note", "item")
-        )
+        if content_language is not _UNSET and (
+            self._require_client() is not client
+            or (
+                runtime_context is not None
+                and runtime_context.snapshot() != runtime_snapshot
+            )
+        ):
+            raise ValueError("Server note client changed before acknowledgement.")
+        saved = self._coerce_resource(response, "note", "item")
+        if content_language is not _UNSET and (
+            "content_language" not in saved
+            or saved["content_language"] != content_language
+            or (content is not _UNSET and saved.get("content") != content)
+            or not saved.get("id")
+            or (note_id is not None and saved["id"] != note_id)
+            or type(saved.get("version")) is not int
+            or saved["version"] < 1
+            or (version is not None and saved["version"] <= version)
+        ):
+            raise ValueError(
+                "Server did not acknowledge the exact source and language."
+            )
+        return self.normalize_server_note(saved)
 
     async def delete_server_note(self, note_id: str, version: int) -> dict[str, Any]:
         self._enforce_policy(self._note_action_id("delete", "server"))

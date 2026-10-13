@@ -1049,7 +1049,7 @@ with stray left-edge border fragments), and padding 0 1 so the full
     min-height: $ds-size-0;
     margin: $ds-space-0;
     overflow-x: hidden;
-    overflow-y: hidden;
+    overflow-y: auto;
 }
 
 #library-shell-grid.library-notes-compact #library-note-title-row,

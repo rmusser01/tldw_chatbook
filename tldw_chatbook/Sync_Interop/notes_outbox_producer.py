@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Mapping
 
 from tldw_chatbook.Sync_Interop.envelope_builder import SyncEnvelopeBuilder
-from tldw_chatbook.Sync_Interop.sync_state import is_local_first_sync_profile_mode
+from tldw_chatbook.Sync_Interop.sync_state import (
+    NOTE_LANGUAGE_UNSET,
+    is_local_first_sync_profile_mode,
+)
 
 
 class NotesSyncV2OutboxProducer:
@@ -29,6 +33,54 @@ class NotesSyncV2OutboxProducer:
         self.state_repository = state_repository
         self.dataset_keys = dataset_keys if dataset_keys is not None else {}
         self.notes_db = notes_db
+
+    def capture_note_intent(
+        self,
+        *,
+        cursor: Any,
+        note: Mapping[str, Any],
+        server_profile_id: str,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        base_version: int | None,
+    ) -> None:
+        """Capture source/language/version inside the canonical mutation transaction."""
+        profile = self.state_repository.get_sync_v2_profile_state(
+            server_profile_id=server_profile_id,
+            authenticated_principal_id=authenticated_principal_id,
+            workspace_scope=workspace_scope,
+        )
+        if (
+            profile is None
+            or not is_local_first_sync_profile_mode(profile.get("profile_mode"))
+            or not profile.get("dataset_id")
+        ):
+            return
+        from tldw_chatbook.Sync_Interop.notes_organization_sync_service import (
+            NotesOrganizationSyncService,
+        )
+
+        snapshot = json.dumps(
+            {
+                key: note[key]
+                for key in ("id", "title", "content", "content_language", "version")
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        NotesOrganizationSyncService._insert_note_sync_intent(
+            cursor,
+            note,
+            intent_id=f"notes-local:{server_profile_id}:{profile['dataset_id']}:{note['id']}:{note['version']}",
+            server_profile_id=server_profile_id,
+            dataset_id=str(profile["dataset_id"]),
+            base_version=base_version,
+            request_fingerprint=hashlib.sha256(snapshot.encode("utf-8")).hexdigest(),
+            source_scope={
+                "authenticated_principal_id": authenticated_principal_id,
+                "workspace_scope": workspace_scope,
+            },
+        )
 
     @staticmethod
     def build_organization_envelope(
@@ -73,6 +125,7 @@ class NotesSyncV2OutboxProducer:
         note_id: str,
         title: str,
         content: str,
+        content_language: Any = NOTE_LANGUAGE_UNSET,
         status: str | None = None,
         tag_ids: list[str] | None = None,
         base_version: str | int | None = None,
@@ -113,10 +166,14 @@ class NotesSyncV2OutboxProducer:
             return profile
 
         builder = self._builder(profile)
+        if content_language is not NOTE_LANGUAGE_UNSET:
+            # Local ciphertext preparation is not peer negotiation or publication.
+            builder.notes_adapter_versions = {"notes": [2]}
         envelope = builder.build_note_upsert(
             note_id=note_id,
             title=title,
             body=content,
+            content_language=content_language,
             status=status,
             tag_ids=tag_ids,
             base_version=base_version,
@@ -126,13 +183,32 @@ class NotesSyncV2OutboxProducer:
             envelope = envelope.model_copy(
                 update={"client_envelope_id": str(publication_intent_id)}
             )
-        return self._enqueue(
+        result = self._enqueue(
             profile=profile,
             server_profile_id=server_profile_id,
             authenticated_principal_id=authenticated_principal_id,
             workspace_scope=workspace_scope,
             envelope=envelope,
         )
+        if content_language is not NOTE_LANGUAGE_UNSET and 2 not in profile.get(
+            "writable_adapter_versions", {}
+        ).get("notes", []):
+            self.state_repository.mark_sync_v2_outbox_push_results(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                dataset_id=str(profile["dataset_id"]),
+                accepted=[],
+                conflicts=[],
+                rejected=[
+                    {
+                        "client_envelope_id": envelope.client_envelope_id,
+                        "error_code": "notes_language_upgrade_required",
+                    }
+                ],
+            )
+            result["reason"] = "notes_language_upgrade_required"
+        return result
 
     def enqueue_note_delete(
         self,
@@ -229,6 +305,9 @@ class NotesSyncV2OutboxProducer:
             "device_id": str(device_id),
             "dataset_id": str(dataset_id),
             "dataset_key": dataset_key,
+            "writable_adapter_versions": (profile.get("capabilities") or {}).get(
+                "writable_adapter_versions", {}
+            ),
         }
 
     @staticmethod

@@ -507,3 +507,30 @@ def test_raw_manifest_lists_are_bounded_before_child_record_parsing() -> None:
     with pytest.raises(CanvasArchiveValidationError) as hints_error:
         CanvasArchiveManifest.from_dict(extension)
     assert hints_error.value.code == "too_many_reopen_hints"
+
+
+@pytest.mark.parametrize(
+    "raw,canonical",
+    [
+        ("1.0", "1.0"),
+        ("1.0.0", "1.0"),
+        ("1.1.0", "1.0"),
+        ("2.0", "2.0"),
+        ("3.0", "3.0"),
+        ("4.0", "4.0"),
+    ],
+)
+def test_archive_version_aliases_keep_exact_canonical_values(raw, canonical):
+    from tldw_chatbook.Chatbooks.chatbook_models import ChatbookVersion
+
+    assert ChatbookVersion(raw).value == canonical
+
+
+@pytest.mark.parametrize(
+    "raw", [None, True, 1, "1.2.0", "2.0.0", "4.0.0", ["1.0.0"], {"version": "1.0.0"}]
+)
+def test_archive_version_constructor_refuses_unknown_or_non_string_values(raw):
+    from tldw_chatbook.Chatbooks.chatbook_models import ChatbookVersion
+
+    with pytest.raises(ValueError):
+        ChatbookVersion(raw)

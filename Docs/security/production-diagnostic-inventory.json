@@ -5045,6 +5045,15 @@
           "status": "legacy_unreviewed"
         },
         {
+          "call_digest": "19ae6dd20a0316d9",
+          "method": "info",
+          "path_expressions": [
+            "manifest.version"
+          ],
+          "scope": "ChatbookCreator.create_chatbook",
+          "status": "legacy_unreviewed"
+        },
+        {
           "call_digest": "601a4cd8c5ea412b",
           "method": "info",
           "path_expressions": [
