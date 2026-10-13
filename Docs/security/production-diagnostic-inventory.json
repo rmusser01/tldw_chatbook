@@ -386,6 +386,13 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+      "call_count": 3,
+      "diagnostic_digest": "acbfa0ec699afc92ed3e",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/console_branch_cursor.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
       "call_count": 1,
       "diagnostic_digest": "11d08c1c87ded662897f",
       "owner": "TASK-492",
@@ -407,8 +414,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 92,
-      "diagnostic_digest": "5e8bbb0cfc39d651b664",
+      "call_count": 87,
+      "diagnostic_digest": "493d8d83864d8a0f2472",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_chat_store.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -582,6 +589,13 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
+      "call_count": 2,
+      "diagnostic_digest": "0147ee3d5f4eecf1ecbb",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/console_stream_persistence.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
       "call_count": 3,
       "diagnostic_digest": "e30df0537ffd268e87c4",
       "owner": "TASK-492",
@@ -656,6 +670,20 @@
       "diagnostic_digest": "df383cb2ba0b9d2a3378",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/reply_sentence_sequencer.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "e78dd2133fc5d0399399",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/response_rules/resources.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 6,
+      "diagnostic_digest": "d045d207ec1c0318735f",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/response_rules/runtime.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {

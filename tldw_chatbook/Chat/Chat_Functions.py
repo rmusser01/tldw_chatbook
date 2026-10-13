@@ -466,6 +466,8 @@ PROVIDER_PARAM_MAP = {
         "top_logprobs": "top_logprobs",
     },
     "deepseek": {
+        "reasoning_effort": "reasoning_effort",
+        "api_mode": "api_mode",
         "api_key": "api_key",
         "messages_payload": "input_data",
         "temp": "temp",  # generic name is 'temp' — 'temperature' was a dead key (temp silently dropped)

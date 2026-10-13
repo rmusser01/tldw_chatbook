@@ -432,3 +432,113 @@ async def test_saved_edit_stays_selected_and_pinned_for_next_manager_action(
         assert "revision 2" in saved_details
         assert "revision 2" in saved_row and "Edited evidence definition" in saved_row
         assert modal.query_one("#rr-title", Input).value == tested.rule.candidate.title
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["reload", "promote"])
+async def test_manager_detached_subtree_callbacks_do_not_read_widgets(native, action):
+    import asyncio
+
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    modal = ResponseRulesModal(rules.scopes(session.id)[0], rules.store, rules)
+    async with ManagerHost(modal).run_test(size=(80, 24)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        original = rules.run_db_call
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def held(call, *args, **kwargs):
+            value = await original(call, *args, **kwargs)
+            if call == rules.store.list_drafts:
+                entered.set()
+                await release.wait()
+            return value
+
+        rules.run_db_call = held
+        task = asyncio.create_task(modal._reload()) if action == "reload" else None
+        if task:
+            await entered.wait()
+        await modal.query_one("#rr-body").remove()
+        try:
+            if task:
+                release.set()
+                await task
+            else:
+                await modal._action("promote")
+            assert len(rules.store.list_bindings(rules.scopes(session.id)[0])) == 1
+        finally:
+            release.set()
+            rules.run_db_call = original
+
+
+@pytest.mark.asyncio
+async def test_manager_superseded_reload_cannot_replace_current_scope_rows(native):
+    import asyncio
+
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    chat, _workspace, global_scope = rules.scopes(session.id)
+    modal = ResponseRulesModal(chat, rules.store, rules)
+    async with ManagerHost(modal).run_test(size=(120, 35)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        original = rules.run_db_call
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def held(call, *args, **kwargs):
+            value = await original(call, *args, **kwargs)
+            if call == rules.store.list_drafts and args == (chat,):
+                entered.set()
+                await release.wait()
+            return value
+
+        rules.run_db_call = held
+        task = asyncio.create_task(modal._reload())
+        try:
+            await entered.wait()
+            modal.scope = global_scope
+            await modal._reload()
+            assert modal._rows == []
+            release.set()
+            await task
+            assert modal._rows == [], "old Chat results must not repaint Global"
+        finally:
+            release.set()
+            await task
+            rules.run_db_call = original
+
+
+@pytest.mark.asyncio
+async def test_manager_reload_preserves_edits_made_while_db_is_pending(native):
+    import asyncio
+
+    _owner, rules, _chats, session, _gateway, _controller = native
+    activate(native)
+    modal = ResponseRulesModal(rules.scopes(session.id)[0], rules.store, rules)
+    async with ManagerHost(modal).run_test(size=(80, 24)) as pilot:
+        for _ in range(8):
+            await pilot.pause()
+        original = rules.run_db_call
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def held(call, *args, **kwargs):
+            value = await original(call, *args, **kwargs)
+            if call == rules.store.list_drafts:
+                entered.set()
+                await release.wait()
+            return value
+
+        rules.run_db_call = held
+        task = asyncio.create_task(modal._reload())
+        try:
+            await entered.wait()
+            modal.query_one("#rr-title", Input).value = "Unsaved while loading"
+            release.set()
+            await task
+            assert modal.query_one("#rr-title", Input).value == "Unsaved while loading"
+            assert modal._has_unsaved()
+        finally:
+            release.set()
+            await task
+            rules.run_db_call = original

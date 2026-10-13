@@ -60,6 +60,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
         self._busy = False
         self._dirty = False
         self._loaded_digest = None
+        self._reload_generation = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(id="response-rules-dialog", classes="ds-panel"):
@@ -194,13 +195,38 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             self.query_one("#rr-status", Static).update(text)
 
     async def _reload(self, *, selected_rule: RuleRevision | None = None) -> None:
+        definition = None
+        if self._selected is not None and self.query("#rr-title"):
+            try:
+                definition = self._candidate().candidate_digest()
+            except ValueError:
+                return
+        self._reload_generation += 1
+        generation, selected_scope = self._reload_generation, self.scope
         bindings = []
-        for scope in self._scopes[self._scopes.index(self.scope) :]:
+        for scope in self._scopes[self._scopes.index(selected_scope) :]:
             if scope is not None:
                 bindings.extend(
                     await self.runtime.run_db_call(self.store.list_bindings, scope)
                 )
-        drafts = await self.runtime.run_db_call(self.store.list_drafts, self.scope)
+        drafts = await self.runtime.run_db_call(self.store.list_drafts, selected_scope)
+        option_nodes = self.query("#rr-rules")
+        detail_nodes = self.query("#rr-details")
+        if (
+            not self.is_attached
+            or not option_nodes
+            or not detail_nodes
+            or generation != self._reload_generation
+            or selected_scope != self.scope
+            or not self._current_scope()
+        ):
+            return
+        if definition is not None:
+            try:
+                if self._candidate().candidate_digest() != definition:
+                    return
+            except ValueError:
+                return
         self._rows = [(b, None) for b in bindings if b.scope == self.scope]
         local = {b.rule_id for b, _ in self._rows}
         for binding in bindings:
@@ -208,7 +234,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                 self._rows.append((binding, None))
                 local.add(binding.rule_id)
         self._rows += [(None, d) for d in drafts]
-        options = self.query_one("#rr-rules", OptionList)
+        options = option_nodes.first(OptionList)
         options.clear_options()
         for binding, draft in self._rows:
             if binding is not None:
@@ -248,7 +274,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             self._load_row(selected)
         else:
             self._selected = None
-            self.query_one("#rr-details", Static).update(
+            detail_nodes.first(Static).update(
                 "No rules in this scope. Use /omfg <problem> after a completed answer."
             )
             self._buttons()
@@ -468,6 +494,8 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
         if action == "close":
             await self.request_safe_cancel(source="button")
             return
+        if not self.is_mounted or not self.is_attached or not self.query("#rr-body"):
+            return
         if self._busy:
             return
         if action in {"test", "save"} and (
@@ -487,8 +515,11 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
         if rule is None:
             return
         if action == "promote":
+            destinations = self.query("#rr-promote-scope")
+            if not destinations:
+                return
             destination = self._scopes[
-                int(str(self.query_one("#rr-promote-scope", Select).value))
+                int(str(destinations.first(Select).value))
             ]
             existing = next(
                 (

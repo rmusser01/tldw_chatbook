@@ -394,6 +394,11 @@ jobs:
             Tests/Chat/test_response_rules_external_hook.py \
             Tests/Chat/test_response_rules_write_contention.py \
             Tests/UI/test_response_rules_modal.py::test_saved_edit_stays_selected_and_pinned_for_next_manager_action \
+            Tests/Chat/test_deepseek_explicit_mode.py \
+            Tests/UI/test_response_rules_modal.py::test_manager_detached_subtree_callbacks_do_not_read_widgets \
+            Tests/UI/test_response_rules_modal.py::test_manager_superseded_reload_cannot_replace_current_scope_rows \
+            Tests/UI/test_response_rules_modal.py::test_manager_reload_preserves_edits_made_while_db_is_pending \
+            Tests/Chat/test_response_rules_builder.py::test_new_learning_timestamps_are_canonical_and_old_offsets_still_parse \
             --timeout=300 \
             --tb=short
 

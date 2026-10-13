@@ -371,3 +371,15 @@ async def test_recorded_answer_over_synthetic_limit_remains_testable():
     result, transport, _ = await learn(inputs("Missing proof" + "x" * 8193))
     assert result.reason == "tested" and result.validation is not None
     assert len(transport.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_new_learning_timestamps_are_canonical_and_old_offsets_still_parse():
+    from tldw_chatbook.Utils.timestamps import is_canonical_utc, parse_utc
+
+    result, _transport, pool = await learn()
+    assert result.rule is not None and result.validation is not None
+    assert is_canonical_utc(result.rule.created_at)
+    assert is_canonical_utc(result.validation.tested_at)
+    assert parse_utc("2026-10-03T01:02:03.123456+00:00").microsecond == 123456
+    await pool.wait_for_cleanup()

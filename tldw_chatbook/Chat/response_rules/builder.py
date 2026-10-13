@@ -7,11 +7,12 @@ import json
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, replace
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, Self
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 from .evaluator import ResponseRuleEvaluator, _unique_keys
 from .models import (
@@ -506,4 +507,4 @@ class ResponseRuleBuilder:
 
     @staticmethod
     def _now() -> str:
-        return datetime.now(UTC).isoformat()
+        return utc_now_iso()

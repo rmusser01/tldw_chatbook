@@ -1577,7 +1577,8 @@ DEEPSEEK = ProviderRecord(
     api_key_env_var="DEEPSEEK_API_KEY",
     api_key_env_candidates=("DEEPSEEK_API_KEY",),
     default_base_url="https://api.deepseek.com",
-    native_tools=True, reasoning_effort=False, auto_refresh=False,
+    native_tools=True, reasoning_effort=True, auto_refresh=False,
+    reasoning_effort_values=frozenset({"none", "low", "high", "max"}),
 )
 MISTRAL = ProviderRecord(
     key="mistral", config_key="MistralAI", display_name="Mistral", classification=_CLOUD,

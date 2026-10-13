@@ -1951,6 +1951,11 @@ async def test_real_resolution_pins_provider_continuation_protocol_before_prepar
     resolution = await gateway.resolve_for_send(
         ConsoleProviderSelection(provider=selected_provider)
     )
+    if provider_key == "deepseek" and protocol == "responses":
+        assert not resolution.ready
+        assert "unsupported" in resolution.visible_copy.lower()
+        await gateway.aclose()
+        return
     checkpoint = parse_provider_continuation_json(
         {
             "schema_version": 1,

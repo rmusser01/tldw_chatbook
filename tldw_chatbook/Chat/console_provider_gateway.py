@@ -672,9 +672,9 @@ def _normalize_deepseek_api_mode(provider_settings: Mapping[str, Any]) -> str:
     if not isinstance(candidate, str):
         raise ChatConfigurationError("DeepSeek API mode must be a string.")
     normalized = candidate.strip().lower()
-    if normalized not in _CONTINUATION_PROTOCOLS:
+    if normalized != "chat_completions":
         raise ChatConfigurationError(
-            "DeepSeek API mode must be 'responses' or 'chat_completions'."
+            "DeepSeek Responses is unsupported; select Chat Completions."
         )
     return normalized
 
@@ -4702,8 +4702,8 @@ class ConsoleProviderGateway:
                     provider=selection.provider,
                     model=model,
                     visible_copy=(
-                        "DeepSeek blocked: invalid API mode setting. Choose "
-                        "'responses' or 'chat_completions' in Settings."
+                        "DeepSeek blocked: API mode 'chat_completions' is supported; "
+                        "Responses is unsupported."
                     ),
                     readiness_key=identity.readiness_key,
                     execution_key=identity.execution_key,
@@ -4871,7 +4871,12 @@ class ConsoleProviderGateway:
             seed=selection.seed,
             presence_penalty=selection.presence_penalty,
             frequency_penalty=selection.frequency_penalty,
-            reasoning_effort=selection.reasoning_effort,
+            reasoning_effort=(
+                provider_settings.get("reasoning_effort")
+                if identity.execution_key == "deepseek"
+                and selection.reasoning_effort is None
+                else selection.reasoning_effort
+            ),
             reasoning_summary=selection.reasoning_summary,
             verbosity=selection.verbosity,
             thinking_effort=selection.thinking_effort,
@@ -5883,7 +5888,7 @@ class ConsoleProviderGateway:
             "request_retries": resolution.request_retries,
             "request_retry_delay": resolution.request_retry_delay,
         }
-        if resolution.execution_key == "qwencloud":
+        if resolution.execution_key in {"qwencloud", "deepseek"}:
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
@@ -7512,7 +7517,7 @@ class ConsoleProviderGateway:
         if local:
             kwargs["api_base_url"] = _adapter_api_base_url(resolution)
             kwargs["api_key_resolved"] = True
-        elif resolution.execution_key == "qwencloud":
+        elif resolution.execution_key in {"qwencloud", "deepseek"}:
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in (
@@ -7627,7 +7632,7 @@ class ConsoleProviderGateway:
             # for byte what they were before prompt caching existed.
             "prompt_caching": resolution.prompt_caching,
         }
-        if resolution.execution_key == "qwencloud":
+        if resolution.execution_key in {"qwencloud", "deepseek"}:
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in (
