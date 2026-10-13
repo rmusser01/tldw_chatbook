@@ -574,6 +574,43 @@ async def test_a_focused_cost_chip_relabelled_longer_stays_in_view() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_refit_that_keeps_the_focused_chips_label_keeps_the_scroll() -> None:
+    """Capture fix 3 round 3: every refit of a focused cost chip scrolled
+    the strip back to it, so a count change elsewhere on the row undid the
+    user's Shift+wheel or swipe back to its start."""
+    app = _ProductionChipsApp(
+        _capture_control_state(tools_label="Tools: 12 ready", tools_active=True),
+        cost_state=_cost_state(**_CAPTURE_LABELS),
+    )
+    async with app.run_test(size=(211, 8)) as pilot:
+        await pilot.pause()
+        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
+        scroll = app.query_one("#console-status-chip-scroll")
+        chip.focus()
+        for _ in range(5):
+            await pilot.pause()
+        assert scroll.scroll_x > 0
+
+        scroll.scroll_home(animate=False)
+        for _ in range(5):
+            await pilot.pause()
+        assert (scroll.scroll_x, app.focused) == (0, chip)
+
+        app.query_one(ConsoleStatusChips).sync_state(
+            _capture_control_state(
+                tools_label="Tools: 12 ready",
+                tools_active=True,
+                approvals_label="Approvals: 1 pending",
+                approvals_active=True,
+            )
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert str(chip.render()) == _CAPTURE_LABELS["label"]
+        assert scroll.scroll_x == 0
+
+
+@pytest.mark.asyncio
 async def test_cost_chip_click_posts_pressed_message():
     """A real ``pilot.click`` must dispatch through the normal message pump.
 

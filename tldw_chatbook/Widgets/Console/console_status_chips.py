@@ -894,7 +894,8 @@ class ConsoleStatusChips(Horizontal):
         segments fit is shown instead (the tooltip keeps every figure), and
         "…" when none fits. A chip that starts past the edge is not drawn,
         so it keeps its label for scrolling in; while the chip has focus it
-        shows that label in full, and the strip scrolls to it.
+        shows that label in full, and the strip scrolls to it whenever the
+        label changes (only then, so a Shift+wheel or swipe away stays).
         """
         state = self._cost_state
         if state is None:
@@ -911,11 +912,13 @@ class ConsoleStatusChips(Horizontal):
             if visible > 0 and cell_len(label) > room:
                 forms = _cost_label_forms(state)
                 label = next((f for f in forms if cell_len(f) <= room), "…")
+        relabelled = str(chip.content) != label
         chip.update(label)
         chip.refresh(layout=True)
-        if chip.has_focus:
-            # On every relabel, not only on focus: a reply that finishes while
-            # the chip has focus lengthens it past the edge.
+        if chip.has_focus and relabelled:
+            # Focus's "…" -> full label, or a reply finishing while focused,
+            # can run the chip past the edge. A refit that keeps the label
+            # leaves the scroll alone: the user may have swiped elsewhere.
             self.call_after_refresh(chip.scroll_visible, animate=False)
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
