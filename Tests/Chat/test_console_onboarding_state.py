@@ -127,8 +127,14 @@ def test_the_active_step_carries_the_one_readiness_word():
 
     blocked = _build(readiness=refused)
     assert blocked.steps[0].label == "Reconnect the provider server"
-    assert blocked.steps[0].detail == readiness_words(refused)
-    assert blocked.steps[0].detail == "Not ready · refused"
+    # Rewritten on purpose (capture finding 12, 02a): the word is this chat's
+    # provider's, so the step names it. With "Use detected llama.cpp" beside
+    # it, an unnamed "Not ready · no key" read as the detected server's.
+    assert blocked.steps[0].detail == f"OpenAI: {readiness_words(refused)}"
+    assert blocked.steps[0].detail == "OpenAI: Not ready · refused"
+    # No provider to name: the fallback label is not one.
+    unnamed = _build(readiness=refused, provider_label="Provider")
+    assert unnamed.steps[0].detail == "Not ready · refused"
     pick = _build(readiness=no_model, has_model=False)
     assert [step.detail for step in pick.steps[:2]] == [
         "OpenAI",

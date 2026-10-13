@@ -252,6 +252,10 @@ def build_console_setup_card_state(
     provider_name = str(provider_label or "Provider").strip() or "Provider"
     # TASK-33005.3: the active step carries the one readiness word.
     word = readiness_words(readiness)
+    # Capture finding 12: the word is this chat's provider's, so the step
+    # names it; beside "Use detected <server>" an unnamed "Not ready · no
+    # key" read as the server's. "Provider" is the callers' fallback, no name.
+    named_word = word if provider_name == "Provider" else f"{provider_name}: {word}"
     step_one = ConsoleSetupStep(
         state="done" if provider_done else "active",
         label=(
@@ -259,7 +263,7 @@ def build_console_setup_card_state(
             if provider_done
             else _STEP_ONE_LABELS.get(readiness.blocker, "Finish provider setup")
         ),
-        detail=provider_name if provider_done else word,
+        detail=provider_name if provider_done else named_word,
     )
     # Step two only counts as done once the provider is actually ready AND a
     # model is set: template defaults (e.g. gpt-4o) must not pre-check the

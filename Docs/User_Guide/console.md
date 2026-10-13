@@ -263,7 +263,10 @@ If no provider is configured when you open Console, the shell is replaced
 by a **Get started** card with three numbered steps — "Connect a provider
 (API key or local server)", "Pick a model", "Send your first message" —
 marked with ● (current) and ○ (pending) glyphs, plus the note "Composer
-unlocks after setup". Behind the card, the workbench is covered by a plain
+unlocks after setup". The current first step names this chat's provider
+beside its readiness word, for example "OpenAI: Not ready · no key", so a
+detected server offered below it is not mistaken for the one without a
+key. Behind the card, the workbench is covered by a plain
 dim fill with nothing drawn on it. Under its plain-language line about
 providers, the card says "Cloud setup opens Settings and comes back here,
 except for custom endpoints. Press Enter to use the highlighted action." —

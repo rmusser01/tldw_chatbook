@@ -295,6 +295,10 @@ async def test_blocked_card_runs_discovery_once_and_offers_detected_server(
         detected = await _detected_action_focused(host, console, pilot)
 
         assert str(detected.label) == "Use detected llama.cpp (127.0.0.1:8080)"
+        # Capture finding 12 (02a): step 1's word is the chat's OpenAI pair's,
+        # and it says so beside the detected server's action.
+        step = console.query_one("#console-setup-step-1", Static)
+        assert "\n     OpenAI: Not ready · no key" in str(step.render())
         assert len(app._discovery_calls) == 1
         # Owner ruling (Phase 5): it probes in its own thread and loop. On the
         # UI loop a boot-time storage scope of another task leaked into the
