@@ -1674,10 +1674,8 @@ class ProviderStep(SetupStep):
             self._selected_provider_models[discovery_key] = models
             if model_outcome is not None:
                 self._selected_provider_outcomes[discovery_key] = model_outcome
-            setattr(
-                self.wizard,
-                "_first_run_selected_provider_models",
-                dict(self._selected_provider_models),
+            self.wizard._first_run_selected_provider_models = dict(
+                self._selected_provider_models
             )
             self.wizard._first_run_selected_provider_outcomes = dict(
                 self._selected_provider_outcomes
@@ -1709,6 +1707,8 @@ class ProviderStep(SetupStep):
                 model_discovery.note_probe_failure(self, failure, discovery_key)
             elif attempted:
                 status.update(f"Checked {display}; no models were reported.")
+                if model_outcome is not None:  # the listing answered "success"
+                    model_discovery.note_probe_reached(self, discovery_key)
             else:
                 status.update("")
         finally:

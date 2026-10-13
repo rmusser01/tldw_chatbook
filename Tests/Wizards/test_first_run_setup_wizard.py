@@ -13573,11 +13573,22 @@ async def test_a_401_to_a_test_that_sent_no_key_asks_for_a_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_listing_that_sent_no_key_and_got_through_makes_the_key_optional():
+@pytest.mark.parametrize(
+    ("model_ids", "line"),
+    [
+        (("m",), "Found 1 model(s) for"),
+        ((), "no models were reported."),
+    ],
+    ids=["lists-a-model", "lists-none"],
+)
+async def test_a_listing_that_sent_no_key_and_got_through_makes_the_key_optional(
+    model_ids, line
+):
     """Capture fix 2 round 1 finding 3, discovery's half: a 401 to a listing
     that sent no key drops '(optional)'. Next asks a failed listing again;
-    once the server lists models with no key (restarted without --api-key),
-    the section is optional again."""
+    once the server answers it with no key (restarted without --api-key),
+    the section is optional again, whether or not a model is loaded
+    (round 2: an empty list got through too, as Test's 'reachable' does)."""
     from types import SimpleNamespace
 
     needs_key = ModelDiscoveryResult(
@@ -13592,7 +13603,7 @@ async def test_a_listing_that_sent_no_key_and_got_through_makes_the_key_optional
             category="unauthorized",
         ),
     )
-    listed = _typed_model_discovery_result("llama_cpp", "m")
+    listed = _typed_model_discovery_result("llama_cpp", *model_ids)
     app_instance = MagicMock(app_config={})
     app_instance.llm_provider_catalog_scope_service = MagicMock(
         discover_models=AsyncMock(side_effect=[needs_key, listed])
@@ -13622,6 +13633,8 @@ async def test_a_listing_that_sent_no_key_and_got_through_makes_the_key_optional
             if step._selected_discovery_state == "complete":
                 break
         assert step._selected_discovery_key.credential_source == "none"
+        status = step.query_one("#setup-provider-probe-status", Static)
+        assert line in str(status.render())
         assert str(auth.title) == "Authentication (optional)"
 
 
