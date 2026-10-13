@@ -576,10 +576,10 @@ class ChatbookImporter:
                     raise ValueError("Invalid chatbook manifest.") from None
                 if not isinstance(manifest_data, dict):
                     raise TypeError("Invalid chatbook manifest.")
-                if manifest_data.get("version") not in {
-                    version.value for version in ChatbookVersion
-                }:
-                    raise ValueError("Unsupported Chatbook format version.")
+                try:
+                    ChatbookVersion(manifest_data.get("version"))
+                except (TypeError, ValueError):
+                    raise ValueError("Unsupported Chatbook format version.") from None
                 try:
                     manifest = ChatbookManifest.from_dict(manifest_data)
                 except CanvasArchiveValidationError:

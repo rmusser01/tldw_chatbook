@@ -498,9 +498,12 @@ Reload discards it." — pick **Overwrite** or **Reload**.
 
 **Quitting with unsaved changes.** **Ctrl+Q** saves the open note before
 Chatbook exits, so text typed in the last moments is kept, and a new note
-keeps the title and body you typed. If that save cannot finish — the title
-is one the save refuses, the note changed elsewhere, or the write fails —
-Chatbook does not exit. It asks 'Quit and discard unsaved changes to
+keeps the title and body you typed. If a canonical save is refused or fails,
+Chatbook can still exit after keeping the exact latest draft locally. Reopen the
+same note after restarting to recover that draft; it remains unsaved, including
+an empty body. Local draft recovery stays on this device and is excluded from
+portable backups. If the draft cannot be kept locally, a save is still pending,
+or the note changed elsewhere, Chatbook asks 'Quit and discard unsaved changes to
 "<title>"?' with **Keep editing** selected: Keep editing (or Enter, or
 Escape) returns you to the editor with your text intact, and only **Discard
 and quit** exits without saving it. The same question covers an unsaved

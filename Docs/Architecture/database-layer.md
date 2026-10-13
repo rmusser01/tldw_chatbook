@@ -85,6 +85,7 @@ ADR-194 adds nullable note source language at v80→v81 after all current upstre
 migrations. Its exact four changed catalog objects also extend the existing
 ADR-126 recovery policy; frozen v80 catalogs remain admitted and migrate through
 the installed SQL step under the restricted validator. Unknown catalogs still
-refuse. The existing shared Subscriptions v2 catalog admits the exact embedded
-ChaChaNotes v81 shape and stamp; its own DDL/version is unchanged. The
+refuse. Shared Subscriptions v2 and v3 catalogs admit the exact embedded
+ChaChaNotes v80/v81 shapes and stamps. Subscriptions' own v2→v3 step is the
+ADR-207 conservative URL-provenance migration with unchanged DDL. The
 device-local Notes draft database remains excluded from portability.

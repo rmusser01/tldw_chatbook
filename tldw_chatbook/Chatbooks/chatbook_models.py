@@ -53,6 +53,13 @@ class ChatbookVersion(Enum):
     V3 = "3.0"
     V4 = "4.0"
 
+    @classmethod
+    def _missing_(cls, value: object) -> "ChatbookVersion | None":
+        """Server V1 patch versions retain the original content layout."""
+        if type(value) is str and value in {"1.0.0", "1.1.0"}:
+            return cls.V1
+        return None
+
 
 def select_chatbook_version(
     *, has_canvas_records: bool, has_note_records: bool = False
@@ -610,12 +617,7 @@ class ChatbookManifest:
     @classmethod
     def from_dict(cls, data: dict) -> "ChatbookManifest":
         """Create ChatbookManifest from dictionary."""
-        # The server uses semantic V1 versions; 1.1 adds optional metadata
-        # while retaining the same core content layout.
-        version_value = data["version"]
-        if version_value in {"1.0.0", "1.1.0"}:
-            version_value = ChatbookVersion.V1.value
-        version = ChatbookVersion(version_value)
+        version = ChatbookVersion(data["version"])
         canvas_archive = None
         if version in {ChatbookVersion.V3, ChatbookVersion.V4}:
             if version is ChatbookVersion.V3 and "canvas" not in data:

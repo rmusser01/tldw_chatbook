@@ -38,6 +38,9 @@ import tldw_chatbook.DB.ChaChaNotes_DB as chachanotes_module
 from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportStatus
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 
+# Real import/export holds the collection-bound private config selection.
+pytestmark = pytest.mark.bootstrap_profile
+
 NUM_CONVERSATIONS = 3
 MESSAGES_PER_CONVERSATION = 5
 

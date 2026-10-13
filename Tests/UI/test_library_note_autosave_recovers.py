@@ -38,6 +38,7 @@ from Tests.UI.library_quit_guard_support import (
     _library,
     _library_app,
     _open_note,
+    _refuse_draft_recovery,
     _settings_without_splash,
     _type,
     _type_at_end,
@@ -105,13 +106,15 @@ async def test_typing_after_keep_editing_on_a_refused_quit_is_autosaved(
                 screen = await _library(app, pilot)
                 body = await _open_note(screen, pilot, _TITLE, profile.note_id)
                 title = screen.query_one("#library-note-title", Input)
-                title.focus()
-                title.cursor_position = len(title.value)
-                await _type(pilot, " ")  # a trailing space: every save is refused
-                prompt = await _ctrl_q(pilot, app, events)  # inside the debounce
-                assert prompt is not None, "a refused save quit without asking"
-                await pilot.pause(_MAX_WAIT + 0.5)  # the prompt outlasts the max wait
-                await _keep_editing(pilot, app, screen, prompt)
+                with monkeypatch.context() as failed_storage:
+                    _refuse_draft_recovery(failed_storage, screen)
+                    title.focus()
+                    title.cursor_position = len(title.value)
+                    await _type(pilot, " ")
+                    prompt = await _ctrl_q(pilot, app, events)  # inside the debounce
+                    assert prompt is not None, "a refused save quit without asking"
+                    await pilot.pause(_MAX_WAIT + 0.5)  # prompt outlasts the max wait
+                    await _keep_editing(pilot, app, screen, prompt)
                 assert profile.note(profile.note_id)["content"] == _BODY
 
                 title.focus()

@@ -1581,7 +1581,7 @@ _SUBSCRIPTIONS_SCHEMA += tuple(
 )
 
 
-# ADR-194: the embedded ChaChaNotes schema advances; Subscriptions stays v2.
+# ADR-194: embedded language catalogs join v2 before ADR-207 derives v3 below.
 from .recovery_core_schema import _CHACHANOTES_LANGUAGE_REPLACEMENTS
 
 _SUBSCRIPTIONS_LANGUAGE_SCHEMAS = tuple(

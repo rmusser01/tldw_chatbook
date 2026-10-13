@@ -686,3 +686,78 @@ async def test_hidden_database_host_permanently_retires_and_reacquires(tmp_path)
         assert await current.format()
         assert not await old.format()
     await close_database_host(host, service)
+
+
+@pytest.mark.asyncio
+async def test_form_focus_reveals_every_field_after_problems_and_resize(tmp_path):
+    """A body reveal may scroll the form; Tab must reveal Title again."""
+    from textual.widgets import Collapsible
+
+    host, service, note_id = database_host(tmp_path, '{"a":}')
+    async with host.run_test(size=(160, 45)) as pilot:
+        screen = await open_note(host, pilot, note_id)
+        await _wait_for_condition(
+            pilot,
+            lambda: screen._notes_state.editor_armed
+            and screen._notes_controller._document_editor.result is not None,
+            message="The real note editor and diagnostic result",
+        )
+        body = screen.query_one("#library-note-body", TextArea)
+        problems = screen.query_one("#library-note-document-tools").query_one(
+            Collapsible
+        )
+        for width, height, expanded in [
+            (160, 45, False),
+            (120, 36, False),
+            (120, 36, True),
+            (160, 45, True),
+        ]:
+            await pilot.resize_terminal(width, height)
+            problems.collapsed = not expanded
+            body.focus()
+            await pilot.pause()
+            visited = set()
+            for _ in range(24):
+                await pilot.press("tab")
+                await pilot.pause()
+                current = screen.focused
+                assert current is not None
+                visited.add(
+                    current.id
+                    or getattr(current, "name", None)
+                    or type(current).__name__
+                )
+                assert screen.can_view_entire(current), (
+                    f"{width}x{height}, expanded={expanded}: {current!r} at "
+                    f"{current.region}, clip={screen.find_widget(current).clip}"
+                )
+                if current is body:
+                    break
+            assert {
+                "library-note-title",
+                "library-note-keywords",
+                "library-note-save",
+                "library-note-use-in-console",
+                "Select",
+                "check",
+                "CollapsibleTitle",
+            } <= visited
+            if expanded:
+                assert "OptionList" in visited
+            assert screen.query_one("#library-note-body", TextArea) is body
+            (tmp_path / f"header-{width}-{height}-{expanded}.svg").write_text(
+                host.export_screenshot(title=f"Structured Notes {width}x{height}")
+            )
+        title = screen.query_one("#library-note-title")
+        title.focus()
+        await pilot.pause()
+        for height in (36, 45):
+            await pilot.resize_terminal(160, height)
+            await pilot.pause()
+            assert screen.focused is title
+            assert screen.can_view_entire(title), (
+                f"A height-only resize hid the focused title: {title.region}, "
+                f"clip={screen.find_widget(title).clip}"
+            )
+        assert body.text == '{"a":}'
+    await close_database_host(host, service)

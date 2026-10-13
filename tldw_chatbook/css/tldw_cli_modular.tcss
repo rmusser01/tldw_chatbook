@@ -12040,7 +12040,7 @@ DocumentDiagnostics {
 }
 DocumentDiagnostics .document-actions {
     height: $ds-control-height-compact;
-    width: 1fr;
+    width: $ds-width-fill;
 }
 DocumentDiagnostics .document-language {
     width: $ds-document-language-width;
@@ -12069,7 +12069,7 @@ DocumentDiagnostics .document-truncation { height: auto; color: $ds-status-warni
 
 DocumentDiagnostics .document-problems.-collapsed { height: $ds-control-height-compact; min-height: $ds-control-height-compact; margin-bottom: $ds-space-0; }
 
-#library-note-exact-source-region { height: 1fr; border: solid $ds-grid-line; padding: $ds-space-1; }
+#library-note-exact-source-region { height: $ds-height-fill; border: solid $ds-grid-line; padding: $ds-space-1; }
 
 
 #library-shell-grid.library-notes-compact #library-note-body {

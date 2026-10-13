@@ -74,6 +74,13 @@ Boot background work is governed by `Utils/boot_worker_policy.py`: an IMMEDIATE 
 
 The model-catalog refresh worker group is named by `Constants.MODEL_CATALOG_REFRESH_WORKER_GROUP` so dispatch sites and the worker-handler acknowledgement set cannot drift.
 
+Structured document checks use one app-owned `DocumentWorker`, constructed by
+`app_service_wiring.py::document_worker` on first active Database Notes or Folder
+Files editor use. Its process remains request-owned and isolated. App lifecycle
+shutdown closes construction admission and drains only the existing backing slot
+before other services; shutdown never constructs an unused lane. The source
+contracts and lease retirement remain in `Document_Editing/` (ADR-194).
+
 ## Reactive conventions
 
 `recompose=True` is used sparingly and deliberately. The canonical current use is pane-level data reactives (Watchlists panes rebuild just that pane's children). The documented anti-pattern is a screen-level `recompose=True` reactive; Settings removed three such reactives because watchers raised `NoActiveAppError` during early compose. For screen content, `BaseAppScreen.refresh(recompose=True)` releases mouse capture when recomposition is scheduled. Keyboard focus capture and restoration live in `BaseAppScreen.recompose()`, covering both scheduled refreshes and direct awaits; child widgets such as `ConsoleTranscript` own their recomposition separately.

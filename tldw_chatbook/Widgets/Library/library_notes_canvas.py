@@ -3207,7 +3207,8 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     # ``_apply_editor_surface_gates`` on the last line of
                     # this compose like every other (fix round 2).
                     yield discard_new
-        with root(Vertical(id="library-note-editor-region")):
+        # Native body reveal can scroll this form; Tab must reveal its fields too.
+        with root(VerticalScroll(id="library-note-editor-region", can_focus=False)):
             with Horizontal(id="library-note-title-row"):
                 yield Static("Title", id="library-note-title-label", markup=False)
                 yield NoteEditorInput(

@@ -120,6 +120,17 @@ def _library_app(tmp_path, monkeypatch, events: list, read, *, notes: bool = Tru
     return app, profile
 
 
+def _refuse_draft_recovery(monkeypatch, screen) -> None:
+    """Fail the actual durability boundary; keep save, flush and quit real."""
+    recovery = screen._library_note_session._recovery
+    assert recovery is not None, "the production Library must attach draft recovery"
+
+    async def storage_full(*args, **kwargs):
+        raise OSError("Synthetic draft storage full")
+
+    monkeypatch.setattr(recovery, "save", storage_full)
+
+
 def _no_autosave(monkeypatch) -> None:
     """Only the quit itself may persist anything in these tests.
 
