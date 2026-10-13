@@ -59,6 +59,21 @@ def manifest(data=b"hello"):
     )
 
 
+def sealed(tmp_path, *, partial=False, unknown=False, mutate=None, data=b"durable"):
+    doc = manifest(data)
+    doc["owners"][0]["owner_id"] = "unknown.newer" if unknown else "ui.state"
+    doc["files"][0]["owner_id"] = doc["owners"][0]["owner_id"]
+    doc["consistency"] = "partial" if partial else "coherent"
+    if mutate:
+        mutate(doc)
+    path = tmp_path / "fixture.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(doc))
+        for payload in doc["files"]:
+            archive.writestr(payload["payload"], data)
+    return acquire(path, tmp_path / "archive-work", ArchiveLimits(), None, Event())
+
+
 def archive(
     tmp_path, doc=None, data=b"hello", extra=None, compression=zipfile.ZIP_STORED
 ):
