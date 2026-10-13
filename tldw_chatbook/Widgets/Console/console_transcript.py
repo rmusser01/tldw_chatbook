@@ -1543,8 +1543,12 @@ class ConsoleMessageHeader(Horizontal):
             and raw_cli.started_at_monotonic is not None
         )
         if active and timer is None:
+            # TASK-34925: 2Hz, not 10Hz. The label shows elapsed time in
+            # tenths; half-second ticks keep it visibly advancing in
+            # consistent .5s steps while repainting 5x less often. Terminal
+            # states land immediately via sync_header, not this timer.
             self._raw_cli_elapsed_timer = self.set_interval(
-                0.1,
+                0.5,
                 self._tick_raw_cli_elapsed,
             )
         elif active:
