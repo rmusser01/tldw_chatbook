@@ -377,8 +377,8 @@ execution API is initialized. It is excluded from centralized backup.
 | C97 | Tests/DB/test_store_kernel | SQLiteStoreKernel._get_connection (contract tests) | tests.store_kernel | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Kernel contract tests connect under a dedicated test owner (TASK-33132, ADR-228; C97 after dev minted C95/C96 mid-flight); the kernel's per-subclass dispatch is the structurally admitted qualified call in DB/store_kernel. |
 
 
-ADR-228 adds one exact restricted-validation caller, not a new SQLite owner:
-`Chat/response_rules/recovery.py::prepare_imported_candidate` resolves only the
+ADR-232 adds one exact restricted-validation caller, not a new SQLite owner:
+`DB/recovery_response_rules.py::prepare_imported_candidate` resolves only the
 installed `db.chachanotes.primary` adapter, validates that same disposable
 candidate without migration, and opens it via `open_recovery_validation` with
 restrictions. Its preparation flag permits only binding state/revision and

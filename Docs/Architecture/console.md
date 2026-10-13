@@ -98,7 +98,7 @@ ADR-052 (memory and compaction policy), ADR-067 (indefinite approval waits), ADR
 5. The review hook clears per-run decision stamps at entry so a raising approval round can never leak a prior turn's approval.
 
 
-### Learned response rules (ADR228)
+### Learned response rules (ADR232)
 
 The app-owned `ConsoleRuntime.ensure_response_rules` lazily binds the shared rule repository, helper pool, queue and controller on first native generation or manager access. `set_chat_controller` installs the lazy factory even for non-screen assembly. `response_rules/generation.py` holds successful completion until required lifecycle settlement and assessment; app shutdown drains retained preparation, transport and finite SQLite callbacks before retiring their owners. `response_rules/chat_state.py` stores native source fences and body-free tool evidence through `ConsoleChatStore` facades. `console_tool_result_observation.py` composes the existing Watchlists receipt observer with definitive rule facts.
 

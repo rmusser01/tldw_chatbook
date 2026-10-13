@@ -2,7 +2,7 @@
 
 Date: 2026-10-03
 Status: Approved by user on 2026-10-03 after written-spec review
-ADR: [ADR-228](../../../backlog/decisions/228-console-learned-response-rules.md) (Accepted)
+ADR: [ADR-232](../../../backlog/decisions/232-console-learned-response-rules.md) (Accepted)
 Related Backlog task: N/A; no implementation task has been created or authorized by this design-only request.
 Implementation plan: [Console response rules plan](../plans/2026-10-03-console-response-rules.md), accepted with the requested audit; Native execution selected on 2026-10-03.
 
@@ -221,7 +221,7 @@ The first version does not add executable/prompt hooks, prevention of tool effec
 
 ADR required: yes
 
-ADR path: `backlog/decisions/228-console-learned-response-rules.md`
+ADR path: `backlog/decisions/232-console-learned-response-rules.md`
 
 Reason: New local-only storage and recovery behavior, a response-assessment lifecycle boundary, scope semantics, and a native correction interface shared with existing hook continuations.
 

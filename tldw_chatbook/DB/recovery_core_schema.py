@@ -957,7 +957,7 @@ COLLECTIONS_V4_TO_V5_SQL = (
 )
 
 
-# ADR-228: append fixed rule declarations to all four accepted v80 lineages.
+# ADR-232: append fixed rule declarations to all four accepted v80 lineages.
 CHACHANOTES_V81_ADDITIONS = (
     "CREATE INDEX idx_machine_followup_receipts_conversation ON console_machine_followup_receipts(conversation_id)",
     "CREATE INDEX idx_response_rule_assessments_source ON console_response_rule_assessments(conversation_id, message_id)",

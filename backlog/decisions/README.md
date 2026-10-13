@@ -157,7 +157,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-192](192-personal-context-v2-canonical-data-contract.md) | Accepted (design only) | Freeze inactive V2 aggregates, complete digest/attribution rules and restrictive disclosure without enabling native consumers. |
 | [ADR-193](193-native-v2-profile-compatibility-and-admission.md) | Accepted (design only) | Require current profile-wide consumer qualification and exact native atomic admission before V2 use. |
 
-| [ADR-228](228-console-learned-response-rules.md) | Accepted | Learn native Chat-scoped response rules, assess permitted execution evidence, and admit bounded correction through current Console custody; preserves source ADR-219 provenance. |
+| [ADR-232](232-console-learned-response-rules.md) | Accepted | Learn native Chat-scoped response rules, assess permitted execution evidence, and admit bounded correction through current Console custody; preserves source ADR-219 provenance. |
 
 ## Historical Decision Material
 

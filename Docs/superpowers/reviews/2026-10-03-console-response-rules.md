@@ -2,11 +2,11 @@
 
 ## Scope and authority
 
-Implementation follows the approved [design](../specs/2026-10-03-console-response-rules-design.md), [plan](../plans/2026-10-03-console-response-rules.md) and [ADR-228](../../../backlog/decisions/228-console-learned-response-rules.md). Initial product base: `74fffc99f99cf47a39c1e67e0011768e57a55587`. Native execution uses one isolated managed worktree. The subsequent user request authorizes publication as a PR against `dev`; the publication integration below records its current evidence.
+Implementation follows the approved [design](../specs/2026-10-03-console-response-rules-design.md), [plan](../plans/2026-10-03-console-response-rules.md) and [ADR-232](../../../backlog/decisions/232-console-learned-response-rules.md). Initial product base: `74fffc99f99cf47a39c1e67e0011768e57a55587`. Native execution uses one isolated managed worktree. The subsequent user request authorizes publication as a PR against `dev`; the publication integration below records its current evidence.
 
 ## Latest-dev publication evidence, 2026-10-04
 
-The publication branch integrates `origin/dev` at `1b12df2757f901e5c8e7a1e8946ad98f315eb8f9`. Incoming model-picker, Chat Settings, waiting-status and quit behavior are retained. Dev's installed v75-to-v76 notes FTS migration remains intact; response rules move to the unpublished v76-to-v77 migration. Restricted recovery validates exact historical v75/v76 catalogs and installed statements before importing disabled rules. ADR-228 records this integration; no additional architectural decision is introduced.
+The publication branch integrates `origin/dev` at `1b12df2757f901e5c8e7a1e8946ad98f315eb8f9`. Incoming model-picker, Chat Settings, waiting-status and quit behavior are retained. Dev's installed v75-to-v76 notes FTS migration remains intact; response rules move to the unpublished v76-to-v77 migration. Restricted recovery validates exact historical v75/v76 catalogs and installed statements before importing disabled rules. ADR-232 records this integration; no additional architectural decision is introduced.
 
 Fresh targeted runs on the integrated tree:
 

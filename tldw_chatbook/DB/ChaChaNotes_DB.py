@@ -765,7 +765,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 81  # ADR-228 device-local response rules after browse-order indexes.
+    _CURRENT_SCHEMA_VERSION = 81  # ADR-232 device-local response rules after browse-order indexes.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"

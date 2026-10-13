@@ -48,7 +48,7 @@ Deleting a temporary example removes its private test material without preventin
 
 If activation succeeds but initial repair fails or is stopped, the rule remains active and the notice distinguishes that result. The original answer and completed work remain available.
 
-Architecture: [ADR-228](../decisions/228-console-learned-response-rules.md). Qualification: [implementation evidence](../../Docs/superpowers/reviews/2026-10-03-console-response-rules.md).
+Architecture: [ADR-232](../decisions/232-console-learned-response-rules.md). Qualification: [implementation evidence](../../Docs/superpowers/reviews/2026-10-03-console-response-rules.md).
 
 
 Current Goal integration follows ADR227: the completed response is assessed using its exact admitted Goal handoff. A confirmed violation remains visible, but automatic repair is unavailable after that iteration has finished; the app does not start a second native run, reuse retired authority, or refill the Goal allowance.
