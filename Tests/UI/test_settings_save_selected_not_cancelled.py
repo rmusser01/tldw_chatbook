@@ -9,6 +9,7 @@ durable write.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 from textual.widgets import Button, SelectionList
@@ -29,6 +30,7 @@ from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
 from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     PersistenceResult,
 )
+from tldw_chatbook.UI.Screens import settings_screen
 
 
 class _HeldSaveScope(_CatalogScope):
@@ -53,27 +55,44 @@ class _HeldSaveScope(_CatalogScope):
         )
 
 
-@pytest.mark.asyncio
-@private_profile_test
-@pytest.mark.parametrize(
-    "interrupt",
-    [
-        "#settings-discover-provider-models",
-        "#settings-clear-discovered-provider-models",
-    ],
-)
-async def test_save_selected_is_not_cancelled_by_discover_or_clear(
-    request, monkeypatch, interrupt
-):
-    """Fix round 1, finding 13: the write landed, but with Discover or Clear
-    pressed meanwhile it said nothing and the Default model picker went on
-    listing the ids as unsaved; after Clear the only toast read as if the
-    save had been dropped."""
+class _RefusingSaveScope(_HeldSaveScope):
+    """Save selected is held, then refused (``outcome`` is a status) or raises."""
+
+    def __init__(self, *args, outcome: str, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.outcome = outcome
+
+    async def persist_discovered_models_to_settings(self, **kwargs):
+        self.persist_calls.append(kwargs)
+        self.started.set()
+        await self.release.wait()
+        if self.outcome == "raise":
+            raise OSError("config.toml is read-only")
+        return PersistenceResult(
+            provider="openai",
+            provider_list_key=None,
+            status=self.outcome,
+            message="Could not save discovered models to the providers list.",
+        )
+
+
+_INTERRUPTS = [
+    "#settings-discover-provider-models",
+    "#settings-clear-discovered-provider-models",
+]
+
+
+async def _save_then_press(monkeypatch, scope, interrupt):
+    """Press Save selected, then ``interrupt`` while the write is held.
+
+    Returns the app, the toasts as (message, severity) and the picker
+    syncs as (provider, reload).
+    """
     app = _app("openai", "gpt-4o", catalog=("gpt-4o",), served=(_SERVED,))
-    scope = app.llm_provider_catalog_scope_service = _HeldSaveScope(
-        "openai", catalog=("gpt-4o",), served=(_SERVED,)
-    )
+    app.llm_provider_catalog_scope_service = scope
     host = _SettingsCssHarness(app, "settings")
+    toasts: list[tuple[str, str]] = []
+    reloads: list[tuple[object, bool]] = []
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
@@ -81,9 +100,13 @@ async def test_save_selected_is_not_cancelled_by_discover_or_clear(
         await _discover(host, pilot, screen)
         screen.query_one("#settings-discovered-models-list", SelectionList).select_all()
         await pilot.pause()
-        toasts: list[str] = []
-        monkeypatch.setattr(host, "notify", lambda message, **_: toasts.append(message))
-        reloads: list[tuple[object, bool]] = []
+        monkeypatch.setattr(
+            host,
+            "notify",
+            lambda message, severity="information", **_: toasts.append(
+                (message, severity)
+            ),
+        )
         sync_picker = screen._sync_model_picker
 
         def spy(provider=None, *, reload=False):
@@ -99,11 +122,80 @@ async def test_save_selected_is_not_cancelled_by_discover_or_clear(
         await pilot.pause()
         scope.release.set()
         await _settle(host, pilot)
+    return app, toasts, reloads
 
-        assert scope.saved == (_SERVED,)
-        assert _SERVED in app.providers_models["OpenAI"]
-        # Capture fix 3 round 1, finding 4, rewritten on purpose: the line
-        # belongs to the Discover or Clear pressed since, so the toast is the
-        # one report and says what the line would have said.
-        assert toasts.count("Saved 1 discovered model to OpenAI.") == 1, toasts
-        assert ("openai", True) in reloads, reloads
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("interrupt", _INTERRUPTS)
+async def test_save_selected_is_not_cancelled_by_discover_or_clear(
+    request, monkeypatch, interrupt
+):
+    """Fix round 1, finding 13: the write landed, but with Discover or Clear
+    pressed meanwhile it said nothing and the Default model picker went on
+    listing the ids as unsaved; after Clear the only toast read as if the
+    save had been dropped."""
+    scope = _HeldSaveScope("openai", catalog=("gpt-4o",), served=(_SERVED,))
+    app, toasts, reloads = await _save_then_press(monkeypatch, scope, interrupt)
+
+    assert scope.saved == (_SERVED,)
+    assert _SERVED in app.providers_models["OpenAI"]
+    # Capture fix 3 round 1, finding 4, rewritten on purpose: the line
+    # belongs to the Discover or Clear pressed since, so the toast is the
+    # one report and says what the line would have said.
+    receipt = ("Saved 1 discovered model to OpenAI.", "information")
+    assert toasts.count(receipt) == 1, toasts
+    assert ("openai", True) in reloads, reloads
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("interrupt", _INTERRUPTS)
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        (
+            "ambiguous_provider_key",
+            (
+                "Multiple provider entries match this provider. Rename or remove "
+                "duplicates before saving discovered models."
+            ),
+        ),
+        ("error", "Could not save discovered models to the providers list."),
+        (
+            "raise",
+            (
+                "Could not save the discovered models (OSError). Try Save again; "
+                "if it keeps failing, check that your config file is writable. "
+                "Details are in Logs (F3)."
+            ),
+        ),
+    ],
+    ids=["ambiguous", "error", "raise"],
+)
+async def test_save_selected_refused_after_discover_or_clear_still_reports(
+    request, monkeypatch, interrupt, outcome, expected
+):
+    """Capture fix 3 round 2, finding 1: with Discover or Clear pressed while
+    Save selected was writing, a save that failed said nothing at all (and a
+    raised one logged nothing), so the user believed the models were saved.
+    Its one report is a warning toast in the line's words."""
+    scope = _RefusingSaveScope(
+        "openai", catalog=("gpt-4o",), served=(_SERVED,), outcome=outcome
+    )
+    logs: list[str] = []
+    handler = logging.Handler(logging.WARNING)
+    handler.emit = lambda record: logs.append(record.getMessage())
+    screen_logger = logging.getLogger(settings_screen.__name__)
+    screen_logger.addHandler(handler)
+    try:
+        app, toasts, _reloads = await _save_then_press(monkeypatch, scope, interrupt)
+    finally:
+        screen_logger.removeHandler(handler)
+
+    assert scope.saved == ()
+    assert _SERVED not in app.providers_models.get("OpenAI", ())
+    warnings = [message for message, severity in toasts if severity == "warning"]
+    assert warnings == [expected], toasts
+    if outcome == "raise":
+        assert any("persistence failed: OSError" in line for line in logs), logs

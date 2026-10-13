@@ -16856,15 +16856,13 @@ class SettingsScreen(BaseAppScreen):
                 model_ids=selected_model_ids,
             )
         except Exception as exc:
-            if revision != self._model_discovery_revision:
-                return
             # Type name only -- logger.exception's traceback tail would print
             # the raw exception message (and diagnose=True would dump frame
             # locals); see the discovery-run branch above (TASK-23108 review).
             logger.warning(
                 f"Provider model discovery persistence failed: {type(exc).__name__}"
             )
-            self._model_discovery_status = failure_status_text(
+            failure = failure_status_text(
                 "Could not save the discovered models",
                 exc,
                 next_step=(
@@ -16872,7 +16870,7 @@ class SettingsScreen(BaseAppScreen):
                     "config file is writable."
                 ),
             )
-            self._refresh_model_discovery_widgets()
+            self._report_discovered_models_save_failure(failure, revision)
             return
 
         message = str(getattr(result, "message", "") or "").strip()
@@ -16911,14 +16909,20 @@ class SettingsScreen(BaseAppScreen):
             self._refresh_model_discovery_widgets()
             return
 
+        self._report_discovered_models_save_failure(
+            MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY
+            if status == "ambiguous_provider_key"
+            else redact_secret_text(message or "Could not save discovered models."),
+            revision,
+        )
+
+    def _report_discovered_models_save_failure(self, text: str, revision: int) -> None:
+        """Say once why Save selected saved nothing: on its line, or (once
+        Discover or Clear own that line) in a warning toast."""
         if revision != self._model_discovery_revision:
+            self.app.notify(text, severity="warning", markup=False)
             return
-        if status == "ambiguous_provider_key":
-            self._model_discovery_status = MODEL_DISCOVERY_AMBIGUOUS_PROVIDER_COPY
-        else:
-            self._model_discovery_status = redact_secret_text(
-                message or "Could not save discovered models."
-            )
+        self._model_discovery_status = text
         self._refresh_model_discovery_widgets()
 
     @work(exclusive=True, group="settings-model-discovery")

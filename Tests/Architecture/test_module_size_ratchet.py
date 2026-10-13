@@ -198,7 +198,10 @@ _BUDGETS: dict[str, int] = {
     # it keeps, not the snapshot preferences leaving drops (+1): 33,951;
     # Save selected reports once, its line or (after Discover or Clear) a
     # toast in the line's words (-1): 33,950.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33950,
+    # Capture fix 3 round 2: a Save selected that saves nothing after
+    # Discover or Clear says why in a warning toast, and a raised one is
+    # logged first (+4): 33,954.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33954,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
