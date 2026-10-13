@@ -15820,7 +15820,10 @@ class SettingsScreen(BaseAppScreen):
         The rows stay visible and keep their values, so switching back to an
         API key loses nothing (TASK-34201).
         """
-        from ..Settings_Modules.providers_models_card import auth_source_row_copy
+        from ..Settings_Modules.providers_models_card import (
+            auth_source_row_copy,
+            sync_api_key_clear,
+        )
 
         try:
             row = self.query_one("#settings-provider-auth-source-row", Horizontal)
@@ -15851,15 +15854,7 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one(selector_id).disabled = locked or subscription
             except QueryError:
                 continue
-        try:
-            clear = self.query_one("#settings-provider-api-key-clear", Button)
-            api_key = self.query_one("#settings-provider-api-key", Input).value
-        except QueryError:
-            return
-        clear.disabled = subscription or (
-            not self._provider_saved_api_key_present(provider)
-            and not api_key.strip()
-        )
+        sync_api_key_clear(self, provider)
 
     def _snapshot_provider_auth_source_widget(self, provider: object) -> None:
         """Capture the visible sign-in choice before switching providers or saving.
@@ -18042,10 +18037,6 @@ class SettingsScreen(BaseAppScreen):
         try:
             api_key_input = self.query_one("#settings-provider-api-key", Input)
             api_key_input.placeholder = self._provider_api_key_placeholder(provider)
-            clear_button = self.query_one("#settings-provider-api-key-clear", Button)
-            clear_button.disabled = not self._provider_saved_api_key_present(
-                provider
-            ) and not bool(api_key_input.value.strip())
             hosted_guidance = self._hosted_provider_guidance(provider, model)
             guidance = self.query_one("#settings-hosted-provider-guidance", Static)
             guidance.update(hosted_guidance)

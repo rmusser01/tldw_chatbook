@@ -155,8 +155,9 @@ _BUDGETS: dict[str, int] = {
     # changes" in its State banner, not "Draft" (+4): 33,899; a revert's
     # one report is its toast, and the next edit clears a save's report
     # (+6): 33,905; discovery names the provider, and its empty state
-    # is one line, not two (-5): 33,900.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33900,
+    # is one line, not two (-5): 33,900; Clear's rule moves to the card
+    # (-9): 33,891.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33891,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -182,8 +183,10 @@ _BUDGETS: dict[str, int] = {
     # saved name is what is invalid, read only then (+5): 2,372. The capture
     # fix wave (2026-10-12): the Inspector's unsaved-edits note is one row
     # and says why (+3): 2,375; the Saved model list's duplicate
-    # empty-state line is gone (-8): 2,367.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2367,
+    # empty-state line is gone (-8): 2,367; Clear shows only while there
+    # is a key to clear, one rule for the card and the screen, and a
+    # keyless provider's Env var reads optional (+39): 2,406.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2406,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 722,

@@ -51,6 +51,7 @@ from ...Chat.custom_endpoint_registry import (
 )
 from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import (
+    KEYLESS_PROVIDER_KEYS,
     default_api_key_env_var,
     get_provider_readiness,
     provider_config_key,
@@ -153,6 +154,9 @@ ENV_VAR_NOT_A_NAME_HELP = "Env var is not a variable's name"
 #: ADR-012:29: the env var is the safer path. C4: the row says the field
 #: holds a name ("a", not the ruling's "the", to fit 39 cells with "safer").
 ENV_VAR_HELP_COPY = "safer: a variable's name, never the key"
+#: Capture finding 10: a provider that needs no key uses one only when its
+#: server was started with one, so the row says the field is optional.
+ENV_VAR_OPTIONAL_HELP = "optional · a variable's name, not a key"
 #: Capture fix 7: Sign in with's one-line help per choice; the Inspector's
 #: guide for the field holds the long copy (ANTHROPIC_*_GUIDANCE_COPY).
 AUTH_SOURCE_API_KEY_HELP = "bills API credits through your key"
@@ -714,6 +718,37 @@ def refresh_openai_reconnect_pending(screen: SettingsScreen) -> None:
     )
 
 
+def env_var_help(provider: str) -> str:
+    """Return the Env var row's help for the provider the form holds."""
+    if provider_config_key(provider) in KEYLESS_PROVIDER_KEYS:
+        return ENV_VAR_OPTIONAL_HELP
+    return ENV_VAR_HELP_COPY
+
+
+def sync_api_key_clear(screen: SettingsScreen, provider: str) -> None:
+    """Show Clear only while there is a key to clear (capture finding 10).
+
+    A saved key or typed text enables it, unless Anthropic's Claude
+    subscription is chosen; it keeps its cell while hidden, so the row's
+    Source word stays in its column.
+
+    Args:
+        screen: The Settings screen that owns the card.
+        provider: The provider the form holds.
+    """
+    try:
+        clear = screen.query_one("#settings-provider-api-key-clear", Button)
+        typed = screen.query_one("#settings-provider-api-key", Input).value
+    except QueryError:
+        return
+    has_key = screen._provider_saved_api_key_present(provider) or bool(typed.strip())
+    subscription = provider_config_key(provider) == "anthropic" and (
+        screen._provider_auth_source_value(provider) == _anthropic_auth_sources()[1]
+    )
+    clear.disabled = subscription or not has_key
+    clear.visible = has_key
+
+
 def env_var_source_word(screen: SettingsScreen, provider: str, env_var: str) -> str:
     """Say whether the key's env var holds a key in this shell.
 
@@ -894,6 +929,9 @@ def refresh_connect_rows(screen: SettingsScreen, provider: str, endpoint: str) -
         "#settings-provider-env-var-source",
         env_var_source_word(screen, provider, env_var),
     )
+    screen._set_static_text(
+        "#settings-provider-credential-guidance", env_var_help(provider)
+    )
     endpoint_word, endpoint_help = endpoint_row_copy(screen, provider, endpoint)
     screen._set_static_text("#settings-provider-endpoint-source", endpoint_word)
     screen._set_static_text("#settings-provider-endpoint-help", endpoint_help)
@@ -911,6 +949,7 @@ def refresh_key_rows(screen: SettingsScreen, provider: str) -> None:
     screen._set_static_text("#settings-provider-key-status", key_word)
     screen._set_static_text("#settings-provider-api-key-help", key_help)
     screen._set_static_text("#settings-provider-readiness", key_check_verdict(screen))
+    sync_api_key_clear(screen, provider)
 
 
 def provider_model_pair(screen: SettingsScreen, provider: object, model: object) -> str:
@@ -1624,17 +1663,17 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 password=True,
                 disabled=registry_locked or subscription_selected,
             )
+            has_key = screen._provider_saved_api_key_present(provider) or bool(
+                str(values.get("api_key") or "").strip()
+            )
             clear_button = Button(
                 "Clear",
                 id="settings-provider-api-key-clear",
                 compact=True,
-                disabled=subscription_selected
-                or (
-                    not screen._provider_saved_api_key_present(provider)
-                    and not bool(str(values.get("api_key") or "").strip())
-                ),
+                disabled=subscription_selected or not has_key,
                 tooltip=API_KEY_CLEAR_TOOLTIP,
             )
+            clear_button.visible = has_key  # sync_api_key_clear's rule
             # Parent AC#2: like Test (t), a key runs it (ApiKeyInput), so it
             # is not a Tab stop between API key and Env var; a click still does.
             clear_button.can_focus = False
@@ -1669,7 +1708,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 markup=False,
             )
             yield Static(
-                ENV_VAR_HELP_COPY,
+                env_var_help(provider),
                 id="settings-provider-credential-guidance",
                 classes="settings-row-help",
                 markup=False,

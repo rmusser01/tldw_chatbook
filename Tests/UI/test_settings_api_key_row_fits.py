@@ -147,6 +147,7 @@ def test_the_rows_other_fixed_sentences_fit_too():
         card.API_KEY_CLEARED_HELP,
         f"{card.API_KEY_CLEARED_HELP} · Env var used",
         card.ENV_VAR_HELP_COPY,
+        card.ENV_VAR_OPTIONAL_HELP,
         card.AUTH_SOURCE_API_KEY_HELP,
         card.AUTH_SOURCE_SUBSCRIPTION_HELP,
         card.MODEL_PICKER_HELP_COPY,

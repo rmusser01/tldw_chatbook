@@ -19,11 +19,13 @@ from Tests.UI.test_settings_connect_rows import (
     _FAKE_KEY,
     _SAVED_KEY,
     _SIZE,
+    _held,
     _no_provider_key_env,
     _open_providers,
     _resting_help_counts,
     _squeezed,
     _text,
+    _type_filter,
     _until,
 )
 from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
@@ -61,6 +63,8 @@ async def test_api_key_row_says_where_the_key_comes_from(
         assert str(status.renderable) == word
         assert clear.parent is row
         assert clear.disabled is (setup != "config")
+        # Capture finding 10: Clear shows only while there is a key to clear.
+        assert clear.visible is (setup == "config")
         assert _FAKE_KEY not in "\n".join(_region_rows(screen, row))
         # ADR-031 rule 4: the row names Clear's key only while it clears.
         assert (_CLEAR_HINT in _text(screen, "#settings-provider-api-key-help")) is (
@@ -479,3 +483,50 @@ async def test_the_card_result_line_takes_no_row_until_there_is_a_result(
         await _until(pilot, lambda: not result.display)
         assert screen._category_has_unsaved_changes(screen._active_category_id())
         assert result.display is False and result.region.height == 0
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_provider_that_needs_no_key_offers_no_clear_and_an_optional_env_var(
+    request, monkeypatch
+):
+    """Capture finding 10 (captures 09b, 10a-10c): llama.cpp needs no key, yet
+    its API key row showed Clear and its Env var row said "safer: a
+    variable's name, never the key". Clear shows only while there is a key
+    to clear, and a provider that needs no key calls its Env var optional."""
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+    from tldw_chatbook.UI.Settings_Modules import providers_models_card as card
+
+    _no_provider_key_env(monkeypatch)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {
+        "openai": dict(_SAVED_KEY),
+        "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
+    }
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        clear = screen.query_one("#settings-provider-api-key-clear", Button)
+        row = screen.query_one("#settings-provider-api-key-row")
+        guidance = "#settings-provider-credential-guidance"
+        assert clear.visible
+        assert _text(screen, guidance) == card.ENV_VAR_HELP_COPY
+
+        await _type_filter(pilot, screen, "llama")
+        await pilot.press("enter")
+        await _until(pilot, lambda: provider_config_key(_held(screen)) == "llama_cpp")
+        await pilot.pause()
+
+        assert _text(screen, "#settings-provider-key-status") == "not required"
+        assert not clear.visible
+        assert "Clear" not in _region_rows(screen, row)[0]
+        assert _text(screen, guidance) == card.ENV_VAR_OPTIONAL_HELP
+
+        # A key typed for a server started with one can be cleared again.
+        screen.query_one("#settings-provider-api-key", Input).focus()
+        await pilot.pause()
+        await pilot.press("x")
+        await _until(pilot, lambda: clear.visible)
+        assert clear.visible and not clear.disabled
