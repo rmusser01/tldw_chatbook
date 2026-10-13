@@ -91,11 +91,13 @@ def test_v5_evals_candidate_migrates_to_v6_and_keeps_its_rows(tmp_path):
         ).fetchone() == ("Saved task",)
 
 
-def test_v6_evals_candidate_migrates_to_v7_and_creates_the_run_created_index(tmp_path):
-    """task-34399 review round 3: a second archived pass takes the v6
-    candidate to v7, creating idx_eval_results_run_created under the
-    db.evals authorizer admissions added for it (CREATE INDEX + the
-    rebuild-dance sqlite_master INSERT)."""
+def test_v5_evals_candidate_migrates_through_v6_to_v7_and_creates_the_run_created_index(tmp_path):
+    """task-34399 review round 3: the DECLARED-v5 candidate migrates through
+    v6 to v7 in a single migrating pass (the v6 drop-column step and the v7
+    step both apply before the first assertion below), creating
+    idx_eval_results_run_created under the db.evals authorizer admissions
+    added for it (CREATE INDEX + the rebuild-dance sqlite_master INSERT);
+    the second pass on the already-v7 candidate is a no-op."""
     path = _build_declared_v5(tmp_path / "evals.db")
 
     assert validate_candidate(_owner(), path, Event(), migrate=True) == ()

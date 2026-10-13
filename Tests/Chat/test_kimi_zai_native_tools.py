@@ -884,12 +884,11 @@ def test_hosted_partial_call_cancellation_never_executes(
 
     def recording_stream_chunk(
         store: ConsoleChatStore, message_id: str, chunk: str
-    ) -> Any:
-        message = real_append_stream_chunk(store, message_id, chunk)
+    ) -> None:
+        real_append_stream_chunk(store, message_id, chunk)
         if _CANCEL_MARKER in chunk:
             marker_observed.set()
             cancelled.set()
-        return message
 
     monkeypatch.setattr(ConsoleChatStore, "append_stream_chunk", recording_stream_chunk)
 

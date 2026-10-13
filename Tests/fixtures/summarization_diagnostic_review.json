@@ -3,6 +3,7 @@
     "manifest_boundary": {
         "checked_normalized_inventory_sha256": "084be82efdaf2f0f5c09b695db1fbfaccefb8cbaccba53119e9dba829effb1ad",
         "origin_dev_generated_normalized_inventory_sha256": "084be82efdaf2f0f5c09b695db1fbfaccefb8cbaccba53119e9dba829effb1ad",
+
         "owned_entries": [
             {
                 "path": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",

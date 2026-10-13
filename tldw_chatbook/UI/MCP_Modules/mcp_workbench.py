@@ -1386,16 +1386,44 @@ class MCPWorkbench(Container):
         fingerprint_runner = getattr(service, "run_catalog_fingerprint", None)
         if not callable(fingerprint_runner):
             return await self._collect_snapshots()
+        # Review fix: name the profiles the cached snapshots describe so the
+        # fingerprint's connection-state projection actually joins the token.
+        # The default ``profiles=()`` excluded connection states entirely, so
+        # a server connect/disconnect with no store change served stale
+        # readiness. `_catalog_records` is the last full pass's local catalog
+        # (re-derived from the same fingerprinted store, whose identity
+        # component already covers membership changes); an empty first visit
+        # passes () exactly as before and always takes the full walk (the
+        # cache is empty too).
+        profiles = tuple(
+            (profile_id, bool(record.get("plugin_owner")))
+            for profile_id, record in self._catalog_records.items()
+        )
         try:
-            fingerprint = await fingerprint_runner()
+            fingerprint = await fingerprint_runner(profiles)
         except Exception:  # noqa: BLE001 - admission refusal: full load
             return await self._collect_snapshots()
         token = (fingerprint, current_config_identity())
         cache = getattr(self.app_instance, "_mcp_workbench_snapshot_cache", None)
         if cache is not None and cache[0] == token:
-            return cache[1]
+            # Review fix (task-34927): a cache hit must restore the local
+            # profile catalog along with the snapshots. `_catalog_records`
+            # feeds the Hub Tools catalog, EDIT_CONFIG's record lookup and
+            # show_import, and it is only populated inside
+            # `_collect_snapshots()` -- leaving it empty on a hit broke all
+            # three. The records are plain dicts re-derived from the same
+            # fingerprinted store, so they are equally cacheable; both the
+            # cache entry and `self._catalog_records` are only ever replaced
+            # wholesale, never mutated in place, so sharing the dict is safe.
+            _, snapshots, catalog_records = cache
+            self._catalog_records = catalog_records
+            return snapshots
         snapshots = await self._collect_snapshots()
-        self.app_instance._mcp_workbench_snapshot_cache = (token, snapshots)
+        self.app_instance._mcp_workbench_snapshot_cache = (
+            token,
+            snapshots,
+            self._catalog_records,
+        )
         return snapshots
 
     async def _collect_snapshots(self) -> list[ReadinessSnapshot]:

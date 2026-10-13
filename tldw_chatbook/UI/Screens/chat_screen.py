@@ -18120,8 +18120,16 @@ class ChatScreen(BaseAppScreen):
             rendered.append((conversation_id, receipt_id))
         return tuple(rendered)
 
-    async def _sync_native_console_transcript(self) -> None:
-        """Render native Console messages in the native transcript."""
+    async def _sync_native_console_transcript(self, *, force: bool = False) -> None:
+        """Render native Console messages in the native transcript.
+
+        Args:
+            force: Skip the TASK-34920 tick gate entirely. Direct callers
+                that mutate transcript presentation while the app is idle
+                (no run active, so no 0.2s tick is running) must pass
+                ``True`` -- the review-notes edit/delete reload otherwise
+                skips as a no-op until the user's next send.
+        """
         try:
             transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
         except QueryError:
@@ -18151,15 +18159,40 @@ class ChatScreen(BaseAppScreen):
                 projection_key = self._change_review_projection.revision_key()
             except Exception:  # noqa: BLE001 - torn-down runtime: never gate
                 projection_key = object()
+            # Run-activity component (task-34920 review follow-up): the
+            # turn-activity line, the jump-indicator chip and the abandon
+            # affordance all read the controller's per-session run state and
+            # approval-round registry, neither of which bumps the store's
+            # display token -- during a store-quiet run period (long tool
+            # call, approval wait) the gate would otherwise hold those frozen
+            # for up to the 15-tick forced-pass bound. Both reads are O(1)
+            # (frozen dataclass + bool, no content hashing); the except keeps
+            # partial controller doubles fail-open like the reads above.
+            try:
+                controller = getattr(self, "_console_chat_controller", None)
+                if controller is None or session_id is None:
+                    run_activity = None
+                else:
+                    run_activity = (
+                        controller.run_state_for(session_id),
+                        bool(controller.has_pending_approval_round(session_id)),
+                    )
+            except Exception:  # noqa: BLE001 - unknown controller: never gate
+                run_activity = object()
             gate = (
                 session_id,
                 token,
                 projection_key,
                 getattr(self, "_console_send_ack", None) is not None,
+                run_activity,
             )
             self._console_transcript_sync_ticks += 1
             forced = self._console_transcript_sync_ticks % 15 == 0
-            if not forced and gate == self._console_transcript_sync_token:
+            if (
+                not force
+                and not forced
+                and gate == self._console_transcript_sync_token
+            ):
                 return
             self._console_transcript_sync_token = gate
 
@@ -23196,7 +23229,11 @@ class ChatScreen(BaseAppScreen):
                     await self._review_selection._load_console_annotation_previews(
                         database, store, conversation_id
                     )
-                    await self._sync_native_console_transcript()
+                    # force=True: this is precisely the idle path the
+                    # TASK-34920 gate cannot see -- edit/delete bumps no
+                    # store token and no tick is running, so the gated sync
+                    # would skip and leave the stale marker row mounted.
+                    await self._sync_native_console_transcript(force=True)
         finally:
             # Every exit path -- empty-notes toast, modal cancel/dismiss, or
             # an error above -- releases the in-flight guard; a latched flag

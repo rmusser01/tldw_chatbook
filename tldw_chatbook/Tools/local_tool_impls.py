@@ -1592,7 +1592,6 @@ def _grep_relative_files(
     return empty
 
 
-    
 
 #: One denylist entry with its path parts case-folded once, ready for the
 #: per-candidate comparisons in :func:`_is_relative_sensitive_path`:

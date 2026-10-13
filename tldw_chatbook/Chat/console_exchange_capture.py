@@ -537,6 +537,12 @@ def sanitize_capture_value_with_omission(
         # through, and the binary stub gate requires a data: prefix or a
         # canonical length >= _STUB_MIN_CHARS (canonical <= raw). Skip the
         # whitespace-strip copy and base64 regex over every chunk.
+        # Honesty note (review follow-up): the per-chunk capture callers
+        # hand this function a 1-element LIST, so on that named path the
+        # isinstance(str) check above never matches and the skip does not
+        # fire there -- today only string-typed callers take this shortcut.
+        # The behavior is equivalent on both paths; the guard logic is left
+        # untouched (redaction-sensitive).
         return sanitized_value, result.redacted
     return (
         stub_binary_strings(_remove_nested_credentials(sanitized_value)),
