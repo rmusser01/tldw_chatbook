@@ -2941,10 +2941,13 @@ class ConsoleSettingsModal(
         provider = readiness.provider_display_name or provider_display_name(
             settings.provider
         )
+        # Capture finding 17 (round 2): the line names the button it explains.
         scope_copy = (
-            "Updates this provider for future conversations."
+            f"{SAVE_ENDPOINT_ACTION_LABEL}: new chats start on this {provider} "
+            "endpoint and model."
             if needs_endpoint_persistence and show_defaults
-            else f"Used by future conversations for {provider}."
+            else f"{SAVE_MODEL_DEFAULT_LABEL}: future chats on this {provider} "
+            "model use these values."
             if show_defaults
             else ""
         )

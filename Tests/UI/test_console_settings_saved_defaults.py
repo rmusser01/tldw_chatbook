@@ -175,7 +175,8 @@ async def test_defaults_line_follows_the_view_switch(edited) -> None:
         await _open(pilot, app, modal)
         default_scope = modal.query_one("#console-settings-default-scope", Static)
         save_default = modal.query_one("#console-settings-save-default", Button)
-        line = "Used by future conversations for llama.cpp."
+        # Rewritten on purpose by TASK-33007 capture finding 17 (round 2).
+        line = "Save as model default: future chats on this llama.cpp model"
         assert save_default.display is default_scope.display is edited
         modal.query_one("#console-settings-view-context", Button).press()
         await settle(pilot, app)

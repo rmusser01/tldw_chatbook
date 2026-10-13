@@ -14369,7 +14369,12 @@ async def test_console_settings_modal_default_action_only_tracks_changed_persist
         assert default_action.variant == "default"
         # TASK-33006.5: one name for the action, the profile it writes.
         assert str(default_action.label) == "Save as model default"
-        assert str(scope.renderable) == "Used by future conversations for llama.cpp."
+        # Rewritten on purpose by TASK-33007 capture finding 17 (round 2):
+        # the line names the button it explains.
+        assert str(scope.renderable) == (
+            "Save as model default: future chats on this llama.cpp model use "
+            "these values."
+        )
 
 
 @pytest.mark.asyncio
@@ -14407,7 +14412,10 @@ async def test_console_settings_modal_model_default_action_names_its_scope() -> 
         assert str(default_action.label) == "Save as model default"
         assert str(
             modal.query_one("#console-settings-default-scope", Static).renderable
-        ) == "Used by future conversations for llama.cpp."
+        ) == (  # rewritten on purpose: capture finding 17 (round 2)
+            "Save as model default: future chats on this llama.cpp model use "
+            "these values."
+        )
         assert modal.query_one("#console-settings-default-scope", Static).display
 
 
@@ -14459,7 +14467,10 @@ async def test_console_settings_modal_unsaved_endpoint_requires_provider_setup_w
         assert str(disabled_reason.renderable) == ""
         assert str(
             modal.query_one("#console-settings-default-scope", Static).renderable
-        ) == "Updates this provider for future conversations."
+        ) == (  # rewritten on purpose: capture finding 17 (round 2)
+            "Save endpoint & use model: new chats start on this Ollama endpoint "
+            "and model."
+        )
 
         default_action.press()
         await pilot.pause()

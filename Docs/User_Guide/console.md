@@ -594,10 +594,10 @@ configuration. **Save as model default** shows only while the draft differs
 from the saved defaults, the same test that dims **Use saved defaults**, so
 the footer never offers a save beside **Matches saved defaults**. While the
 unsaved-changes prompt shows, **Alt+M** and **Ctrl+N** do nothing. The **Context and memory** view has a **Cancel** button in
-place of the default actions. The line above the footer that names where a
-default goes ("Used by future conversations for Anthropic.") shows only
-beside **Save as model default**, so the **Context and memory** view never
-shows it.
+place of the default actions. The line above the footer names the button it
+explains and where that default goes ("Save as model default: future chats on
+this Anthropic model use these values.") and shows only beside **Save as model
+default**, so the **Context and memory** view never shows it.
 
 **Use saved defaults** is how a chat that already holds work picks up
 defaults you saved later (a chat nobody has used yet follows them on its
