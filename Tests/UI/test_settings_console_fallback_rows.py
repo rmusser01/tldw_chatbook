@@ -277,7 +277,8 @@ async def test_each_fallback_says_its_source_and_a_blank_says_what_it_sends(requ
 async def test_every_fallback_row_paints_its_whole_help(request, size):
     """#3057 capture finding 13 (06c): Temperature's help was cut to "higher
     makes th…" at 211x44. Review note 9's 32-cell control column leaves the
-    help 45 cells there, not the 55 the field table was written for. Every
+    help 45 cells there, not the 55 the field table was written for, and
+    capture finding 2's one-cell gap from the Source word leaves 44. Every
     saved fallback, painted in its row with Sampling open, shows its whole
     help at both full-screen sizes."""
     from Tests.UI.test_settings_model_defaults_rows import _EVERY_FIELD_SET
@@ -294,7 +295,9 @@ async def test_every_fallback_row_paints_its_whole_help(request, size):
             assert _static_text(help_line) == MODEL_CONFIG_FIELDS[name].help, name
             help_line.scroll_visible(animate=False, immediate=True)
             await pilot.pause()
-            painted = "".join(_region_rows(screen, help_line)).rstrip()
+            # Capture finding 2: the help's first cell is its own gap from
+            # the Source word, so the painted row starts blank.
+            painted = "".join(_region_rows(screen, help_line)).strip()
             if painted != MODEL_CONFIG_FIELDS[name].help:
                 cut.append((name, help_line.content_region.width, painted))
     assert not cut, "\n".join(map(str, cut))
