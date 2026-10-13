@@ -1665,6 +1665,7 @@ async def test_the_wait_line_goes_when_the_returned_catalog_lists_nothing() -> N
                 await pilot.pause()
                 if switcher._catalog_state.get("openai") == "loading":
                     break
+            assert switcher._catalog_state.get("openai") == "loading"
             await pilot.press("enter")
             await pilot.pause()
             error = switcher.query_one("#console-popover-error")
