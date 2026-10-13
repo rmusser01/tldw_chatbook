@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: No changes · edits save with s | Changes affect global Console fallbacks after save.                               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │   MCP tool.                                                                                                                │  │  │                                         │
+│  category search             │  │  │  Model turns (backstop)  │ 2000                                                                                            │  │  │ Selected category: Console Behavior     │
+│                              │  │  │   Tool-calling rounds per message. A backstop, not the usual limiter - at the default token budget a run stops on spend    │  │  │ No unsaved changes                      │
+│  Core                        │  │  │   first, long before this.                                                                                                 │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │  Steps (backstop)        │ 25000                                                                                           │  │  │  Save (s) — no changes                  │
+│      Providers & Models      │  │  │   Individual loop steps. One tool round costs 3 (think, call, result) and the closing reply costs 1, so N turns need       │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │   3*(N-1)+1 steps. Set below that and this, not the turn count, becomes your limiter. Maximum supported: 199,999 steps.    │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │                                                                                                                            │  │  │ file.                                   │
+│  Interface                   │  │  │                                                                                                                            │  │  │ Control guide                           │
+│      Appearance              │  │  │   Agent tool-result display cap                                                                                            │  │  │  Chat display name: Speaker label and   │
+│      Theme                   │  │  │  Display cap (chars)     │ 160                                                                                             │  │  │  trusted character-template human       │
+│      Splash Screen           │  │  │   How much of an agent tool result the Console shows you here -- distinct from max_tool_result_chars, which caps what      │  │  │  name                                   │
+│    > Console Behavior        │  │  │   the model itself saw. Open a run's "View full log" (Agent rail) to read everything beyond this cap.                      │  │  │  Streaming: Show the reply as it is     │
+│  Data & Privacy              │  │  │                                                                                                                            │  │  │  generated.                             │
+│      Storage                 │  │  │   Permission summaries                                                                                                     │  │  │  Temperature: Lower stays focused;      │
+│      Workspaces              │  │  │   applies immediately - no Save needed                                                                                     │  │  │  higher is more varied.               ▅ │
+│      Tool Profiles           │  │  │   When enabled, a fast LLM you designate receives a bounded excerpt of this conversation (your messages and the          ▄ │  │  │  Top P: Use only top tokens whose       │
+│      Privacy & Security      │  │  │   assistant's, only) to write the approval summary.                                                                        │  │  │  chances sum to P.                      │
+│      Network                 │  │  │  Summary mode            │ Off                         ▼                                                                   │  │  │  Max tokens: Longest reply the model    │
+│      My Profile              │  │  │  Provider                │ e.g. OpenAI                                                                                     │  │  │  may give, in tokens.                   │
+│  Troubleshooting             │  │  │  Model                   │ empty = the provider's default model                                                            │  │  │  Paste collapse: Only pasted chunks     │
+│      Diagnostics (view)      │  │  │                                                                                                                            │  │  │  over the threshold become compact      │
+│      About (view)            │  │  │                                                                                                                            │  │  │  placeholders; typed text stays         │
+│      Agents                  │  │  │   Selection side chat                                                                                                    ▅ │  │  │  literal                                │
+│  Expert                      │  │  │   Ephemeral chat about selected transcript text (More Details / Ask in Side Chat). Nothing is persisted.                   │  │  │  Threshold: Minimum pasted chunk size   │
+│      Hooks                   │  │  │  Side chat model         │ empty = current session model                                                                   │  │  │  before collapse                        │
+│      Internal Prompts        │  │  │  Prompt template         │ Give me more details about: {selection}                                                         │  │  │ Focused field guide                     │
+│      Advanced Config         │  │  │   Template used by More Details: {selection} inserts the selected text; without it the selection is appended. An empty     │  │  │  Purpose: Focus a Console Behavior      │
+│   Domain Defaults ▸ (11)     │  │  │   template uses the built-in default.                                                                                      │  │  │  field for setting-specific guidance.   │
+│                              │  │  │                                                                                                                            │  │  │  Consequences: No field-specific        │
+│                              │  │  │   Conversation context and memory                                                                                          │  │  │  guidance is active right now.          │
+│                              │  │  │   Global defaults for new and inherited conversations. Current-conversation overrides remain in the Console's Context &    │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

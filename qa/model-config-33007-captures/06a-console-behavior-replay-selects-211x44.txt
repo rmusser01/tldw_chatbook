@@ -5,7 +5,7 @@
  Mode: Console Behavior
 ┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
 │                              │  │  │                                                                                                                            │  │  │                                         │
-│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.                                          │  │  │  Scope Inspector                        │
+│  Filter categories (/)       │  │  │  State: No changes · edits save with s | Changes affect global Console fallbacks after save.                               │  │  │  Scope Inspector                        │
 │  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
 │  category search             │  │  │  Console Behavior                                                                                                          │  │  │ Selected category: Console Behavior     │
 │                              │  │  │                                                                                                                            │  │  │ No unsaved changes                      │
@@ -14,7 +14,7 @@
 │      Providers & Models      │  │  │   Applies immediately. Thinking remains part of the conversation even when hidden.                                         │  │  │  Revert (r) — no changes                │
 │      Web Search              │  │  │                                                                                                                          ▁ │  │  │ Local-only: saves write your config     │
 │      Speech & TTS            │  │  │                                                                                                                            │  │  │ file.                                   │
-│  Interface                   │  │  │   Local reasoning history                                                                                                  │  │  │  may write, in tokens.                  │
+│  Interface                   │  │  │   Local reasoning history                                                                                                  │  │  │  may give, in tokens.                   │
 │      Appearance              │  │  │  Default replay          │ Automatic (recommended)     ▼                                                                   │  │  │  Paste collapse: Only pasted chunks     │
 │      Theme                   │  │  │   These device-local controls refine Conversation Auto. Conversation Include and Exclude override them, and Required       │  │  │  over the threshold become compact      │
 │      Splash Screen           │  │  │   continuation remains intact. Automatic follows reviewed templates; unknown templates keep the server default. All        │  │  │  placeholders; typed text stays         │
