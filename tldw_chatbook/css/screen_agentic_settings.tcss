@@ -1054,6 +1054,13 @@ Button.settings-category-group-toggle:focus {
     height: auto;
 }
 
+/* Capture fix 3 (finding 3): the return boxes under Applies to are as tall
+   as what they hold; a Vertical's own 1fr took the card's leftover rows. */
+#settings-provider-navigation-conflict,
+#settings-provider-return-continuation {
+    height: auto;
+}
+
 #settings-providers-models-card .settings-applies-to {
     width: $ds-width-fill;
     height: auto;
