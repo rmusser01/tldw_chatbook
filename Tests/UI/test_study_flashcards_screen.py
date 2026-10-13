@@ -1681,7 +1681,7 @@ async def test_a_held_card_list_rebuild_ends_quietly_when_the_sub_view_is_swappe
         await _until(
             pilot, lambda: scope.list_calls > held, "the rebuild to reach the service"
         )
-        window.current_view = "quizzes"
+        window.current_view = "structured_learning"  # Quizzes can raise on entry (dev)
         await _until(
             pilot,
             lambda: not window.query("#review-status"),
@@ -1691,7 +1691,7 @@ async def test_a_held_card_list_rebuild_ends_quietly_when_the_sub_view_is_swappe
         scope.gate.set()
         await rebuild  # NoMatches before the fix
         await pilot.pause()
-        assert window.current_view == "quizzes"
+        assert window.current_view == "structured_learning"
 
 
 #: The five controller actions that await the card-list rebuild, with the
