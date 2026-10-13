@@ -270,7 +270,7 @@ Tests/UI/test_library_dreams_reader.py
 # PR3010 live phase/Stop event regression; bounded native owner and view guards.
 Tests/UI/test_console_response_rules.py::test_mapped_learning_phase_and_stop_follow_live_helper
 Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the_mounted_current_session
-# TASK-33007 (PR #3057, Phase 7 of the model-configuration redesign): the 87
+# TASK-33007 (PR #3057, Phase 7 of the model-configuration redesign): the 89
 # entries below are this PR's. They sit last, so no earlier entry's shard
 # depends on them, in the order that spreads them most evenly when they are
 # dealt round-robin over eight shards (scripts/ui_lane_shard_replay.py; see
@@ -461,3 +461,6 @@ Tests/UI/test_app_quit_under_modal.py::test_a_snapshot_edit_left_before_its_chan
 # Post-rebase round 1, finding 1: leaving Settings and Ctrl+Q wait for a snapshot Save still writing (15 s each).
 Tests/UI/test_app_quit_under_modal.py::test_leaving_settings_waits_for_a_snapshot_save_in_flight
 Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_on_settings_waits_for_a_snapshot_save_in_flight
+# Capture 13c: a kept snapshot edit is forgotten once it is saved or reverted (14 s each).
+Tests/UI/test_app_quit_under_modal.py::test_a_kept_snapshot_edit_is_forgotten_once_saved_or_reverted[revert]
+Tests/UI/test_app_quit_under_modal.py::test_a_kept_snapshot_edit_is_forgotten_once_saved_or_reverted[save]

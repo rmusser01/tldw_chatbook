@@ -287,7 +287,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # block, a snapshot edit whose Changed has not landed is kept: 275.
 # C16 for post-rebase round 1: +2 node ids after the block (leaving and
 # Ctrl+Q wait for a snapshot Save still writing): 277.
-MINIMUM_FILES = 277
+# Capture 13c: +2 node ids after the block (a kept snapshot edit is
+# forgotten once it is saved or reverted): 279.
+MINIMUM_FILES = 279
 
 
 def read_census(path: Path) -> list[str]:
