@@ -465,12 +465,21 @@ def test_a_recoverys_return_names_no_pair_and_reopens_nothing(monkeypatch) -> No
 
 
 def _settings(
-    target, outcome, store=None, *, dirty=False, conflict=None, own_draft=False
+    target,
+    outcome,
+    store=None,
+    *,
+    dirty=False,
+    conflict=None,
+    own_draft=False,
+    key_check="Ready · not tested",
 ):
     """What the Settings offer and copy read from their screen.
 
     ``dirty`` is any unsaved Providers & Models edit; ``own_draft`` is the
     narrower case of a labelled edit to the target's own provider.
+    ``key_check`` is the Key check row's word, read from the last check's
+    Readiness line as the real screen keeps it.
     """
     return SimpleNamespace(
         _provider_return_target=target,
@@ -479,6 +488,7 @@ def _settings(
         _category_has_unsaved_changes=lambda _category: dirty or own_draft,
         _provider_same_target_has_draft=lambda: own_draft and conflict is None,
         _custom_endpoints_store=lambda: store,
+        _provider_test_result=f"Readiness  {key_check}\nKey  saved in config",
     )
 
 
@@ -664,6 +674,20 @@ def test_settings_copy_names_the_console_chat_and_keeps_the_modal_copy() -> None
         "Provider settings saved. Return to Console to continue in "
         "“Refactor plan for the g…”; generation is not yet verified."
     )
+    # Capture finding 1: a key check after the save (t) that the provider
+    # accepted ends the line's doubt, for a saved key only. Chat settings'
+    # line and a local server's "reachable" (it may ignore the key) keep it.
+    verified = "Ready · verified 21:24"
+    assert continuation_copy(_settings(console, SAVED, store, key_check=verified)) == (
+        "Credential saved. Return to Console to continue in "
+        "“Refactor plan for the g…”; the provider accepted the key."
+    )
+    for unchanged in (
+        _settings(console, SAVED, store, key_check="Ready · reachable 21:24"),
+        _settings(console, other, store, key_check=verified),
+        _settings(modal, SAVED, key_check=verified),
+    ):
+        assert continuation_copy(unchanged).endswith("is not yet verified.")
     store.close_session(chat.id)
     assert continuation_copy(_settings(console, SAVED, store)) == (
         "Credential saved. Return to Console; provider acceptance is not yet verified."
@@ -896,6 +920,60 @@ async def test_recovery_round_trip_returns_to_the_chat_on_one_enter(
         assert not console._console_setup_modal_blocking()
         assert not app.pending_handoffs.has_pending(CHANNEL)
         assert settings._provider_return_target is None
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_key_check_after_the_save_updates_the_return_line(
+    monkeypatch, request
+):
+    """Capture finding 1 (03e): after s, t lists models with the saved key.
+    Key check then read "Ready · verified" while the line above Return to
+    Console still said the key was not verified. The check redraws the line,
+    and focus stays on the return. Only the listing is stubbed."""
+    listed: list[httpx.Request] = []
+
+    def listing(request: httpx.Request) -> httpx.Response:
+        listed.append(request)
+        return httpx.Response(200, json={"data": [{"id": "gpt-5"}]})
+
+    monkeypatch.setattr(
+        discovery_module,
+        "build_httpx_async_client",
+        lambda **kwargs: httpx.AsyncClient(
+            transport=httpx.MockTransport(listing), **kwargs
+        ),
+    )
+    app = _cloud_app(monkeypatch)
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        _console, session, settings = await _recover_from_the_card(app, pilot)
+        status = settings.query_one(
+            "#settings-provider-return-continuation-status", Static
+        )
+        await pilot.press(*_KEY)
+        await pilot.press("escape")  # leave the field, so s is Save
+        await pilot.press("s")
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "settings-provider-return",
+            "focus on the Return to Console action after the save",
+        )
+        line = f"Credential saved. Return to Console to continue in “{session.title}”; "
+        assert str(status.renderable) == (
+            f"{line}provider acceptance is not yet verified."
+        )
+
+        await pilot.press("t")
+        verdict = settings.query_one("#settings-provider-readiness", Static)
+        await _until(
+            pilot,
+            lambda: str(verdict.renderable).startswith("Ready · verified"),
+            "the key check to read verified",
+        )
+        assert len(listed) == 1 and listed[0].url.path.endswith("/models")
+        assert str(status.renderable) == f"{line}the provider accepted the key."
+        assert app.focused.id == "settings-provider-return"
 
 
 @pytest.mark.asyncio

@@ -17983,6 +17983,7 @@ class SettingsScreen(BaseAppScreen):
         )
         self._provider_test_result = detail
         self._update_provider_test_result()
+        self._update_provider_return_widgets()  # its line quotes the Key check
         self.app.notify(
             summary,
             severity=(

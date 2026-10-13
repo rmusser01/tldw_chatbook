@@ -53,6 +53,10 @@ _SAVED_COPY = {
         "generation is not yet verified.",
     ),
 }
+#: The Key check word for a cloud key the provider's listing accepted.
+VERIFIED_PREFIX = "Ready · verified"
+#: A Console return's credential line once the Key check reads verified.
+KEY_ACCEPTED_COPY = "the provider accepted the key."
 
 
 def fitted_chat_title(title: str) -> str:
@@ -267,9 +271,10 @@ def continuation_copy(screen: SettingsScreen) -> str:
 
     Returns:
         After a save: what was saved, where the return goes and what is still
-        unverified. For a Console return with nothing saved: that nothing is
-        unsaved and where the return goes. A Console return names the chat
-        while that chat is open.
+        unverified; for a Console return, once the Key check reads verified,
+        that the provider accepted the key. For a Console return with nothing
+        saved: that nothing is unsaved and where the return goes. A Console
+        return names the chat while that chat is open.
     """
     target = screen._provider_return_target
     saved = _SAVED_COPY.get(screen._provider_return_outcome)
@@ -283,4 +288,12 @@ def continuation_copy(screen: SettingsScreen) -> str:
     chat = f" to continue in “{title}”" if title else ""
     if saved is None:
         return f"{ARRIVAL_COPY} Return to Console{chat}."
-    return f"{saved[0]} Return to Console{chat}; {saved[1]}"
+    unverified = saved[1]
+    if screen._provider_return_outcome is Outcome.CREDENTIAL_SAVED:
+        # Lazy: the card module imports this one.
+        from .providers_models_card import key_check_verdict
+
+        # A key check after the save (t) answers what the save could not.
+        if key_check_verdict(screen).startswith(VERIFIED_PREFIX):
+            unverified = KEY_ACCEPTED_COPY
+    return f"{saved[0]} Return to Console{chat}; {unverified}"

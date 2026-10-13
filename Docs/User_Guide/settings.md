@@ -483,7 +483,9 @@ from the Console one way back is always there.
 From either place a successful save puts focus on the button, so **Esc**,
 **s**, **Enter** is save and go back; from the Console the status then reads
 "Credential saved. Return to Console to continue in “Chat 1”; provider
-acceptance is not yet verified.". After a save, from either place, the button
+acceptance is not yet verified.". Press **t** there and, once **Key check**
+reads "Ready · verified", the status ends "the provider accepted the key."
+instead; focus stays on the button. After a save, from either place, the button
 stays through any later edit and **Return without saving** no longer shows.
 Returning then goes back without asking and does not save those later edits:
 they stay in Settings as unsaved edits (except a snapshot preference — the
