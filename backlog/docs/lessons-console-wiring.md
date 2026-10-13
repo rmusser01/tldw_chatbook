@@ -611,3 +611,22 @@ otherwise consumes the evidence revision without publishing its controls.
 Idle hides the rule chip but keeps its old label; Stop tests must assert no
 visible active copy within the original deadline, rather than clearing hidden
 widget content.
+
+
+## Pending registration and Inspector rows have different publication boundaries
+
+**TASK-34807, 2026-10-13.** PR3020 UI shard4 on3a865 failed the second
+pending-interrupt journey: transcript and run chip said Waiting for your approval,
+but Inspector still showed Generating and zero approvals. The fixture waited on
+the private pending set, bypassing the lock protecting its subsequent kind write,
+then ignored the full refresh's boolean completion. An actual held configuration
+rebuild on90bf reproduced False/Inspector0 with public rounds2; releasing it let
+the existing coalesced replay publish state2, before Textual finished recomposing
+the rows. The relevant owners and original fixture matched accepted84861.
+
+Use the locked public pending-round count for setup. Request the existing refresh
+once, then observe its actual Inspector count and fully rendered copy under the
+original bounded wait. A pause or updated state alone does not prove row publication.
+Keep the original assertions and real worker cleanup; do not retry rendering from
+the observation predicate or change native admission/deadlines. This qualifies the
+current full-refresh contract, not a new native-free partial Inspector projection.

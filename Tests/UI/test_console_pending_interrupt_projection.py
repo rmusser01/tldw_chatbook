@@ -131,6 +131,18 @@ async def _assert_projection(console, pilot, assistant_id, copy, approval_count)
     assert copy in text, text
     assert str(console.query_one("#console-run-chip").render()) == f"Run: {copy}."
     inspector = console.query_one("#console-run-inspector-state", ConsoleRunInspector)
+
+    # A busy config lifetime returns False and queues a fresh trailing sync;
+    # its Inspector state may also precede Textual's row recomposition.
+    def published():
+        rendered = "\n".join(str(row.render()) for row in inspector.query(Static))
+        return (
+            inspector.state.pending_approval_count == approval_count
+            and f"Live work: {copy}" in rendered
+            and f"Approvals: {approval_count} pending" in rendered
+        )
+
+    await _wait(pilot, published)
     rendered = "\n".join(str(row.render()) for row in inspector.query(Static))
     assert f"Live work: {copy}" in rendered, rendered
     assert f"Approvals: {approval_count} pending" in rendered, rendered
@@ -290,7 +302,7 @@ async def _verify_inspector_counts_queued_approval_rounds_for_its_own_session(
                 workers.append(worker)
             await _wait(
                 pilot,
-                lambda: len(controller._pending_approvals.get(session_id, ())) == 2,
+                lambda: controller.pending_round_count(session_id) == 2,
             )
             await _assert_projection(
                 console, pilot, assistant_id, "Waiting for your approval", 2
