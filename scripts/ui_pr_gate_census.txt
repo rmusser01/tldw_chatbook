@@ -270,7 +270,7 @@ Tests/UI/test_library_dreams_reader.py
 # PR3010 live phase/Stop event regression; bounded native owner and view guards.
 Tests/UI/test_console_response_rules.py::test_mapped_learning_phase_and_stop_follow_live_helper
 Tests/UI/test_console_response_rules.py::test_rule_phase_events_project_only_the_mounted_current_session
-# TASK-33007 (PR #3057, Phase 7 of the model-configuration redesign): the 84
+# TASK-33007 (PR #3057, Phase 7 of the model-configuration redesign): the 85
 # entries below are this PR's. They sit last, so no earlier entry's shard
 # depends on them, in the order that spreads them most evenly when they are
 # dealt round-robin over eight shards (scripts/ui_lane_shard_replay.py; see

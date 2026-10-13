@@ -16,7 +16,7 @@ Usage:
     # the end of the census:
     gh run view <run-id> --job <job-id> --log > run1/shard1.log
     python scripts/ui_lane_shard_replay.py --shards 8 run1 run2
-    python scripts/ui_lane_shard_replay.py --shards 8 --tail 84 --write run1 run2
+    python scripts/ui_lane_shard_replay.py --shards 8 --tail 85 --write run1 run2
 """
 
 from __future__ import annotations
