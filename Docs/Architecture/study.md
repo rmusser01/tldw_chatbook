@@ -43,7 +43,7 @@ SRS fields on `flashcards`: `interval` (days), `repetitions`, `ease_factor` (def
 ## Local vs server
 
 - Local decks/cards/quizzes are manually authored; **LLM flashcard generation and source study packs are server-only** (the local service raises "Study packs are server-only"; local Library copy says so explicitly). The dashboard's source-generation action queues a server job and polls bounded times.
-- Workspace study scopes require server mode; deck deletion is disabled in server mode (the server has no deck-delete API); flashcard listing is deck-scoped by construction (scope kwargs are not accepted).
+- Workspace study scopes require server mode; the UI disables deck deletion in server mode by design; flashcard listing is deck-scoped by construction (scope kwargs are not accepted).
 - Every mutation passes a runtime-policy action id (`study.deck.create.local|server`, review actions, …).
 - Dashboard snapshots fall back from the scope service to direct ChaChaNotes reads, run off the event loop for file-backed DBs.
 

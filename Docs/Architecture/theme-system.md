@@ -6,7 +6,7 @@ This document describes theming: the shipped theme catalog and its readability g
 
 | Concern | File | Key symbols |
 | --- | --- | --- |
-| Catalog | `css/Themes/themes.py` | `ALL_THEMES` (68 shipped themes), `create_theme_from_dict`, `load_user_themes`, `sanitize_theme_variables`, `ensure_readable_text_hues`, guard variables (`$tldw-boundary`, `$tldw-focus-fill`), reserved prefixes `custom_` / `unreadable:` |
+| Catalog | `css/Themes/themes.py` | `ALL_THEMES` (the shipped-theme catalog — the count drifts, trust the list), `create_theme_from_dict`, `load_user_themes`, `sanitize_theme_variables`, `ensure_readable_text_hues`, guard variables (`$tldw-boundary`, `$tldw-focus-fill`), reserved prefixes `custom_` / `unreadable:` |
 | Switch/persist engine | `css/Themes/theme_catalog.py` | `use_theme`, `use_theme_toast`, `revert_theme`, `start_revert`, `queue_launch_default` / `settle_launch_default` (single writer thread, latest-wins) |
 | Palette | `app_command_providers.py` | `ThemeProvider` — "Theme: Change Theme" + per-theme switch hits |
 | Picker | `Widgets/settings_theme_picker.py` | `ThemePicker` — Use / Try / Revert / Clone / New / Edit / Rename / Delete / Export / Import |

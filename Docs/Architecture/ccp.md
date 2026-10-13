@@ -1,6 +1,6 @@
 # The legacy CCP route and retired chat tabs
 
-This document disentangles the legacy names: **CCP is Conversations, Characters & Prompts** (the retired Roleplay-era tab — not a "coding copilot"; no such artifact exists in the repo), the `ccp` route still resolves (to PersonasScreen), part of its handler layer is live production code, and the separately-named **Coding** tab was deleted and folded into the Console. A reader grepping "copilot" finds nothing.
+This document disentangles the legacy names: **CCP is Conversations, Characters & Prompts** (the retired Roleplay-era tab — not a "coding copilot"; no such feature exists in the repo — the only "copilot" strings anywhere are unrelated model ids like `o365-copilot` and a CI bot actor). The `ccp` route still resolves (to PersonasScreen), part of its handler layer is live production code, and the separately-named **Coding** tab was deleted and folded into the Console.
 
 ## What exists now
 
@@ -26,7 +26,7 @@ Surviving data seams named after CCP: conversation `discovery_owner` values `{ge
 1. PersonasScreen composes character/persona browsing through the live CCP handlers.
 2. "Start chat" routes through `open_chat_with_handoff` with an explicit intent marker (the legacy route launched a blank main-chat tab via the retired chat-tab container — unqueryable from a pushed screen).
 3. Live conversation turns run through the **Console** (`ChatScreen` + the provider gateway), with the conversation record tagged `discovery_owner=ccp_character|ccp_persona`; Roleplay→Console activation is a cancellable preflight lane.
-4. The old CCP-with-tool-calls experience is gone: the Console transcript owns tool rendering, and the retained non-streaming `chat_wrapper` adapter (which raises on `streaming=True`) has exactly one in-tree caller left — the media-analysis spend path. Its docstring still naming "CCP" is stale relative to callers.
+4. The old CCP-with-tool-calls experience is gone: the Console transcript owns tool rendering, and the retained non-streaming `chat_wrapper` adapter (which raises on `streaming=True`) has **zero production callers** — a census test pins the approved-caller set to empty, and media analysis calls `chat_api_call` directly. The adapter and its docstring's "CCP … still use" claim survive only pending a retirement decision.
 
 ## Boundaries and tests
 
@@ -41,7 +41,7 @@ ADR-004 (`004-personas-destination-native-workbench.md` — the CCP route retire
 1. Never call it "Coding CoPilot" in new writing — grep for "copilot" finds nothing in code; the coding lineage is the separately deleted `TAB_CODING` tab.
 2. `resolve_screen_target("ccp")` reports canonical tab `personas` — highlight logic must use the canonical tab, not the requested route.
 3. `ccp_enhanced_handlers`' dead branches are load-bearing history — the hasattr guards are why the layer still works against a screen that no longer has those attributes.
-4. The `worker_events.chat_wrapper_function` docstring's "CCP … still use" claim is stale (only media analysis calls it) — this doc supersedes it.
+4. The `worker_events.chat_wrapper_function` docstring's "CCP … still use" claim is stale — zero production callers remain (the census test `Tests/Event_Handlers/test_retained_worker_adapter.py` pins the approved-caller set to empty); this doc supersedes the docstring.
 
 ## Related docs
 

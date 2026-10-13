@@ -54,7 +54,7 @@ ADR-121 (`121-local-versioned-canvas-artifacts-and-browser-sandbox.md`; note the
 ## Verified gotchas
 
 1. Naming hazard: Library browse widgets are also called "canvases" — unrelated subsystem.
-2. Tool-result byte caps: `canvas_read` is bounded at ~3.2 MiB, other canvas tools at 64 KiB.
+2. Tool-result byte caps: `canvas_read` is bounded at 6×512 KiB + 64 KiB (≈3.06 MiB) per `MAX_CANVAS_TOOL_RESULT_BYTES`, other canvas tools at 64 KiB.
 3. The provider's `load_schema` returns a schema object carrying hidden guide/profile fields — provider-owned context, deliberately excluded from ordinary schema serialization.
 4. Guidance suppression relies on an exact offer-policy string match in the system prompt; profile-specific guidance is not repeated across history.
 5. Conversation history re-parsing keeps per-profile guidance from being re-delivered every turn.

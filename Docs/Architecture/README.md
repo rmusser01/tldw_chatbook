@@ -72,4 +72,4 @@ It complements the other doc families:
 
 ## Coverage
 
-The set now covers every subsystem tracked by this index (35 files). New subsystems — or material changes to an existing one — should add or update a doc here in the same change; that is the convention that keeps this reference living rather than historical.
+The set now covers every subsystem tracked by this index (34 subsystem docs plus this README). New subsystems — or material changes to an existing one — should add or update a doc here in the same change; that is the convention that keeps this reference living rather than historical.
