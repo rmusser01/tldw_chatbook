@@ -1,7 +1,8 @@
 """Ask before a quit drops staged Settings changes (TASK-33007).
 
-``SettingsScreen.confirm_quit`` delegates here once the theme editor's own
-prompt has answered. A staged change lives only in the screen's drafts, so
+``SettingsScreen.confirm_quit`` asks here before the theme editor's own
+prompt, whose Discard undoes a Try: this prompt changes nothing, so its Keep
+editing loses nothing. A staged change lives only in the screen's drafts, so
 Ctrl+Q with "1 unsaved" used to quit at once and lose it (capture finding 22).
 """
 
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 async def confirm_settings_quit(screen: SettingsScreen) -> bool:
     """Ask before quitting with staged changes in any Settings category.
 
-    Theme is left out: its editor's prompt asked already. Must run inside a
+    Theme is left out: its editor's prompt asks next. Must run inside a
     worker; the app's quit flow is one.
 
     Args:

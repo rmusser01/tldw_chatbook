@@ -131,7 +131,8 @@ Speech & TTS with edits raises its own save/discard dialog instead of keeping
 the draft; see that section and Quirks.) Quitting is different: **Ctrl+Q**
 on Settings with unsaved changes asks "Quit and discard unsaved Settings
 changes?" and names the categories that hold them; **Keep editing** stays,
-**Discard and quit** quits. A draft kept after you left Settings is not asked
+**Discard and quit** quits (with unsaved theme edits too, the theme's own
+Save / Discard / Stay prompt asks after it). A draft kept after you left Settings is not asked
 about: quitting from another screen drops it. A draft that fails
 validation keeps its badge and count and names the problem — "State: Draft —
 save with s · 1 unsaved | Needs correction: \<the problem\>" — and Save stays

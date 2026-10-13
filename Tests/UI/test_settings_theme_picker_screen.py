@@ -1585,6 +1585,47 @@ async def test_quit_with_a_staged_settings_change_asks_first(
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_quit_asks_about_staged_changes_before_the_theme(request, monkeypatch):
+    """Capture fix 2, finding 4: the theme prompt asked first, and its
+    Discard undid the Try preview before the staged-change prompt asked;
+    Keep editing there then cancelled the quit with the preview already
+    gone. The staged-change prompt, which changes nothing, now asks first."""
+    from tldw_chatbook.UI.Screens.settings_config_models import (
+        SettingsCategoryId,
+        SettingsDraft,
+    )
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        draft = SettingsDraft(category=SettingsCategoryId.PROVIDERS_MODELS)
+        draft.set_value("provider", "openai", "anthropic")
+        settings._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = draft
+        undone = []
+        monkeypatch.setattr(editor, "discard_try", lambda: undone.append(True))
+        tldw, _switched = _real_app_on(host, settings, monkeypatch)
+        past_screen_check = []
+
+        async def next_quit_step():
+            past_screen_check.append(True)
+            return False
+
+        monkeypatch.setattr(tldw, "_confirm_console_runtime_quit", next_quit_step)
+        tldw._quit_in_progress = True
+        quit_flow = host.run_worker(tldw._confirm_and_quit(), exit_on_error=False)
+        await pilot.pause(0.3)
+        assert isinstance(host.screen, ConfirmationDialog), host.screen
+        await pilot.click("#cancel-button")
+        await pilot.pause(0.2)
+        await quit_flow.wait()
+        assert past_screen_check == [] and _leave_modals(host) == []
+        assert undone == [] and editor.is_modified and draft.is_dirty
+        assert host.screen is settings
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_real_navigate_to_screen_prompts_and_stay_keeps_settings(request, monkeypatch):
     """Review follow-up 7: a real ``NavigateToScreen`` through the real
     ``TldwCli.handle_screen_navigation`` asks, and Stay vetoes the switch."""
