@@ -8,7 +8,7 @@ legacy Chat window are deprecated parallels; new settings belong here.
 import asyncio
 import copy
 import json
-from collections.abc import Callable, Mapping, MutableMapping, Sequence, Collection
+from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 import logging

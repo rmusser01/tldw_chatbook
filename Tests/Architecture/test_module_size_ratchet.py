@@ -210,7 +210,11 @@ _BUDGETS: dict[str, int] = {
     # Capture fix 3 round 5: a Clear still running when the save fails
     # counts as dropping the rows, so the step is never "Try Save again"
     # (+7): 33,986.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33986,
+    # Rebased onto dev (2026-10-13): dev grew the file from 34,606 to 36,393 lines
+    # since this PR's base (the Guardian rule editor and Personal Context
+    # owners, among others), and this PR's net change is the same as before:
+    # 35,771.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 35771,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

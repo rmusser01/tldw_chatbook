@@ -252,32 +252,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # they fall decides the split as much as the shard count does -- listed where
 # they were, one of six shards ran 16.0 min (17.4 with setup, of 20). They now
 # sit at the end of the census, so no earlier file's shard depends on them,
-# ordered by a search over the tail for the flattest split. Rebased over
-# Roleplay frame B1's four files that order gave 13.4 min at best with six
-# shards and 10.8 with seven, so the lane went to seven. A file added above
-# the tail shifts its shards: re-run the replay then.
-# Phase 7's counts above were taken on its own base; over B1's 163 its eleven
-# files make the floor 174.
-# ordered by a search over the tail for the flattest split. Over dev's 179
-# entries (node ids among them) that order replays at 12.3 min at most with
-# seven shards, so the lane went to seven. An entry added above the tail
-# shifts its shards: re-run the replay then.
-# ordered by a search over the tail for the flattest split. Per-file seconds
-# move about 40% between runs on the hosted runners (the same file took 204 s
-# in one run of #3057 and 295 s in the next), so the search scores each file
-# at the worst of the runs measured. Over dev's 179 entries (node ids among
-# them) seven shards replay at 14.3 min at most -- one ran 16.7 of 20 with
-# setup -- and eight at 11.7, so the lane went to eight. An entry added above
-# the tail shifts its shards: re-run the replay then.
-# Phase 7's counts above were taken on its own base; over dev's 179 its eleven
-# files make the floor 190.
 # ordered by scripts/ui_lane_shard_replay.py for the flattest split. Per-file
 # seconds move about 40% between runs on the hosted runners (one file took
 # 204 s in one run of #3057 and 295 s in the next), so the replay scores each
 # file at the worst of the runs it is given. Over three runs of #3057 and
 # dev's 180 entries above the tail, the best tail order replays at 14.2 min
 # of pytest at most with six shards, 13.1 with seven and 13.7 with eight
-# (dev's own entries fall unevenly over eight), so the lane runs seven. An
+# (dev's own entries fall unevenly over eight), so the lane went to seven. An
 # entry added above the tail shifts its shards: re-run the replay then, and
 # change the shard count only if the best order still nears the cap -- a new
 # count re-deals every entry, and one more shard is not always lighter.
@@ -296,7 +277,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # C16 for the capture fix wave (2026-10-13): +9 node ids, to 246 (tail +2).
 # C16 for capture fix 2 and its rounds (2026-10-13): +12 node ids, to 258 (tail +5).
 # C16 for capture fix 3 and its rounds (2026-10-13): +5 node ids, to 263 (tail +5).
-MINIMUM_FILES = 278
+# Rebased onto dev (2026-10-13): dev's 190 entries and this PR's 84, 274. The 84
+# are one block at the end, re-ordered as a whole: the replay over three runs of
+# #3057, with the lanes report's worst local seconds x1.5 for the 53 entries no
+# CI log timed, gives 17.6 min of pytest at most as they were listed over seven
+# shards, 15.4 re-ordered (about 17 of the job's 20 with setup) and 13.5 over
+# eight, so the lane runs eight.
+MINIMUM_FILES = 274
 
 
 def read_census(path: Path) -> list[str]:
