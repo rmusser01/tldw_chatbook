@@ -1538,6 +1538,18 @@ class ConsoleModelPopover(
                 # list a pair whatever its readiness: no row, so a fast Enter
                 # applies neither their copy nor Find's best match.
                 return None
+            if (
+                reopened
+                and _only_needs_a_model(self._readiness.get(reopened))
+                and (
+                    self._catalog_state.get(reopened) == "loading"
+                    or reopened in self._readiness_pending
+                )
+            ):
+                # Its catalog, then its readiness with the catalog's first
+                # model, are on the way: the settled list's Enter applies a
+                # READY row, not this NEEDS SETUP row's trip to Settings.
+                return None
             own = [index for index in selectable if self._leads(self._rows[index])]
             if reopened and not own:
                 # Back from Settings with no row for the pair (the row named

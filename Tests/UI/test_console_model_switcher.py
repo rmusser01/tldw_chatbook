@@ -1517,6 +1517,90 @@ async def test_a_provider_whose_only_blocker_is_its_model_lists_its_catalog(
         assert applied == [("openai", "gpt-new")]
 
 
+async def test_a_reopened_list_highlights_nothing_while_its_providers_models_arrive() -> (
+    None
+):
+    """Final fix wave 3, item 1. A list reopened on a provider whose only
+    blocker is its model settles on its catalog's first model, READY, and
+    Enter applies it. Until then the list held the NEEDS SETUP "(any model)"
+    row while the catalog loaded, then up to three NEEDS SETUP catalog rows
+    while readiness was asked again, and a fast Enter on either opened
+    Settings again. Nothing is highlighted until both have answered."""
+    catalog_release = asyncio.Event()
+    readiness_release = threading.Event()
+    recorder = Recorder(ready=frozenset({"openrouter"}))
+    others = recorder.readiness
+
+    def readiness(provider: str, model: str | None) -> ConsoleSettingsReadiness:
+        verdict = others(provider, model)
+        if provider != "openai":
+            return verdict
+        if model:
+            readiness_release.wait(10)
+            return READY
+        return NO_MODEL
+
+    async def catalog(provider: str) -> list[str]:
+        if provider == "openai":
+            await catalog_release.wait()
+            return ["gpt-new", "gpt-old"]
+        return ["openai/gpt-y"]
+
+    async def enter_does_nothing(pilot) -> None:
+        assert switcher.highlighted_row() is None
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.screen is switcher
+        assert recorder.setup == [] and recorder.submissions == []
+
+    recorder.readiness = readiness
+    app = SwitcherHarness()
+    try:
+        async with app.run_test(size=(211, 44)) as pilot:
+            switcher = build_switcher(
+                recorder,
+                draft=_draft("openrouter", "openai/gpt-y"),
+                providers_models={"OpenAI": [], "OpenRouter": []},
+                catalog_loader=catalog,
+                query="OpenAI ",
+                reopened_provider="openai",
+            )
+            app.push_screen(switcher, callback=lambda result: None)
+            for _ in range(40):
+                await pilot.pause()
+                if switcher._catalog_state.get("openai") == "loading":
+                    break
+            assert switcher._catalog_state.get("openai") == "loading"
+            await enter_does_nothing(pilot)
+
+            catalog_release.set()
+            for _ in range(40):
+                await pilot.pause()
+                if "openai" in switcher._catalogs:
+                    break
+            assert "openai" in switcher._readiness_pending
+            assert ("setup", "openai", "gpt-new") in _row_keys(switcher)
+            await enter_does_nothing(pilot)
+
+            readiness_release.set()
+            await _settle(app, pilot)
+            row = switcher.highlighted_row()
+            assert row is not None
+            assert (row.kind, row.provider, row.model) == ("pair", "openai", "gpt-new")
+            await pilot.press("enter")
+            await pilot.pause()
+    finally:
+        catalog_release.set()
+        readiness_release.set()
+
+    applied = [
+        (submission.draft.settings.provider, submission.draft.settings.model)
+        for submission in recorder.submissions
+    ]
+    assert applied == [("openai", "gpt-new")]
+    assert recorder.setup == []
+
+
 async def test_a_query_the_list_opened_with_is_typed_after_not_over() -> None:
     """TASK-33008.2: the list reopens with the provider's name and a space in
     Find, and its "no models reported" line asks for an id after the name.

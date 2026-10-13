@@ -947,7 +947,10 @@ Settings offers no way back from there, so nothing reopens for it.
   match again.
 - **A provider that lists no models.** Its row named no model. When its
   cached catalog lists models once the key is saved, they are READY rows,
-  the first of them is highlighted and **Enter** applies it. Otherwise it has
+  the first of them is highlighted and **Enter** applies it. While that
+  catalog and the check it starts are still answering, nothing is
+  highlighted, so an early **Enter** neither applies a model nor opens
+  Settings. Otherwise it has
   none to offer: READY PROVIDERS opens with that provider's own line,
   "<name> · no models reported · type its name and an id". When no
   model is saved for it either, the provider stays under NEEDS SETUP, reading
