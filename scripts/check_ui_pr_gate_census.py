@@ -285,7 +285,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # eight, so the lane runs eight.
 # Round 4 after the rebase (ruling cf3r1-N1): one node appended after the
 # block, a snapshot edit whose Changed has not landed is kept: 275.
-MINIMUM_FILES = 275
+# C16 for post-rebase round 1: +2 node ids after the block (leaving and
+# Ctrl+Q wait for a snapshot Save still writing): 277.
+MINIMUM_FILES = 277
 
 
 def read_census(path: Path) -> list[str]:
