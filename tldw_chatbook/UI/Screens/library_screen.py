@@ -4046,8 +4046,7 @@ class LibraryScreen(BaseAppScreen):
             if recovery_scope is not None and note_authority_is_current()
             else None
         )
-        runtime = getattr(app_instance, "notes_sync_runtime_owner", None)
-        recovery = getattr(runtime, "draft_recovery", None)
+        recovery = getattr(app_lasting_runtime, "draft_recovery", None)
         self._library_note_session = DatabaseNoteSessionCoordinator(
             note_session_port,
             recovery=recovery,

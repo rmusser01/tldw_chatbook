@@ -198,8 +198,12 @@ async def _settle_lasting_sync(screen: LibraryScreen) -> None:
     delays the quit by that much at most and is never cancelled mid-write.
     With nothing in flight it returns at once.
     """
-    runtime = getattr(
-        getattr(screen, "app_instance", None), "notes_sync_runtime_owner", None
+    app = getattr(screen, "app_instance", None)
+    safe_reader = getattr(app, "_read_notes_sync_runtime_owner_safe", None)
+    runtime = (
+        safe_reader()
+        if callable(safe_reader)
+        else getattr(app, "notes_sync_runtime_owner", None)
     )
     if runtime is None:
         return

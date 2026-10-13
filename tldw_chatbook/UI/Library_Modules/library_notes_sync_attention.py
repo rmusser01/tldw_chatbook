@@ -128,9 +128,11 @@ def note_file_written_label(path: str) -> str:
 
 
 def _runtime(host: Any) -> Any:
-    return getattr(
-        getattr(host, "app_instance", None), "notes_sync_runtime_owner", None
-    )
+    app = getattr(host, "app_instance", None)
+    safe_reader = getattr(app, "_read_notes_sync_runtime_owner_safe", None)
+    if callable(safe_reader):
+        return safe_reader()
+    return getattr(app, "notes_sync_runtime_owner", None)
 
 
 async def _ask(runtime: Any, name: str, *args: Any, default: Any) -> Any:
