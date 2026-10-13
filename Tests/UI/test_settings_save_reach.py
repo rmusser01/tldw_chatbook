@@ -324,6 +324,20 @@ async def test_focused_field_shows_help_and_range_and_its_key_only_when_opened(
         assert disclosure.collapsed is True
         assert str(disclosure.title) == "config key"
         assert disclosure.region.height == 1
+        # Capture finding 18: the Inspector's open rows print no config key.
+        # Its "Owns" list printed eight, each split at a dot over two lines
+        # ("api_settings.<provider>." / "endpoint"); every field's key is in
+        # this disclosure ("Saved as") once the field has focus.
+        body = screen.query_one("#settings-impact-pane-body")
+        shown = [
+            _static_text(row)
+            for row in body.query(Static)
+            if disclosure not in row.ancestors
+        ]
+        keyed = [
+            row for row in shown if "api_settings." in row or "chat_defaults." in row
+        ]
+        assert keyed == [], keyed
         inside = [
             "".join(_text(screen, selector).split())
             for selector in (

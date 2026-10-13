@@ -157,8 +157,9 @@ _BUDGETS: dict[str, int] = {
     # (+6): 33,905; discovery names the provider, and its empty state
     # is one line, not two (-5): 33,900; Clear's rule moves to the card
     # (-9): 33,891; Temperature's range is the provider's own in its
-    # placeholder, its guide and Save (+8): 33,899.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33899,
+    # placeholder, its guide and Save (+8): 33,899; Providers & Models'
+    # Inspector prints no "Owns" list of raw keys (+4): 33,903.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33903,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

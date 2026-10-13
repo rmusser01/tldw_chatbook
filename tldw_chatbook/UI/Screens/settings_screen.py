@@ -24048,7 +24048,11 @@ class SettingsScreen(BaseAppScreen):
             "Writes allowed",
             "Yes" if ownership.writes_allowed else "No",
         )
-        if ownership.owns_config_sections:
+        # Capture finding 18: Providers & Models keeps raw keys out of its
+        # open rows; each field's key is its config key disclosure's.
+        if ownership.owns_config_sections and (
+            summary.category is not SettingsCategoryId.PROVIDERS_MODELS
+        ):
             yield self._detail_row(
                 "Owns",
                 "\n".join(ownership.owns_config_sections),
