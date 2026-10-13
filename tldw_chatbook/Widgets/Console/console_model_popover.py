@@ -1593,6 +1593,12 @@ class ConsoleModelPopover(
                 Option(self._prompt(row, False), disabled=not self._selectable(row))
                 for row in self._rows
             )
+        # Capture findings 5 (1): add_options' refresh(layout=True) bumps the
+        # list's box-model cache key only when no layout is pending on it. A
+        # sibling's layout that reached the screen first measured the list at
+        # the previous rebuild's length, and that box was reused: a blank row
+        # under the last one until a resize. Every rebuild bumps it.
+        pairs._layout_updates += 1
         self._set_highlight(self._highlight_target())
         if (
             self._error == _CHECKING_ERROR

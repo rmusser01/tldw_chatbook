@@ -14,7 +14,7 @@ from copy import deepcopy
 
 import httpx
 import pytest
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, OptionList, Static
 
 import tldw_chatbook.UI.Screens.settings_endpoint_probe as probe_module
 import tldw_chatbook.Widgets.Console.console_model_popover as popover_module
@@ -533,6 +533,63 @@ async def test_the_not_running_line_wraps_so_every_name_shows_whole(
     for text in quiet:
         assert line_with(lines, text.strip()), text  # painted whole, no "…"
     assert not any(line.endswith("…") for line in lines), lines
+
+
+async def test_the_list_draws_no_blank_row_when_a_layout_ran_between_answers(servers):
+    """Capture findings 5 (1): one fresh launch of 05d's profile at 211x44 drew
+    a blank row under "MLX-LM (Apple silicon) (not checked)", gone after a
+    resize. Each probe answer rebuilds the rows, and a server that leaves READY
+    for NOT RUNNING's packed row shortens the list by one. When another widget
+    in the dialog got its layout to the screen while one answer's layout was
+    still pending on the list, the list's box was measured and cached at that
+    length, and the next answer's refresh(layout=True) did not invalidate it
+    (Textual bumps the cache key only when no layout is pending). The rows
+    were packed against the laid-out width all along. Made deterministic:
+    three answers behind and laid out, one answer, a sibling's layout first,
+    then the other two. (A list that grows shows its scrollbar for a frame,
+    and the scrollbar's own layout refresh happens to clear the stale box:
+    the shrinking steps are the case.)"""
+    servers.hold = threading.Event()
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            pair=("openai", "gpt-5.1"),  # 05d: an OpenAI chat
+            config=_with_shipped(*_UNTOUCHED),
+            providers_models={
+                **SHIPPED_MODELS,
+                **{key: [] for key in _UNTOUCHED if key not in SHIPPED_MODELS},
+            },
+        )
+        await app.push_screen(switcher)
+        await _wait(pilot, lambda: switcher._first_readiness_done and servers.requests)
+        behind = dict(switcher._readiness)  # every local server Ready, unprobed
+        servers.hold.set()
+        await _settle(app, pilot)
+        answered = dict(switcher._readiness)
+        pairs = switcher.query_one("#console-popover-pairs", OptionList)
+        settled = pairs.option_count
+
+        late = ("aphrodite", "ollama", "tabbyapi")
+        switcher._readiness.update({key: behind[key] for key in late})
+        switcher._rebuild_rows()  # three READY rows, four names on one row
+        await _settle(app, pilot)
+        assert pairs.option_count == settled + 2
+        switcher._readiness["tabbyapi"] = answered["tabbyapi"]
+        switcher._rebuild_rows()  # one answer: a row shorter, its layout pending
+        # Another widget in the dialog reaches the screen with its layout first.
+        label = switcher.query_one("#console-popover-values-label", Static)
+        label.refresh(layout=True)
+        label._check_refresh()
+        switcher._refresh_layout()
+        switcher._readiness.update(answered)
+        switcher._rebuild_rows()  # the other two: a row shorter again
+        await _settle(app, pilot)
+        lines = list_lines(app, switcher)
+
+    assert lines[-1] == "  MLX-LM (Apple silicon) (not checked)", lines
+    assert all(line.strip() for line in lines), lines
+    assert len(lines) == settled
 
 
 async def test_find_counts_one_listed_provider_in_the_singular(servers):
