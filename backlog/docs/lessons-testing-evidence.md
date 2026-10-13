@@ -19717,3 +19717,21 @@ held the lock on the runner is not known.
 makes the condition impossible (here: a shared helper that holds both config locks, which are reentrant, and asserts
 True). Grep every call site that drops the result before trusting one; only the ones followed by a press, a click or
 an assertion on what it renders are exposed.
+
+
+## Loaded controller data does not give a newly shown button mouse geometry
+
+**TASK-34804, 2026-10-13.** PR3020 UI4 on752 timed out waiting for the Dreams
+story modal after an unchecked production Library click. An observed local pass
+was not reproduction. Holding the actual Textual batch across detail publication
+showed the button mounted, displayed and enabled with zero geometry: Pilot cached
+its origin before its own pause, layout then settled, but the click still hit
+nav-home and returned False. No Dreams action worker or modal composition started.
+The same first-data-ready-pause release failed the old loaded helper and passed
+the correction; relevant fixture and product owners matched accepted84861.
+
+Keep the existing readiness deadline and observe the requested control's actual
+mounted/visible/enabled geometry and hit target before issuing one real click.
+Assert that click succeeded. Data-ready or a pause alone is not a mouse-target
+fence; do not retry clicks, press the Button directly, manually open a modal or
+replace the real composition-readiness check to obtain a passing route test.

@@ -26,11 +26,25 @@ class ProductionArtifactsHarness(_CssTrueDestinationHarness):
         await self.push_screen(screen_class(self.app_instance))
 
 
-async def loaded(pilot, controller):
+async def loaded(pilot, controller, selector="#library-artifacts-dreams-actions"):
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         await pilot.pause(0.03)
-        if controller.detail is not None and not controller.loading:
+        button = controller.screen.query_one(selector, Button)
+        # Data publication can precede layout. Pilot caches the target origin
+        # before its own pause, so wait for the actual hit before clicking once.
+        if (
+            controller.detail is not None
+            and not (controller.loading or controller.detail_loading)
+            and button.is_mounted
+            and button.display
+            and button.visible
+            and not button.disabled
+            and button.region.width > 0
+            and button.region.height > 0
+            and button.region.offset in pilot.app.screen.size.region
+            and pilot.app.get_widget_at(*button.region.offset)[0] is button
+        ):
             return
     pytest.fail(f"Dreams did not load: {controller.error} / {controller.detail_error}")
 
@@ -163,7 +177,7 @@ async def test_production_library_dreams_story_actions_goals_and_literal_notice(
             assert (
                 rendered.plain == "Collection notice: " + notice and not rendered.spans
             )
-            await pilot.click("#library-artifacts-dreams-actions")
+            assert await pilot.click("#library-artifacts-dreams-actions")
             modal = await mounted_modal(pilot, DreamsStoryModal, "#dsm-keep-button")
             assert isinstance(modal, DreamsStoryModal)
             assert modal._story["id"] == sid
@@ -181,9 +195,9 @@ async def test_production_library_dreams_story_actions_goals_and_literal_notice(
             await pilot.press("k")
             assert db.get_story(sid)["kept"] == 1
             await pilot.press("q")
-            await loaded(pilot, c)
+            await loaded(pilot, c, "#library-artifacts-dreams-goals")
             assert c.detail.dream_story["kept"] == 1
-            await pilot.click("#library-artifacts-dreams-goals")
+            assert await pilot.click("#library-artifacts-dreams-goals")
             await mounted_modal(pilot, DreamsGoalsModal, "#dgm-goals")
             assert isinstance(host.screen, DreamsGoalsModal)
             await pilot.press("q")
