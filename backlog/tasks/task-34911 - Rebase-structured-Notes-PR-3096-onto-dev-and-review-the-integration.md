@@ -12,7 +12,7 @@ labels:
 priority: high
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/3096
-updated_date: 2026-10-13 01:06
+updated_date: 2026-10-13 03:20
 ---
 
 ## Description
@@ -43,6 +43,7 @@ ADR required: no new ADR for rebase/direct existing-owner integration; ADR path:
 7. Preserve published head 17264512 as a backup and integrate current dev baf7726a by rebase, retaining Dreams/Guardian lifecycle, Collections5, Subscriptions2/3 with embedded ChaCha80/81 exact catalogs, restricted migration owners, character portrait compatibility and feature V4 archives. Keep note schema81 unless actual allocation changes require a new assessed choice. ADR required: no new ADR for direct existing-owner fixes/integration; ADR paths: 194,097,126,207. No widened catalog, recovered activation, new storage or queue/merge policy.
 8. Reproduce the original startup census and header focus failure in isolated owned profiles. Lazily construct the single existing document worker only on first editor use; shutdown reads the backing slot and prevents resurrection. Keep all ratchet constants/pins unchanged. Diagnose actual compositor/ancestor geometry before the smallest token-backed native layout correction; retain focus/resize/Problems/native undo. Reconcile old refused-save quit fixtures with approved durable retention: true recovery-storage failure still prompts/keeps edits; successful exact retention permits lossless quit/reopen. Do not remove the durable fallback, loosen visibility assertions or call retained drafts saved.
 9. Review exact diagnostic statements and final inventory rows before deterministic regeneration; the manifest.version enum classification change is safe and not a new logger. Run targeted failing nodes plus directly affected recovery/catalog/archive/lifecycle/native guards, scoped lint/type/format/security and generated CSS/inventory checks. No full sweep, physical waiver or deferred durable Notes-sync work. Obtain independent review of the new integration/fix range; publish only reviewed source with a fresh exact expected-head lease and truthful limits.
+10. Pre-publication dev advanced from baf7726a to 74cf92e2 (49 incoming paths, five feature overlaps). ADR required: no new ADR; retain existing ADR-225 beautifulsoup4 core dependency and ADR-228 SQLite store kernel alongside ADR-194/097/126/207. Rebase the qualified source onto this pinned advance, preserve current lazy Notes-sync/Kanban/video and private SQLite held-connection/participant gates, combine only verified overlaps and the canonical inventory row, then verify bounded actual owner/storage/startup controls and independently reconcile the exact source before publication. No wholesale feature rerun, inherited-debt repair, pin increase, full sweep, merge or physical waiver.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -57,6 +58,7 @@ Published the reviewed source head to existing draft PR https://github.com/rmuss
 
 All integration acceptance criteria are accounted for. Status remains In Progress because repository static-analysis/formatting DoD is not wholly satisfied by the disclosed inherited feature/current-dev debt and analysis reach limits. No clean whole-file/type claim or waiver is made; broad debt repair was outside this rebase request. ProductionApp nested-fixture refusal, LibraryScreen mypy parser limit and FD/coroutine warnings remain qualified. Physical IME/spoken-output tasks remain open; durable Notes sync stays deferred to TASK-34818. Full report, static clarification, independent reviews and unchanged failed-case control are retained under /private/tmp/structured-notes-pr-rebase-2026-10-12. Existing testing-evidence lessons apply; no new architecture was introduced.
 Current published-head CI follow-up is in progress after the user requested continuation. Prior publication and reviews remain historical; current CI/root-cause evidence is under /private/tmp/structured-notes-pr-followup-2026-10-13. Verification, independent review and final expected-head publication are reopened for the new corrections. No merge, full sweep or physical waiver is authorized.
+Qualified CI-fix source fbb692c331 passed independent delta review with I1 token and M1 import findings corrected; inherited governance/static failures remain disclosed. Before publication, dev advanced to 74cf92e2f807250fbc07ff7a1ed272bd8d0a80a3. This task now tracks the bounded additional integration; original qualified source/report/hash receipts remain immutable.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
