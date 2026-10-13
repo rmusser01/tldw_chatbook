@@ -1810,6 +1810,46 @@ async def test_a_card_front_with_brackets_is_listed_as_typed():
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+async def test_a_card_with_brackets_is_reviewed_as_typed():
+    """The review panel is literal too (fix round 2, finding 2).
+
+    Round 1 made the card list literal, so a front holding "[/]" could be
+    listed and then raised `MarkupError` from Start review; "[new]" in a
+    back or a deck name was dropped as a style tag.
+    """
+    scope = GatedCardListStudyScopeService()
+    scope.candidates[0]["card"].update(front="arr[0] vs arr[/]", back="Paris [new]")
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, _card_list = await _open_flashcards_deck(
+            pilot, app, scope
+        )
+        controller = window.flashcards_controller
+
+        await controller.start_review()  # MarkupError before the fix
+        controller.show_answer()
+        await pilot.pause()
+        shown = [
+            str(window.query_one(f"#review-{part}", Static).render())
+            for part in ("front", "back")
+        ]
+        assert shown == ["arr[0] vs arr[/]", "Paris [new]"]
+
+        window.query_one("#new-deck-name-input", Input).value = "Week [new]"
+        await controller.create_deck()
+        status = window.query_one("#review-status", Static)
+        assert str(status.render()) == "Deck 'Week [new]' created."
+        # The deck change's own rebuild ends the test, not the app's teardown.
+        await _until(
+            pilot,
+            lambda: str(status.render()) == "No cards due for review.",
+            "the new deck's rebuild",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_two_awaited_card_list_rebuilds_do_not_interleave():
     """The awaited rebuilds share one lock with the worker rebuilds.
 

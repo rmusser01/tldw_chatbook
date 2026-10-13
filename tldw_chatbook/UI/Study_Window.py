@@ -272,9 +272,12 @@ class AnkiFlashcardsWidget(Widget):
             # Review section
             with Vertical(classes="review-area"):
                 yield Label("Review Cards:", classes="subsection-title")
-                yield Static("Create a deck to begin studying.", id="review-status")
-                yield Static("", id="review-front")
-                review_back = Static("", id="review-back")
+                # Literal: card text and deck names are typed by the user.
+                yield Static(
+                    "Create a deck to begin studying.", id="review-status", markup=False
+                )
+                yield Static("", id="review-front", markup=False)
+                review_back = Static("", id="review-back", markup=False)
                 review_back.display = False
                 yield review_back
                 yield Static("", id="review-next-intervals")
