@@ -150,18 +150,28 @@ def _blank_rows_below(box: Widget) -> int:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
-@pytest.mark.parametrize("box_id", ["return-continuation", "navigation-conflict"])
+@pytest.mark.parametrize(
+    ("box_id", "size"),
+    [
+        ("return-continuation", (235, 52)),
+        ("navigation-conflict", (211, 44)),
+        ("navigation-conflict", (235, 52)),
+    ],
+    ids=["return-continuation-235x52", "conflict-211x44", "conflict-235x52"],
+)
 @private_profile_test
 async def test_a_routed_pages_return_box_is_as_tall_as_its_rows(
     request, monkeypatch, box_id, size
 ):
     """Capture fix 3, finding 3 (Phase 8's capture): on a provider page a
     Chat settings link opened, the return box under Default model was a
-    plain Vertical whose 1fr height took the card's leftover rows: three
-    one-row children in eight rows, five blank under Stay in Settings. Both
-    return boxes are as tall as what they hold, on a page that is not the
-    default provider's."""
+    plain Vertical whose 1fr height took the card's leftover rows: at
+    235x52, three one-row children in eleven rows, eight blank under Stay in
+    Settings; the conflict box one blank row at both sizes. Both return
+    boxes are as tall as what they hold, on a page that is not the default
+    provider's. Round 1, finding 7: the return box at 211x44 is not a case,
+    as there the page after a save leaves its 1fr no spare row, so it passed
+    without the fix."""
     from textual.widgets import Input
 
     from Tests.UI.test_settings_configuration_hub import (
