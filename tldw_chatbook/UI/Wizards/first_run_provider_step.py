@@ -2325,6 +2325,7 @@ class ProviderStep(SetupStep):
         return provider_probe_result_from_settings_outcome(outcome)
 
     def _render_provider_evidence(self, identity: object) -> None:
+        from tldw_chatbook.Chat.provider_catalog import provider_display_name
         from tldw_chatbook.Chat.provider_test_evidence import (
             ProviderDraftIdentity,
             ProviderReadinessSnapshot,
@@ -2342,15 +2343,14 @@ class ProviderStep(SetupStep):
             model="unconfirmed",
             category=evidence.category,
         )
-        verdict = provider_readiness_verdict(snapshot)
-        prefix = (
-            "✓ "
-            if evidence.endpoint == "reachable"
-            else ("✗ " if evidence.endpoint == "unreachable" else "")
-        )
-        self.query_one("#setup-provider-probe-status", Static).update(
-            f"{prefix}{verdict.detail}"
-        )
+        detail = provider_readiness_verdict(snapshot).detail
+        if evidence.category == "unauthorized" and identity.credential_source == "none":
+            detail = self._discovery_failure_status(  # TASK-33008: no key was sent
+                provider_display_name(identity.provider_key),
+                wizard_state.PROVIDER_PROBE_KEY_REQUIRED,
+            )
+        prefix = {"reachable": "✓ ", "unreachable": "✗ "}.get(evidence.endpoint, "")
+        self.query_one("#setup-provider-probe-status", Static).update(prefix + detail)
 
     @staticmethod
     def _cloud_probe_base_url(provider_key: str) -> str:

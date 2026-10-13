@@ -13476,6 +13476,65 @@ async def test_a_401_to_a_request_that_sent_no_key_asks_for_a_key(monkeypatch) -
 
 
 @pytest.mark.asyncio
+async def test_a_401_to_a_test_that_sent_no_key_asks_for_a_key() -> None:
+    """TASK-33008: the Provider step's own Test button is the sibling path of
+    the case above. llama.cpp with an empty Authentication section answered
+    Test with a 401; the line said the server "rejected this API key" while
+    nothing was sent."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+
+    probe = AsyncMock(
+        return_value=SettingsEndpointProbeOutcome(
+            state="unreachable", summary="401 unauthorized", category="unauthorized"
+        )
+    )
+    app_instance = MagicMock(app_config={})
+    app_instance.llm_provider_catalog_scope_service = MagicMock(
+        discover_models=AsyncMock(
+            return_value=ModelDiscoveryResult(
+                provider="llama_cpp",
+                provider_list_key="llama_cpp",
+                endpoint_fingerprint="safe-fingerprint",
+                status="success",
+                models=(),
+            )
+        )
+    )
+    wizard = SimpleNamespace(
+        app_instance=app_instance,
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard, probe=probe)
+    app = _StepHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("llama_cpp")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if step._selected_discovery_state in {"failed", "complete"}:
+                break
+        step.query_one("#setup-provider-test", Button).press()
+        status = step.query_one("#setup-provider-probe-status", Static)
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if str(status.render()).startswith("✗"):
+                break
+
+        assert probe.await_args.kwargs["credential_source"] == "none"
+        assert str(status.render()) == (
+            "✗ llama.cpp needs an API key and none was set. Add one under "
+            "Authentication, or continue anyway."
+        )
+
+
+@pytest.mark.asyncio
 async def test_summary_overlays_probe_failure_and_flips_primary():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
