@@ -30,7 +30,6 @@ from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 ROOT = Path(__file__).resolve().parents[2]
-AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
 CONSOLE_CSS = ROOT / "tldw_chatbook/css/features/_console.tcss"
 VARIABLES = ROOT / "tldw_chatbook/css/core/_variables.tcss"
 _BUNDLED_STYLESHEET = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
@@ -183,13 +182,7 @@ def test_setup_card_is_wide_enough_for_the_step_three_line():
         detail=CONSOLE_SETUP_STEP_THREE_DETAIL,
     )
     line = ConsoleSetupModal._step_text(3, step_three)
-
-    card = _rule_body(AGENTIC.read_text(encoding="utf-8"), ".console-setup-modal-card")
-    # Match the `width:` property specifically -- not `max-width:` (the `-`
-    # before "width" is excluded so the lookbehind can't be fooled by ordering).
-    width = int(re.search(r"(?<![-\w])width\s*:\s*(\d+)", card).group(1))
-    # padding: 1 2 -> 2 left + 2 right; border: solid -> 1 each side.
-    content_width = width - 4 - 2
+    content_width = _card_content_width()
 
     assert cell_len(line) <= content_width, (
         f"step-3 line is {cell_len(line)} cells but the card content is only "
@@ -208,7 +201,7 @@ def test_setup_step_wraps_instead_of_ellipsizing_on_overflow():
     what silently hid the wrapped second row before TASK-389's ellipsis fix
     existed at all).
     """
-    step = _rule_body(AGENTIC.read_text(encoding="utf-8"), ".console-setup-step")
+    step = _rule_body(CONSOLE_CSS.read_text(encoding="utf-8"), ".console-setup-step")
     assert "nowrap" not in step
     assert "ellipsis" not in step
     assert "height: auto" in step
