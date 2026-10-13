@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-12 05:35'
+updated_date: '2026-10-13 17:43'
 labels: []
 dependencies: []
 ---
@@ -495,6 +495,8 @@ Context/spend extraction plan (after savedb4a284513b): move one coherent display
 Current PR3023 integration: follow Docs/superpowers/plans/2026-10-11-pr3023-current-dev-integration.md on actual sequential current dev. ADR required: existing accepted230, accepted bounded amendment231, exact126/097semantic/179/197/220 as applicable; general231 remains Proposed. Preserve older source history/qualification above and all76optimizationIDs/14followups. Current acceptance awaits per-owner disposition, original native/caller/lifetime/security controls, unchanged budgets and separately qualified final saved-source/provider/rendered evidence; no whole-stack replacement, blanket closure or raised cap.
 
 Scoped dispatch-plan preflight correction: Ruling: require executable critical coverage, matched alternate-order/route/host timing receipts and the accepted detached-consumer zero-I/O proof — these are source-approved contracts missing from the dispatch argument — costs bounded recurring CI plus small contract/measurement evidence, without new product categories or relaxed budgets. Follow the revised current integration Task1 before product edits; preserve source-approved scopes and every historical receipt/acceptance record. No new ADR/ID or product boundary.
+
+2026-10-13 current private start preparation: follow the appended current reviewed private preparation in Docs/superpowers/plans/2026-10-11-pr3023-current-dev-integration.md. Accepted dev5fbee311; queue-armed reviewed Rules5c5e6a64 and privately reviewed font857b1e39 are not merged. Governance-only5c08ed1f preserves all63 paths and unchanged runtime. Root start-binding/explicit release precedes product edits; actual sequential base and changed-boundary qualification precede publication. Preserve full77OPT/14followups/664paths/971owners/89qualification-doc scope, Rules232 versus kernel228, current configuration-path/retryCAS/GC admission/provider/custody and config-free phase/Stop constraints. Existing25204/756 caps and census190/P0 selection20/fourprocess/sixlane bounds remain. ADR required:no new for planning refresh; existing230/accepted231amendment and applicable126/097/179/197/220/227/232 updates precede corresponding code. No newIDs, current acceptance/Done, provider/native/paint/performance or publication waiver.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
