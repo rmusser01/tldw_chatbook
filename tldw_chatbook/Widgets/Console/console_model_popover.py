@@ -1284,7 +1284,8 @@ class ConsoleModelPopover(
                 and provider_left_at_shipped_default(self._app_config, key)
             ):
                 if self._pair_score(query, tokens, key, "") is not None:
-                    not_running.append(self._display(key))
+                    unchecked = " (not checked)" if key in _UNPROBED_SERVERS else ""
+                    not_running.append(self._display(key) + unchecked)
                 continue
             models = list(self._models_for(key))
             if key == current_key and current_model:

@@ -797,7 +797,9 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   Change a provider's settings or use it, and its refusal is a NEEDS SETUP
   row again. MLX-LM is a server too, but no model listing can check it, so
   while it is still at its shipped settings, unused and listing no models,
-  it is named here rather than under READY PROVIDERS.
+  it is named here as "MLX-LM (Apple silicon) (not checked)" rather than
+  under READY PROVIDERS: nothing knows whether it is running, and opening
+  the list again does not check it either.
 
 Each row shows the model, the provider's name, its context size, readiness
 and last use. A size no catalog knows reads `?` (unknown), never a guess;

@@ -453,7 +453,9 @@ async def test_an_untouched_mlx_lm_is_not_running_not_ready(servers, owned):
         quiet = " ".join(row.text for row in _group(switcher, "NOT RUNNING"))
 
     assert ("MLX-LM" in ready) is owned, ready
-    assert ("MLX-LM (Apple silicon)" in quiet) is not owned, quiet
+    # Capture fix round 1: nothing checked it, so the line says so rather
+    # than claim it is not running.
+    assert ("MLX-LM (Apple silicon) (not checked)" in quiet) is not owned, quiet
     assert 5678 not in servers.ports  # Never contacted either way.
 
 
