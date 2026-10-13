@@ -3742,6 +3742,22 @@ its real reason in the comment.
 widget it sizes whose content changes after mount, and run the painted tests
 without it.
 
+**Recurred twice, TASK-33008 capture fix 3, 2026-10-13.** (1) Switch model's
+Enter button follows the highlighted row's kind since capture fix 2 and was
+relabelled with `apply.label = ...` alone: 05c drew "Enter apply to this chat"
+in the 28 cells of "Enter choose a model first", and the 38-cell "…and new
+chats" label would have been cut to 28. The existing label tests compared
+strings only; asserting `region.width == cell_len(label) + 2` failed 4/4.
+(2) A Static relabelled from its PARENT's `on_resize` (the Console's cost chip,
+chosen to fit the room left on the status row) kept its old 47-cell region
+through five pilot pauses even with `chip.refresh(layout=True)`; a second
+refresh, or running the relabel through `call_after_refresh`, took. Cause not
+traced further.
+
+**What to do.** Same as above, and when a relabel depends on geometry, run it
+after the refresh rather than inside the resize handler, then assert the
+region, not the string.
+
 ---
 
 ## Test embedded panes at their allocated width, not the terminal width
