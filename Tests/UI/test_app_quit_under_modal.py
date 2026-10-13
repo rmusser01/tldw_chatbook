@@ -1261,3 +1261,34 @@ async def test_ctrl_q_on_settings_waits_for_a_snapshot_save_in_flight(monkeypatc
         release.set()
     assert cleanups == [True]
     assert len(writes) == 1
+
+
+async def test_the_unsaved_work_check_reads_a_kept_settings_visit():
+    """Recovery mode and maintenance refuse while ``probe_unsaved_editors``
+    reports work. It knew four of the keys Settings' save_state writes, so
+    every kept visit (``hooks_snapshot`` is always written) read "Retained
+    screens: unknown-editor-state", which no save or discard clears. A clean
+    visit is now clean, and a kept snapshot preference edit is retained
+    Settings work to save or discard."""
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import (
+        UnsavedEditor,
+        probe_unsaved_editors,
+    )
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    app = _build_test_app(configured_default="settings")
+    async with app.run_test(size=(190, 55)) as pilot:
+        await _settings_snapshot_keep(app, pilot)
+        await _go_home(app, pilot)
+        clean = probe_unsaved_editors(screen_state_store=app.screen_state_store)
+
+        app.post_message(NavigateToScreen("settings"))
+        keep = await _settings_snapshot_keep(app, pilot)
+        keep.value = str(int(keep.value) + 1)
+        await _until(
+            pilot, app.screen._snapshot_preferences_dirty, "the edit to be staged"
+        )
+        await _go_home(app, pilot)
+        kept = probe_unsaved_editors(screen_state_store=app.screen_state_store)
+    assert clean == ()
+    assert kept == (UnsavedEditor("Retained Settings", "needs-user-save-discard"),)

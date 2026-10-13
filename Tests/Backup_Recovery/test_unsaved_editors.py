@@ -780,3 +780,51 @@ def test_installed_library_prompt_mutation_state_is_checked(busy):
     screen._prompts_state.mutation_in_flight = busy
     assert bool(probe_unsaved_editors(editors=(screen,))) is busy
     assert screen._prompts_state.mutation_in_flight is busy
+
+
+def test_retained_settings_check_knows_every_key_settings_save_state_writes():
+    """The retained check refuses a Settings key it does not know, so a key
+    save_state gains turns every kept visit into "unknown-editor-state" and
+    recovery mode refuses (hooks_snapshot, unsaved_titles and
+    snapshot_preferences did, TASK-33007). Read from the source, so a key
+    written only on one branch, or by a helper handed ``state``, counts."""
+    import ast
+    import inspect
+    import sys
+    import textwrap
+
+    from tldw_chatbook.Backup_Recovery.unsaved_editors import SETTINGS_SNAPSHOT_KEYS
+    from tldw_chatbook.UI.Settings_Modules import settings_quit_guard
+
+    def resolve(node, namespace):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            return namespace[node.id]
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            return getattr(namespace[node.value.id], node.attr)
+        raise AssertionError(f"unreadable state key: {ast.unparse(node)}")
+
+    def written(function, namespace) -> set:
+        keys = set()
+        tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store):
+                if isinstance(node.value, ast.Name) and node.value.id == "state":
+                    keys.add(resolve(node.slice, namespace))
+            elif isinstance(node, ast.Attribute):
+                assert not (
+                    isinstance(node.value, ast.Name) and node.value.id == "state"
+                ), f"state.{node.attr} writes keys this pin cannot read"
+            elif isinstance(node, ast.Call) and any(
+                isinstance(arg, ast.Name) and arg.id == "state" for arg in node.args
+            ):
+                helper = resolve(node.func, namespace)
+                keys |= written(helper, vars(sys.modules[helper.__module__]))
+        return keys
+
+    namespace = {
+        **vars(sys.modules[SettingsScreen.__module__]),
+        "quit_guard": settings_quit_guard,  # save_state's local import
+    }
+    assert written(SettingsScreen.save_state, namespace) == SETTINGS_SNAPSHOT_KEYS
