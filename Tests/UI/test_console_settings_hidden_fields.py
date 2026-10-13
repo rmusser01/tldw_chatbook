@@ -450,6 +450,10 @@ async def test_unknown_support_stays_visible_with_neutral_copy_in_its_help_line(
             help_line = modal.query_one(f"#{field_control_id(name)}-help", Static)
             assert str(help_line.content).startswith(GENERATION_CONTROL_UNKNOWN_COPY)
             assert GENERATION_CONTROL_UNKNOWN_COPY in painted[row.region.y], name
+            # Capture fix 3, finding 2 (08): the sentence after the full stop
+            # starts with a capital ("… for this model. The provider decides").
+            rest = str(help_line.content)[len(GENERATION_CONTROL_UNKNOWN_COPY) :]
+            assert rest[1:2].isupper(), (name, rest)
         # Known support keeps the field table's plain help.
         temperature_help = modal.query_one("#console-settings-temperature-help", Static)
         assert GENERATION_CONTROL_UNKNOWN_COPY not in str(temperature_help.content)

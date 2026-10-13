@@ -870,7 +870,8 @@ class ConsoleSettingsFieldRowsMixin:
         else:
             text = f"{BLANK_FIELD_HELP} · {field.help}"
         if name in self._unknown_support_fields:
-            return f"{GENERATION_CONTROL_UNKNOWN_COPY} {text}"
+            # A new sentence: "the provider decides" starts with a capital.
+            return f"{GENERATION_CONTROL_UNKNOWN_COPY} {text[:1].upper()}{text[1:]}"
         return text
 
     def _field_source(self, word: str, control: Widget) -> str:
