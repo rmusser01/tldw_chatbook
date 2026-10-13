@@ -20,7 +20,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Select, Static
 
 from tldw_chatbook.UI.Screens.settings_video_gen_defaults import (
     BACKEND_IDS,
@@ -39,6 +39,7 @@ from tldw_chatbook.Video_Generation.video_templates import (
     get_all_video_templates,
 )
 from tldw_chatbook.Widgets.settings_image_gen_panel import switch_word, toggle_label
+from tldw_chatbook.Widgets.state_checkbox import StateCheckbox
 
 _GENERATION_DEFAULT_FIELDS: tuple[tuple[str, str], ...] = (
     ("retention_ttl_hours", "Retention TTL (hours)"),
@@ -176,7 +177,7 @@ class VideoGenSettingsPanel(Vertical):
                     id=f"settings-videogen-status-{row.backend_id}",
                     classes="settings-imagegen-badge",
                 )
-                yield Checkbox(
+                yield StateCheckbox(
                     switch_word(is_enabled),
                     value=is_enabled,
                     id=f"settings-videogen-enabled-{row.backend_id}",
@@ -209,7 +210,7 @@ class VideoGenSettingsPanel(Vertical):
                             )
                         if spec.kind == "bool":
                             with Horizontal(classes="settings-input-row"):
-                                yield Checkbox(
+                                yield StateCheckbox(
                                     toggle_label(
                                         spec.label,
                                         bool(
@@ -302,7 +303,7 @@ class VideoGenSettingsPanel(Vertical):
                 allow_blank=False,
                 compact=True,
             )
-        yield Checkbox(
+        yield StateCheckbox(
             toggle_label(
                 "Confirm cost before paid generation",
                 bool(

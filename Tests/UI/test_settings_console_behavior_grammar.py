@@ -271,3 +271,31 @@ async def test_an_unchecked_box_draws_no_mark(request):
         for box in boxes:
             inner = box._button.plain[1]
             assert inner != "X" and (inner != " ") is box.value, box.id
+
+
+def test_no_settings_panel_builds_a_stock_checkbox():
+    """#3057 capture fix 2, finding 1: finding 4's fix reached only the
+    screen and the Providers & Models card, so Theme's "Dark theme", Splash
+    Screen's three switches, Hooks, Agents, Image Gen and Video Gen still drew
+    ▐X▌ beside an "Off" word. Every Settings module builds StateCheckbox (a
+    Checkbox, so queries, handlers and CSS still match it)."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "tldw_chatbook"
+    modules = [
+        *root.glob("UI/Screens/settings*.py"),
+        *root.glob("UI/Settings_Modules/*.py"),
+        *root.glob("Widgets/settings*.py"),
+        *root.glob("Widgets/Settings_Widgets/*.py"),
+    ]
+    assert len(modules) > 20
+    stock = [
+        f"{path.relative_to(root)}:{node.lineno}"
+        for path in modules
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Checkbox"
+    ]
+    assert stock == []

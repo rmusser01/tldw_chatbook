@@ -37,6 +37,7 @@ from ...Personal_Context.service import (
 )
 from ...Personal_Context.settings_provenance import SettingsProvenanceSubject
 from ..modal_dismissal import SafeModalDismissMixin
+from ..state_checkbox import StateCheckbox
 from tldw_chatbook.Widgets.status_line import set_status_line
 from .personal_context_provenance import PersonalContextProvenanceDetails
 
@@ -532,7 +533,7 @@ class PersonalContextReviewModal(
             ProposalOperation.UPDATE,
         }
         with Vertical(classes="personal-context-review-row"):
-            yield Checkbox(
+            yield StateCheckbox(
                 (
                     f"{change.operation.value.title()} · "
                     f"{kind.replace('_', ' ').title()} · {subject or 'record'}"

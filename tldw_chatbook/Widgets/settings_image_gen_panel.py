@@ -50,7 +50,7 @@ from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Checkbox, Collapsible, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Select, Static
 
 from tldw_chatbook.Media_Creation.generation_templates import (
     BUILTIN_TEMPLATES,
@@ -65,6 +65,7 @@ from tldw_chatbook.UI.Screens.settings_image_gen_defaults import (
     effective_placeholder,
     load_user_image_generation_table,
 )
+from tldw_chatbook.Widgets.state_checkbox import StateCheckbox
 
 # Generation-defaults scalar fields, in display order. `context_llm_enabled`
 # is rendered separately as a Checkbox (booleans have no placeholder analog).
@@ -241,7 +242,7 @@ class ImageGenSettingsPanel(Vertical):
                     id=f"settings-imagegen-status-{row.backend_id}",
                     classes="settings-imagegen-badge",
                 )
-                yield Checkbox(
+                yield StateCheckbox(
                     switch_word(is_enabled),
                     value=is_enabled,
                     id=f"settings-imagegen-enabled-{row.backend_id}",
@@ -343,7 +344,7 @@ class ImageGenSettingsPanel(Vertical):
                     )
 
         yield Static("Generation defaults", classes="destination-section")
-        yield Checkbox(
+        yield StateCheckbox(
             toggle_label(
                 "Context LLM",
                 bool(overlay.get("context_llm_enabled", bool(cfg.context_llm_enabled))),

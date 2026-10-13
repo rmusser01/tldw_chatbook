@@ -65,6 +65,7 @@ from tldw_chatbook.Chat.sampling_params import (
 )
 from tldw_chatbook.config import save_settings_to_cli_config
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.Widgets.state_checkbox import StateCheckbox
 from tldw_chatbook.Widgets.status_line import set_status_line
 
 #: Soft ceiling before the status line warns about spawn-schema bloat
@@ -267,7 +268,7 @@ class AgentsSettingsPanel(Vertical):
                 yield Static(
                     "Allow ad-hoc spawn overrides", classes="settings-input-label"
                 )
-                yield Checkbox(value=False, id="agents-override-enabled-checkbox")
+                yield StateCheckbox(value=False, id="agents-override-enabled-checkbox")
             yield Static(
                 "Override allowlist (one per line: provider or provider/model-glob)",
                 classes="settings-input-label",
