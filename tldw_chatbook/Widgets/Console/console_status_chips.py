@@ -913,12 +913,15 @@ class ConsoleStatusChips(Horizontal):
                 label = next((f for f in forms if cell_len(f) <= room), "…")
         chip.update(label)
         chip.refresh(layout=True)
+        if chip.has_focus:
+            # On every relabel, not only on focus: a reply that finishes while
+            # the chip has focus lengthens it past the edge.
+            self.call_after_refresh(chip.scroll_visible, animate=False)
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Show the focused cost chip's full label and scroll it into view."""
         if event.widget.id == "console-cost-chip":
             self._refit_cost_chip()
-            self.call_after_refresh(event.widget.scroll_visible, animate=False)
 
     def on_descendant_blur(self, event: events.DescendantBlur) -> None:
         """Fit the cost chip to the room left again once focus leaves it.

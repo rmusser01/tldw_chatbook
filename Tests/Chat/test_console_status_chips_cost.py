@@ -549,6 +549,31 @@ async def test_leaving_the_cost_chip_scrolls_the_strip_home(leave: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_focused_cost_chip_relabelled_longer_stays_in_view() -> None:
+    """Capture fix 3 round 2 finding 2: the strip scrolled to the focused
+    chip only once, on focus; a reply finishing while it had focus gave it a
+    longer label whose end the strip cut at the edge."""
+    app = _ProductionChipsApp(
+        _capture_control_state(tools_label="Tools: 12 ready", tools_active=True),
+        cost_state=_cost_state(**_CAPTURE_LABELS),
+    )
+    async with app.run_test(size=(211, 8)) as pilot:
+        await pilot.pause()
+        app.query_one("#console-cost-chip", ConsoleCostChip).focus()
+        for _ in range(5):
+            await pilot.pause()
+        assert _cost_chip_drawn_whole(app) == _CAPTURE_LABELS["label"]
+
+        longer = "Context 4% · Current $12,345.67 ● · On next send —"
+        app.query_one(ConsoleStatusChips).sync_cost_state(
+            _cost_state(label=longer, compact_label=_CAPTURE_LABELS["compact_label"])
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert _cost_chip_drawn_whole(app) == longer
+
+
+@pytest.mark.asyncio
 async def test_cost_chip_click_posts_pressed_message():
     """A real ``pilot.click`` must dispatch through the normal message pump.
 
