@@ -156,8 +156,9 @@ _BUDGETS: dict[str, int] = {
     # one report is its toast, and the next edit clears a save's report
     # (+6): 33,905; discovery names the provider, and its empty state
     # is one line, not two (-5): 33,900; Clear's rule moves to the card
-    # (-9): 33,891.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33891,
+    # (-9): 33,891; Temperature's range is the provider's own in its
+    # placeholder, its guide and Save (+8): 33,899.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33899,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -189,7 +190,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2406,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
-    "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 722,
+    # The capture fix wave (2026-10-12): Temperature's placeholder and
+    # Validation line state the provider's own range (+38): 760.
+    "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 760,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.

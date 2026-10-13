@@ -76,3 +76,14 @@ def test_shared_params_editor_parser_preserves_numeric_and_invalid_literals():
     params, errors = parse_params_text("top_k=40\ntop_p=0.37\nreasoning_effort=high\nseed=nan\nbroken")
     assert params == {"top_k": 40, "top_p": 0.37, "reasoning_effort": "high", "seed": "nan"}
     assert errors == ["params line 5: expected 'key = value'"]
+
+
+def test_temperature_range_is_the_providers_own():
+    """Capture finding 11 (TASK-33007): Anthropic's Messages API takes a
+    temperature from 0 to 1, so one 0-2 range for every provider let
+    Settings offer values Anthropic refuses."""
+    from tldw_chatbook.Chat.sampling_params import TEMPERATURE_RANGE, temperature_range
+
+    assert temperature_range("anthropic") == (0.0, 1.0)
+    assert temperature_range("openai") == TEMPERATURE_RANGE == (0.0, 2.0)
+    assert temperature_range("") == TEMPERATURE_RANGE

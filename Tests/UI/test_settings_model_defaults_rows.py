@@ -297,8 +297,12 @@ async def test_a_blank_field_says_what_it_inherits_and_from_where(request):
             "thinking_budget_tokens",
         ):
             placeholder = screen.query_one(f"#{_cid(name)}", Input).placeholder
-            assert (
-                placeholder == MODEL_PROFILE_INPUT_PLACEHOLDERS[f"model_profile_{name}"]
+            # Capture finding 11, rewritten on purpose: Temperature states
+            # Anthropic's own range, 0 to 1.
+            assert placeholder == (
+                "0.0 - 1.0"
+                if name == "temperature"
+                else MODEL_PROFILE_INPUT_PLACEHOLDERS[f"model_profile_{name}"]
             )
             assert "optional" not in placeholder and "inherit" not in placeholder
 
@@ -887,3 +891,50 @@ async def test_inherit_after_an_option_clears_a_choice_the_select_cannot_show(
         "temperature": 0.5
     }
     assert after == expected
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    ("provider", "model", "placeholder", "valid_range", "accepted"),
+    [
+        ("anthropic", "claude-sonnet-4-5", "0.0 - 1.0", "0.0 to 1.0", False),
+        ("openai", "gpt-5.6-terra", "0.0 - 2.0", "0.0 to 2.0", True),
+    ],
+)
+async def test_temperature_states_and_holds_the_providers_own_range(
+    request, provider, model, placeholder, valid_range, accepted
+):
+    """Capture finding 11 (capture 01b): Anthropic's Temperature read
+    "0.0 - 2.0" though Anthropic takes 0 to 1. The placeholder, the
+    Inspector's Validation line and Save state the provider's own range,
+    and Save refuses 1.5 where the provider does."""
+    app = _app(provider, model)
+    app.app_config["api_settings"]["openai"] = {"api_key": _KEY}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        temperature = screen.query_one(f"#{_cid('temperature')}", Input)
+        assert temperature.placeholder == placeholder
+
+        temperature.focus()
+        await pilot.pause()
+        guide = " ".join(
+            _text(screen, f"#settings-provider-field-guide-{index}")
+            for index in range(4)
+        )
+        assert f"Validation: {valid_range}; blank inherits the default" in " ".join(
+            guide.split()
+        ), guide
+
+        await pilot.press("end", *["backspace"] * 8, *"1.5", "escape", "s")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        refused = "Temperature must be between 0.0 and 1.0."
+        assert (_text(screen, "#settings-provider-save-result") == refused) is (
+            not accepted
+        )
+        assert screen._category_has_unsaved_changes(
+            SettingsCategoryId.PROVIDERS_MODELS
+        ) is (not accepted)

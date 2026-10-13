@@ -136,6 +136,7 @@ from ...Chat.provider_test_evidence import (
     connection_credential_revision,
     shared_connection_evidence,
 )
+from ...Chat.sampling_params import temperature_range
 from ...Chat.console_provider_support import (
     CARRY_FORWARD_OPTIONS,
     GENERATION_FIELD_REQUEST_KEYS,
@@ -13961,10 +13962,13 @@ class SettingsScreen(BaseAppScreen):
         return float(text)
 
     def _normalise_model_profile_temperature(self, value: object) -> float | str:
+        # Capture finding 11: the provider's own range (Anthropic's is 0-1).
+        provider = provider_config_key(self._provider_widget_value())
+        low, high = temperature_range(provider)
         return self._normalise_optional_float(
             value,
-            min_value=0.0,
-            max_value=2.0,
+            min_value=low,
+            max_value=high,
             label=MODEL_FIELD_LABELS["temperature"],
         )
 
@@ -16095,6 +16099,8 @@ class SettingsScreen(BaseAppScreen):
         api_key_input.value = value
 
     def _sync_provider_model_profile_widgets(self, provider: str, model: str) -> None:
+        from ..Settings_Modules.settings_field_rows import model_default_placeholder
+
         input_values = self._model_profile_values(provider, model)
         self._syncing_provider_model_profile = True
         try:
@@ -16138,7 +16144,7 @@ class SettingsScreen(BaseAppScreen):
                         continue
                     widget.disabled = not supported
                     # AC#4: a placeholder only states a range or unit.
-                    widget.placeholder = MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key]
+                    widget.placeholder = model_default_placeholder(provider, draft_key)
                     # task-15740: prevent the posted echo the flag misses.
                     with widget.prevent(Input.Changed):
                         widget.value = (
@@ -18295,6 +18301,8 @@ class SettingsScreen(BaseAppScreen):
         # TASK-33002.1: every model-default row reads the one field table.
         draft_key = (field_id or "").removeprefix("settings-").replace("-", "_")
         if draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS:
+            from ..Settings_Modules.settings_field_rows import model_default_validation
+
             name = PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
             spec = MODEL_CONFIG_FIELDS[name]
             if not self._model_profile_field_supported(
@@ -18316,7 +18324,7 @@ class SettingsScreen(BaseAppScreen):
                 ("Focused setting", spec.label),
                 ("Purpose", spec.help),
                 ("Saved as", f"{provider_config_prefix}.model_defaults.{model}.{name}"),
-                ("Validation", f"{spec.valid_range}; blank inherits the default"),
+                ("Validation", model_default_validation(provider, name)),
             )
         if field_id == "settings-model-catalog-stale-hours":
             return (

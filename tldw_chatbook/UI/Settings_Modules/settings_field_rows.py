@@ -44,6 +44,8 @@ from ...Chat.console_session_settings import (
     chat_defaults_value,
     resolve_console_value_layers,
 )
+from ...Chat.provider_readiness import provider_config_key
+from ...Chat.sampling_params import temperature_range
 from ...config import coerce_bool_setting
 from ...Widgets.Console.console_settings_field_row import (
     BLANK_CHOICE_PROMPT,
@@ -106,6 +108,42 @@ NOT_A_CHOICE_HELP = "saved '{value}' is not a choice"
 #: The global fallbacks' Sampling title when no sampler holds a value;
 #: nothing inherits on this surface, so it is not Model defaults' word.
 NO_SAMPLER_SET = "none set"
+
+
+def model_default_validation(provider: str, name: str) -> str:
+    """Return the Inspector's Validation line for a Model defaults field.
+
+    Capture finding 11: Temperature states the provider's own range
+    (Anthropic's is 0 to 1); every other field, the field table's.
+
+    Args:
+        provider: The provider the card holds.
+        name: A field-table name, e.g. ``"temperature"``.
+
+    Returns:
+        E.g. "0.0 to 1.0; blank inherits the default".
+    """
+    valid = MODEL_CONFIG_FIELDS[name].valid_range
+    if name == "temperature":
+        valid = "{:.1f} to {:.1f}".format(
+            *temperature_range(provider_config_key(provider))
+        )
+    return f"{valid}; blank inherits the default"
+
+
+def model_default_placeholder(provider: str, key: str) -> str:
+    """Return a Model defaults field's placeholder: its range or unit.
+
+    Args:
+        provider: The provider the card holds.
+        key: The field's draft key, e.g. ``"model_profile_temperature"``.
+
+    Returns:
+        E.g. "0.0 - 1.0" for Anthropic's Temperature, or "tokens".
+    """
+    if key != draft_key("temperature"):
+        return MODEL_PROFILE_INPUT_PLACEHOLDERS[key]
+    return "{:.1f} - {:.1f}".format(*temperature_range(provider_config_key(provider)))
 
 
 def draft_key(name: str) -> str:
@@ -408,7 +446,7 @@ def _model_default_control(
         value=screen._model_profile_input_value(provider, key, model, values[key]),
         id=control_id(name),
         classes="settings-compact-input",
-        placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS[key],
+        placeholder=model_default_placeholder(provider, key),
         restrict=_INTEGER_RESTRICT if name in _CONSOLE_INT_FIELDS else None,
         disabled=not supported,
     )
