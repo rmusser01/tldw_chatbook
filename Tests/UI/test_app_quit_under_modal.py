@@ -968,3 +968,39 @@ async def test_a_raw_edit_left_before_its_change_lands_is_asked_about():
         editor.text = editor.text + "\n# typed, its Changed still queued\n"
         state = settings.save_state()  # no await: Changed is not delivered
     assert "Advanced Config" in state[KEPT_UNSAVED_TITLES]
+
+
+async def test_ctrl_q_elsewhere_never_names_what_settings_did_not_keep(monkeypatch):
+    """Capture fix 3 round 1, findings 3 and 9: Providers & Models counts its
+    Prompt-cache snapshot preferences as unsaved, but leaving Settings does
+    not keep them. With only those changed, Ctrl+Q from Home named Providers
+    & Models; Discard and quit discarded nothing and Keep editing opened a
+    Settings with nothing unsaved. Only what Settings keeps is asked about."""
+    from tldw_chatbook.LLM_Management.snapshot_settings import SnapshotPreferences
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+    app = _build_test_app(configured_default="settings")
+    cleanups: list[bool] = []
+    monkeypatch.setattr(
+        app, "_run_approved_quit_cleanup", _record_cleanup_then_exit(app, cleanups)
+    )
+    async with app.run_test(size=(190, 55)) as pilot:
+        await _until(
+            pilot,
+            lambda: type(app.screen).__name__ == "SettingsScreen",
+            "the Settings screen",
+        )
+        settings = app.screen
+        settings._snapshot_preferences_loaded = SnapshotPreferences(
+            enabled=False, keep_count=20
+        )
+        settings._snapshot_preferences_raw = (False, "7")
+        assert settings._category_has_unsaved_changes(
+            SettingsCategoryId.PROVIDERS_MODELS
+        )
+        await _go_home(app, pilot)
+
+        await pilot.press("ctrl+q")
+        # A prompt would hold the quit, so reaching the shutdown proves none.
+        await _until_exited(app, cleanups, "Ctrl+Q to quit without asking")
+    assert cleanups == [True]

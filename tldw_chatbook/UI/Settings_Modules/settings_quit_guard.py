@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 KEPT_UNSAVED_TITLES = "unsaved_titles"
 
 
-def unsaved_settings_titles(screen: SettingsScreen) -> list[str]:
+def unsaved_settings_titles(screen: SettingsScreen, *, kept: bool = False) -> list[str]:
     """Name every category with unsaved changes, Theme aside.
 
     Theme is left out: its editor's prompt asks on its own, and leaving
@@ -37,15 +37,25 @@ def unsaved_settings_titles(screen: SettingsScreen) -> list[str]:
 
     Args:
         screen: The Settings screen holding the drafts.
+        kept: Name only what ``save_state`` keeps. Providers & Models also
+            counts its Prompt-cache snapshot preferences, which leaving
+            Settings does not keep, so only its draft counts here.
 
     Returns:
         The categories' titles, in rail order.
     """
+
+    def unsaved(category: SettingsCategoryId) -> bool:
+        if kept and category is SettingsCategoryId.PROVIDERS_MODELS:
+            draft = screen._settings_drafts.get(category)
+            return bool(draft and draft.is_dirty)
+        return screen._category_has_unsaved_changes(category)
+
     return [
         summary.title
         for summary in screen._category_summaries()
         if summary.category is not SettingsCategoryId.THEME
-        and screen._category_has_unsaved_changes(summary.category)
+        and unsaved(summary.category)
     ]
 
 

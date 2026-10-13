@@ -194,8 +194,9 @@ _BUDGETS: dict[str, int] = {
     # names its unsaved categories, so a quit from another screen asks;
     # the stand-in lives in settings_quit_guard.py (+4): 33,949 with both.
     # Capture fix 3 round 1: save_state names them after every capture, the
-    # raw editor's queued input included (+1): 33,950.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33950,
+    # raw editor's queued input included (+1): 33,950; and name only what
+    # it keeps, not the snapshot preferences leaving drops (+1): 33,951.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33951,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

@@ -4498,7 +4498,8 @@ class SettingsScreen(BaseAppScreen):
 
         # C-N1: a quit from another screen asks about these (quit_guard),
         # named after every capture above (the raw editor's queued input).
-        state[quit_guard.KEPT_UNSAVED_TITLES] = quit_guard.unsaved_settings_titles(self)
+        titles = quit_guard.unsaved_settings_titles(self, kept=True)
+        state[quit_guard.KEPT_UNSAVED_TITLES] = titles
         return state
 
     def restore_state(self, state: dict[str, object]) -> None:
