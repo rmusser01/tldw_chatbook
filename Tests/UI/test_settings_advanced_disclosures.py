@@ -780,9 +780,9 @@ async def test_a_failed_discovery_reports_once_on_its_line(request):
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open(host, pilot)
-        screen.query_one("#settings-advanced-saved-models", Collapsible).collapsed = (
-            False
-        )
+        screen.query_one(
+            "#settings-advanced-saved-models", Collapsible
+        ).collapsed = False
         await pilot.pause()
         screen.query_one("#settings-discover-provider-models", Button).press()
         status = screen.query_one("#settings-model-discovery-status", Static)
@@ -795,9 +795,7 @@ async def test_a_failed_discovery_reports_once_on_its_line(request):
             "Check the API key, then run Discover again."
         )
         messages = [str(note.message) for note in host._notifications]
-        assert not any("discovery" in message.lower() for message in messages), (
-            messages
-        )
+        assert not any("discovery" in message.lower() for message in messages), messages
 
 
 @pytest.mark.asyncio
