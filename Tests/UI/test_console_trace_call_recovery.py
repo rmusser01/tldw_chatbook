@@ -8,6 +8,7 @@ from textual.app import ComposeResult
 from textual.widgets import Button, Static
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from tldw_chatbook.Chat.console_context_budget_copy import MODEL_WINDOW_SETTING
 from tldw_chatbook.UI.Console_Modules.trace_call_recovery import (
     TraceCallRecoveryCallout,
     TraceCallRecoveryState,
@@ -253,7 +254,9 @@ async def test_a_compaction_hold_on_an_estimated_window_says_so() -> None:
     app = _HoldApp(_HoldController(), estimated=True)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.pause()
-        assert "F4 Settings > Providers & Models" in _painted(app)
+        # Rewritten on purpose (capture finding 17): the pointer is the
+        # constant both Chat settings views spell.
+        assert MODEL_WINDOW_SETTING in _painted(app)
 
 
 async def test_each_compaction_hold_button_reaches_its_controller_action() -> None:

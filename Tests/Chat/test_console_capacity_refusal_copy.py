@@ -32,6 +32,7 @@ from Tests.Chat.test_console_compaction_live_session import (
     _live_controller,
     _system_rows,
 )
+from tldw_chatbook.Chat.console_context_budget_copy import MODEL_WINDOW_SETTING
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -85,7 +86,9 @@ async def test_unknown_window_refusal_names_the_model_and_the_fix(
     assert "Max tokens" in copy
     # Rewritten on purpose (review of #3057, R4 M13): the word is "assumed".
     assert "(assumed)" in copy
-    assert "F4 Settings > Providers & Models" in copy
+    # Rewritten on purpose (capture finding 17): the pointer is the constant
+    # both Chat settings views spell, "Settings ▸ Providers & Models (F4)".
+    assert MODEL_WINDOW_SETTING in copy
     for jargon in _POLICY_JARGON:
         assert jargon not in copy
     # Refused before commit: no 'Response accepted' recovery panel, and no
