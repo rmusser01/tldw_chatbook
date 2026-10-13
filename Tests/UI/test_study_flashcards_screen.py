@@ -1720,11 +1720,14 @@ _ACTION_SERVICE_CALLS = {
         ),
         # Opening Flashcards awaits the deck list (fix round 2, finding 1).
         ("initialize_view", "list_decks"),
+        # Start review and a rating await the next card (fix round 3, finding 2).
+        ("start_review", "get_next_review_candidate"),
     ],
 )
 async def test_an_action_held_across_the_sub_view_swap_ends_quietly(action, held):
-    """Create, delete and move end quietly when Flashcards is swapped out
-    while they await the service or the card-list rebuild.
+    """Create, delete, move, opening Flashcards and Start review end quietly
+    when Flashcards is swapped out while they await the service or the
+    card-list rebuild.
 
     Fix round 1 of the #3057 review, finding 19: the rebuild itself ended
     quietly (R3 #8), but each of these five actions touched the review panel

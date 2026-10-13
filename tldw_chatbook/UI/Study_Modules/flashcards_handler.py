@@ -1174,6 +1174,7 @@ class StudyFlashcardsController:
             self._set_next_intervals(outcome.get("next_intervals"))
             await self._load_next_review_candidate(deck_id=self._selected_deck_id())
 
+    @_quiet_when_swapped_out  # Start review and a rating both await the next card
     async def _load_next_review_candidate(self, *, deck_id: Optional[str]) -> None:
         service = self._scope_service()
         if service is None or deck_id is None or not self._scope_is_available():
