@@ -400,7 +400,10 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         # what it serves), then the pick's evidence probe follows.
         assert calls == [(provider_id, True)] * 2
         assert modal._current_model_value() == model_id
-        assert modal._current_draft_discovery_identity().provider_key == provider_id
+        identity = modal._current_draft_discovery_identity()
+        assert identity is not None
+        assert identity.provider_key == "llama_cpp"
+        assert identity.entry_id == provider_id
 
         # Creation persists the entry, but Cancel leaves the conversation on
         # its original provider. Selecting the new entry must run the real
@@ -541,9 +544,8 @@ async def test_switch_model_applies_a_saved_entry_through_the_live_rebase(
 ):
     """The Switch model half of the test above, on its own (TASK-33004.4).
 
-    That test's modal half fails on dev at its ``provider_key`` assertion
-    before it reaches Switch model, so this case seeds the saved entry
-    directly and runs the real controller rebase and live commit.
+    Seed a saved entry directly to exercise the controller rebase and live
+    commit independently of endpoint creation.
     """
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
