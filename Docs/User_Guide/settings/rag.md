@@ -52,8 +52,8 @@ shows the **first-run starter panel** while the **Editing: `<profile>`** field
 wall is collapsed. The editing card holds the ⚠ legend and five folds —
 **Search**, **Embedding**, **Chunking**, **Vector store**, **Reranking**.
 
-The pinned **State banner** above them reads `State: Draft — save with s |
-Defaults affect future Library/RAG retrieval and display.`, switching to
+The pinned **State banner** above them reads `State: No changes · edits save
+with s | Defaults affect future Library/RAG retrieval and display.`, switching to
 `State: Draft — save with s · 1 unsaved · revert with r | …` once you edit a
 field; the count follows how many fields differ from their saved values.
 **Save (s)** and **Revert (r)** live in the **Scope Inspector** on the right,

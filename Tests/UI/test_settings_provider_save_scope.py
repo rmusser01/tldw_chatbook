@@ -50,7 +50,12 @@ async def test_providers_models_state_line_names_its_scope_in_one_row(request) -
             "Applies to new and unused open chats · used chats keep theirs "
             "(Console: Alt+M)"
         )
-        assert _static_text(banner) == f"State: Draft — save with s | {scope}"
+        # Capture finding 3, rewritten on purpose: at rest the banner read
+        # "Draft — save with s" beside the Inspector's "No unsaved changes".
+        assert _static_text(banner) == f"State: No changes · edits save with s | {scope}"
+        assert _static_text(
+            screen.query_one("#settings-selected-category-draft-status", Static)
+        ) == "No unsaved changes"
         assert banner.content_region.height == 1
 
         widest = f"State: Draft — save with s · 99 unsaved | {scope}"

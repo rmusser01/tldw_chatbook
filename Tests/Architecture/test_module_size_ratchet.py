@@ -151,7 +151,9 @@ _BUDGETS: dict[str, int] = {
     # writes it with (+4): 33,885; the Test result blames the Env var field
     # only for a name typed there that is no name (+8): 33,893; fix round 3
     # compares a quit-summary change with the write in flight (+2): 33,895.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33895,
+    # The capture fix wave (2026-10-12): a draft category at rest says "No
+    # changes" in its State banner, not "Draft" (+4): 33,899.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33899,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

@@ -180,7 +180,9 @@ async def test_raw_cli_unlock_and_arm_are_separate_confirmed_gates():
             assert disclosure in text
         assert "sandboxed" not in text.lower()
         assert "confined" not in text.lower()
-        assert "Draft — save with s" in _visible_text(screen)
+        # Capture finding 3 (TASK-33007), rewritten on purpose: the clean
+        # banner of a draft category reads "No changes · edits save with s".
+        assert "edits save with s" in _visible_text(screen)
         assert "Applies immediately." in text
         assert screen.query_one("#settings-privacy-security-card")
         assert screen.query_one("#settings-check-privacy")

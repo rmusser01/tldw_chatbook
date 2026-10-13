@@ -10772,6 +10772,10 @@ class SettingsScreen(BaseAppScreen):
         # but nothing NAMED the model, so users trained on Save/Revert got
         # silent contract changes (five models coexist on this screen).
         badge = self._persistence_badge(category)
+        if category in GUIDED_SETTINGS_MUTATION_CATEGORIES:
+            # Capture finding 3: nothing is held, so not "Draft" beside the
+            # Inspector's "No unsaved changes"; the save key still leads.
+            badge = "No changes · edits save with s"
         return f"State: {badge} | {self._category_state_scope_text(category)}"
 
     def _persistence_badge(self, category: SettingsCategoryId) -> str:

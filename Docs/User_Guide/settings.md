@@ -98,7 +98,9 @@ Appearance.
 ![A draft category with unsaved changes](images/settings/console-draft.svg)
 
 The State banner reads "State: \<badge\> | \<what saving affects\>". Unsaved
-edits keep the badge and add a count. Above, Console Behavior has one edited
+edits keep the badge and add a count. A **Draft — save with s** category with
+nothing unsaved reads "State: No changes · edits save with s | …" instead, as
+the Scope Inspector's "No unsaved changes" does. Above, Console Behavior has one edited
 field, so it reads "State: Draft — save with s · 1 unsaved · revert with r |
 Changes affect global Console fallbacks after save." and the Scope
 Inspector's buttons lose their "— no changes" suffix. The count is the number

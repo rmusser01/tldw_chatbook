@@ -13323,7 +13323,9 @@ def test_state_banner_leads_with_persistence_badge():
     app = _build_test_app()
     screen = SettingsScreen(app)
     expected = {
-        SettingsCategoryId.CONSOLE_BEHAVIOR: "Draft — save with s",
+        # Capture finding 3 (TASK-33007), rewritten on purpose: a draft
+        # category at rest holds no draft, so its clean badge says so.
+        SettingsCategoryId.CONSOLE_BEHAVIOR: "No changes · edits save with s",
         SettingsCategoryId.SPLASH_SCREEN: "Auto-saved",
         SettingsCategoryId.WORKSPACES: "Applies immediately",
         SettingsCategoryId.INTERNAL_PROMPTS: "Per-item Save/Reset",
