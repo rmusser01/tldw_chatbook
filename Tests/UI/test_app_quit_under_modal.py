@@ -1125,9 +1125,12 @@ async def test_leaving_settings_waits_for_a_snapshot_save_in_flight(monkeypatch)
             await _until(
                 pilot, lambda: type(app.screen).__name__ == "HomeScreen", "Home"
             )
-            state = app.screen_state_store.restore(
-                "settings", app._current_runtime_identity()
-            ) or {}
+            state = (
+                app.screen_state_store.restore(
+                    "settings", app._current_runtime_identity()
+                )
+                or {}
+            )
             assert _notified(app, "Snapshot preferences saved.")
     finally:
         release.set()
