@@ -29,6 +29,7 @@ from math import isfinite
 from typing import Any, ClassVar, Literal, Protocol
 from uuid import uuid4
 
+from rich.cells import cell_len
 from rich.style import Style
 from rich.text import Text
 from textual import events, on
@@ -691,8 +692,13 @@ class ConsoleModelPopover(
         return f"Switch model · now: {now}"
 
     def _find_placeholder(self) -> str:
+        used = self._used_provider_keys()
         ready = [
-            key for key in self._provider_order if _is_ready(self._readiness.get(key))
+            key
+            for key in self._provider_order
+            if _is_ready(readiness := self._readiness.get(key))
+            # Round 2 finding 3: one listed under NOT RUNNING is not counted.
+            and not self._not_running(key, readiness, used)
         ]
         enter = "Enter picks" if self._pick_only else "Enter applies"
         if not ready:
@@ -1263,26 +1269,7 @@ class ConsoleModelPopover(
             readiness = self._readiness.get(key)
             if readiness is None:
                 continue
-            if (
-                # TASK-33005.6 AC#3 (owner ruling): a shipped localhost default
-                # the user never set up or used is still probed, so a running
-                # one is found, but its refusal is no setup task.
-                (
-                    (
-                        readiness.endpoint_category == "connection_refused"
-                        and _retries_in_place(readiness)
-                    )
-                    # Capture finding 11: one no probe can check is Ready from
-                    # the template alone; listing nothing, it is as unset.
-                    or (
-                        key in _UNPROBED_SERVERS
-                        and _is_ready(readiness)
-                        and not self._models_for(key)
-                    )
-                )
-                and key not in used
-                and provider_left_at_shipped_default(self._app_config, key)
-            ):
+            if self._not_running(key, readiness, used):
                 if self._pair_score(query, tokens, key, "") is not None:
                     unchecked = " (not checked)" if key in _UNPROBED_SERVERS else ""
                     not_running.append(self._display(key) + unchecked)
@@ -1385,10 +1372,52 @@ class ConsoleModelPopover(
         )
         group(
             "NOT RUNNING · local servers never set up · rechecked on open",
-            [SwitcherRow("info", "  " + " · ".join(not_running))] if not_running else [],
+            [SwitcherRow("info", line) for line in self._packed(not_running)],
         )
         rows.extend(self._typed_rows(tokens))
         return rows
+
+    def _not_running(
+        self, key: str, readiness: ConsoleSettingsReadiness, used: set[str]
+    ) -> bool:
+        """Whether a server is listed once under NOT RUNNING, not as a row."""
+        return (
+            # TASK-33005.6 AC#3 (owner ruling): a shipped localhost default
+            # the user never set up or used is still probed, so a running
+            # one is found, but its refusal is no setup task.
+            (
+                (
+                    readiness.endpoint_category == "connection_refused"
+                    and _retries_in_place(readiness)
+                )
+                # Capture finding 11: one no probe can check is Ready from
+                # the template alone; listing nothing, it is as unset.
+                or (
+                    key in _UNPROBED_SERVERS
+                    and _is_ready(readiness)
+                    and not self._models_for(key)
+                )
+            )
+            and key not in used
+            and provider_left_at_shipped_default(self._app_config, key)
+        )
+
+    def _packed(self, names: list[str]) -> list[str]:
+        """NOT RUNNING's names in as many rows as the list's width needs.
+
+        Round 2 finding 2: one row was cut at the dialog's edge. The width is
+        read when the rows are built (a resize repacks on the next rebuild),
+        less the scrollbar's cells in case the list starts to scroll.
+        """
+        pairs = self.query_one("#console-popover-pairs", OptionList)
+        width = pairs.content_region.width - pairs.styles.scrollbar_size_vertical
+        lines: list[str] = []
+        for name in names:
+            if lines and (width <= 0 or cell_len(f"{lines[-1]} · {name}") <= width):
+                lines[-1] = f"{lines[-1]} · {name}"
+            else:
+                lines.append(f"  {name}")
+        return lines
 
     def _catalog_status_rows(self, key: str, has_rows: bool) -> list[SwitcherRow]:
         """AC#9: a loading, empty or unavailable catalog says so in a row."""

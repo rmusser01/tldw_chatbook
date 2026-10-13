@@ -142,7 +142,12 @@ def servers(monkeypatch) -> Servers:
 
 
 def build(
-    app, *, config=CONFIG, providers_models=PROVIDERS_MODELS, prober=True
+    app,
+    *,
+    config=CONFIG,
+    providers_models=PROVIDERS_MODELS,
+    prober=True,
+    pair=("ollama", "qwen3:4b"),
 ) -> ConsoleModelPopover:
     """The switcher as Alt+M opens it, minus the screen, on an Ollama chat
     (this chat's own row shows CURRENT, not a hint)."""
@@ -157,7 +162,7 @@ def build(
     switcher = ConsoleModelPopover(
         origin=ConsoleSettingsOrigin("session-a", None, 0),
         app_config=config,
-        initial_draft=_draft("ollama", "qwen3:4b"),
+        initial_draft=_draft(*pair),
         providers_models=providers_models,
         scope_copy="Applies to: this chat only",
         durability_copy="Temporary until this chat is promoted",
@@ -451,12 +456,56 @@ async def test_an_untouched_mlx_lm_is_not_running_not_ready(servers, owned):
         await _settle(app, pilot)
         ready = " ".join(row.text for row in _group(switcher, "READY PROVIDERS"))
         quiet = " ".join(row.text for row in _group(switcher, "NOT RUNNING"))
+        placeholder = switcher.query_one("#console-popover-find", Input).placeholder
+        ready_keys = [
+            key
+            for key in switcher._provider_order
+            if popover_module._is_ready(switcher._readiness.get(key))
+        ]
 
     assert ("MLX-LM" in ready) is owned, ready
+    # Round 2 finding 3: Find counts only the providers READY PROVIDERS lists.
+    assert "local_mlx_lm" in ready_keys
+    listed = len(ready_keys) - (0 if owned else 1)
+    assert f" in {listed} providers " in placeholder, placeholder
     # Capture fix round 1: nothing checked it, so the line says so rather
     # than claim it is not running.
     assert ("MLX-LM (Apple silicon) (not checked)" in quiet) is not owned, quiet
     assert 5678 not in servers.ports  # Never contacted either way.
+
+
+@pytest.mark.parametrize("size", ((211, 44), (120, 44)))
+async def test_the_not_running_line_wraps_so_every_name_shows_whole(servers, size):
+    """Round 2 finding 2: seven untouched servers on one NOT RUNNING row were cut
+    at the dialog's edge to "MLX-LM (Apple silicon) (not ch…" at both full
+    sizes. The names are packed into as many rows as the list's width needs."""
+    shipped = (
+        *("ollama", "tabbyapi", "aphrodite", "vllm"),
+        *("custom", "custom_2", "local_mlx_lm"),
+    )
+    app = _harness()
+    async with app.run_test(size=size) as pilot:
+        switcher = build(
+            app,
+            pair=("openai", "gpt-5.1"),  # 05d: an OpenAI chat
+            config=_with_shipped(*shipped),
+            providers_models={
+                **SHIPPED_MODELS,
+                **{key: [] for key in shipped if key not in SHIPPED_MODELS},
+            },
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        quiet = [row.text for row in _group(switcher, "NOT RUNNING")]
+        lines = list_lines(app, switcher)
+
+    joined = " · ".join(text.strip() for text in quiet)
+    names = ("Ollama", "TabbyAPI", "vLLM", "MLX-LM (Apple silicon) (not checked)")
+    for name in names:
+        assert name in joined, quiet
+    for text in quiet:
+        assert line_with(lines, text.strip()), text  # painted whole, no "…"
+    assert not any(line.endswith("…") for line in lines), lines
 
 
 @pytest.mark.parametrize("owned_by", ("chat default", "edit"))
