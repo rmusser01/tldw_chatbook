@@ -854,7 +854,8 @@ class StudyFlashcardsController:
         self._update_lifecycle_controls()
 
     def handle_move_target_changed(self) -> None:
-        self._sync_move_target_options()
+        # No option rebuild here: `set_options` resets the selection, so the
+        # pick would be undone. The deck list and deck changes rebuild them.
         self._update_lifecycle_controls()
 
     @_quiet_when_swapped_out

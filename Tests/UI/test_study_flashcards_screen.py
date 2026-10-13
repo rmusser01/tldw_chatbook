@@ -1897,9 +1897,7 @@ async def test_a_deck_name_with_brackets_is_shown_as_typed():
     async with app.run_test(size=(180, 60)) as pilot:
         window, deck_select, _card_list = await _open_flashcards_deck(pilot, app, scope)
         move_select = window.query_one("#move-card-target-select", Select)
-        # Its Changed handler rebuilds the options, which clears the pick (dev).
-        with move_select.prevent(Select.Changed):
-            move_select.value = "deck-local-2"
+        move_select.value = "deck-local-2"
         await pilot.pause()
         assert _select_label(move_select) == "Week [new]"
 
@@ -1913,6 +1911,36 @@ async def test_a_deck_name_with_brackets_is_shown_as_typed():
             lambda: str(status.render()) == "No cards due for review.",
             "the new deck's rebuild",
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_picked_move_target_stays_picked_and_enables_move():
+    """Picking a Move target keeps it (fix round 4, finding 1).
+
+    The target Select's Changed handler rebuilt its options, and
+    `Select.set_options` resets the selection: the pick fell back to the
+    prompt and Move stayed disabled, so no card could be moved (dev).
+    """
+    scope = GatedCardListStudyScopeService()
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, _deck_select, card_list = await _open_flashcards_deck(pilot, app, scope)
+        card_list.index = 0
+        card_list.action_select_cursor()
+        await _until(
+            pilot,
+            lambda: window.flashcards_controller.selected_card_record is not None,
+            "the card to be selected",
+        )
+        move_select = window.query_one("#move-card-target-select", Select)
+        move_select.value = "deck-local-2"
+        await pilot.pause()
+
+        assert move_select.value == "deck-local-2"
+        assert _select_label(move_select) == "Chemistry"
+        assert window.query_one("#move-selected-card-button", Button).disabled is False
 
 
 @pytest.mark.asyncio
