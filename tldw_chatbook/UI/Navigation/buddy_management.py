@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import replace
 from typing import Any
@@ -125,6 +126,7 @@ class BuddyManagementCoordinator:
         self._opening = False
         self._modal: Any = None
         self._scope_timer: Any = None
+        self._scope_reconcile_fingerprint: tuple[Any, ...] | None = None
         self._scope_configured = "buddy_interaction" in app.app_config
         self._promotion_pending = False
         self._promotion_retry_after = 0.0
@@ -1013,29 +1015,77 @@ class BuddyManagementCoordinator:
         if self._scope_timer is None and hasattr(self.app, "set_interval"):
             self._scope_timer = self.app.set_interval(0.5, self.reconcile_scope)
 
+    def stop_scope_tracking(self) -> None:
+        """Stop the periodic scope reconcile once no Buddy presentation remains.
+
+        One final reconcile settles speech/sink state for the closed
+        presentation; ``start_scope_tracking`` re-arms on the next Buddy view.
+        Callers already holding the presentation lock cannot race a concurrent
+        ``reconcile`` re-arm.
+        """
+        timer = self._scope_timer
+        if timer is None:
+            return
+        self._scope_timer = None
+        try:
+            self.reconcile_scope()
+        except Exception:  # noqa: BLE001 -- teardown must always stop the timer
+            pass
+        finally:
+            with contextlib.suppress(Exception):
+                timer.stop()
+
     def reconcile_scope(self) -> None:
         """Filter trusted lifecycle events and replay current state after a rebind."""
         if not self._scope_configured:
             return
         speech = getattr(self.app, "buddy_speech_coordinator", None)
+        runtime = getattr(self.app, "console_runtime", None)
+        binding = self.preferences.binding
+        sessions = self._runtime_sessions()
+        presentation_flags: tuple[bool, bool] | None = None
         if speech is not None or self.preferences.speak_responses:
+            presentation = self.controller.current_preferences()
+            presentation_flags = (presentation.enabled, presentation.open)
+        # Cheap no-op gate: scope depends only on the binding, the speech and
+        # presentation flags, and the live session set. Runtime object identity
+        # covers rebinding replays; persisted ids cover session promotion.
+        # Promotion retries are deadline-driven and bypass the gate.
+        fingerprint = (
+            runtime,
+            binding,
+            self.preferences.speak_responses,
+            speech is not None,
+            presentation_flags,
+            tuple(
+                (session.id, session.persisted_conversation_id)
+                for session in sessions
+            ),
+        )
+        promotion_due = bool(
+            binding is not None
+            and binding.kind == "conversation"
+            and binding.conversation_id is None
+            and not binding.ephemeral
+            and not self._promotion_pending
+            and time.monotonic() >= self._promotion_retry_after
+        )
+        if fingerprint == self._scope_reconcile_fingerprint and not promotion_due:
+            return
+        self._scope_reconcile_fingerprint = fingerprint
+        if presentation_flags is not None:
             from .buddy_speech import ensure_buddy_speech
 
-            presentation = self.controller.current_preferences()
+            enabled, open_ = presentation_flags
             ensure_buddy_speech(self.app).configure(
-                self.preferences.binding,
-                self.preferences.speak_responses
-                and presentation.enabled
-                and presentation.open,
+                binding,
+                self.preferences.speak_responses and enabled and open_,
             )
-        runtime = getattr(self.app, "console_runtime", None)
         if runtime is None:
             return
         controller = getattr(runtime, "chat_controller", None)
         if controller is None:
             return
-        binding = self.preferences.binding
-        sessions = self._runtime_sessions()
         if binding is None:
             selected = ()
         elif binding.kind == "conversation":
