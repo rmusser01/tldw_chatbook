@@ -163,7 +163,8 @@ _BUDGETS: dict[str, int] = {
     # write and says nothing at rest (+4): 33,907; its focus-help line skips
     # the nav bar's tooltips (+3): 33,910; Console Behavior's Status row and
     # Chat images become a Select and a Checkbox, the summary prompt's
-    # button gets a labelled row (+2): 33,912.
+    # button gets a labelled row (+2): 33,912. Capture fix round 1: those
+    # two instant-apply rows' help leads with "Applies immediately." (+0).
     "tldw_chatbook/UI/Screens/settings_screen.py": 33912,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for

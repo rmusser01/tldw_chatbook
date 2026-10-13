@@ -240,3 +240,11 @@ async def test_status_row_chat_images_and_summary_prompt_read_as_controls(reques
         assert {position.parent, prompt.parent}.isdisjoint({card})
         rail = card.query_one("#settings-console-rail-layout-scope", Select)
         assert position.region.x == rail.region.x == prompt.region.x
+        # Capture fix round 1, finding 3: these two write at once, beside
+        # neighbours that stage for s, so each one's help says so first.
+        for help_id in (
+            "#settings-console-status-row-position-help",
+            "#settings-console-remote-images-help",
+        ):
+            help_text = _static_text(card.query_one(help_id, Static))
+            assert help_text.startswith("Applies immediately."), help_text

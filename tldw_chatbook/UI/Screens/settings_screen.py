@@ -19797,8 +19797,8 @@ class SettingsScreen(BaseAppScreen):
                     ),
                 )
             yield Static(
-                "Above keeps the chips directly under the conversation; "
-                "below closes the shell as a bottom status row.",
+                "Applies immediately. Above keeps the chips directly under the "
+                "conversation; below closes the shell as a bottom status row.",
                 id="settings-console-status-row-position-help",
                 classes="settings-help-copy",
             )
@@ -19842,8 +19842,8 @@ class SettingsScreen(BaseAppScreen):
                 ),
             )
             yield Static(
-                "Off by default: fetching a model-suggested link reveals your "
-                "IP address to that host.",
+                "Applies immediately. Off by default: fetching a model-suggested "
+                "link reveals your IP address to that host.",
                 id="settings-console-remote-images-help",
             )
             yield Static("Parallel agent runs", classes="destination-section")
