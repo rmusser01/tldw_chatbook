@@ -33,6 +33,12 @@ CONSOLE_SETUP_CARD_SUBTITLE = (
 CONSOLE_READY_EMPTY_COPY = "Ready — type a message to begin."
 CONSOLE_QUIET_EMPTY_COPY = "No messages yet."
 CONSOLE_SETUP_STEP_GLYPHS = {"done": "✓", "active": "●", "pending": "○"}
+#: The card's content cells: .console-setup-modal-card (features/_console.tcss)
+#: is 66 wide, padding 1 2, solid border. test_console_setup_card_fit.py
+#: measures the step lines against that rule.
+CONSOLE_SETUP_CARD_CONTENT_CELLS = 60
+#: An active step's readiness word sits on its own line, this far in.
+CONSOLE_SETUP_STEP_DETAIL_INDENT = "     "
 
 # TASK-2154.8 (FR-10): endpoint variants name the thing in plain terms first
 # ("server address") with the jargon glossed after it; "send-capable" becomes
@@ -257,10 +263,14 @@ def build_console_setup_card_state(
     # Capture finding 12: the word is this chat's provider's, so the step
     # names it; beside "Use detected <server>" an unnamed "Not ready · no
     # key" read as the server's. "Provider" is the callers' fallback, no name.
-    # The card prints this on its own line, 5 cells in from a 60-cell content
-    # width (console_setup_modal._step_text): a long name is cut so the word
-    # is never split by a wrap (TASK-33005.3).
-    budget = 60 - 5 - 2 - cell_len(word)
+    # The card prints this on its own line (console_setup_modal._step_text):
+    # a long name is cut so the word is never split by a wrap (TASK-33005.3).
+    budget = (
+        CONSOLE_SETUP_CARD_CONTENT_CELLS
+        - len(CONSOLE_SETUP_STEP_DETAIL_INDENT)
+        - 2
+        - cell_len(word)
+    )
     name = provider_name
     if cell_len(name) > budget:
         name = set_cell_size(name, budget - 1).rstrip() + "…"

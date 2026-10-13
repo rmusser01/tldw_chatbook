@@ -31,6 +31,8 @@ from Tests.UI.consolidated_css import APP_STYLESHEETS
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENTIC = ROOT / "tldw_chatbook/css/components/_agentic_terminal.tcss"
+CONSOLE_CSS = ROOT / "tldw_chatbook/css/features/_console.tcss"
+VARIABLES = ROOT / "tldw_chatbook/css/core/_variables.tcss"
 _BUNDLED_STYLESHEET = ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss"
 
 
@@ -38,6 +40,26 @@ def _rule_body(css: str, selector: str) -> str:
     css = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
     match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css)
     return match.group(1) if match else ""
+
+
+def _cells(value: str) -> int:
+    """A cell count, or a ``$token`` read from core/_variables.tcss."""
+    if value.startswith("$"):
+        tokens = VARIABLES.read_text(encoding="utf-8")
+        value = re.search(rf"^\{value}\s*:\s*(\d+)\s*;", tokens, re.MULTILINE).group(1)
+    return int(value)
+
+
+def _card_content_width() -> int:
+    """The setup card's content cells, from its rule in features/_console.tcss:
+    width minus left and right padding minus a border cell each side."""
+    card = _rule_body(
+        CONSOLE_CSS.read_text(encoding="utf-8"), ".console-setup-modal-card"
+    )
+    width = _cells(re.search(r"(?<![-\w])width\s*:\s*(\S+)\s*;", card).group(1))
+    side = _cells(re.search(r"padding\s*:\s*\S+\s+(\S+)\s*;", card).group(1))
+    assert re.search(r"(?<![-\w])border\s*:\s*solid\b", card), card
+    return width - 2 * side - 2
 
 
 def _card_state_with_step_three() -> ConsoleSetupCardState:
@@ -68,8 +90,7 @@ def test_the_active_steps_readiness_word_gets_its_own_line():
     line = ConsoleSetupModal._step_text(1, step)
 
     assert line == "1. ● Reconnect the provider server\n     Not ready · refused :9199"
-    # The card is $ds-size-66 wide: 60 content cells after border and padding.
-    assert max(cell_len(row) for row in line.split("\n")) <= 60
+    assert max(cell_len(row) for row in line.split("\n")) <= _card_content_width()
 
 
 @pytest.mark.parametrize(
@@ -149,8 +170,9 @@ def test_a_long_provider_name_never_wraps_the_readiness_word(
 
     assert rows[1].endswith(f": {word}")
     assert rows[1].lstrip().startswith(name[:12])
-    # The card is $ds-size-66 wide: 60 content cells after border and padding.
-    assert max(cell_len(row) for row in rows) <= 60
+    # Capture fix round 2: measured against the card's rule, not a copied 60,
+    # so narrowing the card or widening its padding turns this red.
+    assert max(cell_len(row) for row in rows) <= _card_content_width()
 
 
 def test_setup_card_is_wide_enough_for_the_step_three_line():

@@ -39,6 +39,7 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     CONSOLE_SETUP_CARD_TITLE,
     CONSOLE_SETUP_NOTES_ACTION_LABEL,
     CONSOLE_SETUP_NOTES_ACTION_TOOLTIP,
+    CONSOLE_SETUP_STEP_DETAIL_INDENT,
     ConsoleDetectedServerAction,
     ConsoleSetupCardState,
     ConsoleSetupStep,
@@ -433,7 +434,11 @@ class ConsoleSetupModal(Vertical):
         if step.detail:
             # TASK-33005.3: the active step's detail is the readiness word; it
             # gets its own line under the label so a wrap never splits it.
-            joiner = "\n     " if step.state == "active" else "  "
+            joiner = (
+                f"\n{CONSOLE_SETUP_STEP_DETAIL_INDENT}"
+                if step.state == "active"
+                else "  "
+            )
             text = f"{text}{joiner}{step.detail}"
         return text
 
