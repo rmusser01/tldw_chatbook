@@ -3105,6 +3105,12 @@ class ConsoleTranscript(VerticalScroll):
         self._unit_spans_by_index: tuple[
             tuple[int, int, str, tuple[str, ...]], ...
         ] = ()
+        # TASK-34922: shared per-ingest caches keyed on the identity of the
+        # current ``self._messages`` list (replaced, never mutated).
+        self._units_cache_source: list[ConsoleChatMessage] | None = None
+        self._units_cache: tuple[ConsoleTranscriptUnit, ...] = ()
+        self._ownership_cache_source: list[ConsoleChatMessage] | None = None
+        self._ownership_cache: dict[str, tuple[str, tuple[str, ...]]] | None = None
         self.selected_message_id: str | None = None
         #: task-501: a selection to apply on the NEXT message ingest that
         #: contains this id. Set by the screen's sibling-swipe handler, which
@@ -3723,13 +3729,39 @@ class ConsoleTranscript(VerticalScroll):
             for index, span in enumerate(spans)
         )
 
+    def _units_for_current_messages(self) -> tuple["ConsoleTranscriptUnit", ...]:
+        """Grouping for the exact current ``self._messages`` list.
+
+        TASK-34922: set_messages installs a fresh list per ingest and
+        nothing mutates it in place, so list identity is a sound cache
+        token; the ingest itself, span building, ownership mapping, and
+        the prune/measure helpers all share ONE grouping walk per ingest
+        instead of one each.
+        """
+        if self._units_cache_source is not self._messages:
+            self._units_cache = group_console_transcript_messages(self._messages)
+            self._units_cache_source = self._messages
+        return self._units_cache
+
     def _ownership_by_message_id(
         self, messages: list[ConsoleChatMessage] | None = None
     ) -> dict[str, tuple[str, tuple[str, ...]]]:
         """Map every causal message id to its top-level owner and unit ids."""
-        source = self._messages if messages is None else messages
+        if messages is None:
+            if self._ownership_cache_source is not self._messages:
+                self._ownership_cache = self._ownership_from_units(
+                    self._units_for_current_messages()
+                )
+                self._ownership_cache_source = self._messages
+            return self._ownership_cache
+        return self._ownership_from_units(group_console_transcript_messages(messages))
+
+    @staticmethod
+    def _ownership_from_units(
+        units: "Iterable[ConsoleTranscriptUnit]",
+    ) -> dict[str, tuple[str, tuple[str, ...]]]:
         ownership: dict[str, tuple[str, tuple[str, ...]]] = {}
-        for unit in group_console_transcript_messages(source):
+        for unit in units:
             if unit.standalone is not None:
                 message = unit.standalone
                 ownership[message.id] = (message.id, (message.id,))
@@ -4442,7 +4474,7 @@ class ConsoleTranscript(VerticalScroll):
         ]
         previous_hidden_tail_ids = self._hidden_tail_ids
         self._messages = list(messages)
-        units = group_console_transcript_messages(self._messages)
+        units = self._units_for_current_messages()
         self._unit_spans_by_index = self._build_unit_spans(self._messages, units)
         message_ids = {message.id for message in self._messages}
         session_changed = False
