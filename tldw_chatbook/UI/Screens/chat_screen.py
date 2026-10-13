@@ -1192,6 +1192,16 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = (
     ("F6", "next pane", False),
 )
 
+#: Capture fix 3 finding 3 (02b): a dialog over the card (Switch model) takes
+#: Enter, and every app key but Ctrl+P and Ctrl+Q is inert under a modal
+#: (measured: F1, F6 and Ctrl+Shift+F do nothing there), so while one covers
+#: the card the footer names only the palette beside the app's Ctrl+Q.
+CONSOLE_WORKBENCH_SHORTCUTS_SETUP_COVERED = (
+    ("Ctrl+P", "palette"),
+    ("F1", "help", False),
+    ("F6", "next pane", False),
+)
+
 #: TASK-25733: the same lie as the setup-blocked case above, from a different
 #: cause -- with the composer collapsed there is nothing to type into and Enter
 #: sends nothing, yet the footer kept offering "Enter send / queue". Escape is
@@ -5008,10 +5018,13 @@ class ChatScreen(BaseAppScreen):
         with focus on the setup card's primary action.
         """
         if self._console_setup_modal_blocking():
-            shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
             if self._console_covered_by_dialog():
-                # Capture fix 3 finding 3 (02b): Enter acts on the dialog.
-                shortcuts = tuple(pair for pair in shortcuts if pair[0] != "Enter")
+                self.register_footer_shortcuts(
+                    source="console",
+                    shortcuts=CONSOLE_WORKBENCH_SHORTCUTS_SETUP_COVERED,
+                )
+                return
+            shortcuts = CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED
         elif self._console_composer_collapsed:
             # TASK-25733: same truthfulness rule as the setup-blocked branch --
             # with no composer mounted, "Enter send" names something the key

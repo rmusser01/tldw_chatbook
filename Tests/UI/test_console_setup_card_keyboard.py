@@ -225,8 +225,9 @@ async def test_a_dialog_over_the_card_leaves_the_cards_enter_out_of_the_footer(
     """Capture fix 3 finding 3 (02b): with Switch model open over the card the
     footer still read "Enter continue setup", while Enter there applies the
     dialog's highlighted model. While a dialog covers the card the footer
-    leaves the card's Enter out, a re-registration included; it is back when
-    the dialog closes."""
+    names only the keys that act under it (a re-registration included):
+    each key it leaves out is pressed and changes nothing, the palette's
+    opens. The card's keys are back when the dialog closes."""
     app = _blocked_console_app((_DETECTED_SERVER,))
     host = ConsoleHarness(app)
 
@@ -239,7 +240,7 @@ async def test_a_dialog_over_the_card_leaves_the_cards_enter_out_of_the_footer(
         )
 
         await pilot.press("enter")
-        await _switcher_ready(host, pilot)
+        switcher = await _switcher_ready(host, pilot)
         await _until(
             pilot,
             lambda: "continue setup" not in str(drawn.render()),
@@ -247,8 +248,23 @@ async def test_a_dialog_over_the_card_leaves_the_cards_enter_out_of_the_footer(
         )
         console._register_console_footer_shortcuts()  # a sync while covered
         await pilot.pause()
-        assert "continue setup" not in str(drawn.render())
-        assert "F1 help" in str(drawn.render())
+        drawn_text = str(drawn.render())
+        hinted = {
+            hint.split(" ", 1)[0]
+            for part in drawn_text.split(" | ")
+            for hint in part.split(" · ")
+        }
+        assert hinted == {"Ctrl+P", "Ctrl+Q"}, drawn_text
+
+        for key in ("f1", "f6", "ctrl+shift+f"):
+            focused = host.focused
+            await pilot.press(key)
+            await pilot.pause(0.2)
+            assert host.screen is switcher and host.focused is focused, key
+        await pilot.press("ctrl+p")
+        await _until(pilot, lambda: host.screen is not switcher, "the palette")
+        host.pop_screen()
+        await _until(pilot, lambda: host.screen is switcher, "the palette to go")
 
         await pilot.press("escape")
         await _until(pilot, lambda: host.screen is console, "the dialog to close")
