@@ -6057,7 +6057,7 @@ class ConsoleSettingsModal(
         if state.model_window_tokens is not None and not state.model_window_verified:
             return f"{'Model window':<20}unknown, {tokens} assumed"
         suffix = f" ({source})" if source else ""
-        return f"{'Model window':<20}{tokens} tokens{suffix}"
+        return context_token_row("Model window", state.model_window_tokens) + suffix
 
     def _memory_metadata_label(self) -> str:
         effective = self._context_state.effective_memory

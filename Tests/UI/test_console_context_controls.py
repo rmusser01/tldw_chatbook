@@ -1118,6 +1118,35 @@ async def test_context_view_names_settings_as_the_model_view_does() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unknown_model_window_reads_unknown_not_unknown_tokens() -> None:
+    """Capture fix round 1, finding 1: with no window known at all, the
+    Context view's first row read "Model window        unknown tokens"; it
+    reads "unknown", as every other count row does."""
+    estimate = ConsoleSettingsContextEstimate(0, None, "0 tokens (window unknown)")
+    state = build_console_context_control_state(settings=_settings(), estimate=estimate)
+    assert state.model_window_tokens is None
+    app = _ContextHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=_settings(),
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["model-a"]},
+                context_estimate=estimate,
+                context_state=state,
+                can_save=True,
+                focus_context=True,
+            )
+        )
+        await pilot.pause()
+
+        window = str(
+            app.screen.query_one("#console-context-model-window", Static).content
+        )
+        assert window == "Model window        unknown", window
+
+
+@pytest.mark.asyncio
 async def test_quick_popover_mounts_with_no_model_selected() -> None:
     """A session with no model opens Switch model without a CURRENT row.
 
