@@ -438,11 +438,13 @@ async def test_settings_console_behavior_fallback_labels_come_from_the_table(
         }
         # Captures flag 10: the inspector's Scope row lost its bracketed
         # section names to markup ("Scope:  response fallbacks and  paste").
+        # Rewritten on purpose (#3057 capture finding 11, 06c): the row named
+        # raw config sections; it names the card's own sections instead.
         rendered = [
             str(static.visual) for static in screen.query(".settings-detail-row")
         ]
         scope = [text for text in rendered if text.startswith("Scope: ")]
-        assert scope and all("  " not in text for text in scope), scope
+        assert scope == ["Scope: Global fallback defaults and paste collapse"], scope
 
         # Final review I2: focusing a fallback shows the table's help and
         # range, as the Providers & Models inspector does.

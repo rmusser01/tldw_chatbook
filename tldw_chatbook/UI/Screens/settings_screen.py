@@ -23912,10 +23912,9 @@ class SettingsScreen(BaseAppScreen):
                 "Priority",
                 "active Console session, then provider+model profile, then these global fallbacks",
             )
-            yield self._detail_row(
-                "Scope",
-                "[chat_defaults] response fallbacks and [console] paste display settings",
-            )
+            # Capture finding 11: the card's own names, not config sections
+            # (those are in the config key disclosure above).
+            yield self._detail_row("Scope", "Global fallback defaults and paste collapse")
             yield self._detail_row("Save", STAGED_SAVE_BEHAVIOR_COPY)
             return
         elif summary.category is SettingsCategoryId.PROVIDERS_MODELS:
