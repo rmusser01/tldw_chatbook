@@ -385,9 +385,11 @@ model or settings change (another pick in Switch model, or Apply in Chat
 settings, returns it to the saved address) or Chatbook restarts, and a
 notice says so. If the default cannot be saved, a notice says the pick
 applies to this chat only, and the detected server is used the same way.
-Discovery runs once per launch, the first time Console shows the card; a
-well-known port where nothing answers stays silent. A server you start
-after that is not offered on the card until Chatbook restarts.
+Discovery runs when Console first shows the card, and again each time
+Console comes back to the card with nothing found, as after a trip to
+Settings or a dialog closed over the card; a well-known port where nothing
+answers stays silent. A server you start while the card shows is offered
+the next time you come back to it. Once one is found, discovery stops.
 
 Every action on the card is drawn as a button with a rounded edge, one under
 the other; Tab and Shift+Tab move between the ones shown, wrapping at either

@@ -14091,9 +14091,10 @@ class ChatScreen(BaseAppScreen):
                 self.call_after_refresh(modal.focus_primary_action)
 
     def _maybe_start_console_local_discovery(self) -> None:
-        """Start the one-shot local-server discovery worker while blocked.
+        """Start the local-server discovery worker while blocked.
 
-        Discovery runs at most once per screen, in its own exclusive worker
+        Discovery runs once per visit to a blocking card with nothing found
+        (``on_screen_resume`` re-arms it), in its own exclusive worker
         group so it can never cancel (or be duplicated alongside) the Console
         UI sync workers. Results only ever add a secondary card affordance;
         a quiet network stays quiet.
@@ -22790,6 +22791,13 @@ class ChatScreen(BaseAppScreen):
         # `_restore_console_workbench_focus` below would just re-apply the
         # stale block and the modal could stick even after setup completed
         # elsewhere.
+        if (
+            not mount_already_refreshed
+            and self._console_detected_local_server is None
+            and self._console_setup_modal_blocking()
+        ):
+            # Back on the card with nothing found: a server may have started.
+            self._console_local_discovery_started = False
         self._sync_console_transcript_guidance()
         if not mount_already_refreshed:
             self.sync_task_resume_state()

@@ -11,6 +11,7 @@ import threading
 
 import pytest
 from textual.app import ComposeResult
+from textual.screen import Screen
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
@@ -797,3 +798,44 @@ async def test_blocked_card_stays_quiet_when_no_server_is_found(request) -> None
             f"#{CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID}", Button
         )
         assert not _is_displayed(detected)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_card_resumed_with_nothing_detected_runs_discovery_again(
+    request,
+) -> None:
+    """Controller ruling of 2026-10-12 (the final review's item 1, Option A).
+
+    Discovery ran once per screen, and the Console screen is reused, so a
+    server started after the first look was never offered until Chatbook
+    restarted. Coming back to Console while the card still blocks and nothing
+    was found runs it again; once a server is found, a return does not."""
+    app = _blocked_console_app(())
+    host = ConsoleHarness(app)
+
+    async def leave_and_come_back(pilot) -> None:
+        await host.push_screen(Screen())
+        await pilot.pause()
+        await host.pop_screen()
+        await pilot.pause()
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-setup-modal")
+        await _until(pilot, lambda: len(app._discovery_calls) == 1, "discovery")
+
+        async def server_started(config):
+            app._discovery_calls.append(config)
+            return (_DETECTED_SERVER,)
+
+        app.console_local_server_discovery = server_started
+        await leave_and_come_back(pilot)
+        detected = await _detected_action_focused(host, console, pilot)
+        assert str(detected.label) == "Use detected llama.cpp (127.0.0.1:8080)"
+        assert len(app._discovery_calls) == 2
+
+        await leave_and_come_back(pilot)
+        for _ in range(10):
+            await pilot.pause(0.05)
+        assert len(app._discovery_calls) == 2
