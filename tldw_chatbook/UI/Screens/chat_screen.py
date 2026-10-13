@@ -12989,9 +12989,9 @@ class ChatScreen(BaseAppScreen):
                 return
             self._request_console_context_allocation_reconcile()
 
-    @on(ConsoleWorkspaceContextTray.Relabeled)
-    def _on_console_workspace_context_relabeled(self) -> None:
-        """Re-mount out-of-band tray controls after a width-driven relabel."""
+    @on(ConsoleWorkspaceContextTray.Recomposed)
+    def _on_console_workspace_context_recomposed(self) -> None:
+        """Re-mount out-of-band tray controls after any tray rebuild."""
         self.call_after_refresh(
             lambda: self.run_worker(
                 self._sync_console_legacy_workspace_context_aliases,

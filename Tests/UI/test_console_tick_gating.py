@@ -337,6 +337,32 @@ async def test_console_workspace_context_legacy_alias_kick_skipped_when_state_un
 
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
+async def test_a_tray_rebuild_no_state_change_kicked_keeps_new_conversation():
+    """Phase 8 round 2 finding 8 (02c, 03f, 05c): "New conversation" was gone
+    from the left rail at 211x44 after setup completed or after Return to
+    Console. The screen mounts it into the Conversations tray from outside
+    compose(), so a tray rebuild drops it; only a state change or a width
+    relabel put it back, and the relabel's notice went out before the rebuild
+    ran. Any rebuild of the tray now puts it back once the rebuild is done."""
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        alias = "#console-new-workspace-conversation"
+        await _wait_for_selector(console, pilot, alias)
+        tray = console.query_one("#console-workspace-context")
+
+        tray.refresh(recompose=True)  # a rebuild with no state change to kick
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if console.query(alias) and not tray._recompose_required:
+                break
+        assert console.query(alias), "the rebuild dropped New conversation"
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_inspector_content_stays_fresh_while_right_rail_hidden():
     """Regression test protecting the deliberate Change-3 deviation.
 
