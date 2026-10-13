@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
 import pytest
+from rich.cells import cell_len
 from textual.containers import Grid
 from textual.widgets import Button, Input, OptionList, Select, Static
 
@@ -2809,6 +2810,15 @@ def _key_row(app, switcher: ConsoleModelPopover) -> str:
     return "\n".join(line[region.x : region.right] for line in lines)
 
 
+def _assert_enter_drawn_whole(app, switcher: ConsoleModelPopover) -> None:
+    """Capture fix 3 finding 1: Enter's button is as wide as its label, so a
+    longer label is never cut and a shorter one leaves no gap after it."""
+    apply = switcher.query_one("#console-popover-apply", Button)
+    label = str(apply.label)
+    assert apply.region.width == cell_len(label) + 2, (label, apply.region.width)
+    assert f" {label}  · Tab edit values" in _key_row(app, switcher)
+
+
 async def _edited_switcher(app, pilot, recorder: Recorder) -> ConsoleModelPopover:
     switcher = await open_switcher(app, pilot, _real_switcher(recorder))
     await pilot.press(*"son", "tab", *"0.9")
@@ -2924,6 +2934,7 @@ async def test_the_enter_label_follows_the_highlighted_rows_kind() -> None:
         for _ in switcher._rows:
             row = switcher.highlighted_row()
             labels.setdefault(row.kind, set()).add(str(apply.label))
+            _assert_enter_drawn_whole(app, switcher)
             await pilot.press("down")
             await pilot.pause()
 
@@ -2943,8 +2954,9 @@ async def test_the_enter_label_follows_the_highlighted_rows_kind() -> None:
             "highlight_pair": ("openai", "gpt-5.1"),
             "recent": (_KEYLESS_USE,),
         },
+        {"draft": _draft("openai", None), "enter_sets_default": True},
     ],
-    ids=["no-rows-yet", "reopened-unhighlighted"],
+    ids=["no-rows-yet", "reopened-unhighlighted", "label-grows"],
 )
 async def test_the_enter_label_names_the_refusal_while_nothing_is_highlighted(
     held,
@@ -2952,7 +2964,11 @@ async def test_the_enter_label_names_the_refusal_while_nothing_is_highlighted(
     """Capture fix 2 round 1 finding 1: while providers are checked nothing
     is highlighted (no rows yet, or a reopened list kept unhighlighted), and
     Enter applies nothing there. The key row said "Enter apply to this chat";
-    it names the refusal until a row is highlighted."""
+    it names the refusal until a row is highlighted.
+
+    Capture fix 3 finding 1 (05c): Button.label is no layout reactive, so the
+    button kept the refusal's width after the label changed: a gap after a
+    shorter label, a cut in a longer one ("label-grows")."""
     recorder, release = _held_recorder()
     app = SwitcherHarness()
     try:
@@ -2965,11 +2981,13 @@ async def test_the_enter_label_names_the_refusal_while_nothing_is_highlighted(
             assert switcher.highlighted_row() is None
             apply = switcher.query_one("#console-popover-apply", Button)
             assert str(apply.label) == "Enter choose a model first"
+            _assert_enter_drawn_whole(app, switcher)
 
             release.set()
             await _settle(app, pilot)
             assert switcher.highlighted_row() is not None
             assert str(apply.label) != "Enter choose a model first"
+            _assert_enter_drawn_whole(app, switcher)
     finally:
         release.set()
 

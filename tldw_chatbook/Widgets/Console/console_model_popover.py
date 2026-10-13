@@ -1716,7 +1716,11 @@ class ConsoleModelPopover(
             self._rebase_to(provider, model)
         if not self._pick_only:
             apply = self.query_one("#console-popover-apply", Button)
-            apply.label = self._enter_label(row)
+            label = self._enter_label(row)
+            if str(apply.label) != label:
+                apply.label = label
+                # Button.label is no layout reactive: size the button anew.
+                apply.refresh(layout=True)
 
     def _enter_action(self, row: SwitcherRow | None) -> str:
         """What Enter does on this row: ``_activate`` acts on it, the key row
