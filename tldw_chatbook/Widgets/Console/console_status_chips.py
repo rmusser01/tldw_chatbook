@@ -921,8 +921,20 @@ class ConsoleStatusChips(Horizontal):
             self.call_after_refresh(event.widget.scroll_visible, animate=False)
 
     def on_descendant_blur(self, event: events.DescendantBlur) -> None:
-        """Fit the cost chip to the room left again once focus leaves it."""
+        """Fit the cost chip to the room left again once focus leaves it.
+
+        The fit assumes the strip at scroll 0, so a chip that starts inside
+        the strip scrolls it home first: left scrolled, the first chip was cut
+        at the left edge. Every chip before it ends before its start, so a
+        chip that focus moved to stays in view.
+        """
         if event.widget.id == "console-cost-chip":
+            scroll = event.widget.parent
+            if (
+                isinstance(scroll, HorizontalScroll)
+                and event.widget.virtual_region.x < scroll.scrollable_content_region.width
+            ):
+                scroll.scroll_home(animate=False)
             self._refit_cost_chip()
 
     def on_resize(self, _event: events.Resize) -> None:

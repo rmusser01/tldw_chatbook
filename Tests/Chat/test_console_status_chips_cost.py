@@ -12,6 +12,7 @@ import pytest
 from rich.cells import cell_len
 from textual import on
 from textual.app import App, ComposeResult
+from textual.widgets import Input
 
 from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
@@ -501,6 +502,50 @@ async def test_the_cost_chip_fits_when_it_is_shown_after_layout() -> None:
         for _ in range(5):
             await pilot.pause()
         assert _cost_chip_drawn_whole(app) == "Ctx 0% · Now $0.00"
+
+
+class _ChipsAndComposerApp(_ProductionChipsApp):
+    """The production strip with an Input outside it, like the composer."""
+
+    def compose(self) -> ComposeResult:
+        yield from super().compose()
+        yield Input(id="composer")
+
+
+@pytest.mark.parametrize("leave", ("composer", "shift+tab"))
+@pytest.mark.asyncio
+async def test_leaving_the_cost_chip_scrolls_the_strip_home(leave: str) -> None:
+    """Capture fix 3 round 2 finding 1: focus scrolled the strip to the
+    chip's full label; when focus left for the composer (or Shift+Tab to an
+    earlier chip) the chip went back to "…" but the strip stayed scrolled,
+    so its first chip was cut at the left edge."""
+    app = _ChipsAndComposerApp(
+        _capture_control_state(tools_label="Tools: 12 ready", tools_active=True),
+        cost_state=_cost_state(**_CAPTURE_LABELS),
+    )
+    async with app.run_test(size=(211, 8)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
+        scroll = app.query_one("#console-status-chip-scroll")
+        first = app.query_one("#console-provider-chip")
+        before = (str(chip.render()), first.region.x)
+        assert before[0] == "…"
+
+        chip.focus()
+        for _ in range(5):
+            await pilot.pause()
+        assert scroll.scroll_x > 0
+
+        if leave == "composer":
+            app.query_one("#composer", Input).focus()
+        else:
+            await pilot.press("shift+tab")
+        for _ in range(5):
+            await pilot.pause()
+        assert app.focused is not chip
+        assert scroll.scroll_x == 0
+        assert (str(chip.render()), first.region.x) == before
 
 
 @pytest.mark.asyncio
