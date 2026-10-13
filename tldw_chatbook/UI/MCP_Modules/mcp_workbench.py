@@ -683,6 +683,11 @@ class MCPWorkbench(Container):
         self._app_instance = app_instance
         self._mcp_recovery_token = None
         self._mcp_recovery_busy = False
+        # TASK-34915: the 0.25s save-status timer refreshes the config-file
+        # identity (stat read) only every 8th tick (~2s); direct post-save
+        # calls force a fresh read via the refresh flag.
+        self._save_status_tick = 0
+        self._save_file_identity_cache: tuple[tuple, tuple | None] | None = None
         self._active_mode = "servers"
         #: Mode requested before the deferred canvases mounted (task-2901);
         #: replayed by `_mount_deferred_canvases`.
@@ -4305,7 +4310,9 @@ class MCPWorkbench(Container):
             exclusive=True,
         )
 
-    def _master_save_projection(self) -> tuple[bool, str, bool]:
+    def _master_save_projection(
+        self, *, file_identity_refresh: bool = False
+    ) -> tuple[bool, str, bool]:
         """Describe the latest choice without changing runtime tool authority."""
         enabled = coerce_bool_setting(
             get_cli_setting(
@@ -4315,8 +4322,10 @@ class MCPWorkbench(Container):
         )
         owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
         config_path = get_cli_config_path()
-        generation = current_config_identity()[0]
-        file_revision = config_file_revision(config_path)
+        generation, file_revision = self._save_status_file_identity(
+            refresh=file_identity_refresh
+        )
+        generation = generation[0]
         default = "Applies immediately - no Save needed."
         if owner is None:
             return enabled, default, False
@@ -4382,7 +4391,9 @@ class MCPWorkbench(Container):
             and not canvas._pruning
         )
 
-    def _sync_master_save_status(self) -> None:
+    def _sync_master_save_status(
+        self, *, file_identity_refresh: bool = True
+    ) -> None:
         canvases = [
             canvas
             for canvas_type in (MCPToolsMode, MCPServersMode)
@@ -4391,7 +4402,9 @@ class MCPWorkbench(Container):
         ]
         if not canvases:
             return
-        enabled, text, error = self._master_save_projection()
+        enabled, text, error = self._master_save_projection(
+            file_identity_refresh=file_identity_refresh
+        )
         owner = getattr(self.app_instance, "_mcp_local_config_saves", None)
         state = owner.state_for("local_tools_enabled") if owner is not None else None
         pending = bool(
@@ -4409,9 +4422,33 @@ class MCPWorkbench(Container):
                 pending=pending,
             )
 
+    def _save_status_file_identity(
+        self, *, refresh: bool = False
+    ) -> tuple[tuple, tuple[int, int, int, int] | None]:
+        """Config identity + config-file revision for save-status stamps.
+
+        Args:
+            refresh: Force a fresh stat read; the 0.25s timer instead uses
+                the coarse ~2s cache so idle ticks do not touch the file.
+        """
+        if refresh or self._save_file_identity_cache is None:
+            self._save_file_identity_cache = (
+                current_config_identity(),
+                config_file_revision(get_cli_config_path()),
+            )
+        return self._save_file_identity_cache
+
     def _sync_local_config_save_status(self) -> None:
-        self._sync_root_save_status()
-        self._sync_master_save_status()
+        # TASK-34915: external config edits only need a coarse detection
+        # cadence; the in-memory save-state stamp parts stay per-tick.
+        self._save_status_tick += 1
+        refresh_file_identity = self._save_status_tick % 8 == 1
+        self._sync_root_save_status(
+            file_identity_refresh=refresh_file_identity
+        )
+        self._sync_master_save_status(
+            file_identity_refresh=refresh_file_identity
+        )
 
     async def _observe_local_master_save(self, task) -> None:
         outcome = await asyncio.shield(task)
@@ -4474,7 +4511,9 @@ class MCPWorkbench(Container):
             exclusive=True,
         )
 
-    def _sync_root_save_status(self) -> None:
+    def _sync_root_save_status(
+        self, *, file_identity_refresh: bool = True
+    ) -> None:
         """Project current-profile receipts, including after screen recreation."""
         if not self.is_attached or not self.query(MCPToolsMode):
             return
@@ -4485,13 +4524,16 @@ class MCPWorkbench(Container):
         state = owner.state_for("workspace_root") if owner is not None else None
         if state is None:
             return
+        config_identity, file_revision = self._save_status_file_identity(
+            refresh=file_identity_refresh
+        )
         stamp = (
             canvas,
             state.revision,
             state.result is None,
             owner.completion_revision,
-            current_config_identity(),
-            config_file_revision(get_cli_config_path()),
+            config_identity,
+            file_revision,
         )
         if stamp == getattr(self, "_root_save_projection", None):
             return
@@ -4501,8 +4543,8 @@ class MCPWorkbench(Container):
         self._root_save_projection = stamp
         canvas.project_workspace_root_save(
             state,
-            generation=current_config_identity()[0],
-            file_revision=config_file_revision(get_cli_config_path()),
+            generation=config_identity[0],
+            file_revision=file_revision,
         )
 
     async def _observe_workspace_root_save(self, task) -> None:
