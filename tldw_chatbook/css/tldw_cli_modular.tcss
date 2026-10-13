@@ -8412,7 +8412,7 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 
 
 #console-settings-modal.-context-view {
-    height: $ds-percent-94;
+    height: $ds-percent-85;
 }
 
 

@@ -28,9 +28,11 @@
     padding: $ds-space-0 $ds-space-1;
 }
 
-/* The Context and memory view keeps its own height (TASK-33006.1 AC#11). */
+/* The Context and memory view keeps its own, taller height (TASK-33006.1
+   AC#11). 85%, not 94%: centred, it leaves the nav bar's 3 rows clear at
+   211x44 and 235x52 (TASK-33007 capture finding 21, round 2). */
 #console-settings-modal.-context-view {
-    height: $ds-percent-94;
+    height: $ds-percent-85;
 }
 
 /* TASK-31665 AC#15: visible scrollbar thumb. `$ds-grid-line` on a

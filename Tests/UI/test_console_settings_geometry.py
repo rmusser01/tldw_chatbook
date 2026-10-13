@@ -374,6 +374,34 @@ async def test_footer_hint_and_buttons_are_set_apart(
         assert not touching
 
 
+#: The Console's navigation bar: the active tab's box top, the tab row and
+#: the rule under it.
+NAV_BAR_ROWS = 3
+
+
+@pytest.mark.parametrize("size", ((211, 44), (235, 52)), ids=["211x44", "235x52"])
+@pytest.mark.asyncio
+async def test_context_view_leaves_the_nav_bar_visible(size: tuple[int, int]) -> None:
+    """Capture finding 21 (round 2, 08b): the Context view grew to 42 of 44
+    rows and covered the navigation bar. Centred, it now keeps the bar's
+    three rows clear above it (and as many below), and stays taller than the
+    Model view so it still scrolls less."""
+    app = GeometryHarness()
+    modal = build_geometry_modal(app, ready=True)
+
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        modal._show_settings_view("context")
+        await pilot.pause()
+        await pilot.pause()
+
+        frame = modal.query_one("#console-settings-modal").region
+        assert frame.y >= NAV_BAR_ROWS, frame
+        assert frame.bottom <= size[1] - NAV_BAR_ROWS, frame
+        assert frame.height > MODAL_HEIGHT, frame
+
+
 @pytest.mark.parametrize("size", GEOMETRY_SIZES)
 @pytest.mark.asyncio
 async def test_connection_and_completion_actions_are_keyboard_reachable(
