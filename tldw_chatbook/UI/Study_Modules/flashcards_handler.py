@@ -7,6 +7,7 @@ import functools
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
+from rich.text import Text
 from textual.css.query import NoMatches, QueryError
 from textual.widgets import (
     Button,
@@ -385,7 +386,7 @@ class StudyFlashcardsController:
 
         selected_deck_id = self._selected_deck_id()
         options = [
-            (str(deck.get("name") or "Unnamed deck"), str(deck.get("backing_id")))
+            (Text(str(deck.get("name") or "Unnamed deck")), str(deck.get("backing_id")))
             for deck in self.current_decks
             if deck.get("backing_id") not in {None, "", selected_deck_id}
         ]
@@ -627,8 +628,9 @@ class StudyFlashcardsController:
         self.current_decks = list(decks)
 
         deck_select = self.window.query_one("#deck-select", Select)
+        # Text: a str prompt is markup ("[new]" vanishes, "[/]" raises).
         options = [
-            (str(deck.get("name") or "Unnamed deck"), str(deck.get("backing_id")))
+            (Text(str(deck.get("name") or "Unnamed deck")), str(deck.get("backing_id")))
             for deck in decks
             if deck.get("backing_id") not in {None, ""}
         ]

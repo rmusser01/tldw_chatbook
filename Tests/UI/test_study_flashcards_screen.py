@@ -1877,6 +1877,44 @@ async def test_a_card_with_brackets_is_reviewed_as_typed():
         )
 
 
+def _select_label(select: Select) -> str:
+    return str(select.query_one("SelectCurrent #label", Static).render())
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_a_deck_name_with_brackets_is_shown_as_typed():
+    """Both deck Selects show a deck's name as typed (fix round 3, finding 3).
+
+    A deck name was a Select prompt, which Textual reads as markup: "Week
+    [new]" showed "Week ", and creating "Arr [/] x" raised `MarkupError`
+    out of `create_deck`.
+    """
+    scope = GatedCardListStudyScopeService()
+    scope.decks[1]["name"] = "Week [new]"
+    app = _study_app_for(scope)
+
+    async with app.run_test(size=(180, 60)) as pilot:
+        window, deck_select, _card_list = await _open_flashcards_deck(pilot, app, scope)
+        move_select = window.query_one("#move-card-target-select", Select)
+        # Its Changed handler rebuilds the options, which clears the pick (dev).
+        with move_select.prevent(Select.Changed):
+            move_select.value = "deck-local-2"
+        await pilot.pause()
+        assert _select_label(move_select) == "Week [new]"
+
+        window.query_one("#new-deck-name-input", Input).value = "Arr [/] x"
+        await window.flashcards_controller.create_deck()  # MarkupError before
+        assert _select_label(deck_select) == "Arr [/] x"
+        status = window.query_one("#review-status", Static)
+        # The deck change's own rebuild ends the test, not the app's teardown.
+        await _until(
+            pilot,
+            lambda: str(status.render()) == "No cards due for review.",
+            "the new deck's rebuild",
+        )
+
+
 @pytest.mark.asyncio
 @pytest.mark.bootstrap_profile
 async def test_two_awaited_card_list_rebuilds_do_not_interleave():
