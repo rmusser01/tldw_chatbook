@@ -573,8 +573,11 @@ async def test_a_focused_cost_chip_relabelled_longer_stays_in_view() -> None:
         assert _cost_chip_drawn_whole(app) == longer
 
 
+@pytest.mark.parametrize("width", (211, 235))
 @pytest.mark.asyncio
-async def test_a_refit_that_keeps_the_focused_chips_label_keeps_the_scroll() -> None:
+async def test_a_refit_that_keeps_the_focused_chips_label_keeps_the_scroll(
+    width: int,
+) -> None:
     """Capture fix 3 round 3: every refit of a focused cost chip scrolled
     the strip back to it, so a count change elsewhere on the row undid the
     user's Shift+wheel or swipe back to its start."""
@@ -582,7 +585,7 @@ async def test_a_refit_that_keeps_the_focused_chips_label_keeps_the_scroll() -> 
         _capture_control_state(tools_label="Tools: 12 ready", tools_active=True),
         cost_state=_cost_state(**_CAPTURE_LABELS),
     )
-    async with app.run_test(size=(211, 8)) as pilot:
+    async with app.run_test(size=(width, 8)) as pilot:
         await pilot.pause()
         chip = app.query_one("#console-cost-chip", ConsoleCostChip)
         scroll = app.query_one("#console-status-chip-scroll")
@@ -608,6 +611,44 @@ async def test_a_refit_that_keeps_the_focused_chips_label_keeps_the_scroll() -> 
             await pilot.pause()
         assert str(chip.render()) == _CAPTURE_LABELS["label"]
         assert scroll.scroll_x == 0
+
+
+@pytest.mark.parametrize(
+    ("width", "change"), ((235, "narrower-terminal"), (211, "wider-chip-before-it"))
+)
+@pytest.mark.asyncio
+async def test_a_focused_cost_chip_in_view_stays_in_view_when_the_row_moves(
+    width: int, change: str
+) -> None:
+    """Capture fix 3 round 4: with the label unchanged, a narrower terminal or
+    a wider chip before it pushed the focused chip past the right edge (13
+    of its 47 cells showed at 200 columns): the strip only followed a
+    relabel. A chip the user has not scrolled away from stays in view."""
+    app = _ProductionChipsApp(
+        _capture_control_state(tools_label="Tools: 12 ready", tools_active=True),
+        cost_state=_cost_state(**_CAPTURE_LABELS),
+    )
+    async with app.run_test(size=(width, 8)) as pilot:
+        await pilot.pause()
+        app.query_one("#console-cost-chip", ConsoleCostChip).focus()
+        for _ in range(5):
+            await pilot.pause()
+        assert _cost_chip_drawn_whole(app) == _CAPTURE_LABELS["label"]
+
+        if change == "narrower-terminal":
+            await pilot.resize_terminal(200, 8)
+        else:
+            app.query_one(ConsoleStatusChips).sync_state(
+                _capture_control_state(
+                    tools_label="Tools: 12 ready",
+                    tools_active=True,
+                    approvals_label="Approvals: 12 pending, 3 queued",
+                    approvals_active=True,
+                )
+            )
+        for _ in range(5):
+            await pilot.pause()
+        assert _cost_chip_drawn_whole(app) == _CAPTURE_LABELS["label"]
 
 
 @pytest.mark.asyncio
