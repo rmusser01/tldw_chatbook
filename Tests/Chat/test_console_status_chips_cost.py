@@ -651,6 +651,54 @@ async def test_a_focused_cost_chip_in_view_stays_in_view_when_the_row_moves(
         assert _cost_chip_drawn_whole(app) == _CAPTURE_LABELS["label"]
 
 
+@pytest.mark.parametrize("width", (211, 235))
+@pytest.mark.asyncio
+async def test_a_same_width_relabel_does_not_undo_a_later_swipe(width: int) -> None:
+    """Capture fix 3 round 5: a focused relabel that kept the chip's width
+    ("$0.00" to "$0.01") laid nothing out, so the mark it left was still set
+    after the user swiped the row home; the next wider chip before it
+    scrolled the row back to the cost chip (scroll_x 0 to 52 at 211)."""
+    app = _ProductionChipsApp(
+        _capture_control_state(tools_label="Tools: 12 ready", tools_active=True),
+        cost_state=_cost_state(**_CAPTURE_LABELS),
+    )
+    async with app.run_test(size=(width, 8)) as pilot:
+        await pilot.pause()
+        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
+        scroll = app.query_one("#console-status-chip-scroll")
+        chips = app.query_one(ConsoleStatusChips)
+        chip.focus()
+        for _ in range(5):
+            await pilot.pause()
+
+        same_width = "Context 1% · Current $0.01 · On next send —"
+        chips.sync_cost_state(
+            _cost_state(
+                label=same_width, compact_label=_CAPTURE_LABELS["compact_label"]
+            )
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert str(chip.render()) == same_width
+
+        scroll.scroll_home(animate=False)
+        for _ in range(5):
+            await pilot.pause()
+        assert (scroll.scroll_x, app.focused) == (0, chip)
+
+        chips.sync_state(
+            _capture_control_state(
+                tools_label="Tools: 12 ready",
+                tools_active=True,
+                approvals_label="Approvals: 12 pending, 3 queued",
+                approvals_active=True,
+            )
+        )
+        for _ in range(5):
+            await pilot.pause()
+        assert scroll.scroll_x == 0
+
+
 @pytest.mark.asyncio
 async def test_cost_chip_click_posts_pressed_message():
     """A real ``pilot.click`` must dispatch through the normal message pump.

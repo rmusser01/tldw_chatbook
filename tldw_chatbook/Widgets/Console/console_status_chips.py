@@ -431,10 +431,10 @@ class ConsoleStatusChips(Horizontal):
         self.scope_state = scope_state
         self.ephemeral = ephemeral
         self._cost_state = cost_state
-        # The strip's max_scroll_x after its last layout, and whether the
-        # focused cost chip was relabelled since (see _keep_cost_chip_in_view).
+        # The strip's max_scroll_x and the cost chip's width at the last
+        # layout check (see _keep_cost_chip_in_view).
         self._cost_strip_end = 0.0
-        self._cost_relabelled_in_focus = False
+        self._cost_chip_width = 0
         self._run_chip_state: tuple[bool, str] = (bool(run_copy), run_copy)
         self._collapsed = bool(collapsed)
         self.remove_class(*(name for name in self.classes if name.startswith("h-")))
@@ -915,8 +915,6 @@ class ConsoleStatusChips(Horizontal):
             if visible > 0 and cell_len(label) > room:
                 forms = _cost_label_forms(state)
                 label = next((f for f in forms if cell_len(f) <= room), "…")
-        if chip.has_focus and str(chip.content) != label:
-            self._cost_relabelled_in_focus = True
         chip.update(label)
         chip.refresh(layout=True)
 
@@ -928,11 +926,13 @@ class ConsoleStatusChips(Horizontal):
         relabel itself scheduled could run before the chip's new width was
         laid out, read its old place and not scroll (measured in round 4).
         The chip is last on the strip, so it shows whole exactly when the
-        strip sits at its end. The strip follows it when it was relabelled
-        while focused (focus's "…" to the full label, a reply finishing), or
-        when the strip sat at its end before this layout (a narrower
+        strip sits at its end. The strip follows it when its width changed
+        since the last check (focus's "…" to the full label, a longer figure),
+        or when the strip sat at its end before this layout (a narrower
         terminal, a wider chip before it); a Shift+wheel or swipe away from
-        the end stays where the user put it.
+        the end stays where the user put it. A width, not a "relabelled" mark:
+        a relabel that keeps the width lays nothing out, so no check would
+        clear the mark before a later layout read it (round 5).
         """
         try:
             chip = self.query_one("#console-cost-chip", ConsoleCostChip)
@@ -944,8 +944,9 @@ class ConsoleStatusChips(Horizontal):
         # -1: a scroll to the chip can stop short of the end (41.67 of 42).
         at_end = scroll.scroll_x >= self._cost_strip_end - 1
         self._cost_strip_end = scroll.max_scroll_x
-        follow = self._cost_relabelled_in_focus or at_end
-        self._cost_relabelled_in_focus = False
+        width = chip.size.width
+        follow = width != self._cost_chip_width or at_end
+        self._cost_chip_width = width
         if chip.has_focus and follow:
             chip.scroll_visible(animate=False)
 
