@@ -43,11 +43,19 @@ It complements the other doc families:
 
 ### Surfaces and supporting subsystems
 
+- [home.md](./home.md) — Home destination: per-visit dispatch, triage builder, next-best-action engine, active-work adapter, deep links
 - [library-shell.md](./library-shell.md) — Library destination: rail/canvas navigation, adaptive reader, read-it-later, collections, the durable ingest job queue
+- [artifacts.md](./artifacts.md) — Artifacts after ADR-172: Library browse as canonical, the composite catalog, kept briefings, Daily Reports
 - [subscriptions-watchlists.md](./subscriptions-watchlists.md) — source polling, single-flight run claims, items and briefings, the artifact chain
 - [scheduling-workflows.md](./scheduling-workflows.md) — unified scheduler (reminders, watchlist checks, briefings, automations), server ownership/transfer, workflow authoring and session execution, meetings
 - [evals.md](./evals.md) — classic evals orchestration, word bench, character probe engines, EvalsDB
 - [speech.md](./speech.md) — TTS service and adapter registry, voice profiles, PCM playback, dictation, hands-free loop
+- [notifications.md](./notifications.md) — dispatch path, local inbox, producer categories, server parity feed, settings state
+- [canvas.md](./canvas.md) — sandboxed conversation artifacts: immutable revisions, in-turn persistence, QuickJS gateway, canvas tools
+- [theme-system.md](./theme-system.md) — theme catalog, switch/persist engine, picker/editor, the `$ds-*` interaction rule
+- [metrics.md](./metrics.md) — the three metrics paths, opt-in exposition, privacy and cardinality patterns
+- [research-workspace.md](./research-workspace.md) — workspace authorities, three-stage source receipts, quick notes, research runs
+- [server-sync.md](./server-sync.md) — `TLDWAPIClient` safety semantics, Sync v2 outbox, `sync_log` ledger, runtime identity, scope-service pattern
 - [personal-context.md](./personal-context.md) — encrypted profile store, bounded snapshot injection, agent lessons and human-reviewed promotion
 - [acp.md](./acp.md) — ACP runtime launcher, session payloads, Console-follow handoff, honest boundaries
 
@@ -60,4 +68,4 @@ It complements the other doc families:
 
 ## Not yet covered
 
-Areas without a doc here yet (candidates): the Home screen, Artifacts screen, notifications, metrics/telemetry (`Metrics/`), the theme system, Canvas, the research workspace, the server-sync seams (`Sync_Interop/`, `tldw_api/`). Until a doc exists here, the ADR set and `Docs/User_Guide/` are the reference for those areas.
+Areas without a doc here yet (candidates): backup/recovery (`Backup_Recovery/`, `DB/recovery_*`), the web server (`Web_Server/`), the study/flashcards surface, the legacy Coding CoPilot tab. Until a doc exists here, the ADR set and `Docs/User_Guide/` are the reference for those areas.
