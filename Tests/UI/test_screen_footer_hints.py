@@ -288,7 +288,12 @@ class _DefaultScreenFooterHost(ConsolidatedCSSApp):
 @pytest.mark.asyncio
 async def test_console_registration_updates_the_screens_own_footer():
     """chat_screen's registration must land on ITS instance, not the app's
-    default-screen one; text contains 'F6' and 'Ctrl+K'."""
+    default-screen one; text carries the Console's own "Ctrl+Shift+F focus".
+
+    This harness has no provider, so the Get started card blocks and the
+    footer soon reads the blocked set, which names neither Ctrl+K nor the
+    Console's F6 (TASK-33008 capture fixes); the focus hint leads both sets.
+    """
     app_instance = _build_test_app()
     host = _DefaultScreenFooterHost(app_instance, ChatScreen)
 
@@ -300,8 +305,7 @@ async def test_console_registration_updates_the_screens_own_footer():
         # _register_console_footer_shortcuts() during push_screen above.
         screen_footer = screen.query_one(AppFooterStatus)
         assert screen_footer.id == "screen-footer-status"
-        assert "F6" in screen_footer.shortcut_text
-        assert "Ctrl+K" in screen_footer.shortcut_text
+        assert "Ctrl+Shift+F focus" in screen_footer.shortcut_text
 
         # The app's default-screen footer (what `self.app.query_one(...)`
         # used to target) must be left untouched at its default text.
