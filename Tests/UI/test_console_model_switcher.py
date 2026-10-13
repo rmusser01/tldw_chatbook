@@ -1683,6 +1683,91 @@ async def test_the_wait_line_goes_when_the_returned_catalog_lists_nothing() -> N
     assert recorder.setup == [] and recorder.submissions == []
 
 
+async def test_the_wait_line_holds_when_enter_lands_during_the_first_readiness() -> (
+    None
+):
+    """Final fix wave 5, item 1. The double Enter's second press usually lands
+    before the first readiness. That readiness rebuilt the list before the
+    returned provider's catalog was marked loading, so the rebuild cleared the
+    checking line (and briefly highlighted its NEEDS SETUP row) while its
+    models were still on the way. The line holds until the list settles."""
+    readiness_release = threading.Event()
+    catalog_release = asyncio.Event()
+    checking = "Still checking providers: press Enter again when the list fills."
+    recorder = Recorder(ready=frozenset({"openrouter"}))
+    others = recorder.readiness
+
+    def readiness(provider: str, model: str | None) -> ConsoleSettingsReadiness:
+        verdict = others(provider, model)
+        if provider != "openai":
+            return verdict
+        if model:
+            return READY
+        readiness_release.wait(10)
+        return NO_MODEL
+
+    async def catalog(provider: str) -> list[str]:
+        if provider == "openai":
+            await catalog_release.wait()
+            return ["gpt-new", "gpt-old"]
+        return ["openai/gpt-y"]
+
+    def error_line() -> str:
+        error = switcher.query_one("#console-popover-error")
+        return str(error.render()) if error.display else ""
+
+    recorder.readiness = readiness
+    app = SwitcherHarness()
+    try:
+        async with app.run_test(size=(211, 44)) as pilot:
+            switcher = build_switcher(
+                recorder,
+                draft=_draft("openrouter", "openai/gpt-y"),
+                providers_models={"OpenAI": [], "OpenRouter": []},
+                catalog_loader=catalog,
+                query="OpenAI ",
+                reopened_provider="openai",
+            )
+            app.push_screen(switcher, callback=lambda result: None)
+            await pilot.pause()
+            assert not switcher._first_readiness_done
+            await pilot.press("enter")
+            await pilot.pause()
+            assert error_line() == checking
+
+            highlighted: list[tuple[str, str] | None] = []
+            rebuild = switcher._rebuild_rows
+
+            def spied_rebuild() -> None:
+                rebuild()
+                row = switcher.highlighted_row()
+                highlighted.append(None if row is None else (row.kind, row.provider))
+
+            switcher._rebuild_rows = spied_rebuild
+            readiness_release.set()
+            for _ in range(40):
+                await pilot.pause()
+                if switcher._catalog_state.get("openai") == "loading":
+                    break
+            assert switcher._catalog_state.get("openai") == "loading"
+            assert switcher._first_readiness_done
+            assert switcher.highlighted_row() is None
+            assert error_line() == checking
+            assert highlighted and ("setup", "openai") not in highlighted
+
+            catalog_release.set()
+            await _settle(app, pilot)
+            row = switcher.highlighted_row()
+            assert row is not None
+            assert (row.kind, row.provider, row.model) == ("pair", "openai", "gpt-new")
+            assert error_line() == ""
+    finally:
+        readiness_release.set()
+        catalog_release.set()
+
+    assert recorder.setup == [] and recorder.submissions == []
+
+
 @pytest.mark.parametrize(
     "catalog", [None, ["gpt-new", "gpt-old"]], ids=["lists-nothing", "lists-others"]
 )

@@ -915,9 +915,11 @@ class ConsoleModelPopover(
         self._first_readiness_done |= not self._readiness_pending
         if not self.is_mounted:
             return
+        # Catalogs first: the returned provider is "loading" at the rebuild,
+        # so it neither highlights its NEEDS SETUP row nor clears the wait line.
+        self._load_ready_catalogs(tuple(resolved))
         self._rebuild_rows()
         self._sync_find_placeholder()
-        self._load_ready_catalogs(tuple(resolved))
         self._offer_probes(resolved)
 
     def _offer_probes(self, resolved: Mapping[str, ConsoleSettingsReadiness]) -> None:
@@ -977,8 +979,7 @@ class ConsoleModelPopover(
         if not targets:
             return
         for key in targets:
-            self._catalog_state[key] = "loading"
-        self._rebuild_rows()
+            self._catalog_state[key] = "loading"  # the caller rebuilds
         self.run_worker(
             self._load_catalogs(targets),
             group="console-switcher-catalogs",
