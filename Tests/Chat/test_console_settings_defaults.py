@@ -2110,6 +2110,7 @@ def _anthropic_make_default_mutation(
     chat_defaults_temperature: float,
     profile: dict[str, object],
     temperature: float | None,
+    field_mask: frozenset[str] = QUICK_MODEL_DEFAULT_FIELDS,
 ) -> object:
     config = {
         "api_settings": {
@@ -2130,14 +2131,17 @@ def _anthropic_make_default_mutation(
         action=ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT,
         provider_config_key="anthropic",
         literal_model_id=_ANTHROPIC_MODEL,
-        field_mask=QUICK_MODEL_DEFAULT_FIELDS,
+        field_mask=field_mask,
         values={"temperature": temperature, "max_tokens": None, "streaming": True},
         endpoint_patch=None,
     )
+    # apply_console_default_intent validates the intent before the gate; do the
+    # same so the gate is only ever pinned on an intent production can send.
+    provider, model = defaults_module._validate_intent(intent)
     return defaults_module._build_locked_default_mutation(
         intent,
-        "anthropic",
-        _ANTHROPIC_MODEL,
+        provider,
+        model,
         config_module.AtomicLiteralMutationSnapshot(
             generation=1, raw_values=config, effective_values=config
         ),
@@ -2156,9 +2160,14 @@ def test_make_default_gate_validates_the_temperature_the_write_saves() -> None:
     assert mutation.section_values[profile_path]["temperature"] == 0.7
 
 
-def test_make_default_gate_refuses_a_cleared_value_that_leaves_an_invalid_one() -> (
-    None
-):
-    """Clearing the profile's 0.5 leaves [chat_defaults]' 1.2: not a valid default."""
+def test_make_default_gate_refuses_a_cleared_value_that_leaves_an_invalid_one() -> None:
+    """Clearing the profile's 0.5 leaves [chat_defaults]' 1.2: not a valid default.
+
+    Only Chat settings' Make default for new chats can clear Temperature (an
+    inherited field is sent as None under the full mask); Alt+M's quick mask
+    must always carry a Temperature.
+    """
     with pytest.raises(ValueError, match="not ready for new chats"):
-        _anthropic_make_default_mutation(1.2, {"temperature": 0.5}, None)
+        _anthropic_make_default_mutation(
+            1.2, {"temperature": 0.5}, None, FULL_MODEL_DEFAULT_FIELDS
+        )
