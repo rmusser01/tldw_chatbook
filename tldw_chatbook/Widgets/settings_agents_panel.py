@@ -13,6 +13,7 @@ persist through the atomic config writer; presets persist through the DB.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -336,12 +337,23 @@ class AgentsSettingsPanel(Vertical):
         # for up to a tick, so a click/select right after reload can miss it
         # (review finding, task-6 fix round 1).
         await lv.clear()
-        self._rows = self._runs_db.list_agent_definitions()
-        for row in self._rows:
-            marker = "" if row["enabled"] else " (disabled)"
-            await lv.append(
-                ListItem(Static(f"{row['name']}{marker}", markup=False), name=row["id"])
+        # task-34932: the definition read is a sync file-backed SQLite call
+        # and this coroutine runs on the event loop -- read it off the loop
+        # (AgentRunsDB uses thread-local connections), and batch the row
+        # appends into one extend instead of one await per row.
+        self._rows = await asyncio.to_thread(self._runs_db.list_agent_definitions)
+        items = [
+            ListItem(
+                Static(
+                    f"{row['name']}{'' if row['enabled'] else ' (disabled)'}",
+                    markup=False,
+                ),
+                name=row["id"],
             )
+            for row in self._rows
+        ]
+        if items:
+            await lv.extend(items)
         warning = self._enabled_count_warning()
         if warning:
             self._set_status(warning)
