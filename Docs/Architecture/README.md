@@ -19,6 +19,7 @@ It complements the other doc families:
 - [app-shell.md](./app-shell.md) — `TldwCli` composition root, startup phases, screen-based navigation, destinations, events/workers/reactives, CSS build and design tokens, splash, settings surface
 - [console.md](./console.md) — the Console: screen layout, send lifecycle, run states, approvals, branching, compaction, crash recovery
 - [chat-pipeline.md](./chat-pipeline.md) — streaming, per-send transforms, swipes/branching, tool-call presentation, attachments and vision
+- [ccp.md](./ccp.md) — the legacy CCP route (Conversations/Characters/Prompts → Roleplay), its live handlers vs deleted modules, and the retired Coding tab
 
 ### Agents, tools, and permissions
 
@@ -56,6 +57,9 @@ It complements the other doc families:
 - [metrics.md](./metrics.md) — the three metrics paths, opt-in exposition, privacy and cardinality patterns
 - [research-workspace.md](./research-workspace.md) — workspace authorities, three-stage source receipts, quick notes, research runs
 - [server-sync.md](./server-sync.md) — `TLDWAPIClient` safety semantics, Sync v2 outbox, `sync_log` ledger, runtime identity, scope-service pattern
+- [study.md](./study.md) — Study destination: SM-2 flashcards and quizzes, honest pane status, Library/Home handoffs, local/server asymmetries
+- [backup-recovery.md](./backup-recovery.md) — ADR-126 backup/restore: admission fence, data groups, encrypted archives, journaled restore, rollback
+- [web-server.md](./web-server.md) — served mode (TUI in a browser): auth and bind policy, canvas seam, the artifact-share child server
 - [personal-context.md](./personal-context.md) — encrypted profile store, bounded snapshot injection, agent lessons and human-reviewed promotion
 - [acp.md](./acp.md) — ACP runtime launcher, session payloads, Console-follow handoff, honest boundaries
 
@@ -66,6 +70,6 @@ It complements the other doc families:
 - Decisions link to their ADRs in `backlog/decisions/`; user-facing behavior links into `Docs/User_Guide/`.
 - These docs describe the current state. When a subsystem changes materially, update its doc in the same change.
 
-## Not yet covered
+## Coverage
 
-Areas without a doc here yet (candidates): backup/recovery (`Backup_Recovery/`, `DB/recovery_*`), the web server (`Web_Server/`), the study/flashcards surface, the legacy Coding CoPilot tab. Until a doc exists here, the ADR set and `Docs/User_Guide/` are the reference for those areas.
+The set now covers every subsystem tracked by this index (35 files). New subsystems — or material changes to an existing one — should add or update a doc here in the same change; that is the convention that keeps this reference living rather than historical.
