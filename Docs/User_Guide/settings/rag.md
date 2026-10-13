@@ -197,9 +197,10 @@ not:
   **Clone** / **Rename**; Enter submits, Esc cancels.
 - **Unsaved Library/RAG changes** — "Save your changes before switching the
   active profile, or discard them?" (**Cancel** / **Discard** / **Save**),
-  raised only when you press **Set active** with an unsaved draft. Only one
-  other unsaved-changes prompt exists in Settings — leaving **Speech & TTS**
-  with edits; every other category keeps your draft silently.
+  raised only when you press **Set active** with an unsaved draft. Leaving
+  **Speech & TTS** with edits, or **Theme** with an edited theme, asks too,
+  and **Ctrl+Q** on Settings asks before discarding any staged draft;
+  leaving any other category keeps your draft silently.
 - **Delete profile** — 'Delete the "`<name>`" RAG profile? This cannot be
   undone.' (**Cancel** / **Delete**).
 - **Re-index required** — the destructive one, raised on **Save** when a ⚠
