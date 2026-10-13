@@ -1426,6 +1426,81 @@ async def test_a_no_model_rows_enter_opens_settings_in_the_default_model_field(
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_model_saved_in_the_default_model_field_is_the_reopened_highlight(
+    monkeypatch, request
+):
+    """Final fix wave 3, item 3, on the real app. Cerebras has a key and no
+    model, and the chat holds work. Enter on its row opens Settings in the
+    Default model field; a Custom ID saved there makes Cerebras ready on that
+    model. The row named no model, so the reopened list had no pair: it said
+    "no models reported", highlighted nothing, and the chat kept its old pair
+    until the id was typed again. It reopens on the model just saved, and
+    Enter applies it."""
+    monkeypatch.delenv("CEREBRAS_API_KEY", raising=False)
+    app = _switcher_app(
+        monkeypatch, **{"api_settings.cerebras": {"model": "", "api_key": _KEY}}
+    )
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "console-native-composer",
+            "the composer to hold focus",
+        )
+        console = app._navigation_outgoing_screen()
+        store = console._ensure_console_chat_store()
+        store.append_message(
+            store.active_session_id, role=ConsoleMessageRole.USER, content="hi"
+        )
+        open_provider_setup(console, "cerebras", reopen_switcher=True)
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, SettingsScreen)
+                and isinstance(app.focused, Input)
+                and app.focused.id == "model-search-picker-input"
+            ),
+            "Settings to open with focus in Cerebras's Default model field",
+        )
+        settings = app.screen
+        picker = settings.query_one("#settings-model-picker", ModelSearchPicker)
+        await pilot.press("tab")
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "model-search-picker-custom",
+            "focus on Custom ID",
+        )
+        await pilot.press("enter")
+        await _until(pilot, lambda: picker.custom_mode, "Custom ID's own field")
+        await pilot.press(*"llama-x")
+        await pilot.press("escape")
+        await pilot.press("s")
+        await _until(
+            pilot,
+            lambda: getattr(app.focused, "id", None) == "settings-provider-return",
+            "focus on the Return to Console action after the save",
+        )
+        assert _saved_config()["api_settings"]["cerebras"]["model"] == "llama-x"
+
+        await pilot.press("enter")
+        await _until(
+            pilot,
+            lambda: (
+                isinstance(app.screen, ConsoleModelPopover)
+                and (row := app.screen.highlighted_row()) is not None
+                and (row.kind, row.provider, row.model)
+                == ("pair", "cerebras", "llama-x")
+            ),
+            "Switch model on the model just saved",
+        )
+        assert _chat_pair(console) == ("openai", "gpt-5")
+        await pilot.press("enter")
+        await _until(pilot, lambda: app.screen is console, "the pick to apply")
+        assert _chat_pair(console) == ("cerebras", "llama-x")
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_a_recovery_that_saves_nothing_returns_from_the_arrival_action(
     monkeypatch, request
 ):

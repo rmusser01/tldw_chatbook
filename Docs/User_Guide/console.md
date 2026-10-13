@@ -936,9 +936,11 @@ Settings offers no way back from there, so nothing reopens for it.
   highlighted, even when PREVIOUS or RECENT lists the same pair, so **Enter**
   opens its fix again; **Esc** leaves the chat as it was with the composer in
   focus.
-- **What is highlighted.** The row's model. Other matches for the provider's
+- **What is highlighted.** The row's model; for a row that named none, the
+  model now saved for that provider, such as one just saved in the **Model**
+  field, listed even when no catalog has it. Other matches for the provider's
   name, however many, never push it off the list. If the list has no row for
-  that model (the row named none, or the provider no longer lists it), that
+  that model (no model is saved for it, or the provider no longer lists it), that
   provider's first row is highlighted instead and is kept on the list the
   same way; nothing is highlighted when the list has no row of that
   provider's. Until you change **Find** or move the highlight yourself, the
@@ -956,7 +958,8 @@ Settings offers no way back from there, so nothing reopens for it.
   model is saved for it either, the provider stays under NEEDS SETUP, reading
   "Not ready · no model", with its row highlighted; **Enter** there opens
   Settings again with the **Model** field under **Default model for new
-  chats** in focus, where a model can be chosen and saved. Or stay in the
+  chats** in focus, where a model can be chosen and saved; back in the list,
+  that model is highlighted and **Enter** applies it. Or stay in the
   list: its name is already in **Find**, so type the model id after it (as
   in "Ollama qwen3:32b"): the pair appears under **TYPED MODEL ID**, the last
   row of the list, and **Enter** on that row applies it.

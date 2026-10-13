@@ -583,10 +583,12 @@ def reopen_model_switcher(screen: ChatScreen, provider: str, model: str | None) 
     here (``provider_return.py``). A chat that holds work keeps its own pair
     after a Settings save (ADR-095), so the pick is still to make: Find holds
     the provider's name, as "… N more" does, and the row's own pair is
-    highlighted when the list has it, so one Enter applies it. When it has
-    not (the row named no model, or the catalog dropped it), the highlight is
-    that provider's first row or nothing, never another provider's match for
-    the name. With nothing saved the row is still under NEEDS SETUP and
+    highlighted when the list has it, so one Enter applies it. A row that
+    named no model reopens on the provider's saved model, such as one just
+    saved in Settings' Model field. When the list has no row for the pair (no
+    model is saved, or the catalog dropped the row's), the highlight is that
+    provider's first row or nothing, never another provider's match for the
+    name. With nothing saved the row is still under NEEDS SETUP and
     nothing has changed.
 
     It opens in the mode the chat is in now: the Get started card's while the
@@ -598,8 +600,12 @@ def reopen_model_switcher(screen: ChatScreen, provider: str, model: str | None) 
         provider: The row's provider.
         model: The row's model, when it had one.
     """
+    from ...Chat.console_session_settings import resolve_effective_chat_configuration
+
     key = provider_config_key(provider)
-    name = provider_display_name(key, screen._provider_readiness_app_config())
+    config = screen._provider_readiness_app_config()
+    name = provider_display_name(key, config)
+    model = model or resolve_effective_chat_configuration(config, provider=key).model
     _open_switcher(
         screen,
         query=f"{name} ",

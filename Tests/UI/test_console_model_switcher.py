@@ -1601,6 +1601,51 @@ async def test_a_reopened_list_highlights_nothing_while_its_providers_models_arr
     assert recorder.setup == []
 
 
+@pytest.mark.parametrize(
+    "catalog", [None, ["gpt-new", "gpt-old"]], ids=["lists-nothing", "lists-others"]
+)
+async def test_a_ready_returned_provider_lists_the_model_just_saved(
+    catalog: list[str] | None,
+) -> None:
+    """Final fix wave 3, item 3. A model saved in Settings' Model field for a
+    provider is the pair the list reopens on, and the provider is ready on it.
+    READY PROVIDERS listed only its [providers] list or catalog, never its
+    saved model: with neither the list said "no models reported" and
+    highlighted nothing, and with a catalog Enter applied the catalog's first
+    model. A pair that is not the saved model and that no list holds is still
+    not listed (test_a_list_reopened_from_settings_never_highlights_another_
+    providers_row[model-no-longer-listed])."""
+
+    async def load(provider: str) -> list[str]:
+        return list(catalog or ()) if provider == "openai" else ["openai/gpt-y"]
+
+    recorder = Recorder(ready=frozenset({"openrouter", "openai"}))
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                draft=_draft("openrouter", "openai/gpt-y"),
+                providers_models={"OpenAI": [], "OpenRouter": []},
+                app_config={"api_settings": {"openai": {"model": "llama-x"}}},
+                catalog_loader=load,
+                query="OpenAI ",
+                highlight_pair=("openai", "llama-x"),
+                reopened_provider="openai",
+            ),
+        )
+        row = switcher.highlighted_row()
+        assert row is not None
+        assert (row.kind, row.provider, row.model) == ("pair", "openai", "llama-x")
+        await pilot.press("enter")
+        await pilot.pause()
+
+    settings = recorder.submissions[0].draft.settings
+    assert (settings.provider, settings.model) == ("openai", "llama-x")
+
+
 async def test_a_query_the_list_opened_with_is_typed_after_not_over() -> None:
     """TASK-33008.2: the list reopens with the provider's name and a space in
     Find, and its "no models reported" line asks for an id after the name.

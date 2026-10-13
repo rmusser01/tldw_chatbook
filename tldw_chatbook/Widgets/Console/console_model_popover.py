@@ -51,6 +51,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     provider_left_at_shipped_default,
     readiness_words,
     resolve_console_value_layers,
+    resolve_effective_chat_configuration,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     QUICK_MODEL_DEFAULT_FIELDS,
@@ -520,9 +521,11 @@ class ConsoleModelPopover(
                 row, else the provider's first row (its NEEDS SETUP row
                 before a copy that would apply), else none, and none while
                 providers are checked. No row cap cuts its NEEDS SETUP row,
-                with or without a model. When it can send and lists no
-                models it has no row, and READY PROVIDERS opens with its
-                "no models reported" line. Its READY rows are cut at 30
+                with or without a model. When it can send, its saved model
+                is listed whatever lists it (one just saved in Settings'
+                Model field); with none saved and no models listed it has no
+                row, and READY PROVIDERS opens with its "no models reported"
+                line. Its READY rows are cut at 30
                 matches like any other's, the pair's row excepted.
             **kwargs: Forwarded to ``ModalScreen``.
         """
@@ -1087,6 +1090,14 @@ class ConsoleModelPopover(
         # ``_reopened`` is "" for every other opener: no key is that.
         return bool(key) and key == self._reopened and self._query == self._opened_query
 
+    def _returned_saved_model(self, key: str) -> str | None:
+        """The model saved for provider ``key`` when a return from Settings
+        reopened the list on it, while Find is as it opened; else None."""
+        if not self._returned_to(key):
+            return None
+        config = resolve_effective_chat_configuration(self._app_config, provider=key)
+        return config.model
+
     def _capped(self, rows: list[SwitcherRow], cap: int) -> list[SwitcherRow]:
         """The first ``cap`` rows; the highlight pair's row is never cut.
 
@@ -1260,6 +1271,10 @@ class ConsoleModelPopover(
                 # ADR-020: the active model stays listed, first.
                 models = [current_model, *(m for m in models if m != current_model)]
             if _is_ready(readiness):
+                saved = self._returned_saved_model(key)
+                if saved and saved not in models:
+                    # Saved in Settings' Model field: in no list yet.
+                    models.append(saved)
                 if tokens:
                     for index, model in enumerate(models):
                         score = self._pair_score(query, tokens, key, model)
