@@ -1457,6 +1457,29 @@ async def test_saved_only_list_says_catalog_refresh_is_off_when_it_is(
         assert _status_text(app) == expected
 
 
+def test_an_unreadable_catalog_setting_is_logged_by_type(monkeypatch):
+    """Capture fix round 1, finding 4: when [model_catalog] could not be read
+    the picker fell back to "Live catalog unavailable" and nothing recorded
+    why. It logs the exception's type, never its text."""
+    from loguru import logger
+
+    import tldw_chatbook.Widgets.model_search_picker as picker_module
+
+    def unreadable():
+        raise PermissionError("secret-path")
+
+    monkeypatch.setattr(picker_module, "load_settings", unreadable)
+    lines: list[str] = []
+    sink = logger.add(lines.append, level="DEBUG", format="{message}")
+    try:
+        assert picker_module._catalog_refresh_off("openrouter") is False
+    finally:
+        logger.remove(sink)
+    logged = "".join(lines)
+    assert "PermissionError" in logged, lines
+    assert "secret-path" not in logged
+
+
 @pytest.mark.asyncio
 async def test_a_typed_filter_counts_matches_highlights_the_first_and_enter_picks_it():
     """Capture 02 (TASK-33007 fix 8): with a filter typed the status still

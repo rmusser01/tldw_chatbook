@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from functools import partial
 
+from loguru import logger
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
@@ -89,7 +90,11 @@ def _catalog_refresh_off(provider_key: str) -> bool:
     """
     try:
         settings = load_model_catalog_settings(load_settings())
-    except Exception:  # noqa: BLE001 - the status line then names no cause
+    except Exception as exc:  # noqa: BLE001 - the status line then names no cause
+        # Type only: diagnose=True would print the config's values.
+        logger.debug(
+            f"Model picker could not read [model_catalog] settings: {type(exc).__name__}"
+        )
         return False
     return (
         not settings.auto_refresh_enabled
