@@ -265,7 +265,13 @@ to the widget's OWN screen's `screen_layout_refresh_signal` (published at the en
 every `_refresh_layout`) and refits when the chip has moved; the per-change
 `call_after_refresh` refits were then deleted, since each one relabelled a second time
 and could draw the stale fit for a tick. Rule: for "after MY screen has laid out", use
-that signal, not `call_after_refresh`. A change made with a real `ModalScreen` on top
+that signal, not `call_after_refresh`. A subscriber that stays subscribed also runs after
+every scroll (`reflow_visible`), so read only cached values there (`outer_size`,
+`display`, your own flags), never `region`/`size`/`virtual_region`: for a widget outside
+the visible map, each such read arranges the whole screen on every scroll frame
+(`reflow_visible` invalidates the full map, and `find_widget` rebuilds it). Capture fix 4
+round 2 measured 5 full arranges in 5 scroll frames at the base, for a cost chip past the
+strip's edge and for a collapsed strip. A change made with a real `ModalScreen` on top
 loses the race every time, so that is the deterministic test; without a dialog it is
 lost only some of the time.
 
