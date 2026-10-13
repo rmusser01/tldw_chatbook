@@ -1,6 +1,12 @@
-# Phase 7 (TASK-33007) full-screen captures (after capture fix 3, 2026-10-13)
+# Phase 7 (TASK-33007) full-screen captures (after the post-rebase fix, 2026-10-13)
 
-The captures of the screens capture fix 3 changed were taken again on 2026-10-13, at
+The post-rebase fix and its round 1 (`f33ed7b121..5068e68fe6`) changed no screen that an
+earlier capture shows. They changed what Settings keeps when it is left (unsaved
+Prompt-cache snapshot preferences) and what a leave or a quit waits for (a snapshot Save
+still writing). So nothing was retaken. Three new captures were taken on 2026-10-13 at
+`5068e68fe6`: `13a`, `13b` and `13c` (see "Snapshot preferences session" below).
+
+Before that, the captures of the screens capture fix 3 changed were taken again on 2026-10-13, at
 `a036d5db41` (branch `feat/model-config-p7-settings-pm`, after capture fix 3 and its
 five rounds): `02a`, `02`, `08`, `10a`, `10b`, and the new `10d`, `10e`, `11`, `12a`,
 `12b` and `12c`. `10b` came out byte-identical to the earlier one. Every other capture
@@ -40,6 +46,11 @@ and `06d` were scrolled again at 235x52 before that capture. `.txt` is
   The `a036d5db41` run built the OpenAI and llama.cpp profiles the same way, with
   `users_name = "verify_cap3057v3"`, and a fifth: `Groq` /
   `llama-3.3-70b-versatile` with no Groq key anywhere (`12a`-`12c`).
+
+  The `5068e68fe6` run built the OpenAI profile the same way, with
+  `users_name = "verify_cap3057v6"` (`13a`-`13c`). `TLDW_CONFIG_PATH` pointed at that
+  profile file. Its `[llamacpp_snapshots]` started at the template's `enabled = false`,
+  `keep_count = 10`.
 - **Loopback server (10a-10e only).** A stub on 127.0.0.1:18791 answered every GET with
   a three-model `/v1/models` listing: `qwen3-8b-q4`,
   `gemma-4-26B-A4B-it-ultra.Q4_K_M.gguf` and `llama-4-scout-17b-16e.Q4_K_M.gguf`. Its
@@ -55,7 +66,9 @@ and `06d` were scrolled again at 235x52 before that capture. `.txt` is
   (the same single difference). The llama.cpp session's **Save selected** added one id
   to `[providers] Llama_cpp`. The Groq session saved OpenAI as the default, then,
   on the routed page, a made-up Groq key with the linked pair (Groq became the default
-  again); both writes went to its scratch profile. No key
+  again); both writes went to its scratch profile. In the `5068e68fe6` run the only
+  writes were snapshot preference Saves (enabled `true` with keep count 25, then keep
+  count 30, 35 and 36), all to its scratch profile. No key
   appears in any capture. Afterwards the tmux server was killed and the scratch
   directory deleted. The driver is not committed.
 
@@ -244,29 +257,71 @@ Before the captures:
   - "▼ Model defaults" follows on the next row at both sizes. Save wrote the linked
     pair, so both rows now read **new-chat default**.
 
-## Verification of capture findings round 3 (`.superpowers/sdd/p7-review-fix/capture-findings-3.md`)
+### Snapshot preferences session at `5068e68fe6` (ruling cf3r1-N1 (b))
 
-Every finding is fixed (the numbers are the findings file's):
+The OpenAI profile. Settings ▸ Providers & Models was opened as above. Then a click on the
+**Prompt-cache snapshots** title, a click on **Enable snapshots**, and the keep count
+changed from `10` to `25`. The header read "2 unsaved", and the Inspector read "Unsaved:
+Prompt-cache snapshots, Snapshot keep count.".
 
-1. **Custom ID on one row** (`02a`, `02`, `10a`, both sizes). The edges stay, and the
-   picker is one row shorter.
-2. **A capital after the full stop** (`08`, both sizes): "Support not verified for this
-   model. The provider decides · …". The only other use of `BLANK_FIELD_HELP`, the
-   Settings Model defaults rows, prints it alone.
-3. **The return boxes are as tall as their rows** (`12a` conflict box, `12c` return box
-   after a save, both sizes, on a routed Groq page while OpenAI was the saved default).
-   On this branch the return box shows after a save, not on arrival (`12b`).
-4. **Ctrl+Q from another screen asks about a kept Settings draft** (`11`, plus the live
-   checks listed there): **Keep editing** returns to Settings with the draft, or stays
-   in an open dialog; **Discard and quit** quits. The guide no longer says a kept draft
-   is not asked about.
-5. **A failed discovery reports once**, on its line, with no toast (`10e`).
-6. **The Save selected receipt** reads "Saved 1 discovered model to llama.cpp." (`10d`):
-   the provider's display name and a real singular. With nothing new it reads "The
-   selected models are already saved for llama.cpp.".
+- `13a-snapshot-edit-kept-after-leaving`: a click on Console in the nav bar, then **F4**.
+  - The edit is kept and marked unsaved. The header reads "Draft — save with s · 2
+    unsaved", and the rail reads "Providers & Models \*".
+  - The closed title reads "Prompt-cache snapshots · llama.cpp only · On · keep 25".
+  - The Inspector reads "Unsaved: Prompt-cache snapshots, Snapshot keep count.".
+  - Not captured: opening the title showed **Enable snapshots** checked and `25` in the
+    field.
+- `13b-quit-from-console-names-snapshot-edit`: a click on Console, then **Ctrl+Q**. The
+  Console asks "Quit and discard unsaved Settings changes?", with "These Settings have
+  unsaved changes: Providers & Models.".
+  - Not captured: **Keep editing** went to Settings with the edit ("2 unsaved", "keep
+    25").
+- `13c-reverted-snapshot-edit-back-after-leaving` (a defect; see "New on the screens this
+  wave changed").
+  - Before it, in the same session, after **Keep editing**:
+    - **s** and a click on Console: "Snapshot preferences saved.", and the config held
+      keep 25. **F4** read "2 unsaved · keep 25" again.
+    - **r**, **Discard changes** ("No changes"), keep `30` typed, **s**, and a click on
+      Console 0.4 s later: "Snapshot preferences saved.", and the config held 30.
+      **F4** read "2 unsaved", "On · keep 25" again. **s** there was refused with the
+      toast "Snapshot preferences changed elsewhere; Revert before Save.".
+    - **r**, **Discard changes**: "No changes", "On · keep 30".
+  - The capture: a click on Console, then **F4**. Settings again reads "2 unsaved",
+    "On · keep 25" and "Unsaved: Prompt-cache snapshots, Snapshot keep count.", while
+    the config holds keep 30. It is byte-identical to `13a` at both sizes.
+- Not captured, in a fresh session (nothing kept before):
+  - Keep `35` typed, then **s** and a click on Console sent together. The toast read
+    "Snapshot preferences saved.", the config held 35, and **F4** showed "No changes ·
+    keep 35".
+  - Keep `36` typed, then **s** and **Ctrl+Q** 0.1 s apart. The app quit with no prompt,
+    and the config held 36.
+  - When **s** and **Ctrl+Q** were sent in one write, the quit prompt opened first and
+    the **s** never reached Settings. That is the order the two keys were read in, not
+    the wait this wave added.
+
+## Verification of findings round 4 (`.superpowers/sdd/p7-review-fix/capture-findings-4.md`)
+
+1. **Leaving Settings keeps unsaved Prompt-cache snapshot preferences** (ruling cf3r1-N1
+   (b)): fixed for one leave. The edit comes back marked unsaved (`13a`). **Ctrl+Q** from
+   the Console names Providers & Models (`13b`), and **Keep editing** returns to it. A
+   Save followed at once by a leave or a quit settles first (the fresh-session checks
+   above). The kept pair is not dropped once it stops being unsaved, though: see `13c`
+   below.
+2. **A Save selected that raises after Discover or Clear took the line reports its
+   failure**: this wave did not change it (fixed at `f33ed7b121`). It cannot be shown
+   live without making the save raise. Its pinned node,
+   `Tests/UI/test_settings_save_selected_not_cancelled.py::test_save_selected_raised_after_another_action_names_a_true_next_step`,
+   passed 5/5 through the scratch runner at `5068e68fe6`.
 
 ## New on the screens this wave changed
 
-Nothing. Against `940965848f`, `10b` is byte-identical and `08` differs only in the
-three capitals. `02a`, `02` and `10a` differ only by the one-row **Custom ID**, the
-rows it moves up (one more card row at the bottom) and the scrollbar thumb.
+- **A kept snapshot edit outlives its Save or Revert** (`13c`). Once a leave has kept the
+  pair, every later return to Settings restores it, even after it was saved or reverted.
+  The screen then shows an edit nobody has pending, against a stale baseline, and Save
+  refuses it as "changed elsewhere".
+  - Cause: `BaseAppScreen.save_state` returns `self.state_data`, and `restore_state` set
+    that to the restored snapshot. So `SettingsScreen.save_state` starts from a dict that
+    still holds `snapshot_preferences`. `keep_snapshot_preferences` writes that key only
+    when the pair is unsaved, and never removes it.
+- Nothing else. `11` would read the same: a kept snapshot edit is named as a kept
+  Temperature edit is.
