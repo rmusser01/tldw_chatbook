@@ -7,21 +7,21 @@
 │                              │  │  │                                                                                                                            │  │  │                                         │
 │  Filter categories (/)       │  │  │  State: No changes · edits save with s | Changes affect global Console fallbacks after save.                               │  │  │  Scope Inspector                        │
 │  No filter | / focus         │  │  │   Exchange capture                                                                                                         │  │  │                                         │
-│  category search             │  │  │  ▐X▌ Capture future exchanges                                                                                              │  │  │ Selected category: Console Behavior     │
-│                              │  │  │  ▐X▌ Mask PII in future traces                                                                                             │  │  │ No unsaved changes                      │
+│  category search             │  │  │  ▐✓▌ Capture future exchanges                                                                                              │  │  │ Selected category: Console Behavior     │
+│                              │  │  │  ▐ ▌ Mask PII in future traces                                                                                             │  │  │ No unsaved changes                      │
 │  Core                        │  │  │  Trace viewer            │ Safe                        ▼                                                                   │  │  │  Guided edits: change a field first.    │
-│      Overview (view)         │  │  │   Capture, PII masking, and viewing are separate. PII masking is irreversible for provider-only trace data but never       │  │  │  Save (s) — no changes                  │
+│      Overview (view)         │  │  │   Capture, PII masking, and viewing are separate. PII masking is irreversible for provider-only trace data but never     ▆ │  │  │  Save (s) — no changes                  │
 │      Providers & Models      │  │  │   rewrites the saved conversation. New traces reference saved messages instead of copying the transcript. Safe and Full    │  │  │  Revert (r) — no changes                │
 │      Web Search              │  │  │   view the same trace; credentials stay blocked in both, and older trace formats remain readable.                          │  │  │ Local-only: saves write your config     │
 │      Speech & TTS            │  │  │   Apply exchange capture                                                                                                   │  │  │ file.                                   │
 │  Interface                   │  │  │   Global exchange capture settings are active.                                                                             │  │  │ Control guide                           │
 │      Appearance              │  │  │                                                                                                                            │  │  │  Chat display name: Speaker label and   │
 │      Theme                   │  │  │   Rail presentation                                                                                                        │  │  │  trusted character-template human       │
-│      Splash Screen           │  │  │  Rail layout scope       │ Global                      ▼                                                                 ▁ │  │  │  name                                   │
+│      Splash Screen           │  │  │  Rail layout scope       │ Global                      ▼                                                                 ▆ │  │  │  name                                   │
 │    > Console Behavior        │  │  │   Global keeps one arrangement everywhere. Per workspace restores and keeps each workspace's saved arrangement.            │  │  │  Streaming: Show the reply as it is     │
-│  Data & Privacy              │  │  │  ▐X▌ Stack collapsed rail labels                                                                                           │  │  │  generated.                             │
-│      Storage                 │  │  │   Saved style: Horizontal                                                                                                  │  │  │  Temperature: Lower stays focused;      │
-│      Workspaces              │  │  │   Uses narrower 3-column handles by stacking upright letters. Direction glyphs are omitted.                                │  │  │  higher is more varied.               ▅ │
+│  Data & Privacy              │  │  │  ▐ ▌ Stack collapsed rail labels                                                                                           │  │  │  generated.                             │
+│      Storage                 │  │  │   Saved style: Horizontal                                                                                                  │  │  │  Temperature: Lower stays focused;    ▅ │
+│      Workspaces              │  │  │   Uses narrower 3-column handles by stacking upright letters. Direction glyphs are omitted.                                │  │  │  higher is more varied.                 │
 │      Tool Profiles           │  │  │                                                                                                                            │  │  │  Top P: Use only top tokens whose       │
 │      Privacy & Security      │  │  │   Status row placement                                                                                                     │  │  │  chances sum to P.                      │
 │      Network                 │  │  │   Where the Console status chips sit relative to the composer.                                                             │  │  │  Max tokens: Longest reply the model    │
@@ -31,13 +31,13 @@
 │      About (view)            │  │  │                                                                                                                            │  │  │  placeholders; typed text stays         │
 │      Agents                  │  │  │   Composer paste handling                                                                                                  │  │  │  literal                                │
 │  Expert                      │  │  │   Collapse large pasted chunks only when they exceed the threshold.                                                        │  │  │  Threshold: Minimum pasted chunk size   │
-│      Hooks                   │  │  │  ▐X▌ Collapse large pastes                                                                                                 │  │  │  before collapse                        │
+│      Hooks                   │  │  │  ▐✓▌ Collapse large pastes                                                                                                 │  │  │  before collapse                        │
 │      Internal Prompts        │  │  │  Threshold (chars)       │ 50                                                                                              │  │  │ Focused field guide                     │
 │      Advanced Config         │  │  │   Normal typing stays literal. The canonical message payload is preserved.                                                 │  │  │  Purpose: Focus a Console Behavior      │
 │   Domain Defaults ▸ (11)     │  │  │                                                                                                                            │  │  │  field for setting-specific guidance.   │
 │                              │  │  │   Chat images                                                                                                              │  │  │  Consequences: No field-specific        │
 │                              │  │  │   Render images linked in assistant replies (remote fetch).                                                                │  │  │  guidance is active right now.          │
-│                              │  │  │  ▐X▌ Render linked images                                                                                                  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │  ▐ ▌ Render linked images                                                                                                  │  │  │ ▼ more — scroll the inspector           │
 │                              │  │  │                                                                                                                            │  │  │                                         │
 └──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
 

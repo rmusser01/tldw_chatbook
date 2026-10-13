@@ -12,15 +12,15 @@
  ────────────────╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮       │
  Conversations   │  Chat settings · Chat 1                                                                                                                                                      │       │
         Archive t│                                                                                                                                                                              │       │
-          Archive│  Model and generation · Selected  Context and memory                                                                                                                         │       │
+          Archive│  ● Model and generation  Context and memory                                                                                                                                  │       │
         Search al│ Applies to this chat only · saved with the conversation · defaults live in Settings ▸ Providers & Models (F4)                                                                │       │
    Chat 1        │ Model             gpt-5.6-terra · OpenAI                                                                    this chat  Ready · not tested · context unknown   Change Alt+M   │       │
                  │ Temperature       █ 0.6         Console Behavior   Lower stays focused; higher is more varied.                                                                               │       │
   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔│ Max tokens        │ 4096        provider           Longest reply the model may give, in tokens.                                                                              │       │
   ▊  Filter visib│ Streaming         │ Off      ▼  provider           Show the reply as it is generated.                                                                                        │       │
-  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁│ Reasoning effort  │ default  ▼  provider           Support not verified for this model. blank = provider default · How much a reasoning model thinks first.                  │       │
-                 │ Reasoning summary │ default  ▼  provider           Support not verified for this model. blank = provider default · How much of its reasoning the model sums up.              │       │◂ Inspect
-   New conversati│ Verbosity         │ default  ▼  provider           Support not verified for this model. blank = provider default · How long and detailed replies are.                        │       │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁│ Reasoning effort  │ default  ▼  provider           Support not verified for this model. the provider decides · How much a reasoning model thinks first.                      │       │
+                 │ Reasoning summary │ default  ▼  provider           Support not verified for this model. the provider decides · How much of its reasoning the model sums up.                  │       │◂ Inspect
+   New conversati│ Verbosity         │ default  ▼  provider           Support not verified for this model. the provider decides · How long and detailed replies are.                            │       │
   Chats          │  ▶ Sampling · hidden for OpenAI: Min P, Top K, Thinking, Thinking budget (this provider does not accept them)                                                                │       │
    Chat 1        │  ▶ Connection · api.openai.com · key saved · change it in Settings ▸ Providers & Models                                                                                      │       │
                  │  ▶ Request estimate · 0 / 32,000 tokens (assumed; window unknown)                                                                                                            │       │
