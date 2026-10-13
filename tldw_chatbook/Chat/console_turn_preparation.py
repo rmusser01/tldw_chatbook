@@ -87,6 +87,81 @@ class ContextCompactionHold:
     estimated: bool
 
 
+#: TASK-33621.20: why an Automatic Library search paused a send, keyed by the
+#: preparation's error code. The shelf prefixes it with "Not sent: ", so it
+#: stays short and names no query or source.
+LIBRARY_PAUSE_COPY: Mapping[str, str] = MappingProxyType(
+    {
+        "library_retrieval_timeout": "Library search timed out",
+        "library_retrieval_failed": "Library search failed",
+        "library_retrieval_stopped": "Library search stopped",
+    }
+)
+LIBRARY_PAUSE_CANCELLED_COPY = "Library search canceled; nothing was sent."
+
+
+def library_pause_copy(error_code: str | None) -> str:
+    """Return the visible reason for a Library-paused send.
+
+    Args:
+        error_code: The preparation outcome's bounded error code, if any.
+
+    Returns:
+        A short reason; a generic one for an unknown or missing code.
+    """
+    return LIBRARY_PAUSE_COPY.get(error_code or "", "Library search did not finish")
+
+
+#: How long the Library's first-use runtime build (embedding model, vector
+#: store) may take before an automatic send pauses with a timeout. Generous on
+#: purpose: a first build that had to download the model took 18 s live. The
+#: search itself keeps its own short budget.
+LIBRARY_INITIALIZATION_TIMEOUT_SECONDS = 60.0
+
+#: TASK-33621.20 review: the pauses that the send's own Retry/Cancel card and
+#: the unsent-turn shelf's Restore/Discard can end -- the kinds the
+#: controller's generic cancel handles. A Retry or Send once without Library
+#: that meets a provider that is not ready re-pauses as DESTINATION_CHANGED;
+#: before this set, nothing showed or released that pause. Trace, capture and
+#: compaction pauses keep their own recovery.
+SHELF_RELEASABLE_PAUSES: frozenset[ConsolePreparationPauseKind] = frozenset(
+    {
+        ConsolePreparationPauseKind.RETRIEVAL,
+        ConsolePreparationPauseKind.DESTINATION_CHANGED,
+        ConsolePreparationPauseKind.PERSISTENCE,
+    }
+)
+
+#: Why a prepared send re-paused on its way out (the card's title reason).
+RESEND_PAUSE_COPY: Mapping[ConsolePreparationPauseKind, str] = MappingProxyType(
+    {
+        ConsolePreparationPauseKind.DESTINATION_CHANGED: (
+            "Provider not ready or changed"
+        ),
+        ConsolePreparationPauseKind.PERSISTENCE: "Send could not be saved",
+    }
+)
+SEND_CANCELLED_COPY = "Send canceled; nothing was sent."
+
+
+def prepared_cancel_copy(preparation: ConsoleTurnPreparation) -> str:
+    """Return the run chip's copy once a prepared send is cancelled.
+
+    Args:
+        preparation: The preparation as it was when the cancel began.
+
+    Returns:
+        The Library copy for a send cancelled while (or because) its Library
+        search ran; the plain send copy for any other prepared send.
+    """
+    if (
+        preparation.pause_kind is ConsolePreparationPauseKind.RETRIEVAL
+        or preparation.state is ConsoleTurnPreparationState.PREPARING
+    ):
+        return LIBRARY_PAUSE_CANCELLED_COPY
+    return SEND_CANCELLED_COPY
+
+
 PAUSE_ACTIONS: Mapping[ConsolePreparationPauseKind, tuple[str, ...]] = MappingProxyType(
     {
         ConsolePreparationPauseKind.RETRIEVAL: ("retry", "bypass", "cancel"),
