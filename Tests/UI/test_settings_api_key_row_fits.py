@@ -1,11 +1,16 @@
 """Settings ▸ Providers & Models ▸ Connect: the API key row's fixed sentences
 fit the row (review of PR #3057, R1 #11).
 
-The row is one line, cut with an ellipsis. The review measured its help
-column at 39 cells at 211x44, and four sentences written for the old
-multi-line status block were cut there ("Claude subscription credential
-expired; log in with Claude Code" is 63). Readiness is a stand-in, so no
-case reads a real credential.
+The row is one line, cut with an ellipsis. The review put its help column
+at 39 cells at 211x44, and four sentences written for the old multi-line
+status block were cut there ("Claude subscription credential expired; log
+in with Claude Code" is 63). Readiness is a stand-in, so no case reads a
+real credential.
+
+Capture fix round 1 (finding 5): the mounted card measures that help at 41
+cells, 40 of them text since c62e73beb7 gave it a padding cell (capture 01
+starts it at the same column, 118). The guard keeps the review's 39, one
+cell under what the row shows.
 
 Fix round 1 (findings 2, 9 and 26): a custom endpoint's line is the screen's
 own sentence, printed as it is returned, and an endpoint that is not ready
@@ -28,7 +33,7 @@ from tldw_chatbook.UI.Settings_Modules import providers_models_card as card
 # admission the per-test sandbox refuses; keep the collection-time profile.
 pytestmark = pytest.mark.bootstrap_profile
 
-#: The API key row's help column at 211x44, as the review measured it.
+#: The API key row's help shows 40 cells at 211x44; one spare, as the review set it.
 _HELP_CELLS = 39
 
 

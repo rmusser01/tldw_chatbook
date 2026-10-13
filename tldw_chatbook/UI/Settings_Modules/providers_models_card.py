@@ -142,7 +142,7 @@ API_KEY_CLEAR_TOOLTIP = (
     f"({API_KEY_CLEAR_KEY} in the API key field)."
 )
 #: R1 #11: one-row forms of sentences written for the old status block (the
-#: help column is 39 cells at 211x44); the row's Source word says the rest.
+#: help shows 40 cells at 211x44, kept to 39); the row's Source word says the rest.
 SUBSCRIPTION_KEY_HELP = {
     "pending": "checking the Claude Code login…",
     "ready": "Claude Code login · not verified",

@@ -193,12 +193,14 @@ _BUDGETS: dict[str, int] = {
     # and says why (+3): 2,375; the Saved model list's duplicate
     # empty-state line is gone (-8): 2,367; Clear shows only while there
     # is a key to clear, one rule for the card and the screen, and a
-    # keyless provider's Env var reads optional (+39): 2,406.
+    # keyless provider's Env var reads optional (+39): 2,406. Capture fix
+    # round 1: the API key help's width comment says what is measured (+0).
     "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2406,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and
-    # Validation line state the provider's own range (+38): 760.
+    # Validation line state the provider's own range (+38): 760. Capture fix
+    # round 1: UNSET_FALLBACK_HELP's comment says 44 cells, not 45 (+0).
     "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 760,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved

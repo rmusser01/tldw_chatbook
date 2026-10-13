@@ -183,7 +183,7 @@ class ModelConfigField:
 #: (Alt+M popover, Chat settings, Settings model defaults and Console
 #: Behavior fallbacks). Labels stay within the modal's 23-cell label column;
 #: a model field's help stays within 44 cells, so Settings rows show it
-#: whole at 211x44 (Model defaults has 61; Console Behavior 44, after its
+#: whole at 211x44 (Model defaults has 60; Console Behavior 44, after its
 #: 32-cell control column and the help's own one-cell gap from its Source
 #: word).
 MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
