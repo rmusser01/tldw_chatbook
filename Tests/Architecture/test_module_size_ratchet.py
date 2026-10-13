@@ -188,7 +188,9 @@ _BUDGETS: dict[str, int] = {
     # Capture fix 2 round 1: a failed discovery's one report is its line,
     # not a toast too (+0): 33,942; Ctrl+Q asks about staged drafts before
     # the theme prompt, whose Discard undoes a Try (+0): 33,942.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33942,
+    # Capture fix 3: Save selected's line names the provider and counts in
+    # words, not "model(s) to <config key>" (+3): 33,945.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33945,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.

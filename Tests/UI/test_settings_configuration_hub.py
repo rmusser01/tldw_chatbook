@@ -11558,7 +11558,9 @@ async def test_settings_provider_model_discovery_saves_selected_runtime_models()
         await _wait_for_settings_text(
             screen,
             pilot,
-            "Saved 1 discovered model(s) to openai.",
+            # Capture fix 3, finding 6, rewritten on purpose: the receipt names
+            # the provider, not its config key, and counts without "(s)".
+            "Saved 1 discovered model to OpenAI.",
         )
 
     assert scope.discover_calls == [

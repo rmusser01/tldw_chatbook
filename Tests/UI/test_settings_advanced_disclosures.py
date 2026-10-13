@@ -28,6 +28,7 @@ from Tests.UI.test_settings_category_sweep import (
 from Tests.UI.test_settings_configuration_hub import (
     FakeSettingsModelDiscoveryScope,
     ModelDiscoveryResult,
+    PersistenceResult,
     _discovered_model,
 )
 from Tests.UI.test_settings_connect_rows import _until
@@ -892,3 +893,45 @@ async def test_custom_id_keeps_its_edge_on_one_row(request, size):
         assert custom.region.height == 1, painted
         assert "Custom ID" in painted[0], painted
         assert painted[0].startswith("▊") and painted[0].endswith("▎"), painted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("saved", "receipt"),
+    [
+        (("gpt-new-1",), "Saved 1 discovered model to OpenAI."),
+        (("gpt-new-1", "gpt-new-2"), "Saved 2 discovered models to OpenAI."),
+        ((), "The selected models are already saved for OpenAI."),
+    ],
+)
+@private_profile_test
+async def test_save_selected_names_the_provider_in_its_receipt(request, saved, receipt):
+    """Capture fix 3, finding 6: Save selected's line printed the config key
+    and "model(s)", "Saved 1 discovered model(s) to openai.". It names the
+    provider by its display name and counts in words, as the discovery toast
+    does."""
+    app = _app(discovered=_DISCOVERED)
+    app.llm_provider_catalog_scope_service.persistence_result = PersistenceResult(
+        provider="openai",
+        provider_list_key="openai",
+        status="saved",
+        saved_model_ids=saved,
+        message="Saved 1 discovered model(s) to openai.",
+    )
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        await _discover(host, pilot, screen)
+        listing = screen.query_one("#settings-discovered-models-list", SelectionList)
+        listing.select("gpt-new-1")
+        await pilot.pause()
+        screen.query_one("#settings-save-discovered-provider-models", Button).press()
+        await _until(
+            pilot, lambda: app.llm_provider_catalog_scope_service.persist_calls
+        )
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        status = screen.query_one("#settings-model-discovery-status", Static)
+        assert str(status.renderable) == receipt

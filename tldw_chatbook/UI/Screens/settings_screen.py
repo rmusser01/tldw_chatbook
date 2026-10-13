@@ -16896,8 +16896,11 @@ class SettingsScreen(BaseAppScreen):
             self._activate_saved_model_if_field_empty(saved_model_ids)
             # The saved ids now group as saved in the Default model picker.
             self._sync_model_picker(provider, reload=True)
+            count, label = len(saved_model_ids), self._provider_display_label(provider)
             self._model_discovery_status = (
-                message or f"Saved {len(saved_model_ids)} discovered model(s)."
+                f"Saved {count} discovered model{'' if count == 1 else 's'} to {label}."
+                if count
+                else f"The selected models are already saved for {label}."
             )
             self._refresh_model_discovery_widgets()
             return
