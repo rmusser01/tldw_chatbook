@@ -6,6 +6,7 @@ are offloaded to a thread by the module (the ``briefing_service._invoke_chat``
 discipline).
 """
 import json
+import re
 
 import pytest
 
@@ -394,10 +395,14 @@ def test_goal_mark_is_read_and_removed_wherever_it_is(line, query, goal):
 @pytest.mark.parametrize(
     "line, query, goal",
     [
-        # Inside a word, or in the middle of the line: text, not a mark.
+        # Glued to a word in front of it, a "[g1]" is a subscript: text.
         ("arr[g1] indexing in c", "arr[g1] indexing in c", None),
         ("index into arr[g1]", "index into arr[g1]", None),
-        ("tour dates [g1] seattle", "tour dates [g1] seattle", None),
+        ("arr_[g1] lookups", "arr_[g1] lookups", None),
+        ("f(x)[g1] values", "f(x)[g1] values", None),
+        # Standing alone it is the mark, wherever it stands (round 5, F1:
+        # round 4 had made this one text, and it was searched).
+        ("tour dates [g1] seattle", "tour dates seattle", _G1),
         # A mark the model bracketed twice is still its mark -- and no
         # "[ ]" is left behind.
         ("[[g1]] osaka food", "osaka food", _G1),
@@ -537,8 +542,28 @@ def test_a_number_is_a_list_marker_only_in_a_numbered_response(
         # line of preamble in front of it.
         ("1. rust tui news\n2. cello lessons\n3) tour dates",
          ["rust tui news", "cello lessons", "tour dates"]),
+        # (The preamble itself ends in a colon: a label, not a query.)
         ("Here are the queries:\n1. rust tui news\n2. cello lessons",
-         ["Here are the queries:", "rust tui news", "cello lessons"]),
+         ["rust tui news", "cello lessons"]),
+        # Sections that each start again at 1 are lists too (round 5, F1).
+        ("Topic queries:\n1. rust tui news\n2. cello lessons\n"
+         "Goal queries:\n1. tour dates",
+         ["rust tui news", "cello lessons", "tour dates"]),
+        # ...and so is a list whose numbers are bold, bulleted or inside
+        # whole-line bold.
+        ("**1.** rust tui news\n**2.** cello lessons",
+         ["rust tui news", "cello lessons"]),
+        ("- 1. rust tui news\n- 2. cello lessons",
+         ["rust tui news", "cello lessons"]),
+        ("**1. rust tui news**\n**2. cello lessons**",
+         ["rust tui news", "cello lessons"]),
+        ("1) rust tui news\n(2) cello lessons",
+         ["rust tui news", "cello lessons"]),
+        # A run that does not start at 1, or skips, is not a list.
+        ("2. Bundesliga Spielplan 2026\n3. Liga Tabelle",
+         ["2. Bundesliga Spielplan 2026", "3. Liga Tabelle"]),
+        ("1. FC K\u00f6ln transfer news\n3. Liga Tabelle",
+         ["1. FC K\u00f6ln transfer news", "3. Liga Tabelle"]),
         # ...and inside one, an ordinal that belongs to the query survives.
         ("1. 2. Bundesliga Spielplan 2026\n2. rust tui news",
          ["2. Bundesliga Spielplan 2026", "rust tui news"]),
@@ -617,3 +642,849 @@ def test_fallback_rows_are_distinct_queries_too():
         "jazz guitar recent developments",
         "surprising adjacent to Rust TUI",
     ]
+
+
+# --- Review round 5, N1: reading a mark must not be quadratic --------------------
+#
+# ``\s*/?\s*`` in the mark pattern made one long run of spaces after a "["
+# cost its square: 20,000 spaces took 1.9 s on the event loop. A run of
+# brackets followed by a run of spaces did the same through ``\[+``.
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "[" + " " * 200_000 + "x",
+        "[" * 20_000 + " " * 20_000 + "x",
+        "[" + " /" * 50_000,
+        "[g" + " " * 200_000 + "1",
+        "[g1" + " " * 200_000,
+        "[ g 1 ]" * 30_000,
+        "\\[" * 60_000,
+    ],
+    ids=["spaces", "brackets-then-spaces", "slashes", "g-spaces", "tail-spaces",
+         "many-marks", "escaped-brackets"],
+)
+def test_reading_marks_in_a_hostile_line_is_fast(line):
+    import time
+
+    from tldw_chatbook.Dreams.query_synthesis import (
+        _GOAL_MARK_RE,
+        _response_rows,
+    )
+
+    started = time.perf_counter()
+    list(_GOAL_MARK_RE.finditer(line))
+    _response_rows(line + "\nrust tui news", [(_G1, None)])
+    elapsed = time.perf_counter() - started
+
+    # Linear work on 200,000 characters is a few milliseconds; the
+    # quadratic pattern needed minutes for these. Loose on purpose.
+    assert elapsed < 2.0, f"{elapsed:.2f}s"
+
+
+@pytest.mark.parametrize(
+    "line, is_mark",
+    [
+        ("[g1]", True), ("[ g 1 ]", True), ("[  /  g  1  ]", True),
+        ("[[[g1]]]", True),
+        # More padding than any model writes is not a mark any more.
+        ("[" + " " * 10 + "g1]", False),
+        ("[g" + " " * 10 + "1]", False),
+    ],
+)
+def test_the_mark_pattern_is_bounded_but_still_loose(line, is_mark):
+    from tldw_chatbook.Dreams.query_synthesis import _GOAL_MARK_RE
+
+    assert bool(_GOAL_MARK_RE.fullmatch(line)) is is_mark
+
+
+def test_a_line_too_long_to_be_a_query_is_not_one():
+    """No search query is hundreds of characters long; a line like that is
+    prose, and nothing below has to scan it."""
+    from tldw_chatbook.Dreams.query_synthesis import _response_rows
+
+    rows = _response_rows(
+        "[g1] " + "very " * 200 + "long\n[g1] tour dates", [(_G1, None)])
+
+    assert [(row["query"], row["goal"]) for row in rows] == [
+        ("tour dates", _G1)]
+
+
+# === Review of #2921, round 5, F1: no goal mark ever reaches a search =============
+#
+# Round 4 let a mark count only at the very front or the very end of a line,
+# with list numbers judged on raw lines numbered strictly 1..n. Anything the
+# cleaner did not strip in front of the mark -- a restarted number, a bold
+# number, a label, an escaped bracket, a byte order mark -- left the mark in
+# the query, sent it to the search provider, and lost the goal.
+
+_F1_SHAPES = [
+    # The reviewer's reproductions.
+    ("1. [g1] japan rail pass", "japan rail pass"),
+    ("**2.** [g1] japan rail pass", "japan rail pass"),
+    ("**2. [g1] japan rail pass**", "japan rail pass"),
+    ("- 2. [g1] japan rail pass", "japan rail pass"),
+    ("Query: [g1] cheap flights", "cheap flights"),
+    ("tour dates [g1] seattle", "tour dates seattle"),
+    ("**[g1]:** cheap flights", "cheap flights"),
+    ("__[g1]__ cheap flights", "cheap flights"),
+    ("\\[g1\\] cheap flights", "cheap flights"),
+    ("\ufeff[g1] cheap flights", "cheap flights"),
+    # More of the same family.
+    ("(2) [g1] japan rail pass", "japan rail pass"),
+    ("2) [g1] japan rail pass", "japan rail pass"),
+    ("**2**. [g1] japan rail pass", "japan rail pass"),
+    ("- **2.** [g1] japan rail pass", "japan rail pass"),
+    ("> - 2. [g1] japan rail pass", "japan rail pass"),
+    ("* - [g1] japan rail pass", "japan rail pass"),
+    ("Goal query 2: [g1] cheap flights", "cheap flights"),
+    ("**Query:** [g1] cheap flights", "cheap flights"),
+    ("**Query: [g1] cheap flights**", "cheap flights"),
+    ("Q1: [g1] cheap flights", "cheap flights"),
+    ("_[g1] cheap flights_", "cheap flights"),
+    ("__[g1] cheap flights__", "cheap flights"),
+    ("*[g1] cheap flights*", "cheap flights"),
+    ("`[g1] cheap flights`", "cheap flights"),
+    ("`[g1]` cheap flights", "cheap flights"),
+    ("([g1]) cheap flights", "cheap flights"),
+    ("_[g1]_ cheap flights", "cheap flights"),
+    ("**[g1] cheap flights", "cheap flights"),
+    ("[g1] **cheap flights**", "cheap flights"),
+    ("cheap flights **[g1]**", "cheap flights"),
+    ("cheap flights ([g1])", "cheap flights"),
+    ("cheap flights [g1] [/g1]", "cheap flights"),
+    ("[g1] -5\u00b0C tokyo weather", "-5\u00b0C tokyo weather"),
+    ("cheap **[g1]** flights", "cheap flights"),
+    ("cheap [g1]flights", "cheap flights"),
+    ("[ G 1 ] cheap flights", "cheap flights"),
+    ("[[g1]]: cheap flights", "cheap flights"),
+    ("  \t[g1]\tcheap flights  ", "cheap flights"),
+    # The query keeps what is its own.
+    ("_[g1] snake_case tips_", "snake_case tips"),
+    ("*[g1] learn C**", "learn C*"),
+    ('[g1] "Wednesday 13" tour dates', '"Wednesday 13" tour dates'),
+    ("[g1] 2. Bundesliga Spielplan 2026", "2. Bundesliga Spielplan 2026"),
+    ("[g1] python: list comprehension", "python: list comprehension"),
+]
+
+
+@pytest.mark.parametrize("line, query", _F1_SHAPES)
+def test_a_standalone_mark_is_removed_and_names_its_goal_in_every_shape(
+        line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None), (_G2, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}
+
+
+@pytest.mark.asyncio
+async def test_sections_with_restarting_numbers_lose_numbers_and_marks():
+    """The reviewer's first reproduction, as the model would write it."""
+    chat, _calls = _capture_chat(
+        "Topic queries:\n"
+        "1. rust tui news\n"
+        "2. beginner cello lessons\n"
+        "\n"
+        "Goal queries:\n"
+        "1. [g1] wednesday 13 tour dates\n"
+        "2. [g2] cello teachers nearby\r\n"
+    )
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [(row["query"], row["goal"]) for row in rows] == [
+        ("rust tui news", None),
+        ("beginner cello lessons", None),
+        ("wednesday 13 tour dates", _G1),
+        ("cello teachers nearby", _G2),
+    ]
+
+
+# --- The invariant, as a property ---------------------------------------------------
+#
+# Whatever a model wraps around a marked query, the mark never survives into
+# the query and the goal is attributed. Where the wrapping is something the
+# cleaner claims to remove completely, the query comes out exactly.
+
+from hypothesis import assume, given, settings as hyp_settings  # noqa: E402
+from hypothesis import strategies as st  # noqa: E402
+
+_BASE_QUERIES = [
+    "cheap flights tokyo", "tour dates", "rust tui news",
+    '"Wednesday 13" tour dates 2026', 'tutorial for "rust tui"',
+    "learn C*", "*.rs lint rules", "3.5 inch floppy drives",
+    "-5\u00b0C tokyo weather", "snake_case naming tips",
+    "what does `ls -la` print", "#rustlang news", "caf\u00e9 culture paris",
+    "\u65e5\u672c\u306e\u796d\u308a 2027", "C# tutorials", "x",
+    # Round 6, G-N7: queries that begin with a number of their own.
+    "1. FC K\u00f6ln transfer news", "2027 world cup tickets",
+    "3d printing news",
+]
+
+#: Labels whose words are the query's subject (round 6, G1): in front of a
+#: mark they lose only their colon.
+_SUBJECT_LABELS = ["Kyoto", "Japan travel", "Wednesday 13", "Rust TUI",
+                   "Dune", "Tokyo in April"]
+
+#: How a model writes the mark itself (for goal ``{n}``).
+_MARK_FORMS = [
+    "[g{n}]", "[G{n}]", "[ g {n} ]", "[[g{n}]]", "\\[g{n}\\]", "[g{n}]:",
+    "**[g{n}]**", "__[g{n}]__", "*[g{n}]*", "_[g{n}]_", "`[g{n}]`",
+    '"[g{n}]"', "([g{n}])", "**[g{n}]:**", "**[g{n}]**:",
+]
+
+#: Formatting a model puts IN FRONT of a line, removed completely whatever
+#: stands behind it. ``{}`` is the rest of the line.
+_FRONT_WRAPPERS = ["- {}", "* {}", "\u2022 {}", "> {}", ">> {}", "  {}",
+                   "\ufeff{}"]
+
+#: Formatting a model puts AROUND a whole line.
+_LINE_WRAPPERS = ["**{}**", "*{}*", '"{}"', "`{}`", "\u201c{}\u201d",
+                  "__{}__", "_{}_"]
+
+#: Formatting that is only certainly formatting when the MARK follows it
+#: directly: a number on a single line may be an ordinal, a "word:" may be
+#: the query's own. In front of a mark they are neither.
+_BEFORE_MARK_ONLY = ["{n}. {}", "{n}) {}", "({n}) {}", "**{n}.** {}",
+                     "Query: {}", "Goal query {n}: {}", "Q{n}: {}",
+                     # Round 7, H2: plural and numbered label words.
+                     "Queries: {}", "Goal #{n}: {}", "Goal ({n}): {}",
+                     "**Ideas**: {}"]
+
+_MARK_ANYWHERE_RE = re.compile(r"\\?\[+\s*/?\s*g\s*-?\d+\s*\\?\]+", re.I)
+
+
+@st.composite
+def _marked_lines(draw):
+    """``(line, expected query, goal number, exact)`` for one marked line."""
+    base = draw(st.sampled_from(_BASE_QUERIES))
+    expected = base
+    number = draw(st.sampled_from([1, 2]))
+    mark = draw(st.sampled_from(_MARK_FORMS)).replace("{n}", str(number))
+    place = draw(st.sampled_from(
+        ["front", "front-glued", "front-glued-wrapped", "end", "both", "mid"]))
+    words = base.split(" ")
+    exact = True
+    glued_quote = ""  # the straight quote around a glued mark, if any
+    if place == "front":
+        line = f"{mark} {base}"
+    elif place == "front-glued":
+        # No space after the mark (round 6, G-N7: a quoted phrase glued
+        # behind it is back in). Only an asterisk glued behind a mark is
+        # left out: "[g1]*.rs" reads as emphasis to a person too.
+        assume(not base.startswith("*"))
+        mark = f"[g{number}]"
+        line = f"{mark}{base}"
+    elif place == "front-glued-wrapped":
+        # A WRAPPED mark glued to the next word (round 7, H1): the wrapper
+        # goes with the mark. Left out where a person could not tell the
+        # two apart either: the next word starting with a wrapper
+        # character, and a straight quote around the mark when the query
+        # has the same quote in it (it may open that phrase).
+        wrapped = draw(st.sampled_from(
+            ["**[g{n}]**", "__[g{n}]__", "*[g{n}]*", "_[g{n}]_", "`[g{n}]`",
+             "([g{n}])", '"[g{n}]"', "'[g{n}]'", "\u201c[g{n}]\u201d",
+             "\u2018[g{n}]\u2019"])).replace("{n}", str(number))
+        assume(base[0] not in "*_\"'`(")
+        assume(not (wrapped[0] in "\"'" and wrapped[0] in base))
+        glued_quote = wrapped[0] if wrapped[0] in "\"'" else ""
+        line = f"{wrapped}{base}"
+    elif place == "end":
+        line = f"{base} {mark}"
+    elif place == "both":
+        line = f"{mark} {base} [/g{number}]"
+    else:
+        assume(len(words) > 1)
+        cut = draw(st.integers(1, len(words) - 1))
+        # A list number alone in front of a mark is a list number:
+        # "1. [g1] FC Koeln ..." loses its "1.", as it should.
+        assume(not re.fullmatch(r"\(?\d{1,3}[.)]", " ".join(words[:cut])))
+        line = " ".join(words[:cut] + [mark] + words[cut:])
+    at_front = place in ("front", "front-glued", "front-glued-wrapped", "both")
+    # Nested the way a model nests them: a number or a label directly in
+    # front of the mark, bold/italics/quotes around the line (inside or
+    # outside that number), and bullets and quote markers outermost.
+    steps = draw(st.permutations(["before-mark", "line", "line"]))
+    for step in steps[:draw(st.integers(0, 3))]:
+        if step == "before-mark":
+            if at_front and draw(st.booleans()):
+                line = draw(st.sampled_from(_BEFORE_MARK_ONLY)).replace(
+                    "{n}", str(draw(st.integers(1, 9)))).replace("{}", line)
+            elif at_front:
+                subject = draw(st.sampled_from(_SUBJECT_LABELS))
+                line = f"{subject}: {line}"
+                expected = f"{subject} {base}"
+            continue
+        wrapper = draw(st.sampled_from(_LINE_WRAPPERS))
+        if base[-1] in wrapper.replace("{}", ""):
+            # "*...learn C**": the query's own last character and the
+            # wrapper's closer run together -- no reading is the one
+            # right one (found by seed 7 once glued wrappers were in).
+            exact = False
+        if glued_quote and glued_quote in wrapper:
+            # '""[g1]"cheap"': the outer quote closes the line AND could
+            # close a phrase the glued quote opens -- no reading is the
+            # one right one. Still: no mark, and the goal.
+            exact = False
+        if not at_front:
+            # Around a line whose mark is NOT in front, a pair is only
+            # removed when none of its characters is inside (the rule
+            # that keeps ``"A" tour "B"`` whole).
+            opening = wrapper.split("{}")[0]
+            exact = exact and not any(char in line for char in set(opening))
+        line = wrapper.replace("{}", line)
+    for _ in range(draw(st.integers(0, 2))):
+        line = draw(st.sampled_from(_FRONT_WRAPPERS)).replace("{}", line)
+    return line, expected, number, exact
+
+
+@hyp_settings(max_examples=600, deadline=None)
+@given(_marked_lines())
+def test_no_wrapping_lets_a_mark_through_or_loses_its_goal(case):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    line, base, number, exact = case
+    goals = [(_G1, None), (_G2, None)]
+
+    row = _query_row(line, goals)
+
+    assert row is not None, line
+    assert not _MARK_ANYWHERE_RE.search(row["query"]), (line, row["query"])
+    assert row["goal"] == goals[number - 1][0], (line, row)
+    if exact:
+        assert row["query"] == base, (line, row["query"])
+
+
+#: Unmarked lines that end in a colon and ARE queries (round 6, G-N1).
+_COLON_QUERIES = ["kyoto temples:", "what is new in rust:",
+                  "C++ scope resolution operator ::"]
+
+
+@hyp_settings(max_examples=300, deadline=None)
+@given(st.text(alphabet="abcxyz 19", min_size=1, max_size=12).filter(
+           lambda text: text.strip() and any(c.isalpha() for c in text)),
+       st.sampled_from([":", " ::", "::"]))
+def test_an_unmarked_line_ending_in_a_colon_alone_is_a_query(words, ending):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    line = " ".join(words.split()) + ending
+    assert _query_row(line, [(_G1, None)])["query"] == line
+
+
+@hyp_settings(max_examples=300, deadline=None)
+@given(st.lists(_marked_lines(), min_size=1, max_size=6),
+       st.sampled_from(["\n", "\r\n", "\n\n"]),
+       st.sampled_from(["", "{i}. ", "{i}) ", "**{i}.** ", "- {i}. "]),
+       st.booleans(),
+       st.sampled_from([None, *_COLON_QUERIES]))
+def test_no_response_lets_a_mark_through_whatever_its_numbering(
+        cases, newline, numbering, with_cpp_line, last_line):
+    """The same through the response parser, with the lines numbered the
+    ways a model numbers them (or not at all), under either line ending --
+    and with a "::" query among them and a query ending in a colon last
+    (round 6, G-N7)."""
+    from tldw_chatbook.Dreams.query_synthesis import _response_rows
+
+    goals = [(_G1, None), (_G2, None)]
+    entries = [(line, number) for line, _expected, number, _exact in cases]
+    if with_cpp_line:
+        entries.insert(len(entries) // 2,
+                       ("C++ scope resolution operator ::", None))
+    response = "Here are your queries:" + newline + newline.join(
+        numbering.replace("{i}", str(index)) + line
+        for index, (line, _number) in enumerate(entries, start=1))
+    if last_line is not None:
+        response += newline + last_line
+        entries.append((last_line, None))
+
+    rows = _response_rows(response, goals)
+
+    assert len(rows) == len(entries), response
+    for row, (line, number) in zip(rows, entries):
+        if number is None:
+            assert row["query"] == line and row["goal"] is None, (line, row)
+            continue
+        assert not _MARK_ANYWHERE_RE.search(row["query"]), (line, row["query"])
+        assert row["goal"] == goals[number - 1][0], (line, row)
+
+
+# --- Review round 5, N2: what a removed mark leaves next to it -------------------
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        # Punctuation the model set after a leading mark is the mark's.
+        ("[g1]. cheap flights", "cheap flights"),
+        ("[g1], cheap flights", "cheap flights"),
+        ("[g1]; cheap flights", "cheap flights"),
+        ("[g1]) cheap flights", "cheap flights"),
+        ("[g1] - cheap flights", "cheap flights"),
+        ("[g1] \u2014 cheap flights", "cheap flights"),
+        ("[g1]: - cheap flights", "cheap flights"),
+        # ...but a sign or a dot that belongs to the query stays.
+        ("[g1] -5\u00b0C tokyo", "-5\u00b0C tokyo"),
+        ("[g1] .5 inch drives", ".5 inch drives"),
+        ("[g1] ...and justice for all", "...and justice for all"),
+        # A second mark glued to the query goes with the first.
+        ("[g1]x[g1]", "x"),
+        ("[g1]tour dates[/g1]", "tour dates"),
+        # The same in front of a mark at the END of the line.
+        ("cheap flights - [g1]", "cheap flights"),
+        ("cheap flights: [g1]", "cheap flights"),
+        ("cheap flights ([g1])", "cheap flights"),
+        ("[g1] cheap flights [/g1].", "cheap flights"),
+        ("cheap flights [g1].", "cheap flights"),
+        # ...where a hyphenated word and a real full stop stay.
+        ("state-of-the-art tui [g1]", "state-of-the-art tui"),
+        ("what is a T.U.I. [g1]", "what is a T.U.I."),
+        # In the middle the query's own punctuation is untouched.
+        ("tokyo, osaka [g1] and kyoto", "tokyo, osaka and kyoto"),
+    ],
+)
+def test_a_removed_mark_leaves_no_punctuation_of_its_own_behind(line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None), (_G2, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}
+
+
+# --- Review round 5, F2: a line with nothing to search for is not a query --------
+#
+# Round 4's cleaner stopped dropping lines that are only formatting: a
+# response wrapped in a code fence spent searches on '```', a rule on '---',
+# a stray bullet on '-'.
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["```", "```text", "```json", "---", "-", "***", "* * *", "___", "===",
+     "...",
+     "\"\"", "**", "> ", "[g1] ---", "- [g1] ...", "~~~", "|---|---|"],
+)
+def test_a_line_with_no_letter_or_digit_gives_no_query(line):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None), (_G2, None)]) is None
+
+
+@pytest.mark.asyncio
+async def test_a_fenced_response_spends_no_search_on_its_fences():
+    """The reviewer's probe: searched = ['```', 'rust tui news', 'japan rail
+    pass', '---', '-']."""
+    chat, _calls = _capture_chat(
+        "```\nrust tui news\n[g1] wednesday 13 tour\n---\n-\n```")
+
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [(row["query"], row["goal"]) for row in rows] == [
+        ("rust tui news", None), ("wednesday 13 tour", _G1)]
+
+
+@pytest.mark.parametrize(
+    "line", ["C#", "C++", "\u65e5\u672c", "1984", "x", "\u00e9"])
+def test_a_short_real_query_is_still_a_query(line):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None)])["query"] == line
+
+
+# --- Review round 5, N4: what the guide says about the fallback's exploration line
+
+
+def test_the_fallback_has_one_exploration_line_except_at_one_query():
+    from tldw_chatbook.Dreams.query_synthesis import _fallback_queries
+
+    goals = [(_G1, None)]
+    for count in (2, 3, 6):
+        rows = _fallback_queries(["rust tui"], goals, count)
+        assert [row["query"] for row in rows].count(
+            "surprising adjacent to rust tui") == 1
+    assert [row["query"] for row in _fallback_queries([], goals, 3)][-1] == (
+        "curious new things this week")
+    # One query: the topic's (or the goal's) line, no exploration line.
+    assert [row["query"] for row in _fallback_queries(["rust tui"], goals, 1)
+            ] == ["rust tui recent developments"]
+    assert [row["goal"] for row in _fallback_queries([], goals, 1)] == [_G1]
+    assert [row["query"] for row in _fallback_queries([], [], 1)] == [
+        "curious new things this week"]
+
+
+# === Review of #2921, round 6 ======================================================
+
+# --- G1: words in front of a mark are the query's, unless they are a label word --
+#
+# Round 5 dropped up to four words and a colon in front of a mark as a
+# "label", so the goal's search lost its subject: "Kyoto: [g1] temples in
+# autumn" was searched as "temples in autumn".
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        ("Kyoto: [g1] temples in autumn", "Kyoto temples in autumn"),
+        ("Japan travel: [g1] cherry blossom tours",
+         "Japan travel cherry blossom tours"),
+        ("Wednesday 13: [g1] tour dates", "Wednesday 13 tour dates"),
+        ("Rust TUI: [g1] new releases", "Rust TUI new releases"),
+        ("Dune: [g1] Part Two tickets", "Dune Part Two tickets"),
+        ("Tokyo in April: [g1] cheap flights", "Tokyo in April cheap flights"),
+        ("**Kyoto:** [g1] temples", "Kyoto temples"),
+        ("- Kyoto: [g1] temples", "Kyoto temples"),
+        ("My long trip to Tokyo in April: [g1] cheap flights",
+         "My long trip to Tokyo in April cheap flights"),
+        ("Query results: [g1] x", "Query results x"),
+        ("Quebec: [g1] winter carnival", "Quebec winter carnival"),
+        ("C++ scope resolution operator :: [g1]",
+         "C++ scope resolution operator ::"),
+        # The generic labels are still formatting.
+        ("Query: [g1] cheap flights", "cheap flights"),
+        ("query: [g1] cheap flights", "cheap flights"),
+        ("Search: [g1] cheap flights", "cheap flights"),
+        ("Goal 1: [g1] cheap flights", "cheap flights"),
+        ("Goal query 2: [g1] cheap flights", "cheap flights"),
+        ("Topic query: [g1] cheap flights", "cheap flights"),
+        ("Q1: [g1] cheap flights", "cheap flights"),
+        ("Q: [g1] cheap flights", "cheap flights"),
+        ("Idea 3: [g1] cheap flights", "cheap flights"),
+        ("Exploration: [g1] cheap flights", "cheap flights"),
+        ("Line 4: [g1] cheap flights", "cheap flights"),
+        ("**Query:** [g1] cheap flights", "cheap flights"),
+    ],
+)
+def test_a_label_in_front_of_a_mark_is_dropped_only_when_it_is_a_label_word(
+        line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None), (_G2, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}
+
+
+# --- G-N1: a line ending in a colon is a label only when a line follows it -------
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["C++ scope resolution operator ::", "kyoto temples:",
+     "what is new in rust:"],
+)
+def test_a_lone_line_ending_in_a_colon_is_a_query(line):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None)])["query"] == line
+
+
+@pytest.mark.asyncio
+async def test_a_colon_line_is_a_label_over_the_lines_below_it_only():
+    chat, _calls = _capture_chat(
+        "Topic queries:\n"
+        "rust tui news\n"
+        "C++ scope resolution operator ::\n"
+        "beginner cello lessons\n"
+        "what is new in rust:"
+    )
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [row["query"] for row in rows] == [
+        "rust tui news", "C++ scope resolution operator ::",
+        "beginner cello lessons", "what is new in rust:"]
+
+
+# --- G-N2: spaces are collapsed BEFORE the marks are read ------------------------
+#
+# Collapsing after the marks were read turned an over-padded mark (not a
+# mark) into a valid one inside the query: "cheap flights [g    1]" was
+# searched as "cheap flights [g 1]".
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        ("cheap flights [g    1]", "cheap flights"),
+        ("[g1    ] cheap flights", "cheap flights"),
+        ("[    g1] cheap flights", "cheap flights"),
+        ("cheap   flights [g1]", "cheap flights"),
+        ("[[[[g1]]]] cheap flights", "cheap flights"),
+        ("cheap flights [[[[[g1]]]]]", "cheap flights"),
+        ("\\[\\[g1\\]\\] cheap flights", "cheap flights"),
+    ],
+)
+def test_an_over_padded_or_over_bracketed_mark_is_still_a_mark(line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None), (_G2, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}
+
+
+# --- G-N3 / G-N6: the two stated limits, pinned ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_two_queries_that_both_begin_with_1_read_as_a_restarted_list():
+    """The residue the _is_numbered docstring names: each loses its "1."."""
+    chat, _calls = _capture_chat(
+        "1. FC K\u00f6ln transfer news\n1. FC Union Berlin tickets")
+
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [row["query"] for row in rows] == [
+        "FC K\u00f6ln transfer news", "FC Union Berlin tickets"]
+
+
+@pytest.mark.parametrize("line", ["tokyo[g1]", "(tokyo)[g1]", "tokyo[g1] flights"])
+def test_a_mark_glued_to_a_word_is_searched_as_text(line):
+    """The _query_row docstring's exception: a glued [gN] is text."""
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None)]) == {
+        "query": line, "goal_derived": False, "goal": None}
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        ('[g1]"Wednesday 13" tour dates', '"Wednesday 13" tour dates'),
+        ('"[g1]"Wednesday 13" tour dates 2026"',
+         '"Wednesday 13" tour dates 2026'),
+        ('"[g1]" cheap flights', "cheap flights"),
+        ('**"[g1]"** cheap flights', "cheap flights"),
+    ],
+)
+def test_a_quote_glued_behind_a_mark_opens_the_phrase(line, query):
+    """Found by the widened generator (round 6, G-N7): a wrapper around a
+    mark closes only where Markdown closes one, not glued to a word."""
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}
+
+
+# === Review of #2921, round 7 ======================================================
+
+# --- H1: a wrapper glued to the word after a mark is still the mark's ------------
+#
+# G-N7 made a wrapper around a mark close only before a space, punctuation
+# or another closer -- for every kind of wrapper. So "**[g1]**cheap" left
+# "*cheap". Only a straight quote can OPEN the next phrase, and only when
+# that phrase closes again later on the line.
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        ("**[g1]**cheap flights", "cheap flights"),
+        ('"[g1]"cheap flights', "cheap flights"),
+        ("'[g1]'cheap flights", "cheap flights"),
+        ("([g1])cheap flights", "cheap flights"),
+        ("`[g1]`cargo tips", "cargo tips"),
+        ("__[g1]__cheap flights", "cheap flights"),
+        ("_[g1]_cheap flights", "cheap flights"),
+        ("*[g1]*cheap flights", "cheap flights"),
+        ("\u201c[g1]\u201dcheap flights", "cheap flights"),
+        ("\u2018[g1]\u2019cheap flights", "cheap flights"),
+        # The case the rule exists for still holds.
+        ('"[g1]"Wednesday 13" tour dates 2026"', '"Wednesday 13" tour dates 2026'),
+        ('[g1]"Wednesday 13" tour dates', '"Wednesday 13" tour dates'),
+    ],
+)
+def test_a_wrapper_glued_to_the_next_word_is_removed_with_the_mark(line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}
+
+
+# --- H2: plural and numbered label words are labels too --------------------------
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["Queries", "Goals", "Ideas", "Topics", "Lines", "Searches",
+     "Explorations", "Search queries", "Goal #1", "Goal (1)", "Goal 1",
+     "Goals 2", "Topic #12", "Query (3)", "Goal queries", "Idea 2",
+     "**Queries**", "Q #1"],
+)
+def test_a_plural_or_numbered_label_word_is_formatting(label):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(f"{label}: [g1] cheap flights", [(_G1, None)]) == {
+        "query": "cheap flights", "goal_derived": True, "goal": _G1}
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        # The description repeats the goal the mark names: the model naming
+        # the goal, not part of the search.
+        ("Goal 1 (visit tokyo): [g1] cheap flights", "cheap flights"),
+        ("Goal 1 (Visit  Tokyo): [g1] cheap flights", "cheap flights"),
+        ("Goal #1 (visit tokyo): [g1] cheap flights", "cheap flights"),
+        # Anything else is the subject, like any other label's words.
+        ("Goal 1 (Tokyo trip): [g1] cheap flights", "Tokyo trip cheap flights"),
+        ("Goal (budget): [g1] cheap flights", "budget cheap flights"),
+        # It is goal 2's text, but the mark names goal 1: not a repeat.
+        ("Goal 1 (learn the cello): [g1] cheap flights",
+         "learn the cello cheap flights"),
+    ],
+)
+def test_a_goal_label_drops_its_description_only_when_it_repeats_the_goal(
+        line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    goals = [("visit tokyo", None), ("learn the cello", None)]
+    assert _query_row(line, goals) == {
+        "query": query, "goal_derived": True, "goal": "visit tokyo"}
+
+
+# --- H3: a colon line is a label over a list, not over any line ------------------
+#
+# Round 6 (G-N1) dropped every unmarked line ending in one colon that was
+# not the response's last line, so a real query in the middle of a plain
+# list was lost. A colon line is a label only when it is the first line,
+# or when the line after it is a marked or numbered query.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response, queries",
+    [
+        ("rust tui news\nwhat is new in rust:\njazz guitar",
+         ["rust tui news", "what is new in rust:", "jazz guitar"]),
+        ("rust tui news\nRe:Zero season 3:\njazz guitar",
+         ["rust tui news", "Re:Zero season 3:", "jazz guitar"]),
+        ("rust tui news\nwhat is new in rust:\n```",
+         ["rust tui news", "what is new in rust:"]),
+        # Labels.
+        ("rust tui news\nGoal queries:\n[g1] wednesday 13 tour",
+         ["rust tui news", "wednesday 13 tour"]),
+        ("rust tui news\nMore ideas:\n1. cello lessons\n2. tour dates",
+         ["rust tui news", "cello lessons", "tour dates"]),
+        ("Here you go:\nrust tui news\njazz guitar",
+         ["rust tui news", "jazz guitar"]),
+    ],
+)
+async def test_a_colon_line_heads_a_list_only_when_it_looks_like_one(
+        response, queries):
+    chat, _calls = _capture_chat(response)
+
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [row["query"] for row in rows] == queries
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response, queries",
+    [
+        # The residue the _query_row docstring names, pinned so it cannot
+        # widen silently: a query ending in a colon as the FIRST of several
+        # lines, or right above a marked or numbered query, is a label.
+        # (Two queries after it: one usable line alone would send the
+        # synthesis to its fallback.)
+        ("Re:Zero season 3:\njazz guitar\nrust tui news",
+         ["jazz guitar", "rust tui news"]),
+        ("rust tui news\nRe:Zero season 3:\n[g1] wednesday 13 tour",
+         ["rust tui news", "wednesday 13 tour"]),
+        # ...and a heading above plain lines in the middle is searched.
+        ("rust tui news\nMore ideas:\njazz guitar",
+         ["rust tui news", "More ideas:", "jazz guitar"]),
+    ],
+)
+async def test_the_colon_line_residue_is_what_the_docstring_says(
+        response, queries):
+    chat, _calls = _capture_chat(response)
+
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [row["query"] for row in rows] == queries
+
+
+# === Review of #2921, round 8 ======================================================
+
+# --- J1: a quote after a glued mark opens a phrase only inside a quoted line -----
+#
+# H1's "the same quote again later" misfired when the later quote belongs to
+# another phrase. The glued quote opens the next phrase only when the line
+# itself is quoted -- it ends with that quote, the closer of the one in
+# front of the mark -- and the phrase has its own partner before that end.
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        ('"[g1]"cheap "tokyo" flights', 'cheap "tokyo" flights'),
+        ("'[g1]'cheap 'n' cheerful", "cheap 'n' cheerful"),
+        ('"[g1]"Wednesday 13" tour"', '"Wednesday 13" tour'),
+        ('"[g1]"Wednesday 13" tour dates 2026"', '"Wednesday 13" tour dates 2026'),
+        ('"[g1]"cheap flights', "cheap flights"),
+    ],
+)
+def test_a_glued_quote_opens_a_phrase_only_inside_a_quoted_line(line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    assert _query_row(line, [(_G1, None)]) == {
+        "query": query, "goal_derived": True, "goal": _G1}
+
+
+# --- J2: only a standalone mark on the next line makes a colon line a heading ----
+
+
+@pytest.mark.asyncio
+async def test_a_colon_query_above_a_glued_subscript_is_kept():
+    """``arr[g1]`` is text (a subscript), so the line above it does not
+    head a list of marked queries."""
+    chat, _calls = _capture_chat(
+        "rust tui news\nwhat is new in rust:\nindex into arr[g1]\njazz guitar")
+
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [row["query"] for row in rows] == [
+        "rust tui news", "what is new in rust:", "index into arr[g1]",
+        "jazz guitar"]
+
+
+@pytest.mark.asyncio
+async def test_a_colon_line_above_a_standalone_mark_is_still_a_heading():
+    chat, _calls = _capture_chat(
+        "rust tui news\nGoal queries:\n**[g1]** wednesday 13 tour")
+
+    rows = await synthesize_query_rows(
+        chat, snapshot=SNAP_TWO_GOALS, count=5, exploration_slots=1)
+
+    assert [row["query"] for row in rows] == [
+        "rust tui news", "wednesday 13 tour"]
+
+
+# === Review of #2921, round 9: the J1 residue, pinned ===============================
+#
+# One family, accepted as rare: a QUOTED line whose glued phrase quote has
+# no partner before the line's closing quote. The quotes cannot all pair up
+# either way; one stray quote stays. Pinned so the residue cannot widen (or
+# be "fixed" into something else) without this test saying so.
+
+
+@pytest.mark.parametrize(
+    "line, query",
+    [
+        ('"[g1]"cheap flights"', 'cheap flights"'),
+        ("'[g1]'rock 'n' roll'", "'rock 'n' roll"),
+        ('"[g1]"tokyo"', 'tokyo"'),
+        ('"[g1]"a" "b"', '"a" "b'),
+    ],
+)
+def test_the_known_quoted_line_residue_keeps_one_stray_quote(line, query):
+    from tldw_chatbook.Dreams.query_synthesis import _query_row
+
+    row = _query_row(line, [(_G1, None)])
+
+    assert row == {"query": query, "goal_derived": True, "goal": _G1}
+    assert "[g1]" not in row["query"]
+    stray = [char for char in row["query"] if char in ('"', "'")]
+    assert len(stray) % 2 == 1, "exactly the unpaired quote is left"

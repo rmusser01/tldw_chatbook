@@ -2057,7 +2057,7 @@ async def _two_page_watches_and_a_question(dreams_db, service, scheduling_db):
     users_url = "https://example.com/users-own"
     await service.create_source(
         {"name": "User's own", "url": users_url, "source_type": "url",
-         "url_provenance": provenance})
+         "url_provenance": UrlProvenance.USER_ENTERED})
     attached = await track_page(
         service, dreams_db, url=users_url, title="Theirs", intent="topic",
         origin_story_id=2, scheduling_db_getter=getter)
@@ -4028,7 +4028,7 @@ async def test_a_users_own_change_rule_is_neither_adopted_nor_silenced(
     users_url = "https://example.com/users-own"
     existing = await service.create_source(
         {"name": "User's own", "url": users_url, "source_type": "url",
-         "url_provenance": provenance})
+         "url_provenance": UrlProvenance.USER_ENTERED})
     source_id = existing["source_id"]
     theirs = await _users_rule(service, job_id=source_id)
     everywhere = await _users_rule(
@@ -5231,7 +5231,11 @@ async def _owned_source_with_a_url_the_user_changed(dreams_db, service):
     owned = await track_page(
         service, dreams_db, url=_URL, title="Flights", intent="deal",
         origin_story_id=1)
-    await service.update_source(owned["subscription_id"], {"url": _USERS_URL})
+    # ADR-207 (2026-10-12 amendment): an edit establishes user entry only
+    # when the caller passes the app-owned enum, as the UI paths do.
+    await service.update_source(
+        owned["subscription_id"],
+        {"url": _USERS_URL, "url_provenance": UrlProvenance.USER_ENTERED})
     return owned
 
 
@@ -5321,16 +5325,26 @@ async def test_a_restored_unmarked_source_is_stamped_by_the_verifying_backfill(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provenance", [None, UrlProvenance.USER_ENTERED],
+    ids=["no-provenance", "user-entered"])
 async def test_the_verifying_backfill_leaves_the_users_own_sources_alone(
-        tmp_path, dreams_db, settings, subs_stack):
+        tmp_path, dreams_db, settings, subs_stack, provenance):
+    """A source the user created is never stamped by the verifying
+    backfill -- whatever provenance it was created with. With none,
+    create_source now stores {"url_provenance": "unknown"} itself (ADR-207);
+    the backfill must leave that alone too, not just the user-entered case
+    (review of #3097, item 2)."""
     from tldw_chatbook.Dreams.track_service import backfill_egress_marks
 
     subs_db, service = subs_stack
-    source_id, _attached = await _attach_to_users_source(dreams_db, service)
+    source_id, _attached = await _attach_to_users_source(
+        dreams_db, service, provenance=provenance)
+    before = _stored_options(subs_db, source_id)
 
     assert await backfill_egress_marks(service, dreams_db, verify=True) == 0
 
-    assert _stored_options(subs_db, source_id) == {}
+    assert _stored_options(subs_db, source_id) == before
 
 
 # --- Round 4 nit: a held source is not an active source ---------------------------

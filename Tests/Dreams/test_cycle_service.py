@@ -7,6 +7,7 @@ payload contract) and chat (OpenAI-shaped ``chat_api_call`` reply). ``now``
 is fixed so the local date is deterministic on any machine's timezone.
 """
 import asyncio
+import re
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
@@ -1037,6 +1038,60 @@ async def test_no_goal_mark_or_list_marker_ever_reaches_the_search(
     assert stories["https://dreams.test/bike"]["goal"] is None
 
 
+# Review round 5, F1: the name of the test above is a promise about EVERY
+# response, and round 4 broke it for most of them. These are the reviewer's
+# reproductions, driven through the whole cycle: whatever the model wraps
+# around a marked line, the search function never sees a mark and the story
+# keeps its goal.
+_F1_RESPONSES = {
+    "sections-restart-numbering": (
+        "Topic queries:\n1. bike repair tips\n2. cello practice routine\n"
+        "Goal queries:\n1. [g2] japan rail pass"),
+    "bold-numbers": "**1.** bike repair tips\n**2.** [g2] japan rail pass",
+    "bold-lines": "**1. bike repair tips**\n**2. [g2] japan rail pass**",
+    "bullet-and-number": "- 1. bike repair tips\n- 2. [g2] japan rail pass",
+    "one-numbered-line": "bike repair tips\n1. [g2] japan rail pass",
+    "label": "bike repair tips\nQuery: [g2] japan rail pass",
+    "mid-line": "bike repair tips\njapan [g2] rail pass",
+    "mark-in-bold-with-colon": "bike repair tips\n**[g2]:** japan rail pass",
+    "underscore-bold": "bike repair tips\n__[g2]__ japan rail pass",
+    "escaped-brackets": "bike repair tips\n\\[g2\\] japan rail pass",
+    "bom-and-crlf": "\ufeff[g2] japan rail pass\r\nbike repair tips\r\n",
+    "closing-mark": "bike repair tips\n[g2] japan rail pass [/g2]",
+    "quoted-in-a-quote-block": '> "[g2] japan rail pass"\n> bike repair tips',
+    "code-fence": "```\nbike repair tips\n[g2] japan rail pass\n```",
+}
+
+_ANY_GOAL_MARK = re.compile(r"\[\s*/?\s*g\s*-?\d+\s*\\?\]", re.IGNORECASE)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", sorted(_F1_RESPONSES))
+async def test_no_goal_mark_reaches_the_search_whatever_shape_the_response_has(
+        dreams_db, settings, shape):
+    _seed_two_goals(dreams_db)
+    searched: list[str] = []
+
+    def chat(**kwargs):
+        if "search queries" in str(kwargs.get("system_message") or ""):
+            return {"choices": [{"message": {"content": _F1_RESPONSES[shape]}}]}
+        return _fake_chat(**kwargs)
+
+    def perform(search_engine, search_query, **kwargs):
+        searched.append(search_query)
+        return _bike_and_japan_perform(search_engine, search_query, **kwargs)
+
+    result = await run_cycle(
+        _deps(dreams_db, perform=perform, chat=chat), trigger="manual")
+
+    assert searched, "fixture: the model's lines were searched"
+    assert not [query for query in searched if _ANY_GOAL_MARK.search(query)]
+    assert "japan rail pass" in searched and "bike repair tips" in searched
+    japan = _stories_by_url(
+        dreams_db, result["collection_id"])["https://dreams.test/japan"]
+    assert (japan["query"], japan["goal"]) == ("japan rail pass", _GOAL_JAPAN)
+
+
 @pytest.mark.asyncio
 async def test_page_found_by_a_topic_query_and_a_goal_query_names_the_goal(
         dreams_db, settings):
@@ -1345,6 +1400,86 @@ async def test_a_cycle_does_not_write_into_a_collection_that_took_its_id(
     assert other["profile_digest"] == "other" and other["status"] == "generating"
     assert dreams_db.list_stories(taken_over[0]) == [], (
         "the other collection got none of this cycle's stories"
+    )
+
+
+def _take_over_todays_collection(dreams_db, *, digest="other") -> int:
+    """What "the other process" does: delete today's still-empty row and
+    create a new one that gets the SAME id (ids are reused)."""
+    row = dreams_db.get_collection_by_date(_today())
+    assert dreams_db.delete_empty_collection(int(row["id"])) is True
+    with dreams_db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO dreams_collections (id, local_date, status,"
+            " profile_digest, trigger, created_at) VALUES"
+            " (?, ?, 'generating', ?, 'catchup', '2000-01-01T00:00:00.000Z')",
+            (int(row["id"]), _today(), digest))
+    return int(row["id"])
+
+
+@pytest.mark.asyncio
+async def test_a_cycle_that_wrote_no_story_does_not_close_another_collection(
+        dreams_db, settings):
+    """Review round 5, F4 (a). A cycle with no model call left for a story
+    writes no story -- so no story insert can refuse the stale id -- and
+    then stamps its verdict ("failed") on its collection. If the id was
+    taken over meanwhile, that verdict used to land on the other one.
+
+    The day's one model call goes to query synthesis; the other process
+    takes the id over while that call runs."""
+    import sqlite3
+
+    _seed_topics(dreams_db)
+    settings["max_llm_calls_per_day"] = 1
+    taken_over: list[int] = []
+
+    def chat(**kwargs):
+        if not taken_over:
+            taken_over.append(_take_over_todays_collection(dreams_db))
+        return _fake_chat(**kwargs)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        await run_cycle(_deps(dreams_db, chat=chat), trigger="manual")
+
+    assert taken_over, "fixture: the id was taken over mid-cycle"
+    other = dreams_db.get_collection_by_date(_today())
+    assert (other["profile_digest"], other["status"]) == ("other", "generating")
+    assert other["completed_at"] is None and other["degradation_notes"] is None
+
+
+@pytest.mark.asyncio
+async def test_an_appending_cycle_writes_only_into_the_row_it_appended_to(
+        dreams_db, settings, monkeypatch):
+    """Review round 5, F4 (b): the two-process case the claim is for. A
+    second trigger of the day appends to the existing (empty, failed) row.
+    Right after it has picked that row, the other process replaces it with
+    a new row under the same id; the appending cycle must hold the row it
+    picked, not whatever has its id when it next looks."""
+    import sqlite3
+
+    from tldw_chatbook.Dreams import cycle_service
+
+    _seed_topics(dreams_db)
+    first = dreams_db.create_collection(_today(), "scheduled", "first")
+    dreams_db.set_collection_status(first, "failed", story_count=0)
+    real_target = cycle_service._append_target
+    taken_over: list[int] = []
+
+    def target_then_taken_over(db, local_date):
+        target = real_target(db, local_date)
+        taken_over.append(_take_over_todays_collection(db))
+        return target
+
+    monkeypatch.setattr(cycle_service, "_append_target", target_then_taken_over)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        await run_cycle(_deps(dreams_db), trigger="manual")
+
+    assert taken_over == [first], "fixture: the appended-to id was reused"
+    other = dreams_db.get_collection_by_date(_today())
+    assert (other["profile_digest"], other["status"]) == ("other", "generating")
+    assert dreams_db.list_stories(first) == [], (
+        "the new collection got none of the appending cycle's stories"
     )
 
 
@@ -2035,6 +2170,34 @@ async def test_one_keyword_in_two_spellings_from_two_sources_is_one_topic(
     assert stored["jazzguitar"]["source"] == "media"
 
 
+@pytest.mark.asyncio
+async def test_a_keyword_that_normalisation_lengthens_is_stored_not_dropped(
+        dreams_db, monkeypatch):
+    """Review round 5, F3, the reviewer's third probe: the keyword passed
+    the first check of the refresh (as read) and failed the second (as
+    stored) -- kept [209, 8], stored only the 8."""
+    from tldw_chatbook.Dreams import profile_sources
+    from tldw_chatbook.Dreams.cycle_service import _refresh_profile_signals
+    from tldw_chatbook.Utils.input_validation import (
+        validate_dreams_profile_text,
+    )
+
+    keyword = " ".join(["\u0958\u093e\u0928\u0942\u0928"] * 30)[:179]
+    stored_form = validate_dreams_profile_text(keyword)
+    assert len(stored_form) > 200, "fixture"
+    monkeypatch.setattr(
+        profile_sources, "read_note_topics",
+        lambda _db: [{"facet": "topic", "text": keyword, "weight": 0.9},
+                     {"facet": "topic", "text": "rust tui", "weight": 0.5}])
+    deps = _deps(dreams_db)
+    deps.chachanotes_db_getter = lambda: object()
+
+    assert await _refresh_profile_signals(deps, NOW) == []
+
+    assert {row["text"] for row in dreams_db.list_profile()} == {
+        stored_form.lower(), "rust tui"}
+
+
 def test_signal_refresh_still_never_clobbers_a_users_own_topic(dreams_db):
     """The protection is keyed on the stored form, so a derived row whose
     NFC spelling is the user's topic leaves the user's weight alone."""
@@ -2115,3 +2278,165 @@ async def test_mixed_profile_cycle_keeps_topic_and_goal_stories_without_changing
     assert all("private medical goal" not in query for query in searched)
     assert {row["text"]: row["weight"] for row in dreams_db.list_profile() if row["facet"] == "goal"} == {
         "learn cello": 0.9, "private medical goal": 1.0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "line, query",
+    [("Kyoto: [g2] japan temples in autumn", "Kyoto japan temples in autumn"),
+     ("Japan travel: [g2] rail pass", "Japan travel rail pass")],
+)
+async def test_the_subject_in_front_of_a_mark_reaches_the_search(
+        dreams_db, settings, line, query):
+    """Review round 6, G1, through the cycle: the search got 'temples in
+    autumn' -- the subject was dropped as a label."""
+    _seed_two_goals(dreams_db)
+    searched: list[str] = []
+
+    def chat(**kwargs):
+        if "search queries" in str(kwargs.get("system_message") or ""):
+            return {"choices": [{"message": {"content":
+                "bike repair tips\n" + line}}]}
+        return _fake_chat(**kwargs)
+
+    def perform(search_engine, search_query, **kwargs):
+        searched.append(search_query)
+        return _bike_and_japan_perform(search_engine, search_query, **kwargs)
+
+    result = await run_cycle(
+        _deps(dreams_db, perform=perform, chat=chat), trigger="manual")
+
+    assert searched == ["bike repair tips", query]
+    japan = _stories_by_url(
+        dreams_db, result["collection_id"])["https://dreams.test/japan"]
+    assert (japan["query"], japan["goal"]) == (query, _GOAL_JAPAN)
+
+
+@pytest.mark.asyncio
+async def test_spacings_of_one_keyword_fold_into_one_row_and_old_rows_stay(
+        dreams_db, monkeypatch):
+    """Review round 6, G-N5: the pin round 5 described. Derived keywords
+    spelled with two spaces and with a no-break space fold into ONE row
+    "rust tui", their weights summed. Rows an earlier build stored with a
+    run of spaces are not rewritten: the derived one is left to decay,
+    the user's own stays exactly as typed."""
+    from tldw_chatbook.Dreams import profile_sources
+    from tldw_chatbook.Dreams.cycle_service import _refresh_profile_signals
+
+    dreams_db.upsert_profile_entry(
+        "topic", "rust  tui", weight=0.4, searchable=1, source="notes")
+    dreams_db.upsert_profile_entry(
+        "topic", "jazz  guitar", weight=0.3, searchable=1, source="user")
+    monkeypatch.setattr(
+        profile_sources, "read_note_topics",
+        lambda _db: [{"facet": "topic", "text": "rust  tui", "weight": 0.5}])
+    monkeypatch.setattr(
+        profile_sources, "read_media_topics",
+        lambda _db: [{"facet": "topic", "text": "rust\u00a0tui", "weight": 0.3}])
+    deps = _deps(dreams_db)
+    deps.chachanotes_db_getter = lambda: object()
+    deps.media_db_getter = lambda: object()
+
+    assert await _refresh_profile_signals(deps, NOW) == []
+
+    rows = {row["text"]: row for row in dreams_db.list_profile()}
+    assert set(rows) == {"rust tui", "rust  tui", "jazz  guitar"}
+    assert rows["rust tui"]["weight"] == pytest.approx(0.8)
+    assert rows["rust tui"]["source"] == "notes"
+    assert rows["rust  tui"]["weight"] == pytest.approx(0.4), "left to decay"
+    assert (rows["jazz  guitar"]["weight"], rows["jazz  guitar"]["source"]) == (
+        pytest.approx(0.3), "user"), "a user's own row stays as typed"
+
+
+# --- Follow-up to #2921: Guardian consent compares stored forms ------------------
+#
+# The cycle refuses to go on when a Guardian-sourced topic in its snapshot is
+# no longer one Guardian consents to. The snapshot holds the topic in its
+# STORED form (the profile text rule: NFC, invisible characters removed,
+# spaces collapsed, lowercased by the merge); the check compared it with the
+# RAW Guardian label, so any label the stored form changes never matched and
+# every cycle halted.
+
+
+def _guardian_with_topic(tmp_path, monkeypatch, label):
+    from tldw_chatbook.DB.Guardian_DB import GuardianDB
+    from tldw_chatbook.Guardian import settings as guardian_settings
+
+    monkeypatch.setattr(
+        guardian_settings, "guardian_setting",
+        lambda key, default=None: True if key == "enabled" else default)
+    guardian = GuardianDB(tmp_path / "guardian.sqlite", "consent")
+    rule = guardian.upsert_rule(
+        name="topic", topic=label, pattern="x", feeds_discovery=1)
+    guardian.insert_alert(rule_id=rule, session_id="a", visit_id="v",
+                          topic=label, message_digest="a" * 64)
+    return guardian, rule
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "label, stored",
+    [
+        ("late  night radio", "late night radio"),
+        ("late\u00a0night radio", "late night radio"),
+        ("Cafe\u0301 culture", "caf\u00e9 culture"),
+        ("jazz\u200bguitar", "jazzguitar"),
+        ("x\u2062y plots", "xy plots"),
+    ],
+    ids=["two-spaces", "no-break-space", "decomposed-accent",
+         "zero-width-space", "invisible-times"],
+)
+async def test_a_guardian_topic_the_stored_form_changes_keeps_its_consent(
+        tmp_path, dreams_db, settings, monkeypatch, label, stored):
+    guardian, _rule = _guardian_with_topic(tmp_path, monkeypatch, label)
+    searched: list[str] = []
+
+    def perform(search_engine, search_query, **kwargs):
+        searched.append(search_query)
+        return _fake_perform(search_engine, search_query, **kwargs)
+
+    try:
+        deps = _deps(dreams_db, perform=perform)
+        deps.guardian_db_getter = lambda: guardian
+
+        result = await run_cycle(deps, trigger="scheduled")
+
+        assert {row["text"] for row in dreams_db.list_profile()
+                if row["source"] == "guardian"} == {stored}, "fixture"
+        assert result["status"] == "complete", result
+        assert searched, "the cycle searched: the consent check held"
+    finally:
+        guardian.close()
+
+
+@pytest.mark.asyncio
+async def test_a_guardian_topic_whose_consent_is_withdrawn_still_halts_the_cycle(
+        tmp_path, dreams_db, settings, monkeypatch):
+    """The control: the same awkward label, consent withdrawn while the
+    cycle waits for its provider. Nothing goes out after that."""
+    guardian, rule = _guardian_with_topic(
+        tmp_path, monkeypatch, "late  night radio")
+    calls: list[str] = []
+
+    def chat(**kwargs):
+        calls.append("model")
+        return _fake_chat(**kwargs)
+
+    def perform(search_engine, search_query, **kwargs):
+        calls.append("search")
+        return _fake_perform(search_engine, search_query, **kwargs)
+
+    def resolve():
+        guardian.upsert_rule(id=rule, feeds_discovery=0)  # withdrawn
+        return chat
+
+    try:
+        deps = _deps(dreams_db, perform=perform)
+        deps.chat_getter = resolve
+        deps.guardian_db_getter = lambda: guardian
+
+        await run_cycle(deps, trigger="scheduled")
+
+        assert calls == [], "no model call and no search after withdrawal"
+    finally:
+        guardian.close()

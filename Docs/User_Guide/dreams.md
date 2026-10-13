@@ -34,9 +34,9 @@ The same page lets you:
 A topic, a goal and the region are each one line of plain text of at most
 200 characters. They are counted as Unicode code points: a letter or a
 simple emoji is one, while a flag, a skin-toned or a family emoji is
-several (a subdivision flag such as Scotland's is seven). An accent
-typed as a separate mark counts together with its letter where Unicode
-has one character for the pair, and as one more where it has not. The
+several (a subdivision flag such as Scotland's is seven). Accents and
+other marks on a letter do not count, however they were typed — but the
+text may not be longer than 600 code points in all, marks included. The
 rule is about
 what the text is, not what it mentions — `JavaScript: The Good Parts`,
 `<b>` or `[b]` are fine: Dreams stores them as typed, shows them as
@@ -48,8 +48,11 @@ are written as parentheses, because those screens read `[…]` as
 formatting. What is refused — the notice says which of these it was —
 while your typed text stays in the field to fix:
 
-- text with nothing to read in it: blank, punctuation only, or made only
-  of invisible characters. A single emoji or symbol is enough;
+- text with nothing to read in it. A letter or a number in any script is
+  enough, and so is an emoji — typed with or without the invisible emoji
+  selector (a keycap such as #️⃣, ‼, ◽ and the skin-tone swatches included)
+  — or a symbol such as ♥, € or ©. Punctuation, maths signs
+  (+, ∞, →), accents and invisible characters on their own are not;
 - line breaks and control characters, including Unicode's line and
   paragraph separators;
 - hidden text-direction controls, which make text display in a different
@@ -57,18 +60,23 @@ while your typed text stays in the field to fix:
 - other invisible formatting characters that change what the text is
   without showing. The invisible joiners and direction marks that emoji,
   flags, and right-to-left, Persian or Mongolian text need are fine;
+- characters that are not text at all (Unicode's noncharacters, or half
+  of a broken character pair);
 - text longer than 200 characters.
 
 A few invisible characters that are not part of what you mean are simply
-left out instead of refused: zero-width spaces (Thai and Khmer keyboards
-type them between words), soft hyphens, and the stray marks a paste can
-carry along. A blank braille cell or a Hangul filler is saved as a space.
+left out instead of refused: zero-width spaces (Khmer keyboards type them
+between words, and Thai text copied from the web often carries them),
+soft hyphens, the invisible operators pasted maths carries, and the
+stray marks a paste can carry along. A blank braille cell or a Hangul
+filler is saved as a space, and every run of spaces is saved as one.
 
 Two spellings of the same accented phrase (the accent typed as part of the
-letter, or as a separate mark) are saved as one topic from now on. A
-topic that an earlier version saved in the separate-mark spelling keeps
-that spelling, so adding it again makes a second topic beside it; remove
-the old one.
+letter, or as a separate mark), and two spacings of the same phrase, are
+saved as one topic from now on. A topic that an earlier version saved in
+the separate-mark spelling, or with two spaces (or a no-break space)
+between its words, keeps that spelling, so adding it again makes a
+second topic beside it; remove the old one.
 
 A `region` in `config.toml` that breaks these rules is ignored — Dreams
 behaves as if no region were set — until you correct it. Settings says so
@@ -166,7 +174,7 @@ the defaults:
 | `model` | none | Pin a model; falls back to the provider's remembered model. |
 | `stories_per_cycle` | `5` | Stories one dated collection fills up with. |
 | `queries_per_cycle` | `3` | Search queries synthesized per cycle. |
-| `exploration_slots` | `1` | How many of the queries the model is asked to aim at adjacent (non-profile) topics. A request in the prompt, not a reserved slot. The fallback queries used when the model is unavailable always contain exactly one such line (`surprising adjacent to <your top topic>`), whatever this is set to. |
+| `exploration_slots` | `1` | How many of the queries the model is asked to aim at adjacent (non-profile) topics. A request in the prompt, not a reserved slot. The fallback queries used when the model is unavailable contain one such line whatever this is set to — `surprising adjacent to <your top topic>`, or `curious new things this week` when you have no topics — except when `queries_per_cycle` is 1 and you have a topic or a goal: then the one query is that topic's or goal's line. |
 | `search_engine` | `"duckduckgo"` | Web search engine used. |
 | `web_search_enabled` | `true` | Kill switch for web search; false means LLM-knowledge stories. |
 | `region` | `""` | Your region. Sent with every synthesis and story prompt, usable in searches, and substituted for `{region}` in tracked questions; a story is labelled with it only when it appears in the story's source text. |
@@ -305,7 +313,9 @@ watch is checked more often than once per
   time cannot overspend a budget between them. The other side of
   counting first: if the app is closed, or a cycle or check is cut off,
   at the very moment one has been counted but not yet sent, that one
-  stays counted — at most one search and one model call each time.
+  stays counted — at most one search and one model call for each cycle
+  or check that was cut off (several checks cut off together leave one
+  each).
 - When a cycle stops short of its plan — the search budget was used up
   by other Dreams work part-way, no model call was left for a story, a
   source failed — it records why with that day's collection. Read the
