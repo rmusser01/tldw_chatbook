@@ -1417,6 +1417,47 @@ async def test_a_committed_model_past_the_result_cap_stays_marked_and_first():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model_catalog", "expected"),
+    [
+        (
+            {"auto_refresh_enabled": False},
+            "Catalog refresh is off. Showing 4 configured models.",
+        ),
+        (
+            {"auto_refresh_enabled": True, "auto_refresh_disabled": ["OpenRouter"]},
+            "Catalog refresh is off. Showing 4 configured models.",
+        ),
+        (
+            {"auto_refresh_enabled": True, "auto_refresh_disabled": ["OpenAI"]},
+            "Live catalog unavailable. Showing 4 configured models.",
+        ),
+    ],
+    ids=["refresh-off", "provider-opted-out", "refresh-on"],
+)
+async def test_saved_only_list_says_catalog_refresh_is_off_when_it_is(
+    monkeypatch, model_catalog, expected
+):
+    """Capture finding 20: with catalog refresh turned off, the picker opened
+    with no filter said "Live catalog unavailable. Showing 14 configured
+    models.", which reads like a fault. It says refresh is off, globally or
+    for this provider; "unavailable" stays for a refresh that is on."""
+    import tldw_chatbook.Widgets.model_search_picker as picker_module
+
+    monkeypatch.setattr(
+        picker_module, "load_settings", lambda: {"model_catalog": model_catalog}
+    )
+    app = PickerTestApp(
+        {"OpenRouter": ["a/big", "a/mini-two", "a/mini", "c/other"]},
+        (),
+        current_model="a/big",
+    )
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        assert _status_text(app) == expected
+
+
+@pytest.mark.asyncio
 async def test_a_typed_filter_counts_matches_highlights_the_first_and_enter_picks_it():
     """Capture 02 (TASK-33007 fix 8): with a filter typed the status still
     read "Showing 14 configured models", and no row was highlighted, so

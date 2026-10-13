@@ -817,7 +817,10 @@ matching models. Type to narrow the list." A catalog warning takes that
 line first: "Current model is not in the latest catalog. Choose another or
 keep it.", "Catalog unavailable. Use a configured model or Custom ID." and
 "Live catalog unavailable. Showing N configured models." are never replaced
-by the count, however long the list.
+by the count, however long the list. When catalog refresh is turned off (for
+every provider, or for this one in its list of opted-out providers), the last
+of these says why instead: "Catalog refresh is off. Showing N configured
+models."
 
 #### QwenCloud in Console
 

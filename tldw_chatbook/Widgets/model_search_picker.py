@@ -19,8 +19,10 @@ from textual.widgets.input import Selection
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.config import load_settings
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
+    load_model_catalog_settings,
 )
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
@@ -72,6 +74,27 @@ def normalize_model_id(value: object | None) -> str | None:
 
 def _count(count: int, noun: str) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _catalog_refresh_off(provider_key: str) -> bool:
+    """Whether catalog refresh skips this provider: off, or opted out.
+
+    Args:
+        provider_key: A ``provider_config_key`` name.
+
+    Returns:
+        True when ``[model_catalog]`` turns refresh off or lists the
+        provider in ``auto_refresh_disabled``; False when the config
+        cannot be read.
+    """
+    try:
+        settings = load_model_catalog_settings(load_settings())
+    except Exception:  # noqa: BLE001 - the status line then names no cause
+        return False
+    return (
+        not settings.auto_refresh_enabled
+        or provider_key in settings.auto_refresh_disabled
+    )
 
 
 class PickerSearchInput(Input):
@@ -702,8 +725,14 @@ class ModelSearchPicker(Widget):
             and sources
             and sources <= {"saved"}
         ):
+            # Capture finding 20: with refresh off, "unavailable" read as a fault.
+            cause = (
+                "Catalog refresh is off"
+                if _catalog_refresh_off(cache_key)
+                else "Live catalog unavailable"
+            )
             self._set_status(
-                f"Live catalog unavailable. Showing {_count(len(model_ids), 'configured model')}."
+                f"{cause}. Showing {_count(len(model_ids), 'configured model')}."
             )
             return
         if matched is not None:
