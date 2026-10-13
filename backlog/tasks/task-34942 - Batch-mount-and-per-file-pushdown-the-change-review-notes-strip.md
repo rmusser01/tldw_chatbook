@@ -1,15 +1,16 @@
 ---
 id: TASK-34942
 title: Batch-mount-and-per-file-pushdown-the-change-review-notes-strip
-status: To Do
+status: Done
 assignee: []
-created_date: '2026-10-13 14:59'
+created_date: 2026-10-13 14:59
 labels:
-  - performance
-  - ui-perf
-  - wave-4-blocking-rebuilds
+- performance
+- ui-perf
+- wave-4-blocking-rebuilds
 dependencies: []
 priority: low
+updated_date: 2026-10-13 19:16
 ---
 
 ## Description
@@ -20,5 +21,6 @@ Change-review _focus_leaf fetches notes_for_run (ALL run notes) then Python-filt
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Notes strip rebuilt with a single batched mount,Per-focus note query narrowed to the focused file or run notes cached once per run
+- [x] Notes strip rebuilt with a single batched mount
+- [x] Per-focus note query narrowed to the focused file or run notes cached once per run
 <!-- AC:END -->
