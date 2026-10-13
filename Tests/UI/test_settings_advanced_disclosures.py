@@ -905,11 +905,15 @@ async def test_custom_id_keeps_its_edge_on_one_row(request, size):
     ],
 )
 @private_profile_test
-async def test_save_selected_names_the_provider_in_its_receipt(request, saved, receipt):
+async def test_save_selected_names_the_provider_in_its_receipt(
+    request, monkeypatch, saved, receipt
+):
     """Capture fix 3, finding 6: Save selected's line printed the config key
     and "model(s)", "Saved 1 discovered model(s) to openai.". It names the
     provider by its display name and counts in words, as the discovery toast
-    does."""
+    does. Round 1, finding 4: the line is the one report; the toast
+    "Discovered models saved." came with it, even for a save that wrote
+    nothing."""
     app = _app(discovered=_DISCOVERED)
     app.llm_provider_catalog_scope_service.persistence_result = PersistenceResult(
         provider="openai",
@@ -926,6 +930,8 @@ async def test_save_selected_names_the_provider_in_its_receipt(request, saved, r
         listing = screen.query_one("#settings-discovered-models-list", SelectionList)
         listing.select("gpt-new-1")
         await pilot.pause()
+        toasts: list[str] = []
+        monkeypatch.setattr(host, "notify", lambda message, **_: toasts.append(message))
         screen.query_one("#settings-save-discovered-provider-models", Button).press()
         await _until(
             pilot, lambda: app.llm_provider_catalog_scope_service.persist_calls
@@ -935,3 +941,50 @@ async def test_save_selected_names_the_provider_in_its_receipt(request, saved, r
 
         status = screen.query_one("#settings-model-discovery-status", Static)
         assert str(status.renderable) == receipt
+        assert toasts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("selected", "line"),
+    [
+        ((), "Select discovered models to save."),
+        (("gpt-new-1",), "Config is not writable."),
+    ],
+    ids=["nothing-selected", "refused"],
+)
+@private_profile_test
+async def test_save_selected_that_saves_nothing_reports_on_its_line_only(
+    request, monkeypatch, selected, line
+):
+    """Capture fix 3 round 1, finding 4: with nothing selected, or a save the
+    service refused, Save selected wrote its line and also toasted ("Select
+    discovered models before saving.", "Discovered model save failed.").
+    As for discovery, the line beside the button just pressed is the one
+    report."""
+    app = _app(discovered=_DISCOVERED)
+    app.llm_provider_catalog_scope_service.persistence_result = PersistenceResult(
+        provider="openai",
+        provider_list_key="OpenAI",
+        status="error",
+        message=line,
+    )
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        await _discover(host, pilot, screen)
+        listing = screen.query_one("#settings-discovered-models-list", SelectionList)
+        for model_id in selected:
+            listing.select(model_id)
+        await pilot.pause()
+        toasts: list[str] = []
+        monkeypatch.setattr(host, "notify", lambda message, **_: toasts.append(message))
+        screen.query_one("#settings-save-discovered-provider-models", Button).press()
+        status = screen.query_one("#settings-model-discovery-status", Static)
+        await _until(pilot, lambda: str(status.renderable) == line)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert str(status.renderable) == line
+        assert toasts == []

@@ -247,13 +247,16 @@ Open **Saved model list**, then use **Tab** to reach the discovered-model
 list, arrow keys to move, and **Space** to select a model; its row then starts
 with **selected**. Checked rows, and the **Served now** rows in Model,
 survive leaving this category and returning within Settings. **Save selected** immediately appends those exact
-model IDs to that provider’s saved list. If Model is empty, the first newly
+model IDs to that provider’s saved list and reports once, on the line above
+**Discover models**: "Saved 2 discovered models to OpenAI.", "The selected
+models are already saved for OpenAI." when none was new, or why nothing was
+saved ("Select discovered models to save." with none checked). If Model is empty, the first newly
 saved ID fills it as an unsaved draft; an existing Model value is kept.
 **Clear** removes discovered results (and their **Served now** rows in Model),
 while keeping the saved list. A failed save or clear keeps the checked rows for retry.
 A **Save selected** that has started always finishes: pressing **Discover models**
-or **Clear** meanwhile does not cancel it, and "Discovered models saved." is
-still shown when it lands.
+or **Clear** meanwhile does not cancel it, and as that line is then theirs,
+its report is a toast with the same words when it lands.
 Changing provider, endpoint or credentials clears the old results; a delayed
 operation cannot replace the new form’s results or Model value.
 

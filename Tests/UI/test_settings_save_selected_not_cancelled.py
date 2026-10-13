@@ -102,5 +102,8 @@ async def test_save_selected_is_not_cancelled_by_discover_or_clear(
 
         assert scope.saved == (_SERVED,)
         assert _SERVED in app.providers_models["OpenAI"]
-        assert "Discovered models saved." in toasts, toasts
+        # Capture fix 3 round 1, finding 4, rewritten on purpose: the line
+        # belongs to the Discover or Clear pressed since, so the toast is the
+        # one report and says what the line would have said.
+        assert toasts.count("Saved 1 discovered model to OpenAI.") == 1, toasts
         assert ("openai", True) in reloads, reloads

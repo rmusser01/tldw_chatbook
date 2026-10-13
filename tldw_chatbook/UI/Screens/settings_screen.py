@@ -16839,11 +16839,9 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             selected_model_ids = sorted(self._model_discovery_selected_model_ids)
         if not selected_model_ids:
+            # Capture fix 3 round 1, finding 4: the line is the one report.
             self._model_discovery_status = "Select discovered models to save."
             self._refresh_model_discovery_widgets()
-            self.app.notify(
-                "Select discovered models before saving.", severity="warning"
-            )
             return
 
         self._model_discovery_selected_model_ids = set(selected_model_ids)
@@ -16887,13 +16885,20 @@ class SettingsScreen(BaseAppScreen):
         if status == "saved":
             provider_list_key = getattr(result, "provider_list_key", None)
             self._append_saved_discovered_models(provider_list_key, saved_model_ids)
-            self.app.notify("Discovered models saved.", severity="information")
+            count, label = len(saved_model_ids), self._provider_display_label(provider)
+            receipt = (
+                f"Saved {count} discovered model{'' if count == 1 else 's'} to {label}."
+                if count
+                else f"The selected models are already saved for {label}."
+            )
             # The save belongs to its original provider even if the form moved.
-            # Discover or Clear since the press own the status line; the saved
-            # ids still group as saved while the form holds that provider.
+            # Discover or Clear since the press own the status line, so the
+            # receipt is a toast (its one report); the saved ids still group
+            # as saved while the form holds that provider.
             if revision != self._model_discovery_revision:
                 if provider_config_key(self._provider_widget_value()) == provider_key:
                     self._sync_model_picker(provider, reload=True)
+                self.app.notify(receipt, severity="information", markup=False)
                 return
             # TASK-369: recognition over recall — offer the saved model for
             # activation instead of leaving an empty Model field the user must
@@ -16902,12 +16907,7 @@ class SettingsScreen(BaseAppScreen):
             self._activate_saved_model_if_field_empty(saved_model_ids)
             # The saved ids now group as saved in the Default model picker.
             self._sync_model_picker(provider, reload=True)
-            count, label = len(saved_model_ids), self._provider_display_label(provider)
-            self._model_discovery_status = (
-                f"Saved {count} discovered model{'' if count == 1 else 's'} to {label}."
-                if count
-                else f"The selected models are already saved for {label}."
-            )
+            self._model_discovery_status = receipt
             self._refresh_model_discovery_widgets()
             return
 
@@ -16920,7 +16920,6 @@ class SettingsScreen(BaseAppScreen):
                 message or "Could not save discovered models."
             )
         self._refresh_model_discovery_widgets()
-        self.app.notify("Discovered model save failed.", severity="warning")
 
     @work(exclusive=True, group="settings-model-discovery")
     async def _clear_discovered_provider_models_worker(self) -> None:
