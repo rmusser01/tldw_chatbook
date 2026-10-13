@@ -52,7 +52,7 @@ enabled = true
 host = "localhost"
 port = 8000
 title = "tldw chatbook"
-font_size = 12
+font_size = 16
 debug = false
 # Required for non-loopback access. Prefer the dedicated environment variable
 # or OS keyring to storing this credential in plaintext here.
@@ -69,9 +69,16 @@ trusted_proxy_addresses = []
 allow_insecure_remote_http = false
 ```
 
-`font_size` controls the browser terminal cell density. The default `12` keeps
-the web UI close to native terminal screenshots; use `?fontsize=16` in the URL
-or set `font_size = 16` if you prefer larger text.
+`font_size` controls the browser terminal text size in CSS pixels. The default
+is `16`, approximately the same text size as a terminal configured to 12 points.
+Font family, display scaling, and the available character grid can still affect
+appearance and wrapping.
+
+A valid `?fontsize=12` URL parameter overrides the saved setting for that page;
+otherwise `[web_server] font_size` takes precedence over the default. Existing
+saved sizes are preserved. To adopt the new default on an existing profile, set
+**Settings → Appearance → Web font size (px)** to `16`, or update the config and
+reload the page. Valid sizes are whole numbers from `6` to `32`.
 
 ## Remote access and authentication
 

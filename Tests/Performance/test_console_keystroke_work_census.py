@@ -1509,6 +1509,9 @@ async def test_console_storage_units_stay_within_their_ratchets(
             "_count_storage_units wraps for it is no longer on the production "
             "path, so every ceiling below would pass vacuously."
         )
+    # PERF-06: a warm credential observer must not re-admit cached settings.
+    assert census["credential poll (per tick)"]["config_admissions"] == 0
+    assert census["credential poll (per tick)"]["storage_admissions"] == 0
     slack = {"os_opens": OS_OPENS_JITTER_SLACK}
     over = [
         f"{phase} {unit}: {value} > ceiling {ceiling}"

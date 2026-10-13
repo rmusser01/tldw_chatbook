@@ -3,6 +3,7 @@ from importlib.resources import files as _resource_files
 
 import pytest
 
+from tldw_chatbook import config
 from tldw_chatbook.Web_Server import serve
 
 pytestmark = pytest.mark.skipif(
@@ -47,6 +48,10 @@ class FakeTextualServeServer:
 
 
 def _make_test_server(**kwargs):
+    kwargs.setdefault(
+        "canvas_policy",
+        config.build_canvas_config_policy({"canvas": {"enabled": False}}),
+    )
     server_class = serve.build_chatbook_web_server_class(FakeTextualServeServer)
     return server_class(
         command="python -m tldw_chatbook.app",
@@ -57,25 +62,48 @@ def _make_test_server(**kwargs):
     )
 
 
-def test_web_font_size_defaults_to_dense_terminal_cells(monkeypatch):
-    monkeypatch.setattr(serve, "get_cli_setting", lambda *_, default=None: default)
+@pytest.mark.parametrize("settings", [{}, config.DEFAULT_CONFIG_FROM_TOML])
+def test_web_font_size_defaults_to_16px_for_missing_and_generated_config(
+    monkeypatch, settings
+):
+    monkeypatch.setattr(
+        serve,
+        "get_cli_setting",
+        lambda section, key, default=None: settings.get(section, {}).get(key, default),
+    )
 
-    assert serve.resolve_web_font_size(None) == 12
+    assert serve.resolve_web_font_size(None) == 16
 
 
 def test_web_font_size_query_overrides_default(monkeypatch):
     monkeypatch.setattr(serve, "get_cli_setting", lambda *_, default=None: default)
 
-    assert serve.resolve_web_font_size("16") == 16
+    assert serve.resolve_web_font_size("12") == 12
 
 
-def test_web_font_size_config_fills_missing_or_invalid_query(monkeypatch):
-    monkeypatch.setattr(serve, "get_cli_setting", lambda *_, default=None: "14")
+@pytest.mark.parametrize("configured_size", [12, "14"])
+def test_web_font_size_config_fills_missing_or_invalid_query(
+    monkeypatch, configured_size
+):
+    monkeypatch.setattr(
+        serve, "get_cli_setting", lambda *_, default=None: configured_size
+    )
 
-    assert serve.resolve_web_font_size(None) == 14
-    assert serve.resolve_web_font_size("not-a-size") == 14
-    assert serve.resolve_web_font_size("64") == 14
-    assert serve.resolve_web_font_size("12.5") == 14
+    assert serve.resolve_web_font_size(None) == int(configured_size)
+    assert serve.resolve_web_font_size("not-a-size") == int(configured_size)
+    assert serve.resolve_web_font_size("64") == int(configured_size)
+    assert serve.resolve_web_font_size("12.5") == int(configured_size)
+
+
+@pytest.mark.parametrize("configured_size", [None, "huge", 5, 33, 12.5])
+def test_web_font_size_invalid_config_uses_16px_fallback(monkeypatch, configured_size):
+    monkeypatch.setattr(
+        serve, "get_cli_setting", lambda *_, default=None: configured_size
+    )
+
+    assert serve.resolve_web_font_size(None) == 16
+    assert serve.resolve_web_font_size("not-a-size") == 16
+    assert serve.resolve_web_font_size("12") == 12
 
 
 def test_textual_serve_resize_patch_forces_full_terminal_repaint():
@@ -317,7 +345,7 @@ def test_served_shell_derives_same_origin_terminal_websocket_url():
 
     assert (
         '(location.protocol === "https:" ? "wss://" : "ws://")'
-        " + location.host + \"/ws\"" in shell
+        ' + location.host + "/ws"' in shell
     )
     assert 'data-session-websocket-url="__APP_WEBSOCKET_URL__"' in _served_shell_html()
 
@@ -327,7 +355,9 @@ def test_served_shell_stops_canvas_session_poll_after_disable():
     switch that cannot recover without a restart, so the 1 Hz poll must
     stop instead of firing forever."""
     shell = _served_shell_js()
-    disable_body = shell[shell.index("function disableCanvas") : shell.index("function applyState")]
+    disable_body = shell[
+        shell.index("function disableCanvas") : shell.index("function applyState")
+    ]
 
     assert "clearInterval" in disable_body
 
@@ -361,7 +391,6 @@ def test_served_shell_versions_the_cached_textual_bundle():
 
 
 def test_handle_index_substitutes_bundle_fingerprint(tmp_path):
-
     js_dir = tmp_path / "js"
     js_dir.mkdir()
     source = (

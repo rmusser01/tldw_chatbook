@@ -933,6 +933,7 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
     )
     from tldw_chatbook.Chat.provider_test_evidence import (
         ProviderTestEvidenceStore,
+        provider_connection_evidence,
     )
 
     harness = _ConsoleFlowHarness(_persisted_console_app())
@@ -948,6 +949,8 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
             real_sync(),
         )
 
+        snapshot = console._console_credential_snapshot
+        console._console_sync_maintenance_close_admission()
         store = ProviderTestEvidenceStore(lambda: harness)
         store.settle(
             store.begin(
@@ -965,12 +968,95 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
         )
         for _ in range(3):
             console._poll_console_credential_readiness()
+        assert not refreshes
+        assert console._console_credential_snapshot == snapshot
+        console._console_sync_maintenance_resume()
+        for _ in range(3):
+            console._poll_console_credential_readiness()
         assert len(refreshes) == 1  # Counted before any other tick can run.
 
         await pilot.pause()
         assert _rail_text(console, "#console-settings-readiness-row") == (
             "Not ready · timed out"
         )
+
+        from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery import storage_admission
+
+        identity = console._active_console_settings_readiness()[1].connection
+        assert identity is not None
+        assert console._console_config_snapshot_is_disk_loaded(
+            console._provider_readiness_app_config()
+        )
+        store.settle(
+            store.begin(identity), ProviderProbeResult("reachable", ("model-a",))
+        )
+        snapshot = console._console_credential_snapshot
+        pauses, control_results = [], []
+        real_control = console._sync_console_control_bar
+
+        def summary_then_pause():
+            real_sync()
+            pauses.append(storage_admission._begin_local_pause())
+
+        def checked_control():
+            result = real_control()
+            control_results.append(result)
+            return result
+
+        console._sync_console_settings_summary = summary_then_pause
+        console._sync_console_control_bar = checked_control
+        try:
+            console._poll_console_credential_readiness()
+            assert len(pauses) == 1
+            assert control_results == [False]
+            assert console._console_credential_snapshot == snapshot
+        finally:
+            console._sync_console_settings_summary = real_sync
+            console._sync_console_control_bar = real_control
+            for pause in reversed(pauses):
+                pause.resume()
+        console._poll_console_credential_readiness()
+        assert (
+            console._console_credential_snapshot[2]
+            == provider_connection_evidence(harness).version
+        )
+
+        # A genuine cold reader still defers at native storage admission.
+        snapshot = console._console_credential_snapshot
+        store.settle(
+            store.begin(identity), ProviderProbeResult("unreachable", (), "timeout")
+        )
+        pause = storage_admission._begin_local_pause()
+        try:
+            config._invalidate_config_caches()
+            assert not console._console_sync_maintenance_paused
+            console._poll_console_credential_readiness()
+            assert console._console_credential_snapshot == snapshot
+        finally:
+            pause.resume()
+        console._poll_console_credential_readiness()
+        assert (
+            console._console_credential_snapshot[2]
+            == provider_connection_evidence(harness).version
+        )
+
+        # A cold lookup cannot adopt a different selected configuration source.
+        import os
+
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+        selected = os.environ["TLDW_CONFIG_PATH"]
+        snapshot = console._console_credential_snapshot
+        os.environ["TLDW_CONFIG_PATH"] = selected + ".other"
+        try:
+            with pytest.raises(RecoveryRequired):
+                console._poll_console_credential_readiness()
+            assert console._console_credential_snapshot == snapshot
+        finally:
+            os.environ["TLDW_CONFIG_PATH"] = selected
+        console._poll_console_credential_readiness()
+        assert console._console_credential_snapshot == snapshot
 
 
 _KEYED_VLLM_CONFIG = {

@@ -29,7 +29,7 @@ from .settings_config_models import SettingsValidationResult
 
 DEFAULT_THEME = "textual-dark"
 DEFAULT_PALETTE_THEME_LIMIT = 1
-DEFAULT_FONT_SIZE = 12
+DEFAULT_FONT_SIZE = 16
 DEFAULT_DENSITY = "normal"
 DEFAULT_ANIMATIONS_ENABLED = True
 DEFAULT_SMOOTH_SCROLLING = True

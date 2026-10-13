@@ -408,13 +408,20 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
                 assert case.console._console_control_bar_sync_scheduled
                 case.rules._project(other_session_id, phase="repairing")
                 assert "Testing rule" in str(chip.render())
+                # Exercise the armed timer before Stop, without relying on cadence.
+                await case.console._console_credential_poll_timer._tick(
+                    next_timer=time.monotonic(), count=0
+                )
+                assert not expired.is_set(), "credential timer blocked the UI loop"
                 stop.press()
                 async with asyncio.timeout(1):
-                    while case.rules.state(case.session_id).phase != "idle":
+                    while case.rules.state(case.session_id).phase != "idle" or (
+                        chip.display and "Testing rule" in str(chip.render())
+                    ):
                         await asyncio.sleep(0.01)
                 assert not expired.is_set() and not release.is_set()
                 assert holder.is_alive()
-                assert "Testing rule" not in str(chip.render())
+                assert not chip.display or "Testing rule" not in str(chip.render())
                 assert case.rules.state(other_session_id).phase == "repairing"
                 assert not case.rules.acceptance_current(source)
                 assert case.rules.helpers.unsettled_count == 1
@@ -468,6 +475,9 @@ async def test_rule_phase_events_project_only_the_mounted_current_session(
         await case.host.pop_screen()
         await case.pilot.pause()
         assert not case.console.is_attached
+        snapshot = case.console._console_credential_snapshot
+        case.console._poll_console_credential_readiness()
+        assert case.console._console_credential_snapshot == snapshot
         before = str(chip.render())
         case.rules._project(case.session_id, phase="checking")
         assert str(chip.render()) == before
