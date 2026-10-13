@@ -3776,7 +3776,11 @@ shrinking steps after a sibling's `_check_refresh` went red. The fix bumps the l
 
 **What to do.** Same as above, and when a relabel depends on geometry, run it
 after the refresh rather than inside the resize handler, then assert the
-region, not the string.
+region, not the string. When the content can change again before that widget's
+idle (a burst of async answers), its own `refresh(layout=True)` is not enough
+either, and deferring the change is no fix when the answers drive it: bump its
+`_layout_updates` with every change, as Switch model's `_rebuild_rows` does
+(`console_model_popover.py`, after `add_options`).
 
 ---
 
