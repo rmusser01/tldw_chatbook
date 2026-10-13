@@ -2934,6 +2934,46 @@ async def test_the_enter_label_follows_the_highlighted_rows_kind() -> None:
     }, labels
 
 
+@pytest.mark.parametrize(
+    "held",
+    [
+        {"draft": _draft("openai", None)},
+        {
+            "query": "OpenAI ",
+            "highlight_pair": ("openai", "gpt-5.1"),
+            "recent": (_KEYLESS_USE,),
+        },
+    ],
+    ids=["no-rows-yet", "reopened-unhighlighted"],
+)
+async def test_the_enter_label_names_the_refusal_while_nothing_is_highlighted(
+    held,
+) -> None:
+    """Capture fix 2 round 1 finding 1: while providers are checked nothing
+    is highlighted (no rows yet, or a reopened list kept unhighlighted), and
+    Enter applies nothing there. The key row said "Enter apply to this chat";
+    it names the refusal until a row is highlighted."""
+    recorder, release = _held_recorder()
+    app = SwitcherHarness()
+    try:
+        async with app.run_test(size=(211, 44)) as pilot:
+            switcher = build_switcher(recorder, **held)
+            app.push_screen(switcher, callback=lambda result: None)
+            await pilot.pause()
+            await pilot.pause()
+            assert not switcher._first_readiness_done
+            assert switcher.highlighted_row() is None
+            apply = switcher.query_one("#console-popover-apply", Button)
+            assert str(apply.label) == "Enter choose a model first"
+
+            release.set()
+            await _settle(app, pilot)
+            assert switcher.highlighted_row() is not None
+            assert str(apply.label) != "Enter choose a model first"
+    finally:
+        release.set()
+
+
 @pytest.mark.parametrize("key", ["enter", "tab", "ctrl+n", "ctrl+o", "escape"])
 async def test_every_printed_key_works_while_find_has_focus(key) -> None:
     """AC#16: each printed accelerator acts from Find, on the highlighted pair."""

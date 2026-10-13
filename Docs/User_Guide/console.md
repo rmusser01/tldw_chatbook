@@ -866,8 +866,9 @@ The keys, printed under the values, work while you type in Find:
   ("Applies to: this chat only"), then closes and returns you to the
   composer; nothing is written to `config.toml`. Its label follows the
   highlighted row: "Enter set up in Settings" on a NEEDS SETUP row, "Enter
-  explain" on a server that did not answer, and "Enter show them" on a
-  "… N more" row.
+  explain" on a server that did not answer, "Enter show them" on a
+  "… N more" row, and "Enter choose a model first" while no row is
+  highlighted (Enter then applies nothing).
 - **Ctrl+N** makes the highlighted pair the default for new chats, with its
   Temperature, Max tokens and Streaming. **Save as model default** (no key;
   Shift+Tab from Find reaches it) saves those three as the model's defaults.

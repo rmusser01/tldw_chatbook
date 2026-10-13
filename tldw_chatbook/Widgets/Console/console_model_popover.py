@@ -119,6 +119,9 @@ APPLY_TO_CHAT_AND_NEW_CHATS_LABEL = "Enter apply to this chat and new chats"
 SET_UP_LABEL = "Enter set up in Settings"
 EXPLAIN_LABEL = "Enter explain"
 SHOW_MORE_LABEL = "Enter show them"
+#: No row highlighted (no rows yet, or kept unhighlighted while providers are
+#: checked): Enter refuses there, so the label never promises an apply.
+CHOOSE_FIRST_LABEL = "Enter choose a model first"
 #: Spec §2 / mockup (a): READY PROVIDERS shows this many models per provider.
 TOP_MODELS_PER_PROVIDER = 3
 #: Row caps that keep one open to a screenful; typing searches everything.
@@ -773,7 +776,8 @@ class ConsoleModelPopover(
             yield guard
             with Horizontal(id="console-popover-keys", classes="console-popover-strip"):
                 yield Button(
-                    self._apply_label,
+                    # No rows until the first rebuild (on_mount's is a no-op).
+                    self._enter_label(None),
                     id="console-popover-apply",
                     variant="primary",
                     compact=True,
@@ -1714,16 +1718,27 @@ class ConsoleModelPopover(
             apply = self.query_one("#console-popover-apply", Button)
             apply.label = self._enter_label(row)
 
-    def _enter_label(self, row: SwitcherRow | None) -> str:
-        """What Enter does on this row, as ``_activate`` does it."""
-        if row is not None and row.kind == "more":
-            return SHOW_MORE_LABEL
-        if row is not None and row.kind == "setup":
+    def _enter_action(self, row: SwitcherRow | None) -> str:
+        """What Enter does on this row: ``_activate`` acts on it, the key row
+        names it (one mapping, so the label never promises another action)."""
+        if row is None:
+            return "choose"
+        if row.kind == "more":
+            return "more"
+        if row.kind == "setup":
             readiness = self._readiness.get(provider_key(row.provider))
             if readiness is not None and _retries_in_place(readiness):
-                return EXPLAIN_LABEL
-            return SET_UP_LABEL
-        return self._apply_label
+                return "explain"
+            return "setup"
+        return "apply"
+
+    def _enter_label(self, row: SwitcherRow | None) -> str:
+        return {
+            "choose": CHOOSE_FIRST_LABEL,
+            "more": SHOW_MORE_LABEL,
+            "explain": EXPLAIN_LABEL,
+            "setup": SET_UP_LABEL,
+        }.get(self._enter_action(row), self._apply_label)
 
     def highlighted_row(self) -> SwitcherRow | None:
         """The row Enter acts on, or None when nothing is selectable."""
@@ -1795,10 +1810,11 @@ class ConsoleModelPopover(
         action: ConsoleSettingsAction = ConsoleSettingsAction.APPLY_TO_CHAT,
     ) -> None:
         """Enter: apply the highlighted pair, open its fix, or expand a provider."""
-        if row is None:
+        enter = self._enter_action(row)
+        if row is None:  # "choose"
             self._refuse_no_pair()
             return
-        if row.kind == "more":
+        if enter == "more":
             find = self.query_one("#console-popover-find", Input)
             find.value = f"{self._display(row.provider)} "
             find.cursor_position = len(find.value)
@@ -1814,10 +1830,12 @@ class ConsoleModelPopover(
                 self._release_mouse_capture()
                 self.dismiss_safe_once((provider_key(row.provider), row.model))
             return
-        if row.kind == "setup" and action is ConsoleSettingsAction.APPLY_TO_CHAT:
+        if (
+            enter in {"explain", "setup"}
+            and action is ConsoleSettingsAction.APPLY_TO_CHAT
+        ):
             key = provider_key(row.provider)
-            readiness = self._readiness.get(key)
-            if readiness is not None and _retries_in_place(readiness):
+            if enter == "explain":
                 self._set_error(
                     f"{self._display(key)} did not answer: start it; rechecked on open."
                 )
