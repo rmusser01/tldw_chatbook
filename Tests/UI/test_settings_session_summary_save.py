@@ -241,3 +241,51 @@ async def test_a_write_the_checkbox_started_leaves_newer_typed_text_alone(
         await _settle(host, pilot)
         assert config.writes[1:] == [{"enabled": True, "duration_seconds": 30}]
         assert field.value == "30"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_write_the_checkbox_started_leaves_an_emptied_field_alone(
+    request, monkeypatch
+):
+    """Fix round 2, finding 3: an empty field reads as the default 3, so a
+    write that sent 3 took it for the duration it carried and put "3" back
+    mid-edit: "5" typed next became "35", and Enter saved 30."""
+    config = _Config(monkeypatch)
+    release = threading.Event()
+    fake_save = settings_screen.save_settings_to_cli_config
+
+    def held_save(section_values) -> bool:
+        release.wait(10)
+        return fake_save(section_values)
+
+    monkeypatch.setattr(settings_screen, "save_settings_to_cli_config", held_save)
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        _screen, checkbox, field = await _open_session_summary(host, pilot)
+        checkbox.focus()
+        await pilot.pause()
+        await pilot.press("space")  # the write starts, carrying 3 s
+        await pilot.pause()
+        field.focus()
+        await pilot.pause()
+        await pilot.press("end", "backspace")
+        await pilot.pause()
+        assert field.value == ""
+
+        release.set()
+        await _settle(host, pilot)
+        assert config.writes == [{"enabled": True, "duration_seconds": 3}]
+        assert field.value == ""
+
+        await pilot.press("5", "enter")
+        await _settle(host, pilot)
+        assert config.writes[1:] == [{"enabled": True, "duration_seconds": 5}]
+        assert field.value == "5"
+
+        # Emptied and committed, the field reads the 3 s it saved (C8).
+        await pilot.press("backspace", "enter")
+        await _settle(host, pilot)
+        assert config.writes[2:] == [{"enabled": True, "duration_seconds": 3}]
+        assert field.value == "3"

@@ -17119,6 +17119,7 @@ class SettingsScreen(BaseAppScreen):
         if section_values == self._saved_session_summary():
             self._show_session_summary(section_values)  # "03" reads 3 again
             return
+        controls[1].value = str(section_values["session_summary"]["duration_seconds"])
         with self._session_summary_save_lock:
             start_worker = self._session_summary_pending_save is None
             self._session_summary_pending_save = section_values
@@ -17133,10 +17134,10 @@ class SettingsScreen(BaseAppScreen):
         values = shown["session_summary"]
         with controls[0].prevent(Checkbox.Changed):
             controls[0].value = values["enabled"]
-        typed = _session_summary_section_values(0, controls[1].value)["session_summary"]
-        # A finished write passes the duration it ``sent``: text typed in the
-        # focused field since then is newer and stays ("99" sent 30: reads 30).
-        if not controls[1].has_focus or sent in (None, typed["duration_seconds"]):
+        # A finished write passes the duration it ``sent``, which the field
+        # was set to when the write began: other text in the focused field,
+        # "" included, was typed since and stays.
+        if not controls[1].has_focus or sent is None or controls[1].value == str(sent):
             controls[1].value = str(values["duration_seconds"])
         self._refresh_advanced()  # the Advanced title says its state
 
