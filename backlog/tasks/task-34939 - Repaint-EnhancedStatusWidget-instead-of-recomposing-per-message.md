@@ -1,15 +1,16 @@
 ---
 id: TASK-34939
 title: Repaint-EnhancedStatusWidget-instead-of-recomposing-per-message
-status: To Do
+status: Done
 assignee: []
-created_date: '2026-10-13 14:58'
+created_date: 2026-10-13 14:58
 labels:
-  - performance
-  - ui-perf
-  - wave-4-blocking-rebuilds
+- performance
+- ui-perf
+- wave-4-blocking-rebuilds
 dependencies: []
 priority: low
+updated_date: 2026-10-13 19:08
 ---
 
 ## Description
@@ -20,5 +21,6 @@ EnhancedStatusWidget.messages is the last data reactive in the repo with recompo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 messages reactive drops recompose=True (refresh-only) or children update incrementally,Per-message cost is a repaint not a remove/remount cycle (test with N messages)
+- [x] messages reactive drops recompose=True (refresh-only) or children update incrementally
+- [x] Per-message cost is a repaint not a remove/remount cycle (test with N messages)
 <!-- AC:END -->

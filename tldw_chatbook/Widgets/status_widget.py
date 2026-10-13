@@ -79,7 +79,11 @@ class EnhancedStatusWidget(RecomposeCaptureGuard, Widget):
     }
     """
 
-    messages: reactive[List[StatusMessage]] = reactive(list, recompose=True)
+    # TASK-34939: refresh-only repaint. The widget renders via render()
+    # with no children, so per-message recomposes (a full remove/remount
+    # cycle each add) were pure scheduling overhead -- import loops call
+    # add_warning/add_error once per conversation.
+    messages: reactive[List[StatusMessage]] = reactive(list)
     max_messages: reactive[int] = reactive(100)
     show_timestamp: reactive[bool] = reactive(True)
     title: reactive[str] = reactive("Status")
