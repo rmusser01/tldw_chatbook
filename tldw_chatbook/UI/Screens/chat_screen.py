@@ -7416,6 +7416,12 @@ class ChatScreen(BaseAppScreen):
         # Message action, preview, speaking, and swipe state lives on
         # `self._message`; compatibility properties below proxy that owner.
         self._console_transcript_sync_timer: Any | None = None
+        # TASK-34920: skip-gate state for the 0.2s transcript tick -- the
+        # store's constant-time display token plus projection inputs, with a
+        # forced full pass every 15th tick (~3s) bounding staleness from any
+        # mutation the token does not cover.
+        self._console_transcript_sync_ticks = 0
+        self._console_transcript_sync_token: tuple[Any, ...] | None = None
         # Set by every start request, cleared by each poll tick (TASK-34789).
         self._console_transcript_poll_asked = False
         # Cost-ticker PR3 (task-5): the 10s WARM->EXPIRED repaint timer --
@@ -18120,6 +18126,42 @@ class ChatScreen(BaseAppScreen):
             transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
         except QueryError:
             transcript = None
+
+        # TASK-34920: cheap gate BEFORE the O(session) message pipeline
+        # (snapshot materialization, projections, grouping, spec walks).
+        # The store's display token covers transcript-visible mutations
+        # (stream chunks and folds via the speech fence; appends, terminal
+        # marks, edits, deletes bump directly); the projection key covers
+        # change-review marker republication; the ack flag covers send
+        # acknowledgements. A forced pass every 15th tick (~3s) bounds any
+        # gap, and the refresh-key reconcile inside the pipeline remains
+        # the final arbiter of DOM writes.
+        store = self._console_chat_store
+        if store is not None:
+            session_id = store.active_session_id
+            try:
+                token = (
+                    None
+                    if session_id is None
+                    else store.display_projection_revision(session_id)
+                )
+            except Exception:  # noqa: BLE001 - unknown session: never gate
+                token = object()
+            try:
+                projection_key = self._change_review_projection.revision_key()
+            except Exception:  # noqa: BLE001 - torn-down runtime: never gate
+                projection_key = object()
+            gate = (
+                session_id,
+                token,
+                projection_key,
+                getattr(self, "_console_send_ack", None) is not None,
+            )
+            self._console_transcript_sync_ticks += 1
+            forced = self._console_transcript_sync_ticks % 15 == 0
+            if not forced and gate == self._console_transcript_sync_token:
+                return
+            self._console_transcript_sync_token = gate
 
         active_messages = self._message._native_console_messages()
         messages = self._change_review_projection.project(active_messages)

@@ -115,6 +115,22 @@ class ConsoleChangeReviewProjection:
         self._key: tuple[str | None, int] | None = None
         self._marker_blocks: list[Any] = []
 
+    def revision_key(self) -> tuple[str | None, int] | None:
+        """Cheap input token for screen-side skip gates (TASK-34920).
+
+        Mirrors ``project``'s own cache key: when this and the caller's
+        other inputs are unchanged, ``project`` would inject the same
+        markers, so the screen may skip the whole pipeline.
+        """
+        runtime = self._runtime_accessor()
+        coordinator = runtime.change_review_coordinator
+        if coordinator is None:
+            return None
+        return (
+            self._conversation_id_accessor(),
+            coordinator.publication_signal.snapshot().revision,
+        )
+
     def project(self, messages: list[Any]) -> list[Any]:
         """Return messages with the current durable review markers injected."""
         runtime = self._runtime_accessor()

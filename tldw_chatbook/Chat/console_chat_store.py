@@ -10981,6 +10981,7 @@ class ConsoleChatStore:
     ) -> ConsoleChatMessage:
         """Append one source node within an atomic fork-transition window."""
 
+        self._bump_display_projection_revision(session_id)
         with self._fork_source_transition(session_id):
             return self._append_message(
                 session_id,
@@ -12412,6 +12413,7 @@ class ConsoleChatStore:
         if not content.strip():
             raise ValueError("Message content cannot be blank.")
         message = self._message_or_raise(message_id)
+        self._bump_display_revision_for_message(message.id)
         self._reject_quarantined_generation_mutation(message)
         self._materialize_stream_buffer(message)
         if message.status in {"pending", "streaming"}:
@@ -13854,6 +13856,7 @@ class ConsoleChatStore:
         ``console_subtree_delete`` so the Console can run the write off the
         event loop; this runs all three in a row.
         """
+        self._bump_display_revision_for_message(message_id)
         from tldw_chatbook.Chat import console_subtree_delete as subtree
 
         plan = subtree.plan_subtree_delete(self, message_id)
@@ -16851,6 +16854,7 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._prime_unpersisted_terminal_receipt(message)
+        self._bump_display_revision_for_message(message.id)
         self._finalize_character_emote_capture(message, outcome="complete")
         self._materialize_stream_buffer(message)
         session_id = self._message_session_index[message.id]
@@ -17054,6 +17058,7 @@ class ConsoleChatStore:
         """
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
+        self._bump_display_revision_for_message(message.id)
         self._finalize_character_emote_capture(message, outcome="stopped")
         self._materialize_stream_buffer(message)
         session_id = self._message_session_index[message.id]
@@ -17127,6 +17132,7 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._validate_can_mark_terminal(message)
         self._prime_unpersisted_terminal_receipt(message)
+        self._bump_display_revision_for_message(message.id)
         self._finalize_character_emote_capture(message, outcome="failed")
         self._materialize_stream_buffer(message)
         session_id = self._message_session_index[message.id]
@@ -21639,6 +21645,18 @@ class ConsoleChatStore:
         """Return a constant-time invalidation token for screen projections."""
         self._session_or_raise(session_id)
         return self._display_projection_revisions.get(session_id, 0)
+
+    def _bump_display_revision_for_message(self, message_id: str) -> None:
+        """Invalidate the token for one message's session (TASK-34920).
+
+        The screen's 0.2s transcript tick gates on the token, so every
+        transcript-visible mutation must advance it. Extra bumps are always
+        safe: consumers only use the token to SKIP work, so an over-broad
+        invalidation costs one re-sync, never staleness.
+        """
+        session_id = self._message_session_index.get(message_id)
+        if session_id is not None:
+            self._bump_display_projection_revision(session_id)
 
     def _bump_payload_revision(self, session_id: str) -> None:
         """Mark the session's provider payload as changed (cost-ticker PR3).
