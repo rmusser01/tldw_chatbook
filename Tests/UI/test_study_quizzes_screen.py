@@ -1343,7 +1343,8 @@ async def test_quiz_names_and_question_text_are_shown_as_typed():
     A quiz name was a Select prompt, and the question list and the attempt
     panel read markup: creating "Arr [/] x" raised `MarkupError` out of
     `create_quiz` (its worker ends the app), and "[new]" was dropped as a
-    style tag.
+    style tag. Fix round 5, finding 1: the Study dashboard's Resume button
+    and its recent deck and quiz lists print the same names.
     """
     scope = FakeQuizScopeService()
     app_instance = SimpleNamespace(
@@ -1387,3 +1388,22 @@ async def test_quiz_names_and_question_text_are_shown_as_typed():
             for selector in ("#quiz-attempt-question", "#quiz-attempt-history-summary")
         ]
         assert shown == [typed, f"1. {typed}"]
+
+        # Fix round 5, finding 1: Start quiz hands the same name to the Study
+        # dashboard's Resume button, and the recents print deck and quiz names.
+        await pilot.click("#quiz-start")  # MarkupError before the fix
+        resume = app.screen.query_one("#study-resume-last", Button)
+        for _ in range(40):
+            if not resume.disabled:
+                break
+            await pilot.pause(0.05)
+        assert str(resume.label) == "Resume quizzes: Arr [/] x"
+
+        app.screen._recent_deck_titles = ["Deck [/] y"]
+        app.screen._recent_quiz_titles = ["Week [new]"]
+        app.screen.sync_shell_from_window()  # MarkupError before the fix
+        recents = [
+            _text(app.screen.query_one(selector, Static))
+            for selector in ("#study-recent-decks", "#study-recent-quizzes")
+        ]
+        assert recents == ["Deck [/] y", "Week [new]"]

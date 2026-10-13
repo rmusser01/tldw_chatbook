@@ -7,6 +7,8 @@ from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+from ...Utils.input_validation import escape_markup
+
 
 RESUME_DISABLED_TOOLTIP = (
     "No study session to resume. Open flashcards or quizzes to start a session."
@@ -89,10 +91,12 @@ class StudyDashboard(Widget):
                     )
                 with Vertical(classes="study-dashboard-column"):
                     yield Static("Recent Decks", classes="study-dashboard-heading")
+                    # Deck and quiz names print as typed.
                     yield Static(
                         "No recent decks yet.",
                         id="study-recent-decks",
                         classes="study-dashboard-value",
+                        markup=False,
                     )
                 with Vertical(classes="study-dashboard-column"):
                     yield Static("Recent Quizzes", classes="study-dashboard-heading")
@@ -100,6 +104,7 @@ class StudyDashboard(Widget):
                         "No recent quizzes yet.",
                         id="study-recent-quizzes",
                         classes="study-dashboard-value",
+                        markup=False,
                     )
             with Horizontal(classes="study-dashboard-actions"):
                 yield Button(
@@ -146,7 +151,7 @@ class StudyDashboard(Widget):
             return
         button = self.query_one("#study-resume-last", Button)
         if summary:
-            button.label = f"Resume {summary}"
+            button.label = f"Resume {escape_markup(summary)}"
             button.disabled = False
             button.tooltip = RESUME_ENABLED_TOOLTIP
         else:
