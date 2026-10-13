@@ -109,13 +109,15 @@ class TestDispatchNameAliases:
         [
             ("koboldcpp", "summarize_with_kobold"),
             ("oobabooga", "summarize_with_oobabooga"),
-            ("mistralai", "summarize_with_mistral"),
             ("llama_cpp", "summarize_with_llama"),
             ("local_ollama", "summarize_with_ollama"),
             ("local_vllm", "summarize_with_vllm"),
             ("local_llamacpp", "summarize_with_llama"),
             ("local_llamafile", "summarize_with_llama"),
             ("local_llm", "summarize_with_local_llm"),
+            # ("mistralai", ...) moved: mistral routes through the
+            # TASK-34895 chat-dispatch core, pinned in
+            # test_summarization_chat_dispatch.py.
         ],
     )
     def test_chat_dispatch_spellings_route_to_a_provider(

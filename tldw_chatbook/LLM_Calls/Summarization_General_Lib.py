@@ -22,7 +22,8 @@ import inspect
 import json
 import os
 import time
-from typing import Optional, Union, Generator, Any, Dict, List, Callable
+from dataclasses import dataclass
+from typing import Optional, Union, Generator, Any, Dict, List, Callable, Iterable
 
 #
 # 3rd-Party Imports
@@ -1415,9 +1416,7 @@ def summarize_with_groq(
             logging.info("Groq: Using API key provided as parameter")
         else:
             # If no parameter is provided, use the key from the config
-            groq_api_key = without_ciphertext(
-                get_cli_setting("groq_api", "api_key")
-            )
+            groq_api_key = without_ciphertext(get_cli_setting("groq_api", "api_key"))
             if groq_api_key:
                 logging.info("Groq: Using API key from config file")
             else:
@@ -2701,6 +2700,207 @@ def format_input_with_metadata(metadata, content):
 ############################################################################################################################################
 
 
+# --- TASK-34895: chat-dispatch core -----------------------------------
+# The OpenAI-wire cloud summarizers ride the SAME provider layer as chat:
+# analyze()'s dispatch routes them through chat_api_call instead of the
+# per-provider HTTP copies. Each spec preserves the legacy function's
+# model sourcing (legacy `<provider>_api` section incl. its fallback),
+# prompt assembly order, default temperature, and in-band error strings,
+# so ingest callers and the Web_Scraping failure-marker contract see
+# identical behavior. Deliberately NO diagnostic statements in this
+# section: the diagnostic ledger pins this module's statement counts
+# (Tests/LLM_Calls/test_summarization_diagnostic_privacy.py).
+#
+# Key resolution mirrors the legacy functions exactly (parameter key,
+# then the legacy `<provider>_api` section; ciphertext never a key), so
+# keyless users see the same in-band refusal the per-provider functions
+# produced.
+
+_CHAT_SUMMARIZER_DEFAULT_SYSTEM = (
+    "You are a helpful AI assistant who does whatever the user requests."
+)
+
+
+@dataclass(frozen=True)
+class _SummarizerChatSpec:
+    endpoint: str
+    legacy_section: str
+    default_model: str
+    default_temp: float
+    missing_key_message: str
+    empty_message: str
+    error_template: str
+    prompt_first: bool = False
+
+
+_SUMMARIZER_CHAT_SPECS: Dict[str, _SummarizerChatSpec] = {
+    "groq": _SummarizerChatSpec(
+        endpoint="groq",
+        legacy_section="groq_api",
+        default_model="llama3-70b-8192",
+        default_temp=0.2,
+        missing_key_message=(
+            "Groq: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Groq: Expected data not found in API response.",
+        error_template=(
+            "Groq: Error occurred while processing summary with Groq: {detail}"
+        ),
+    ),
+    "deepseek": _SummarizerChatSpec(
+        endpoint="deepseek",
+        legacy_section="deepseek_api",
+        default_model="deepseek-chat",
+        default_temp=0.1,
+        missing_key_message=(
+            "DeepSeek: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="DeepSeek: Summary not available",
+        error_template="DeepSeek: Error occurred while processing summary: {detail}",
+    ),
+    "mistral": _SummarizerChatSpec(
+        endpoint="mistral",
+        legacy_section="mistral_api",
+        default_model="mistral-large-latest",
+        default_temp=0.2,
+        missing_key_message=(
+            "Mistral: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="Mistral: Summary not available",
+        error_template="Mistral: Error occurred while processing summary: {detail}",
+        prompt_first=True,
+    ),
+    "openrouter": _SummarizerChatSpec(
+        endpoint="openrouter",
+        legacy_section="openrouter_api",
+        default_model="microsoft/wizardlm-2-8x22b",
+        default_temp=0.1,
+        missing_key_message=(
+            "OpenRouter: API Key Not Provided/Found in Config file or is empty"
+        ),
+        empty_message="openrouter: Expected data not found in API response.",
+        error_template=(
+            "openrouter: Error occurred while processing summary with "
+            "openrouter: {detail}"
+        ),
+    ),
+}
+
+
+@_provider_recovery.unqualified
+def _chat_stream_text_chunks(stream: Iterable[Any]) -> Generator[str, None, None]:
+    """Translate one chat streaming reply into plain text chunks.
+
+    Chat handlers stream OpenAI-style SSE wire frames (``data: {...}``
+    lines with a terminal ``data: [DONE]``); the summarization contract
+    yields plain text chunks. Unparseable frames are skipped, matching the
+    legacy per-provider stream generators; an in-stream provider error
+    frame becomes one ``Error during streaming: ...`` chunk, matching the
+    legacy OpenAI summarizer's behavior.
+    """
+    for frame in stream:
+        for line in frame.splitlines():
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            payload = line[len("data:") :].strip()
+            if not payload:
+                continue
+            if payload == "[DONE]":
+                return
+            try:
+                event = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            failure = event.get("error")
+            if isinstance(failure, dict):
+                failure = failure.get("message") or failure.get("code")
+            if failure:
+                yield f"Error during streaming: {failure}"
+                return
+            choices = event.get("choices") or []
+            if not choices or not isinstance(choices[0], dict):
+                continue
+            delta = choices[0].get("delta") or {}
+            piece = delta.get("content") or choices[0].get("text") or ""
+            if piece:
+                yield piece
+
+
+def _summarize_via_chat_api(
+    spec_key: str,
+    api_key,
+    input_data,
+    custom_prompt_arg,
+    temp,
+    system_message,
+    streaming,
+):
+    """One summarization call over the unified chat provider dispatch."""
+    spec = _SUMMARIZER_CHAT_SPECS[spec_key]
+    if isinstance(input_data, dict) and "summary" in input_data:
+        return input_data["summary"]
+    if isinstance(input_data, list):
+        text = extract_text_from_segments(input_data)
+    elif isinstance(input_data, str):
+        text = input_data
+    else:
+        raise ValueError(f"{spec.endpoint}: Invalid input data format")
+
+    if spec.prompt_first:
+        user_content = f"{custom_prompt_arg}\n\n\n\n{text} "
+    else:
+        user_content = f"{text} \n\n\n\n{custom_prompt_arg}"
+    messages = [{"role": "user", "content": user_content}]
+
+    # Deferred: chat-side imports stay off this module's import time (the
+    # ingest import-weight tests pin it).
+    from ..Chat.Chat_Functions import chat_api_call, chat_reply_text
+    from ..Chat.Chat_Deps import (
+        ChatAPIError,
+        ChatAuthenticationError,
+        ChatConfigurationError,
+    )
+
+    # Key resolution mirrors the legacy functions exactly: parameter key
+    # first, then the legacy `<provider>_api` section; `enc:` ciphertext is
+    # never a credential. Refusing HERE (in-band, before the chat dispatch)
+    # keeps the legacy refusal shape and keeps the chat handler's own
+    # settings resolution off the keyless path entirely.
+    if api_key and api_key.strip():
+        resolved_key = api_key
+    else:
+        resolved_key = without_ciphertext(
+            get_cli_setting(spec.legacy_section, "api_key")
+        )
+    if not resolved_key or not resolved_key.strip():
+        return spec.missing_key_message
+
+    try:
+        result = chat_api_call(
+            spec.endpoint,
+            messages,
+            api_key=resolved_key,
+            temp=spec.default_temp if temp is None else float(temp),
+            system_message=system_message or _CHAT_SUMMARIZER_DEFAULT_SYSTEM,
+            model=get_cli_setting(spec.legacy_section, "model", spec.default_model),
+            streaming=streaming,
+        )
+    except (ChatAuthenticationError, ChatConfigurationError) as exc:
+        return spec.missing_key_message
+    except ChatAPIError as exc:
+        return spec.error_template.format(detail=str(exc))
+
+    if streaming:
+        return _chat_stream_text_chunks(result)
+    summary = chat_reply_text(result).strip()
+    if not summary:
+        return spec.empty_message
+    return summary
+
+
 # --- TASK-33245: dispatch table replacing the per-provider elif chain ---
 # Late-binding on purpose: the analyze/privacy suites monkeypatch the
 # module-level provider names, so entries must be lambdas resolving
@@ -2718,20 +2918,20 @@ _SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
     "google": lambda ak, text, cp, temp, sm, st: summarize_with_google(
         ak, text, cp, temp, sm, st
     ),
-    "groq": lambda ak, text, cp, temp, sm, st: summarize_with_groq(
-        ak, text, cp, temp, sm, st
+    "groq": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "groq", ak, text, cp, temp, sm, st
     ),
     "huggingface": lambda ak, text, cp, temp, sm, st: summarize_with_huggingface(
         ak, text, cp, temp, st
     ),
-    "openrouter": lambda ak, text, cp, temp, sm, st: summarize_with_openrouter(
-        ak, text, cp, temp, sm, st
+    "openrouter": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "openrouter", ak, text, cp, temp, sm, st
     ),
-    "deepseek": lambda ak, text, cp, temp, sm, st: summarize_with_deepseek(
-        ak, text, cp, temp, sm, st
+    "deepseek": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "deepseek", ak, text, cp, temp, sm, st
     ),
-    "mistral": lambda ak, text, cp, temp, sm, st: summarize_with_mistral(
-        ak, text, cp, temp, sm, st
+    "mistral": lambda ak, text, cp, temp, sm, st: _summarize_via_chat_api(
+        "mistral", ak, text, cp, temp, sm, st
     ),
     # --- Mocking test LLM calls ---
     "mock-llm": lambda ak, text, cp, temp, sm, st: summarize_with_mock_llm(
@@ -2766,11 +2966,11 @@ _SUMMARIZER_DISPATCH: Dict[str, Callable[..., Any]] = {
     "local-llm": lambda ak, text, cp, temp, sm, st: summarize_with_local_llm(
         text, cp, temp, sm, st
     ),
-    "custom-openai-api": lambda ak, text, cp, temp, sm, st: summarize_with_custom_openai(
-        ak, text, cp, temp, sm, st
+    "custom-openai-api": lambda ak, text, cp, temp, sm, st: (
+        summarize_with_custom_openai(ak, text, cp, temp, sm, st)
     ),
-    "custom-openai-api-2": lambda ak, text, cp, temp, sm, st: summarize_with_custom_openai_2(
-        ak, text, cp, temp, sm, st
+    "custom-openai-api-2": lambda ak, text, cp, temp, sm, st: (
+        summarize_with_custom_openai_2(ak, text, cp, temp, sm, st)
     ),
     # TASK-34812: ollama's signature is (input_data, custom_prompt,
     # api_url, api_key, temp, system_message, model, ...); the old
