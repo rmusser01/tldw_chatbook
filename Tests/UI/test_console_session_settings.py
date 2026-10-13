@@ -5002,7 +5002,7 @@ async def test_console_settings_focused_button_keeps_its_contrast(theme) -> None
         await pilot.pause()
         screen = app.screen
         # TASK-33006.5: the default-variant sample is Default for new chats
-        # (Cancel is the Context view's now).
+        # (Cancel shows only with the recovery actions, TASK-33007 capture finding 20).
         for button_id in ("#console-settings-save", "#console-settings-make-default"):
             button = screen.query_one(button_id, Button)
             assert not button.disabled, button_id
@@ -8807,7 +8807,8 @@ async def test_console_settings_modal_ignores_screen_routed_select_click_without
         # TASK-33006.4: the provider Select is gone; Streaming is a Select.
         provider_select = app.screen.query_one("#console-settings-streaming", Select)
         # TASK-33006.5: any focused control outside the Select will do;
-        # Cancel is the Context view's now, so the MODEL row's Change.
+        # Cancel shows only with the recovery actions (TASK-33007
+        # capture finding 20), so the MODEL row's Change.
         cancel_button = app.screen.query_one("#console-settings-model-change", Button)
         cancel_button.focus()
         await pilot.pause()
@@ -11785,7 +11786,7 @@ async def test_console_settings_modal_focus_order_starts_temperature_ends_apply_
     Sampling, Connection and the name stay closed until opened.
     TASK-33006.4 (R7): the MODEL row's Change sits between the view tabs and
     Temperature. TASK-33006.5 renamed it: the Model view ends on Apply, and
-    Cancel is the Context view's.
+    Cancel shows only with the recovery actions (TASK-33007 capture finding 20).
     """
     app = ModalHarness()
     modal = _basic_modal(
@@ -13684,7 +13685,8 @@ async def test_console_settings_modal_tab_order_skips_collapsed_disclosure_child
     walks the shown CORE rows, then the Sampling, Connection, Request
     estimate and name titles, then the footer to Apply; opening Sampling from
     its title puts its first field next in the order. TASK-33006.5: the
-    footer ends on Apply (Cancel is the Context view's).
+    footer ends on Apply (Cancel shows only with the recovery actions,
+    TASK-33007 capture finding 20).
     """
     app = ModalHarness()
     modal = _basic_modal(
@@ -14690,8 +14692,8 @@ async def test_console_settings_task4_geometry_keeps_connection_and_footer_usabl
         assert actions.virtual_size.width <= actions.container_size.width
         assert actions.region.bottom <= frame.content_region.bottom
         assert actions.region.right <= frame.content_region.right
-        # TASK-33006.5: Cancel is the Context view's; the Model view names
-        # its actions and their keys.
+        # Cancel shows only with the recovery actions (TASK-33007
+        # capture finding 20); the Model view names its actions and their keys.
         assert not cancel.display
         assert str(adopt.label) == "Use saved defaults"
         assert str(defaults.label) == "Save as model default"

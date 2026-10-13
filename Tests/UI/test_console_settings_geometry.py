@@ -142,8 +142,9 @@ async def test_conversation_settings_size_matrix_has_bounded_fluid_geometry(
             )
 
         connection = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
-        # TASK-33006.5: Cancel is the Context view's; the Model view's footer
-        # leads with Use saved defaults (rewritten on purpose).
+        # Cancel shows only with the recovery actions (TASK-33007
+        # capture finding 20); the Model view's footer leads with Use saved
+        # defaults (rewritten on purpose).
         adopt = modal.query_one("#console-settings-use-saved-defaults", Button)
         save_default = modal.query_one("#console-settings-save-default", Button)
         save = modal.query_one("#console-settings-save", Button)

@@ -103,7 +103,8 @@ async def test_title_names_the_chat_and_counts_its_unsaved_edits() -> None:
 async def test_footer_offers_the_four_actions_in_order(size) -> None:
     """AC#2: the Esc hint, then Use saved defaults, Save as model default,
     Default for new chats (Ctrl+N) and Apply to this chat (Ctrl+Enter), on
-    one painted row; Cancel is the Context view's, not the Model view's.
+    one painted row; Cancel shows only with the recovery actions
+    (TASK-33007 capture finding 20).
 
     Plan ruling R14: the Context view keeps its own scope copy and offers
     no defaults action (its defaults line:

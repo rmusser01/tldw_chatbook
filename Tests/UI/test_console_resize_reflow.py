@@ -339,9 +339,10 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         await pilot.pause()
 
         panel = modal.query_one("#console-settings-modal")
-        # Rewritten on purpose by TASK-33006.5: Cancel is the Context view's,
-        # and Use saved defaults leads (dimmed here: this harness passes no
-        # draft rebaser, which it needs).
+        # Rewritten on purpose by TASK-33006.5: Cancel shows only with the
+        # recovery actions (TASK-33007 capture finding 20), and Use saved
+        # defaults leads (dimmed here: this harness passes no draft rebaser,
+        # which it needs).
         actions = [
             button
             for button in modal.query("#console-settings-actions Button")
@@ -873,8 +874,9 @@ async def test_blocked_full_settings_keeps_enabled_actions_mouse_reachable(
 
         panel = modal.query_one("#console-settings-modal")
         blocked = modal.query_one("#console-settings-new-chat-default-block")
-        # TASK-33006.5: Cancel is the Context view's, so the Model view's
-        # shown actions are measured (its Cancel case is gone).
+        # Cancel shows only with the recovery actions (TASK-33007
+        # capture finding 20), so the Model view's shown actions are measured
+        # (its Cancel case is gone).
         actions = [
             button
             for button in modal.query("#console-settings-actions Button")
