@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from rich.cells import cell_len
 from textual import events
 from textual.containers import ScrollableContainer
 from textual.widgets import Button, Collapsible, Input, Static
@@ -24,9 +25,11 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
 
 
 GEOMETRY_SIZES = ((80, 24), (100, 30), (160, 40), (200, 50))
-#: TASK-33006.1 (spec §6, mock (b)): $ds-size-150 by $ds-size-22, each
-#: capped at $ds-percent-95 of the viewport. The 196-column wide tier is gone.
-MODAL_WIDTH, MODAL_HEIGHT, VIEWPORT_CAP_PERCENT = 150, 22, 95
+#: TASK-33006.1 (spec §6, mock (b)): $ds-chat-settings-width by $ds-size-22,
+#: each capped at $ds-percent-95 of the viewport. The 196-column wide tier is
+#: gone. The width is 176, not mock (b)'s 150, since TASK-33007 capture
+#: finding 15 (150 cut every help line over 95 cells).
+MODAL_WIDTH, MODAL_HEIGHT, VIEWPORT_CAP_PERCENT = 176, 22, 95
 
 
 def expected_modal_size(viewport: tuple[int, int]) -> tuple[int, int]:
@@ -197,15 +200,16 @@ async def test_conversation_settings_size_matrix_has_bounded_fluid_geometry(
     ids=["narrow", "below-token", "full-screen", "wide-full-screen"],
 )
 @pytest.mark.asyncio
-async def test_chat_settings_size_is_the_150x22_token_capped_to_the_viewport(
+async def test_chat_settings_size_is_its_width_token_by_22_capped_to_the_viewport(
     size: tuple[int, int],
 ) -> None:
-    """The modal is 150x22, capped at 95% of the viewport; no wide tier.
+    """The modal is 176x22, capped at 95% of the viewport; no wide tier.
 
     Rewritten on purpose by TASK-33006.1 (AC#13): it pinned the 85%/196
-    wide tier, which mock (b)'s 150-column frame replaces. Restoring the tier
+    wide tier, which mock (b)'s fixed frame replaces. Restoring the tier
     (or a percentage width) fails the full-screen cases: at 211 and 235
-    columns the frame must stay exactly 150 wide and 22 tall.
+    columns the frame must stay exactly 176 wide and 22 tall. Rewritten on
+    purpose again by TASK-33007 capture finding 15: 150 became 176.
 
     Args:
         size: Terminal size (columns, rows) the harness app runs at.
@@ -236,7 +240,7 @@ async def test_chat_settings_size_tracks_live_resize(
     start_size: tuple[int, int],
     end_size: tuple[int, int],
 ) -> None:
-    """An open modal re-derives its capped 150x22 frame on resize.
+    """An open modal re-derives its capped 176x22 frame on resize.
 
     Rewritten on purpose by TASK-33006.1 (AC#13): it followed the retired
     wide-tier class across the 150-column boundary. Now the frame must follow
@@ -268,6 +272,59 @@ async def test_chat_settings_size_tracks_live_resize(
         assert (container.region.width, container.region.height) == (
             expected_modal_size(end_size)
         )
+
+
+@pytest.mark.parametrize("size", ((211, 44), (235, 52)), ids=["211x44", "235x52"])
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    (("openai", "gpt-5.6-terra"), ("anthropic", "claude-unknown-model")),
+    ids=["reasoning-rows", "thinking-rows"],
+)
+@pytest.mark.asyncio
+async def test_every_field_help_line_is_whole_at_full_screen(
+    size: tuple[int, int], provider: str, model: str
+) -> None:
+    """Capture finding 15 (08): at 150 columns the Reasoning rows' help
+    ("Support not verified for this model. blank = provider default · How
+    much of its reasoning the model summarizes for you.", 119 cells) was cut
+    with an ellipsis at both full-screen sizes. Every shown row's help line
+    is whole at 211x44 and 235x52, whose support is unknown and value blank.
+
+    Args:
+        size: Terminal size (columns, rows) the harness app runs at.
+        provider: The draft's provider.
+        model: A model whose reasoning or thinking support is unknown.
+    """
+    app = GeometryHarness()
+    app.app_config = {
+        "api_settings": {provider: {"api_key": "sk-made-up-key-for-a-layout-test"}}
+    }
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider=provider, model=model),
+        app_config=app.app_config,
+        providers_models={provider: [model]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+    )
+
+    async with app.run_test(size=size) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        rows = [
+            row
+            for row in modal.query(".console-settings-field-row")
+            if row.display and row.region.width
+        ]
+        helps = [line for row in rows for line in row.query(".console-settings-help-line")]
+        assert any("not verified" in str(line.content) for line in helps)
+        cut = {
+            str(line.id): (str(line.content), line.region.width)
+            for line in helps
+            if cell_len(str(line.content)) > line.region.width
+        }
+        assert not cut
 
 
 @pytest.mark.parametrize("size", GEOMETRY_SIZES)

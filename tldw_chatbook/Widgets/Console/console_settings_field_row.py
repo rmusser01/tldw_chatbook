@@ -125,10 +125,12 @@ NAME_TITLE = "Your name in this chat"
 #: Ends the Connection summary (spec §7 mock (b)): credentials and provider
 #: defaults live in Settings, and Console only surfaces recovery (ADR-012).
 SETTINGS_POINTER = "change it in Settings ▸ Providers & Models"
-#: Cells for a closed disclosure title in the 150-column frame: 150 - 2
-#: border - 2 padding - 2 title padding - 2 symbol - 1 scrollbar. Every
-#: closed title stays one row (owner ruling of 2026-10-02): Connection
-#: shortens its host, Sampling counts the fields it cannot name.
+#: Cells for a closed disclosure title, measured in mock (b)'s 150-column
+#: frame: 150 - 2 border - 2 padding - 2 title padding - 2 symbol - 1
+#: scrollbar. Every closed title stays one row (owner ruling of 2026-10-02):
+#: Connection shortens its host, Sampling counts the fields it cannot name.
+#: The frame is 176 since TASK-33007 capture finding 15; titles keep this
+#: budget, so they still fit one row.
 DISCLOSURE_TITLE_CELLS = 141
 #: The host part for an endpoint that cannot be parsed (a half-typed URL).
 INVALID_ENDPOINT_HOST = "invalid endpoint"

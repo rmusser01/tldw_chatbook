@@ -474,7 +474,8 @@ settings** card. Its title names the chat and counts your unsaved edits ("Chat
 settings · Refactor plan · 2 unsaved edits"), and the line under the tabs
 says what it changes: "Applies to this chat only · saved with the
 conversation · defaults live in Settings ▸ Providers & Models (F4)". It is
-150 columns by 22 rows, and the **Model and generation**
+176 columns by 22 rows, wide enough that every field's help line shows whole
+at 211x44 and 235x52, and the **Model and generation**
 view puts tuning first, so at 211x44 the whole view fits without scrolling:
 
 - **Model**: the chat's model and its provider's name, where the pair comes

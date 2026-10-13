@@ -189,6 +189,12 @@ $ds-textarea-min-height: 5;
  * 235x52 (120 until the final review let ids render whole); its auto
  * height caps at $ds-percent-80 (_console_panels.tcss). */
 $ds-model-switcher-width: 140;
+/* Chat settings (Ctrl+O) is 176 columns at 211x44 and 235x52 (150 until
+ * TASK-33007 capture finding 15): a row is label 18 + control 13 + Source
+ * 20 + help, and the longest help (a blank row whose support is unknown)
+ * is 119 cells, cut at 150. 176 leaves it whole with a scrollbar showing.
+ * Capped at $ds-percent-95 below that (_console_panels.tcss). */
+$ds-chat-settings-width: 176;
 /* Fill the parent's inline axis (ADR-161 task 8a): the tokenized expression
  * of the recurring `width: 100%` on promoted full-width components (status
  * areas, message bodies). Raw percentage widths in moved rules map here. */

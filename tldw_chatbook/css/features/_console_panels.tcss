@@ -9,13 +9,15 @@
  * vocabulary, console-surface scoped. ======================================== */
 
 
-/* TASK-33006.1 (spec §6, mock (b)): Chat settings is 150x22 over the
+/* TASK-33006.1 (spec §6, mock (b)): Chat settings is 22 rows over the
    Console, so the whole Model view fits at 211x44 without scrolling; both
    caps keep it inside smaller terminals. No vertical padding: the frame,
    header, tabs, scope, defaults line and footer cost 9 of the 22 rows,
-   leaving 13 for the MODEL row, at most 8 CORE rows and 4 disclosures. */
+   leaving 13 for the MODEL row, at most 8 CORE rows and 4 disclosures.
+   Its width is the token's 176 columns (mock (b)'s 150 cut every help line
+   longer than 95 cells: TASK-33007 capture finding 15). */
 #console-settings-modal {
-    width: $ds-size-150;
+    width: $ds-chat-settings-width;
     max-width: $ds-percent-95;
     height: $ds-size-22;
     max-height: $ds-percent-95;

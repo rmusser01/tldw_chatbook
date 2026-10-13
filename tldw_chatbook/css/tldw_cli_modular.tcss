@@ -120,6 +120,8 @@ $ds-textarea-min-height: 5;
 
 $ds-model-switcher-width: 140;
 
+$ds-chat-settings-width: 176;
+
 $ds-width-full: 100%;
 
 $ds-width-fill: 1fr;
@@ -8397,7 +8399,7 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 
 
 #console-settings-modal {
-    width: $ds-size-150;
+    width: $ds-chat-settings-width;
     max-width: $ds-percent-95;
     height: $ds-size-22;
     max-height: $ds-percent-95;
