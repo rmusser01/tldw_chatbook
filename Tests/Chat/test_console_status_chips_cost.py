@@ -444,6 +444,49 @@ async def test_the_cost_chip_refits_when_a_chip_before_it_changes() -> None:
         assert _cost_chip_drawn_whole(app) == _CAPTURE_LABELS["label"]
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    (
+        {"tools_label": "Tools: 12 ready", "tools_active": True},
+        {
+            "provider_label": "Provider: OpenRouter",
+            "model_label": "Model: meta-llama/llama-3.3-70b-instruct",
+            "assistant_label": "Assistant: Research helper",
+        },
+    ),
+    ids=("tools-chip", "openrouter-long-model"),
+)
+@pytest.mark.asyncio
+async def test_the_cost_chip_shows_an_ellipsis_when_no_form_fits(overrides) -> None:
+    """Capture fix 3 round 1 finding 1: with the Tools chip shown (or a long
+    provider, model and assistant) the room left at 211 columns is under the
+    shortest form, and the full label was drawn cut ("  Cont"). The chip
+    shows "…" whole instead (its 12-cell box is clipped at the edge like any
+    chip there, its text is not); focus shows the full label in view (the
+    strip scrolls to it), and leaving it puts "…" back."""
+    app = _ProductionChipsApp(
+        _capture_control_state(**overrides),
+        cost_state=_cost_state(**_CAPTURE_LABELS),
+    )
+    async with app.run_test(size=(211, 8)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        chip = app.query_one("#console-cost-chip", ConsoleCostChip)
+        edge = app.query_one("#console-status-chip-scroll").content_region.right
+        assert str(chip.render()) == "…"
+        assert chip.content_region.x + cell_len("…") <= edge, chip.region
+
+        chip.focus()
+        for _ in range(5):
+            await pilot.pause()
+        assert _cost_chip_drawn_whole(app) == _CAPTURE_LABELS["label"]
+
+        app.query_one("#console-provider-chip").focus()
+        for _ in range(5):
+            await pilot.pause()
+        assert str(chip.render()) == "…"
+
+
 @pytest.mark.asyncio
 async def test_cost_chip_click_posts_pressed_message():
     """A real ``pilot.click`` must dispatch through the normal message pump.

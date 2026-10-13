@@ -889,26 +889,39 @@ class ConsoleStatusChips(Horizontal):
         Capture fix 3 finding 4: the chips before it can leave less room on
         the strip than that label needs, and the strip cut it mid-word
         ("Current $0." at 211 columns). The longest form whose whole " · "
-        segments fit is shown instead (the tooltip keeps every figure); with
-        room for none, the label stays and scrolls in on focus like any
-        chip past the edge.
+        segments fit is shown instead (the tooltip keeps every figure), and
+        "…" when none fits. A chip that starts past the edge is not drawn,
+        so it keeps its label for scrolling in; while the chip has focus it
+        shows that label in full, and the strip scrolls to it.
         """
         state = self._cost_state
         if state is None:
             return
         label = state.compact_label if self.screen.size.width < 120 else state.label
         scroll = chip.parent
-        if isinstance(scroll, HorizontalScroll) and scroll.size.width:
-            room = (
-                scroll.scrollable_content_region.width
-                - chip.virtual_region.x
-                - chip.styles.gutter.width
-            )
-            if cell_len(label) > room:
+        if (
+            not chip.has_focus
+            and isinstance(scroll, HorizontalScroll)
+            and scroll.size.width
+        ):
+            visible = scroll.scrollable_content_region.width - chip.virtual_region.x
+            room = visible - chip.styles.gutter.width
+            if visible > 0 and cell_len(label) > room:
                 forms = _cost_label_forms(state)
-                label = next((f for f in forms if cell_len(f) <= room), label)
+                label = next((f for f in forms if cell_len(f) <= room), "…")
         chip.update(label)
         chip.refresh(layout=True)
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        """Show the focused cost chip's full label and scroll it into view."""
+        if event.widget.id == "console-cost-chip":
+            self._refit_cost_chip()
+            self.call_after_refresh(event.widget.scroll_visible, animate=False)
+
+    def on_descendant_blur(self, event: events.DescendantBlur) -> None:
+        """Fit the cost chip to the room left again once focus leaves it."""
+        if event.widget.id == "console-cost-chip":
+            self._refit_cost_chip()
 
     def on_resize(self, _event: events.Resize) -> None:
         """Reapply width-aware cost copy without requiring a state change.
