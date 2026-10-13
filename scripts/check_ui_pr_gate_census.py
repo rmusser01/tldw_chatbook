@@ -283,7 +283,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # CI log timed, gives 17.6 min of pytest at most as they were listed over seven
 # shards, 15.4 re-ordered (about 17 of the job's 20 with setup) and 13.5 over
 # eight, so the lane runs eight.
-MINIMUM_FILES = 274
+# Round 4 after the rebase (ruling cf3r1-N1): one node appended after the
+# block, a snapshot edit whose Changed has not landed is kept: 275.
+MINIMUM_FILES = 275
 
 
 def read_census(path: Path) -> list[str]:

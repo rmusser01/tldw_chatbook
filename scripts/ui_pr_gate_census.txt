@@ -456,3 +456,5 @@ Tests/UI/test_settings_plain_provider_names.py
 # no lane (8-11 s). With it the Phase 7 block moves five shards on (19 mod 7).
 Tests/UI/test_settings_provider_test_draft.py::test_discovery_row_labels_use_user_vocabulary_not_internal_jargon
 Tests/UI/test_settings_custom_endpoint_default.py::test_revert_to_a_registry_default_relocks_model_discovery
+# Ruling cf3r1-N1 (b): a snapshot edit left before its Changed lands is kept (11 s).
+Tests/UI/test_app_quit_under_modal.py::test_a_snapshot_edit_left_before_its_change_lands_is_kept
