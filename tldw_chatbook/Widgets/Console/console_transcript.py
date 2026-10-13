@@ -1283,34 +1283,77 @@ def _console_markdown_body_ends_in_open_fence(body: str) -> bool:
     false "open" verdict here is now purely a *delayed-highlight* risk, not
     a drop risk, regardless of how this scan is wrong.
 
-    Known cost: this rescans the *entire* ``body`` on every call that needs
-    a decision (``_append_or_defer_body_delta`` passes ``self._body_text``,
-    not just the new delta), so it is O(body length) per streamed tick, not
-    O(delta). For a single assistant reply that stays well under a few
-    hundred KB (the normal case) this is negligible next to the Pygments
-    cost it exists to avoid, but it is a real, unbounded-with-message-size
-    cost worth knowing about, not a free check.
+    Known cost (TASK-34921, fixed): the streaming row keeps incremental
+    parity (``_StreamingFenceParity``) so complete lines fold once and only
+    the trailing partial line is judged per tick; this one-shot helper
+    remains for whole-body verdicts and delegates to the same fold rules.
     """
-    fence_char: str | None = None
-    fence_len = 0
-    for line in body.split("\n"):
+    return _StreamingFenceParity().ends_in_open_fence(body)
+
+
+class _StreamingFenceParity:
+    """Incremental fence parity for one append-only streaming body.
+
+    Verdict-identical to ``_console_markdown_body_ends_in_open_fence``:
+    complete lines fold exactly once (``scanned_upto`` sits just past the
+    last consumed newline), and the trailing partial line -- which a later
+    delta may extend, possibly changing what kind of delimiter line it is
+    -- is judged fresh on every call without being committed.
+    """
+
+    __slots__ = ("fence_char", "fence_len", "scanned_upto")
+
+    def __init__(self) -> None:
+        self.fence_char: str | None = None
+        self.fence_len = 0
+        self.scanned_upto = 0
+
+    def reset(self) -> None:
+        self.fence_char = None
+        self.fence_len = 0
+        self.scanned_upto = 0
+
+    @staticmethod
+    def _line_verdict(
+        line: str, fence_char: str | None, fence_len: int
+    ) -> tuple[str | None, int]:
         match = _FENCE_DELIMITER_LINE_RE.match(line)
         if not match:
-            continue
+            return fence_char, fence_len
         run, rest = match.groups()
         char = run[0]
         if fence_char is None:
             if char == "`" and "`" in rest:
                 # Not a valid opening fence line (backtick info strings
                 # can't contain backticks) -- ordinary text, ignore it.
-                continue
-            fence_char = char
-            fence_len = len(run)
-            continue
+                return fence_char, fence_len
+            return char, len(run)
         if char == fence_char and len(run) >= fence_len and not rest.strip():
-            fence_char = None
-            fence_len = 0
-    return fence_char is not None
+            return None, 0
+        return fence_char, fence_len
+
+    def ends_in_open_fence(self, body: str) -> bool:
+        if (
+            len(body) < self.scanned_upto
+            or (self.scanned_upto and body[self.scanned_upto - 1] != "\n")
+        ):
+            # Non-append body change the widget did not route through
+            # reset(): the consumed prefix is no longer intact (the fold
+            # invariant is that it ends just past a newline), so rebuild
+            # from scratch rather than trust stale parity.
+            self.reset()
+        last_newline = body.rfind("\n", self.scanned_upto)
+        if last_newline >= 0:
+            for line in body[self.scanned_upto : last_newline].split("\n"):
+                self.fence_char, self.fence_len = self._line_verdict(
+                    line, self.fence_char, self.fence_len
+                )
+            self.scanned_upto = last_newline + 1
+        tail_char, tail_len = self.fence_char, self.fence_len
+        tail = body[self.scanned_upto :]
+        if tail:
+            tail_char, tail_len = self._line_verdict(tail, tail_char, tail_len)
+        return tail_char is not None
 
 
 #: TASK-15456. While an assistant reply is streaming inside an open code
@@ -1700,6 +1743,10 @@ class ConsoleMarkdownMessage(Vertical):
         # open fence), plus the monotonic deadline by which it must flush.
         self._pending_fence_delta = ""
         self._fence_defer_deadline: float | None = None
+        # TASK-34921: incremental fence parity for ``self._body_text`` --
+        # complete lines fold once (append-only), only the trailing partial
+        # line is judged per streamed tick.
+        self._body_fence_parity = _StreamingFenceParity()
 
     def compose(self) -> ComposeResult:
         if self._show_header:
@@ -1900,6 +1947,7 @@ class ConsoleMarkdownMessage(Vertical):
             # rather than flush.
             self._pending_fence_delta = ""
             self._fence_defer_deadline = None
+            self._body_fence_parity.reset()
             markdown.update(new_body)
             self._body_text = new_body
             # Selection clamp-on-sync (task G): a replaced body may no longer
@@ -1950,7 +1998,7 @@ class ConsoleMarkdownMessage(Vertical):
         if (
             message.status == "streaming"
             and not deadline_due
-            and _console_markdown_body_ends_in_open_fence(self._body_text)
+            and self._body_fence_parity.ends_in_open_fence(self._body_text)
         ):
             if self._fence_defer_deadline is None:
                 self._fence_defer_deadline = now + _FENCE_APPEND_DEFER_SECONDS
