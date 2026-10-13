@@ -232,6 +232,74 @@ class ConsoleDispatchRepository:
                     receipt.initiator,
                 ),
             )
+        machine = acceptance.machine_followup_receipt
+        if machine is not None:
+            from tldw_chatbook.Chat.response_rules.corrections import (
+                MachineFollowupReceipt,
+            )
+
+            if type(machine) is not MachineFollowupReceipt:
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid machine receipt."
+                )
+            machine.__post_init__()
+            parent = cursor.execute(
+                "SELECT sender,version FROM messages WHERE id=? AND conversation_id=? AND deleted=0",
+                (machine.parent_assistant_message_id, acceptance.conversation_id),
+            ).fetchone()
+            if (
+                acceptance.origin != "queued"
+                or not acceptance.queue_entry_id
+                or machine.parent_assistant_message_id != acceptance.parent_message_id
+                or parent is None
+                or parent[0] != "assistant"
+                or (
+                    machine.source_message_version is not None
+                    and machine.source_message_version != parent[1]
+                )
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid machine parent."
+                )
+            if "hook" in machine.contributors and receipt is None:
+                raise ConsoleDispatchCheckpointValidationError("Missing genuine hook receipt.")
+            if receipt is not None and (
+                "hook" not in machine.contributors
+                or receipt.parent_turn_id != machine.parent_turn_id
+                or receipt.admitted_turns != machine.admitted_turns
+                or receipt.chain_id != machine.chain_id
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Mismatched machine lineage."
+                )
+            previous = cursor.execute(
+                "SELECT admitted_turns,native_turns FROM console_machine_followup_receipts WHERE chain_id=? AND conversation_id=? ORDER BY admitted_turns DESC LIMIT 1",
+                (machine.chain_id, acceptance.conversation_id),
+            ).fetchone()
+            shared, native_count = (previous[0], previous[1]) if previous else (0, 0)
+            if (
+                machine.admitted_turns != shared + 1
+                or machine.native_turns
+                != native_count + int("native" in machine.contributors)
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid machine counters."
+                )
+            cursor.execute(
+                "INSERT INTO console_machine_followup_receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    machine.operation_id,
+                    machine.parent_turn_id,
+                    machine.settlement_id,
+                    acceptance.conversation_id,
+                    machine.parent_assistant_message_id,
+                    acceptance.assistant_message_id,
+                    machine.chain_id,
+                    machine.admitted_turns,
+                    machine.native_turns,
+                    json.dumps(machine.contributors, separators=(",", ":")),
+                ),
+            )
         attachments = self._validated_attachments(acceptance)
         first_attachment = next(
             (row for row in attachments if row[0] == 0),
@@ -275,9 +343,11 @@ class ConsoleDispatchRepository:
                         }
                     )
                     if receipt
-                    else MessageMetadata(root_fork=True).to_json()
-                    if acceptance.user_root_fork
-                    else None
+                    else (
+                        MessageMetadata(root_fork=True).to_json()
+                        if acceptance.user_root_fork
+                        else None
+                    )
                 ),
             ),
         )
@@ -368,6 +438,7 @@ class ConsoleDispatchRepository:
                 reconstructability_json,
             ),
         )
+        self.db._advance_semantic_graph_epoch(cursor)
         message_ids: Mapping[str, str] = {
             "user": acceptance.user_message_id,
             "assistant": acceptance.assistant_message_id,
@@ -394,6 +465,50 @@ class ConsoleDispatchRepository:
                 error_code or "Accepted checkpoint is invalid."
             )
         return checkpoint
+
+    def admitted_trace_revision_ids(self, cursor: sqlite3.Cursor) -> tuple[str, ...]:
+        """Read current provenance roots owned by valid durable admissions.
+
+        The caller holds the collector's mark transaction. Reuse dispatch's
+        exact payload/version validation; a recovery-shaped or off-path row
+        does not acquire retention authority. Reservation later takes over
+        through the trace call graph, and settlement releases this root.
+        """
+        revisions: list[str] = []
+        conversations = cursor.execute(
+            "SELECT DISTINCT conversation_id FROM console_dispatch_checkpoints"
+        ).fetchall()
+        for (conversation_id,) in conversations:
+            result = self.read_for_session(str(conversation_id))
+            checkpoint = result.checkpoint
+            if checkpoint is None:
+                continue
+            parent = cursor.execute(
+                "SELECT parent_message_id FROM messages WHERE id = ?",
+                (checkpoint.assistant_message_id,),
+            ).fetchone()
+            if parent is None or parent[0] != checkpoint.user_message_id:
+                continue
+            rows = cursor.execute(
+                """WITH RECURSIVE admitted_path(message_id, parent_message_id) AS (
+                       SELECT id, parent_message_id FROM messages
+                        WHERE id = ? AND conversation_id = ? AND deleted = 0
+                       UNION
+                       SELECT parent.id, parent.parent_message_id FROM messages AS parent
+                         JOIN admitted_path AS child ON parent.id = child.parent_message_id
+                        WHERE parent.conversation_id = ? AND parent.deleted = 0
+                   ) SELECT revision.revision_id
+                       FROM console_trace_semantic_revisions AS revision
+                       JOIN admitted_path AS message
+                         ON revision.live_message_id = message.message_id
+                      WHERE revision.source_conversation_id = ?
+                        AND revision.source_message_id = message.message_id
+                        AND revision.live_locator_retired_at IS NULL""",
+                (checkpoint.assistant_message_id, conversation_id,
+                 conversation_id, conversation_id),
+            ).fetchall()
+            revisions.extend(str(row[0]) for row in rows)
+        return tuple(revisions)
 
     def read_for_session(self, conversation_id: str) -> ConsoleDispatchReadResult:
         """Read and validate at most one active-path recovery owner."""
@@ -859,6 +974,7 @@ class ConsoleDispatchRepository:
         )
         if deleted.rowcount != 1:
             raise sqlite3.IntegrityError("Checkpoint reconciliation delete failed.")
+        CharactersRAGDB._advance_semantic_graph_epoch(cursor)
 
     @staticmethod
     def _quarantined(
@@ -983,6 +1099,7 @@ class ConsoleDispatchRepository:
                 raise sqlite3.IntegrityError(
                     "Checkpoint state CAS lost after owner CAS."
                 )
+            self.db._advance_semantic_graph_epoch(cursor)
             updated_row = self._owner_by_assistant(
                 cursor, transition.assistant_message_id
             )
@@ -1227,6 +1344,7 @@ class ConsoleDispatchRepository:
                 raise sqlite3.IntegrityError(
                     "Checkpoint settlement delete lost after owner CAS."
                 )
+            self.db._advance_semantic_graph_epoch(cursor)
             return ConsoleDispatchWriteResult(
                 ConsoleDispatchResultStatus.COMMITTED,
                 None,
@@ -1337,6 +1455,7 @@ class ConsoleDispatchRepository:
                 raise sqlite3.IntegrityError(
                     "Checkpoint handoff delete lost after owner CAS."
                 )
+            self.db._advance_semantic_graph_epoch(cursor)
             content = row["assistant_content"]
             return ConsoleDispatchWriteResult(
                 ConsoleDispatchResultStatus.COMMITTED,

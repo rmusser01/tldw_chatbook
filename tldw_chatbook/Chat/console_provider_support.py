@@ -16,6 +16,7 @@ from tldw_chatbook.Chat.provider_readiness import (
 )
 from tldw_chatbook.model_capabilities import (
     anthropic_model_rejects_fixed_thinking_budget,
+    deepseek_model_supports_reasoning_effort,
     moonshot_model_supports_reasoning_effort,
     zai_model_supports_reasoning_effort,
 )
@@ -357,6 +358,8 @@ def _capability_generation_fields(
 
     provider_key = provider_config_key(provider or "")
     supported = set(GENERATION_FIELD_REQUEST_KEYS) - _PROVIDER_GATED_GENERATION_FIELDS
+    if provider_key == "deepseek" and deepseek_model_supports_reasoning_effort(model):
+        supported.add("reasoning_effort")
     if provider_key == "moonshot" and moonshot_model_supports_reasoning_effort(model):
         supported.add("reasoning_effort")
     if provider_key == "zai" and zai_model_supports_reasoning_effort(model):
@@ -549,6 +552,13 @@ def console_generation_control_support(
         if anthropic_model_rejects_fixed_thinking_budget(model):
             return "unsupported" if control == "thinking_budget_tokens" else "supported"
         return "unknown"
+
+    if readiness_key == "deepseek" and control == "reasoning_effort":
+        return (
+            "supported"
+            if deepseek_model_supports_reasoning_effort(model)
+            else "unsupported"
+        )
 
     if readiness_key == "moonshot":
         return (

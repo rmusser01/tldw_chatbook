@@ -375,3 +375,13 @@ execution API is initialized. It is excluded from centralized backup.
 | C96 | tldw_chatbook/DB/recovery_dreams_guardian | _DreamsAdapter.validate | recovery.operations.dreams | private_file, read_only_uri | exact installed historical Dreams v1–v6 catalogs | Migrated via `connect_private_sqlite`. Complete measured catalogs and positive historical version markers; no runtime reference-store construction. |
 | B40 | tldw_chatbook/DB/recovery_dreams_guardian | _DreamsAdapter.capture | recovery.operations.dreams | private_file, read_only_uri | copy_private_sqlite | Migrated via `copy_private_sqlite`. Owner-checked private snapshot preserves historical data; restoration grants no automatic execution. |
 | C97 | Tests/DB/test_store_kernel | SQLiteStoreKernel._get_connection (contract tests) | tests.store_kernel | private_file, memory | read/write | Migrated via `connect_private_sqlite`. Kernel contract tests connect under a dedicated test owner (TASK-33132, ADR-228; C97 after dev minted C95/C96 mid-flight); the kernel's per-subclass dispatch is the structurally admitted qualified call in DB/store_kernel. |
+
+
+ADR-232 adds one exact restricted-validation caller, not a new SQLite owner:
+`DB/recovery_response_rules.py::prepare_imported_candidate` resolves only the
+installed `db.chachanotes.primary` adapter, validates that same disposable
+candidate without migration, and opens it via `open_recovery_validation` with
+restrictions. Its preparation flag permits only binding state/revision and
+assessment state/JSON updates. This path is selected-import preparation only;
+internal rollback does not disable local rules. The private-call census pins
+this symbol, literal adapter selection, candidate argument, and validation call.

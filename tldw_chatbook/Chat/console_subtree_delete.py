@@ -168,6 +168,10 @@ def apply_subtree_delete(
     store._project_sync_v2_message_deletes(tombstones)
     for node_id in plan.subtree_ids:
         store._invalidate_generation_attempt(node_id)
+    if message.persisted_message_id is None and store.response_rule_store is not None:
+        store.response_rule_store.remove_temporary_sources(
+            session_id, set(plan.subtree_ids)
+        )
     children_map = store._children_by_parent.get(session_id, {})
     # Detach the deleted node from its parent's ordered child list.
     siblings = children_map.get(parent_native_id)

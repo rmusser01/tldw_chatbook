@@ -492,3 +492,38 @@ class ConsoleSettingsUnsavedGuardMixin:
 
     def on_select_changed(self, _event: object) -> None:
         self.call_after_refresh(self._sync_unsaved_hint)
+
+
+    def _parse_float_input(self, input_id: str, fallback: float) -> object:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        if not raw_value:
+            return fallback
+        try:
+            return float(raw_value)
+        except ValueError:
+            return raw_value
+
+
+    def _parse_optional_float_input(self, input_id: str) -> object:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        if not raw_value:
+            return None
+        try:
+            return float(raw_value)
+        except ValueError:
+            return raw_value
+
+
+    def _parse_optional_int_input(self, input_id: str) -> object:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        if not raw_value:
+            return None
+        try:
+            return int(raw_value)
+        except ValueError:
+            return raw_value
+
+
+    def _parse_optional_text_input(self, input_id: str) -> str | None:
+        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
+        return raw_value or None

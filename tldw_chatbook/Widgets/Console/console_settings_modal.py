@@ -1101,10 +1101,10 @@ class ConsoleSettingsModal(
         providers_models: Mapping[str, list[str]],
         context_estimate: ConsoleSettingsContextEstimate,
         context_state: ConsoleContextControlState | None = None,
-        context_window_resolver: Callable[
-            [ConsoleSessionSettings], Awaitable[ContextWindowResolution]
-        ]
-        | None = None,
+        context_window_resolver: (
+            Callable[[ConsoleSessionSettings], Awaitable[ContextWindowResolution]]
+            | None
+        ) = None,
         can_save: bool,
         active_run: bool = False,
         focus_model: bool = False,
@@ -1123,10 +1123,12 @@ class ConsoleSettingsModal(
         default_recovery_handler: DefaultRecoveryHandler | None = None,
         suspended_draft: ConsoleSettingsDraftSnapshot | None = None,
         expected_settings_revision: int = 0,
+        open_response_rules: Callable[[], Awaitable[None]] | None = None,
         model_picker: ModelPicker | None = None,
         chat_title: str = "",
     ) -> None:
         super().__init__()
+        self._open_response_rules = open_response_rules
         self._model_picker, self._chat_title = model_picker, chat_title
         self._unsaved_committed = (settings, context_state, user_display_name_override)
         if transfer is not None:
@@ -1534,6 +1536,12 @@ class ConsoleSettingsModal(
         values = ", ".join(_PROVIDER_CHOICE_VALUES[control_id])
         return f"Saved value is unavailable. Choose one of: {values}."
 
+    @on(Button.Pressed, "#console-settings-response-rules")
+    async def _response_rules_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._open_response_rules is not None:
+            await self._open_response_rules()
+
     def compose(self) -> ComposeResult:
         base_url = self._base_url_for_provider(self._active_provider)
         uses_base_url = self._provider_uses_base_url(self._active_provider)
@@ -1616,6 +1624,11 @@ class ConsoleSettingsModal(
             # is focused, so the container stays out of the focus chain.
             body.can_focus = False
             with body:
+                yield Button(
+                    "Response rules",
+                    id="console-settings-response-rules",
+                    disabled=self._open_response_rules is None,
+                )
                 with Vertical(
                     id="console-settings-provider-model-section",
                     classes="console-settings-model-view",
@@ -6110,14 +6123,6 @@ class ConsoleSettingsModal(
         """Round-trip a stored ratio as a human percentage draft."""
         return f"{ratio * 100:.12g}"
 
-    def _parse_float_input(self, input_id: str, fallback: float) -> object:
-        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
-        if not raw_value:
-            return fallback
-        try:
-            return float(raw_value)
-        except ValueError:
-            return raw_value
 
     def _provider_choice_input_errors(self) -> list[str]:
         errors: list[str] = []
@@ -6136,27 +6141,8 @@ class ConsoleSettingsModal(
                     errors.append(f"{label} has a saved value that is unavailable.")
         return errors
 
-    def _parse_optional_float_input(self, input_id: str) -> object:
-        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
-        if not raw_value:
-            return None
-        try:
-            return float(raw_value)
-        except ValueError:
-            return raw_value
 
-    def _parse_optional_int_input(self, input_id: str) -> object:
-        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
-        if not raw_value:
-            return None
-        try:
-            return int(raw_value)
-        except ValueError:
-            return raw_value
 
-    def _parse_optional_text_input(self, input_id: str) -> str | None:
-        raw_value = self.query_one(f"#{input_id}", Input).value.strip()
-        return raw_value or None
 
     def _parse_optional_choice_select(self, input_id: str) -> str | None:
         raw_value = self._select_value_text(

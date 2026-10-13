@@ -1048,6 +1048,8 @@ command that only reports (`/doctor`, `/skills`,
 the chat you sent it from. Anything you type while a command runs stays in
 the composer.
 
+**Learning a response rule.** After a completed answer, `/omfg <what was wrong>` drafts and tests a structured check for this Chat, then attempts to repair the answer while retaining completed work. `/rules` opens its manager; Workspace and current-profile promotion are explicit. See [Response rules](../../backlog/docs/console-response-rules.md) for testing, limits and local recovery behavior.
+
 **Steering a running turn.** `/steer <guidance>` delivers text into the
 *currently running* agent turn — it is read before the next model call, after
 the in-flight tool batch finishes, so it never interrupts a tool mid-write.

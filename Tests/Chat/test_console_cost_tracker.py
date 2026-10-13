@@ -56,6 +56,49 @@ def test_snapshot_sums_priced_usage_rows():
     assert snap.total_tokens == 2_000_000
 
 
+def test_response_helper_usage_keeps_its_own_model_and_unknown_reports():
+    answer = ProviderUsage(
+        uncached_input=1_000_000,
+        output=1_000_000,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+    )
+    helper = ProviderUsage(
+        uncached_input=1_000_000,
+        output=1_000_000,
+        provider="anthropic",
+        model="claude-haiku-4-5",
+    )
+    snap = build_cost_snapshot(
+        [_msg(usage=answer)],
+        provider="anthropic",
+        model=answer.model,
+        auxiliary_usage=(helper,),
+    )
+    assert snap.total_tokens == 4_000_000
+    assert snap.total_usd == 24.0
+    unknown = build_cost_snapshot(
+        [_msg(usage=answer)],
+        provider="anthropic",
+        model=answer.model,
+        auxiliary_usage=(helper, None),
+    )
+    assert unknown.total_tokens == 4_000_000
+    assert unknown.total_usd is None and not unknown.pricing_known
+    partial = build_cost_snapshot(
+        [_msg(usage=answer)],
+        provider="anthropic",
+        model=answer.model,
+        auxiliary_usage=(
+            ProviderUsage(
+                output=7, provider="anthropic", model=helper.model, partial=True
+            ),
+        ),
+    )
+    assert partial.total_tokens == 2_000_007
+    assert partial.total_usd is None and partial.auxiliary_usage_unknown == 1
+
+
 def test_rows_without_usage_fall_back_to_estimates():
     snap = build_cost_snapshot(
         [_msg(content="x" * 400, usage=None)],

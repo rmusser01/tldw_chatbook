@@ -349,6 +349,13 @@ jobs:
             "Tests/UI/test_console_project_instruction_choose_folder.py::test_choose_folder_opens_picker_and_applies_the_chosen_binding[enable]" \
             Tests/UI/test_console_conversation_action_menu.py::test_unwritable_save_path_shows_an_error_and_keeps_the_app_running \
             "Tests/UI/test_console_conversation_action_menu.py::test_save_prompt_closes_without_writing_and_restores_focus[cancel]" \
+            Tests/Chat/test_response_rules_preparation_custody.py \
+            "Tests/DB/test_response_rules_migration.py::test_historical_migrates_using_installed_sql_without_losing_history[80]" \
+            Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics \
+            Tests/Backup_Recovery/test_response_rules_restore.py::test_every_accepted_v80_catalog_migrates_to_its_exact_v81_variant \
+            Tests/Backup_Recovery/test_response_rules_restore.py::test_restricted_import_preparation_disables_only_qualified_selected_payload \
+            Tests/Chat/test_console_voice_pair_persistence.py::test_voice_promotion_response_rule_residue_refuses_without_mutation \
+            Tests/DB/test_private_sqlite_inventory.py::test_response_rule_import_dispatch_is_exact_and_validated \
             --timeout=180 \
             --tb=short
 
@@ -379,6 +386,19 @@ jobs:
             Tests/UI/test_console_hook_review_send_freeze.py::test_the_app_pump_answers_ctrl_q_while_the_enter_review_is_open \
             Tests/UI/test_console_hook_review_send_freeze.py::test_a_declined_send_review_settles_and_keeps_the_draft \
             Tests/UI/test_console_hook_review_send_freeze.py::test_allow_all_resumes_the_captured_send_exactly_once \
+            Tests/Chat/test_response_rules_trace_admission.py \
+            Tests/Chat/test_response_rules_goal_intersection.py \
+            Tests/Chat/test_response_rules_runtime.py::test_first_send_checks_stored_global_rule_without_prior_manager_use \
+            Tests/Chat/test_response_rules_runtime.py::test_cancelled_rule_db_call_keeps_real_handle_until_own_cleanup \
+            Tests/Chat/test_response_rules_runtime.py::test_real_completed_tool_work_is_retained_during_native_repair \
+            Tests/Chat/test_response_rules_external_hook.py \
+            Tests/Chat/test_response_rules_write_contention.py \
+            Tests/UI/test_response_rules_modal.py::test_saved_edit_stays_selected_and_pinned_for_next_manager_action \
+            Tests/Chat/test_deepseek_explicit_mode.py \
+            Tests/UI/test_response_rules_modal.py::test_manager_detached_subtree_callbacks_do_not_read_widgets \
+            Tests/UI/test_response_rules_modal.py::test_manager_superseded_reload_cannot_replace_current_scope_rows \
+            Tests/UI/test_response_rules_modal.py::test_manager_reload_preserves_edits_made_while_db_is_pending \
+            Tests/Chat/test_response_rules_builder.py::test_new_learning_timestamps_are_canonical_and_old_offsets_still_parse \
             --timeout=300 \
             --tb=short
 

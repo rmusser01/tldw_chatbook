@@ -127,25 +127,35 @@ def test_schema_policy_matches_installed_store(core_store):
     assert policy.versions == (
         (owner._CURRENT_SCHEMA_VERSION, 4)
         if name == "prompts"
-        else (owner._CURRENT_SCHEMA_VERSION, 76, 75)
+        else (owner._CURRENT_SCHEMA_VERSION, 80, 79, 78, 77, 76, 75)
         if name == "chachanotes"
         else (5, 4) if name == "library_collections"
         else (owner._CURRENT_SCHEMA_VERSION,)
     )
     assert policy.schema_sql[0] == (owner._CURRENT_SCHEMA_VERSION, actual)
     assert len(policy.schema_sql) == (
-        10 if name == "chachanotes" else 2 if name == "prompts" else 3 if name == "library_collections" else 1
+        26 if name == "chachanotes" else 2 if name == "prompts" else 3 if name == "library_collections" else 1
     )
     if name == "chachanotes":
         from tldw_chatbook.DB.recovery_core_schema import (
             CHACHANOTES_NATIVE_V76_TO_V77_SQL,
-            CHACHANOTES_V76_NATIVE_SCHEMAS,
+            CHACHANOTES_FLEET_V77_TO_V78_SQL,
+            CHACHANOTES_SARGABLE_V78_TO_V79_SQL,
+            CHACHANOTES_BROWSE_V79_TO_V80_SQL,
+            CHACHANOTES_RULES_V80_TO_V81_SQL,
+            CHACHANOTES_V81_SCHEMAS,
         )
 
         assert policy.schema_sql[-2:] == tuple(
-            (77, schema) for schema in CHACHANOTES_V76_NATIVE_SCHEMAS
+            (81, schema) for schema in CHACHANOTES_V81_SCHEMAS[2:]
         )
-        assert policy.migration_steps == ((76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),)
+        assert policy.migration_steps == (
+            (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
+            (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
+            (78, 79, CHACHANOTES_SARGABLE_V78_TO_V79_SQL),
+            (79, 80, CHACHANOTES_BROWSE_V79_TO_V80_SQL),
+            (80, 81, CHACHANOTES_RULES_V80_TO_V81_SQL),
+        )
     elif name == "library_collections":
         from tldw_chatbook.DB.recovery_core_schema import COLLECTIONS_V4_TO_V5_SQL
         assert policy.migration_steps == ((4, 5, COLLECTIONS_V4_TO_V5_SQL),)
@@ -1112,11 +1122,12 @@ def test_dependency_validation_scans_each_real_peer_once_per_invocation(tmp_path
     import sys
     from collections import Counter
     from contextlib import closing
-    from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
-    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
-    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+
     from tldw_chatbook.Backup_Recovery.models import StorageItem
     from tldw_chatbook.DB import private_sqlite
+    from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
+    from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+    from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 
     stores = {
         "db.library_collections": LibraryCollectionsDB(tmp_path / "collections.db"),

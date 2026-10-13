@@ -614,6 +614,15 @@ async def test_backend_switch_preserves_open_source_draft_widget_and_focus(size)
         screen.active_section = "sources"
         await pilot.pause()
         pane = screen.query_one("#watchlists-sources-pane", SourcesPane)
+        await asyncio.gather(
+            *(
+                worker.wait()
+                for worker in host.workers
+                if worker.node is screen and worker.group == "wc_tree"
+            )
+        )
+        assert not screen._tree_snapshot_failures
+        assert watchlist["id"] in {row["id"] for row in screen._tree_watchlists}
         pane.query_one("#sources-new-button", Button).press()
         await pilot.pause()
         table = pane.query_one("#sources-table", DataTable)

@@ -137,7 +137,9 @@ def _log_usage_metrics(model: str, usage: dict[str, Any]) -> None:
         "deepseek_api_total_tokens", usage.get("total_tokens", 0),
         labels={"model": model},
     )
-    from tldw_chatbook.Chat.session_usage import session_usage  # deferred: boot census (ADR-097)
+    from tldw_chatbook.Chat.session_usage import (
+        session_usage,  # deferred: boot census (ADR-097)
+    )
 
     session_usage().record_provider_payload(usage, provider="deepseek", model=model)
 
@@ -176,6 +178,8 @@ def chat_with_deepseek(
     logit_bias: dict[str, float] | None = None,
     custom_prompt_arg: str | None = None,
     api_base_url: str | None = None,
+    reasoning_effort: str | None = None,
+    api_mode: str | None = None,
 ):
     del custom_prompt_arg
     start_time = time.time()
@@ -189,6 +193,30 @@ def chat_with_deepseek(
 
     logger.debug("DeepSeek: API key provided.")
     current_model = model or deepseek_config.get("model", "deepseek-v4-flash")
+    from tldw_chatbook.model_capabilities import (
+        deepseek_model_supports_reasoning_effort,
+    )
+
+    mode = (
+        api_mode
+        if api_mode is not None
+        else deepseek_config.get("api_mode", "chat_completions")
+    )
+    if not isinstance(mode, str) or mode.strip().lower() != "chat_completions":
+        raise ChatConfigurationError(
+            provider="deepseek",
+            message="DeepSeek Responses is unsupported; select Chat Completions.",
+        )
+    # Omission preserves the provider default; Console passes its frozen selection.
+    effort = reasoning_effort
+    if effort is not None and (
+        not isinstance(effort, str)
+        or effort not in {"none", "low", "high", "max"}
+        or not deepseek_model_supports_reasoning_effort(current_model)
+    ):
+        raise ChatConfigurationError(
+            provider="deepseek", message="Unsupported DeepSeek reasoning effort or model."
+        )
     current_temp = (
         temp if temp is not None else float(deepseek_config.get("temperature", 0.1))
     )
@@ -234,6 +262,8 @@ def chat_with_deepseek(
         "messages": api_messages,
         "stream": current_streaming,
     }
+    if effort is not None:
+        data["reasoning_effort"] = effort
     if current_temp is not None:
         data["temperature"] = current_temp
     if current_top_p is not None:

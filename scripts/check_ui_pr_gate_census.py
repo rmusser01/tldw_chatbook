@@ -209,7 +209,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-34797 adds the native Notes status context/shutdown module after green qualification.
 # TASK-25907.23 / 34800 adds seven bounded privacy/currentness entries.
 # PR2921: production Library Dreams reader and native modal layout/owner checks.
-MINIMUM_FILES = 188
+# PR3010 adds two bounded native rule phase/Stop event node IDs.
+MINIMUM_FILES = 190
 
 
 def read_census(path: Path) -> list[str]:

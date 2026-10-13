@@ -6,6 +6,7 @@ from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 
 import asyncio
 import contextlib
+import functools
 import hashlib
 import inspect
 import json
@@ -185,6 +186,7 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
 )
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.response_rules.resources import RuleHelperLease
     from tldw_chatbook.Chat.console_context_window import (
         ContextWindowCache,
         ContextWindowResolution,
@@ -670,9 +672,9 @@ def _normalize_deepseek_api_mode(provider_settings: Mapping[str, Any]) -> str:
     if not isinstance(candidate, str):
         raise ChatConfigurationError("DeepSeek API mode must be a string.")
     normalized = candidate.strip().lower()
-    if normalized not in _CONTINUATION_PROTOCOLS:
+    if normalized != "chat_completions":
         raise ChatConfigurationError(
-            "DeepSeek API mode must be 'responses' or 'chat_completions'."
+            "DeepSeek Responses is unsupported; select Chat Completions."
         )
     return normalized
 
@@ -4700,8 +4702,8 @@ class ConsoleProviderGateway:
                     provider=selection.provider,
                     model=model,
                     visible_copy=(
-                        "DeepSeek blocked: invalid API mode setting. Choose "
-                        "'responses' or 'chat_completions' in Settings."
+                        "DeepSeek blocked: API mode 'chat_completions' is supported; "
+                        "Responses is unsupported."
                     ),
                     readiness_key=identity.readiness_key,
                     execution_key=identity.execution_key,
@@ -4869,7 +4871,12 @@ class ConsoleProviderGateway:
             seed=selection.seed,
             presence_penalty=selection.presence_penalty,
             frequency_penalty=selection.frequency_penalty,
-            reasoning_effort=selection.reasoning_effort,
+            reasoning_effort=(
+                provider_settings.get("reasoning_effort")
+                if identity.execution_key == "deepseek"
+                and selection.reasoning_effort is None
+                else selection.reasoning_effort
+            ),
             reasoning_summary=selection.reasoning_summary,
             verbosity=selection.verbosity,
             thinking_effort=selection.thinking_effort,
@@ -5440,6 +5447,66 @@ class ConsoleProviderGateway:
         request: AuxiliaryCompletionRequest,
         *,
         route: ConsoleRequestRoute | None = None,
+        rule_lease: RuleHelperLease | None = None,
+    ) -> AuxiliaryCompletionResult:
+        """Run a sensitive completion, optionally under native-rule custody."""
+        if rule_lease is None:
+            return await self._complete_auxiliary(request, route=route)
+        from .response_rules.models import MAX_HELPER_OUTPUT_TOKENS
+        from .response_rules.resources import RuleHelperLease
+
+        if not isinstance(rule_lease, RuleHelperLease):
+            raise TypeError("rule_lease")
+        try:
+            if not isinstance(request, AuxiliaryCompletionRequest):
+                raise TypeError("request must be an AuxiliaryCompletionRequest")
+            if route is not None:
+                raise TraceProvenanceAlignmentError(
+                    "native rule helper route must be capture-off"
+                )
+            if not rule_lease.acceptance_current:
+                raise asyncio.CancelledError
+            remaining = rule_lease.remaining_seconds
+            timeout = request.resolution.request_timeout
+            resolution = replace(
+                request.resolution,
+                request_timeout=min(
+                    remaining,
+                    timeout if timeout is not None and timeout > 0 else remaining,
+                ),
+                request_retries=0,
+            )
+            request = replace(
+                request,
+                resolution=resolution,
+                max_output_tokens=min(
+                    request.max_output_tokens,
+                    MAX_HELPER_OUTPUT_TOKENS,
+                    (
+                        resolution.max_tokens
+                        if resolution.max_tokens is not None
+                        else MAX_HELPER_OUTPUT_TOKENS
+                    ),
+                ),
+            )
+            async with asyncio.timeout(remaining):
+                result = await self._complete_auxiliary(request, rule_lease=rule_lease)
+            if not rule_lease.acceptance_current:
+                raise asyncio.CancelledError
+            return result
+        except BaseException:
+            rule_lease.cancel_acceptance("retired")
+            raise
+        finally:
+            rule_lease.release_unused()
+
+    async def _complete_auxiliary(
+        self,
+        request: AuxiliaryCompletionRequest,
+        *,
+        route: ConsoleRequestRoute | None = None,
+        rule_lease: RuleHelperLease | None = None,
+        native_accounting: bool = False,
     ) -> AuxiliaryCompletionResult:
         """Run exactly one sensitive, non-streaming completion.
 
@@ -5480,13 +5547,23 @@ class ConsoleProviderGateway:
             list[Mapping[str, Any]], _thaw_auxiliary_value(request.messages)
         )
         prepared = None
-        call_signals = None
-        if automatic is not None:
-            prepared = self.prepare_chat_request(
+        call_signals = (
+            ConsoleProviderStreamSignals().new_usage_call()
+            if native_accounting
+            else None
+        )
+        if automatic is not None or rule_lease is not None or native_accounting:
+            prepare = functools.partial(
+                self.prepare_chat_request,
                 resolution,
                 messages,
                 apply_safety_window=False,
                 response_format=request.response_format,
+            )
+            prepared = (
+                await rule_lease.run_preparation(prepare)
+                if rule_lease is not None
+                else prepare()
             )
             if prepared.known_overflow:
                 raise ChatBadRequestError(
@@ -5500,6 +5577,13 @@ class ConsoleProviderGateway:
             )
             request = replace(request, max_output_tokens=resolution.max_tokens)
             call_signals = ConsoleProviderStreamSignals().new_usage_call()
+        if rule_lease is not None:
+            if not rule_lease.acceptance_current:
+                raise asyncio.CancelledError
+            resolution = replace(
+                resolution,
+                request_timeout=min(resolution.request_timeout, rule_lease.remaining_seconds),
+            )
         response: Any = _UNSUPPORTED_RESPONSE
         try:
             with sensitive_llm_request():
@@ -5509,52 +5593,110 @@ class ConsoleProviderGateway:
                     # reasoning_budget_tokens. Auxiliary requests inherit session
                     # thinking settings (documented parity with cloud
                     # providers).
-                    text = await self.complete_llamacpp_chat(
-                        local_structured_thinking=resolution.local_structured_thinking,
-                        reasoning_replay=resolution.reasoning_replay,
-                        base_url=resolution.base_url,
-                        model=model,
-                        messages=messages,
-                        temperature=resolution.temperature,
-                        top_p=resolution.top_p,
-                        min_p=resolution.min_p,
-                        top_k=resolution.top_k,
-                        max_tokens=request.max_output_tokens,
-                        seed=resolution.seed,
-                        presence_penalty=resolution.presence_penalty,
-                        frequency_penalty=resolution.frequency_penalty,
-                        reasoning_effort=resolution.reasoning_effort,
-                        thinking_budget_tokens=resolution.thinking_budget_tokens,
-                        strict_response=True,
-                        api_key=resolution.api_key,
-                        **(
-                            {
-                                "_automatic_prepared": prepared,
-                                "_automatic_signals": call_signals,
-                            }
-                            if automatic is not None
-                            else {}
-                        ),
-                        request_timeout=resolution.request_timeout,
-                        thinking_stream_disposition=(
-                            resolution.thinking_stream_disposition
-                        ),
-                        include_thinking_events=True,
-                        adapter_admission=admission,
+                    async def complete_local():
+                        try:
+                            return await self.complete_llamacpp_chat(
+                                local_structured_thinking=resolution.local_structured_thinking,
+                                reasoning_replay=resolution.reasoning_replay,
+                                base_url=resolution.base_url,
+                                model=model,
+                                messages=messages,
+                                temperature=resolution.temperature,
+                                top_p=resolution.top_p,
+                                min_p=resolution.min_p,
+                                top_k=resolution.top_k,
+                                max_tokens=request.max_output_tokens,
+                                seed=resolution.seed,
+                                presence_penalty=resolution.presence_penalty,
+                                frequency_penalty=resolution.frequency_penalty,
+                                reasoning_effort=resolution.reasoning_effort,
+                                thinking_budget_tokens=resolution.thinking_budget_tokens,
+                                strict_response=True,
+                                api_key=resolution.api_key,
+                                **(
+                                    {
+                                        "_automatic_prepared": prepared,
+                                        "_automatic_signals": call_signals,
+                                    }
+                                    if call_signals is not None
+                                    else {}
+                                ),
+                                request_timeout=resolution.request_timeout,
+                                thinking_stream_disposition=(
+                                    resolution.thinking_stream_disposition
+                                ),
+                                include_thinking_events=True,
+                                adapter_admission=admission,
+                            )
+                        finally:
+                            if rule_lease is not None and call_signals is not None:
+                                call_signals.close_usage_call()
+                    text = (
+                        await rule_lease.run_async(
+                            complete_local,
+                            lambda _: ProviderUsage.from_provider_payload(
+                                call_signals.usage_snapshot(), provider=provider, model=model
+                            ) if call_signals is not None else None,
+                        )
+                        if rule_lease is not None else await complete_local()
                     )
                 else:
-                    kwargs = (self._chat_api_kwargs_from_prepared(resolution, prepared) if prepared is not None else self._auxiliary_chat_api_kwargs(request, resolution))
+                    kwargs = (
+                        self._chat_api_kwargs_from_prepared(resolution, prepared)
+                        if prepared is not None
+                        else self._auxiliary_chat_api_kwargs(request, resolution)
+                    )
+                    if rule_lease is not None:
+                        # Preparation must retain this helper's transport limits.
+                        kwargs.update(
+                            api_base_url=_adapter_api_base_url(resolution),
+                            request_timeout=resolution.request_timeout,
+                            request_retries=0,
+                            request_retry_delay=resolution.request_retry_delay,
+                        )
                     with _automatic_generation(prepared, call_signals):
                         context = copy_context()
-                        response = await asyncio.to_thread(
-                            context.run,
-                            self._complete_sensitive_sync,
-                            kwargs,
-                            admission,
-                            resolution.provider,
-                        )
-                        if call_signals is not None and isinstance(response, Mapping):
-                            _maybe_record_usage(response, call_signals)
+                        if rule_lease is None:
+                            response = await asyncio.to_thread(
+                                context.run,
+                                self._complete_sensitive_sync,
+                                kwargs,
+                                admission,
+                                resolution.provider,
+                            )
+                            if call_signals is not None and isinstance(
+                                response, Mapping
+                            ):
+                                _maybe_record_usage(response, call_signals)
+                        else:
+
+                            def native_worker():
+                                try:
+                                    raw = context.run(
+                                        self._complete_sensitive_sync,
+                                        kwargs,
+                                        admission,
+                                        resolution.provider,
+                                    )
+                                    if call_signals is not None and isinstance(
+                                        raw, Mapping
+                                    ):
+                                        _maybe_record_usage(raw, call_signals)
+                                    return raw
+                                finally:
+                                    if call_signals is not None:
+                                        call_signals.close_usage_call()
+
+                            response = await rule_lease.run_sync(
+                                native_worker,
+                                lambda raw: (
+                                    ProviderUsage.from_provider_payload(
+                                        raw.get("usage"), provider=provider, model=model
+                                    )
+                                    if isinstance(raw, Mapping)
+                                    else None
+                                ),
+                            )
         except AutomaticWorkRefused:
             raise
         except asyncio.CancelledError:
@@ -5592,10 +5734,14 @@ class ConsoleProviderGateway:
                 status_code=status_code if isinstance(status_code, int) else 502,
             ) from None
         finally:
-            if call_signals is not None:
+            if call_signals is not None and rule_lease is None:
                 call_signals.close_usage_call()
 
         usage: ProviderUsage | None = None
+        if (native_accounting or rule_lease is not None) and call_signals is not None:
+            usage = ProviderUsage.from_provider_payload(
+                call_signals.usage_snapshot(), provider=provider, model=model
+            )
         if response is not _UNSUPPORTED_RESPONSE:
             text = self._auxiliary_response_text(response)
             if isinstance(response, Mapping):
@@ -5742,7 +5888,7 @@ class ConsoleProviderGateway:
             "request_retries": resolution.request_retries,
             "request_retry_delay": resolution.request_retry_delay,
         }
-        if resolution.execution_key == "qwencloud":
+        if resolution.execution_key in {"qwencloud", "deepseek"}:
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
@@ -7371,7 +7517,7 @@ class ConsoleProviderGateway:
         if local:
             kwargs["api_base_url"] = _adapter_api_base_url(resolution)
             kwargs["api_key_resolved"] = True
-        elif resolution.execution_key == "qwencloud":
+        elif resolution.execution_key in {"qwencloud", "deepseek"}:
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in (
@@ -7486,7 +7632,7 @@ class ConsoleProviderGateway:
             # for byte what they were before prompt caching existed.
             "prompt_caching": resolution.prompt_caching,
         }
-        if resolution.execution_key == "qwencloud":
+        if resolution.execution_key in {"qwencloud", "deepseek"}:
             kwargs["api_mode"] = resolution.api_mode
             kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in (

@@ -37,6 +37,8 @@ UNSPECIFIED_ASSISTANT = object()
 _HYDRATION_NOT_PREPARED = object()
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.response_rules.models import RuleEvidence
+    from tldw_chatbook.Chat.response_rules.store import ResponseRuleStore
     from tldw_chatbook.Agents.fleet_messages import MessageStore
     from tldw_chatbook.Canvas.staging import (
         CanvasPromotionContribution,
@@ -76,14 +78,7 @@ from tldw_chatbook.Chat.console_capture_policy_repository import (
     ConsoleCapturePolicyRepository,
 )
 from tldw_chatbook.Chat.console_chat_fork import (
-    validate_console_fork_video_projection,
-    console_fork_message_state_is_eligible,
-    console_fork_visible_selection,
-    fingerprint_console_fork_attachments,
-    validate_console_fork_image_selections,
-    fingerprint_console_fork_video,
-    project_console_fork_message,
-    console_fork_candidate_matches_fence,
+    CONSOLE_FORK_SAVED_HISTORY_UNAVAILABLE,
     CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
     ConsoleChatForkSnapshot,
     ConsoleForkCitationLink,
@@ -96,14 +91,21 @@ from tldw_chatbook.Chat.console_chat_fork import (
     ConsoleForkProjectedGeneration,
     ConsoleForkProjectedMessage,
     ConsoleForkProjectedVideoTombstone,
-    CONSOLE_FORK_SAVED_HISTORY_UNAVAILABLE,
     check_console_fork_saved_tail,
+    console_fork_candidate_matches_fence,
+    console_fork_message_state_is_eligible,
     console_fork_prefix_refusal,
     console_fork_source_ids,
+    console_fork_visible_selection,
     encode_console_fork_message_metadata,
+    fingerprint_console_fork_attachments,
     fingerprint_console_fork_configuration,
+    fingerprint_console_fork_video,
     normalize_fork_title,
+    project_console_fork_message,
     validate_console_fork_image_payload,
+    validate_console_fork_image_selections,
+    validate_console_fork_video_projection,
 )
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY,
@@ -186,7 +188,6 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     effective_user_display_name,
     expand_character_template,
     normalize_chat_display_name,
-    resolve_console_message_presentation,
     session_assistant_display_name,
 )
 from tldw_chatbook.Chat.console_roleplay_metadata import (
@@ -1683,6 +1684,7 @@ class ConsoleChatStore:
         ]
         | None = None,
         on_assistant_default_notice: Callable[[str], None] | None = None,
+        response_rule_store: "ResponseRuleStore | None" = None,
     ) -> None:
         """Initialize the Console chat store.
 
@@ -1726,6 +1728,9 @@ class ConsoleChatStore:
                 a native session activation or active-branch transition.
         """
         self.persistence = persistence
+        self.response_rule_store: ResponseRuleStore | None = None
+        if response_rule_store is not None:
+            self.bind_response_rule_store(response_rule_store)
         self._assistant_defaults_provider = assistant_defaults_provider
         self._on_assistant_default_notice = on_assistant_default_notice
         self.canvas_promotion_participant = canvas_promotion_participant
@@ -2061,6 +2066,11 @@ class ConsoleChatStore:
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
+        self._response_rule_evidence_lock = threading.RLock()
+        self._response_rule_results: dict[str, dict[str, RuleEvidence]] = {}
+        self._response_rule_task_roots: dict[str, str] = {}
+        self._response_rule_invalidations: list[Callable[[str, str], None]] = []
+        self._response_rule_completion_holds: dict[str, tuple[int, int] | None] = {}
         # Content-free fence that advances only for live successful
         # completions. It distinguishes duplicate callback delivery from a
         # later regeneration of the same message without retaining text.
@@ -2170,7 +2180,45 @@ class ConsoleChatStore:
             self._message_completion_epoch
         )
         self._settle_message_library_destination(session_id, message_id)
-        self._publish_message_completed(session_id, message_id)
+        if message_id in self._response_rule_completion_holds:
+            self._response_rule_completion_holds[message_id] = (
+                self.message_completion_generation(message_id),
+                self.response_rule_source_version(message_id),
+            )
+        else:
+            self._publish_message_completed(session_id, message_id)
+
+    def subscribe_response_rule_invalidation(self, callback: Callable[[str, str], None]) -> Callable[[], None]:
+        """Delegate to the same store-owned chat_state boundary."""
+        from tldw_chatbook.Chat.response_rules.chat_state import (
+            subscribe_response_rule_invalidation,
+        )
+
+        return subscribe_response_rule_invalidation(self, callback)
+
+    def invalidate_response_rule_source(self, session_id: str, reason: str) -> None:
+        """Delegate to the same store-owned chat_state boundary."""
+        from tldw_chatbook.Chat.response_rules.chat_state import (
+            invalidate_response_rule_source,
+        )
+
+        return invalidate_response_rule_source(self, session_id, reason)
+
+    def hold_response_rule_completion(self, message_id: str) -> None:
+        """Delegate to the same store-owned chat_state boundary."""
+        from tldw_chatbook.Chat.response_rules.chat_state import (
+            hold_response_rule_completion,
+        )
+
+        return hold_response_rule_completion(self, message_id)
+
+    def release_response_rule_completion(self, message_id: str) -> None:
+        """Delegate to the same store-owned chat_state boundary."""
+        from tldw_chatbook.Chat.response_rules.chat_state import (
+            release_response_rule_completion,
+        )
+
+        return release_response_rule_completion(self, message_id)
 
     def message_completion_generation(self, message_id: str) -> int:
         """Return the process-local generation of a live successful completion."""
@@ -2330,6 +2378,8 @@ class ConsoleChatStore:
         )
         if ephemeral and self.canvas_promotion_participant is not None:
             self.canvas_promotion_participant.activate_session(session.id)
+        if ephemeral and self.response_rule_store is not None:
+            self.response_rule_store.register_temporary(session.id)
         if (
             ephemeral
             and self.canvas_turn_controller is not None
@@ -5029,6 +5079,7 @@ class ConsoleChatStore:
             The session activated after closing, or ``None`` when no sessions remain.
         """
         with self._first_persistence_lock:
+            self.invalidate_response_rule_source(session_id, "closed")
             return self._close_session_locked(session_id)
 
     def _close_session_locked(self, session_id: str) -> ConsoleChatSession | None:
@@ -5091,6 +5142,8 @@ class ConsoleChatStore:
     def _purge_session_runtime_state(self, session_id: str) -> None:
         """Delete one session's exact process-local ownership without DB writes."""
         self._session_or_raise(session_id)
+        if self.response_rule_store is not None:
+            self.response_rule_store.discard_temporary(session_id)
 
         if self.canvas_promotion_participant is not None:
             self.canvas_promotion_participant.discard_session(session_id)
@@ -5139,6 +5192,9 @@ class ConsoleChatStore:
             self._variant_restored_message_ids.discard(message_id)
             self._failed_retry_message_ids.discard(message_id)
             self._message_speech_revisions.pop(message_id, None)
+            with self._response_rule_evidence_lock:
+                self._response_rule_results.pop(message_id, None)
+                self._response_rule_task_roots.pop(message_id, None)
             self._message_completion_generations.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
             self._restored_tree_message_ids.discard(message_id)
@@ -6150,6 +6206,9 @@ class ConsoleChatStore:
             ).hexdigest(),
             "continuation_receipt": cls._canonical_fingerprint_value(
                 acceptance.continuation_receipt
+            ),
+            "machine_followup_receipt": cls._canonical_fingerprint_value(
+                acceptance.machine_followup_receipt
             ),
             "user_root_fork": acceptance.user_root_fork,
             "parent_message_id": acceptance.parent_message_id,
@@ -9507,6 +9566,8 @@ class ConsoleChatStore:
             session.settings != settings
             or session.ephemeral_endpoint_policy is not None
         )
+        if changed:
+            self.invalidate_response_rule_source(session_id, "settings_changed")
         if mark_user_work and changed:
             session.has_user_work = True
         elif not mark_user_work:
@@ -10531,6 +10592,9 @@ class ConsoleChatStore:
 
     def set_workspace_context(self, workspace_context: ConsoleWorkspaceContext) -> None:
         """Replace the active workspace context."""
+        if workspace_context != self.workspace_context:
+            for session_id in tuple(self._sessions):
+                self.invalidate_response_rule_source(session_id, "workspace_changed")
         self.workspace_context = workspace_context
 
     def set_session_project_instruction_state(
@@ -10598,6 +10662,8 @@ class ConsoleChatStore:
         """Replace state only while no voice capability can observe it."""
 
         with self._voice_promotion_state_replacement_scope():
+            for session_id in tuple(self._sessions):
+                self.invalidate_response_rule_source(session_id, "restored")
             self._restore_state_unfenced(
                 sessions=sessions,
                 messages_by_session=messages_by_session,
@@ -10745,6 +10811,9 @@ class ConsoleChatStore:
         self._variant_restored_message_ids.clear()
         self._failed_retry_message_ids.clear()
         self._message_speech_revisions.clear()
+        with self._response_rule_evidence_lock:
+            self._response_rule_results.clear()
+            self._response_rule_task_roots.clear()
         self._message_completion_generations.clear()
         # M2: both keyed by message id, same as the caches immediately
         # above -- previously left uncleared here, so a restore (session
@@ -12053,6 +12122,44 @@ class ConsoleChatStore:
         self._materialize_stream_buffer(message)
         return self._snapshot(message)
 
+    def response_rule_source_version(self, message_id: str) -> int:
+        """Delegate to the same store-owned chat_state boundary."""
+        from tldw_chatbook.Chat.response_rules.chat_state import (
+            response_rule_source_version,
+        )
+
+        return response_rule_source_version(self, message_id)
+
+    def bind_response_rule_task_root(self, message_id: str, user_message_id: str) -> None:
+        """Delegate to the same store-owned chat_state boundary."""
+        from tldw_chatbook.Chat.response_rules.chat_state import (
+            bind_response_rule_task_root,
+        )
+
+        return bind_response_rule_task_root(self, message_id, user_message_id)
+
+    def response_rule_task_root(self, message_id: str) -> str | None:
+        """Delegate to the same store-owned chat_state boundary."""
+        from tldw_chatbook.Chat.response_rules.chat_state import response_rule_task_root
+
+        return response_rule_task_root(self, message_id)
+
+    def record_response_rule_tool_result(self, message_id: str, call_id: str, *, state: str, outcome: str, tool_name: str) -> None:
+        """Delegate to the same store-owned chat_state boundary."""
+        from tldw_chatbook.Chat.response_rules.chat_state import (
+            record_response_rule_tool_result,
+        )
+
+        return record_response_rule_tool_result(self, message_id, call_id, state=state, outcome=outcome, tool_name=tool_name)
+
+    def response_rule_tool_results(self, message_id: str) -> tuple[RuleEvidence, ...]:
+        """Delegate to the same store-owned chat_state boundary."""
+        from tldw_chatbook.Chat.response_rules.chat_state import (
+            response_rule_tool_results,
+        )
+
+        return response_rule_tool_results(self, message_id)
+
     def projected_trace_calls(
         self,
         persisted_message_id: str,
@@ -12182,230 +12289,21 @@ class ConsoleChatStore:
             return self._snapshot(replacement)
         raise KeyError(message_id)
 
-    def issue_tts_message_speech_snapshot(
-        self,
-        message_id: str,
-        *,
-        presentation_context: ConsolePresentationContext | None = None,
-        owner_session_id: str | None = None,
-    ) -> TTSMessageSpeechSnapshot:
-        """Issue a trusted snapshot for one speakable active-path message.
-
-        Args:
-            message_id: Native Console message selected by the user.
-            presentation_context: Optional live identity used to resolve trusted
-                character-template content. ``None`` preserves neutral callers.
-            owner_session_id: Explicit local owner for app-owned Buddy speech.
-                Omission retains the visible-session requirement.
-
-        Returns:
-            An immutable snapshot bound to the exact selected text and
-            current trusted session authorship.
-
-        Raises:
-            ConsoleSpeechSnapshotRejected: If the message is missing,
-                inactive, incomplete, non-assistant, blank, or cannot be
-                durably version-fenced.
-        """
-        session_id = self._message_session_index.get(message_id)
-        if session_id is None:
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
-            )
-        if session_id != (
-            self.active_session_id if owner_session_id is None else owner_session_id
-        ):
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
-            )
-        session = self._sessions.get(session_id)
-        message = self._nodes_by_session.get(session_id, {}).get(message_id)
-        if session is None or message is None:
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
-            )
-        if owner_session_id is not None and session.runtime_backend != "local":
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
-            )
-        if message.generation_projection_quarantined:
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
-            )
-        if (
-            message.persisted_message_id is not None
-            and session.persisted_conversation_id is None
-        ):
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
-            )
-        if message_id not in self.active_path_message_ids(session_id):
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
-            )
-        raw_content, selected_variant_id = self._speech_selection(message)
-        if presentation_context is not None:
-            if not isinstance(presentation_context, ConsolePresentationContext):
-                raise ValueError(
-                    "presentation_context must be ConsolePresentationContext or None"
-                )
-            raw_content = resolve_console_message_presentation(
-                self._snapshot(message), presentation_context
-            ).content
-        if (
-            message.role is not ConsoleMessageRole.ASSISTANT
-            or message.status != "complete"
-            or not raw_content.strip()
-        ):
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MESSAGE_NOT_SPEAKABLE
-            )
-        speech_revision = self._message_speech_revisions.get(message_id)
-        if type(speech_revision) is not int or speech_revision < 0:
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
-            )
-        if (
-            session.assistant_kind is not None
-            and type(session.assistant_kind) is not str
-        ):
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.AUTHORSHIP_CHANGED
-            )
-        persisted_version = self._persisted_message_version_or_reject(message)
-        return TTSMessageSpeechSnapshot(
-            session_id=session_id,
-            message_id=message.id,
-            persisted_conversation_id=session.persisted_conversation_id,
-            persisted_message_id=message.persisted_message_id,
-            raw_content=raw_content,
-            selected_variant_id=selected_variant_id,
-            speech_revision=speech_revision,
-            persisted_message_version=persisted_version,
-            role=message.role,
-            status=message.status,
-            assistant_kind=session.assistant_kind,
-            character_ref=session.character_ref(),
+    def issue_tts_message_speech_snapshot(self, message_id: str, *, presentation_context: ConsolePresentationContext | None=None, owner_session_id: str | None=None) -> TTSMessageSpeechSnapshot:
+        """Delegate to the same store-owned console_speech_snapshot boundary."""
+        from tldw_chatbook.Chat.console_speech_snapshot import (
+            issue_tts_message_speech_snapshot,
         )
 
-    def validate_tts_message_speech_snapshot(
-        self,
-        snapshot: TTSMessageSpeechSnapshot,
-        *,
-        presentation_context: ConsolePresentationContext | None = None,
-        owner_session_id: str | None = None,
-    ) -> str:
-        """Revalidate an issued Console speech snapshot against live state.
+        return issue_tts_message_speech_snapshot(self, message_id, presentation_context=presentation_context, owner_session_id=owner_session_id)
 
-        Args:
-            snapshot: Immutable snapshot previously issued by this store.
-            presentation_context: Optional fresh identity used to re-resolve
-                trusted character-template content before comparison.
-            owner_session_id: Exact local owner, matching the issue-time opt-in.
-                The caller also validates its captured Buddy binding.
-
-        Returns:
-            The captured exact raw content after every identity, state,
-            authorship, and durable-version check succeeds.
-
-        Raises:
-            ConsoleSpeechSnapshotRejected: If any captured fact is stale or
-                cannot be re-established.
-        """
-        if type(snapshot) is not TTSMessageSpeechSnapshot:
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
-            )
-        if snapshot.session_id != (
-            self.active_session_id if owner_session_id is None else owner_session_id
-        ):
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
-            )
-        session = self._sessions.get(snapshot.session_id)
-        if session is None:
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
-            )
-        if owner_session_id is not None and session.runtime_backend != "local":
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
-            )
-        owner_session_id = self._message_session_index.get(snapshot.message_id)
-        if owner_session_id is None:
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
-            )
-        if owner_session_id != snapshot.session_id:
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
-            )
-        message = self._nodes_by_session.get(snapshot.session_id, {}).get(
-            snapshot.message_id
+    def validate_tts_message_speech_snapshot(self, snapshot: TTSMessageSpeechSnapshot, *, presentation_context: ConsolePresentationContext | None=None, owner_session_id: str | None=None) -> str:
+        """Delegate to the same store-owned console_speech_snapshot boundary."""
+        from tldw_chatbook.Chat.console_speech_snapshot import (
+            validate_tts_message_speech_snapshot,
         )
-        if message is None:
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
-            )
-        if message.generation_projection_quarantined:
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
-            )
-        if (
-            message.persisted_message_id is not None
-            and session.persisted_conversation_id is None
-        ):
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
-            )
-        if snapshot.message_id not in self.active_path_message_ids(snapshot.session_id):
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
-            )
-        raw_content, selected_variant_id = self._speech_selection(message)
-        if presentation_context is not None:
-            if not isinstance(presentation_context, ConsolePresentationContext):
-                raise ValueError(
-                    "presentation_context must be ConsolePresentationContext or None"
-                )
-            raw_content = resolve_console_message_presentation(
-                self._snapshot(message), presentation_context
-            ).content
-        if (
-            message.role is not ConsoleMessageRole.ASSISTANT
-            or message.status != "complete"
-            or not raw_content.strip()
-        ):
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MESSAGE_NOT_SPEAKABLE
-            )
-        if (
-            message.id != snapshot.message_id
-            or message.role is not snapshot.role
-            or message.status != snapshot.status
-            or selected_variant_id != snapshot.selected_variant_id
-            or raw_content != snapshot.raw_content
-            or self._message_speech_revisions.get(message.id)
-            != snapshot.speech_revision
-            or session.persisted_conversation_id != snapshot.persisted_conversation_id
-            or message.persisted_message_id != snapshot.persisted_message_id
-        ):
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
-            )
-        if (
-            session.assistant_kind != snapshot.assistant_kind
-            or session.character_ref() != snapshot.character_ref
-        ):
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.AUTHORSHIP_CHANGED
-            )
-        current_version = self._persisted_message_version_or_reject(message)
-        if current_version != snapshot.persisted_message_version:
-            raise ConsoleSpeechSnapshotRejected(
-                ConsoleSpeechSnapshotRejectionCode.PERSISTED_VERSION_CHANGED
-            )
-        return snapshot.raw_content
+
+        return validate_tts_message_speech_snapshot(self, snapshot, presentation_context=presentation_context, owner_session_id=owner_session_id)
 
     def replace_deferred_terminal_body(
         self,
@@ -12520,6 +12418,8 @@ class ConsoleChatStore:
             raise ValueError("Wait for response to finish before editing this message.")
         session_id = self._message_session_index[message.id]
         previous_content = message.content
+        if content != previous_content:
+            self.invalidate_response_rule_source(session_id, "source_edited")
         if (
             message.role is ConsoleMessageRole.ASSISTANT
             and content != previous_content
@@ -13944,6 +13844,7 @@ class ConsoleChatStore:
         if session_id is None:
             return self._delete_message(message_id)
         with self._fork_source_transition(session_id):
+            self.invalidate_response_rule_source(session_id, "source_deleted")
             return self._delete_message(message_id)
 
     def _delete_message(self, message_id: str) -> ConsoleChatMessage:
@@ -14217,6 +14118,8 @@ class ConsoleChatStore:
         nodes = self._nodes_by_session.get(session_id, {})
         if message_id is not None and message_id not in nodes:
             raise KeyError(f"Unknown Console message: {message_id}")
+        if message_id != self._active_leaf_by_session.get(session_id):
+            self.invalidate_response_rule_source(session_id, "branch_changed")
         if not self._persist_active_leaf(session_id, message_id):
             raise RuntimeError("Conversation cursor change was refused.")
         previous_leaf = self._active_leaf_by_session.get(session_id)
@@ -14242,52 +14145,15 @@ class ConsoleChatStore:
             self._notify_canvas_context_changed(session_id)
 
     def session_context_summary(self, session_id: str) -> tuple[str | None, str | None]:
-        """Return the session's in-memory ``(summary, boundary_native_id)`` pair.
-
-        Console `/rewind` "summarize up to here" (SP2). ``(None, None)`` when
-        no summary has been set (including a freshly created session).
-        """
+        """Return the current native summary without loading persistence helpers."""
         self._session_or_raise(session_id)
         return self._context_summary_by_session.get(session_id, (None, None))
 
-    def set_session_context_summary(
-        self,
-        session_id: str,
-        summary: str | None,
-        boundary_native_id: str | None,
-    ) -> None:
-        """Set (or clear, with ``(None, None)``) a session's boundary summary.
+    def set_session_context_summary(self, session_id: str, summary: str | None, boundary_native_id: str | None) -> None:
+        """Delegate to the same store-owned console_branch_cursor boundary."""
+        from tldw_chatbook.Chat.console_branch_cursor import set_session_context_summary
 
-        Updates the in-memory ``(summary, boundary_native_id)`` pair, then --
-        when the session owns a persisted conversation and the persistence
-        adapter exposes a raw ``db`` seam -- write-throughs the local-only
-        ``conversations.context_summary`` / ``summary_boundary_message_id``
-        columns (mapped to the boundary node's *persisted* id, or ``None``
-        when the boundary is cleared or not yet persisted). A durable write
-        failure is logged, never raised: the in-memory pair is authoritative
-        and already updated, matching ``set_active_leaf``'s persist-through
-        convention. Unlike ``set_active_leaf``, an unknown
-        ``boundary_native_id`` does not raise -- it write-throughs a ``None``
-        persisted id (treated as "not yet persisted"), matching the design's
-        fail-open handling of a dangling boundary.
-
-        Args:
-            session_id: Native Console session ID.
-            summary: The boundary summary text, or ``None`` to clear it.
-            boundary_native_id: Native id of the message the summary covers
-                up to, or ``None`` to clear it.
-
-        Raises:
-            KeyError: If the session is unknown.
-        """
-        self._session_or_raise(session_id)
-        previous = self._context_summary_by_session.get(session_id, (None, None))
-        updated = (summary, boundary_native_id)
-        self._context_summary_by_session[session_id] = updated
-        self._persist_context_summary(session_id, summary, boundary_native_id)
-        self._bump_payload_revision(session_id)
-        if updated != previous:
-            self._bump_conversation_context_epoch(session_id)
+        return set_session_context_summary(self, session_id, summary, boundary_native_id)
 
     def active_path_message_ids(self, session_id: str) -> list[str]:
         """Return native ids along the active path, root -> active leaf.
@@ -15314,7 +15180,7 @@ class ConsoleChatStore:
             self._persist_exchanges_only(pending)
 
     def _attach_message_exchanges_locked(
-        self, message_id: str, captures: Sequence["ExchangeCapture"]
+        self, message_id: str, captures: Sequence[ExchangeCapture]
     ) -> ConsoleChatMessage | None:
         """Merge the captures in memory; return the message needing a flush.
 
@@ -18452,6 +18318,7 @@ class ConsoleChatStore:
             raise ValueError("selected_index must reference an existing variant")
         target = message.variants.variants[selected_index]
         session_id = self._message_session_index[message.id]
+        self.invalidate_response_rule_source(session_id, "variant_changed")
         previous_content = message.content
         previous_generation = self._generation_variant(message)
         previous_index = message.variants.selected_index
@@ -18559,6 +18426,8 @@ class ConsoleChatStore:
             return session.persisted_conversation_id
         if self.persistence is None:
             return None
+
+        self.invalidate_response_rule_source(session_id, "saved")
         if type(session.runtime_backend) is not str or session.runtime_backend not in {
             "local",
             "server",
@@ -18956,6 +18825,7 @@ class ConsoleChatStore:
         if not session.ephemeral:
             self.retry_pending_workspace_projection(session_id)
             return None
+        self.invalidate_response_rule_source(session_id, "saved")
         if self.persistence is None:
             return None
         if (
@@ -19277,6 +19147,7 @@ class ConsoleChatStore:
             context_policy_overrides=session.context_policy_overrides,
             contributions=contributions,
             trace_boundary=session.fork_trace_boundary,
+            **({"rule_adoption_session_id": session_id} if self.response_rule_store is not None else {}),
         )
 
         # The transaction has returned and SQLite can no longer roll it back.
@@ -21646,6 +21517,14 @@ class ConsoleChatStore:
         if isinstance(payload_hash, str) and payload_hash:
             self._sync_v2_message_versions[stable_key] = payload_hash
 
+    def bind_response_rule_store(self, rules: ResponseRuleStore) -> None:
+        """Delegate to the same store-owned chat_state boundary."""
+        from tldw_chatbook.Chat.response_rules.chat_state import (
+            bind_response_rule_store,
+        )
+
+        return bind_response_rule_store(self, rules)
+
     def _session_or_raise(self, session_id: str) -> ConsoleChatSession:
         try:
             return self._sessions[session_id]
@@ -22293,44 +22172,11 @@ class ConsoleChatStore:
                 )
             yield
 
-    def _persist_active_leaf(
-        self,
-        session_id: str,
-        message_id: str | None,
-        *,
-        content_safe_diagnostic: bool = False,
-    ) -> bool:
-        """Write-through the local-only active-leaf pointer for a persisted conv.
+    def _persist_active_leaf(self, session_id: str, message_id: str | None, *, content_safe_diagnostic: bool=False) -> bool:
+        """Delegate to the same store-owned console_branch_cursor boundary."""
+        from tldw_chatbook.Chat.console_branch_cursor import _persist_active_leaf
 
-        No-op unless the session owns a persisted conversation AND the
-        persistence adapter exposes a raw ``db`` seam (mirrors the
-        ``persistence_db = getattr(self.persistence, "db", None)`` pattern in
-        ``persist_session_if_needed``). Maps the in-memory leaf to its persisted
-        message id (``None`` when cleared or not yet persisted).
-
-        Returns False only for an ownership refusal. Other I/O errors preserve
-        the historical in-memory write-through behavior.
-        """
-        session = self._sessions.get(session_id)
-        conversation_id = (
-            session.persisted_conversation_id if session is not None else None
-        )
-        if conversation_id is None:
-            return True
-        persistence_db = getattr(self.persistence, "db", None)
-        if persistence_db is None:
-            return True
-        leaf_persisted_id: str | None = None
-        if message_id is not None:
-            node = self._nodes_by_session.get(session_id, {}).get(message_id)
-            leaf_persisted_id = node.persisted_message_id if node is not None else None
-        return self._write_active_leaf(
-            persistence_db,
-            conversation_id,
-            leaf_persisted_id,
-            session_id=session_id,
-            content_safe_diagnostic=content_safe_diagnostic,
-        )
+        return _persist_active_leaf(self, session_id, message_id, content_safe_diagnostic=content_safe_diagnostic)
 
     @staticmethod
     def _write_active_leaf(
@@ -22360,224 +22206,71 @@ class ConsoleChatStore:
             return True
         return True
 
-    def _persist_context_summary(
-        self,
-        session_id: str,
-        summary: str | None,
-        boundary_native_id: str | None,
-    ) -> None:
-        """Write-through the local-only context-summary pair for a persisted conv.
+    def _persist_context_summary(self, session_id: str, summary: str | None, boundary_native_id: str | None) -> None:
+        """Delegate to the same store-owned console_branch_cursor boundary."""
+        from tldw_chatbook.Chat.console_branch_cursor import _persist_context_summary
 
-        Console `/rewind` "summarize up to here" (SP2). No-op unless the
-        session owns a persisted conversation AND the persistence adapter
-        exposes a raw ``db`` seam (mirrors ``_persist_active_leaf``). Maps
-        the in-memory boundary to its persisted message id (``None`` when
-        cleared or not yet persisted).
-        """
-        session = self._sessions.get(session_id)
-        conversation_id = (
-            session.persisted_conversation_id if session is not None else None
+        return _persist_context_summary(self, session_id, summary, boundary_native_id)
+
+    def _resolve_context_summary_on_resume(self, session_id: str, persisted_to_native: dict[str, str]) -> None:
+        """Delegate to the same store-owned console_branch_cursor boundary."""
+        from tldw_chatbook.Chat.console_branch_cursor import (
+            _resolve_context_summary_on_resume,
         )
-        if conversation_id is None:
-            return
-        persistence_db = getattr(self.persistence, "db", None)
-        if persistence_db is None:
-            return
-        boundary_persisted_id: str | None = None
-        if boundary_native_id is not None:
-            node = self._nodes_by_session.get(session_id, {}).get(boundary_native_id)
-            boundary_persisted_id = (
-                node.persisted_message_id if node is not None else None
-            )
-        try:
-            persistence_db.set_conversation_context_summary(
-                conversation_id, summary, boundary_persisted_id
-            )
-        except Exception:
-            logger.bind(
-                session_id=session_id,
-                conversation_id=conversation_id,
-            ).exception(
-                "Failed to persist Console context-summary; the in-memory "
-                "pair keeps the applied value."
-            )
 
-    def _resolve_context_summary_on_resume(
-        self, session_id: str, persisted_to_native: dict[str, str]
-    ) -> None:
-        """Map the persisted context-summary boundary back to a native id.
+        return _resolve_context_summary_on_resume(self, session_id, persisted_to_native)
 
-        Console `/rewind` resume mapping (SP2). Reads
-        ``get_conversation_context_summary`` via the db seam (mirrors
-        ``_persist_active_leaf``'s ``getattr(self.persistence, "db", None)``
-        guard) -- no-op unless the session owns a persisted conversation and
-        the persistence adapter exposes the seam. The stored boundary is a
-        *persisted* message id; when it maps to a node on the just-loaded
-        tree (``persisted_to_native``, built by ``_ingest_full_tree``), the
-        in-memory summary state is set. Absent, unreadable, or dangling (no
-        stored summary, or a boundary id not present on the loaded tree)
-        leaves the in-memory state unset -- fail-open, matching the design's
-        rule that an inert/dangling boundary falls back to full history. A
-        DANGLING boundary additionally best-effort clears the stale
-        persisted pair (``set_conversation_context_summary(conversation_id,
-        None, None)``, guarded + exception-swallowed like the write-through
-        above) so a permanently-orphaned boundary (e.g. its branch was
-        hard-deleted, or a foreign client rewrote history) doesn't linger in
-        the DB row indefinitely -- benign either way (this path already
-        fails open, and the next summarize overwrites it), just misleading
-        to anything that reads the column directly.
-        """
-        session = self._sessions.get(session_id)
-        conversation_id = (
-            session.persisted_conversation_id if session is not None else None
+    def _fold_stream_buffer_without_persistence(self, message: ConsoleChatMessage) -> bool:
+        """Delegate to the same store-owned console_stream_persistence boundary."""
+        from tldw_chatbook.Chat.console_stream_persistence import (
+            _fold_stream_buffer_without_persistence,
         )
-        if conversation_id is None:
-            return
-        persistence_db = getattr(self.persistence, "db", None)
-        if persistence_db is None:
-            return
-        try:
-            summary, boundary_persisted_id = (
-                persistence_db.get_conversation_context_summary(conversation_id)
-            )
-        except Exception:
-            logger.bind(
-                session_id=session_id,
-                conversation_id=conversation_id,
-            ).exception(
-                "Failed to read Console context-summary on resume; leaving unset."
-            )
-            return
-        if summary is None or boundary_persisted_id is None:
-            return
-        boundary_native_id = persisted_to_native.get(boundary_persisted_id)
-        if boundary_native_id is None:
-            # Dangling: the persisted boundary message isn't on the loaded
-            # tree. Leave the in-memory state unset (fail-open) AND
-            # best-effort clear the now-permanently-orphaned persisted pair
-            # so it doesn't linger indefinitely -- non-fatal, mirrors
-            # ``_persist_context_summary``'s write-through guard.
-            try:
-                persistence_db.set_conversation_context_summary(
-                    conversation_id, None, None
-                )
-            except Exception:
-                logger.bind(
-                    session_id=session_id,
-                    conversation_id=conversation_id,
-                ).exception(
-                    "Failed to clear stale Console context-summary with a "
-                    "dangling boundary; the persisted pair may linger."
-                )
-            return
-        self._context_summary_by_session[session_id] = (summary, boundary_native_id)
 
-    def _fold_stream_buffer_without_persistence(
-        self,
-        message: ConsoleChatMessage,
-    ) -> bool:
-        """Fold buffered stream chunks into ``message.content`` without a write.
-
-        TASK-259: after joining, the chunk list is collapsed to the single
-        joined string (in place, preserving any outstanding list references),
-        so the next materialize joins only the chunks that arrived since this
-        one instead of re-walking the whole stream history on every 0.2s
-        tick. The invariant ``"".join(buffer) == full streamed content`` is
-        preserved for every reader.
-
-        Args:
-            message: Store-owned message whose visible content should
-                reflect all chunks appended so far.
-
-        Returns:
-            Whether new chunks were folded into ``message.content``.
-        """
-        buffer = self._stream_chunks_by_message.get(message.id)
-        if not buffer:
-            return False
-        if self._stream_materialized_counts.get(message.id) == len(buffer):
-            return False
-        message.content = "".join(buffer)
-        buffer[:] = [message.content]
-        self._stream_materialized_counts[message.id] = 1
-        self._bump_message_speech_revision(message.id)
-        return True
+        return _fold_stream_buffer_without_persistence(self, message)
 
     def _materialize_stream_buffer(self, message: ConsoleChatMessage) -> None:
-        """Fold buffered chunks and persist a newly materialized pending row."""
-        if self._fold_stream_buffer_without_persistence(message):
-            if message.id in self._pending_terminal_receipts:
-                # A receipt is only valid as part of its terminal row+mark
-                # transaction. Leave the folded body live until that owner
-                # persists it atomically rather than writing an orphan first.
-                return
-            self._persist_pending_message_if_ready(message)
+        """Delegate to the same store-owned console_stream_persistence boundary."""
+        if not self._stream_chunks_by_message.get(message.id):
+            return
+        from tldw_chatbook.Chat.console_stream_persistence import (
+            _materialize_stream_buffer,
+        )
+
+        return _materialize_stream_buffer(self, message)
 
     def _materialize_stream_buffer_deferred(self, message: ConsoleChatMessage) -> None:
-        """Fold buffered chunks inline and persist the pending row off-thread.
+        """Delegate to the same store-owned console_stream_persistence boundary."""
+        if not self._stream_chunks_by_message.get(message.id):
+            return
+        from tldw_chatbook.Chat.console_stream_persistence import (
+            _materialize_stream_buffer_deferred,
+        )
 
-        task-33081: read paths running on the UI event loop (the 0.2s Console
-        tick via ``messages_for_session``) must not write SQLite inline --
-        under writer contention the inline pending-row INSERT blocks the
-        whole loop for the connection's busy timeout. The fold itself is
-        in-memory so readers still observe streamed text immediately; only
-        the write moves to the store's single-slot persistence executor.
-        """
-        if self._fold_stream_buffer_without_persistence(message):
-            if message.id in self._pending_terminal_receipts:
-                return
-            self._defer_pending_message_persistence(message)
+        return _materialize_stream_buffer_deferred(self, message)
 
     def _defer_pending_message_persistence(self, message: ConsoleChatMessage) -> None:
-        if self.persistence is None:
-            return
-        with self._stream_persistence_deferred_lock:
-            if self._stream_persistence_executor_closed:
-                return
-            if message.id in self._stream_persistence_deferred_ids:
-                return
-            self._stream_persistence_deferred_ids.add(message.id)
-        try:
-            self._stream_persistence_executor.submit(
-                self._persist_deferred_message, message
-            )
-        except RuntimeError:
-            # Teardown raced the submit: the store is retiring, so this
-            # pending write is moot and must never surface on the read path.
-            with self._stream_persistence_deferred_lock:
-                self._stream_persistence_deferred_ids.discard(message.id)
+        """Delegate to the same store-owned console_stream_persistence boundary."""
+        from tldw_chatbook.Chat.console_stream_persistence import (
+            _defer_pending_message_persistence,
+        )
+
+        return _defer_pending_message_persistence(self, message)
 
     def _persist_deferred_message(self, message: ConsoleChatMessage) -> None:
-        with self._stream_persistence_deferred_lock:
-            self._stream_persistence_deferred_ids.discard(message.id)
-        try:
-            self._persist_pending_message_if_ready(message)
-        except KeyError:
-            # The message's session was retired between submit and run --
-            # nothing durable remains to write for it.
-            logger.debug(
-                "Deferred stream persistence skipped a retired message ({})",
-                message.id,
-            )
-        except Exception:
-            logger.exception(
-                "Deferred stream persistence failed for message {}", message.id
-            )
+        """Delegate to the same store-owned console_stream_persistence boundary."""
+        from tldw_chatbook.Chat.console_stream_persistence import (
+            _persist_deferred_message,
+        )
+
+        return _persist_deferred_message(self, message)
 
     def flush_deferred_stream_persistence(self) -> None:
-        """Block until every queued deferred stream write has completed.
+        """Delegate to the same store-owned console_stream_persistence boundary."""
+        from tldw_chatbook.Chat.console_stream_persistence import (
+            flush_deferred_stream_persistence,
+        )
 
-        Test and teardown seam for the off-thread pending-row writes
-        (task-33081): callers that must observe durable state immediately
-        after a fold-driven read drain the executor here.
-        """
-        with self._stream_persistence_deferred_lock:
-            executor = self._stream_persistence_executor
-        if executor is None:  # pragma: no cover - always constructed today
-            return
-        barrier = threading.Event()
-        executor.submit(barrier.set).add_done_callback(lambda _f: barrier.set())
-        barrier.wait(timeout=30.0)
+        return flush_deferred_stream_persistence(self)
 
     @staticmethod
     def _snapshot(message: ConsoleChatMessage) -> ConsoleChatMessage:

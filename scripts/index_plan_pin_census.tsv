@@ -350,3 +350,6 @@ idx_conversations_last_modified	plan-pinned	Tests/ChaChaNotesDB/test_conversatio
 
 # PR2921: retained historical catalog index, no new current-runtime CREATE.
 idx_dream_feedback_story	plan-pinned	Tests/Dreams/test_schema_lineage.py::test_historical_feedback_index_retains_statistics_free_plan
+idx_machine_followup_receipts_conversation	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+idx_response_rule_assessments_source	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics
+idx_response_rule_drafts_scope	plan-pinned	Tests/DB/test_response_rules_migration.py::test_rule_lookup_indexes_without_statistics

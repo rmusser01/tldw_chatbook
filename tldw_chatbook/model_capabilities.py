@@ -797,8 +797,8 @@ def zai_model_supports_reasoning_effort(model: object) -> bool:
 #
 # Same design as the Moonshot/Z.ai predicates above: a per-model fact about
 # the provider's wire behavior, deliberately outside the config-driven
-# tables. The DeepSeek handler (LLM_API_Calls.chat_with_deepseek) has no
-# reasoning-effort parameter and passes ``max_tokens`` straight through as
+# tables. The DeepSeek handler preserves the omitted-effort provider default
+# and passes ``max_tokens`` straight through as
 # the whole completion budget, reasoning-INCLUSIVE -- so a reasoning-typed
 # model handed a plain budget can spend all of it thinking and answer
 # ``finish_reason=length`` with an EMPTY completion (TASK-21515: the
@@ -824,12 +824,16 @@ def _deepseek_normalized_model(model: object) -> Optional[str]:
     return normalized or None
 
 
+def deepseek_model_supports_reasoning_effort(model: object) -> bool:
+    """Whether the documented current DeepSeek model accepts explicit effort."""
+    return model in ("deepseek-flash", "deepseek-v4-pro")
+
+
 def deepseek_model_thinks_by_default(model: object) -> bool:
     """Whether a DeepSeek model spends completion tokens on reasoning by default.
 
-    The DeepSeek handler has no reasoning-effort parameter and its
-    ``max_tokens`` budget is reasoning-inclusive, so these models need a
-    larger completion budget for the same output length (TASK-21515:
+    With effort omitted, the ``max_tokens`` budget is reasoning-inclusive,
+    so these models need a larger completion budget for the same output length (TASK-21515:
     deepseek-v4-flash exhausted ``BRIEFING_MAX_TOKENS`` on reasoning and
     returned an empty completion).
 

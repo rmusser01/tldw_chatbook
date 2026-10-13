@@ -270,37 +270,23 @@ from ...Event_Handlers.Chat_Events.chat_events_console_dictionaries import (
 from ...Chat.rag_scope import RagScope
 from ...Chat.console_command_grammar import (
     FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID,
-    FEWER_PERMISSION_PROMPTS_COMMAND_NAME,
     GENERATE_IMAGE_COMMAND_HANDLER_ID,
-    GENERATE_IMAGE_COMMAND_NAME,
     GENERATE_VIDEO_COMMAND_HANDLER_ID,
-    GENERATE_VIDEO_COMMAND_NAME,
     KIND_COMMAND,
     KIND_NOT_COMMAND,
     KIND_UNKNOWN,
     PREFILL_COMMAND_HANDLER_ID,
-    PREFILL_COMMAND_NAME,
-    PROMPT_COMMAND_HANDLER_ID,
-    PROMPT_COMMAND_NAME,
     GOAL_COMMAND_HANDLER_ID,
-    GOAL_COMMAND_NAME,
     RESEARCH_COMMAND_HANDLER_ID,
-    RESEARCH_COMMAND_NAME,
     HELP_COMMAND_HANDLER_ID,
-    HELP_COMMAND_NAME,
     CONSOLE_ACTION_COMMAND_HANDLER_ID,
     CONSOLE_ACTION_COMMANDS,
     DOCTOR_COMMAND_HANDLER_ID,
-    DOCTOR_COMMAND_NAME,
     REWIND_COMMAND_HANDLER_ID,
     EMERGENCY_STOP_COMMAND_HANDLER_ID,
-    EMERGENCY_STOP_COMMAND_NAME,
     REDIRECT_COMMAND_HANDLER_ID,
-    REDIRECT_COMMAND_NAME,
     STEER_COMMAND_HANDLER_ID,
-    STEER_COMMAND_NAME,
     STOP_COMMAND_HANDLER_ID,
-    STOP_COMMAND_NAME,
     REWIND_COMMAND_NAME,
     SKILLS_COMMAND_HANDLER_ID,
     SKILLS_COMMAND_NAME,
@@ -3401,6 +3387,9 @@ class ChatScreen(BaseAppScreen):
         from ..Console_Modules.model_switcher import open_model_picker
 
         modal = modal_contract.ConsoleSettingsModal(
+            open_response_rules=lambda: self._response_rules_ui.open_manager(
+                self._console_runtime().ensure_response_rules().scopes(session_id)[0]
+            ),
             model_picker=partial(open_model_picker, self),
             chat_title=next(
                 (s.title for s in store.sessions() if s.id == session_id), ""
@@ -9825,8 +9814,11 @@ class ChatScreen(BaseAppScreen):
         Returns:
             dict[str, Any]: slot name -> this view's value.
         """
+        from tldw_chatbook.UI.Console_Modules.response_rules import refresh_rule_controls
+
         skill = getattr(self, "_skill", None)
         return {
+            "response_rules_changed": partial(refresh_rule_controls, self),
             "set_pending_decision": self._set_console_pending_decision,
             "follow_watchlists_operations": self._follow_console_watchlists_operations,
             "set_pending_approval": self._set_console_pending_approval,
@@ -11279,12 +11271,14 @@ class ChatScreen(BaseAppScreen):
             )
             provider, model, _settings = self._active_console_provider_model_display()
             catalog = get_pricing_catalog()
+            helper_usage = self._console_runtime().response_rule_usage(session_id)
             projection_key = (
                 history_key,
                 provider,
                 model,
                 store.session_settings_revision(session_id),
                 catalog,
+                helper_usage,
             )
             # PR2b Task 5 (cost rollup): the active conversation's LIVE
             # sub-agent fleet spend, folded into the snapshot's token total
@@ -11348,6 +11342,7 @@ class ChatScreen(BaseAppScreen):
                     model=model,
                     fleet_tokens=0,
                     estimate_cache=estimate_cache,
+                    auxiliary_usage=tuple(record.usage for record in helper_usage),
                 )
                 historical_media = any(
                     message.role is ConsoleMessageRole.USER
@@ -11845,9 +11840,23 @@ class ChatScreen(BaseAppScreen):
         self._reveal_console_inspector_rail()
 
     @on(ConsoleRunChip.OpenRequested)
-    def _console_run_chip_activated(self, event: ConsoleRunChip.OpenRequested) -> None:
-        """Open the Inspector rail at the live run rows (FB-08)."""
+    async def _console_run_chip_activated(
+        self, event: ConsoleRunChip.OpenRequested
+    ) -> None:
+        """Open rule details for a rule status, or the live run Inspector."""
         event.stop()
+        controller = self._console_chat_controller
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else None
+        rules = controller.response_rules if controller is not None else None
+        if rules is not None and session_id is not None:
+            state = rules.state(session_id)
+            if state.phase != "idle" or (
+                not controller.run_state_for(session_id).is_stop_allowed
+                and (state.assessment is not None or state.learning is not None)
+            ):
+                await self._response_rules_ui.open_manager(rules.scopes(session_id)[0])
+                return
         self._reveal_console_inspector_rail()
 
     def _reveal_console_inspector_rail(self) -> None:
@@ -18343,11 +18352,20 @@ class ChatScreen(BaseAppScreen):
             )
         controller = self._console_chat_controller
         run_state = controller.run_state if controller is not None else None
+        from tldw_chatbook.UI.Console_Modules.response_rules import rule_status
+
+        if controller is not None and controller.has_pending_approval_round(session_id or ""):
+            return f"{console_pending_round_copy_for(controller, session_id or '')}."
+        rules = controller.response_rules if controller is not None else None
+        rule_state = rules.state(session_id) if rules is not None and session_id else None
+        if rule_state is not None and rule_state.phase != "idle":
+            return rule_status(rule_state)
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
             if reason := blocked_turn_reason(controller):  # TASK-33621.2: stuck
                 return f"Blocked — {reason}"
             send_ack = getattr(self, "_console_send_ack", None)  # TASK-33620.5
-            return send_ack.run_copy(session_id) if send_ack is not None else ""
+            acknowledgement = send_ack.run_copy(session_id) if send_ack is not None else ""
+            return acknowledgement or (rule_status(rule_state) if rule_state is not None else "")
         # Every interrupt kind owns its waiting copy; approval takes priority.
         # The Inspector counts approval rounds from the same session registry.
         if controller.has_pending_approval_round(session_id or ""):
@@ -19101,29 +19119,8 @@ class ChatScreen(BaseAppScreen):
         "endpoint": "action_open_console_new_endpoint",
     }
     _CONSOLE_COMMAND_NAME_TO_HANDLER_ID = {
-        PROMPT_COMMAND_NAME: PROMPT_COMMAND_HANDLER_ID,
-        SYSTEM_COMMAND_NAME: SYSTEM_COMMAND_HANDLER_ID,
-        SKILLS_COMMAND_NAME: SKILLS_COMMAND_HANDLER_ID,
-        FEWER_PERMISSION_PROMPTS_COMMAND_NAME: (
-            FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID
-        ),
-        PREFILL_COMMAND_NAME: PREFILL_COMMAND_HANDLER_ID,
-        GENERATE_IMAGE_COMMAND_NAME: GENERATE_IMAGE_COMMAND_HANDLER_ID,
-        GENERATE_VIDEO_COMMAND_NAME: GENERATE_VIDEO_COMMAND_HANDLER_ID,
-        STREAM_VIDEO_COMMAND_NAME: STREAM_VIDEO_COMMAND_HANDLER_ID,
-        REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
-        STEER_COMMAND_NAME: STEER_COMMAND_HANDLER_ID,
-        REDIRECT_COMMAND_NAME: REDIRECT_COMMAND_HANDLER_ID,
-        EMERGENCY_STOP_COMMAND_NAME: EMERGENCY_STOP_COMMAND_HANDLER_ID,
-        STOP_COMMAND_NAME: STOP_COMMAND_HANDLER_ID,
-        RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
-        GOAL_COMMAND_NAME: GOAL_COMMAND_HANDLER_ID,
-        HELP_COMMAND_NAME: HELP_COMMAND_HANDLER_ID,
-        DOCTOR_COMMAND_NAME: DOCTOR_COMMAND_HANDLER_ID,
-        **{
-            _name: CONSOLE_ACTION_COMMAND_HANDLER_ID
-            for _name, _hint in CONSOLE_ACTION_COMMANDS
-        },
+        command.name: command.handler_id
+        for command in default_console_registry().commands()
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -19171,6 +19168,8 @@ class ChatScreen(BaseAppScreen):
                 await self._append_native_console_system_message(video_blocked)
                 return
         dispatch_map = {
+            "learn-response-rule": self._response_rules_ui.learn,
+            "manage-response-rules": self._response_rules_ui.manage,
             "insert-prompt": self._console_command_insert_prompt,
             "apply-system": self._console_command_apply_system,
             SKILLS_COMMAND_HANDLER_ID: self._console_command_skills,
@@ -19277,7 +19276,7 @@ class ChatScreen(BaseAppScreen):
         """
         import asyncio as _asyncio
 
-        from ...Utils.doctor import run_doctor, format_doctor_report
+        from ...Utils.doctor import format_doctor_report, run_doctor
         from ..Console_Modules.command_handoff import append_command_output
 
         include_network = "network" in (parse.args or "").lower()
@@ -20154,7 +20153,8 @@ class ChatScreen(BaseAppScreen):
         # takes the stop first -- it is not a controller "run", so
         # stop_active_run() would only toast "No active Console run to stop."
         # The cancel event wakes the adapter's poll loop immediately.
-        store = self._console_chat_store
+        runtime = getattr(self, "_console_runtime_ref", None)
+        store = runtime.chat_store if runtime is not None else None
         active_session_id = store.active_session_id if store is not None else None
         image_edit = (
             self._image._h3_image_edit_registry().request_cancel(active_session_id)
@@ -20187,12 +20187,19 @@ class ChatScreen(BaseAppScreen):
             stop_button.label = "Stopping…"
             stop_button.disabled = True
         try:
-            controller = self._ensure_console_chat_controller()
-            if not controller.stop_active_run():
+            controller = runtime.chat_controller if runtime is not None else None
+            rules = controller.response_rules if controller is not None else None
+            rule_check = rules is not None and rules.state(
+                active_session_id or ""
+            ).phase in {"drafting", "testing", "checking"}
+            if controller is None or not controller.stop_active_run():
                 self.app_instance.notify(
                     "No active Console run to stop.", severity="warning"
                 )
-            await self._sync_native_console_chat_ui()
+                return
+            # Rule cancellation projects its own controls without reading config.
+            if not rule_check:
+                await self._sync_native_console_chat_ui()
         finally:
             if stop_button is not None:
                 # The bar's sync governs visibility/variant but not the

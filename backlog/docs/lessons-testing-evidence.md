@@ -19685,3 +19685,18 @@ process performs the actual first URLMonitor check. Do not reset admission or
 participants, increase the timeout, or call the setup timeout a product privacy
 failure. Retained evidence: restored-first-fetch-1 four admission timeouts;
 restored-first-fetch-4 four passing native restored-fetch cases with Dreams off.
+
+
+## Qualify admitted trace lifetime before provider reservation
+
+**PR3010 current integration / TASK-34807, 2026-10-12.** The mounted learning journey intermittently retained a repair for recovery. Phase28 reproduced the cause using native SQLite, real durable admission, the real trace collector and actual call reservation: GC deleted the current semantic revisions between checkpoint acceptance and reservation. ADR097 already makes current host-owned work a root; current validated checkpoint ancestry now protects that interval and all five canonical checkpoint mutations advance the existing graph epoch. Positive ordinary/native-plus-hook reservation and negative revoked/orphan/invalid-owner reclamation controls are both necessary: merely preventing deletion can leak unreferenced history.
+
+Phase29 then proved a second lifetime error in the actual automatic collector loop: a completed epoch4 result remained cached at epoch6 after settlement because physical compaction was threshold-deferred. Explicit collect tests had passed. Qualify the automatic last-collected/pending-result path too, preserving reuse while the epoch is unchanged and recollecting after canonical ownership changes. Do not silence startup maintenance or widen retained roots to make a mounted test pass. Goal's automatic path intentionally uses Capture Off and must be qualified separately rather than assigned a fabricated USER checkpoint.
+
+
+**PR3010 final review / TASK-34807, 2026-10-12.** Off-loop rule activation passed cancellation tests but held both store and runtime locks while waiting for SQLite writer admission. The independent real-writer diagnostic blocked actual controller Stop for 0.620 seconds; bounded sibling regressions reproduced 0.516–0.614-second stalls, early invalidation and a deferred write-upgrade failure. Exercise real `BEGIN IMMEDIATE` contention and synchronous Stop/source change, with a separate bounded release thread so the failure can clean up. Check both responsive revocation before admission and the short commit/rollback fence afterward; also prove temporary state is published only after settlement. A separate public edit-Test-Save-Promote/Disable-Enable sequence exposed an old selected revision being repinned despite correct binding CAS. A Save-only assertion cannot prove the next action uses the committed definition.
+
+
+### PR3010: trusted recovery imports can acquire startup admission
+
+On 2026-10-12, all three hosted Eval recovery jobs failed the complete retained-definition rebackup case. The selected-import staging helper imported `Chat.response_rules.recovery`; Python executed `Chat.__init__`, reached runtime TLS/config initialization, and retained a process-lifetime startup lease. Isolated publication then waited on its own unbound holder. A complete actual-dev control passed, and a passive original-child trace identified the extra holder; importing test helpers in an earlier observer had contaminated that observer and was not valid causal evidence. Recovery helpers must live behind constructor-free installed DB recovery imports. Test populated/malformed candidates in fresh children as well as complete publication: ordinary pytest fixture imports already preload Chat/config and conceal this dependency regression. The fix preserves startup/admission ownership and original deadlines rather than releasing the holder or preloading runtime.
