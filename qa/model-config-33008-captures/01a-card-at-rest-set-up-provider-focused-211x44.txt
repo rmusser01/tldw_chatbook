@@ -20,7 +20,7 @@
                                                                         │  custom endpoints. Press Enter to use the highlighted action.  │
                                                                         │                                                                │
                                                                         │  1. ● Connect a provider (API key or local server)             │
-                                                                        │       Not ready · no key                                       │
+                                                                        │       OpenAI: Not ready · no key                               │
                                                                         │  2. ○ Pick a model                                             │
                                                                         │  3. ○ Send your first message  Composer unlocks after setup    │
                                                                         │                                                                │
@@ -41,4 +41,4 @@
 
 
 
-  Ctrl+Shift+F focus | Enter continue setup | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q
+  Ctrl+Shift+F focus | Enter continue setup | F1 help | Ctrl+P palette | F6 next pane · Ctrl+Q quit

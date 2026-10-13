@@ -1,7 +1,7 @@
          ╭──────────────╮
  ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Console — Chat, source handoffs, live runs, and control actions.                                                                                   Speak replies   ▌   Hands-free   ▌     Ready · verified 21:24
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                   Speak replies   ▌   Hands-free   ▌     Ready · verified 01:28
    New tab     Settings     ⚓      Context rail     Search Library     Help
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                     │ Conversation | Chat 1                                                                                                                                             │

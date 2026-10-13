@@ -21,12 +21,12 @@
                                                ╭─ Switch model · now: OpenAI · gpt-5.6-terra ─────────────────────────────────────────────────────────────────────────────────────────────╮
                                                │ Find llama.cpp                                                                                                                           │
                                                │ READY PROVIDERS · matches from every provider's catalog                                                                                  │
-                                               │ ▶ qwen3-8b-instruct-q4_k_m     llama.cpp                ?  Ready · reachable 21:22                                                       │
-                                               │   phi-4-mini-q8                llama.cpp                ?  Ready · reachable 21:22                                                       │
-                                               │   gemma-3-4b-it-q4             llama.cpp                ?  Ready · reachable 21:22                                                       │
+                                               │ ▶ qwen3-8b-instruct-q4_k_m     llama.cpp                ?  Ready · reachable 01:25                                                       │
+                                               │   phi-4-mini-q8                llama.cpp                ?  Ready · reachable 01:25                                                       │
+                                               │   gemma-3-4b-it-q4             llama.cpp                ?  Ready · reachable 01:25                                                       │
                                                │ Values for qwen3-8b-instruct-q4_k_m · llama.cpp                                                                                          │
                                                │ Temperature 0.6      Console Behavior  Max tokens 4096     provider          Streaming On    ▼  provider                                 │
-                                               │  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel                      │
+                                               │  Enter apply to this chat and new chats  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel        │
                                                │  Save as model default  saves Temperature, Max tokens, Streaming                 Applies to: this chat · also the default for new chats  │
                                                ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
                                                                                     │                                                                │
@@ -49,4 +49,4 @@
 
 
 
-  Ctrl+Shift+F focus | Enter continue setup | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q
+  Ctrl+Shift+F focus | Enter continue setup | F1 help | Ctrl+P palette | F6 next pane · Ctrl+Q quit

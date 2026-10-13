@@ -15,7 +15,7 @@
 │      Web Search              │  │  │  Env var                 │ OPENAI_API_KEY                     not set          safer: keeps keys out of config.toml        │  │  │ Local-only: saves write your config     │
 │      Speech & TTS            │  │  │  Endpoint                │ http://127.0.0.1:18431/v1          config           blank uses the provider default             │  │  │ file.                                   │
 │  Interface                   │  │  │  Key check                Ready · not tested                                                                  Test (t)     │  │  │  Focused setting: None — Tab to a       │
-│      Appearance              │  │  │   Existing unsaved changes: API key.                                                                                       │  │  │  setting                                │
+│      Appearance              │  │  │   Unsaved changes: API key.                                                                                                │  │  │  setting                                │
 │      Theme                   │  │  │                                                                                                                            │  │  │  Purpose: Configure the default         │
 │      Splash Screen           │  │  │   Default model for new chats                                                                                              │  │  │  provider, model, endpoint, and         │
 │      Console Behavior        │  │  │  Model                   │ gpt-5.6-terra                      new-chat default type to search · Custom ID for others       │  │  │  credential source.                     │

@@ -32,13 +32,13 @@
  ───────────────────────────────── ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                         │
  Details                       ▸    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │
-                                    │                                                                                                                                                                   │
-                                    │                                                                                                                                                                   │
-                                    │                                                                                                                                                                   │
-                                    │                                                                                                                                                                   │
-───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Status ▾   Library · Auto off · Agent access off     Provider: DeepSeek     Model: deepseek-v4-flash     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Curre
-
+                                    │                                                                                                                ╭──────────────────────────────────────────────────────────╮
+                                    │                                                                                                                │                                                          │
+                                    │                                                                                                                │ Console provider changed OpenAI → DeepSeek: this unused  │
+                                    │                                                                                                                │ session now follows your saved defaults (Settings ▸      │
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│ Providers & Models).                                     │──
+ Status ▾   Library · Auto off · Agent access off     Provider: DeepSeek     Model: deepseek-v4-flash     System Prompt: off     Assistant: General  │                                                          │e
+                                                                                                                                                     ╰──────────────────────────────────────────────────────────╯
 █  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                    Send disabled: type a message       Send         Dictate
 
   Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q
