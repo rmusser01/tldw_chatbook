@@ -272,6 +272,7 @@ defaults, Advanced — starts with a one-row header. Console Behavior's fields
 sit in one control column, wide enough for its longest choice; its
 free-text fields (Side chat's model and prompt template, Permission
 summaries' Model) take the rest of their row instead. Its disclosures and Permission summaries group draw no box.
+A checkbox on these cards shows ✓ when it is on and an empty box when it is off.
 
 Catalog refresh shows whether changes are saving, saved ("Saved to config."),
 or could not be saved; with nothing changed it says nothing. If a write fails, your choices remain visible when you leave this category and

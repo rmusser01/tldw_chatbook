@@ -495,5 +495,7 @@ async def test_console_rail_toggle_is_painted_with_production_styles(
         toggle = screen.query_one(RAIL_LABEL_TOGGLE, Checkbox)
         painted = _painted(host, toggle)
         assert str(toggle.label) in painted, (toggle.region, painted)
-        assert "X" in painted, (toggle.region, painted)
+        # Rewritten on purpose (#3057 capture finding 4): Settings' checkboxes
+        # draw a check or a blank, not X; their state glyph is what must paint.
+        assert toggle._button.plain[:2] in painted, (toggle.region, painted)
         assert app.app_config["console"]["stack_collapsed_rail_labels"] is False

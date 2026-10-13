@@ -248,3 +248,23 @@ async def test_status_row_chat_images_and_summary_prompt_read_as_controls(reques
         ):
             help_text = _static_text(card.query_one(help_id, Static))
             assert help_text.startswith("Applies immediately."), help_text
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_unchecked_box_draws_no_mark(request):
+    """#3057 capture finding 4 (06b): every checkbox drew ▐X▌, an off one's X
+    only darker (0,15,24 on 36,47,56, about 1.4:1), so "▐X▌ Stack collapsed
+    rail labels" read as ticked over "Saved style: Horizontal". The glyph
+    says the state: a mark when on, a blank cell when off."""
+    from textual.widgets import Checkbox
+
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        _screen, card = await _open_card(host, pilot)
+        boxes = list(card.query(Checkbox))
+        assert len(boxes) >= 5 and {box.value for box in boxes} == {True, False}
+        for box in boxes:
+            inner = box._button.plain[1]
+            assert inner != "X" and (inner != " ") is box.value, box.id

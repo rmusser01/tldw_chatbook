@@ -178,9 +178,10 @@ _BUDGETS: dict[str, int] = {
     # Capture fix A2 round 2 (2026-10-13): Console Behavior's Inspector
     # Scope row names the card's sections, not config sections (-1): 33,911;
     # Reasoning replay override hides its controls until Console names a
-    # local model (+8): 33,919.
-    # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 33,931.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33931,
+    # local model (+8): 33,919; its checkboxes say their state in the glyph,
+    # a check or a blank (StateCheckbox, +1): 33,920.
+    # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 33,932.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33932,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -214,7 +215,10 @@ _BUDGETS: dict[str, int] = {
     # 2,407; the Saved model list names the saved models it does not show,
     # and the discovery line hides when a find leaves it empty (+43): 2,450;
     # the unsaved-edits note names the unsaved fields (+17): 2,467.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2467,
+    # Capture fix A2 round 2 (2026-10-13): its checkboxes say their state in
+    # the glyph, a check or a blank (StateCheckbox, +1): 2,407.
+    # Integrated capture fix 2 (2026-10-13): re-measured after the pick: 2,468.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2468,
     # settings_field_rows.py: the review of #3057 lowers it from 729 to 722
     # (two constants it had copied are imported; one number spelling, C6).
     # The capture fix wave (2026-10-12): Temperature's placeholder and

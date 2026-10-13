@@ -90,6 +90,7 @@ from ...Chat.local_reasoning import (
     supports_local_reasoning,
 )
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
+from ...Widgets.state_checkbox import StateCheckbox
 from ...Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
     builtin_provider_endpoint,
@@ -19609,7 +19610,7 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Console behavior", classes="destination-section")
             yield from compose_goal_policy(self)
             yield Static("Start here", classes="destination-section")
-            yield Checkbox(
+            yield StateCheckbox(
                 self._show_model_thinking_label(),
                 value=self._loaded_show_model_thinking(),
                 id="settings-console-show-model-thinking",
@@ -19679,7 +19680,7 @@ class SettingsScreen(BaseAppScreen):
                         classes="settings-compact-select",
                         compact=True,
                     )
-                native_tools = Checkbox(
+                native_tools = StateCheckbox(
                     "Native tool support",
                     value=self._reasoning_native_override_value(),
                     disabled=target is None,
@@ -19714,7 +19715,7 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             yield Static("Exchange capture", classes="destination-section")
-            yield Checkbox(
+            yield StateCheckbox(
                 "Capture future exchanges",
                 value=self._console_capture_policy.enabled,
                 id="settings-console-exchange-capture-enabled",
@@ -19729,7 +19730,7 @@ class SettingsScreen(BaseAppScreen):
             )
             legacy_detail.display = False
             yield legacy_detail
-            yield Checkbox(
+            yield StateCheckbox(
                 "Mask PII in future traces",
                 value=getattr(
                     self._console_capture_policy,
@@ -19787,7 +19788,7 @@ class SettingsScreen(BaseAppScreen):
                 "and keeps each workspace's saved arrangement.",
                 classes="settings-help-copy",
             )
-            yield Checkbox(
+            yield StateCheckbox(
                 "Stack collapsed rail labels",
                 value=self._console_rail_labels_stacked(),
                 id="settings-console-stack-collapsed-rail-labels",
@@ -19835,7 +19836,7 @@ class SettingsScreen(BaseAppScreen):
                 "Collapse large pasted chunks only when they exceed the threshold.",
                 id="settings-console-collapse-large-pastes-label",
             )
-            yield Checkbox(
+            yield StateCheckbox(
                 "Collapse large pastes",
                 value=self._collapse_large_pastes_enabled(),
                 id="settings-console-collapse-large-pastes-toggle",
@@ -19859,7 +19860,7 @@ class SettingsScreen(BaseAppScreen):
                 "Render images linked in assistant replies (remote fetch).",
                 id="settings-console-remote-images-label",
             )
-            yield Checkbox(
+            yield StateCheckbox(
                 "Render linked images",
                 value=self._remote_images_enabled(),
                 id="settings-console-remote-images-toggle",
@@ -20238,7 +20239,7 @@ class SettingsScreen(BaseAppScreen):
 
             yield from compose_console_fallbacks(self)
             yield Static("Background effects", classes="destination-section")
-            yield Checkbox(
+            yield StateCheckbox(
                 "Enable background effects",
                 value=bool(self._console_background_effect_value("enabled")),
                 id="settings-console-background-effect-enabled",
@@ -21302,7 +21303,7 @@ class SettingsScreen(BaseAppScreen):
             )
             provider_mode_card.border_title = "Allowed Library access"
             with provider_mode_card:
-                yield Checkbox(
+                yield StateCheckbox(
                     "Use direct Library tools instead of Library RAG",
                     value=bool(values["direct_library_tools"]),
                     id="settings-library-rag-direct-library-tools",
@@ -21484,7 +21485,7 @@ class SettingsScreen(BaseAppScreen):
                     disabled=field_disabled,
                 )
             yield Static("Citation and snippets", classes="destination-section")
-            yield Checkbox(
+            yield StateCheckbox(
                 "Include citations",
                 value=bool(values["include_citations"]),
                 id="settings-library-rag-include-citations",
@@ -21657,7 +21658,7 @@ class SettingsScreen(BaseAppScreen):
                 "disabling it removes that config entirely.",
                 classes="settings-detail-row",
             )
-            yield Checkbox(
+            yield StateCheckbox(
                 "Enable reranking",
                 value=rerank_enabled,
                 id="settings-library-rag-enable-reranking",
@@ -21849,7 +21850,7 @@ class SettingsScreen(BaseAppScreen):
         active = registry.get_active_workspace()
         active_id = active.workspace_id if active is not None else None
         yield Button("Create workspace…", id="settings-workspace-create", compact=True)
-        yield Checkbox(
+        yield StateCheckbox(
             "Show archived", show_archived, id="settings-workspaces-show-archived"
         )
         with Vertical(id="settings-workspaces-list"):
@@ -23095,7 +23096,7 @@ class SettingsScreen(BaseAppScreen):
                 )
                 with Horizontal(classes="settings-input-row"):
                     yield Static("Animations", classes="settings-input-label")
-                    yield Checkbox(
+                    yield StateCheckbox(
                         value=bool(values["animations_enabled"]),
                         id="settings-appearance-animations-enabled",
                         tooltip="Toggle optional UI animation defaults.",
@@ -23498,7 +23499,7 @@ class SettingsScreen(BaseAppScreen):
                     "or the parent-page DOM.",
                     classes="settings-status-row",
                 )
-                yield Checkbox(
+                yield StateCheckbox(
                     "Enable Canvas tools, actions, and browser delivery",
                     value=self._canvas_draft_value(CANVAS_ENABLED_DRAFT_KEY),
                     id="settings-canvas-enabled",
@@ -23507,7 +23508,7 @@ class SettingsScreen(BaseAppScreen):
                         "artifacts while revoking execution and browser delivery."
                     ),
                 )
-                yield Checkbox(
+                yield StateCheckbox(
                     "Open Canvas automatically after a successful create",
                     value=self._canvas_draft_value(CANVAS_AUTO_OPEN_DRAFT_KEY),
                     id="settings-canvas-auto-open",
@@ -23580,7 +23581,7 @@ class SettingsScreen(BaseAppScreen):
                 )
                 for line in RAW_CLI_DISCLOSURE_LINES:
                     yield Static(line, classes="settings-raw-cli-disclosure")
-                yield Checkbox(
+                yield StateCheckbox(
                     "Allow raw CLI and Terminal access on this device",
                     value=self._raw_cli_draft_value(),
                     id="settings-raw-cli-permitted",

@@ -332,6 +332,11 @@ async def test_catalog_refresh_rows_say_on_off_and_whether_choices_apply(startup
                 row = screen.query_one(f"#settings-mc-auto-{provider.lower()}").parent
                 assert row.region.height == 1, provider
                 assert len(row.query(Checkbox)) == 2, provider
+            # #3057 capture finding 4 (10c): an off box drew the X an on one
+            # does, only darker ("▐X▌ save to config Off"); the glyph says it.
+            for box in group.query(Checkbox):
+                inner = box._button.plain[1]
+                assert inner != "X" and (inner != " ") is box.value, box.id
 
             master.toggle()
             toggled = f"Refresh on startup {'Off' if startup else 'On'}"

@@ -94,7 +94,13 @@ async def test_console_and_storage_controls_paint_readable_values(
                         painted,
                     )
                     if isinstance(control, Checkbox):
-                        assert "X" in painted, (control.id, painted)
+                        # Rewritten on purpose (#3057 capture finding 4):
+                        # Settings' checkboxes draw a check or a blank, not
+                        # X; their state glyph is what must paint.
+                        assert control._button.plain[:2] in painted, (
+                            control.id,
+                            painted,
+                        )
                 elif isinstance(control, Select):
                     label = next(
                         str(label)

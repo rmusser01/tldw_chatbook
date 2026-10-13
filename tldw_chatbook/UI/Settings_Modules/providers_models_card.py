@@ -67,6 +67,7 @@ from ...Widgets.model_search_picker import (
     ModelSearchPicker,
     PickerSearchInput,
 )
+from ...Widgets.state_checkbox import StateCheckbox
 from ..Screens.settings_context_memory import model_context_window_state
 from ..Screens.settings_provider_view_model import (
     custom_endpoint_rows,
@@ -1372,7 +1373,7 @@ def catalog_toggle(checkbox_id: str, value: bool, **kwargs: object) -> Checkbox:
     Returns:
         The checkbox.
     """
-    return Checkbox(
+    return StateCheckbox(
         catalog_toggle_label(checkbox_id, value), value=value, id=checkbox_id, **kwargs
     )
 
@@ -2221,7 +2222,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             )
             # The saved values as a quit reads them (C8): 99 in the file is 30.
             saved = screen._saved_session_summary()["session_summary"]
-            yield Checkbox(
+            yield StateCheckbox(
                 "Show session usage summary when quitting",
                 value=saved["enabled"],
                 id="settings-session-summary-enabled",
@@ -2256,7 +2257,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 id="settings-snapshot-launch-scope",
                 classes="settings-help-copy",
             )
-            yield Checkbox(
+            yield StateCheckbox(
                 "Enable snapshots",
                 value=screen._snapshot_preferences_raw[0],
                 disabled=screen._snapshot_preferences_unavailable,

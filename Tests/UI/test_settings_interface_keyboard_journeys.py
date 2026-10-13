@@ -61,7 +61,13 @@ async def test_interface_controls_are_keyboard_reachable_and_painted(
                             painted,
                         )
                     if isinstance(control, Checkbox):
-                        assert "X" in painted, (control.id, painted)
+                        # Rewritten on purpose (#3057 capture finding 4):
+                        # Settings' checkboxes draw a check or a blank, not
+                        # X; their state glyph is what must paint.
+                        assert control._button.plain[:2] in painted, (
+                            control.id,
+                            painted,
+                        )
                     if control.id == "settings-theme-preset-target":
                         assert "Primary" in painted, painted
                     if control.id == "settings-splash-default-select":
