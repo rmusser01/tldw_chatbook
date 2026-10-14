@@ -61,6 +61,7 @@ VERDICTS = {
     "pr-fast-lane-admission": "Require successful PR fast lane (admission-sensitive)",
     "ui-fast-lane": "Require successful UI fast lane",
     "console-p0-gate": "Require successful Console P0 regression gate",
+    "dreams-boundary": "Require successful Dreams and Guardian boundary contracts",
     "dreams-tracking": "Require successful Dreams tracking tests",
 }
 
@@ -98,6 +99,9 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
         # TASK-33621.27: the Console review's P0 regression tests, moved out
         # of pr-fast-lane when they took it to 33m41s of its 35-min cap.
         "console-p0-gate",
+        # TASK-34986: PR2921's Dreams/Guardian steps, moved out of
+        # console-p0-gate when they took it to 18.7 min of its 20-min cap.
+        "dreams-boundary",
         # TASK-34929: Tests/Dreams/test_track_service.py, in no PR lane before.
         "dreams-tracking",
         "derived-artifacts",
@@ -379,6 +383,7 @@ def _pytest_step_targets() -> list[tuple[str, tuple[str, ...]]]:
         "pr-fast-lane",
         "pr-fast-lane-admission",
         "console-p0-gate",
+        "dreams-boundary",
         "dreams-tracking",
     ):
         for step in _workflow()["jobs"][job_name]["steps"]:
@@ -417,8 +422,8 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
         "pr-fast-lane-admission: Run admission-sensitive suites",
         "console-p0-gate: Run the sandboxed Console P0 regression tests",
         "console-p0-gate: Run the admission-sensitive Console P0 regression tests",
-        "console-p0-gate: Run Dreams and Guardian boundary contracts",
-        "console-p0-gate: Run Dreams admission-sensitive contracts",
+        "dreams-boundary: Run Dreams and Guardian boundary contracts",
+        "dreams-boundary: Run Dreams admission-sensitive contracts",
         "dreams-tracking: Run the Dreams tracking tests",
     )
     overlapping = _census_checker().overlapping_targets
@@ -440,14 +445,19 @@ def test_every_node_id_target_in_a_pr_lane_step_resolves():
                 assert reason is None, f"{name}: {target}: {reason}"
 
 
-@pytest.mark.parametrize("mutation", ["wrong-job", "missing", "duplicate", "order", "overlap", "unresolved"])
+@pytest.mark.parametrize(
+    "mutation", ["wrong-job", "moved-back", "missing", "duplicate", "order", "overlap", "unresolved"]
+)
 def test_pr_step_contract_rejects_location_and_target_drift(monkeypatch, mutation):
     workflow = _workflow()
     fast = workflow["jobs"]["pr-fast-lane"]["steps"]
-    p0 = workflow["jobs"]["console-p0-gate"]["steps"]
+    # TASK-34986: the Dreams/Guardian boundary steps' own job.
+    p0 = workflow["jobs"]["dreams-boundary"]["steps"]
     step = p0[-2]
     if mutation == "wrong-job":
         fast.append(p0.pop(-2))
+    elif mutation == "moved-back":
+        workflow["jobs"]["console-p0-gate"]["steps"].append(p0.pop(-2))
     elif mutation == "missing":
         p0.pop(-2)
     elif mutation == "duplicate":
