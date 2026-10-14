@@ -65,10 +65,11 @@ After S1, saved model lists can be trusted:
   - TASK-35010 branches from dev after #3057 merges.
   - TASK-35011 follows TASK-35010, because it uses T1's refresh and write rules.
   - TASK-35012 follows TASK-35010 (the sample-id set) and Phase 8 (TASK-33008), because the popover holds +451 lines of P8 work.
-  - T2 and T3 touch disjoint files and can run in parallel.
+  - T2 and T3 touch disjoint files, so TASK-35012's dependencies do not name TASK-35011. Land it after TASK-35011 anyway (the shared order below), because the default it lifts is the pick TASK-35011 saves.
+- **Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories), and TASK-35016 then updates the rail-size guard deliberately. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
 - **Phase 9 (TASK-33641, local branch `feat/model-config-p9-riders`) is not a dependency.** It shares these seams:
   - Task 7 (TASK-33005.8): the `s` save's success branch, which T2 extends.
-  - Task 16 (TASK-33005.12, TASK-33641.9): `console_model_popover.py`, beside T3.
+  - Task 16 (TASK-33005.12; TASK-33641.9, on the local P8/P9 branch, not yet on dev): `console_model_popover.py`, beside T3.
   - Task 14: edits `.github/workflows/derived-artifacts.yml`, which S1 does not touch.
 
   Whichever PR lands second rebases. No rule from either side changes.
@@ -115,18 +116,20 @@ After S1, saved model lists can be trusted:
   - `s` normalises an untouched `api_url`;
   - live cloud discovery needs keys. Tests stub the transport.
 
-## Owner decisions needed
+## Decisions (ruled 2026-10-14)
 
-**OD-1. How sample ids already written into existing config files are recognised.**
+**"Pick = use as default"** (owner choice): see the block at the top. TASK-35011 implements it, records it in ADR-002 and supersedes TASK-33007.3 AC#4.
 
-- (a) A frozen set of the 13 legacy ids (vLLM ×4, TabbyAPI ×3, Aphrodite ×2, Custom ×2, Custom_2 ×2). The saved-list loader and Settings' default choice ignore them, and Settings drops them from a list the next time it writes that list. Nothing is written at startup.
-- (b) A one-time startup migration that rewrites the user's file.
-- (c) Fix new profiles only; existing files keep the samples.
+**OD-1. How sample ids already written into existing config files are recognised. Ruled: (a)** (the recommendation; the owner was told and did not object).
 
-Recommendation: **(a)**. It needs a ruling because TASK-34100.2 AC#9 says template samples are recognised "by an explicit template-sample marker, not by comparing values". Points for (a):
-- A marker cannot identify ids that existing files already hold, since they carry none.
+- (a) **Ruled.** A frozen set of the 13 legacy ids (vLLM ×4, TabbyAPI ×3, Aphrodite ×2, Custom ×2, Custom_2 ×2). The saved-list loader and Settings' default choice ignore them, and Settings drops them from a list the next time it writes that list. Nothing is written at startup.
+- (b) Not chosen. A one-time startup migration that rewrites the user's file.
+- (c) Not chosen. Fix new profiles only; existing files keep the samples.
+
+**A deliberate, scoped departure from TASK-34100.2 AC#9.** That AC says template samples are recognised "by an explicit template-sample marker, not by comparing values", and the frozen set compares values; that is why OD-1 went to the owner. The departure is scoped:
+- The frozen set covers only ids that older versions already wrote. Those carry no marker, so a marker cannot identify them.
 - The set is frozen. These ids leave the template in TASK-35010, so the set can never drift from it.
-- It applies only to model lists and Settings' default choice. AC#9's readiness half and its marker stay with TASK-34100.2.
+- It applies only to model lists and Settings' default choice. TASK-34100.2's marker rule still governs the template, and AC#9's readiness half stays with TASK-34100.2. TASK-34100.2 itself is not edited (other branches carry versions of it).
 
 Known limit of (a): a server that really serves a model with exactly one of these ids cannot have it listed.
 
@@ -226,7 +229,7 @@ Closes A2 (the owner decision replaces its by-design verdict), B6, B19 (minus Te
    Everything else stays refused. This follows the `auth_source` precedent: `test_combined_boundary_writes_a_known_anthropic_sign_in_choice` / `..._refuses_other_sign_in_writes`.
 4. **The Saved model list block:**
    - **Tab order (B6).** Discover models gets its own `settings-input-row`, then `SelectionList#settings-discovered-models-list`, then a row with Add to model list and Clear. Tab becomes Discover → list → Add → Clear.
-   - **Ids and CSS.** All ids are kept. The buttons' edges are id-based CSS (`#settings-save-discovered-provider-models` …), and `#settings-advanced-saved-models .settings-input-row` already styles both rows, so no CSS change is expected. If one turns out to be needed, edit `css/features/_settings.tcss` (no new bare-type subject) and rebuild with `python tldw_chatbook/css/build_css.py`.
+   - **Ids and CSS.** All ids are kept. The buttons' edges are id-based CSS (`#settings-save-discovered-provider-models` …). On #3057's branch the only `#settings-advanced-saved-models .settings-input-row` selector is the compact-width stacking rule under `.settings-workbench-compact` (css/features/_settings.tcss); at 211x44 and 235x52 both rows take the shared `.settings-input-row` rule. No CSS change is expected, but measure both rows at both sizes and at the compact width. If one turns out to be needed, edit `css/features/_settings.tcss` (no new bare-type subject) and rebuild with `python tldw_chatbook/css/build_css.py`.
    - **Label and hint (A2).** The label becomes "Add to model list", with a reworded tooltip. Add a `Static(INSTANT_APPLY_BEHAVIOR_COPY, classes="settings-instant-apply-hint")`, the ADR-033 labelled exception; the class is a standalone rule in `_settings.tcss`.
    - **Title.** `saved_models_summary` appends "· 1 joins on save" while a pending addition matches. It reads only in-memory state, because it runs on every keystroke through `refresh_advanced`.
 5. **Receipts (C4 residual).**
@@ -240,8 +243,9 @@ Closes A2 (the owner decision replaces its by-design verdict), B6, B19 (minus Te
    - **Focused setting.** `_guided_field_id` then names these controls without further change.
 7. **Capability line (C-M2).** Delete Settings' duplicate `MODEL_DISCOVERY_CAPABILITY_WARNING`. The card imports the shared `MODEL_CAPABILITY_UNKNOWN_WARNING` from `provider_model_resolution.py`, which `settings_screen.py` already imports at module scope, so there is no import cost. Reword it once, for example "Capabilities unknown for models no catalog lists; text chat is assumed." It shows on Settings' discovery card and as a per-model warning in Console's model options (Chat settings has no picker since TASK-33006.4).
 8. **Size ratchets.** Net lines in `settings_screen.py` and `providers_models_card.py` go down. Lower both rows to their measured sizes in the same commit. Add a birth row for `saved_model_list.py`, following the TASK-33007.8 precedent.
-9. **ADR-002 amendment** ("Amendment 2026-10-14, owner decision"):
-   - choosing a discovered model as the default persists exactly that id on `s`;
+9. **ADR-002 amendment** (`backlog/decisions/002-openai-compatible-model-discovery.md`, "Amendment 2026-10-14, owner decision"; TASK-35011 AC#14):
+   - it records the 2026-10-14 "Pick = use as default" ruling: choosing a discovered model as the default persists exactly that id on `s`, and adds it to the provider's saved list;
+   - it says that the ruling supersedes TASK-33007.3 AC#4 (a discovered pick stays off the saved list);
    - Add to model list stays the bulk path;
    - nothing is saved without a user choice;
    - list writes start from the file under the write lock.
@@ -372,6 +376,8 @@ Commands: run the covering files once at HEAD, always through the scratch-HOME w
 
 ## Docs
 
+Each task's User Guide edit below is one of its ACs (TASK-35010 AC#11, TASK-35011 AC#15, TASK-35012 AC#5).
+
 `Docs/User_Guide/settings.md`, content only:
 - **(T1)** The vLLM, TabbyAPI, Aphrodite, Custom and Custom 2 lists start empty and fill through **Discover models**. Old sample ids are ignored, and removed the next time Settings saves that list. **Save selected** / **Add to model list** adds to the list as the file holds it, so a model added or removed elsewhere is respected.
 - **(T2) Default model row.** Choosing a discovered model stages it as the default, and **s** saves it and adds it to the provider's saved list. This replaces "it does not add the model to the provider's saved list — only Save selected does that".
@@ -381,9 +387,9 @@ Commands: run the covering files once at HEAD, always through the scratch-HOME w
   - the new receipts;
   - the empty-default fill.
 
-`Docs/User_Guide/console.md` (T3): READY PROVIDERS lists each provider's saved default first, after the open chat's current model.
+`Docs/User_Guide/console.md` (T3): READY PROVIDERS lists each provider's saved default first, after the open chat's current model. Switch model lives in Console, so this is the matching guide page.
 
-ADR-002 amendment (T2).
+ADR-002 amendment (T2, TASK-35011 AC#14): records the "Pick = use as default" ruling and that it supersedes TASK-33007.3 AC#4.
 
 No "Verified against" paragraphs. What was verified, on which branch and date, goes in each task's Implementation Notes.
 
@@ -459,7 +465,7 @@ No "Verified against" paragraphs. What was verified, on which branch and date, g
 - **Guidance rows** keep the four-plus-one row shape, or `_with_save_behavior_row`'s positional refresh misaligns.
 - **Markup.** Receipts that interpolate model ids or provider names use `notify(..., markup=False)`. Tooltips stay static. Run `scripts/check_markup_interpolation.py`.
 - **Workflows.** Editing `.github/workflows/*` in parallel with P9 Task 14 triggers `evict-workflow-file`, so use the UI census instead.
-- **Config IO on the UI loop.** T2's locked read and T1's locked transaction do guarded IO on the UI loop, as the writers already do. P9 Task 4 (TASK-33641.6) scopes raw reads per task. If it has not landed, expect the same `RecoveryRequired` the writer itself would hit; this is not a new failure mode.
+- **Config IO on the UI loop.** T2's locked read and T1's locked transaction do guarded IO on the UI loop, as the writers already do. P9 Task 4 (TASK-33641.6, on the local P8/P9 branch, not yet on dev) scopes raw reads per task. If it has not landed, expect the same `RecoveryRequired` the writer itself would hit; this is not a new failure mode.
 - **Validator hole.** The `providers` branch must admit only the mutation's own key and a list holding the saved model. Test each refusal.
 - **Frozen sample set.** It cannot list a real model whose id is exactly one of the 13 (OD-1). Mark it in code with a `ponytail:` comment naming that ceiling.
 - **zsh.** `git show "$ref:path"` applies the `:t` modifier; quote it as `"${ref}:path"`.

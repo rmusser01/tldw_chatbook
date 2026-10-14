@@ -25,7 +25,7 @@ Plan: `backlog/docs/plan-2026-10-14-settings-keyboard-search.md`. Findings close
 <!-- AC:BEGIN -->
 - [ ] #1 Every value-editing control rendered in a Settings page can be found through '/' by its visible label, or is listed as a non-setting control with a stated reason, and the search-index drift guard passes
 - [ ] #2 '/session summary' and '/summary duration' land on the session summary controls, '/sign in' lands on Sign in with, '/region' on the Dreams region field, and '/search backend' on Web Search's backend choice
-- [ ] #3 '/discover' and '/model discovery' open Providers & Models with focus on Discover models, and its disclosure is open; '/discover' still lists Dreams as the next match (this assumes owner decision OD1 is (a) or (b))
+- [ ] #3 '/discover' and '/model discovery' open Providers & Models with focus on Discover models, and its disclosure is open; '/discover' still lists Dreams as the next match
 - [ ] #4 '/dark mode' and '/light mode' open the Theme picker
 - [ ] #5 Every '/' landing and match count that existing tests pin is unchanged
 - [ ] #6 The rail category-count guard matches the number of Settings categories and passes

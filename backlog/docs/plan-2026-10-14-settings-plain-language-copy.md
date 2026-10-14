@@ -14,12 +14,13 @@ Findings closed:
 - D4: implementation vocabulary used as user copy.
 - D5: only the half about what the Inspector says. S2 owns the half about whether the storage line is true.
 - A-pm-design heuristic 2: the Inspector's "Owns" list of raw config paths.
-- B11: paths folded onto a second line in the wide detail pane.
 - D minor 7: F1 only repeats the save contract.
-- D minor 14 and A minor 11: User Guide drift.
+- D minor 14 and A minor 11: User Guide drift, for the copy this stream changes. The guide's category map and view-only count are TASK-35016's, the Goal runs section's move under Console Behavior is TASK-35017's, and the Tab sentence is TASK-35021's.
 - D question 7: the raw-CLI "DANGER!!!" copy.
 
-The owner chose this stream and set its rule.
+B11 is excluded (see Out of scope).
+
+The owner chose this stream. Its copy rule is this plan's extension of the approved model-config spec §4 rule 2 (`backlog/docs/spec-2026-09-26-model-config-redesign.md`, "Raw config keys never appear in UI copy"), which Phase 7 applied to Providers & Models.
 
 ## Goal
 
@@ -33,7 +34,7 @@ A first-time user can read every Settings page, banner, Inspector and F1 panel i
    - For read-only rows that are edited somewhere else, it is one "Saved as" disclosure under that block.
    - This extends the model-config spec §4 rule 2 ("Raw config keys never appear in UI copy") from Providers & Models to the whole shell.
    - It reuses what PR #3057 built: `SettingsScreen._config_key_disclosure`, `SettingsScreen._split_config_key_row` and `CONFIG_KEY_ROW_LABEL = "Saved as"`.
-   - Settled, not an owner decision: P7 ships this exact grammar and the owner's rule names it. Categories without a focused-field guide therefore show no keys. Experts use Advanced Config.
+   - Settled, not an owner decision: P7 ships this exact grammar for Providers & Models as its way of meeting spec §4 rule 2, and this plan reuses it. Categories without a focused-field guide therefore show no keys. Experts use Advanced Config.
 3. Enum values reach the screen through a words map, never through `.value`.
 4. The UI carries no roadmap notes ("Planned", "not available yet", "future defaults may cover…", "(v1)") and no ADR or task ids.
 5. A warning states the consequence in a calm sentence. Its force comes from the semantic `$error` card and the explicit disclosure lines, not from capitals or "!!!".
@@ -71,6 +72,11 @@ A first-time user can read every Settings page, banner, Inspector and F1 panel i
   - TASK-35019 rewrites four branches of `_category_state_scope_text`: AGENTS, STORAGE, DREAMS and GUARDIAN.
   - Both streams edit `_render_domain_category_detail`, so whichever lands second rebases.
 - **Order:** TASK-35019 depends on TASK-35018, because T1 creates the copy module and the guard file that T2 extends. Both edit `settings_screen.py` and `settings.md`.
+- **The shell streams land first (S3).**
+  - TASK-35018 depends on TASK-35016, which owns the view-only pages' "Planned" row and their Inspector read-only line (it rewrites `read_only_reason` to "Change these in \<owner\>"), plus the User Guide's category map and view-only count. S4 leaves all of these as TASK-35016 ships them.
+  - TASK-35019 depends on TASK-35017. TASK-35017's first commit moves `SettingsScreen._render_console_behavior_card` into `UI/Settings_Modules/console_behavior_card.py`, and it reshapes `compose_goal_policy`; TASK-35019 edits the card and the goal help in their new places. TASK-35017 also moves the guide's Goal runs section under Console Behavior.
+  - TASK-35021 owns the guide's Tab sentence.
+- **Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories), and TASK-35016 then updates the rail-size guard deliberately. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
 - **Merge queue is on.**
   - Arm auto-merge only after Qodo has reviewed the current head and every thread is resolved.
   - Never `update-branch` an armed PR.
@@ -80,32 +86,35 @@ A first-time user can read every Settings page, banner, Inspector and F1 panel i
 
 **In scope:**
 - **T1:** the Scope Inspector body for every category, plus the header's "Selected category" row; the F1 help body; the ownership-record copy fields, which then render only in F1; and the focused-field guide rows outside "Saved as".
-- **T2:** the State-banner scope text and page copy listed below, the Speech word map, the Guardian and Dreams word maps, the raw-CLI title, the Canvas limits disclosure, the domain pages' roadmap and source rows, the Agents scope notes, Console Behavior's budget and goal help, B11 for path rows, and the User Guide drift.
+- **T2:** the State-banner scope text and page copy listed below, the Speech word map, the Guardian and Dreams word maps, the raw-CLI title, the Canvas limits disclosure, the domain pages' source rows and contract-table roadmap rows, the Agents scope notes, Console Behavior's budget and goal help, and the User Guide's plain-language pass.
 
 **Out of scope, each with its owner:**
-- **S2 (save-model honesty):** D1, D7, D-M1, D-M2, D-M4 and the storage-line half of D5. The boundaries are listed above.
+- **S2 (save-model honesty):** D1, D7, D-M1, D-M4 and the storage-line half of D5. The boundaries are listed above. D-M2 (the Domain Defaults "read-only" tooltip) is TASK-35016's.
 - **Shell IA, page order and keyboard (D2, D3, D6, D8):**
-  - Regrouping the rail.
-  - "Open <Destination>" buttons on view-only pages.
-  - Goal runs placement.
+  - Regrouping the rail, and the guide's category map and view-only count (TASK-35016).
+  - "Open <Destination>" buttons on view-only pages, their "Planned" row and their Inspector read-only line (TASK-35016).
+  - Goal runs placement, in the page and in the guide (TASK-35017).
   - The "Mode:" strip row.
-  - Tab behaviour. S4 only corrects the guide's Tab sentence.
+  - Tab behaviour and the guide's Tab sentence (TASK-35021).
+- **B11 (dotted config keys wrapping onto a second line in the wide detail pane): excluded.** It was never corroborated, and its only evidence row (the Providers endpoint key) moved to the Inspector on #3057, so no verified cause remains.
 - **Findability (A7, A-M1, D-M3):** the search-index rows and the red index and count guards. S4 adds only the alias its own rename needs.
 - **Discovery residuals (A2, C-M2):** the "Save selected" label and `MODEL_DISCOVERY_CAPABILITY_WARNING`.
 
-## Owner decisions needed
+## Decisions (ruled 2026-10-14)
 
-- **OD-1: How F1 names the settings on a page.**
-  - (a) An "Includes:" line drawn from the `/` search index (`FIELD_SEARCH_INDEX[category]`): the first visible label per field id, skipping labels that contain `.`, `_` or `<`. It is capped at 8 labels, followed by "and N more — press / to find one". **Recommended.** It is derived data, works on an unmounted screen, and needs no new strings.
-  - (b) The page's section headings, read from the mounted detail pane.
-  - (c) One to three hand-written common tasks per category, about 66 strings with no guard.
-  - (d) No list; F1 points to the Inspector's focused-field guide.
+Both were ruled on 2026-10-14 (the block at the top); the options are kept as the record.
+
+- **OD-1: How F1 names the settings on a page. Ruled: (a)** (the recommendation; the owner was told and did not object).
+  - (a) **Ruled.** An "Includes:" line drawn from the `/` search index (`FIELD_SEARCH_INDEX[category]`): the first visible label per field id, skipping labels that contain `.`, `_` or `<`. It is capped at 8 labels, followed by "and N more — press / to find one". Chosen because it is derived data, works on an unmounted screen, and needs no new strings.
+  - (b) Not chosen. The page's section headings, read from the mounted detail pane.
+  - (c) Not chosen. One to three hand-written common tasks per category, about 66 strings with no guard.
+  - (d) Not chosen. No list; F1 points to the Inspector's focused-field guide.
   - Why a cap: the index holds 60 auto-refresh rows on Providers & Models and dozens of rows on Console Behavior and Image Gen, so an uncapped line would be a wall of text.
-- **OD-2: The raw CLI and Terminal card's title.**
-  - (a) "Danger: raw CLI and Terminal run commands as your user, with no sandbox". **Recommended.**
-  - (b) "Unsandboxed host access: raw CLI and Terminal".
-  - (c) Keep "DANGER!!! RAW CLI + TERMINAL HOST ACCESS".
-  - Why this is the owner's call: the approved plan `Docs/superpowers/plans/2026-08-26-raw-cli-user-command.md` (Task 4) fixed the exact text "DANGER!!! RAW CLI HOST ACCESS". ADR-093 and ADR-094 require the feature to be "unmistakably dangerous", while PRODUCT.md asks for "confident restraint".
+- **OD-2: The raw CLI and Terminal card's title. Ruled: (a)** (the recommendation; the owner was told and did not object).
+  - (a) **Ruled.** "Danger: raw CLI and Terminal run commands as your user, with no sandbox".
+  - (b) Not chosen. "Unsandboxed host access: raw CLI and Terminal".
+  - (c) Not chosen. Keep "DANGER!!! RAW CLI + TERMINAL HOST ACCESS".
+  - Why it went to the owner: the approved plan `Docs/superpowers/plans/2026-08-26-raw-cli-user-command.md` (Task 4) fixed the exact text "DANGER!!! RAW CLI HOST ACCESS". ADR-093 and ADR-094 require the feature to be "unmistakably dangerous", while PRODUCT.md asks for "confident restraint".
   - (a) keeps one plain danger word, states the real scope (the OS user, per `RAW_CLI_DISCLOSURE_LINES`, not "the whole computer"), and keeps the `settings-raw-cli-danger` card styling and every disclosure line unchanged.
 
 ## Task TASK-35018: The Scope Inspector and F1 help explain the page in plain words
@@ -136,10 +145,11 @@ It also closes the D4 items that render in the Inspector or F1: class names in o
    - The explicit branches are rewritten in place. Examples: "[image_generation] backend enable/default…" → "image backends, their keys and generation defaults"; "[scheduling].briefing_schedules_enabled" → "whether scheduled briefings run".
    - Why a module at all: `settings_screen.py` is pinned at its exact line count, and T2 adds word maps that would otherwise grow the file.
 2. **`SettingsScreen._render_impact_pane_body`.**
-   - Delete the generic tail's "Runtime owner", "Writes allowed", "Owns" and "Read-only" rows. On domain view-only pages the "Read-only" row printed `contract.follow_up`, a roadmap sentence, because `_domain_category_ownership_records` sets `read_only_reason=contract.follow_up`.
+   - Delete the generic tail's "Runtime owner", "Writes allowed" and "Owns" rows on every category, and its "Read-only" row on every category except the seven view-only pages.
+   - On the seven view-only pages the "Read-only" row is TASK-35016's: it rewrites `read_only_reason` from `contract.follow_up` (a roadmap sentence) to "Change these in \<owner\>". This task keeps that row as TASK-35016 ships it and does not reword it.
    - The else-branch drops its `summary.description` echo of the rail text.
    - Every non-guide category keeps the plain Affects/Recovery/Boundary block from `_inspector_guidance`. The Boundary row keeps id `settings-boundary-note`.
-   - **The five guide categories show the focused-field guide (plus the blocks each already has) and no Affects/Recovery/Boundary block.** This follows the owner's rule; the facts are kept in F1 through the ownership notes.
+   - **The five guide categories show the focused-field guide (plus the blocks each already has) and no Affects/Recovery/Boundary block.** This follows the copy rule above (this plan's extension of spec §4 rule 2); the facts are kept in F1 through the ownership notes.
      - Providers & Models ends after `compose_providers_models_inspector`. This matches spec mock (c), which ends at "Key".
      - Console Behavior keeps P7's branch unchanged.
      - Appearance keeps its guide and the "Open Theme picker" button. It drops "Settings owns" / "Theme owns", because the ownership `boundary_copy` already says the same in F1.
@@ -180,7 +190,7 @@ It also closes the D4 items that render in the Inspector or F1: class names in o
 
 ## Task TASK-35019: Settings pages, banners and the User Guide speak plain language
 
-Closes: D4 (the page, banner and status half), B11 (path rows), D question 7 (the raw-CLI copy), D minor 14 and A minor 11 (User Guide drift). Depends on TASK-35018.
+Closes: D4 (the page, banner and status half), D question 7 (the raw-CLI copy), and D minor 14 and A minor 11 for the copy this task changes (User Guide drift). Depends on TASK-35018 and TASK-35017.
 
 **Sites, by symbol:**
 1. **`SettingsScreen._category_state_scope_text`:**
@@ -206,17 +216,17 @@ Closes: D4 (the page, banner and status half), B11 (path rows), D question 7 (th
    - Use it at every `.connection.value`, `.catalog.value` and `.sample.value` interpolation in `SpeechTTSSettingsPanel` (`Widgets/Settings_Widgets/speech_tts_settings_panel.py`): `_connection_status_copy`, the `#settings-speech-provider-current-status` refresh, and `_compose_provider_setup_body`.
    - This is not LLM readiness (TASK-33005.7).
 6. **`SettingsScreen._render_domain_category_detail`.**
-   - Delete the "Where the data lives" heading and its "Source N" rows, and the "Planned" (`follow_up`) row, on every domain page.
+   - Delete the "Where the data lives" heading and its "Source N" rows on every domain page. The "Planned" (`follow_up`) row is TASK-35016's, which deletes it; this task does not touch it.
    - In `DOMAIN_CONTRACT_BY_CATEGORY`, delete the roadmap and developer-instruction rows: Roleplay "What Settings might add later"; Skills, Watchlists and Workflows "Settings role: future defaults…"; Artifacts "Settings role: …do not move artifact operations here".
    - Reword these rows: Dreams "Budgets & cadence: read-only here; edit the remaining [dreams] keys in config.toml (v1)" → "read-only here; change them in Advanced Config", and Guardian "Dreams gate: only rules opted in with feeds_discovery…" → "only rules you allow to feed Dreams do; crisis rules never can".
-   - `source_of_truth` and `follow_up` data stay non-empty, because they are pinned and `follow_up` feeds `read_only_reason`. The MCP "Runtime owner" row stays (pinned).
+   - `source_of_truth` and `follow_up` data stay non-empty, because they are pinned. The view-only pages' `read_only_reason` ("Change these in \<owner\>") is TASK-35016's; leave it as it ships. The MCP "Runtime owner" row stays (pinned).
    - The "Settings mode" and "Writes allowed" rows belong to S2 (D7).
 7. **`SettingsScreen._render_guardian_controls` and `_render_dreams_controls`.**
    - Add `GUARDIAN_READ_ONLY_WORDS` and `DREAMS_READ_ONLY_WORDS` to `settings_help_copy.py`, imported inside the functions. Examples: `fixation_share_threshold` → "Fixation alert share"; `stories_per_cycle` → "Stories per cycle". The rows read "<words>: <value>".
    - The headings say "read-only here; change them in Advanced Config".
    - Under each block, add one `_config_key_disclosure` holding "Saved as: [guardian] fixation_share_threshold, …".
-   - This supersedes TASK-34792's controller ruling R1 (the Dreams rows were labelled by their TOML key). R1's purpose, letting users find the key, is kept by the disclosure. The owner's rule decides it.
-8. **Console Behavior help.**
+   - **Pending owner ruling (asked 2026-10-14): supersede TASK-34792 R1 — plain-language labels with the keys in a 'Saved as' disclosure — or keep R1.** R1 is that task's controller ruling that the Dreams budget and cadence rows are labelled by their TOML key. This step and TASK-35019 AC#3 are written for superseding it; R1's purpose, letting users find the key, is kept by the disclosure. If the owner keeps R1, the Dreams rows are excluded from this step and from AC#3 (they keep their key labels), and Guardian's rows still change.
+8. **Console Behavior help** (after TASK-35017; the card lives in `UI/Settings_Modules/console_behavior_card.py`).
    - In `AGENT_BUDGET_FIELDS`, rewrite the `help_text` of `agent_max_total_tokens`, `agent_max_wall_seconds` and `agent_max_tool_call_seconds` in plain words, keeping every safety fact:
      - Spend grows faster each turn, because the whole conversation is re-sent.
      - Sub-agents have their own time limit.
@@ -227,16 +237,8 @@ Closes: D4 (the page, banner and status half), B11 (path rows), D question 7 (th
    - "(stored in agent_runs.db, not config.toml)" → "(saved in Chatbook's agents database, not your config file)".
    - The Routing note "(stored in config.toml [agents], applied at spawn)" → "(saved in your config file; used when a sub-agent starts)".
 10. **`SettingsScreen._guided_action_message`, OVERVIEW entry:** "choose Providers or Console" → "choose Providers & Models or Console Behavior". This fixes the names only and makes no claim about saving (S2).
-11. **B11.**
-    - Before coding, re-measure live on the post-#3057 base whether any detail-pane row still folds a key or path. Its only evidence row moved to the Inspector in P7, and B11 was never corroborated.
-    - Then `SettingsScreen._detail_row` gains `fold: bool = True`, so Inspector behaviour is unchanged. Storage's "Config path" row and its configured database-path rows, and Diagnostics' "Config path" row, pass `fold=False`.
-12. **`Docs/User_Guide/settings.md` content.**
-    - Move "Goal policy in Console behavior" into "Interface — Console Behavior" as "Goal runs". It is reached with F4, because Settings is F4 in `shell_destinations.py`; F9 is not a Settings key. Drop "zero disables admission" there too. The guide may keep the key names in its table, since the rule governs the UI, not the guide.
-    - **Category map:**
-      - Correct the group counts to the live rail.
-      - Add one row each for Tool Profiles, Network, Hooks, Dreams, Guardian and Video Gen.
-      - Retitle "the eight view-only pages" to the seven read-only pages (Artifacts, Roleplay, Skills, Watchlists, Workflows, MCP, ACP), and drop its "What is still missing" roadmap column.
-    - **Layout tour:** "Tab again walks into the detail pane's fields" → name F6.
+11. **`Docs/User_Guide/settings.md` content: the plain-language pass.** Four items are owned elsewhere and not touched here: the category map and the view-only page count (TASK-35016), moving the Goal runs section under Console Behavior with its F4 path (TASK-35017), and the Tab sentence (TASK-35021).
+    - **Goal runs wording:** in the section TASK-35017 moved, drop "zero disables admission". The guide may keep the key names in its table, since the rule governs the UI, not the guide.
     - **Quirks:** Animations is read by character expressions. Leave the Smooth scrolling and Palette limit halves to S2 (D7).
     - **Quote as they now render:** the Privacy raw-CLI passage, the Agents notes, the Storage label list, and the Speech, Guardian and Dreams rows.
 
@@ -353,7 +355,6 @@ On the #3057 base, several Settings nodes are in the UI PR lane, but most of the
   - **T2:**
     - On Privacy, the raw-CLI title has no "!!!" and the card keeps its danger class.
     - Diagnostics, Workflows (view), Guardian, Dreams, Storage and Speech & TTS (scope inspector expanded) paint no `jargon_hits`.
-    - Storage's "Config path" row is one line at 211x44 when it fits (B11).
 
 ## Docs
 
@@ -362,7 +363,7 @@ On the #3057 base, several Settings nodes are in the UI PR lane, but most of the
 - **T1:**
   - The Layout tour's "Scope Inspector" row: what is pinned (no "Selected category"), the focused-field guide, the "config key" disclosure, and the plain Affects/Recovery/Boundary block on the other categories.
   - The F1 paragraph under "Keyboard & commands": what the panel now holds.
-- **T2:** the items in T2 step 12.
+- **T2:** the items in T2 step 11.
 - **Both:**
   - Run `python scripts/check_guide_claim_strings.py Docs/User_Guide/settings.md` before and after. It is a read-list, not a gate. No new misses may appear for strings this stream changed.
   - Describe composed rows (F1 notes, Inspector rows) as rules, not as quoted specimens (lesson "A claim-string checker is blind by construction to composed copy").
@@ -404,7 +405,6 @@ Use the sandboxed recipe that has been verified to work. Never point the app at 
    - **T2:**
      - No "DANGER!!!", "not_tested", "agent_runs.db", "ChaChaNotes", "Planned" or "Source 1".
      - The Guardian and Dreams rows are in words.
-     - Storage's Config path is on one line.
      - `/chachanotes` lands on the Storage field.
 6. **Back captures with Pilot.** A capture is a read, not proof of what was painted. Every claim made in the PR also has a Pilot assertion in `test_settings_plain_copy.py`.
 7. **Clean up.**
@@ -430,7 +430,7 @@ Use the sandboxed recipe that has been verified to work. Never point the app at 
 - **Module size ratchet.**
   - Lower the `settings_screen.py` row to the measured count in each PR.
   - T2's word maps live in `settings_help_copy.py`, so T2 must not grow `settings_screen.py`. If it does, move more data out; never raise the number.
-- **CSS.** S4 adds no CSS. The bare-type subject ratchet is at its limit and the boot CSS budget is tight. If a rule turns out to be unavoidable:
+- **CSS.** S4 adds no CSS. If a rule turns out to be unavoidable, it lands in the lazily loaded Settings sheet, which the bare-type census (it boots Console) does not count, so add no bare-type subject anyway, and keep it out of the tight boot CSS budget:
   - Edit `css/features/_settings.tcss`, never the generated `css/screen_agentic_settings.tcss`.
   - Rebuild with `tldw_chatbook/css/build_css.py`.
   - Run `./scripts/preflight.sh`.
@@ -438,7 +438,7 @@ Use the sandboxed recipe that has been verified to work. Never point the app at 
   - `_detail_row` already uses `markup=False`. Any new Static that interpolates runtime text does too.
   - Run `python scripts/check_markup_interpolation.py`; it should show no new sites.
 - **Superseded rulings, said out loud in the PR.**
-  - TASK-34792's R1 (keys as Dreams row labels): the keys stay findable in the disclosure.
+  - TASK-34792's R1 (keys as Dreams row labels): pending owner ruling (asked 2026-10-14) — supersede R1 (plain-language labels with the keys in a 'Saved as' disclosure) or keep it. If it is superseded, say so in the PR; if it is kept, the Dreams rows stay as R1 has them and the PR says so.
   - P7 review R1 #27's Providers Inspector boundary line: the fact moves to F1.
   - The raw-CLI plan's exact title (OD-2).
 - **Branch conflicts.**

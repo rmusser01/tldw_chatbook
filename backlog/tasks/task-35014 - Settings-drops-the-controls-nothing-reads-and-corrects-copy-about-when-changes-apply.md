@@ -10,6 +10,7 @@ labels:
 - settings-ux-review-2026-10-14
 dependencies:
 - TASK-33007
+- TASK-35016
 priority: medium
 ---
 
@@ -21,11 +22,10 @@ Appearance offers two controls the app never reads: Palette limit (themes) and S
 Other copy is false about when or how changes apply:
 - Splash Screen's State line says changes take effect as you make them, but splash settings only show at the next launch.
 - The Guardian and Dreams pages say 'Settings mode: Immediate global briefing-gate control' and 'Writes allowed: Yes - global gate only'. That wording was copied from Schedules and does not describe them.
-- The Domain Defaults rail toggle says its pages are read-only, though six of its thirteen are editable.
 
 Each of these tells the user something false about what a control does or when it takes effect. This task removes the two inert controls without touching the values users have already saved, and corrects the false copy.
 
-Plan: `backlog/docs/plan-2026-10-14-settings-save-honesty.md`. Findings closed: D7, D-shell-design-M2 (Settings UX review, 2026-10-14).
+Plan: `backlog/docs/plan-2026-10-14-settings-save-honesty.md`. Findings closed: D7 (Settings UX review, 2026-10-14). The Domain Defaults rail toggle's false 'read-only' tooltip (D-shell-design-M2) is TASK-35016's, which replaces that toggle.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -34,7 +34,6 @@ Plan: `backlog/docs/plan-2026-10-14-settings-save-honesty.md`. Findings closed: 
 - [ ] #2 A profile whose config already holds palette_theme_limit or smooth_scrolling opens Appearance and saves a change without error, and both keys keep their values.
 - [ ] #3 Splash Screen's State line says its changes are saved as you make them and shown at the next launch.
 - [ ] #4 Guardian's and Dreams' 'How this page works' rows describe what that page controls and writes. Schedules keeps its briefing-gate wording.
-- [ ] #5 The Domain Defaults rail toggle no longer says that all of its pages are read-only.
-- [ ] #6 Docs/User_Guide/settings.md's Appearance, Quirks, Splash, Guardian and Dreams text matches the app, including that Animations is read by character expression playback.
-- [ ] #7 settings_screen.py is no longer than it was before this change, and every new test runs and passes in the UI PR gate lane.
+- [ ] #5 Docs/User_Guide/settings.md's Appearance, Quirks, Splash, Guardian and Dreams text matches the app, including that Animations is read by character expression playback.
+- [ ] #6 The change does not raise settings_screen.py's budget in the module size ratchet, and the new tests run on every pull request.
 <!-- AC:END -->

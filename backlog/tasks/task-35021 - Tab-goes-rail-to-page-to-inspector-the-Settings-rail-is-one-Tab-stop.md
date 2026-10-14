@@ -10,6 +10,7 @@ labels:
 - ux-review-2026-10-14
 dependencies:
 - TASK-33007
+- TASK-35016
 priority: medium
 ---
 
@@ -25,7 +26,7 @@ Plan: `backlog/docs/plan-2026-10-14-settings-keyboard-search.md`. Findings close
 <!-- AC:BEGIN -->
 - [ ] #1 For every Settings category at 211x44 and 235x52, one Tab from the open category's rail row reaches the first control of that page; a page with no control takes focus itself
 - [ ] #2 Shift+Tab from a page's first control returns to the open category's rail row. Tab from the navigation bar, or with nothing focused, lands on that row, or on the first shown match while a filter hides it
-- [ ] #3 Up/Down and j/k move through the rail rows in the order shown on screen, never land on a hidden row, and reach the Domain Defaults toggle. Enter opens the focused category or toggles the group. With a filter active they move only among the shown matches
+- [ ] #3 Up/Down and j/k move through the rail rows in the order shown on screen, never land on a hidden row, and reach the rail's collapsed group toggles. Enter opens the focused category or toggles the group. With a filter active they move only among the shown matches
 - [ ] #4 After the arrow keys move along the rail, Tab leaves the rail from that row without visiting other rail rows. Clicking any rail row still opens and focuses it
 - [ ] #5 Tab never stops on the detail pane's or the inspector's scroll body while that pane holds a control, and PageDown/PageUp pressed on a button or checkbox in a long page still scroll it
 - [ ] #6 F6 and Shift+F6 cycle the rail, detail pane and inspector as before

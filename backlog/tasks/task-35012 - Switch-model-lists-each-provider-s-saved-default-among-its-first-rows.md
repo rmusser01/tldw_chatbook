@@ -33,4 +33,5 @@ Plan: `backlog/docs/plan-2026-10-14-s1-discovered-model-default-saved-lists.md`.
 - [ ] #2 Each group lists the same models as before, only reordered, and the '… N more' row counts the remaining ones
 - [ ] #3 A shipped sample model id is never moved forward as a provider's default
 - [ ] #4 Find results and their ranking are unchanged
+- [ ] #5 The Console User Guide's Switch model description says each ready provider's saved default shows first, after the open chat's current model
 <!-- AC:END -->

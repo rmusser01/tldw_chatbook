@@ -27,7 +27,7 @@ Plan: `backlog/docs/plan-2026-10-14-settings-keyboard-search.md`. Findings close
 - [ ] #1 With focus on any control in a Settings page whose footer offers s, Ctrl+S performs that page's Save (s) with the same result and messages, and focus stays on that control
 - [ ] #2 Edits that a field commits or rolls back when it is left (an invalid Custom ID model, the session summary duration) take effect before the save, so Ctrl+S never saves a value that field would reject or drop
 - [ ] #3 In an in-page editor that has its own commit button, such as a custom endpoint's Save name or Save endpoint, Ctrl+S performs that button's action and never the page's Save
-- [ ] #4 Typing s, r or t in a field still types the letter. Ctrl+S does nothing on the rail, in the category filter, in the inspector, with nothing focused, or on a page whose footer does not offer s
+- [ ] #4 Typing s, r or t in a field still types the letter. Ctrl+S does nothing on the rail, in the category filter, in the inspector or with nothing focused. On Settings surfaces whose footer does not offer s (Advanced Config, the Theme editor, My Profile, Internal Prompts and the like), this task's binding performs no save; Ctrl+S in those editors is left to TASK-34000.43
 - [ ] #5 While a text field in the page has focus, the footer shows 'ctrl+s' with the action it performs in place of 'Esc, s save category', and the other keys keep their 'Esc,' form
 - [ ] #6 The Settings User Guide's keyboard and troubleshooting sections teach Ctrl+S
 <!-- AC:END -->

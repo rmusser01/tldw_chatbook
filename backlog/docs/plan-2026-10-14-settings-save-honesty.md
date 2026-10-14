@@ -9,14 +9,17 @@
 
 Source: the Settings UX review of 2026-10-14 (critique snapshot `.impeccable/critique/2026-10-14T15-26-24Z__tldw-chatbook-ui-screens-settings-screen-py.md`), reviewed on origin/dev 1ef4fcf4ae.
 
-Tasks: TASK-35013 (Settings shows which controls save without s, and where each page's saves go), TASK-35014 (Settings drops the controls nothing reads and corrects copy about when changes apply), TASK-35015 (Every Settings form uses one on/off control and one row shape).
+Tasks: TASK-35013 (Settings shows which controls save without s, and where each page's saves go), TASK-35014 (Settings drops the controls nothing reads and corrects copy about when changes apply), TASK-35015 (Every Settings form uses one on/off control and one row shape), TASK-35023 (Speech & TTS selects render one row tall like other Settings selects).
 
 Review: the verified Settings UX review on origin/dev 1ef4fcf4ae (assessments A–E, adversarial verdicts, completeness critic). origin/dev is now 67136d5dd7. The commits since the review only change backlog files and clean up the repository root (path pointers in two tests and two scripts), so no Settings code changed. Every code anchor below was read on PR #3057's head 29ca19f10d, because this stream lands after it.
 
 Findings closed:
 - TASK-35013: D1 (the residual the verifier left after rating it BY-DESIGN P2), D-shell-design-M1, D5 (the storage line), D-shell-design-M4.
-- TASK-35014: D7, D-shell-design-M2.
-- TASK-35015: D6 (controls and rows), D-shell-design-M5, B10.
+- TASK-35014: D7.
+- TASK-35015: D6 (the on/off controls and their one-row shape), D-shell-design-M5, B10.
+- TASK-35023: D6 (Speech & TTS's three-row selects).
+
+Not here, each with its one owner: D-shell-design-M2 (the Domain Defaults "read-only" tooltip) is TASK-35016's, and D6's Goal runs rows are TASK-35017's.
 
 ## Goal
 
@@ -43,9 +46,16 @@ If #3057 changes again before it merges, re-read every anchor below at its merge
 
 **P8 and P9 restack onto #3057 after it merges.** Both are still based on an older #3057 commit, so compare their own commits, not their trees. They touch some of this stream's files; see Overlaps. Whichever PR lands second rebases. Never merge dev into a branch.
 
-**Order inside the stream: TASK-35013 and TASK-35014 are independent, and TASK-35015 comes after TASK-35014.**
+**The shell streams land first.** TASK-35016 and TASK-35017 (S3) land before T1, T2 and T3:
+- TASK-35017's first commit moves `SettingsScreen._render_console_behavior_card` into the new `UI/Settings_Modules/console_behavior_card.py` (as `compose_console_behavior_card`). T1 and T3 depend on TASK-35017 and edit the card in that module, never in `settings_screen.py`. TASK-35017 also folds Permission summaries and Exchange capture into closed Advanced disclosures whose titles carry their state, so T1 re-counts which save-without-`s` groups no title names before writing the State-line count.
+- TASK-35016 owns the rail groups, the Domain Defaults "read-only" tooltip (D-shell-design-M2) and the User Guide's category map and view-only count. T1 depends on it because both edit the guide's "How saving works" badge table (TASK-35016 changes its view-only count); T2 depends on it because both edit `_render_domain_category_detail` and the guide's group-named headings.
+
+**Order inside the stream: TASK-35013 and TASK-35014 are independent, TASK-35015 comes after TASK-35014, and TASK-35023 is independent of all three.**
 - T1 and T2 can land in either order. The second rebases: both edit `settings_screen.py`, its ratchet row and settings.md, and T1 moves `_category_state_scope_text`, whose Splash line T2 edits.
 - T3 waits for T2 so that it does not convert Smooth scrolling, a control T2 deletes, or rewrite the Appearance block twice.
+- TASK-35023 shares only `SpeechTTSSettingsPanel` (its `_row` helper) and the Speech CSS rules with T3, which converts Speech's Switches. Whichever lands second rebases.
+
+**Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories), and TASK-35016 then updates the rail-size guard deliberately. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
 
 Design target: 211x44 and 235x52 only.
 
@@ -57,8 +67,9 @@ In scope:
 - The Scope Inspector's Save row and storage line.
 - The User Guide and DESIGN.md save-model text.
 - The two inert Appearance controls.
-- The false Splash, Guardian and Dreams copy, and the Domain Defaults "read-only" tooltip.
-- One on/off control and one label-left, one-row field shape across Settings category forms.
+- The false Splash, Guardian and Dreams copy.
+- One on/off control across Settings category forms, drawn in one row, and DESIGN.md's row-shape line.
+- Speech & TTS's three-row selects (TASK-35023).
 
 Out of scope, with the reason for each:
 - **Abolishing or merging the commit models.** ADR-033 rule 1 rejects it, and this plan does not recommend it.
@@ -71,16 +82,17 @@ Out of scope, with the reason for each:
 - **The rest of D5:** the inspector's width, the category name shown four times, and the long "Owns:" lists. These are shell-layout items. S2 fixes only the false storage claim.
 - **B5:** see OD-4.
 - **Theme's `r` = rename, and Theme having no State banner.** Both are BY-DESIGN and pinned (Excluded).
-- **D2, D3, D4, D8 and D-shell-design-M3.** These belong to the review's IA/page-order, copy, keyboard/search and findability/guards streams.
+- **D2, D3, D4, D8, D-shell-design-M2 and D-shell-design-M3.** These belong to the review's IA/page-order (TASK-35016 owns M2's tooltip), copy, keyboard/search and findability/guards streams.
+- **Goal runs' rows (the Goal runs part of D6).** TASK-35017 rebuilds that section into Advanced ▸ Agent limits and gives it the shared one-row shape.
 
 ## Settled, not asked
 
 - **Status row placement and Chat images stay instant.** ADR-033 rule 3 allows instant-apply for low-risk, independently meaningful, trivially reversible preferences, if the control is labelled. Both handlers (`handle_console_status_row_position_toggle`, `handle_console_remote_images_toggle`) are documented as "immediate write, no category draft". TASK-32761 qualified their write queue across leaving the screen. M1's verified fix is the label, so staging them would undo deliberate, tested work for no verified gain.
-- **The one Settings boolean widget is a checkbox.** TASK-2827 (Done) chose Checkbox over Switch and Button toggles for Settings, and #3057 made it the state-glyph `StateCheckbox`. The Speech and Agents Switches and the Appearance Button toggles came back later and are regressions against that task's AC#1. OD-3 asks only how the checkbox is labelled.
+- **The one Settings boolean widget is a checkbox.** TASK-2827 (Done) chose Checkbox over Switch and Button toggles for Settings, and #3057 made it the state-glyph `StateCheckbox`. The Speech and Agents Switches and the Appearance Button toggles came back later and are regressions against that task's AC#1. OD-3 settled only how the checkbox is labelled.
 
-## Owner decisions needed
+## Decisions (ruled 2026-10-14)
 
-Each decision lists its options and a recommendation. The tasks are written for the recommended options. A different ruling changes the named task's ACs before it starts.
+Each decision records the options considered and the ruling of 2026-10-14 (the block at the top). The tasks are written to the rulings.
 
 ### OD-1: How the State line summarises the controls that save without `s` (TASK-35013, D1)
 
@@ -93,7 +105,7 @@ Options:
 - **(B)** Add the count on every draft page, and shorten Providers & Models' scope copy to make room. This reverses #3057 AC#4's "who a save reaches" wording.
 - **(C)** Leave the banner alone, and put the count in F1's "Save contract:" line and the Inspector's draft-status row.
 
-**Recommend (A).** It fits one row everywhere and does not reopen #3057. It warns on the only page where these exceptions are spread among about 20 groups.
+**Ruled (A)** (the recommendation; the owner was told and did not object). It fits one row everywhere and does not reopen #3057. It warns on the only page where these exceptions are spread among about 20 groups.
 
 ### OD-2: What happens to the two inert Appearance controls, Palette limit (themes) and Smooth scrolling (TASK-35014, D7)
 
@@ -104,7 +116,7 @@ Options:
 - **(B)** Keep them, labelled "(not used yet)".
 - **(C)** Wire Palette limit to the command palette's theme list. This is new feature work.
 
-**Recommend (A).** Add a control back when something reads it.
+**Ruled (A)** (the recommendation; the owner was told and did not object). Add a control back when something reads it.
 
 ### OD-3: How the one Settings checkbox is labelled (TASK-35015, D6/M5/B10)
 
@@ -117,7 +129,7 @@ Options:
 - **(A)** Keep DESIGN.md as written. The setting name goes in the label column, and the checkbox's label is the live On/Off word. That means about 25 conversions the other way, and long names must wrap or be cut to fit the 24-cell column, including the raw-CLI consent wording "Allow raw CLI and Terminal access on this device" (pinned in `test_settings_raw_cli`).
 - **(B)** One `StateCheckbox` whose label names the setting, with the mark as the state and no separate word. Amend the DESIGN.md bullet to say so. In a grid whose rows already name the item, the checkbox may keep a short On/Off label; this covers Catalog refresh's per-provider grid (ruled by #3057) and the Image/Video Gen backend rows.
 
-**Recommend (B).** It is the shape #3057 ships and guards, needs no consent copy rewritten, and is the review's own suggestion ("Checkbox with the label on the right"). Amending DESIGN.md is the design-system owner's call, which is why this is a decision.
+**Ruled (B)** (owner choice). It is the shape #3057 ships and guards, needs no consent copy rewritten, and is the review's own suggestion ("Checkbox with the label on the right"). Amending DESIGN.md is the design-system owner's call, which is why it went to the owner.
 
 ### OD-4: Where B5 goes
 
@@ -127,7 +139,7 @@ Options:
 - **(A)** Add an AC to TASK-33005.15 (P9 Task 2, To Do): "the Overview's Configuration row and its Status describe the saved pair, and name an unsaved Providers draft separately".
 - **(B)** Give it its own task in this stream.
 
-**Recommend (A).** P9 Task 2 already rewires `_resolve_provider_model_for_settings` (TASK-33001.8 AC#3) and `_provider_overview_readiness_status` (TASK-33005.15). Fixing the shown pair without its Status would create a new contradiction, and a second PR on the same two functions would conflict. This changes another program's task, which is why the owner decides.
+**Ruled (A)** (the recommendation; the owner was told and did not object). P9 Task 2 already rewires `_resolve_provider_model_for_settings` (TASK-33001.8 AC#3) and `_provider_overview_readiness_status` (TASK-33005.15). Fixing the shown pair without its Status would create a new contradiction, and a second PR on the same two functions would conflict. This changes another program's task, which is why it went to the owner. The AC is on TASK-33005.15 as AC#4.
 
 ## Task-by-task design
 
@@ -149,7 +161,7 @@ Closes D1 (residual), D-shell-design-M1, D5 (storage line) and D-shell-design-M4
 
    The module imports the screen's constants at module top, as `providers_models_card.py` does. `settings_screen.py` imports the module only inside the functions that use it. ADR-097 pins the Settings route's pre-import payload (`Tests/Performance/boot_budget_snapshots/preimport_payload.json`).
 
-2. **Each Console control that saves without `s` declares itself the ADR-033 way (M1).** In `_render_console_behavior_card`:
+2. **Each Console control that saves without `s` declares itself the ADR-033 way (M1).** In `compose_console_behavior_card`, in `UI/Settings_Modules/console_behavior_card.py` (TASK-35017 moves `_render_console_behavior_card` there in its first commit, and this task lands after it):
    - Wrap Show model thinking, Status row placement and Chat images, each with its header, control and help, in a `Vertical(classes="settings-instant-apply-group")`, as the Permission summaries group already is.
    - Give each help `Static` the `settings-instant-apply-hint` class, and start it with `INSTANT_APPLY_BEHAVIOR_COPY` followed by the rest of today's sentence. This replaces #3057's ad-hoc "Applies immediately." prefix and adds no row.
    - Give Exchange capture's help a lead clause naming its Apply button and saying that `s` does not save it.
@@ -170,7 +182,7 @@ Closes D1 (residual), D-shell-design-M1, D5 (storage line) and D-shell-design-M4
    - Overview keeps its paragraph, and Theme keeps its line.
    - Categories that write the config file keep "Local-only: saves write your config file.", which is pinned for Providers & Models and Console Behavior.
    - Categories that write somewhere else name the place in plain words, for example Agents (the Agents database), Workspaces (the workspace records), Tool Profiles (your local tool profiles), My Profile (your encrypted profile), and Dreams and Guardian (config plus their own store).
-   - Categories whose ownership record has `writes_allowed=False` say that nothing on the page is saved: Diagnostics, About, and the seven view-only Domain Defaults pages.
+   - Categories whose ownership record has `writes_allowed=False` say that nothing on the page is saved: Diagnostics, About, and the seven view-only pages.
    - Check each page's real write path before writing its line. `_INSPECTOR_GUIDANCE`'s "Affected config" / "Affected data" rows are the starting list.
 
 6. **Docs drift (M4).**
@@ -178,16 +190,16 @@ Closes D1 (residual), D-shell-design-M1, D5 (storage line) and D-shell-design-M4
      - "Reviewed actions" (Tool Profiles) and "Pending — save with s" (Network);
      - Hooks under Draft, Video Gen under "save/revert below", and Agents, Schedules, Dreams and Guardian under Applies immediately.
 
-     It also says "eight" view-only pages where there are seven.
+     The table's view-only count (eight → seven) is TASK-35016's, which lands first; keep its count when rewriting the table.
    - Correct every "seven draft categories" claim to the code: the Scope Inspector row of the layout table, the `s`/`r` rows of the keys table, and the Quirks bullet "'s' did nothing at all". `s` saves the nine `GUIDED_SETTINGS_MUTATION_CATEGORIES` plus Network (`action_settings_save_category`).
    - Update the layout table's "Local-only: saves write your config file." sentence for the new storage line.
    - **DESIGN.md:** update the "Persistence badge" bullet, which still lists "Managed in editor" and says five models.
 
-**Files.** `UI/Settings_Modules/settings_save_contract.py` (new); `UI/Screens/settings_screen.py` (a net shrink, with the ratchet row lowered to the new size if it shrinks by more than 50 lines); `Docs/User_Guide/settings.md`; `DESIGN.md`; the tests below. No CSS change is expected. If one turns out to be needed, edit `css/features/_settings.tcss` and rebuild with `tldw_chatbook/css/build_css.py`.
+**Files.** `UI/Settings_Modules/settings_save_contract.py` (new); `UI/Settings_Modules/console_behavior_card.py` (TASK-35017's module); `UI/Screens/settings_screen.py` (a net shrink, with the ratchet row lowered to the new size if it shrinks by more than 50 lines); `Docs/User_Guide/settings.md`; `DESIGN.md`; the tests below. No CSS change is expected. If one turns out to be needed, edit `css/features/_settings.tcss` and rebuild with `tldw_chatbook/css/build_css.py`.
 
 ### TASK-35014: Settings drops the controls nothing reads and corrects copy about when changes apply
 
-Closes D7 and D-shell-design-M2. The design below is for OD-2 (A).
+Closes D7. The design follows the OD-2 ruling (A). D-shell-design-M2 (the Domain Defaults "read-only" tooltip) is TASK-35016's, which removes that toggle.
 
 **Mechanism.**
 
@@ -210,9 +222,7 @@ Closes D7 and D-shell-design-M2. The design below is for OD-2 (A).
    - Add two optional fields to `SettingsDomainCategoryContract` (`settings_config_models.py`) for the "Settings mode" and "Writes allowed" rows. Set them on the three contracts, and have the renderer use them. The view-only wording stays the default.
    - `settings_config_models.py` is in the UI-ready module census, so add fields and no imports.
 
-4. **Domain Defaults tooltip (M2).** In `_render_category_buttons`, the group toggle's tooltip drops "(read-only ownership contracts)". It can say that pages marked "(view)" are read-only.
-
-5. **Docs.**
+4. **Docs.**
    - Docs/User_Guide/settings.md: the Appearance paragraph; the Splash, Guardian and Dreams wording; and the Quirks bullet "Four Appearance fields are less than they appear". Animations is now read by `Chat/character_expression_playback.py`, and Palette limit and Smooth scrolling are gone.
    - `Tests/UI/COMMAND_PALETTE_TESTING.md`: remove the stale `palette_theme_limit` step.
 
@@ -220,13 +230,13 @@ Closes D7 and D-shell-design-M2. The design below is for OD-2 (A).
 
 ### TASK-35015: Every Settings form uses one on/off control and one row shape
 
-Closes D6 (controls and rows), D-shell-design-M5 and B10. The design below is for OD-3 (B).
+Closes D6 (the on/off controls and their one-row shape), D-shell-design-M5 and B10. The design follows the OD-3 ruling (B). D6's Goal runs rows are TASK-35017's, and Speech & TTS's three-row selects are TASK-35023's.
 
 **Mechanism.**
 
 1. **One on/off control.** Every on/off setting on a Settings category form is a `StateCheckbox` whose label names the setting. Each converted control keeps its id, saved key, value and save model. Its handler moves from `Button.Pressed` or `Switch.Changed` to `Checkbox.Changed`. Space, Enter and a click toggle it.
    - **Appearance.**
-     - Animations has no label today, and with `width: auto` it clips to "▐X…".
+     - Animations has no label today, and with `width: auto` it clips its closing glyph (▐X… on dev, ▐✓… after #3057).
      - The Reduce motion and ASCII glyphs Buttons. Carry over P8's TASK-33008.4 tooltip and Purpose copy for Reduce motion.
      - The value Buttons: Library rail, Width mode ("Automatic widths"/"Custom widths"), the six `LIBRARY_READER_DESTINATIONS` "Items pane" toggles, and Folder Files tree pane.
      - Remove `_appearance_bool_label` and `_appearance_media_layout_label`, along with the Buttons' label cycling.
@@ -246,12 +256,13 @@ Closes D6 (controls and rows), D-shell-design-M5 and B10. The design below is fo
 
 2. **One CSS rule.** Give every Settings `StateCheckbox` the one-row, borderless shape through one settings-owned class, for example `.settings-toggle`. Tokens only: the dimension-literal ratchet is in `Tests/UI/test_component_pattern_governance.py`.
    - It replaces the id list under "Compact toggles retain the full label and glyph…". Where they measure equal, it also replaces the `#settings-providers-models-card Checkbox` and `#settings-console-behavior-card Checkbox` rules.
+   - On Console Behavior the class goes on the checkboxes in `compose_console_behavior_card` (TASK-35017's module); this task lands after TASK-35017.
    - Keep the selector made of settings-owned tokens, so that `build_css.py` routes it to the lazily loaded `screen_agentic_settings.tcss` and not to the boot bundle. Never add it to `components/_settings_splash_theme.tcss`, which is in the boot manifest.
    - The ancestor-scoped bare-type census (`MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES` in `Tests/Performance/test_textual_css_fastpath.py`) boots on Console, before the Settings sheet loads. It therefore does not count these rules: leave its constant alone, and add no new bare-type subject anyway.
 
-3. **One row shape.** Every other field is label-left with a one-row control.
-   - **Goal runs.** `compose_goal_policy` (`settings_goal_policy.py`) moves from a bare label `Static` above a default three-row `Input` to `settings-input-row` + `settings-input-label` + `settings-compact-input`, with a digits-only `restrict`. Those inputs then join the shared Console control column that `test_every_console_behavior_control_shares_one_width_and_shows_whole_labels` checks.
-   - **Speech & TTS.** Its Selects and Inputs already pass `compact=True` and `settings-compact-*`, yet render three rows tall. Measure before changing CSS. The suspects are `.settings-speech-input-row.settings-select-row { min-height: $ds-size-3 }` and the error-stack `Vertical`. Keep `.settings-speech-stacked` working, per the lesson "Exercise both sides of a form's actual responsive threshold".
+3. **The row shape.** Every converted on/off control takes the one-row shape from step 2. The two field-shape items the review found elsewhere each have one owner and are not done here:
+   - **Goal runs:** TASK-35017, which rebuilds `compose_goal_policy`'s rows into Advanced ▸ Agent limits.
+   - **Speech & TTS's three-row Selects and Inputs:** TASK-35023, below.
 
 4. **DESIGN.md.** Amend the dense-form convention's "Toggles and switches" bullet to say:
    - one `StateCheckbox` labelled with the setting, the mark is the state;
@@ -260,9 +271,21 @@ Closes D6 (controls and rows), D-shell-design-M5 and B10. The design below is fo
 
    Add one line on the row shape.
 
-5. **User Guide.** Update every Settings section that describes a converted control. For example: Console Behavior's "An Enabled/Disabled toggle plus Threshold", Splash's switches, Appearance's toggles, Speech's switches, and Goal runs' fields.
+5. **User Guide.** Update every Settings section that describes a converted control. For example: Console Behavior's "An Enabled/Disabled toggle plus Threshold", Splash's switches, Appearance's toggles and Speech's switches.
 
-**Files.** `Widgets/Settings_Widgets/speech_tts_settings_panel.py`, `Widgets/settings_splash_screen_viewer.py`, `Widgets/settings_agents_panel.py`, `Widgets/settings_image_gen_panel.py`, `Widgets/settings_video_gen_panel.py`, `Widgets/settings_theme_editor.py`, `UI/Screens/settings_goal_policy.py`, `UI/Screens/settings_screen.py` (a net shrink), `css/features/_settings.tcss` (rebuild the bundle), `DESIGN.md`, `Docs/User_Guide/settings.md`.
+**Files.** `Widgets/Settings_Widgets/speech_tts_settings_panel.py`, `Widgets/settings_splash_screen_viewer.py`, `Widgets/settings_agents_panel.py`, `Widgets/settings_image_gen_panel.py`, `Widgets/settings_video_gen_panel.py`, `Widgets/settings_theme_editor.py`, `UI/Settings_Modules/console_behavior_card.py` (TASK-35017's module), `UI/Screens/settings_screen.py` (a net shrink), `css/features/_settings.tcss` (rebuild the bundle), `DESIGN.md`, `Docs/User_Guide/settings.md`.
+
+### TASK-35023: Speech & TTS selects render one row tall like other Settings selects
+
+Closes D6's Speech & TTS part. Split out of TASK-35015, because its cause is unknown and it needs its own investigation.
+
+**Mechanism.**
+
+1. **Find the cause first.** Speech's Selects and Inputs already pass `compact=True` and `settings-compact-*`, yet render three rows tall, so about seven fields fit on a 44-row screen (`02-speech-211.txt`). Measure before changing CSS. The suspects are `.settings-speech-input-row.settings-select-row { min-height: $ds-size-3 }` and the error-stack `Vertical` that `SpeechTTSSettingsPanel._row` wraps each field in. `.value = "x"` in Pilot cannot see a field that paints no text (TASK-13154.1), so read painted strips.
+2. **Fix it at the cause.** Keep the `settings-compact-*` classes and every field's id, saved key, value and save model. Keep `.settings-speech-stacked` working, per the lesson "Exercise both sides of a form's actual responsive threshold". Tokens only; add no bare-type subject or raw dimension literal.
+3. **Overlap.** T3 converts Speech's Switches in the same panel and edits `_row`'s tooltip rule and the stacked `> Switch` selector. Whichever lands second rebases.
+
+**Files.** `Widgets/Settings_Widgets/speech_tts_settings_panel.py` and/or `css/features/_settings.tcss` (rebuild the bundle), whichever holds the cause; the tests below.
 
 ## Pinned tests to update (with the reason)
 
@@ -289,7 +312,7 @@ Run every pin below locally before pushing. Use xdist (`-n 6 --dist loadfile`; T
   - `test_settings_footer_hints.py`'s "Save contract:" assertions.
 - `Tests/Architecture/test_module_size_ratchet.py`: lower `settings_screen.py`'s row if it shrank by more than 50 lines.
 - `Tests/Architecture/test_persistent_diagnostic_inventory.py` (it pins `settings_screen.py` entries): re-run it. The moved bodies hold no logger calls.
-- Re-run `scripts/check_markup_interpolation.py`. Census rows are keyed by function name, so moving code that holds a tooltip or a notify re-keys its row. The moved bodies hold neither, and `SettingsScreen._render_console_behavior_card`'s one `tooltip_interp` row keeps its count.
+- Re-run `scripts/check_markup_interpolation.py`. Census rows are keyed by function name, so moving code that holds a tooltip or a notify re-keys its row. The moved bodies hold neither. TASK-35017 already removed the card's one `tooltip_interp` row (it hoists the Frame-rate tooltip), so the card edits add no row.
 
 **TASK-35014**
 - `Tests/UI/test_settings_appearance_defaults.py`: these 7 tests build or read the two fields:
@@ -308,7 +331,7 @@ Run every pin below locally before pushing. Use xdist (`-n 6 --dist loadfile`; T
 - `Tests/UI/test_settings_field_guide_in_view.py::test_other_guided_categories_keep_the_guide_in_view_on_resize`: the Appearance row of `SHARED_HOOK_CASES` uses the Palette limit field; switch it to another guided Appearance field. Its parametrize id stays "appearance".
 - `Tests/UI/test_settings_save_commit_models.py::test_guidance_row_builders_keep_a_uniform_row_count`: its `appearance_field_ids` tuple.
 - The search-index tests (`Tests/UI/test_settings_search_index.py`) must stay green.
-- No test pins the Splash, Guardian/Dreams or tooltip strings (verifier grep, re-checked on #3057). Re-grep before editing.
+- No test pins the Splash or Guardian/Dreams strings (verifier grep, re-checked on #3057). Re-grep before editing.
 
 **TASK-35015**
 - `Tests/UI/test_settings_console_behavior_grammar.py::test_no_settings_panel_builds_a_stock_checkbox`: extend it, or add the new guard beside it.
@@ -333,9 +356,12 @@ Run every pin below locally before pushing. Use xdist (`-n 6 --dist loadfile`; T
   Check each `Switch` hit, because many are other screens' Switches. For example, `Tests/Backup_Recovery/test_unsaved_editors.py`'s Switch is Speech Studio's, not Settings'.
 - `Tests/UI/test_settings_agents_category.py` (`agents-enabled-switch`).
 - `Tests/UI/test_settings_theme_editor.py` and `Tests/UI/test_settings_theme_card_contrast.py` (dark mode).
-- `Tests/UI/test_console_goal_settings.py` (goal rows).
-- `Tests/UI/test_settings_console_behavior_grammar.py::test_every_console_behavior_control_shares_one_width_and_shows_whole_labels`: it now also covers the goal Inputs. Keep it green.
+- `Tests/UI/test_settings_console_behavior_grammar.py::test_every_console_behavior_control_shares_one_width_and_shows_whole_labels`: keep it green (TASK-35017 extends it to the goal Inputs).
 - Must stay green: `Tests/UI/test_checkbox_height_render.py` (in the census), and `Tests/Performance/test_screen_preimport_payload_budget.py`.
+
+**TASK-35023**
+- `Tests/UI/test_settings_speech_tts_panel.py` and `Tests/UI/test_speech_tts_settings_ownership_closeout.py` (`_assert_field_rows_are_labelled`): re-run; update only geometry assertions the fix moves, each with a "rewritten on purpose" note.
+- `Tests/UI/test_settings_narrow_layout.py` (stacked Speech): must stay green.
 
 ## New tests (and their lane)
 
@@ -362,20 +388,23 @@ Add each new file, or each new node in a file the census lists only by node (for
   - A config pre-seeded with both keys opens Appearance, saves a Web font size change, and both keys keep their values. Compare values, not bytes, because the config writer can reformat the file.
   - The Splash scope line names the next launch.
   - Guardian's and Dreams' mode rows differ from Schedules'.
-  - The Domain Defaults toggle's tooltip makes no blanket read-only claim.
 
 **TASK-35015**
 - `Tests/UI/test_settings_boolean_grammar.py` (new), or new nodes in the census-listed `test_settings_console_behavior_grammar.py`:
   - An AST guard: no Settings module builds a `Switch`, or a `StateCheckbox` without a label. It covers the globs the stock-checkbox guard walks. `toggle_label`, `_appearance_bool_label`, `_appearance_media_layout_label` and `switch_state_label` are gone.
   - At 211x44 and 235x52, every converted category's checkboxes paint their whole mark and label, read from `Screen._compositor.render_strips()`. Lessons: "A clipped region check does not prove a control is painted"; "A terminal capture is not evidence about what rendered".
-  - Speech's Selects and Inputs and Goal runs' Inputs are one row tall, label-left, at both sizes. A stacked-Speech case covers the other side of the threshold.
+  - Every converted checkbox is one row tall at both sizes, including in Speech's stacked layout.
   - A staged checkbox still adds to the unsaved count; an instant one still writes at once.
+
+**TASK-35023**
+- New nodes in `Tests/UI/test_settings_speech_tts_panel.py` (or a new census-listed file), with the production stylesheet: every Speech Select and Input is one row tall, label-left, at 211x44 and 235x52, read from painted strips. A stacked-Speech case covers the other side of the threshold. A negative control (the cause put back) turns it red.
 
 ## Docs
 
 - TASK-35013: Docs/User_Guide/settings.md: "How saving works", the layout table's Scope Inspector row, the keys table, and the Quirks bullet. DESIGN.md: the "Persistence badge" bullet. No ADR change: ADR-033 rule 3 already says what T1 does.
 - TASK-35014: Docs/User_Guide/settings.md: Appearance, Quirks, Splash, Guardian and Dreams. `Tests/UI/COMMAND_PALETTE_TESTING.md`.
 - TASK-35015: DESIGN.md: the dense-form convention's toggle bullet and a row-shape line. Docs/User_Guide/settings.md: every converted control's description.
+- TASK-35023: Docs/User_Guide/settings.md only if its Speech section describes the field layout.
 - Never add "Verified against" paragraphs. What was verified, and on which branch and date, goes in each task's Implementation Notes.
 
 ## Live verification script
@@ -426,18 +455,20 @@ tmux -L s2 new-session -d -x 211 -y 44 "cd $WT && $ENVV sandbox-exec -f $SCR/den
 2. Open Appearance: neither control is there.
 3. Change Web font size and press `s`. Diff the config: both seeded keys keep their values, and the font size changed.
 4. Open Splash: the State line names the next launch.
-5. Focus the Domain Defaults toggle: the hint line no longer says read-only. On Guardian and Dreams, "How this page works" names each page's own scope.
+5. On Guardian and Dreams, "How this page works" names each page's own scope.
 
 **TASK-35015**
-1. Capture these pages at both sizes: Appearance, Splash, Console Behavior (Goal runs), Speech & TTS, Privacy & Security, RAG, Hooks, Agents (edit form), Image Gen, Video Gen and the Theme editor. Every on/off setting reads "✓ Name" or a blank mark and "Name", with no "…".
+1. Capture these pages at both sizes: Appearance, Splash, Console Behavior, Speech & TTS, Privacy & Security, RAG, Hooks, Agents (edit form), Image Gen, Video Gen and the Theme editor. Every on/off setting reads "✓ Name" or a blank mark and "Name", with no "…".
 2. Press Space on each toggle. Staged ones add to the unsaved count, and instant ones write at once.
-3. Speech's Global defaults show one-row Selects. Count the fields on one screen against the review's capture (`02-speech-211.txt`: 7).
-4. Goal runs' five limits are label-left, one-row fields.
-5. Read the painted strips (`Screen._compositor.render_strips()`) for any row that looks clipped before calling it a defect.
+3. Read the painted strips (`Screen._compositor.render_strips()`) for any row that looks clipped before calling it a defect.
+
+**TASK-35023**
+1. Speech's Global defaults show one-row Selects at both sizes. Count the fields on one screen against the review's capture (`02-speech-211.txt`: 7).
+2. Narrow the pane until Speech stacks: every field still shows with its label.
 
 ## Overlaps
 
-None of these is duplicated by this stream. Each entry says what it shares and the order rule.
+Each item has one owner. Each entry says what this stream shares with it and the order rule.
 
 - **PR #3057 / TASK-33007 (and .6, .7).** The prerequisite. S2 builds on its copy constants, clean badge, `StateCheckbox` conversion, Console control column and Advanced titles. It keeps #3057 AC#4's Providers scope line (OD-1 A) and AC#9's Save selected behaviour. It does not re-lay-out the Providers & Models card.
 - **P8 (`feat/model-config-p8-first-run`).**
@@ -461,7 +492,7 @@ None of these is duplicated by this stream. Each entry says what it shares and t
 - **TASK-32465 (radios) and TASK-33137 (shared settings vocabulary).** Related, not absorbed.
 - **The review's sibling streams.**
   - Saved-model-list stream (A2): it owns Save selected's rename and hint.
-  - IA/page-order stream (D2, D3): if it regroups Domain Defaults, T2's tooltip goes with it, and its Goal-runs move touches the `compose_goal_policy` call that T3 reshapes.
+  - IA/page-order stream (D2, D3): TASK-35016 owns the Domain Defaults "read-only" tooltip (M2) and the guide's view-only count; T1 and T2 land after it. TASK-35017 owns Goal runs' rows and moves the Console Behavior card into `console_behavior_card.py`; T1 and T3 land after it and edit the card there.
   - Copy stream (D4): it rewrites the Agents scope copy "agent_runs.db (SQLite) …", which lives in T1's module if T1 lands first.
   - Findability/guards stream (M1, A7, D-shell-design-M3): it shares `settings_search_index.py`.
 
@@ -486,13 +517,14 @@ None of these is duplicated by this stream. Each entry says what it shares and t
 - **The State line is 120 cells.** T1's count must fit at both sizes, and so must TASK-33002.10's text if it lands there.
 - **Instant writes and leaving the screen.** Switching category does not exercise leaving Settings. Prove instant writes across removing and recreating the screen (TASK-32761).
 - **Config rewritten on boot.** Compare config values after a post-boot baseline, never hand-authored bytes.
-- **Speech's three-row Selects.** Find the cause before changing CSS. `.value = "x"` in Pilot cannot see a field that paints no text (TASK-13154.1). Keep the `settings-compact-*` classes, and verify both the horizontal and stacked layouts.
+- **Speech's three-row Selects (TASK-35023).** Find the cause before changing CSS. `.value = "x"` in Pilot cannot see a field that paints no text (TASK-13154.1). Keep the `settings-compact-*` classes, and verify both the horizontal and stacked layouts.
 - **Markup.** All new copy is static. The Button-label sites T3 removes only shrink the census.
 - **zsh.** Write `git show "${REF}:path"`. `$REF:path` applies the `:t` modifier and mangles the ref, which happened during this review.
-- **Owner rules.** Fix every review finding (no capped rounds), and reviewers fix what they find. Use xdist. No paperwork ACs.
+- **Process rules from the owner.** Fix every review finding (no capped rounds), and reviewers fix what they find. Use xdist. No paperwork ACs.
 
 ## Rollback
 
 Each task is one PR, and reverting its merge commit restores the previous behaviour. None of them changes the schema, migrates data or rewrites user config:
 - T2 leaves users' `palette_theme_limit` / `smooth_scrolling` keys in place, so a revert brings the controls back with the users' values.
 - T3 keeps every control id and saved key, so config written before and after it has the same shape.
+- TASK-35023 keeps every Speech field's id and saved key; a revert restores the three-row height only.

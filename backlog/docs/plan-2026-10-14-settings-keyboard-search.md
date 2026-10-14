@@ -31,7 +31,7 @@ The guards that keep "/" complete (the search-index drift guard and the rail cat
 |---|---|---|---|
 | A-pm-design-M1 | Found by the A verifier; node run red | 29 rendered value controls have no `FIELD_SEARCH_INDEX` row (`tldw_chatbook/UI/Screens/settings_search_index.py::build_field_search_index`). By category: console-behavior 12, providers-models 5, speech-tts 4, dreams 3, privacy-security 2, web-search 2, theme 1. That is 7 categories, not the 8 the verifier wrote. `Tests/UI/test_settings_search_index.py::test_every_rendered_setting_is_in_the_search_index` names them. It runs only in `.github/workflows/test.yml`, which triggers on push to `main` and on dispatch. `scripts/ui_pr_gate_census.txt` does not list it. | T1 |
 | A7 | CONFIRMED | The session-summary Checkbox and Input are unindexed value widgets. Discover models has no row, because it is an action outside `VALUE_WIDGET_TYPES`. "/discover" opens Dreams because Dreams' description ("daily discovery digest") matches at the description tier (rank 2). In `SettingsScreen._category_search_rank` that tier outranks both field tiers (3 and 4). The discovered list is excluded on purpose. | T1 |
-| D-shell-design-M3 | Found by the D verifier; node run red | `test_settings_category_summaries_cover_every_category_id_exactly_once` asserts `== 31`, but `SettingsCategoryId` has 33 members (Network and My Profile were added). #3057 still asserts 31. | T1 |
+| D-shell-design-M3 | Found by the D verifier; node run red | `test_settings_category_summaries_cover_every_category_id_exactly_once` asserts `== 31`, but `SettingsCategoryId` has 33 members. The guard was last edited at 2bce8ffa0f, at 31 with HOOKS; Dreams and Guardian (1b769eb757) then took the enum to 33. #3057 still asserts 31. | T1 |
 | D heuristic 6 | Review note | Search has no synonyms. "dark mode" and "shortcut" both return 0 matches. | T1, "dark mode" only |
 | D8, Tab half | CONFIRMED, live | Rail rows are separate focusable `Button`s (`SettingsScreen._render_category_buttons`, class `settings-category-button`). `SettingsScreen.on_key` handles Tab only from nothing focused or from the nav bar. | T2 |
 | B17 | B had no verifier | The `VerticalScroll` body `#settings-detail-pane-body` is a Tab stop placed before its own controls, because Textual adds a container to the chain ahead of its children. Only one edge of the outline shows. | T2 (reproduce first) |
@@ -55,37 +55,41 @@ The guards that keep "/" complete (the search-index drift guard and the rail cat
   - Land TASK-35020 before P9 Task 7 if possible. TASK-33003.14 AC#2 needs `test_settings_search_index.py` to "stay green", and it is red today.
   - Both edit the CONSOLE_BEHAVIOR tuple. S5 appends rows at its end; P9 rewrites the `settings-console-default-*` rows. A rebase resolves this.
   - P9 Task 14 also appends to the census. Its plan says six shards, but #3057's head has nine, so read the matrix at rebase.
-- **S3 (rail IA).** T2 derives arrow order from the rendered rail, so a regroup needs no T2 change. The category-count literal becomes PR-gated in T1, and whichever of S3 and T1 lands second re-measures it.
+- **S3 (rail IA).** TASK-35021 lands after TASK-35016, which regroups the rail and turns the one Domain Defaults toggle into one toggle per collapsed group (class `.settings-category-group-toggle`). T2 derives arrow order from the rendered rail, so it treats every group toggle as a rail row. TASK-35020 sets the category-count literal to today's 33 and PR-gates it; TASK-35016 then updates that guard deliberately.
 - **Order.** T1 and T2 are independent. T3 follows T2, because both use the new keyboard module and the footer. Each task is one PR, rebased (never merged) onto dev and landed under CLAUDE.md's merge-queue rules.
+- **Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories), and TASK-35016 then updates the rail-size guard deliberately. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
 
 ## Scope
 
-- **T1.** Index rows for every rendered setting the guard names, plus the Discover models action and Theme synonyms. The "/discover" ranking per OD1. The rail-count literal. Both guards in the required UI lane. The User Guide's "/" text.
-- **T2.** One Tab stop for the rail. Arrows and j/k in the order shown, including the Domain Defaults toggle. No Tab stop on a pane body that holds controls. The User Guide's Tab path.
+- **T1.** Index rows for every rendered setting the guard names, plus the Discover models action and Theme synonyms. The "/discover" ranking per the OD1 ruling. The rail-count literal. Both guards in the required UI lane. The User Guide's "/" text.
+- **T2.** One Tab stop for the rail. Arrows and j/k in the order shown, including the collapsed groups' toggles. No Tab stop on a pane body that holds controls. The User Guide's Tab path, including its Tab sentence.
 - **T3.** Ctrl+S on the Settings pages that offer s, and in the in-page editors on those pages. The footer in a field. The User Guide's keys.
 
 ## Out of scope
 
 - **Console Behavior generation-fallback search**: TASK-33003.14 (P9 Task 7). S5 does not touch the `settings-console-default-*` rows or `_top_field_match`'s choice within a category.
-- **Focus after the Revert dialog**: TASK-33007.11 (P9 Task 7). The Tab filter does not change what Textual focuses when a modal closes, because the nav bar stays first in the chain.
+- **Focus after the Revert dialog**: TASK-33007.11 (on the local P8/P9 branch, not yet on dev; P9 Task 7). The Tab filter does not change what Textual focuses when a modal closes, because the nav bar stays first in the chain.
 - **Discovered-list cursor (B3)**: TASK-33003.17, Done on the P9 branch (266776c54b, P9 Task 3).
 - **Ctrl+S in editors on pages without s**: TASK-34000.43. These are the Advanced Config raw editor, the Theme editor, the My Profile record editor, Internal Prompts, the Image Gen and Video Gen panels, Workspaces rename, and every other screen.
-- **Rail regrouping, the Domain Defaults "read-only" copy, page order**: S3. Copy and User Guide drift outside the keyboard and "/" paragraphs: S4.
+- **Rail regrouping and the Domain Defaults "read-only" tooltip**: TASK-35016. **Page order**: TASK-35017. Copy and User Guide drift outside the keyboard and "/" paragraphs: S4.
 - **A "shortcut" synonym.** No Settings control owns shortcuts (F1 and the footer list them), so the synonym would route to an unrelated page.
 - **A focus cue for a pane body that has no control**, such as Theme's inspector. B17 reported the stop in front of controls, which T2 removes. Add the cue if a live capture shows the remaining stop unreadable.
 
-## Owner decision needed
+## Decisions (ruled 2026-10-14)
 
-**OD1: how "/discover" reaches Providers & Models.** Dreams wins today because its description matches at rank 2, above every field tier. The description tier is a substring match. A general "search terms" haystack would therefore re-route every single word inside a term: "/mode", "/key", "/test", "/check", "/models".
+**OD1: how "/discover" reaches Providers & Models. Ruled: (a), curated phrases** (the recommendation; the owner was told and did not object). T1 is written to it.
 
-- **(a) Curated phrases.** Add a few phrases for Providers & Models: "discover models", "model discovery", "test provider". They rank with the description, but match only when the query is the start of a phrase. Only queries that begin one of those phrases change rank.
+Why it was a decision: Dreams wins today because its description matches at rank 2, above every field tier. The description tier is a substring match. A general "search terms" haystack would therefore re-route every single word inside a term: "/mode", "/key", "/test", "/check", "/models".
+
+The options, kept as the record:
+- **(a) Curated phrases (ruled).** Add a few phrases for Providers & Models: "discover models", "model discovery", "test provider". They rank with the description, but match only when the query is the start of a phrase. Only queries that begin one of those phrases change rank.
   - Providers & Models then ties Dreams at rank 2 and wins on rail order (index 2 against 21).
   - Its new Discover models row gives the field landing.
-- **(b) The review's suggestion.** A Domain Defaults category's description-tier hit ranks below field-label hits in other categories. This is general, and it re-ranks every query whose description hit is a Domain Defaults page. For example, "/session" moves from ACP to Providers & Models › Session summary.
-- **(c) Index rows only.** "/discover" keeps opening Dreams, with "Next: Providers & Models › Discover models". T1 AC#3 then changes to "'/model discovery' lands on Discover models".
-- **Recommendation: (a).** It is the smallest change that fixes the evidenced query and re-ranks nothing else. The corpus probe in T1 checks it either way.
+  - Chosen because it is the smallest change that fixes the evidenced query and re-ranks nothing else. T1's corpus probe checks that.
+- **(b) The review's suggestion (not chosen).** A Domain Defaults category's description-tier hit would rank below field-label hits in other categories. This is general, and it would re-rank every query whose description hit is a Domain Defaults page. For example, "/session" would move from ACP to Providers & Models › Session summary.
+- **(c) Index rows only (not chosen).** "/discover" would have kept opening Dreams, with "Next: Providers & Models › Discover models", and T1 AC#3 would have read "'/model discovery' lands on Discover models".
 
-"dark mode" needs no ranking change under any option. T1 adds Theme alias rows.
+"dark mode" needed no ranking change under any option. T1 adds Theme alias rows.
 
 ## Design decisions the repo already settles (not owner calls)
 
@@ -151,13 +155,12 @@ Closes A-pm-design-M1, A7, D-shell-design-M3 and D heuristic 6 ("dark mode").
      - **THEME:**
        - `settings-theme-preset-target` ("Presets fill") goes to `NON_SETTING_CONTROLS` with this reason: a transient pick of which colour a swatch fills, read by `SettingsThemeEditor._preset_target` and never saved.
        - D heuristic 6: add alias rows `("settings-theme-list", "Dark mode")` and `("settings-theme-list", "Light mode")` at the tuple's end. Today "theme" lands on that list (TASK-32948).
-3. **OD1 (a)** (if chosen). Add `CATEGORY_SEARCH_PHRASES: dict[SettingsCategoryId, tuple[str, ...]]` to `settings_search_index.py`, holding only the three Providers & Models phrases.
+3. **OD1 (a), as ruled.** Add `CATEGORY_SEARCH_PHRASES: dict[SettingsCategoryId, tuple[str, ...]]` to `settings_search_index.py`, holding only the three Providers & Models phrases.
    - `SettingsScreen._category_search_rank` returns 2 when any phrase for the category starts with the query, next to the existing Web Search `SEARCH_TERMS` case. Leave that case and its lazy import as they are.
    - "/discover": Providers & Models and Dreams both rank 2. `_filtered_category_summaries` breaks ties on `_category_summaries()` order, so Providers & Models wins. `_search_match_is_field_landing` then promises "Providers & Models › Discover models (Core)", and the Next segment names Dreams.
    - "/test provider" opens Providers & Models plainly, where `t` runs the check. The Test button is deliberately not a Tab stop (#3057).
-   - **Under OD1 (b):** in `_category_search_rank`, return the Domain Defaults description hit after the field tiers, using `DOMAIN_SETTINGS_CATEGORY_IDS`. Re-justify every landing the probe shows moving.
 4. **Ratchet offset.** Move `SettingsScreen._field_match_rank_tier` into `settings_search_index.py` as `field_match_rank_tier(query, category)`. Its only caller is `_category_search_rank`, and no test calls it, so no alias is needed. `settings_screen.py` nets ≤ 0 lines.
-5. **Rail count.** Set the literal in `test_settings_category_summaries_cover_every_category_id_exactly_once` to the measured count: 33 on dev and on #3057. Extend its docstring history with Network and My Profile.
+5. **Rail count.** Set the literal in `test_settings_category_summaries_cover_every_category_id_exactly_once` to the measured count: 33 on dev and on #3057. Extend its docstring history with the step that took it from 31 to 33: Dreams and Guardian (1b769eb757).
 6. **Gate.** Append these under a comment naming this task:
    - `Tests/UI/test_settings_search_index.py` (whole file; module-level `bootstrap_profile`; the census already carries bootstrap files, such as `test_settings_anthropic_auth_source.py`)
    - `Tests/UI/test_settings_configuration_hub.py::test_settings_category_summaries_cover_every_category_id_exactly_once`
@@ -174,7 +177,7 @@ Closes A-pm-design-M1, A7, D-shell-design-M3 and D heuristic 6 ("dark mode").
 
 ### Known intended re-routes
 
-- "/discover": Dreams → Providers & Models › Discover models (OD1).
+- "/discover": Dreams → Providers & Models › Discover models (the OD1 ruling).
 - "/duration": Speech & TTS → Providers & Models › Session summary duration. A Providers & Models label now contains "duration", and it ranks earlier at the same tier. Speech stays the Next match.
 - Name both in the PR description. Any other moved landing found by the probe is a defect to fix before review.
 
@@ -244,14 +247,14 @@ Closes D8 (Tab half) and B17, and fixes S5-N1.
 ### Design
 
 1. **RED first.** In a new file, `Tests/UI/test_settings_keyboard_path.py` (`private_profile_test`, plain `DestinationHarness`):
-   - **S5-N1:**
-     - Down from Splash Screen should reach Console Behavior (today: Storage).
-     - With Domain Defaults collapsed, Down from Console Behavior should reach Storage (today: a hidden Library RAG row).
-     - Up from Overview should stay on Overview (today: Hooks).
+   - **S5-N1.** These cases were measured on dev's grouping. TASK-35021 lands after TASK-35016's regroup, so re-derive each case on the regrouped rail before writing it. The cause (the walk follows `_category_summaries()` order, not the rendered rail, and `.focus()` succeeds on a hidden row) survives the regroup, because TASK-35016 does not reorder the summaries.
+     - Down from Splash Screen should reach Console Behavior (on dev: Storage).
+     - With a group collapsed, Down from the row above its toggle should reach the toggle, never a hidden member row (on dev: a hidden Library RAG row).
+     - Up from Overview should stay on Overview (on dev: Hooks).
    - **D8:** one Tab from the open row should land on the page's first control (today: the next rail row).
    - **B17:** on post-#3057 dev at 211x44, Tab from the rail stops on `#settings-detail-pane-body` before the first control.
 2. **New `tldw_chatbook/UI/Settings_Modules/settings_keyboard.py`.** Functions that take `screen`:
-   - `rail_rows(screen)`: the displayed `Button`s under `#settings-category-list`, in DOM order. That is the order shown on screen: category rows plus the Domain Defaults toggle.
+   - `rail_rows(screen)`: the displayed `Button`s under `#settings-category-list`, in DOM order. That is the order shown on screen: category rows plus the collapsed groups' toggles (`.settings-category-group-toggle`).
    - `rail_tab_stop(screen, rows)`: the focused rail row if there is one, else the open category's row if shown, else the first shown row.
    - `move_rail_focus(screen, delta)`: moves along `rail_rows`, clamped at the ends as today.
    - `tab_chain(screen, chain)`:
@@ -264,7 +267,7 @@ Closes D8 (Tab half) and B17, and fixes S5-N1.
    - **A `focus_chain` property override** returning `settings_keyboard.tab_chain(self, super().focus_chain)`. Textual's Tab path (`BaseAppScreen.action_region_focus_next` → `App.action_focus_next` → `Screen._move_focus`) and `_reset_focus` read it. Clicks, `.focus()`, F6 and every `#settings-category-<id>` helper are unaffected.
    - **`_move_category_focus`**'s body becomes a call to `move_rail_focus`.
    - **`on_key`:**
-     - The up/down/j/k branches treat the Domain Defaults toggle as a rail row. Today they require `_focused_category_value()`.
+     - The up/down/j/k branches treat a group toggle (class `.settings-category-group-toggle`, not a toggle id) as a rail row. Today they require `_focused_category_value()`.
      - The Tab-from-nothing/nav-bar branch focuses `rail_tab_stop` instead of Overview. On first arrival that is still Overview, so the existing pins hold.
      - Enter on the toggle already falls through to the Button's own press.
    - **No change to `compose_content`, no CSS.** `_focus_category` stays where it is (diagnostic inventory). The file nets ≤ 0 lines; lower the ratchet row if it shrinks by more than 50.
@@ -321,7 +324,8 @@ Closes D8 (Tab half) and B17, and fixes S5-N1.
 
 `Docs/User_Guide/settings.md`:
 - **The "Moving around" paragraph in "Layout tour":** the rail is one stop; Tab goes rail → page → inspector; ↑/↓ and j/k move along the rail as shown.
-- **"Keyboard & commands" rows:** Tab, ↑/↓ (which now include the Domain Defaults toggle) and j/k.
+- **"Keyboard & commands" rows:** Tab, ↑/↓ (which now include the collapsed groups' toggles) and j/k.
+- This task owns the guide's Tab sentence (today "Tab again walks into the detail pane's fields"); S4 does not edit it.
 
 ---
 
@@ -337,7 +341,8 @@ Closes the D8 in-field save half. Conforms the Settings pages that offer s to AD
    - **Providers & Models invalid Custom ID** (helpers from `Tests/UI/test_settings_default_model_picker.py`). Type an invalid Custom ID, press Ctrl+S. The saved model is the previously committed one, never "" (`DefaultModelPicker._restore_committed_display_after_blur`).
    - **Session summary Duration** (instant-apply; commits on submit or on leaving). Type a value, press Ctrl+S: it is written (ADR-031 b).
    - **A custom endpoint's Edit form.** Change the URL, press Ctrl+S. The endpoint is saved, as with Save endpoint, and the page draft is not saved.
-   - **Ctrl+S does nothing** (no save, no toast; ADR-031 d) on a rail row, in `#settings-category-search`, in the inspector, with nothing focused, and on Theme and Workspaces.
+   - **Ctrl+S does nothing** (no save, no toast; ADR-031 d) on a rail row, in `#settings-category-search`, in the inspector and with nothing focused.
+   - **This task's binding saves nothing on Theme and Workspaces**, pages whose footer does not offer s. Ctrl+S in those pages' editors is TASK-34000.43's, so the test asserts only that the Settings binding performs no save there, and TASK-34000.43 may later change that page's own behaviour.
    - **Footer in a text field.** It shows `("ctrl+s", "save category")`, or the editor's own verb inside an in-page editor, and no `("Esc, s", ...)`. `("Esc, r", ...)` and the `t` hint keep their "Esc," form.
 2. **`settings_screen.py` changes:**
    - Add `Binding("ctrl+s", "settings_save_from_field", "Save", show=False)` to `SettingsScreen.BINDINGS`. It is non-priority, like the Personas and Library precedents, so a widget's own future Ctrl+S (TASK-34000.43) still wins.
@@ -400,11 +405,11 @@ Closes the D8 in-field save half. Conforms the Settings pages that offer s to AD
 - **Typing.** Pause between a chord and the text after it, because tmux bursts reorder keys.
 
 **Steps:**
-1. **T1.** F4, then `/discover`. The status line should read "Filter: discover | 2 matches | Enter opens Providers & Models › Discover models (Core) | Next: Dreams (Domain Defaults)" (under OD1 a). Press Enter: the Saved model list disclosure is open and Discover models is focused. Repeat with `/model discovery`, `/summary duration`, `/sign in`, `/region`, `/search backend` and `/dark mode`, and capture each.
+1. **T1.** F4, then `/discover`. The status line should read "Filter: discover | 2 matches | Enter opens Providers & Models › Discover models (Core) | Next: Dreams (<Dreams' group>)", where the group name is whatever the rail shows at the time (Domain Defaults before TASK-35016, Console & Agents after it). Press Enter: the Saved model list disclosure is open and Discover models is focused. Repeat with `/model discovery`, `/summary duration`, `/sign in`, `/region`, `/search backend` and `/dark mode`, and capture each.
 2. **T2.**
    - Click Appearance and press Tab once: the first Appearance control shows the focus cue. Shift+Tab: the Appearance row shows its focus bar.
-   - Down ×3 lands on Console Behavior; Down again lands on Storage.
-   - Walk Down to Advanced Config, then Down once more: the Domain Defaults toggle. Enter expands it; Down lands on RAG.
+   - Down from Splash Screen lands on Console Behavior, the first row of Console & Agents; each further Down lands on the next row shown.
+   - Walk Down to the last Data & Privacy row, then Down once more: the Maintenance ▸ toggle. Enter expands it; Down lands on Diagnostics. With it collapsed again, Down skips its hidden rows and lands on the Owned elsewhere ▸ toggle.
    - Open Console Behavior, Tab to a checkbox and press PageDown: the page scrolls, and Tab never lands on the page body.
    - F6 still cycles the three panes.
 3. **T3.**
@@ -453,7 +458,7 @@ No task changes config schema or user data, so no migration rollback is needed.
 ## Overlaps
 
 - PR #3057 / TASK-33007: assumed merged.
-- P9 Task 7 (TASK-33003.14, TASK-33007.11): excluded and coordinated.
+- P9 Task 7 (TASK-33003.14; TASK-33007.11, on the local P8/P9 branch, not yet on dev): excluded and coordinated.
 - P9 Task 3 (TASK-33003.17 = B3): excluded.
 - P9 Task 14: census tail and floor.
 - P8 Task 1 (TASK-33008.1): focus after save.
@@ -462,4 +467,4 @@ No task changes config schema or user data, so no migration rollback is needed.
 - TASK-32385: Folder Files labels in the same index file.
 - TASK-1378: split of `settings_screen.py`.
 - ADR-212 §4; ADR-031 (2026-10-03 refinement).
-- S3 (rail and count); S4 (other User Guide copy).
+- S3: TASK-35016 (rail groups, group toggles, the rail-size guard after T1) lands before T2; TASK-35017 (page order). S4 (other User Guide copy; the Tab sentence stays T2's).

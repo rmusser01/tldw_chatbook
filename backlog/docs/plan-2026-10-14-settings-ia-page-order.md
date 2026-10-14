@@ -1,22 +1,22 @@
 # Plan: Settings information architecture and page order (stream S3-ia-order)
 
 > **Owner rulings, 2026-10-14.**
-> - OD-1: rail map **A** (owner choice), with the group names as written: Core, Look & Feel, Console & Agents, Retrieval & media, Data & Privacy, Maintenance ▸ (collapsed), Owned elsewhere ▸ (collapsed).
-> - OD-3: **(a)**, one Console Behavior page, re-ordered (owner choice). Sub-ruling: Conversation context and memory stays open (recommendation applied).
+> - OD-1: rail map **A** (owner choice), with the group names shown in the option the owner chose: Core, Look & Feel, Console & Agents, Retrieval & media, Data & Privacy, Maintenance ▸ (collapsed), Owned elsewhere ▸ (collapsed).
+> - OD-3: **(a)**, one Console Behavior page, re-ordered (owner choice). Sub-ruling: Conversation context and memory stays open (the recommendation; the owner was told and did not object).
 > - OD-2: **(a)**, view-only pages stay as `(view)` rows in "Owned elsewhere", each leading with "Open <owner>". This was the recommendation; the owner was told and did not object.
 
 Source: the Settings UX review of 2026-10-14 (critique snapshot `.impeccable/critique/2026-10-14T15-26-24Z__tldw-chatbook-ui-screens-settings-screen-py.md`), reviewed on origin/dev 1ef4fcf4ae.
 
 Tasks: TASK-35016 (Group the Settings rail by what people come to change, and give view-only pages a way to their owner), TASK-35017 (Open Console Behavior on chat defaults and fold agent, capture and replay sections into Advanced).
 
-Source: the verified Settings UX review on origin/dev 1ef4fcf4ae (assessments A–E, adversarial verdicts, completeness critic). Planning base: origin/dev **67136d5dd7**. Since the review, dev has only had backlog commits and a repository-root cleanup (#3102); no Settings code changed. PR #3057 (TASK-33007, Phase 7) is OPEN at **29ca19f10d** and BEHIND, with auto-merge not armed; the merge queue is `on`. Code is anchored by **symbol** in a file. Line numbers are left out on purpose.
+Source: the verified Settings UX review on origin/dev 1ef4fcf4ae (assessments A–E, adversarial verdicts, completeness critic). Planning base: origin/dev **67136d5dd7**. Since the review, dev has only had backlog commits and a repository-root cleanup (#3102); no Settings code changed. PR #3057 (TASK-33007, Phase 7) is OPEN at **29ca19f10d** and BEHIND, with auto-merge armed (2026-10-14 16:58Z, by owner go-ahead); the merge queue is `on`. Code is anchored by **symbol** in a file. Line numbers are left out on purpose.
 
 ## Goal
 
 Make the Settings rail and its largest page put first what people come to change:
 
 - **Rail.** Every page Settings can edit sits in a group named for what the user wants to do. Only the four maintenance pages and the seven pages owned by other screens are folded away.
-- **View-only pages.** Each view-only page leads to the screen that owns it and no longer shows developer roadmap notes.
+- **View-only pages.** Each view-only page leads to the screen that owns it. It no longer shows the "Planned" roadmap row, and its Inspector line says where to change its settings instead of repeating a roadmap note. The other roadmap rows in those pages' contract tables are S4's (TASK-35019).
 - **Console Behavior.** The page opens on chat defaults, not on an expert feature that is off by default. Agent, capture and replay controls sit at the end, in closed one-row disclosures.
 
 Findings closed:
@@ -42,13 +42,16 @@ The Providers & Models part of A4/B7/D3 is done by #3057 and is excluded here.
   - P9 Task 3 (TASK-33641.1) changes the contrast of the shared bare-type `Collapsible` frame and of the **Console** rail rules. The Console card's disclosures are frameless under #3057's scoped rules.
   - The expected conflicts are mechanical: the settings_screen.py ratchet row, the census tail plus `MINIMUM_FILES`, and Docs/User_Guide/settings.md. Whoever lands second re-measures the row and keeps both census blocks.
 - **TASK-35016 and TASK-35017 are independent PRs.** Either can land first. The second rebases (`git pull --rebase origin dev`, never a merge) and re-measures the ratchet row.
-- **The owner rules on OD-1..OD-3 before work starts.** The ACs below assume the recommended options; a different ruling re-cuts the ACs it names.
+- **TASK-35017 lands before the streams that edit the Console Behavior card.** Its first commit moves `SettingsScreen._render_console_behavior_card` into the new `UI/Settings_Modules/console_behavior_card.py`. TASK-35013, TASK-35015 and TASK-35019 depend on TASK-35017 and edit the card in that module, never in `settings_screen.py`.
+- **TASK-35016 lands before TASK-35013, TASK-35014, TASK-35018 and TASK-35021.** It owns the rail groups and toggles, the Domain Defaults "read-only" tooltip (D-shell-design-M2), the view-only pages' "Planned" row and Inspector owner line, and the User Guide's category map and view-only count.
+- **The rulings are in.** The owner ruled on OD-1..OD-3 on 2026-10-14 (the block at the top): rail map A with the group names shown in the option the owner chose, OD-2 (a), and OD-3 (a) with Conversation context and memory open. The ACs are written to those rulings.
+- **Landing order across the 2026-10-14 Settings streams.** #3057 first. S1 (TASK-35010 → TASK-35011 → TASK-35012) is independent of the shell streams. TASK-35016 and TASK-35017 land before TASK-35013, TASK-35014, TASK-35015, TASK-35018 and TASK-35019. TASK-35020 can land any time: it fixes the red guards at today's truth (33 categories), and TASK-35016 then updates the rail-size guard deliberately. TASK-35021 lands after TASK-35016, and TASK-35022 after TASK-35021. TASK-35023 can land any time after #3057.
 
 ## Scope
 
 - **TASK-35016, the rail regroup (OD-1):**
   - Collapse works from group membership instead of the one hard-coded "Domain Defaults" title.
-  - The seven view-only pages get an Open \<owner\> button and lose their roadmap copy in the page and in the Inspector (OD-2).
+  - The seven view-only pages get an Open \<owner\> button and lose the "Planned" row and the Inspector's roadmap line (OD-2).
   - Overview gains Run setup wizard.
   - The two guards that 1b769eb757 turned red are fixed.
   - The User Guide category map is rewritten.
@@ -61,21 +64,24 @@ The Providers & Models part of A4/B7/D3 is done by #3057 and is excluded here.
 ## Out of scope (other streams or existing tasks)
 
 - Save-model honesty: D1, D-M1, D5 and D-M4. The one exception is the view-only pages' Inspector "Read-only" roadmap line, which TASK-35016 takes as part of D2.
-- Copy pass (S4): D4 and D7, including the Dreams/Guardian "Settings mode: Immediate global briefing-gate control" strings and the Goal runs note's wording. TASK-35017 only shortens the goal labels so that they fit the label column.
-- Boolean widget grammar: D6, D-M5/B10.
+- D7, including the Dreams/Guardian "Settings mode: Immediate global briefing-gate control" strings: S2's TASK-35014.
+- Copy pass (S4): D4, including the Goal runs note's wording. TASK-35017 only shortens the goal labels so that they fit the label column.
+- Boolean widget grammar and the rest of D6's row shape (D-M5/B10): S2 (TASK-35015, and TASK-35023 for Speech & TTS's selects). TASK-35017 does D6's one-row shape for Goal runs only.
 - The rail as one Tab stop, arrow order following screen order (S5-N1), Ctrl+S, and moving guards into required CI: S5.
 - The rest of the settings_screen.py split: TASK-1378 stays open.
 - Category-switch remount cost: TASK-33281.
 - Focus-intent races: TASK-2831.
 - Retrofitting the page-order rule to other categories: no verified finding asks for it.
 
-## Owner decisions needed
+## Decisions (ruled 2026-10-14)
+
+The owner ruled on all three on 2026-10-14 (the block at the top). Each decision states its ruling; the options not chosen are kept as the record.
 
 ### OD-1: the rail map (all 33 SettingsCategoryId members placed)
 
 **Measured rail window.** The 235x52 capture with Domain Defaults expanded (V-shell-design/captures/03-domain-expanded-235.txt) paints rows 12–48 with content still below, so the window is 37 rows. The pane is 8 rows shorter at 211x44, which gives **29 rows**. Each group heading or toggle costs one row. The new fit test (TASK-35016) settles the exact number. If it measures 30, A has one spare row.
 
-**Option A (recommended): five open groups and two collapsed groups.**
+**Option A (ruled, owner choice): five open groups and two collapsed groups.**
 
 | Group | State | Members (enum) |
 |---|---|---|
@@ -91,13 +97,13 @@ The Providers & Models part of A4/B7/D3 is done by #3057 and is excluded here.
 - **At 235x52.** Maintenance open costs 33 rows and fits. Both groups open cost 40 rows and scroll by 3, which is the user's choice.
 - **Pages behind a toggle.** Every editable page is visible except Internal Prompts and Advanced Config, the two expert editors in Maintenance.
 - **Cost.** "Settings › Diagnostics › Run setup wizard" (README, pinned by test_product_maturity_phase6_packaging_data_safety.py; app.py; first_run_summary_step.py) still names a real category and button, but Diagnostics now sits behind "Maintenance ▸". Overview's new **Run setup wizard**, `/diag` and the palette's "Setup: Run setup wizard…" cover it, so the copy stays as it is.
-- **Fallback.** If the fit test measures 29 and something else needs the row, move HOOKS to Maintenance. It was in "Expert" before.
+- **If the window is smaller than measured.** If the measured rail window at 211x44 is under 29 rows, stop and re-ask the owner before changing the map. The map is the owner's choice, so no member moves without a new ruling.
 
-**Option A2.** As A, but Schedules, Dreams and Guardian get their own "Background features" group. That needs 30 rows, so the rail scrolls by 1 at 211x44.
+**Option A2 (not chosen).** As A, but Schedules, Dreams and Guardian get their own "Background features" group. That needs 30 rows, so the rail scrolls by 1 at 211x44.
 
-**Option B.** As A, but Maintenance stays open. Every Settings-owned page is visible, and the README path is visible without opening anything. The rail needs 33 rows, so it scrolls by 4 at 211x44 (Maintenance's tail and the toggle sit below the fold) and fits at 235x52. Overview's Run setup wizard becomes optional.
+**Option B (not chosen).** As A, but Maintenance stays open. Every Settings-owned page is visible, and the README path is visible without opening anything. The rail needs 33 rows, so it scrolls by 4 at 211x44 (Maintenance's tail and the toggle sit below the fold) and fits at 235x52. Overview's Run setup wizard becomes optional.
 
-**Option C (minimal).**
+**Option C (minimal; not chosen).**
 - Keep today's six groups.
 - Move AGENTS to Expert.
 - Rename "Domain Defaults" to "Feature defaults" and drop "(read-only ownership contracts)".
@@ -105,26 +111,21 @@ The Providers & Models part of A4/B7/D3 is done by #3057 and is excluded here.
 
 C closes M2 and part of D2. Console Behavior stays under Interface, and six editable pages stay hidden.
 
-**Names are part of the ruling:**
-- "Retrieval & media" could instead be "Generation defaults" (the review's word, though RAG is not generation).
-- "Owned elsewhere" could instead be "Other screens' defaults".
-- "Console & Agents" could instead be "Agents & automation".
-
-Recommendation: **A**, with the names as shown.
+**Ruled: A, with the group names shown in the option the owner chose** (Core, Look & Feel, Console & Agents, Retrieval & media, Data & Privacy, Maintenance ▸, Owned elsewhere ▸). The names are part of the ruling. History only: before the ruling the plan also listed alternative names ("Generation defaults" for Retrieval & media, "Other screens' defaults" for Owned elsewhere, "Agents & automation" for Console & Agents); none of them is open.
 
 ### OD-2: the seven view-only pages (Artifacts, Roleplay, Skills, Watchlists, Workflows, MCP Defaults, ACP Defaults)
 
-- **(a) Recommended.** The pages stay as "(view)" rows in the collapsed "Owned elsewhere" group.
+- **(a) Ruled** (the recommendation; the owner was told and did not object). The pages stay as "(view)" rows in the collapsed "Owned elsewhere" group.
   - Each page leads with **Open \<owner\>**, which lands on the owning screen. Artifacts and Skills land on their Library views: Library takes `{"mode": "artifacts-all"}` and `{"mode": "skills"}` (`LIBRARY_NAV_MODE_TO_ROW_ID`).
   - The "Planned: …" row is removed. The Inspector's "Read-only:" line stops repeating the same roadmap note.
-- **(b)** Remove them from the rail, so they are reachable only through category search and deep links.
+- **(b) Not chosen.** Remove them from the rail, so they are reachable only through category search and deep links.
   - This saves the toggle row (28 of 29 under A).
   - It changes what `test_settings_category_groups_cover_every_category_id_exactly_once` means, and it needs a "no rail row" concept in search and in restore.
-- **(c)** Leave them as they are and only add the button. The roadmap copy stays.
+- **(c) Not chosen.** Leave them as they are and only add the button. The roadmap copy stays.
 
 ### OD-3: the shape of Console Behavior
 
-- **(a) Recommended.** One category, re-ordered.
+- **(a) Ruled (owner choice).** One category, re-ordered.
   - One draft, one Save/Revert, the same search rows and the same atomic [console]/[chat_defaults]/[agents] save batch (`SettingsScreen._save_console_behavior_values`).
   - **Open sections, in this order:**
     1. Global fallback defaults
@@ -142,13 +143,13 @@ Recommendation: **A**, with the names as shown.
     4. **Local reasoning history:** with its nested Reasoning replay override.
     5. **Exchange capture**
   - The "Conversation context and memory ↓" jump button and the "Also in this category: …" line are deleted. The jump was CM-007's mitigation for that section being buried (Docs/superpowers/qa/console-context-memory-uat-2026-08-10), and it is now second on the page.
-- **(b)** Local modes (Chat / Context / Display / Agents) as panes inside the category. Search has to switch modes, and this adds a fourth navigation level. Medium risk.
-- **(c)** Split into new rail categories, for example "Agent limits". High risk, because:
+- **(b) Not chosen.** Local modes (Chat / Context / Display / Agents) as panes inside the category. Search has to switch modes, and this adds a fourth navigation level. Medium risk.
+- **(c) Not chosen.** Split into new rail categories, for example "Agent limits". High risk, because:
   - The enum grows to 34, which costs a rail row (30 under A, so the rail scrolls).
   - New drafts, badges, inspector guidance and search-index keys are needed, and the keys collide with P9's TASK-33003.14.
   - The one atomic save batch splits.
   - ADR-006/ADR-052 keep the fallbacks and memory defaults in Console Behavior.
-- **Sub-ruling:** does Conversation context and memory stay open? Recommended: yes.
+- **Sub-ruling:** Conversation context and memory. Ruled: stays open.
 
 The page-order rule ("most common task first; expert or newly added controls in closed one-row disclosures under an Advanced heading at the end, each title saying its state") needs no separate ruling. DESIGN.md's Interaction Quality Contract already sets the principle ("Progressive disclosure: keep the common path focused…"), and #3057 applied it to Providers & Models. TASK-35017 records the concrete Settings instance in DESIGN.md.
 
@@ -210,8 +211,8 @@ Mechanism:
 5. **The guards that 1b769eb757 (Dreams + Guardian, 2026-10-12) turned red,** both in Tests/UI/test_settings_configuration_hub.py:
    - `test_settings_category_summaries_cover_every_category_id_exactly_once`: 31 → 33. Its docstring history gains the step that caused the red: Dreams and Guardian took the enum from 31 to 33.
      - At 2bce8ffa0f the count was 31 (HOOKS was the 31st).
-     - The review verifier and S5's plan both blame Network/My Profile; `git log -L` shows those came earlier (27 and 28).
-     - If TASK-35020 has already set 33, only correct the history.
+     - The review verifier blamed Network/My Profile; `git log -L` shows those came earlier (27 and 28).
+     - If TASK-35020 has already set 33 with this history, leave the test as it is.
    - `test_settings_domain_category_contracts_are_explicit_about_mutation_scope` is red by reading the code, not by a run: it expects 11 contracts, and `SETTINGS_DOMAIN_CATEGORY_CONTRACTS` has 13. Add DREAMS and GUARDIAN to its expected and mutable sets (both have `settings_can_mutate=True`). Run it at the merge base first to confirm.
 6. **Ratchet.** Measure settings_screen.py at the PR head (`len(path.read_text().splitlines())`) and lower its row to that number. `test_budget_is_not_left_slack` fails at more than 50 lines of slack.
 
@@ -253,7 +254,7 @@ Mechanism:
      - its handler `SettingsScreen.handle_console_context_memory_jump`;
      - the `#settings-console-behavior-section-index` Static;
      - the `#settings-console-context-memory-jump` rule in css/features/_settings.tcss. Rebuild the bundle; the rule sits in the lazy Settings sheet, so boot bytes do not move.
-3. **Alignment without new CSS.** #3057 already makes every `#settings-console-behavior-card Collapsible` frameless with a one-row title. Its prose rule, `#settings-console-behavior-card > Static`, matches direct children only. Every prose Static that moves inside a disclosure, including the unclassed help lines (for example `#settings-console-sidechat-prompt-template-help` and the goal note), therefore gains `settings-detail-row` (padding 0 1 in css/components/_forms.tcss). `test_console_behavior_prose_starts_where_its_section_headers_do` checks this, because it walks `Contents` children. Do not add a `Contents > Static` rule: it is a bare-type subject, and that ratchet (Tests/Performance/test_textual_css_fastpath.py) is at its limit.
+3. **Alignment without new CSS.** #3057 already makes every `#settings-console-behavior-card Collapsible` frameless with a one-row title. Its prose rule, `#settings-console-behavior-card > Static`, matches direct children only. Every prose Static that moves inside a disclosure, including the unclassed help lines (for example `#settings-console-sidechat-prompt-template-help` and the goal note), therefore gains `settings-detail-row` (padding 0 1 in css/components/_forms.tcss). `test_console_behavior_prose_starts_where_its_section_headers_do` checks this, because it walks `Contents` children. Do not add a `Contents > Static` rule: it is a bare-type subject. Keeping it out is a convention, not a guarded limit: the ancestor-scoped bare-type census (`MAX_ANCESTOR_SCOPED_BARE_TYPE_RULES` in Tests/Performance/test_textual_css_fastpath.py) boots Console only, so it never counts the lazily loaded Settings sheet and would not catch such a rule.
 4. **Goal runs use the shared row grammar.**
    - `settings_goal_policy.compose_goal_policy` yields `Horizontal(classes="settings-input-row")` containing `Static(label, classes="settings-input-label")` and `Input(…, classes="settings-goal-policy settings-compact-input")`.
    - These stay as they are: the ids, the `.settings-goal-policy` selector in `SettingsScreen._goal_policy_changed`, `sync_goal_policy` and `normalize_goal_setting`. The note Static gains `settings-detail-row`.
