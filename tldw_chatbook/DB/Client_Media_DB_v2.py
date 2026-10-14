@@ -2506,14 +2506,6 @@ class MediaDatabase:
                 f"Failed to delete FTS for Media ID {media_id}: {e}"
             ) from e
 
-    def _update_fts_keyword(self, conn, keyword_id: int, keyword: str) -> None:
-        """Delegate to the shared keyword store (task-34903)."""
-        self._keywords.update_fts(conn, keyword_id, keyword)
-
-    def _delete_fts_keyword(self, conn, keyword_id: int) -> None:
-        """Delegate to the shared keyword store (task-34903)."""
-        self._keywords.delete_fts(conn, keyword_id)
-
         # In Media_DB_v2.py (within the Database class)
 
         # Add 'media_ids_filter' to the method signature
@@ -5349,7 +5341,12 @@ class MediaDatabase:
 
     def update_keywords_for_media(self, media_id: int, keywords: List[str]) -> bool:
         """Synchronize the Media row's keyword links; see KeywordStore."""
-        return self._keywords.update_keywords_for_entity(media_id, keywords)
+        try:
+            return self._keywords.update_keywords_for_entity(media_id, keywords)
+        except (InputError, ConflictError, DatabaseError):
+            raise
+        except Exception as e:
+            raise DatabaseError(f"Unexpected keyword update error: {e}") from e
 
     def update_media_metadata(
         self,
@@ -5592,7 +5589,12 @@ class MediaDatabase:
         """Soft-delete a keyword and unlink it; see KeywordStore."""
         if not keyword or not keyword.strip():
             raise InputError("Keyword cannot be empty.")
-        return self._keywords.soft_delete_keyword(keyword)
+        try:
+            return self._keywords.soft_delete_keyword(keyword)
+        except (InputError, ConflictError, DatabaseError):
+            raise
+        except Exception as e:
+            raise DatabaseError(f"Unexpected soft delete keyword error: {e}") from e
 
     def get_keyword_usage_stats(self) -> List[Dict[str, Any]]:
         """Per-keyword usage counts across active media; see KeywordStore."""

@@ -26,6 +26,12 @@
 # - The host's own exception classes are unreachable from this module by
 #   design: every raise goes through a spec callable, so there is no import
 #   edge back into either host module.
+# - ``get_active_keyword_by_text`` catches ``Exception`` (returning None)
+#   where Prompts' original caught ``(DatabaseError, sqlite3.Error)``;
+#   foreign errors now surface as None on this read helper.
+# - Consolidated logging means Prompts now logs an error line for a
+#   ConflictError its original let pass silently, and Prompts' not-found /
+#   soft-delete log wording uses the shared (Media) texts.
 ####
 
 import logging
@@ -109,7 +115,9 @@ class KeywordStore:
 
     # --- Keyword row lifecycle ---
 
-    def add_keyword_full(self, keyword_text: str) -> Tuple[Optional[int], Optional[str]]:
+    def add_keyword_full(
+        self, keyword_text: str
+    ) -> Tuple[Optional[int], Optional[str]]:
         """Adds a new keyword or undeletes an existing soft-deleted one.
 
         Ported verbatim (modulo table names) from the twin bodies of Media
@@ -223,7 +231,9 @@ class KeywordStore:
                     self.update_fts(conn, kw_id, keyword)
                     return kw_id, new_uuid
         except Exception as e:
-            logger.opt(exception=True).error(f"Error in add_keyword for '{keyword}': {e}")
+            logger.opt(exception=True).error(
+                f"Error in add_keyword for '{keyword}': {e}"
+            )
             if isinstance(e, sqlite3.Error):
                 raise self.spec.make_database_error(
                     f"Failed to add/update keyword: {e}"
@@ -352,7 +362,9 @@ class KeywordStore:
 
     # --- FTS maintenance ---
 
-    def update_fts(self, conn: sqlite3.Connection, keyword_id: int, keyword: str) -> None:
+    def update_fts(
+        self, conn: sqlite3.Connection, keyword_id: int, keyword: str
+    ) -> None:
         """Updates or inserts the keyword's FTS row (Media's canonical body).
 
         Uses INSERT OR REPLACE based on the keyword rowid. Should be called
@@ -540,7 +552,9 @@ class KeywordStore:
                 f"Error updating keywords {entity_label} {entity_id}: {e}"
             )
             if isinstance(e, sqlite3.Error):
-                raise self.spec.make_database_error(f"Keyword update failed: {e}") from e
+                raise self.spec.make_database_error(
+                    f"Keyword update failed: {e}"
+                ) from e
             raise
 
     # --- Host-specific read helpers ---

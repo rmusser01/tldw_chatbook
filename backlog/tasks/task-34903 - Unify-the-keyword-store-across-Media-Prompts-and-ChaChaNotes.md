@@ -7,7 +7,7 @@ labels:
 - simplification
 assignee:
 - '@zcode'
-updated_date: 2026-10-14 20:25
+updated_date: 2026-10-14 20:51
 ---
 
 ## Description
@@ -32,7 +32,7 @@ Evidence (verified on dev df4985e): Media: Keywords table plus ~3k LOC region in
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Phase 1 complete. DB/keyword_store.py (618 lines): shared KeywordStore+KeywordStoreSpec per ADR-177 (helper not base class) - Media and Prompts delegate add_keyword/_add_keyword_full update_keywords_for_* soft_delete_keyword FTS helpers get_active_keyword_by_text and usage_stats to it; per-host spec callables preserve each host's exact exception construction (incl Media's 2-positional ConflictError - attributes observable) normalization (Prompts whitespace-collapse via instance-method lambdas) and soft-delete unlink scope (Media: active-parent links IN-list; Prompts: all links). Unified: FTS NUL scrub now covers Prompts too (strict improvement); two duplicated log lines consolidated (inventory re-frozen via sanctioned --write: 19 statements in the new owner, Media -38 Prompts -12; checker green). DEAD CODE DELETED per census: Media rename_keyword merge_keywords fetch_media_for_keywords; Prompts _add_keyword_with_retry (all zero callers incl Tests/). sql_validation re-sync: VALID_COLUMNS Keywords (live DDL), +PromptKeywordsTable, LINK_TABLE_COLUMNS PromptKeywords->PromptKeywordLinks (test pin updated from the stale name - the VALID_TABLES allowlist trap caught in the wild). VERIFICATION: Tests/Media_DB + Tests/Prompts_DB byte-identical failure set to baseline (2 known env failures); test_sql_validation 31/31; checker green; app import ok. Tests/DB full run 188 failures ALL attributed: 3-file ID-level diff vs pristine dev identical except test_trusted_alias_copy_positively_retires_native_resources[ordinary] which is order-flaky and fails at pristine in isolation too (subprocess-returncode test); remaining files untouched by this diff. The implementation subagent died after writing the store; host rewiring/validation/inventory completed in-session.
+Phase 1 complete + REVIEW ROUND 1 (subagent in Qodo's place): verdict With-fixes; all findings applied. (1 Important) Media's generic-exception DatabaseError wrap restored on the update/soft-delete delegates (matching add_keyword's preserved shim, with the original message texts). (Minors) Media's caller-less FTS delegate shims dropped; the two remaining log deltas + get_active_keyword_by_text's broadened catch documented in the store header's deviations list. (Recommendation) NEW Tests/DB/test_keyword_store.py: 9 direct spec-seam pins - per-host spec construction exactness, both ConflictError factories' exact original arities (Media 2-positional / Prompts 3-arg with the two site messages), error factories' host types, FTS NUL-scrub index health via MATCH (external-content tables project the raw value - the scrub's observable contract is index health), and the unlink-scope semantics with a mixed active+deleted-parent construction (Media retains the deleted-parent link; Prompts removes both; the empty-branch behavior when ALL parents are deleted skips the unlink entirely - faithful to the originals and now understood). Reviewer's own probe: canonicalized DB state byte-identical old-vs-new modulo timestamps across all six flows. Media+Prompts suites byte-identical to baseline throughout.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
