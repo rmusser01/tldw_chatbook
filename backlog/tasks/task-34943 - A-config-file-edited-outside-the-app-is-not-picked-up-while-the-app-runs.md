@@ -7,6 +7,7 @@ labels:
 - config
 - correctness
 priority: medium
+updated_date: 2026-10-14 02:41
 ---
 
 ## Description
@@ -27,9 +28,8 @@ The app decides whether its cached settings are still current by looking at the 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+2026-10-14 (review of PR #3101): this overlaps TASK-34700, which covers the throttle half (the warm-cache check consumes the 1 s window, so the bootstrap's own check inside it serves the stale cache; pinned by the strict xfail Tests/test_config_hot_reload.py::test_external_edit_is_picked_up_at_the_shipped_throttle). This task adds the identity-only cache check as a second cause. PR #3101 measured the effect on [web_security] allowed_hosts: an in-place save and a rename save were both still refused on five checks 1.2 s apart; clearing the caches (what a restart does) admitted the host. Fix the two together.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

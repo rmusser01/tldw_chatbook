@@ -3654,8 +3654,16 @@ async def test_mixed_ownership_riders_stop_and_restore_their_source_once(
 
 
 @pytest.mark.asyncio
-async def test_a_held_watch_is_settled_and_retried_only_on_the_next_switch_on(
+async def test_a_held_watch_is_settled_and_asked_again_by_a_pass_not_by_a_start(
         tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """Round 3, T19, as TASK-34922 changed it (owner decision 2026-10-13:
+    retry private and metadata holds on later cycles). A held watch is
+    settled "on", so the boot check (``needs_switch``, the start-time
+    question this test asks) does not ask for a pass because of it; a
+    start that has other reconcile work runs a pass that looks it up too,
+    which this test does not exercise. A resume pass that runs (and the
+    daily cycle's retry) asks again, and the page comes back once its name
+    resolves publicly."""
     from tldw_chatbook.Utils import egress
 
     subs_db, service = subs_stack
@@ -3678,15 +3686,14 @@ async def test_a_held_watch_is_settled_and_retried_only_on_the_next_switch_on(
     )
 
     lookups.clear()
-    assert await _switch(service, dreams_db, scheduling_db, off=False) == 0
-    assert lookups == [], "and no pass looks its address up again by itself"
+    await _switch(service, dreams_db, scheduling_db, off=False)
+    assert lookups, "a resume pass asks again"
+    assert _is_active(subs_db, source_id) == 0, "still private: still held"
+    assert _record(dreams_db, item_id)["held"] == "private"
 
-    # Off and on again is the retry -- and the page is public by then.
     answer[:] = ["93.184.216.34"]
-    await _switch(service, dreams_db, scheduling_db, off=True)
     await _switch(service, dreams_db, scheduling_db, off=False)
 
-    assert lookups, "the next switch-on asks again"
     assert _is_active(subs_db, source_id) == 1
     assert _record(dreams_db, item_id) is None
 
@@ -4482,6 +4489,64 @@ async def test_tracking_again_retries_a_held_page(
     assert _record(dreams_db, item_id) is None, "the hold is over"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_story", [True, False], ids=["reuse", "new-story"])
+@pytest.mark.parametrize("failing", ["closing", "unsettling"])
+async def test_a_re_track_never_runs_a_source_under_its_hold(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch,
+        same_story, failing):
+    """Review of #3101, round 2, re-track path (as S1 for the resume pass).
+    A re-track whose lookup now passes un-settles the held records just
+    before the source is switched on. If the closing write then fails, the
+    source runs under an unsettled record the next pass finishes -- not
+    under "held: private, settled: on", which the Tracked row calls paused
+    and the boot check never looks at. If the un-settling write fails, the
+    source stays off and the hold stands."""
+    import json
+
+    subs_db, service = subs_stack
+    owned = await _event_page(dreams_db, service, scheduling_db)
+    item_id, source_id = owned["tracked_item_id"], owned["subscription_id"]
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    _resolve_everything_to(monkeypatch, "10.0.0.5")
+    await _switch(service, dreams_db, scheduling_db, off=False)
+    assert _record(dreams_db, item_id)["held"] == "private"
+    _resolve_everything_to(monkeypatch, "93.184.216.34")
+    real = dreams_db.set_tracked_suspension
+
+    def one_write_fails(tracked_item_id, record, **kwargs):
+        if int(tracked_item_id) == item_id:
+            closing = record is None
+            unsettling = record is not None and "held" not in json.loads(record)
+            if (closing, unsettling)[failing == "unsettling"]:
+                raise RuntimeError("disk full")
+        return real(tracked_item_id, record, **kwargs)
+
+    monkeypatch.setattr(dreams_db, "set_tracked_suspension", one_write_fails)
+
+    if failing == "closing" and same_story:
+        # Round 3, T2: the source already runs and the story keeps its
+        # wrapper, so the user is told the re-track worked; the next start
+        # finishes the record.
+        result = await _event_page(dreams_db, service, scheduling_db)
+        assert (result["outcome"], result["tracked_item_id"]) == (
+            "attached", item_id)
+    else:
+        with pytest.raises(RuntimeError):
+            await _event_page(dreams_db, service, scheduling_db,
+                              story_id=1 if same_story else 2)
+
+    record = _record(dreams_db, item_id)
+    if failing == "closing":
+        assert _is_active(subs_db, source_id) == 1
+        assert "held" not in record, "a running source is not reported as held"
+        assert record.get("settled") is None, "the next pass finishes it"
+        assert _boot_needs_switch(dreams_db, enabled=True) is True
+    else:
+        assert _is_active(subs_db, source_id) == 0, "the source stays off"
+        assert (record["held"], record["settled"]) == ("private", "on")
+
+
 # --- T15: mutants that used to survive -----------------------------------------
 #
 # Each test below kills one mutant the reviewer's script left alive.
@@ -5122,7 +5187,9 @@ async def test_a_reactivated_watch_is_not_paused_again_before_it_is_checked(
 # Every held source was settled "on", whatever the reason. "The address is
 # private" is a fact about the address; "the name could not be looked up" is
 # a fact about that minute -- and nothing ever asked again without the user
-# switching Dreams off and on or tracking the page again.
+# switching Dreams off and on or tracking the page again. (TASK-34922 widened
+# this: a private or metadata answer is a DNS answer too, so only a non-web
+# scheme is lasting; see the TASK-34922 block below.)
 
 
 async def _held_for_dns(dreams_db, service, scheduling_db, monkeypatch):
@@ -5196,17 +5263,328 @@ async def test_a_lookup_that_still_fails_leaves_the_page_held(
     assert _boot_needs_switch(dreams_db, enabled=True) is False
 
 
-@pytest.mark.asyncio
-async def test_a_page_held_because_it_is_private_is_not_asked_about_daily(
-        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
-    """A private address is a fact about the address: the daily retry makes
-    no lookup for it, and does not even start a pass."""
-    subs_db, service = subs_stack
+# --- TASK-34922: private and metadata holds are retried too ----------------------
+#
+# Owner decision 2026-10-13: retry private and metadata holds on later
+# cycles. Both are DNS answers, and a hotel, airport or VPN resolver can
+# answer every name with a private address; a retry is the same public
+# check, so it can never switch on a page that still resolves privately.
+
+
+def _no_request_may_be_sent(monkeypatch) -> list[str]:
+    """Record any HTTP request the code under test tries to send."""
+    import httpx
+
+    sent: list[str] = []
+
+    def refuse_sync(self, request, *args, **kwargs):
+        sent.append(str(request.url))
+        raise AssertionError("a request was sent")
+
+    async def refuse_async(self, request, *args, **kwargs):
+        sent.append(str(request.url))
+        raise AssertionError("a request was sent")
+
+    monkeypatch.setattr(httpx.Client, "send", refuse_sync)
+    monkeypatch.setattr(httpx.AsyncClient, "send", refuse_async)
+    return sent
+
+
+async def _held_at(dreams_db, service, scheduling_db, monkeypatch, address,
+                   reason):
     owned = await _event_page(dreams_db, service, scheduling_db)
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    _resolve_everything_to(monkeypatch, address)
+    await _switch(service, dreams_db, scheduling_db, off=False)
+    assert _record(dreams_db, owned["tracked_item_id"])["held"] == reason
+    return owned
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "address, reason",
+    [("10.0.0.5", "private"), ("192.168.1.1", "private"),
+     ("169.254.169.254", "metadata")])
+async def test_a_page_held_for_a_private_answer_clears_on_a_later_cycle(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch,
+        address, reason):
+    subs_db, service = subs_stack
+    owned = await _held_at(
+        dreams_db, service, scheduling_db, monkeypatch, address, reason)
+    assert _boot_needs_switch(dreams_db, enabled=True) is False, (
+        "T19 stands: the hold alone does not make a start run a pass"
+    )
+    lookups = _resolve_publicly(monkeypatch)
+
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+
+    assert lookups, "the daily retry asked again"
+    assert _is_active(subs_db, owned["subscription_id"]) == 1
+    assert _record(dreams_db, owned["tracked_item_id"]) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "address, reason",
+    [("10.0.0.5", "private"), ("169.254.169.254", "metadata")])
+async def test_a_page_that_still_resolves_privately_stays_held_and_is_never_fetched(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch,
+        address, reason):
+    """A retry is the same public-address check: it can never switch on a
+    page that still resolves privately, and nothing is requested from it.
+
+    Neither the retry nor a switch fetches anything, so the page is then
+    run through the watcher's real check path (``launch_run`` +
+    ``execute_run``, as
+    ``test_tracked_page_is_refused_at_fetch_time_once_it_resolves_private``
+    does): the fetch-time policy refuses it too, and no request leaves.
+    Two layers, each pinned: the hold (the source stays off) and the
+    fetch-time refusal (nothing is sent)."""
+    subs_db, service = subs_stack
+    owned = await _held_at(
+        dreams_db, service, scheduling_db, monkeypatch, address, reason)
+    lookups: list[str] = []
+    from tldw_chatbook.Utils import egress
+
+    async def still_private(host):
+        lookups.append(host)
+        return [address]
+
+    monkeypatch.setattr(egress, "_resolve_async", still_private)
+    sent = _no_request_may_be_sent(monkeypatch)
+
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    assert lookups, "it was asked about again"
+    assert _is_active(subs_db, owned["subscription_id"]) == 0
+    record = _record(dreams_db, owned["tracked_item_id"])
+    assert (record["held"], record["settled"]) == (reason, "on")
+
+    run = await service.launch_run(source_id=owned["subscription_id"])
+    await service.execute_run(run["run_id"])
+
+    assert sent == [], "nothing was requested from it"
+    row = subs_db.get_subscription(owned["subscription_id"])
+    assert "network safety policy" in str(row["last_error"])
+
+
+@pytest.mark.asyncio
+async def test_a_retry_that_changes_nothing_rewrites_no_record(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """Review of #3101, N1. The retry runs on every cycle trigger, so a
+    page that is still private is asked about again each time; its record
+    -- held for the same reason, still settled "on" -- is left as it is,
+    not written twice with the same content on every retry."""
+    subs_db, service = subs_stack
+    owned = await _held_at(
+        dreams_db, service, scheduling_db, monkeypatch, "10.0.0.5", "private")
+    item_id = owned["tracked_item_id"]
+    before = dreams_db.get_tracked_item(item_id)["suspension"]
+    writes: list[int] = []
+    real = dreams_db.set_tracked_suspension
+
+    def spy(tracked_item_id, record, **kwargs):
+        writes.append(int(tracked_item_id))
+        return real(tracked_item_id, record, **kwargs)
+
+    monkeypatch.setattr(dreams_db, "set_tracked_suspension", spy)
+
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+
+    assert item_id not in writes, "an unchanged record is not rewritten"
+    assert dreams_db.get_tracked_item(item_id)["suspension"] == before
+    assert _is_active(subs_db, owned["subscription_id"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_held_page_switched_back_on_never_runs_under_its_hold(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """Review of #3101, round 2, S1. A record settled "on" is not written
+    ahead (N1), so once its lookup has passed it must stop saying "held"
+    BEFORE its source runs again. Otherwise a failed closing write leaves
+    the source running under "held: private, settled: on" -- the Tracked
+    row says the page is paused and the boot check sees no work -- where
+    an unsettled record is finished by the next pass."""
+    subs_db, service = subs_stack
+    owned = await _held_at(
+        dreams_db, service, scheduling_db, monkeypatch, "10.0.0.5", "private")
+    item_id = owned["tracked_item_id"]
+    _resolve_publicly(monkeypatch)
+    real = dreams_db.set_tracked_suspension
+
+    def closing_write_fails(tracked_item_id, record, **kwargs):
+        if int(tracked_item_id) == item_id and record is None:
+            raise RuntimeError("disk full")
+        return real(tracked_item_id, record, **kwargs)
+
+    monkeypatch.setattr(dreams_db, "set_tracked_suspension", closing_write_fails)
+
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+
+    assert _is_active(subs_db, owned["subscription_id"]) == 1
+    record = _record(dreams_db, item_id)
+    assert "held" not in record, "a running source is not reported as held"
+    assert record.get("settled") is None, "the next pass finishes it"
+    assert _boot_needs_switch(dreams_db, enabled=True) is True
+
+
+async def _two_held_riders(dreams_db, service, scheduling_db, monkeypatch):
+    """Two stories watching one page, both held for a private answer."""
+    first = await _event_page(dreams_db, service, scheduling_db)
+    second = await _event_page(dreams_db, service, scheduling_db, story_id=2)
+    assert first["subscription_id"] == second["subscription_id"]
     await _switch(service, dreams_db, scheduling_db, off=True)
     _resolve_everything_to(monkeypatch, "10.0.0.5")
     await _switch(service, dreams_db, scheduling_db, off=False)
-    assert _record(dreams_db, owned["tracked_item_id"])["held"] == "private"
+    for owned in (first, second):
+        record = _record(dreams_db, owned["tracked_item_id"])
+        assert (record["held"], record["settled"]) == ("private", "on")
+    return first, second
+
+
+@pytest.mark.asyncio
+async def test_a_rider_whose_first_step_failed_is_un_settled_too(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """Review of #3101, round 3, T1. Two riders share one source; the
+    first rider's own step fails (its fresh read raises), the second's
+    page passes and the source is switched on. The first rider must not
+    be left saying "held: private, settled: on" -- paused on its row, and
+    no work for the boot check -- under a running source: it is
+    un-settled with the others, which is what its skipped write-ahead
+    would have written."""
+    subs_db, service = subs_stack
+    first, second = await _two_held_riders(
+        dreams_db, service, scheduling_db, monkeypatch)
+    _resolve_publicly(monkeypatch)
+    real_read = dreams_db.get_tracked_item
+    armed = [True]
+
+    def first_read_fails(tracked_item_id):
+        if armed[0] and int(tracked_item_id) == first["tracked_item_id"]:
+            raise RuntimeError("read failed")
+        return real_read(tracked_item_id)
+
+    monkeypatch.setattr(dreams_db, "get_tracked_item", first_read_fails)
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+    armed[0] = False
+
+    assert _is_active(subs_db, first["subscription_id"]) == 1
+    record = _record(dreams_db, first["tracked_item_id"])
+    assert "held" not in record, "a running source is not reported as held"
+    assert record.get("settled") is None, "the next pass finishes it"
+    assert _boot_needs_switch(dreams_db, enabled=True) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("riders, failing_write", [(1, 1), (2, 2)],
+                         ids=["only-rider", "second-rider"])
+async def test_a_failed_un_settling_keeps_the_hold_while_the_source_is_off(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch,
+        riders, failing_write):
+    """Review of #3101, round 3, T3. The page passes, but un-settling a
+    held record fails, so the source stays off. Every rider then keeps its
+    hold as recorded -- its row still reads paused and a start does not
+    look the name up -- including a rider un-settled before the failure.
+    The closing write must not turn the hold into a bare unsettled debt."""
+    import json
+
+    subs_db, service = subs_stack
+    if riders == 1:
+        owned = [await _held_at(
+            dreams_db, service, scheduling_db, monkeypatch, "10.0.0.5",
+            "private")]
+    else:
+        owned = list(await _two_held_riders(
+            dreams_db, service, scheduling_db, monkeypatch))
+    ids = {o["tracked_item_id"] for o in owned}
+    _resolve_publicly(monkeypatch)
+    real = dreams_db.set_tracked_suspension
+    unsettling: list[int] = []
+
+    def nth_unsettling_fails(tracked_item_id, record, **kwargs):
+        if (int(tracked_item_id) in ids and record is not None
+                and "held" not in json.loads(record)):
+            unsettling.append(int(tracked_item_id))
+            if len(unsettling) == failing_write:
+                raise RuntimeError("disk full")
+        return real(tracked_item_id, record, **kwargs)
+
+    monkeypatch.setattr(dreams_db, "set_tracked_suspension", nth_unsettling_fails)
+
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+
+    assert len(unsettling) >= failing_write, "fixture: the n-th write failed"
+    assert _is_active(subs_db, owned[0]["subscription_id"]) == 0
+    for item_id in ids:
+        record = _record(dreams_db, item_id)
+        assert (record["held"], record["settled"]) == ("private", "on")
+    assert _boot_needs_switch(dreams_db, enabled=True) is False
+
+
+@pytest.mark.asyncio
+async def test_a_settled_record_that_owes_more_than_its_hold_is_written_ahead(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """Review of #3101, round 2, S2. Only a record that owes nothing but
+    its held subscription may skip the write-ahead. No writer makes a
+    settled "on" record that owes a rule today, so one is written by hand:
+    when restoring that rule fails, the record must already have stopped
+    saying "settled on", or the boot check would take it as done."""
+    from tldw_chatbook.Dreams import track_service
+
+    subs_db, service = subs_stack
+    owned = await _held_at(
+        dreams_db, service, scheduling_db, monkeypatch, "10.0.0.5", "private")
+    item_id = owned["tracked_item_id"]
+    dreams_db.set_tracked_suspension(item_id, track_service._record_text(
+        subscription=True, reminders=[], rules=[999], held="private",
+        settled="on"))
+
+    async def rule_fails(*args, **kwargs):
+        raise RuntimeError("rule store unavailable")
+
+    monkeypatch.setattr(service, "update_alert_rule", rule_fails)
+
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+
+    record = _record(dreams_db, item_id)
+    assert record.get("settled") is None, "written ahead before the restore"
+    assert record["rules"] == [999], "the rule is still owed"
+    assert _boot_needs_switch(dreams_db, enabled=True) is True
+
+
+@pytest.mark.asyncio
+async def test_a_page_held_for_its_scheme_is_not_asked_about_daily(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """A non-web scheme is a fact about the address, not a DNS answer: the
+    only lasting hold. The daily retry makes no lookup for it and does not
+    even start a pass.
+
+    In practice the hold is out of reach: a Dreams source is http(s) when
+    it is tracked and nothing in the app edits a source's URL, so the test
+    puts the scheme in place with a raw database write (review of #3101,
+    N3). It pins the rule, not a path a user can take."""
+    subs_db, service = subs_stack
+    owned = await _event_page(dreams_db, service, scheduling_db)
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    subs_db.update_subscription(
+        owned["subscription_id"], source="ftp://example.com/flights")
+    await _switch(service, dreams_db, scheduling_db, off=False)
+    assert _record(dreams_db, owned["tracked_item_id"])["held"] == "scheme"
     lookups = _resolve_publicly(monkeypatch)
 
     assert await retry_unfinished_resume(

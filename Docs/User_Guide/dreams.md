@@ -101,9 +101,9 @@ knowing:
   and the interrupted run does not count as an attempt, so it does not
   push your next cycle back when you switch Dreams on again.
 - **Your own Watchlists sources keep running.** A source you added to
-  Watchlists yourself is fetched by Watchlists exactly as before, even
-  when a Dreams watch is attached to it. Dreams never switches off
-  something that is yours.
+  Watchlists yourself keeps being fetched by Watchlists on its own
+  schedule, even when a Dreams watch is attached to it. Dreams never
+  switches off something that is yours.
 
 Switching off pauses what your tracked watches set up outside Dreams,
 and Dreams notes on each watch exactly what it paused:
@@ -260,15 +260,22 @@ refused and shows as a failed check in Watchlists — nothing is requested
 from the private address), and before Dreams turns such a page back on
 after you re-enable Dreams (a page that is no longer public stays off,
 and its **Tracked** row says "paused" with the reason; Dreams asks again
-the next time you switch Dreams on, or when you track the page again —
-not on every start. When the reason is only that the address could not
-be looked up at that moment, Dreams also asks again by itself, at its
-next daily cycle). A page you tracked with an earlier version of the
-app is brought under the same rule the next time the app starts. A
+by itself at its next daily cycle, the next time you switch Dreams on,
+or when you track the page again — not on every start. That includes a
+page held because its address looked private: on a hotel, airport or
+VPN network every name can resolve to a private address, and the page
+comes back once its name resolves publicly again. Asking again is the
+same check, so a page whose address is still private stays off and
+nothing is requested from it. Only an address that is not a web
+address at all is not asked about again by itself). A page you tracked
+with an earlier version of the app is brought under the same rule the
+next time the app starts. A
 source you added to Watchlists yourself is yours: Dreams can attach a
-watch to it, and it is fetched exactly as before, private address or
-not. `[web_security] allowed_hosts` in `config.toml` admits a host you
-trust.
+watch to it and does not change how Watchlists fetches it. Watchlists
+fetches a private address only for a source you typed in there; an older
+or imported source at a private address needs its host in
+`[web_security] allowed_hosts` (see
+[Feeds at a private address](watchlists.md#feeds-at-a-private-address)).
 
 **A source that is switched off.** Tracking a page switches its source
 back on only when Dreams itself switched it off — when you untracked the

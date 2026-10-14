@@ -88,6 +88,7 @@ cancelled caller cannot cut it short, and overlapping requests coalesce
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -946,6 +947,42 @@ async def _settle_source_restored(dreams_db: Any, riders: list[dict]) -> None:
             dreams_db.set_tracked_suspension, int(rider["id"]), text)
 
 
+async def _unsettle_held(dreams_db: Any, riders: list[dict]) -> None:
+    """Un-settle held records just before their source runs again.
+
+    A record settled "on" that owes only its held subscription says the
+    page is paused, and the boot check takes it as done. Once the page has
+    passed the check, and before the source is switched on, such a record
+    is written back unsettled (no ``held``), so a closing write that then
+    fails leaves a record the next pass finishes -- not a running source
+    reported as held (review of #3101, round 2: S1 for the resume pass, and
+    the re-track path). A write that fails here raises, and the source
+    stays off; the riders already un-settled get their hold back first, so
+    every row still reads paused and a start does not look the name up
+    (round 3, T3).
+    """
+    async def write(rider: dict, text: str | None) -> None:
+        await asyncio.to_thread(run_finite_local_worker,
+            partial(dreams_db.set_tracked_suspension, only_live=True),
+            int(rider["id"]), text)
+
+    done: list[dict] = []
+    try:
+        for rider in riders:
+            if _settled_hold_only(rider.get("suspension")):
+                await write(rider, _record_text(
+                    subscription=True, reminders=[], rules=[]))
+                done.append(rider)
+    except Exception:
+        for rider in done:
+            # Best effort: the failure being raised is the one reported;
+            # a rider whose hold cannot be put back is only asked about at
+            # the next start.
+            with contextlib.suppress(Exception):
+                await write(rider, rider.get("suspension"))
+        raise
+
+
 async def _retry_held_source(
     subs_service: Any, dreams_db: Any, wrapper: dict,
 ) -> None:
@@ -965,13 +1002,27 @@ async def _retry_held_source(
     if (not subscription_id or record is None or not _owed(record)[0]
             or settled_state(wrapper.get("suspension")) == SETTLED_OFF):
         return
-    resolved, held = await _restore_source(subs_service, subscription_id)
+    async def unsettle() -> None:
+        await _unsettle_held(dreams_db, await asyncio.to_thread(
+            dreams_db.list_tracked_for_subscription, subscription_id))
+
+    resolved, held = await _restore_source(
+        subs_service, subscription_id, before_enable=unsettle)
     if not resolved:
         raise TrackPrivateURL(
             f"refusing to track a non-public destination ({held})")
-    await _settle_source_restored(
-        dreams_db, await asyncio.to_thread(
-            dreams_db.list_tracked_for_subscription, subscription_id))
+    # The source runs again and the story keeps its wrapper: the re-track
+    # is done. A failure to settle the records now is not the user's to
+    # see (review of #3101, round 3, T2) -- they were un-settled before
+    # the switch-on, so the next start finishes them.
+    try:
+        await _settle_source_restored(
+            dreams_db, await asyncio.to_thread(
+                dreams_db.list_tracked_for_subscription, subscription_id))
+    except Exception as exc:  # noqa: BLE001 - the next start finishes it
+        logger.warning(
+            "Dreams re-track: settling subscription {} failed: {}",
+            subscription_id, type(exc).__name__)
 
 
 async def _disable_dream_source(subs_service: Any, subscription_id: int) -> bool:
@@ -1162,6 +1213,7 @@ async def track_page(
             # destination is checked again now (Qodo #1, PR #2921) --
             # still before any write.
             await _require_public_url(str(url))
+            await _unsettle_held(dreams_db, riders)
             await _enable_dream_subscription(
                 subs_service, subscription_id, source)
             await _settle_source_restored(dreams_db, riders)
@@ -1853,9 +1905,10 @@ def _suspension_record(item: Any) -> dict | None:
     record names has been applied -- the watch is fully suspended.
     ``"on"``: a resume restored everything it may; what the record still
     owes is ``held`` (the page is not a public address) until the next
-    switch-on or re-track -- and, when the reason may pass (a failed
-    lookup, see ``_LASTING_HOLDS``), until the daily cycle or any resume
-    pass asks again (round 4, B2). Absent: unfinished -- the write-ahead record
+    switch-on or re-track -- and, when the reason may pass (any DNS
+    answer: a failed lookup, a private or metadata address; see
+    ``_LASTING_HOLDS``), until the daily cycle or any resume pass asks
+    again (round 4, B2; TASK-34922). Absent: unfinished -- the write-ahead record
     of a stop that has not (all) landed, or a resume that could not reach
     a service -- and the next pass in the switch's direction takes it up.
 
@@ -1873,10 +1926,19 @@ def _suspension_record(item: Any) -> dict | None:
     return record if isinstance(record, dict) else {}
 
 
-#: Refusal reasons that are facts about the address itself. A hold for
-#: any other reason -- ``dns_failure`` -- may be gone tomorrow, and is
-#: asked about again without the user doing anything (round 4, B2).
-_LASTING_HOLDS = frozenset({"private", "metadata", "scheme"})
+#: Refusal reasons that are facts about the address itself: only a scheme
+#: that is not a web one. Every other hold Dreams meets is a DNS answer --
+#: a failed lookup, and also a private or cloud-metadata address, which a
+#: hotel, airport or VPN resolver gives for every name -- and may be gone
+#: tomorrow, so it is asked about again without the user doing anything
+#: (round 4, B2; TASK-34922, owner decision 2026-10-13: retry private and
+#: metadata holds on later cycles). A private IP literal or a metadata
+#: hostname would be a fact about the address too, but Dreams does not
+#: hold a page for either: ``_require_public_url`` refuses both when the
+#: page is tracked (review of #3101, N2). A retry is the same
+#: public-address check, so it can never switch on a page that still
+#: resolves privately.
+_LASTING_HOLDS = frozenset({"scheme"})
 
 
 def _hold_may_pass(raw: Any) -> bool:
@@ -1893,6 +1955,19 @@ def _resume_has_work(raw: Any) -> bool:
     """
     return bool(raw) and (
         settled_state(raw) != SETTLED_ON or _hold_may_pass(raw))
+
+
+def _settled_hold_only(raw: Any) -> bool:
+    """Whether a record is settled "on" and owes only its held subscription.
+
+    Every writer of "on" today writes only that (``only_held``), but the
+    resume pass skips its write-ahead and un-settles on this answer, not on
+    the settled state alone (review of #3101, round 2, S2).
+    """
+    if settled_state(raw) != SETTLED_ON:
+        return False
+    subscription, reminders, rules = _owed(_suspension_record({"suspension": raw}))
+    return subscription and not reminders and not rules
 
 
 def _owed(record: dict | None) -> tuple[bool, list[str], list[int]]:
@@ -2162,13 +2237,21 @@ async def _suspend_pass(
 
 
 async def _restore_source(
-    subs_service: Any, subscription_id: int,
+    subs_service: Any, subscription_id: int, *, before_enable: Any = None,
 ) -> tuple[bool, str | None]:
     """Re-enable one subscription Dreams stopped, if its page is public.
 
     Re-enabling restarts fetches of a URL Dreams stored, so the same
     question ``track_page`` asks before a re-enable is asked here (review
     of #2921, item 2).
+
+    Args:
+        subs_service: The app's ``LocalWatchlistsService``.
+        subscription_id: The subscription to re-enable.
+        before_enable: Optional coroutine function awaited once the page
+            has passed the check and just before the source is switched
+            on -- the resume pass un-settles held records there (review of
+            #3101, round 2, S1). If it raises, the source stays off.
 
     Returns:
         ``(resolved, held)``. ``resolved`` is True when nothing is owed
@@ -2196,6 +2279,8 @@ async def _restore_source(
             "Dreams resume: subscription {} left disabled, its page is not "
             "a public destination ({})", subscription_id, refusal)
         return False, refusal
+    if before_enable is not None:
+        await before_enable()
     await _enable_dream_subscription(subs_service, subscription_id, source)
     return True, None
 
@@ -2214,11 +2299,14 @@ async def _resume_pass(
     A subscription whose page is not a public address stays disabled; its
     riders keep the debt with the reason as ``held`` and are marked
     ``settled: "on"`` (round 3, T19) -- the Tracked row shows it, and the
-    next switch-on or re-track asks again, not every start. A hold whose
-    reason may pass (the name could not be looked up) is also taken up
+    next switch-on or re-track asks again, not every start (a start
+    asks only when it has other reconcile work, and then this pass looks
+    every passing hold up too). A hold whose
+    reason may pass -- every DNS answer: the name could not be looked up,
+    or it resolved to a private or metadata address -- is also taken up
     again by every resume pass that runs, and the daily cycle runs one
-    for it (round 4, B2, :func:`retry_unfinished_resume`); a private
-    address is not asked about again by itself. A debt that is left only
+    for it (round 4, B2; TASK-34922, :func:`retry_unfinished_resume`);
+    only a non-web scheme is not asked about again by itself. A debt that is left only
     because a service could not be reached leaves the wrapper unsettled
     instead, so the next pass does retry it.
 
@@ -2235,19 +2323,37 @@ async def _resume_pass(
     # Wrappers whose restore failed part-way: the record written last is
     # the truth about them, and the stale row read at pass start is not.
     failed: set[int] = set()
+    # Subscriptions whose held riders could not be un-settled, so their
+    # source stayed off (review of #3101, round 3, T3).
+    unsettle_failed: set[int] = set()
+
+    async def write_unsettled(
+        item_id: int, subscription: bool, reminders: list[str], rules: list[int]
+    ) -> None:
+        await asyncio.to_thread(run_finite_local_worker,
+            partial(dreams_db.set_tracked_suspension, only_live=True),
+            item_id, _record_text(
+                subscription=subscription, reminders=reminders,
+                rules=rules))
+
+    async def unsettle_held_riders(subscription_id: int) -> None:
+        # Review of #3101, round 2, S1. A held record skipped the
+        # write-ahead (N1); its page has now passed the check, so before
+        # the source runs again it stops saying "held, settled on". A rider
+        # whose own step failed is included (round 3, T1): its skipped
+        # write-ahead would have written exactly this, and the closing
+        # loop below leaves its record as last written.
+        try:
+            await _unsettle_held(dreams_db, [
+                rider for rider in items
+                if int(rider.get("subscription_id") or 0) == subscription_id])
+        except Exception:
+            unsettle_failed.add(subscription_id)
+            raise
+
     for item in pending:
         item_id = int(item["id"])
         subscription, reminders, rules = _owed(_suspension_record(item))
-
-        async def write_unsettled(
-            item_id: int, subscription: bool, reminders: list[str], rules: list[int]
-        ) -> None:
-            await asyncio.to_thread(run_finite_local_worker,
-                partial(dreams_db.set_tracked_suspension, only_live=True),
-                item_id, _record_text(
-                    subscription=subscription, reminders=reminders,
-                    rules=rules))
-
         try:
             # The list was read when the pass began. A lifecycle sweep (a
             # cycle, a track check) may have retired this watch since, and
@@ -2267,8 +2373,15 @@ async def _resume_pass(
             # boot check -- skip as done. And what has been restored is no
             # longer owed, whatever happens to the rest: a reminder left
             # listed was re-armed by the next resume over a disable the
-            # user had made in between.
-            await write_unsettled(item_id, subscription, reminders, rules)
+            # user had made in between. A record settled "on" that owes
+            # only its held subscription says nothing of the kind, and
+            # nothing is restored before that decision, so it is not
+            # rewritten here: a held page asked about again on every cycle
+            # trigger would otherwise be written twice each time (review of
+            # #3101, N1). It is un-settled only once its page passes the
+            # check (``unsettle_held_riders``, round 2, S1).
+            if not _settled_hold_only(item.get("suspension")):
+                await write_unsettled(item_id, subscription, reminders, rules)
             if reminders and scheduling_db is not None:
                 await asyncio.to_thread(run_finite_local_worker,
                     _restore_reminders, scheduling_db, reminders)
@@ -2297,13 +2410,17 @@ async def _resume_pass(
     for item in pending:
         subscription_id = int(item.get("subscription_id") or 0)
         item_id = int(item["id"])
+        # A failed un-settling is that subscription's decision too: its
+        # source stays off for this pass (round 3, T3).
         if (item_id not in left or not left[item_id][0]
                 or not subscription_id or subscription_id in outcomes
+                or subscription_id in unsettle_failed
                 or subs_service is None):
             continue
         try:
             outcomes[subscription_id] = await _restore_source(
-                subs_service, subscription_id)
+                subs_service, subscription_id,
+                before_enable=partial(unsettle_held_riders, subscription_id))
         except Exception as exc:  # noqa: BLE001 - its riders stay unsettled
             logger.warning(
                 "Dreams resume: restoring subscription {} failed: {}",
@@ -2313,6 +2430,12 @@ async def _resume_pass(
         item_id = int(item["id"])
         record = _suspension_record(item)
         if record is None:
+            continue
+        if (int(item.get("subscription_id") or 0) in unsettle_failed
+                and _settled_hold_only(item.get("suspension"))):
+            # The page passed but its source stayed off, because un-settling
+            # failed: the hold stands as recorded (round 3, T3), not as a
+            # bare debt the next start would look up.
             continue
         outcome = outcomes.get(int(item.get("subscription_id") or 0))
         if item_id in left:
@@ -2335,6 +2458,18 @@ async def _resume_pass(
             text = _record_text(
                 subscription=subscription, reminders=reminders, rules=rules,
                 held=held, settled=SETTLED_ON if only_held else None)
+        # Still held for the same reason: nothing to write (review of
+        # #3101, N1). Comparing with the row read at pass start is enough;
+        # no "did this pass write it" guard is needed (round 2, S3). A
+        # final text equal to that row is either a held record that is
+        # still held -- skipped its write-ahead, never un-settled, so
+        # nothing was written -- or an unsettled one that owes no reminder
+        # or rule (restoring one changes the text, a failed restore skips
+        # this loop), whose write-ahead wrote exactly that text. An
+        # un-settled rider never matches: its page passed, so its final
+        # text has no hold, and its start row had one.
+        if text is not None and json.loads(text) == record:
+            continue
         try:
             # ``only_live``: a watch retired since the pass began carries
             # its retirement record, which this pass must not rewrite
@@ -2567,17 +2702,26 @@ async def retry_unfinished_resume(
     Round 4, B2. A tracked page that was left off because its name could
     not be looked up when Dreams was switched on stayed off until the
     user switched Dreams off and on, or tracked it again: every hold was
-    settled for good, whatever the reason. The startup check must not
-    look addresses up on every start (round 3, T19), so the cycle -- at
-    most once a day, and only while Dreams is on -- does it instead: when
-    any live watch's record still has work for a resume pass
+    settled for good, whatever the reason. Since TASK-34922 the same goes
+    for a page held because its name resolved to a private or metadata
+    address (a portal or VPN resolver answers every name that way); the
+    retry is the same public-address check, so it can never switch on a
+    page that still resolves privately. The startup check must not
+    look addresses up on every start (round 3, T19), so the cycle does it
+    instead, on every cycle run while Dreams is on -- the daily schedule, a
+    startup catch-up, and each run the user starts -- because it runs
+    before the cycle checks whether the day's collection is already taken:
+    when any live watch's record still has work for a resume pass
     (:func:`_resume_has_work`: unfinished, or held for a reason that may
     pass) it asks for one, through :func:`reconcile_tracking` so that it
     cannot run beside a switch the user makes at that moment.
 
-    One read when there is nothing to do. No scheduler reload is asked
-    for: a source this switches back on is picked up by the queue's own
-    periodic reload.
+    Cost: one read when there is nothing to do; otherwise one lookup per
+    held source on every retry, one after another and with no backoff. A
+    rider whose record would come out the same (still held, for the same
+    reason) is not rewritten (review of #3101, N1). No scheduler reload is
+    asked for: a source this switches back on is picked up by the queue's
+    own periodic reload.
 
     Returns:
         How many wrappers the pass worked on (0 when none was needed).
