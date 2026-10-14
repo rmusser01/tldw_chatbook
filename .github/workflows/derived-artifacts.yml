@@ -282,6 +282,19 @@ jobs:
     # changes is only which files run before a given file -- a file that needed
     # a particular predecessor was relying on leaked state, which is a bug the
     # split surfaces, not hides. Add a shard (not minutes) when one nears the cap.
+    #
+    # TASK-34917: four shards measured median 13.8 / 9.7 / 16.5 / 15.3 min and
+    # shard 3 max 19.7 over 91 PR runs (to 2026-10-14). Shard 3 holds the
+    # Console test that hangs now and then, and a hung private-profile test
+    # costs ~3m10s-3m18s before the wrapper reports it -- past the cap in 33-36
+    # of those 91 runs, losing exactly that report. Six, because a replay said so: each
+    # census entry's time was read from 26 green runs' shard logs (progress-
+    # line timestamps; the replay reproduces the measured 4-shard times to
+    # within 0.1 min median, 0.8 max) and re-dealt. Heaviest shard over the
+    # 26 runs: 4 -> 19.6, 5 -> 17.4 (round-robin is not monotonic: the fifth
+    # shard collects the CSS-comments, rename and hostile-text files), 6 ->
+    # 14.0 (shard 3, the hanging test's), which leaves ~3 min for one hung
+    # test. No census reorder, so census order still holds inside a shard.
     name: UI Fast Lane
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
@@ -290,7 +303,7 @@ jobs:
       # Report every shard, so one red shard does not hide another.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
 
     steps:
       - uses: actions/checkout@v4

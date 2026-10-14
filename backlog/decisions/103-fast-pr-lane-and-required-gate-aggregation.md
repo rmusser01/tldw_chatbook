@@ -206,3 +206,9 @@ pull-request runs to 2026-10-14 the two invocations in one job took median 31.5 
 max 39.5 min and four runs were cancelled at the cap; each half replays at max
 20.8 and 20.1 min. One more runner per PR: seven concurrent test runners, then
 the aggregate.
+
+2026-10-14 (TASK-34917): the UI Fast Lane runs six round-robin shards (was four);
+the census and its order are unchanged. Four shards measured shard 3 at max 19.7
+min against the 20-min cap; a replay of 26 PR runs' shard logs put the heaviest
+shard at 17.4 min with five and 14.0 with six. Two more runners per PR: nine
+concurrent test runners, then the aggregate.

@@ -140,7 +140,12 @@ def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     strategy = job["strategy"]
     assert strategy["fail-fast"] is False  # one red shard must not hide another
     assert list(strategy["matrix"]) == ["shard"]
-    assert len(strategy["matrix"]["shard"]) >= 2
+    # TASK-34917: six, chosen by replaying 26 PR runs' shard logs against the
+    # census (heaviest shard 19.6 min at four, 17.4 at five, 14.0 at six; the
+    # cap is 20 and a hung private-profile test needs ~3m18s to be reported).
+    # A different count re-deals every entry: replay before changing it.
+    assert strategy["matrix"]["shard"] == [1, 2, 3, 4, 5, 6]
+    assert job["timeout-minutes"] == 20
 
     install = next(
         step
@@ -168,7 +173,7 @@ def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     assert "-p no:randomly" not in run  # not installed; order is collection order
 
 
-@pytest.mark.parametrize("total", [1, 2, 3, 4, 5])
+@pytest.mark.parametrize("total", [1, 2, 3, 4, 5, 6])
 def test_ui_gate_shards_cover_the_census_once_each_in_census_order(total):
     """TASK-34353: the shards the UI lane runs are exactly the census.
 
