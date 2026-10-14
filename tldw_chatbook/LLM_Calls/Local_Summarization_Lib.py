@@ -623,6 +623,12 @@ def summarize_with_kobold(
             kobold_prompt = f"{get_internal_prompt('summarization.local_summarizer_template')}\n\n\n\n{text}"
         else:
             kobold_prompt = f"{custom_prompt_input}\n\n\n\n{text}"
+        # TASK-34844: system_message was accepted but never read. Kobold's
+        # generate-style API has no system role, so a PROVIDED system
+        # message is prepended to the prompt; None keeps the historical
+        # default-path prompt byte-identical.
+        if system_message is not None:
+            kobold_prompt = f"{system_message}\n\n{kobold_prompt}"
 
         logging.debug(
             "Kobold summarization: Prompt prepared; character_count=%s",
@@ -634,7 +640,8 @@ def summarize_with_kobold(
             "max_context_length": 8096,
             "max_length": 4096,
             "prompt": kobold_prompt,
-            "temperature": 0.7,
+            # TASK-34844: honor a provided temp; 0.7 remains the default.
+            "temperature": float(temp) if temp is not None else 0.7,
             "stream": streaming,
             # Include other parameters if needed
             # "top_p": 0.9,
