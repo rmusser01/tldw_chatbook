@@ -468,5 +468,5 @@ Tests/UI/test_app_quit_under_modal.py::test_ctrl_q_from_another_screen_asks_abou
 Tests/UI/test_app_quit_under_modal.py::test_the_unsaved_work_check_reads_a_kept_settings_visit
 # Review of #3057, finding 3: a pipeline voice edit survives a Settings save/restore (5 s).
 Tests/UI/test_audio_cpp_model_library_handoff.py::test_mounted_settings_snapshot_preserves_complete_speech_tts_draft
-# Review of #3057, sibling of finding 3: undoing an audio.cpp review merge keeps a pipeline voice edit (about 50 s, both cases).
+# Review of #3057, sibling of finding 3: undoing an audio.cpp review merge keeps a pipeline voice edit (12 s, both cases).
 Tests/UI/test_audio_cpp_model_library_handoff.py::test_review_merge_undo_keeps_a_pipeline_voice_edit

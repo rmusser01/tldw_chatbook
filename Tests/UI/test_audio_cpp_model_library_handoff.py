@@ -2142,6 +2142,9 @@ async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_ret
         assert screen._audio_cpp_model_request_claim.value == request
 
 
+# Laned (scripts/ui_pr_gate_census.txt): mounts the real Settings screen,
+# whose config readers are bound to the collection-time profile.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_settings_snapshot_preserves_complete_speech_tts_draft(
     monkeypatch: pytest.MonkeyPatch,
@@ -4026,6 +4029,9 @@ async def test_transaction_failure_rolls_back_and_requeues_exact_result(
         assert replay is not None and replay.value == result
 
 
+# Laned (scripts/ui_pr_gate_census.txt): mounts the real Settings screen,
+# whose config readers are bound to the collection-time profile.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize("forced", (False, True), ids=("undo", "forced_teardown"))
 async def test_review_merge_undo_keeps_a_pipeline_voice_edit(
