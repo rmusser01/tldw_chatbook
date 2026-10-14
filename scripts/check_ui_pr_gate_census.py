@@ -286,7 +286,7 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # one shard out: on CI the new entries took up to 1.9x their local seconds.
 # Replayed over that run and the three before it (each file at its worst), the
 # lane is 125 pytest minutes: 15.6 at most over eight, 13.9 over nine (about 16
-# of 20 with setup), 12.5 over ten, so the lane runs nine. The rounds after the
+# of 20 with setup), 12.5 over ten, so the lane went to nine. The rounds after the
 # rebase appended five entries (279); the block of 89 is dealt as a whole.
 # Round 4 after the rebase (ruling cf3r1-N1): one node appended after the
 # block, a snapshot edit whose Changed has not landed is kept: 275.
@@ -299,6 +299,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # survives a Settings save/restore): 281.
 # Their siblings: +1 node id after the block (undoing an audio.cpp review
 # merge keeps a pipeline voice edit): 282.
+# Rebased onto dev's six-shard lane (TASK-34917, 2026-10-14): no entry added,
+# 282. Replayed over #3057's three CI runs and five six-shard runs, each file
+# at its slowest, the re-ordered block gives 15.2 pytest min at most over nine
+# shards, 13.7 over ten and 12.4 over eleven; ten leaves a hung test's report
+# room under the 20-min cap, so the lane runs ten.
 MINIMUM_FILES = 282
 
 
