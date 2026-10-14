@@ -286,15 +286,16 @@ jobs:
     # TASK-34917: four shards measured median 13.8 / 9.7 / 16.5 / 15.3 min and
     # shard 3 max 19.7 over 91 PR runs (to 2026-10-14). Shard 3 holds the
     # Console test that hangs now and then, and a hung private-profile test
-    # costs ~3m10s-3m18s before the wrapper reports it -- past the cap in 33-36
-    # of those 91 runs, losing exactly that report. Six, because a replay said so: each
-    # census entry's time was read from 26 green runs' shard logs (progress-
-    # line timestamps; the replay reproduces the measured 4-shard times to
-    # within 0.1 min median, 0.8 max) and re-dealt. Heaviest shard over the
-    # 26 runs: 4 -> 19.6, 5 -> 17.4 (round-robin is not monotonic: the fifth
-    # shard collects the CSS-comments, rename and hostile-text files), 6 ->
-    # 14.0 (shard 3, the hanging test's), which leaves ~3 min for one hung
-    # test. No census reorder, so census order still holds inside a shard.
+    # costs ~3m10s-3m18s before the wrapper reports it -- past the cap in
+    # 33-36 of those 91 runs, losing exactly that report. Six, because a
+    # replay said so: each census entry's time was read from 26 green runs'
+    # shard logs (progress-line timestamps; the replay reproduces the
+    # measured 4-shard times to within 0.1 min median, 0.8 max) and
+    # re-dealt. Heaviest shard over the 26 runs: 4 -> 19.6, 5 -> 17.4
+    # (round-robin is not monotonic: the fifth shard collects the
+    # CSS-comments, rename and hostile-text files), 6 -> 14.0 (shard 3, the
+    # hanging test's), which leaves ~3 min for one hung test. No census
+    # reorder, so census order still holds inside a shard.
     name: UI Fast Lane
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
@@ -499,11 +500,12 @@ jobs:
     # Its own job, on every PR, not a step on an existing lane: serially it
     # measured 6m35s and 5m42s locally (load average 10-18), and four
     # Dreams-family files that already run in console-p0-gate take 1.3-1.7x
-    # their local time in CI, so ~8-11 min here -- more than the room left in any lane
-    # (the PR Fast Lane halves reach ~21 min of 35, console-p0-gate 18.7 of
-    # 20). Not path-filtered: the file imports Notifications, Scheduling and
-    # Utils/egress as well as Dreams and Subscriptions, and a skipped job
-    # fails the aggregate's `!= 'success'` verdict anyway.
+    # their local time in CI, so ~8-11 min here -- more than the room left
+    # in any lane (the PR Fast Lane halves reach ~21 min of 35,
+    # console-p0-gate 18.7 of 20). Not path-filtered: the file imports
+    # Notifications, Scheduling and Utils/egress as well as Dreams and
+    # Subscriptions, and a skipped job fails the aggregate's
+    # `!= 'success'` verdict anyway.
     #
     # Sandboxed only (no bootstrap_profile node), so one invocation; same
     # minimal dependency set and serial pytest as the other lanes.
