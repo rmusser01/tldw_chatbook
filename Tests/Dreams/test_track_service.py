@@ -6579,3 +6579,39 @@ async def test_the_retired_watch_does_not_claim_the_reminder_it_handed_on(
                   scheduling_db_getter=_sched_getter(scheduling_db))
 
     assert _owing(dreams_db, reminder["id"], page_id, question_id) == [question_id]
+
+
+# --- Review of #3108 ------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_held_page_with_work_left_loses_its_hold_once_its_page_passes(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """X1. A held watch with its reminder still owed keeps its reason
+    through the pass's writes (TASK-34921). When its page then passes and
+    the closing write fails, the source runs -- so the record must not
+    still say "held", or the Tracked row calls a running page paused."""
+    subs_db, service = subs_stack
+    owned = await _event_page(dreams_db, service, scheduling_db)
+    item_id = owned["tracked_item_id"]
+    await _switch(service, dreams_db, scheduling_db, off=True)
+    _fail_resolution(monkeypatch)
+    await set_tracking_suspended(service, dreams_db, suspended=False,
+                                 scheduling_db_getter=None, now=NOW)
+    record = _record(dreams_db, item_id)
+    assert record["held"] == "dns_failure" and record["reminders"], "fixture"
+    _resolve_publicly(monkeypatch)
+    real = dreams_db.set_tracked_suspension
+
+    def closing_write_fails(tracked_item_id, text, **kwargs):
+        if int(tracked_item_id) == item_id and text is None:
+            raise RuntimeError("database is locked")
+        return real(tracked_item_id, text, **kwargs)
+
+    monkeypatch.setattr(dreams_db, "set_tracked_suspension", closing_write_fails)
+    await _switch(service, dreams_db, scheduling_db, off=False)
+
+    assert _is_active(subs_db, owned["subscription_id"]) == 1
+    assert "held" not in _record(dreams_db, item_id)
+    assert _tracked_row(dreams_db, item_id)["held"] is None
+    assert _boot_needs_switch(dreams_db, enabled=True) is True

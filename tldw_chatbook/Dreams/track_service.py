@@ -91,6 +91,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from functools import partial
@@ -1104,7 +1105,10 @@ async def _settle_source_restored(dreams_db: Any, riders: list[dict]) -> None:
             dreams_db.set_tracked_suspension, int(rider["id"]), text)
 
 
-async def _unsettle_held(dreams_db: Any, riders: list[dict]) -> None:
+async def _unsettle_held(
+    dreams_db: Any, riders: list[dict], *,
+    still_owed: Mapping[int, tuple[bool, list[str], list[int]]] | None = None,
+) -> None:
     """Un-settle held records just before their source runs again.
 
     A record settled "on" that owes only its held subscription says the
@@ -1117,26 +1121,50 @@ async def _unsettle_held(dreams_db: Any, riders: list[dict]) -> None:
     stays off; the riders already un-settled get their hold back first, so
     every row still reads paused and a start does not look the name up
     (round 3, T3).
+
+    Args:
+        dreams_db: The app's ``DreamsDB``.
+        riders: The subscription's wrappers, as the caller read them.
+        still_owed: The resume pass's view of what each rider it worked
+            on still owes. Such a rider that carried a hold kept it in the
+            pass's writes (TASK-34921); it is rewritten without it too
+            (review of #3108, X1), or a failed closing write left a running
+            page reported as held.
     """
     async def write(rider: dict, text: str | None) -> None:
         await asyncio.to_thread(run_finite_local_worker,
             partial(dreams_db.set_tracked_suspension, only_live=True),
             int(rider["id"]), text)
 
-    done: list[dict] = []
+    # (rider, the record without its hold, the record to put back)
+    plan: list[tuple[dict, str, str | None]] = []
+    for rider in riders:
+        raw = rider.get("suspension")
+        if _settled_hold_only(raw):
+            plan.append((rider, _record_text(
+                subscription=True, reminders=[], rules=[]), raw))
+            continue
+        held = (_suspension_record(rider) or {}).get("held")
+        if held and still_owed and int(rider["id"]) in still_owed:
+            subscription, reminders, rules = still_owed[int(rider["id"])]
+            plan.append((
+                rider,
+                _record_text(subscription=subscription, reminders=reminders,
+                             rules=rules),
+                _record_text(subscription=subscription, reminders=reminders,
+                             rules=rules, held=held)))
+    done: list[tuple[dict, str, str | None]] = []
     try:
-        for rider in riders:
-            if _settled_hold_only(rider.get("suspension")):
-                await write(rider, _record_text(
-                    subscription=True, reminders=[], rules=[]))
-                done.append(rider)
+        for entry in plan:
+            await write(entry[0], entry[1])
+            done.append(entry)
     except Exception:
-        for rider in done:
+        for rider, _text, back in done:
             # Best effort: the failure being raised is the one reported;
             # a rider whose hold cannot be put back is only asked about at
             # the next start.
             with contextlib.suppress(Exception):
-                await write(rider, rider.get("suspension"))
+                await write(rider, back)
         raise
 
 
@@ -2561,7 +2589,8 @@ async def _resume_pass(
         try:
             await _unsettle_held(dreams_db, [
                 rider for rider in items
-                if int(rider.get("subscription_id") or 0) == subscription_id])
+                if int(rider.get("subscription_id") or 0) == subscription_id],
+                still_owed=left)
         except Exception:
             unsettle_failed.add(subscription_id)
             raise
