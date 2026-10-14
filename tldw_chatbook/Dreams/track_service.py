@@ -2736,6 +2736,13 @@ async def _resume_pass(
     # ran on, its rule enabled, with no watch behind it. Every
     # subscription this pass switched on or re-armed a rule on is looked
     # at once more; with no live watch left, both go back off.
+    # ponytail: the riders are read and the rules and source switched off
+    # with awaits in between, so a story attaching to the running source in
+    # that gap ends on a source this switches off (review of #3108, X5). A
+    # second read inside the disable step would only narrow the gap.
+    # Tracking that story again restarts it -- the retired watch's record
+    # owes the restart (TASK-34920). Closing it needs track_page's attach
+    # and this step under one lock.
     touched = set(restored_rules) | {
         subscription_id for subscription_id, (resolved, _held)
         in outcomes.items() if resolved}
