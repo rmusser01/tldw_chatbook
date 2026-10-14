@@ -732,6 +732,13 @@ class LifecycleMixin:
         coordinator = getattr(self, "watchlists_operation_coordinator", None)
         if coordinator is not None:
             await coordinator.shutdown()
+        # Pooled egress sessions are closed LAST among resource owners:
+        # every durable shutdown above may still issue a final network
+        # call (receipts, notices) through the shared pool (review
+        # follow-up: the pool previously lived until process exit).
+        from .Utils.egress import close_pooled_default_sessions
+
+        close_pooled_default_sessions()
         await self._shutdown_collections_capture_runtime()
         await self._shutdown_notes_sync_runtime()
         await self._shutdown_actor_pack_import()

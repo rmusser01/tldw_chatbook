@@ -1538,7 +1538,12 @@ def create_pooled_default_session(
                 for prefix in mount_prefixes:
                     session.mount(prefix, adapter)
             if len(_SESSION_POOL) >= _SESSION_POOL_MAX:
-                _SESSION_POOL.pop(next(iter(_SESSION_POOL)))
+                # Close on evict: an evicted session's sockets otherwise
+                # linger until GC (review follow-up). The pool holds only
+                # complete sessions (each built fresh above), so an evicted
+                # entry is never the session being handed out here.
+                _evicted = _SESSION_POOL.pop(next(iter(_SESSION_POOL)))
+                requests.Session.close(_evicted)
             _SESSION_POOL[key] = session
         return session
 
