@@ -1096,6 +1096,18 @@ async def _retry_held_source(
             subscription_id, type(exc).__name__)
 
 
+async def _source_is_gone(subs_service: Any, wrapper: dict) -> bool:
+    """Whether a page watch's source was deleted from Watchlists."""
+    subscription_id = int(wrapper.get("subscription_id") or 0)
+    if not subscription_id:
+        return False
+    try:
+        await subs_service.get_source(subscription_id)
+    except KeyError:
+        return True
+    return False
+
+
 async def _disable_dream_source(subs_service: Any, subscription_id: int) -> bool:
     """Switch off a source Dreams created; say whether DREAMS did it.
 
@@ -1200,6 +1212,15 @@ async def track_page(
     if origin_story_id is not None:
         wrapper = await _reusable_wrapper(
             dreams_db, origin_story_id, _PAGE_MECHANISM)
+        if wrapper is not None and await _source_is_gone(subs_service, wrapper):
+            # TASK-34927. The user deleted the watch's source in Watchlists
+            # -- what the notices and the guide tell them to do with one
+            # that is stuck -- and is tracking again: the old watch has
+            # nothing behind it. It is retired (its reminder disarmed and
+            # recorded) and a new watch is made below, on a new source.
+            await untrack(subs_service, dreams_db, int(wrapper["id"]),
+                          scheduling_db_getter=scheduling_db_getter)
+            wrapper = None
         if wrapper is not None:
             await _refresh_wrapper_plan(
                 dreams_db, wrapper, cadence=cadence,

@@ -6230,3 +6230,34 @@ async def test_a_watch_whose_restore_failed_keeps_its_last_record(
     record = _record(dreams_db, failed)
     assert record["reminders"] == [], "the re-armed reminder is not owed again"
     assert record["rules"], "the rule it could not restore is still owed"
+
+
+# --- TASK-34927: tracking again after the source was deleted -------------------
+
+
+@pytest.mark.asyncio
+async def test_tracking_again_after_deleting_the_source_makes_a_working_watch(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db):
+    """What the notices and the guide tell the user to do -- delete the
+    source in Watchlists and track again -- used to find the story's old
+    watch and report it attached, with the deleted source's id, leaving it
+    active with nothing behind it."""
+    subs_db, service = subs_stack
+    old = await _event_page(dreams_db, service, scheduling_db)
+    await service.delete_source(old["subscription_id"])
+
+    again = await _event_page(dreams_db, service, scheduling_db)
+
+    assert again["outcome"] == "created"
+    assert again["subscription_id"] != old["subscription_id"]
+    assert _is_active(subs_db, again["subscription_id"]) == 1
+    assert dreams_db.get_tracked_item(old["tracked_item_id"])["status"] == "retired"
+    assert dreams_db.get_tracked_item(again["tracked_item_id"])[
+        "subscription_id"] == again["subscription_id"]
+    assert [r["enabled"] for r in await _change_rules(
+        service, again["subscription_id"])] == [True]
+    armed = [row for row in scheduling_db.list_reminder_tasks_by_link(
+        "dream_tracked_item",
+        [str(old["tracked_item_id"]), str(again["tracked_item_id"])])
+        if row.get("enabled")]
+    assert [row["link_id"] for row in armed] == [str(again["tracked_item_id"])]
