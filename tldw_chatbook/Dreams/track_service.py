@@ -994,9 +994,18 @@ async def _retry_held_source(
     if not resolved:
         raise TrackPrivateURL(
             f"refusing to track a non-public destination ({held})")
-    await _settle_source_restored(
-        dreams_db, await asyncio.to_thread(
-            dreams_db.list_tracked_for_subscription, subscription_id))
+    # The source runs again and the story keeps its wrapper: the re-track
+    # is done. A failure to settle the records now is not the user's to
+    # see (review of #3101, round 3, T2) -- they were un-settled before
+    # the switch-on, so the next start finishes them.
+    try:
+        await _settle_source_restored(
+            dreams_db, await asyncio.to_thread(
+                dreams_db.list_tracked_for_subscription, subscription_id))
+    except Exception as exc:  # noqa: BLE001 - the next start finishes it
+        logger.warning(
+            "Dreams re-track: settling subscription {} failed: {}",
+            subscription_id, type(exc).__name__)
 
 
 async def _disable_dream_source(subs_service: Any, subscription_id: int) -> bool:

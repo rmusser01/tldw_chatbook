@@ -4524,9 +4524,17 @@ async def test_a_re_track_never_runs_a_source_under_its_hold(
 
     monkeypatch.setattr(dreams_db, "set_tracked_suspension", one_write_fails)
 
-    with pytest.raises(RuntimeError):
-        await _event_page(dreams_db, service, scheduling_db,
-                          story_id=1 if same_story else 2)
+    if failing == "closing" and same_story:
+        # Round 3, T2: the source already runs and the story keeps its
+        # wrapper, so the user is told the re-track worked; the next start
+        # finishes the record.
+        result = await _event_page(dreams_db, service, scheduling_db)
+        assert (result["outcome"], result["tracked_item_id"]) == (
+            "attached", item_id)
+    else:
+        with pytest.raises(RuntimeError):
+            await _event_page(dreams_db, service, scheduling_db,
+                              story_id=1 if same_story else 2)
 
     record = _record(dreams_db, item_id)
     if failing == "closing":
