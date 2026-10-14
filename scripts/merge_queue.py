@@ -1361,7 +1361,15 @@ def _decide(gh: GhApi, pr: PrState, mode: str, now: Callable[[], datetime],
     runs = runs_on(gh, pr.head_sha)
     checks = counted(checks, runs)
     pr = replace(pr, checks=checks + required_run_stand_ins(gh, pr.head_sha, checks, runs))
-    return pr, decide_front(pr, now())
+    action = decide_front(pr, now())
+    if action.slug == "stuck":
+        # Right after a merge, mergeStateStatus can still read up to date for the next PR in line,
+        # and a PR that waited in line has an old green run: that is not a stuck auto-merge (#3070,
+        # evicted twice while a racing run rebased it). Ask GitHub before evicting.
+        compare = gh.rest("GET", f"repos/{REPO}/compare/{BASE}...{pr.head_sha}?per_page=1")
+        if compare.get("behind_by", 0) > 0:
+            action = Action("rebase", "behind dev (its merge state had not caught up yet)")
+    return pr, action
 
 
 def run(
