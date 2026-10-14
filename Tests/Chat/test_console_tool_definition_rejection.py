@@ -64,7 +64,7 @@ _MODEL_ADVICE = (
     "model picker",
 )
 #: Anthropic's documented top-level refusal (verified live 2026-09-29, see
-#: qa/console-ux-review-2026-09-29 G4-01).
+#: Docs/QA/console-ux-review-2026-09-29 G4-01).
 _ANTHROPIC_TOP_LEVEL = ("anyOf", "oneOf", "allOf")
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 
