@@ -236,7 +236,9 @@ class TrackDreamsOff(RuntimeError):
     The Library hides Track and Watch while Dreams is off, but a call that
     reached the service anyway re-enabled a page's source and armed an
     event reminder -- work the master switch had stopped. Raised before
-    any read of another store and before any write.
+    any read of another store and before any write, and asked again just
+    before a re-track would switch a source back on, after the page's
+    name lookup (review of #3108, X2): nothing is switched on then.
 
     Attributes:
         reason_code: Stable machine identifier (``track_dreams_off``).
@@ -1207,6 +1209,9 @@ async def _retry_held_source(
             return
 
     async def unsettle() -> None:
+        # The switch is asked again here (review of #3108, X2): Dreams may
+        # have been switched off while the page's name was looked up.
+        _require_dreams_on()
         await _unsettle_held(dreams_db, await asyncio.to_thread(
             dreams_db.list_tracked_for_subscription, subscription_id))
 
@@ -1441,6 +1446,9 @@ async def track_page(
             # destination is checked again now (Qodo #1, PR #2921) --
             # still before any write.
             await _require_public_url(str(url))
+            # ...and the switch again, after that lookup (review of #3108,
+            # X2): a switch-off that landed meanwhile leaves it off.
+            _require_dreams_on()
             await _unsettle_held(dreams_db, riders)
             await _enable_dream_subscription(
                 subs_service, subscription_id, source)

@@ -6615,3 +6615,46 @@ async def test_a_held_page_with_work_left_loses_its_hold_once_its_page_passes(
     assert "held" not in _record(dreams_db, item_id)
     assert _tracked_row(dreams_db, item_id)["held"] is None
     assert _boot_needs_switch(dreams_db, enabled=True) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["same-story", "new-story"])
+async def test_a_switch_off_during_a_re_tracks_lookup_switches_nothing_on(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch,
+        path):
+    """X2. Dreams was on when the re-track started (TASK-34928 checks at
+    entry). It is switched off -- and the switch-off pass finishes --
+    while the re-track looks the page's name up; the re-track must not
+    then switch the source on with Dreams off."""
+    from tldw_chatbook.Dreams.track_service import TrackDreamsOff
+    from tldw_chatbook.Utils import egress
+
+    subs_db, service = subs_stack
+    owned = await _event_page(dreams_db, service, scheduling_db)
+    source_id = owned["subscription_id"]
+    if path == "same-story":
+        await _switch(service, dreams_db, scheduling_db, off=True)
+        _resolve_everything_to(monkeypatch, "10.0.0.5")
+        await _switch(service, dreams_db, scheduling_db, off=False)
+        assert _record(dreams_db, owned["tracked_item_id"])["held"] == "private"
+    else:
+        await untrack(service, dreams_db, owned["tracked_item_id"],
+                      scheduling_db_getter=_sched_getter(scheduling_db))
+    assert _is_active(subs_db, source_id) == 0, "fixture"
+    switched: list[bool] = []
+
+    async def switch_off_during_the_lookup(_host):
+        if not switched:
+            switched.append(True)
+            settings["enabled"] = False
+            await _switch(service, dreams_db, scheduling_db, off=True)
+        return ["93.184.216.34"]
+
+    monkeypatch.setattr(egress, "_resolve_async", switch_off_during_the_lookup)
+
+    with pytest.raises(TrackDreamsOff):
+        await _event_page(dreams_db, service, scheduling_db,
+                          story_id=1 if path == "same-story" else 2)
+
+    assert switched, "fixture: the switch-off ran during the lookup"
+    assert _is_active(subs_db, source_id) == 0, "Dreams is off: source off"
