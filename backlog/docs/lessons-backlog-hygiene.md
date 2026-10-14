@@ -1328,3 +1328,12 @@ to one and re-verify against the intended base version. Treat a clean
 auto-merge of a heavily edited class-body file as *unverified*, not verified,
 and trust the pinned census/ratchet tests over the shape of the diff: they are
 the one instrument that can see a silently shadowed method.
+
+**Second instance (TASK-34918, 2026-10-14).** PR #2643's merge (2026-09-12)
+left an older 204-line `ChatScreen.on_button_pressed` above the live one. This
+time the stale copy came first, so nothing misbehaved and no census caught it.
+But `test_screen_size_ratchet.py` counted it for a month, in both the line
+budget and the method budget, and that cost was part of why the ratchet went
+red. To catch the other half of this failure, run
+`ruff check --isolated --select F811 <file>` on a heavily merged class-body
+file. It flags the shadowed copy whichever copy wins.
