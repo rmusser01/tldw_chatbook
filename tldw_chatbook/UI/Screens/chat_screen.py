@@ -18165,9 +18165,15 @@ class ChatScreen(BaseAppScreen):
             # approval-round registry, neither of which bumps the store's
             # display token -- during a store-quiet run period (long tool
             # call, approval wait) the gate would otherwise hold those frozen
-            # for up to the 15-tick forced-pass bound. Both reads are O(1)
-            # (frozen dataclass + bool, no content hashing); the except keeps
-            # partial controller doubles fail-open like the reads above.
+            # for up to the 15-tick forced-pass bound. The pending-round KIND
+            # set joins them: a question escalating to (or being joined by)
+            # an approval round flips the waiting copy ("Waiting for your
+            # answer" -> "Waiting for your approval") while the registry-
+            # presence bool below already reads True, so presence alone
+            # cannot see the flip. All reads are O(1)-ish (frozen dataclass,
+            # bool, registry-keyed kind set, no content hashing); the except
+            # keeps partial controller doubles fail-open like the reads
+            # above.
             try:
                 controller = getattr(self, "_console_chat_controller", None)
                 if controller is None or session_id is None:
@@ -18176,15 +18182,48 @@ class ChatScreen(BaseAppScreen):
                     run_activity = (
                         controller.run_state_for(session_id),
                         bool(controller.has_pending_approval_round(session_id)),
+                        controller.pending_round_kinds(session_id),
                     )
             except Exception:  # noqa: BLE001 - unknown controller: never gate
                 run_activity = object()
+            # Armed row-scoped delete confirmation (task-33628.2). Arming,
+            # re-arming, cancelling or clearing the pending delete flips the
+            # selected row's action bar (the confirm/cancel pair) WITHOUT
+            # touching the store, so the display token above cannot see it:
+            # a store-quiet arm used to be skipped as a token-equal no-op and
+            # the row froze pre-confirmation, because every later tick gated
+            # on the same token. The component mirrors the message
+            # controller's ``pending_delete_scope`` truth table -- the scope
+            # only renders while the pending id still matches it -- so a
+            # cleared pending id reopens the gate even when the scope object
+            # lags. getattr defaults (both attributes are initialized in the
+            # controller, so ``None`` here only reads as "nothing armed" for
+            # partial test doubles): frozen-dataclass equality over a few
+            # attribute reads, O(1), same class as the components above.
+            try:
+                delete_host = self._message
+                delete_pending = getattr(
+                    delete_host, "_pending_console_delete_message_id", None
+                )
+                delete_scope = getattr(delete_host, "_console_delete_scope", None)
+                delete_arm = (
+                    None
+                    if (
+                        delete_scope is None
+                        or delete_pending is None
+                        or delete_scope.message_id != delete_pending
+                    )
+                    else delete_scope
+                )
+            except Exception:  # noqa: BLE001 - no message controller: never gate
+                delete_arm = object()
             gate = (
                 session_id,
                 token,
                 projection_key,
                 getattr(self, "_console_send_ack", None) is not None,
                 run_activity,
+                delete_arm,
             )
             self._console_transcript_sync_ticks += 1
             forced = self._console_transcript_sync_ticks % 15 == 0

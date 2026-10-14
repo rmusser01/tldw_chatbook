@@ -3,9 +3,9 @@ id: TASK-32566
 title: Entry-scoped discovery evidence for custom endpoint drafts
 status: Done
 assignee:
-  - '@codex'
-created_date: '2026-09-13 19:02'
-updated_date: '2026-10-13 15:00'
+- '@codex'
+created_date: 2026-09-13 19:02
+updated_date: 2026-10-13 15:00
 labels: []
 dependencies: []
 ---
@@ -75,6 +75,5 @@ PR integration adds production teardown ownership checks and mounted cancellatio
 PR integration verification: 20 passed after the teardown repair (four real model-change cancellation paths, one late-dismissal regression, and all 15 endpoint regressions). The new dismissal regression reproduced the removed-control query before the fix. Attachment and screen-stack ownership now fence settlement and repaint. Scoped static checks pass with no new Ruff diagnostics. The user has authorized publishing these repairs in a PR against dev; no merge or full-suite run.
 
 2026-09-18 crash-report regression follow-up: current origin/dev already includes the runtime repairs. Extended the mounted production creation/controller test with the exact custom-ep:llama-local-2 endpoint, port 9090, and Windows GGUF model ID, then Cancel, quick-picker selection, and Apply. Both ordinary and reported cases verify the exact committed provider, model, and endpoint. Scoped verification: 22 passed across endpoint discovery, settings retention, and registry options; Ruff lint/format and git diff --check pass. Each legacy discovery/provider-normalization mutation independently makes the reported case fail; production files were restored unchanged. A broader run had 24 passed and one unchanged provider-chip failure (RecoveryRequired: raw_source_selection_changed); the same failure reproduced on unmodified dev with 23 passed, and in the unchanged module alone. Self-review complete; independent review could not run because of an account usage limit. ADR required: no new ADR, test-only coverage of backlog/decisions/146-console-custom-endpoint-registry.md. No full-suite or native Windows verification; no runtime changes.
-
 2026-10-13 regression maintenance: corrected the creation test to assert `provider_key == "llama_cpp"` and the exact dashed `entry_id` separately, matching `ConsoleModelDiscoveryIdentity`. Removed the saved-entry test's obsolete claim that creation fails on dev. Both creation and saved-entry Apply scenarios pass for ordinary and reported Windows identifiers (4 passed, 24 deselected). Ruff lint, formatting of the edited ranges, and git diff checks pass; full-file formatting differences were verified to predate this edit. Self-review confirms both execution routing and registry ownership remain covered. No runtime changes, full-suite run, or native Windows verification. ADR required: no; existing ADR-146 applies.
 <!-- SECTION:NOTES:END -->
