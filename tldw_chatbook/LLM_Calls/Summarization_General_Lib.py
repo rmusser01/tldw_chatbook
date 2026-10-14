@@ -303,8 +303,7 @@ def _dispatch_to_api(
     streaming: bool,
 ) -> Union[str, Generator[str, None, None], None]:
     """
-    Internal function to call the appropriate API-specific summarization function.
-    Handles the mapping from api_name to the actual function call.
+    Internal dispatch: map api_name to the provider's chat-path handler.
     """
     # TASK-34100.4: still-encrypted `enc:` ciphertext is never a credential;
     # each summarizer then reports its key as missing (mirrors chat_api_call).
@@ -313,14 +312,6 @@ def _dispatch_to_api(
         api_name_lower = api_name.lower()
         api_name_lower = _CHAT_DISPATCH_NAME_ALIASES.get(api_name_lower, api_name_lower)
         logging.debug(f"Dispatching to API: {api_name_lower}")
-
-        # Ensure required args for specific functions are handled if needed
-        # (e.g., model might be loaded from config inside specific funcs)
-
-        # NOTE: The specific functions (summarize_with_openai, etc.) should
-        # handle their own internal logic for loading API keys from config if
-        # the provided api_key is None. They also handle loading models, etc.
-        # We just pass the parameters along.
 
         handler = _SUMMARIZER_DISPATCH.get(api_name_lower)
         if handler is None:

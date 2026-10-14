@@ -1,4 +1,4 @@
-"""Payload pins for TASK-18802: the summarization path must consult the
+"""Predicate pins for TASK-18802: the summarization path must consult the
 per-model request-capability predicates instead of unconditionally sending
 sampling parameters and the classic ``max_tokens`` cap.
 
@@ -37,15 +37,6 @@ from tldw_chatbook.model_capabilities import (
     openai_model_requires_max_completion_tokens,
 )
 
-
-# ---------------------------------------------------------------------------
-# Harness
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Anthropic payload pins (AC #1 / #3 / #4)
-# ---------------------------------------------------------------------------
 
 # Served models that still accept sampling parameters individually but reject
 # the ``temperature``+``top_p`` pair (TASK-19020 probes, module docstring).
@@ -118,10 +109,6 @@ def test_anthropic_combination_predicate_survives_user_capability_table():
         is True
     )
 
-
-# ---------------------------------------------------------------------------
-# OpenAI payload pins (AC #2 / #3 / #4)
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # OpenAI predicate unit pins

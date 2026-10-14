@@ -83,7 +83,7 @@ def test_vllm_explicit_key_returns_a_summary(monkeypatch):
     session = FakeSession(
         FakeResponse(json_data={"choices": [{"message": {"content": " THE SUMMARY "}}]})
     )
-    monkeypatch.setattr(local, "create_default_session", lambda: session)
+    monkeypatch.setattr(local, "create_pooled_default_session", lambda **_kw: session)
 
     result = local.chat_with_vllm(
         [{"role": "user", "content": "some text"}], api_key="explicit-key", model="m"
@@ -124,7 +124,9 @@ def test_custom_openai_stream_yields_the_summary_once(monkeypatch):
         "data: [DONE]",
     ]
     monkeypatch.setattr(
-        local, "create_default_session", lambda: FakeSession(FakeResponse(lines=lines))
+        local,
+        "create_pooled_default_session",
+        lambda **_kw: FakeSession(FakeResponse(lines=lines)),
     )
     monkeypatch.setattr(
         sgl,

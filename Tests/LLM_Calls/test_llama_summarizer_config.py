@@ -103,7 +103,9 @@ def test_budget_and_diagnostic_reach_the_public_analyze_boundary(monkeypatch):
 
     # TASK-34895: llama_cpp routes through the chat handler; the transport
     # and config seams now live on LLM_API_Calls_Local.
-    monkeypatch.setattr(_local, "create_default_session", lambda: _Session())
+    monkeypatch.setattr(
+        _local, "create_pooled_default_session", lambda **_kw: _Session()
+    )
 
     class _Snapshot:
         values = settings
