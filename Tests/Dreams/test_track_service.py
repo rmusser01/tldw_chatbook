@@ -5346,6 +5346,40 @@ async def test_a_retry_that_changes_nothing_rewrites_no_record(
 
 
 @pytest.mark.asyncio
+async def test_a_held_page_switched_back_on_never_runs_under_its_hold(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """Review of #3101, round 2, S1. A record settled "on" is not written
+    ahead (N1), so once its lookup has passed it must stop saying "held"
+    BEFORE its source runs again. Otherwise a failed closing write leaves
+    the source running under "held: private, settled: on" -- the Tracked
+    row says the page is paused and the boot check sees no work -- where
+    an unsettled record is finished by the next pass."""
+    subs_db, service = subs_stack
+    owned = await _held_at(
+        dreams_db, service, scheduling_db, monkeypatch, "10.0.0.5", "private")
+    item_id = owned["tracked_item_id"]
+    _resolve_publicly(monkeypatch)
+    real = dreams_db.set_tracked_suspension
+
+    def closing_write_fails(tracked_item_id, record, **kwargs):
+        if int(tracked_item_id) == item_id and record is None:
+            raise RuntimeError("disk full")
+        return real(tracked_item_id, record, **kwargs)
+
+    monkeypatch.setattr(dreams_db, "set_tracked_suspension", closing_write_fails)
+
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+
+    assert _is_active(subs_db, owned["subscription_id"]) == 1
+    record = _record(dreams_db, item_id)
+    assert "held" not in record, "a running source is not reported as held"
+    assert record.get("settled") is None, "the next pass finishes it"
+    assert _boot_needs_switch(dreams_db, enabled=True) is True
+
+
+@pytest.mark.asyncio
 async def test_a_page_held_for_its_scheme_is_not_asked_about_daily(
         tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
     """A non-web scheme is a fact about the address, not a DNS answer: the

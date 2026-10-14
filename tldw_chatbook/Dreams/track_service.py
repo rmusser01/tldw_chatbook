@@ -2172,13 +2172,21 @@ async def _suspend_pass(
 
 
 async def _restore_source(
-    subs_service: Any, subscription_id: int,
+    subs_service: Any, subscription_id: int, *, before_enable: Any = None,
 ) -> tuple[bool, str | None]:
     """Re-enable one subscription Dreams stopped, if its page is public.
 
     Re-enabling restarts fetches of a URL Dreams stored, so the same
     question ``track_page`` asks before a re-enable is asked here (review
     of #2921, item 2).
+
+    Args:
+        subs_service: The app's ``LocalWatchlistsService``.
+        subscription_id: The subscription to re-enable.
+        before_enable: Optional coroutine function awaited once the page
+            has passed the check and just before the source is switched
+            on -- the resume pass un-settles held records there (review of
+            #3101, round 2, S1). If it raises, the source stays off.
 
     Returns:
         ``(resolved, held)``. ``resolved`` is True when nothing is owed
@@ -2206,6 +2214,8 @@ async def _restore_source(
             "Dreams resume: subscription {} left disabled, its page is not "
             "a public destination ({})", subscription_id, refusal)
         return False, refusal
+    if before_enable is not None:
+        await before_enable()
     await _enable_dream_subscription(subs_service, subscription_id, source)
     return True, None
 
@@ -2252,19 +2262,34 @@ async def _resume_pass(
     # #3101, N1): only for the others is the row read at pass start still
     # what is stored, so only they may skip an unchanged final write.
     rewritten: set[int] = set()
+
+    async def write_unsettled(
+        item_id: int, subscription: bool, reminders: list[str], rules: list[int]
+    ) -> None:
+        await asyncio.to_thread(run_finite_local_worker,
+            partial(dreams_db.set_tracked_suspension, only_live=True),
+            item_id, _record_text(
+                subscription=subscription, reminders=reminders,
+                rules=rules))
+
+    async def unsettle_held_riders(subscription_id: int) -> None:
+        # Review of #3101, round 2, S1. A held record skipped the
+        # write-ahead (N1); its page has now passed the check, so before
+        # the source runs again it stops saying "held, settled on". A
+        # closing write that then fails leaves an unsettled record the
+        # next pass finishes -- not a running source the Tracked row calls
+        # paused and the boot check never looks at again.
+        for rider in items:
+            rider_id = int(rider["id"])
+            if (int(rider.get("subscription_id") or 0) == subscription_id
+                    and rider_id not in failed
+                    and settled_state(rider.get("suspension")) == SETTLED_ON):
+                await write_unsettled(rider_id, True, [], [])
+                rewritten.add(rider_id)
+
     for item in pending:
         item_id = int(item["id"])
         subscription, reminders, rules = _owed(_suspension_record(item))
-
-        async def write_unsettled(
-            item_id: int, subscription: bool, reminders: list[str], rules: list[int]
-        ) -> None:
-            await asyncio.to_thread(run_finite_local_worker,
-                partial(dreams_db.set_tracked_suspension, only_live=True),
-                item_id, _record_text(
-                    subscription=subscription, reminders=reminders,
-                    rules=rules))
-
         try:
             # The list was read when the pass began. A lifecycle sweep (a
             # cycle, a track check) may have retired this watch since, and
@@ -2289,6 +2314,8 @@ async def _resume_pass(
             # restored before that decision), so it is not rewritten here:
             # a held page asked about again on every cycle trigger would
             # otherwise be written twice each time (review of #3101, N1).
+            # It is un-settled only once its page passes the check
+            # (``unsettle_held_riders``, round 2, S1).
             if settled_state(item.get("suspension")) != SETTLED_ON:
                 await write_unsettled(item_id, subscription, reminders, rules)
                 rewritten.add(item_id)
@@ -2326,7 +2353,8 @@ async def _resume_pass(
             continue
         try:
             outcomes[subscription_id] = await _restore_source(
-                subs_service, subscription_id)
+                subs_service, subscription_id,
+                before_enable=partial(unsettle_held_riders, subscription_id))
         except Exception as exc:  # noqa: BLE001 - its riders stay unsettled
             logger.warning(
                 "Dreams resume: restoring subscription {} failed: {}",
