@@ -10,7 +10,7 @@ labels:
 priority: medium
 assignee:
 - '@claude'
-updated_date: 2026-10-14 15:16
+updated_date: 2026-10-14 16:02
 ---
 
 ## Description
@@ -51,6 +51,7 @@ Test (AC#3): test_overlapping_reconciles_report_settled_once_at_the_end and its 
 Verification: the whole file 219 passed serially (341.8 s) after the change; Tests/CI + Tests/Packaging/test_python_runtime_floor.py 915 passed, 1 skipped; negative controls for the new contract (target removed, the file also listed in another step, job dropped from needs, a -k filter) are all caught; ruff findings on the touched test files are identical per file and message to dev; ./scripts/preflight.sh passed. The job's first real run is the PR's own CI.
 
 Files: .github/workflows/derived-artifacts.yml, Tests/Dreams/test_track_service.py, Tests/CI/test_ci_queue_pressure_contract.py, Tests/CI/test_derived_artifacts_workflow.py, Tests/CI/test_console_p0_regression_gate.py, backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md.
+Review of #3106, W2 (supersedes the 'bounded by pytest-timeout' line above): unbounded awaits hung for the lane's full 180 s and pytest-timeout's report for an async test points at the event loop's selector, not the await. The six waits now go through _within_bound (asyncio.wait_for, _PARKED_WAIT_S = 60 s: about 10x the slow case, since the tests take ~1.2 s locally under load and ran five times slower than that on a loaded host), which fails naming the wait. Mutant: never setting parked.release in test_overlapping_reconciles_report_settled_once_at_the_end fails in 61.8 s with 'Failed: both reconcile requests settling did not happen within 60 s' and a traceback through test_track_service.py:4731, the gather's await (run with the lane's --timeout=180). The three tests pass (4.6 s).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
