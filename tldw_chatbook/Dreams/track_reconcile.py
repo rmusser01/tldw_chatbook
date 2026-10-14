@@ -214,9 +214,10 @@ def _stores_may_run(app: Any, dreams_db: Any) -> bool:
     """Whether every store the reconcile writes is cleared for it (sync).
 
     The reconcile disables and re-arms reminders (the scheduled-tasks
-    store) and switches, stamps and re-rules subscriptions (the
-    subscriptions store), so it holds exactly where their own background
-    work holds (review of #2921, round 3, T25; round 4, B5):
+    store), switches, stamps and re-rules subscriptions (the subscriptions
+    store) and rewrites its own watches' records (the Dreams store), so it
+    holds exactly where their own background work holds (review of #2921,
+    round 3, T25; round 4, B5):
 
     * ``db.scheduled_tasks`` -- the question ``app.py`` asks before it
       starts the scheduler worker and ``SchedulerLoop.run`` asks before
@@ -224,13 +225,21 @@ def _stores_may_run(app: Any, dreams_db: Any) -> bool:
     * ``db.subscriptions`` -- the question the subscriptions store's own
       boot work asks (``app_feature_glue._backfill_subscription_items_fts``).
       Round 3 asked only the first, although the egress backfill writes
-      nothing but subscriptions.
+      nothing but subscriptions;
+    * ``db.dreams`` -- the store of the suspension and provenance records
+      every pass writes.
 
     Each is false for a restored generation still awaiting the user's
     review (ADR-126), where a false answer "permits local inspection
-    only". A check made once, before the work, as ``app.py`` makes its
-    own -- not a scope retained through it. File I/O; the caller
-    thread-offloads it.
+    only". It is a check made once, before the work, as ``app.py`` makes
+    its own -- not an ``activation.execution_scope`` retained through it.
+    This pass is many awaits long: thread hops, watchlists service calls,
+    name lookups. A storage maintenance pause (a backup capture) drains
+    live storage leases before it proceeds and gives up at its deadline
+    (``storage_admission._LocalPause.drain``), so holding a scope's lease
+    through those awaits would make a capture wait on name lookups. The
+    cost of checking once: a restore that begins after this check is not
+    held off by it. File I/O; the caller thread-offloads it.
 
     Returns:
         True when every store there is to ask about is cleared for
@@ -320,8 +329,10 @@ async def _boot_pass(
         dreams_db, owned, switch, backfill = await asyncio.to_thread(
             _boot_db, app)
         # What has to land BEFORE anything is dispatched: stopping the
-        # watches of a Dreams that is off, and marking a source that is
-        # still a trusted egress origin (T1). A resume has no such claim.
+        # watches of a Dreams that is off, and the egress-mark backfill
+        # (T1 -- written when an unmarked source was a trusted egress
+        # origin; since ADR-207 it is fetched under the public-only rule
+        # anyway). A resume has no such claim.
         must_precede_dispatch = backfill or (
             switch and not bool(dreams_setting("enabled")))
         if first_dispatch is not None and not must_precede_dispatch:

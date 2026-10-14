@@ -136,6 +136,10 @@ _UNWATCHED_NOTICE = "Stopped watching this question."
 _TRACK_CAP_NOTICE = (
     "Tracking budget is full: retire a tracked page before adding more."
 )
+_TRACK_DREAMS_OFF_NOTICE = (
+    "Dreams is switched off, so nothing was tracked. Switch it on in "
+    "Settings > Domain Defaults > Dreams to track stories."
+)
 # Watchlists cannot switch an existing source back on, so this must not
 # tell the user to "enable it" there (review of #2921, round 4, A2).
 _TRACK_SOURCE_DISABLED_NOTICE = (
@@ -738,6 +742,7 @@ class DreamsStoryModal(SafeModalDismissMixin, ModalScreen[None]):
         # Lazy Dreams import (same pattern as ``action_ingest``).
         from ...Dreams.track_service import (
             TrackCapReached,
+            TrackDreamsOff,
             TrackInvalidURL,
             TrackPrivateURL,
             TrackSourceDisabled,
@@ -768,6 +773,11 @@ class DreamsStoryModal(SafeModalDismissMixin, ModalScreen[None]):
             )
         except TrackCapReached:
             self.notify(_TRACK_CAP_NOTICE, severity="warning", markup=False)
+            return
+        except TrackDreamsOff:
+            # TASK-34928: the service refuses before anything is written.
+            self.notify(_TRACK_DREAMS_OFF_NOTICE, severity="warning",
+                        markup=False)
             return
         except TrackPrivateURL:
             # Qodo #1 (PR #2921): a story URL nobody typed must be a
@@ -926,7 +936,11 @@ class DreamsStoryModal(SafeModalDismissMixin, ModalScreen[None]):
             self.notify(_NO_QUERY_NOTICE, severity="information", markup=False)
             return
         # Lazy Dreams import (same pattern as ``action_ingest``).
-        from ...Dreams.track_service import TrackCapReached, track_question
+        from ...Dreams.track_service import (
+            TrackCapReached,
+            TrackDreamsOff,
+            track_question,
+        )
 
         # Same kind-to-intent mapping as ``action_track``: 'event'/'deal'
         # pass through, everything else is a topic watch.
@@ -949,6 +963,10 @@ class DreamsStoryModal(SafeModalDismissMixin, ModalScreen[None]):
             )
         except TrackCapReached:
             self.notify(_TRACK_CAP_NOTICE, severity="warning", markup=False)
+            return
+        except TrackDreamsOff:
+            self.notify(_TRACK_DREAMS_OFF_NOTICE, severity="warning",
+                        markup=False)
             return
         except Exception as exc:  # noqa: BLE001 - a failed watch is a notice
             logger.warning(f"Dreams watch failed: {type(exc).__name__}")

@@ -136,11 +136,21 @@ saved pause and provenance work is verified. If ownership cannot be read,
 watchlist checks remain held too; an error does not authorize a fetch. The one
 thing a start does not
 retry is a tracked page that was left off because its address is not
-public (see [Tracking](#tracking)). On a profile restored from a backup
+public (see [Tracking](#tracking)).
+
+A restore brings Dreams' parts back from the backup groups you restore:
+its stories, watches and what each watch says Dreams stopped come with
+**Conversations, notes, and personas**, the Watchlists sources and
+change alerts of its tracked pages with **Research and subscriptions**,
+its event reminders with **Schedules, notifications, and sync**, and the
+on/off switch with **Settings**. Each comes back
+as it was when the backup was taken, and a group you leave out keeps
+what it has now, so restore them together to get Dreams back as it was.
+On a profile restored from a backup
 and still waiting for your review, Dreams cycles, tracked checks and this startup
 reconciliation remain inactive until the Dreams owner is approved. Reconciliation
-also requires approval for the Watchlists and scheduler stores it changes.
-Stored enabled settings do not provide that approval. Legacy Watchlists URLs
+also requires approval for the Dreams, Watchlists and scheduler stores it
+changes. Stored enabled settings do not provide that approval. Legacy Watchlists URLs
 without recorded user-entered provenance remain untrusted on their first fetch,
 even when Dreams is disabled; explicitly recorded user-entered URLs retain their
 existing access.
@@ -235,6 +245,9 @@ From an open story, **Track this (t)** puts the page under watch: Dreams
 creates (or adopts) a watchlists subscription for the URL, joins it to a
 shared "Dreams Tracked" watchlist, and pins a change alert — every new
 item the page produces lands in the Watchlists **Notifications** pane.
+Tracking and watching need Dreams switched on: while it is off, Dreams
+tracks nothing and says so, so a page whose source the switch stopped
+is not started again behind it.
 
 **The event reminder.** Tracking an event-dated story also schedules one
 reminder a week before the event, at 9:00 in the morning by your
@@ -246,7 +259,9 @@ that date, and one you switched off or moved stays as you left it. It is
 re-made only when the event's date changes. When a story is both tracked
 and watched and one of the two ends — you untrack it, or it retires as
 quiet — the reminder stays with the one that is left, at the time you
-last gave it. When the story's last watch ends, a reminder that has not
+last gave it, and takes that watch's name unless you renamed it. If that
+happens while Dreams is off, the reminder moves when you switch Dreams on
+again. When the story's last watch ends, a reminder that has not
 fired yet is disarmed, and tracking the story again arms one for the
 event again. If a story's event date can no longer be read, the reminder
 still pending for the old date is switched off.
