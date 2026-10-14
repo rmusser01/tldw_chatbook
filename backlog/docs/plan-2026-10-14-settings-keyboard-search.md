@@ -61,7 +61,7 @@ The guards that keep "/" complete (the search-index drift guard and the rail cat
 
 ## Scope
 
-- **T1.** Index rows for every rendered setting the guard names, plus the Discover models action and Theme synonyms. The "/discover" ranking per the OD1 ruling. The rail-count literal. Both guards in the required UI lane. The User Guide's "/" text.
+- **T1.** Index rows for every rendered setting the guard names, plus the Discover models action and Theme synonyms. The "/discover" ranking per the OD1 ruling. The rail-count literal. The search-index guard and the two rail guards (count and group coverage) in the required UI lane. The User Guide's "/" text.
 - **T2.** One Tab stop for the rail. Arrows and j/k in the order shown, including the collapsed groups' toggles. No Tab stop on a pane body that holds controls. The User Guide's Tab path, including its Tab sentence.
 - **T3.** Ctrl+S on the Settings pages that offer s, and in the in-page editors on those pages. The footer in a field. The User Guide's keys.
 
