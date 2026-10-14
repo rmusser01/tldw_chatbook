@@ -793,16 +793,8 @@ class SpeechTTSSettingsPanel(Vertical):
         if draft_snapshot is not None:
             if type(draft_snapshot) is not SpeechTTSPanelDraftSnapshot:
                 raise TypeError("Speech/TTS panel draft snapshot is invalid")
-            restored = SpeechTTSPanelDraftSnapshot(
-                state=draft_snapshot.state,
-                original_state=draft_snapshot.original_state,
-                realtime_draft=draft_snapshot.realtime_draft,
-                realtime_original=draft_snapshot.realtime_original,
-                configure_provider=draft_snapshot.configure_provider,
-                draft_revision=draft_snapshot.draft_revision,
-                pipeline_voice_draft=draft_snapshot.pipeline_voice_draft,
-                pipeline_voice_original=draft_snapshot.pipeline_voice_original,
-            )
+            # replace() revalidates a detached copy of every field.
+            restored = replace(draft_snapshot)
             self.original_state = deepcopy(restored.original_state)
             self.state = deepcopy(restored.state)
             metadata_original = original_state or state
@@ -1061,16 +1053,7 @@ class SpeechTTSSettingsPanel(Vertical):
 
         if type(snapshot) is not SpeechTTSPanelDraftSnapshot:
             raise TypeError("Speech/TTS panel draft snapshot is invalid")
-        restored = SpeechTTSPanelDraftSnapshot(
-            state=snapshot.state,
-            original_state=snapshot.original_state,
-            realtime_draft=snapshot.realtime_draft,
-            realtime_original=snapshot.realtime_original,
-            configure_provider=snapshot.configure_provider,
-            draft_revision=snapshot.draft_revision,
-            pipeline_voice_draft=snapshot.pipeline_voice_draft,
-            pipeline_voice_original=snapshot.pipeline_voice_original,
-        )
+        restored = replace(snapshot)  # revalidates a copy of every field
         focus_id = self._focused_id() if self.is_mounted else None
         live_metadata = self.state
         original_metadata = self.original_state
