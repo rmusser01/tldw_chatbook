@@ -531,9 +531,9 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
 def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
     """TASK-34929: the Dreams tracking tests run, whole, on every pull request.
 
-    Its own job because ~8-11 min of CI fits in no existing lane's headroom;
-    not path-filtered, so a change outside Dreams (egress, Scheduling,
-    Notifications) that breaks the file is caught too.
+    Its own job, so no existing lane moves toward its cap (6m50s on its first
+    run, 38588725796); not path-filtered, so a change outside Dreams (egress,
+    Scheduling, Notifications) that breaks the file is caught too.
     """
     workflow = _workflow("derived-artifacts.yml")
     job = workflow["jobs"]["dreams-tracking"]

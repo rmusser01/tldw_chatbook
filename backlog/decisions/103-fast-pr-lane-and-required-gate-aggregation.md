@@ -218,6 +218,6 @@ lane before, runs whole on every pull request in its own job, `dreams-tracking`
 ("Dreams tracking tests", 20-min cap, the PR Fast Lane's plugin set); the required
 check `needs` it and fails when it is not `success`. It is not path-filtered: the
 file also imports Notifications, Scheduling and the egress guard, and a skipped
-job would fail the aggregate's verdict. It costs ~8-11 min of CI, which fits in no
-existing lane's headroom. One more runner per PR: ten concurrent test runners,
-then the aggregate.
+job would fail the aggregate's verdict. Its own job, so no existing lane moves
+toward its cap; its first run (38588725796) took 6m50s. One more runner per PR:
+ten concurrent test runners, then the aggregate.

@@ -497,20 +497,20 @@ jobs:
     # tracking and switch logic) ran in no pull-request lane; seven of its
     # tests went red with the #2921 merge and stayed red unnoticed.
     #
-    # Its own job, on every PR, not a step on an existing lane: serially it
-    # measured 6m35s and 5m42s locally (load average 10-18), and four
-    # Dreams-family files that already run in console-p0-gate take 1.3-1.7x
-    # their local time in CI, so ~8-11 min here -- more than the room left
-    # in any lane (the PR Fast Lane halves reach ~21 min of 35,
-    # console-p0-gate 18.7 of 20). Not path-filtered: the file imports
+    # Its own job, on every PR, not a step on an existing lane, so no
+    # existing job moves toward its cap: its first run (38588725796, PR
+    # #3106) took 6m50s, 5m48s of it the tests (5m42s-6m35s locally; the
+    # 1.3-1.7x CI factor estimated from four Dreams files in console-p0-gate
+    # did not hold for this file), against the PR Fast Lane halves' ~21 min
+    # of 35 and console-p0-gate's 18.7 of 20. Not path-filtered: the file imports
     # Notifications, Scheduling and Utils/egress as well as Dreams and
     # Subscriptions, and a skipped job fails the aggregate's
     # `!= 'success'` verdict anyway.
     #
     # Sandboxed only (no bootstrap_profile node), so one invocation; same
     # minimal dependency set and serial pytest as the other lanes.
-    # timeout-minutes: ~1 min setup + ~8-11 min of tests leaves ~8 min, and
-    # one hung test at --timeout=180 still ends ~5 min under the cap.
+    # timeout-minutes: the first run's 6m50s leaves ~13 min, and one hung
+    # test at --timeout=180 still ends ~10 min under the cap.
     name: Dreams tracking tests
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest

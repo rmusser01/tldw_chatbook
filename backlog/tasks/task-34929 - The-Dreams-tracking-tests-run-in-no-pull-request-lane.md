@@ -10,7 +10,7 @@ labels:
 priority: medium
 assignee:
 - '@claude'
-updated_date: 2026-10-14 16:02
+updated_date: 2026-10-14 16:06
 ---
 
 ## Description
@@ -52,6 +52,7 @@ Verification: the whole file 219 passed serially (341.8 s) after the change; Tes
 
 Files: .github/workflows/derived-artifacts.yml, Tests/Dreams/test_track_service.py, Tests/CI/test_ci_queue_pressure_contract.py, Tests/CI/test_derived_artifacts_workflow.py, Tests/CI/test_console_p0_regression_gate.py, backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md.
 Review of #3106, W2 (supersedes the 'bounded by pytest-timeout' line above): unbounded awaits hung for the lane's full 180 s and pytest-timeout's report for an async test points at the event loop's selector, not the await. The six waits now go through _within_bound (asyncio.wait_for, _PARKED_WAIT_S = 60 s: about 10x the slow case, since the tests take ~1.2 s locally under load and ran five times slower than that on a loaded host), which fails naming the wait. Mutant: never setting parked.release in test_overlapping_reconciles_report_settled_once_at_the_end fails in 61.8 s with 'Failed: both reconcile requests settling did not happen within 60 s' and a traceback through test_track_service.py:4731, the gather's await (run with the lane's --timeout=180). The three tests pass (4.6 s).
+First CI run (review of #3106, W5): run 38588725796 (PR #3106, head b1d4142d65), job 'Dreams tracking tests' green in 6m50s (410 s: checkout 22 s, setup-python 5 s, install 23 s, tests 354 s; pytest reported '219 passed in 348.34s'), queued 3.3 min after the run was created. The 8-11 min estimate above was high: in CI this file ran at about the speed of the local serial runs (342-395 s), not the 1.3-1.7x measured for four other Dreams files. The workflow comment, the contract-test docstring and ADR-103 now quote the measured run instead of the estimate; the job keeps its 20-min cap (~13 min of headroom, ~10 after one hung test at --timeout=180).
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
