@@ -3311,6 +3311,23 @@ async def test_two_watches_on_one_source_both_record_its_silenced_rule(
 # overlapping requests coalesce, and each pass reads the live flag.
 
 
+#: The bound on each wait in the parked-source tests (TASK-34929; review of
+#: #3106, W2). The old 5 s / 10 s bounds were too tight: these tests take
+#: about 1.2 s locally under load and ran five times slower than that on a
+#: loaded host. 60 s is 10x that slow case, and well inside the lanes' 180 s
+#: pytest-timeout, so a source that never parks or a pass that never ends
+#: fails here, naming the wait, instead of in the event loop's selector.
+_PARKED_WAIT_S = 60
+
+
+async def _within_bound(awaitable, what: str):
+    """Await ``awaitable``; fail naming ``what`` if it takes over 60 s."""
+    try:
+        return await asyncio.wait_for(awaitable, _PARKED_WAIT_S)
+    except TimeoutError:
+        pytest.fail(f"{what} did not happen within {_PARKED_WAIT_S} s")
+
+
 class _ParkedSources:
     """Wraps a watchlists service; ``get_source`` waits until released."""
 
@@ -3367,12 +3384,12 @@ async def test_cancelling_a_reconcile_caller_does_not_cut_the_switch_short(
 
     caller = asyncio.create_task(
         track_service.reconcile_tracking(parked, dreams_db))
-    await asyncio.wait_for(parked.parked.wait(), timeout=5)
+    await _within_bound(parked.parked.wait(), "the first pass parking on get_source")
     caller.cancel()  # e.g. another settings action cancelled the worker
     with pytest.raises(asyncio.CancelledError):
         await caller
     parked.release.set()
-    await asyncio.wait_for(track_service._RECONCILE_TASK, timeout=5)
+    await _within_bound(track_service._RECONCILE_TASK, "the owned reconcile task finishing")
 
     assert int(subs_db.get_subscription(
         owned["subscription_id"])["is_active"]) == 0, (
@@ -3399,13 +3416,13 @@ async def test_overlapping_reconciles_settle_on_the_latest_switch(
     settings["enabled"] = False
     first = asyncio.create_task(
         track_service.reconcile_tracking(parked, dreams_db))
-    await asyncio.wait_for(parked.parked.wait(), timeout=5)
+    await _within_bound(parked.parked.wait(), "the first pass parking on get_source")
     settings["enabled"] = True
     second = asyncio.create_task(
         track_service.reconcile_tracking(parked, dreams_db, now=NOW))
     await asyncio.sleep(0)
     parked.release.set()
-    await asyncio.wait_for(asyncio.gather(first, second), timeout=10)
+    await _within_bound(asyncio.gather(first, second), "both reconcile requests settling")
 
     assert int(subs_db.get_subscription(
         owned["subscription_id"])["is_active"]) == 1
@@ -4706,13 +4723,13 @@ async def test_overlapping_reconciles_report_settled_once_at_the_end(
     settings["enabled"] = False
     first = asyncio.create_task(track_service.reconcile_tracking(
         parked, dreams_db, on_settled=on_settled))
-    await asyncio.wait_for(parked.parked.wait(), timeout=5)
+    await _within_bound(parked.parked.wait(), "the first pass parking on get_source")
     settings["enabled"] = True
     second = asyncio.create_task(track_service.reconcile_tracking(
         parked, dreams_db, now=NOW, on_settled=on_settled))
     await asyncio.sleep(0)
     parked.release.set()
-    await asyncio.wait_for(asyncio.gather(first, second), timeout=10)
+    await _within_bound(asyncio.gather(first, second), "both reconcile requests settling")
 
     assert states_at_settle == [1], (
         "one reload, after the last pass, seeing the final state"

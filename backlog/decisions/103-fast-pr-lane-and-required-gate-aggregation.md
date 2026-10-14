@@ -197,3 +197,27 @@ one more runner per PR: the PR Fast Lane, four UI shards and the P0 gate make
 six concurrent test runners, then the aggregate.
 `Tests/CI/test_console_p0_regression_gate.py` pins where each P0 test runs. The
 required context name, event cadence and dependency boundary are unchanged.
+
+2026-10-14 (TASK-34916): the PR Fast Lane's admission-sensitive pytest invocation
+runs in its own job, `pr-fast-lane-admission` ("PR Fast Lane (admission-sensitive)"),
+with the same install line, the same targets in the same order, and the same 35-min
+cap; the required check `needs` it and fails when it is not `success`. Over 90
+pull-request runs to 2026-10-14 the two invocations in one job took median 31.5 /
+max 39.5 min and four runs were cancelled at the cap; each half replays at max
+20.8 and 20.1 min. One more runner per PR: seven concurrent test runners, then
+the aggregate.
+
+2026-10-14 (TASK-34917): the UI Fast Lane runs six round-robin shards (was four);
+the census and its order are unchanged. Four shards measured shard 3 at max 19.7
+min against the 20-min cap; a replay of 26 PR runs' shard logs put the heaviest
+shard at 17.4 min with five and 14.1 with six. Two more runners per PR: nine
+concurrent test runners, then the aggregate.
+
+2026-10-14 (TASK-34929): `Tests/Dreams/test_track_service.py`, in no pull-request
+lane before, runs whole on every pull request in its own job, `dreams-tracking`
+("Dreams tracking tests", 20-min cap, the PR Fast Lane's plugin set); the required
+check `needs` it and fails when it is not `success`. It is not path-filtered: the
+file also imports Notifications, Scheduling and the egress guard, and a skipped
+job would fail the aggregate's verdict. Its own job, so no existing lane moves
+toward its cap; its first run (38588725796) took 6m50s. One more runner per PR:
+ten concurrent test runners, then the aggregate.

@@ -137,12 +137,46 @@ DREAMS_BOUNDARY_TARGETS = (
     "Tests/Watchlists/test_runtime_name_literals.py",
     "Tests/Notifications/test_notification_toast_markup.py",
 )
+#: TASK-34929: the Dreams tracking tests, gated whole in their own job.
+DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
     "Tests/Library/test_capture_url_provenance.py::test_actual_capture_first_and_retry_apply_egress_at_every_hop",
     "Tests/Subscriptions/test_local_watchlists_service.py",
     "Tests/Watchlists/test_watchlists_bulk_source_authoring.py",
     "Tests/UI/test_settings_dreams_guardian_native_lifecycle.py",
+)
+
+#: The admission-sensitive invocation, exactly, in order (review of #3106,
+#: W1). Only the sandboxed step had an exact pin, so dropping a file here or
+#: shortening its ``--timeout=300`` passed every contract. These are
+#: ``bootstrap_profile`` suites (TASK-32873); they run in their own job,
+#: ``pr-fast-lane-admission`` (TASK-34916).
+ADMISSION_TARGETS = (
+    "Tests/Chat/test_console_run_log_connection_ownership.py",
+    "Tests/Chat/test_console_chat_create_connection_ownership.py",
+    "Tests/DB/test_chachanotes_connection_quiescence.py",
+    "Tests/DB/test_operation_owned_connection_retirement.py",
+    "Tests/UI/test_console_runtime_ownership.py",
+    "Tests/Chat/test_console_viewless_hooks.py",
+    "Tests/Agents/test_install_skill_runtime_tool.py",
+    "Tests/Chat/test_console_chat_create_integration.py",
+    "Tests/Notes/test_notes_sync_tail_edit.py",
+    "Tests/Notes/test_notes_sync_delete_restore_signal.py",
+    "Tests/Notes/test_notes_sync_crlf_single_line.py",
+    "Tests/Notes/test_notes_sync_source_moved_settle.py",
+    "Tests/Notes/test_notes_sync_watcher_after_heal.py",
+    "Tests/Notes/test_notes_sync_version_only_move.py",
+    "Tests/Notes/test_notes_sync_resave_window.py",
+    "Tests/Notes/test_notes_sync_attention_fence.py",
+    "Tests/Agents/test_first_request_window_honest_plan.py",
+    "Tests/Chat/test_console_capacity_refusal_copy.py",
+    # Roleplay frame B1 (TASK-33910.2): the mounted Roleplay frame suites.
+    "Tests/UI/test_roleplay_frame_harness.py",
+    "Tests/UI/test_roleplay_header.py",
+    "Tests/UI/test_roleplay_hostile_names.py",
+    "Tests/UI/test_roleplay_journeys.py",
+    "Tests/UI/test_app_factory_cleanup.py",
 )
 
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
@@ -209,22 +243,39 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # each lane needs its own verdict step below or a red lane would leave the
     # required check green.
     # TASK-33621.27: the Console P0 regression gate is the third lane.
-    assert required.get("needs") == ["pr-fast-lane", "ui-fast-lane", "console-p0-gate"]
+    # TASK-34916: the PR Fast Lane's admission-sensitive half is its own job.
+    # TASK-34929: the Dreams tracking tests are the fifth lane.
+    assert required.get("needs") == [
+        "pr-fast-lane",
+        "pr-fast-lane-admission",
+        "ui-fast-lane",
+        "console-p0-gate",
+        "dreams-tracking",
+    ]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in required["steps"])
 
-    verdict = _named_step(required, "Require successful PR fast lane")
-    assert not verdict.get("continue-on-error", False)
     # TASK-33621.27 review round 4: `!cancelled() &&` drops the implicit
     # `success()`, so a red lane does not skip the next lane's verdict and
     # every red lane is reported in one pass (run 38072845848 showed the UI
     # and P0 verdicts skipped behind the PR lane's).
-    assert verdict["if"] == (
-        f"${{{{ !cancelled() && ({LANES}) && needs.pr-fast-lane.result != 'success' }}}}"
-    )
-    assert "needs.pr-fast-lane.result" in verdict["run"]
-    assert "exit 1" in verdict["run"]
+    for lane, step_name in (
+        ("pr-fast-lane", "Require successful PR fast lane"),
+        ("pr-fast-lane-admission", "Require successful PR fast lane (admission-sensitive)"),
+        ("dreams-tracking", "Require successful Dreams tracking tests"),
+    ):
+        verdict = _named_step(required, step_name)
+        assert not verdict.get("continue-on-error", False)
+        assert verdict["if"] == (
+            f"${{{{ !cancelled() && ({LANES}) && needs.{lane}.result != 'success' }}}}"
+        )
+        assert f"needs.{lane}.result" in verdict["run"]
+        assert "exit 1" in verdict["run"]
+    for job_name in ("pr-fast-lane-admission", "dreams-tracking"):
+        job = workflow["jobs"][job_name]
+        assert not job.get("continue-on-error", False)
+        assert all(not step.get("continue-on-error", False) for step in job["steps"])
 
     ui_verdict = _named_step(required, "Require successful UI fast lane")
     assert not ui_verdict.get("continue-on-error", False)
@@ -260,15 +311,35 @@ def _assert_required_aggregation(workflow: dict) -> None:
     assert ui_commands.count("pip install") == 1
 
 
-def _assert_fast_lane_invocation(workflow: dict) -> None:
-    fast = workflow["jobs"]["pr-fast-lane"]
-    run = _named_step(fast, "Run fast PR contract")["run"]
+#: Each exact-pinned PR Fast Lane step: (job, step, targets, test limit).
+EXACT_STEPS = {
+    "sandboxed": ("pr-fast-lane", "Run fast PR contract", FAST_LANE_TARGETS, 180),
+    "admission-sensitive": (
+        "pr-fast-lane-admission",
+        "Run admission-sensitive suites",
+        ADMISSION_TARGETS,
+        300,
+    ),
+}
+
+
+def _assert_exact_step(workflow: dict, which: str) -> None:
+    job, name, targets, limit = EXACT_STEPS[which]
+    run = _named_step(workflow["jobs"][job], name)["run"]
     assert tuple(shlex.split(run.replace("\\\n", " "), comments=True)) == (
         "pytest",
-        *FAST_LANE_TARGETS,
-        "--timeout=180",
+        *targets,
+        f"--timeout={limit}",
         "--tb=short",
     )
+
+
+def _assert_fast_lane_invocation(workflow: dict) -> None:
+    _assert_exact_step(workflow, "sandboxed")
+
+
+def _assert_admission_invocation(workflow: dict) -> None:
+    _assert_exact_step(workflow, "admission-sensitive")
 
 
 def test_heavy_tests_run_only_on_main_push_or_manual_dispatch() -> None:
@@ -332,23 +403,46 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
     assert "-n auto" not in run["run"]
 
 
-def test_fast_lane_is_one_serial_minimal_python_312_job() -> None:
-    """Keep the fast lane serial, bounded, and minimally provisioned."""
-    fast = _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane"]
+@pytest.mark.parametrize(
+    ("job_name", "display_name", "test_step"),
+    [
+        ("pr-fast-lane", "PR Fast Lane", "Run fast PR contract"),
+        (
+            "pr-fast-lane-admission",
+            "PR Fast Lane (admission-sensitive)",
+            "Run admission-sensitive suites",
+        ),
+    ],
+)
+def test_fast_lane_is_one_serial_minimal_python_312_job(
+    job_name: str, display_name: str, test_step: str
+) -> None:
+    """Keep each half of the fast lane serial, bounded, and minimally provisioned.
 
-    assert fast["name"] == "PR Fast Lane"
+    Args:
+        job_name: The workflow job key.
+        display_name: Its check name.
+        test_step: Its one pytest step.
+    """
+    fast = _workflow("derived-artifacts.yml")["jobs"][job_name]
+
+    assert fast["name"] == display_name
     assert fast["if"] == LANES
     assert fast["runs-on"] == "ubuntu-latest"
     # Roleplay frame B1 (TASK-33910.2): owner decision 2026-10-09, "Raise
     # timeout to 35 (Rec.)" -- 30 -> 35 to fit B1's mounted Roleplay suites in
-    # the admission-sensitive step (worst case measured 28m20s).
+    # the admission-sensitive step (worst case measured 28m20s). TASK-34916
+    # split the two pytest invocations into two jobs instead of raising it
+    # again: over 90 PR runs the halves replay at max 20.8 and 20.1 min.
     assert fast["timeout-minutes"] == 35
     assert "strategy" not in fast
-    # TASK-32873: 5 steps -- the admission-sensitive suites run in a
-    # separate pytest invocation inside the same job (their
-    # keep_bootstrap_profile enrollment poisons sandboxed suites sharing
-    # a process).
-    assert len(fast["steps"]) == 5
+    # checkout, setup-python, install, one pytest step. TASK-32873 keeps the
+    # admission-sensitive suites in their own pytest invocation (their
+    # keep_bootstrap_profile enrollment poisons sandboxed suites sharing a
+    # process); TASK-34916 moved that invocation to its own job.
+    assert len(fast["steps"]) == 4
+    assert fast["steps"][-1]["name"] == test_step
+    assert "if" not in fast["steps"][-1]
 
     setup = next(
         step for step in fast["steps"] if step.get("uses") == "actions/setup-python@v5"
@@ -426,12 +520,58 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
     fast_targets = set(
         _pytest_targets(
             _named_step(
-                _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane"],
+                _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane-admission"],
                 "Run admission-sensitive suites",
             )["run"]
         )
     )
     assert not fast_targets & set(_pytest_targets(admission["run"]))
+
+
+def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
+    """TASK-34929: the Dreams tracking tests run, whole, on every pull request.
+
+    Its own job, so no existing lane moves toward its cap (6m50s on its first
+    run, 38588725796); not path-filtered, so a change outside Dreams (egress,
+    Scheduling, Notifications) that breaks the file is caught too.
+    """
+    workflow = _workflow("derived-artifacts.yml")
+    job = workflow["jobs"]["dreams-tracking"]
+
+    assert job["name"] == "Dreams tracking tests"
+    assert job["if"] == LANES
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["timeout-minutes"] == 20
+    assert "strategy" not in job
+    assert len(job["steps"]) == 4
+    setup = next(
+        step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5"
+    )
+    assert setup["with"]["python-version"] == "3.12"
+    install = _named_step(job, "Install fast-lane dependencies")["run"]
+    assert shlex.split(install) == shlex.split(
+        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+    )
+    step = _named_step(job, "Run the Dreams tracking tests")
+    assert "if" not in step
+    assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
+        "pytest",
+        DREAMS_TRACKING_TARGET,
+        "--timeout=180",
+        "--tb=short",
+    )
+    # It runs once: no other PR-lane step lists the file or one of its tests.
+    others = [
+        f"{key}: {candidate['name']}"
+        for key, other in workflow["jobs"].items()
+        if key != "dreams-tracking"
+        for candidate in other.get("steps", ())
+        if any(
+            target.split("::", 1)[0] == DREAMS_TRACKING_TARGET
+            for target in _pytest_targets(str(candidate.get("run", "")))
+        )
+    ]
+    assert others == []
 
 
 def test_fast_lane_target_set_is_exact_and_non_overlapping() -> None:
@@ -451,6 +591,14 @@ def test_fast_lane_target_set_is_exact_and_non_overlapping() -> None:
             assert other_path not in target_path.parents
 
 
+def test_admission_target_set_is_exact() -> None:
+    """Review of #3106, W1: the admission-sensitive step is pinned like the
+    sandboxed one -- every target, their order, and the 300 s test limit."""
+    _assert_admission_invocation(_workflow("derived-artifacts.yml"))
+    assert len(set(ADMISSION_TARGETS)) == len(ADMISSION_TARGETS)
+    assert set(NOTES_SYNC_REAL_STACK_TARGETS) <= set(ADMISSION_TARGETS)
+
+
 def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> None:
     """Keep the "no silent winner" and no-hold pins on every pull request.
 
@@ -460,9 +608,9 @@ def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> Non
     negative controls or the re-save wait and merge green.
     """
     workflow = _workflow("derived-artifacts.yml")
-    fast = workflow["jobs"]["pr-fast-lane"]
+    admission = workflow["jobs"]["pr-fast-lane-admission"]
     targets = _pytest_targets(
-        _named_step(fast, "Run admission-sensitive suites")["run"]
+        _named_step(admission, "Run admission-sensitive suites")["run"]
     )
 
     missing = [name for name in NOTES_SYNC_REAL_STACK_TARGETS if name not in targets]
@@ -522,6 +670,12 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
     ("job_name", "step_name"),
     [
         ("pr-fast-lane", None),
+        ("pr-fast-lane-admission", None),
+        ("pr-fast-lane-admission", "Run admission-sensitive suites"),
+        ("derived-artifacts", "Require successful PR fast lane (admission-sensitive)"),
+        ("dreams-tracking", None),
+        ("dreams-tracking", "Run the Dreams tracking tests"),
+        ("derived-artifacts", "Require successful Dreams tracking tests"),
         ("console-p0-gate", None),
         ("console-p0-gate", "Run the admission-sensitive Console P0 regression tests"),
         ("derived-artifacts", None),
@@ -557,18 +711,37 @@ def test_required_aggregation_contract_rejects_continue_on_error(
         "--deselect=Tests/test_smoke.py",
     ],
 )
-def test_fast_lane_contract_rejects_selection_suppressing_flags(flag: str) -> None:
+@pytest.mark.parametrize("which", list(EXACT_STEPS))
+def test_fast_lane_contract_rejects_selection_suppressing_flags(flag: str, which: str) -> None:
     """Reject pytest flags that can turn the exact lane into a subset.
 
     Args:
         flag: Selection-suppressing argument appended to the pytest command.
+        which: The exact-pinned step to mutate.
     """
+    job, name, _, _ = EXACT_STEPS[which]
     mutated = copy.deepcopy(_workflow("derived-artifacts.yml"))
-    run_step = _named_step(mutated["jobs"]["pr-fast-lane"], "Run fast PR contract")
+    run_step = _named_step(mutated["jobs"][job], name)
     run_step["run"] += f" {flag}"
 
     with pytest.raises(AssertionError):
-        _assert_fast_lane_invocation(mutated)
+        _assert_exact_step(mutated, which)
+
+
+@pytest.mark.parametrize("which", list(EXACT_STEPS))
+def test_fast_lane_contract_rejects_a_shorter_test_limit(which: str) -> None:
+    """Review of #3106, W1: `--timeout=300` -> `--timeout=30` must fail too.
+
+    Args:
+        which: The exact-pinned step to mutate.
+    """
+    job, name, _, limit = EXACT_STEPS[which]
+    mutated = copy.deepcopy(_workflow("derived-artifacts.yml"))
+    run_step = _named_step(mutated["jobs"][job], name)
+    run_step["run"] = run_step["run"].replace(f"--timeout={limit}", f"--timeout={limit // 10}")
+
+    with pytest.raises(AssertionError):
+        _assert_exact_step(mutated, which)
 
 
 def test_focused_guards_keep_dev_pr_and_dev_main_push_coverage() -> None:
@@ -616,18 +789,21 @@ def test_bundle_and_backlog_checks_run_on_push_events() -> None:
     assert not (PROJECT_ROOT / ".github/workflows/backlog-guard.yml").exists()
 
 
+@pytest.mark.parametrize("which", list(EXACT_STEPS))
 @pytest.mark.parametrize("comment_only", [False, True])
-def test_exact_targets_and_invocation_reject_missing_executable_target(comment_only):
+def test_exact_targets_and_invocation_reject_missing_executable_target(comment_only, which):
+    job, name, targets, _ = EXACT_STEPS[which]
     workflow = copy.deepcopy(_workflow("derived-artifacts.yml"))
-    step = _named_step(workflow["jobs"]["pr-fast-lane"], "Run fast PR contract")
-    target = FAST_LANE_TARGETS[-1]
-    step["run"] = step["run"].replace(target + " \\\n", "")
-    assert target not in step["run"]
-    if comment_only:
-        step["run"] += "\n# " + target + "\n"
-    assert target not in _pytest_targets(step["run"])
+    step = _named_step(workflow["jobs"][job], name)
+    # The last target, and (review of #3106, W1) one from the middle.
+    for target in (targets[-1], targets[len(targets) // 2]):
+        step["run"] = step["run"].replace(target + " \\\n", "")
+        assert target not in step["run"]
+        if comment_only:
+            step["run"] += "\n# " + target + "\n"
+        assert target not in _pytest_targets(step["run"])
     with pytest.raises(AssertionError):
-        _assert_fast_lane_invocation(workflow)
+        _assert_exact_step(workflow, which)
 
 
 def test_target_parser_preserves_quoted_hash_and_continuation():

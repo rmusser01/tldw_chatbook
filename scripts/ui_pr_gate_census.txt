@@ -55,13 +55,15 @@ Tests/UI/test_console_session_tab_close.py
 #     Inspector; Ctrl+Q quits after a screen handler error under a modal.
 #   TASK-33625.1 / 33622.2: Stop is whole at 80-235 columns and every route
 #     stops the run; Enter on a focused composer button runs that button.
-# Twelve entries, a multiple of the four shards, inserted here rather than
-# appended: no later file changes shard, and the tail does not conflict. At
-# insertion the 2nd/6th/10th entries (the heaviest: about 210 s together under
-# load) land in shard 2, the lightest (about 6 min in CI). All are
-# private-profile or static, so none poisons its shard. Pinned by
+# Twelve entries, a multiple of the shard count (four when they went in, six
+# since TASK-34917), inserted here rather than appended: no later file changes
+# shard, and the tail does not conflict. At insertion the 2nd/6th/10th entries
+# (the heaviest: about 210 s together under load) landed in shard 2 of four,
+# the lightest (about 6 min in CI); with six shards they land in shards 2, 6
+# and 4, and every shard holds two of the twelve. All are private-profile or
+# static, so none poisons its shard. Pinned by
 # Tests/CI/test_console_p0_regression_gate.py. In CI (PR #3062, run
-# 38064483856) the block took 49/160/46/51 s in shards 1-4. Shard 3's 18m25s
+# 38064483856, four shards) the block took 49/160/46/51 s in shards 1-4. Shard 3's 18m25s
 # against 20 (15m43s on re-run) was the rest of that shard on a slow runner
 # plus an unrelated flake's timeout, not these 46 s; if a shard nears its
 # cap, add a shard (TASK-34353) rather than drop a P0 entry. The rest of the

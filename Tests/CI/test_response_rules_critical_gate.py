@@ -237,7 +237,9 @@ def _validate_ui_phase_membership(census_path):
     from scripts.check_ui_pr_gate_census import read_census, shard
 
     entries = read_census(census_path)
-    shards = [shard(entries, index, 4) for index in range(4)]
+    # The UI lane's own shard count (TASK-34917 took it from four to six).
+    total = len(yaml.safe_load(WORKFLOW.read_text())["jobs"]["ui-fast-lane"]["strategy"]["matrix"]["shard"])
+    shards = [shard(entries, index, total) for index in range(total)]
     for target in UI_PHASE_SELECTION:
         assert sum(part.count(target) for part in shards) == 1
 

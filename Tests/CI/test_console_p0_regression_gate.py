@@ -206,7 +206,7 @@ def _lanes() -> dict[str, tuple[str, ...]]:
         "UI Fast Lane census": tuple(census.read_census(census.CENSUS_PATH)),
         "PR Fast Lane (sandboxed)": _step_targets("pr-fast-lane", "Run fast PR contract"),
         "PR Fast Lane (admission-sensitive)": _step_targets(
-            "pr-fast-lane", "Run admission-sensitive suites"
+            "pr-fast-lane-admission", "Run admission-sensitive suites"
         ),
         "Console P0 gate (sandboxed)": _step_targets(
             "console-p0-gate", "Run the sandboxed Console P0 regression tests"
@@ -219,6 +219,9 @@ def _lanes() -> dict[str, tuple[str, ...]]:
         ),
         "Dreams contracts (admission-sensitive)": _step_targets(
             "console-p0-gate", "Run Dreams admission-sensitive contracts"
+        ),
+        "Dreams tracking (sandboxed)": _step_targets(
+            "dreams-tracking", "Run the Dreams tracking tests"
         ),
     }
 
