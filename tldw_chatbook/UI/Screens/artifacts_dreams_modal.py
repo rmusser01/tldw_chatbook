@@ -136,12 +136,12 @@ _UNWATCHED_NOTICE = "Stopped watching this question."
 _TRACK_CAP_NOTICE = (
     "Tracking budget is full: retire a tracked page before adding more."
 )
-# Watchlists cannot switch an existing source back on, so this must not
-# tell the user to "enable it" there (review of #2921, round 4, A2).
 _TRACK_DREAMS_OFF_NOTICE = (
     "Dreams is switched off, so nothing was tracked. Switch it on in "
     "Settings > Domain Defaults > Dreams to track stories."
 )
+# Watchlists cannot switch an existing source back on, so this must not
+# tell the user to "enable it" there (review of #2921, round 4, A2).
 _TRACK_SOURCE_DISABLED_NOTICE = (
     "This page already has a source in Watchlists that is switched off, "
     "and Dreams did not switch it off, so it is left alone. To track the "
