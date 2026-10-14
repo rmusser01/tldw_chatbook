@@ -5314,6 +5314,36 @@ async def test_a_page_that_still_resolves_privately_stays_held_and_is_never_fetc
 
 
 @pytest.mark.asyncio
+async def test_a_retry_that_changes_nothing_rewrites_no_record(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
+    """Review of #3101, N1. The retry runs on every cycle trigger, so a
+    page that is still private is asked about again each time; its record
+    -- held for the same reason, still settled "on" -- is left as it is,
+    not written twice with the same content on every retry."""
+    subs_db, service = subs_stack
+    owned = await _held_at(
+        dreams_db, service, scheduling_db, monkeypatch, "10.0.0.5", "private")
+    item_id = owned["tracked_item_id"]
+    before = dreams_db.get_tracked_item(item_id)["suspension"]
+    writes: list[int] = []
+    real = dreams_db.set_tracked_suspension
+
+    def spy(tracked_item_id, record, **kwargs):
+        writes.append(int(tracked_item_id))
+        return real(tracked_item_id, record, **kwargs)
+
+    monkeypatch.setattr(dreams_db, "set_tracked_suspension", spy)
+
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+
+    assert item_id not in writes, "an unchanged record is not rewritten"
+    assert dreams_db.get_tracked_item(item_id)["suspension"] == before
+    assert _is_active(subs_db, owned["subscription_id"]) == 0
+
+
+@pytest.mark.asyncio
 async def test_a_page_held_for_its_scheme_is_not_asked_about_daily(
         tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
     """A non-web scheme is a fact about the address, not a DNS answer: the

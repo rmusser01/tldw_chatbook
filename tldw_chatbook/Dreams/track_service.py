@@ -2244,6 +2244,10 @@ async def _resume_pass(
     # Wrappers whose restore failed part-way: the record written last is
     # the truth about them, and the stale row read at pass start is not.
     failed: set[int] = set()
+    # Wrappers whose record this pass has already rewritten (review of
+    # #3101, N1): only for the others is the row read at pass start still
+    # what is stored, so only they may skip an unchanged final write.
+    rewritten: set[int] = set()
     for item in pending:
         item_id = int(item["id"])
         subscription, reminders, rules = _owed(_suspension_record(item))
@@ -2276,8 +2280,14 @@ async def _resume_pass(
             # boot check -- skip as done. And what has been restored is no
             # longer owed, whatever happens to the rest: a reminder left
             # listed was re-armed by the next resume over a disable the
-            # user had made in between.
-            await write_unsettled(item_id, subscription, reminders, rules)
+            # user had made in between. A record settled "on" says nothing
+            # of the kind and owes only its held subscription (nothing is
+            # restored before that decision), so it is not rewritten here:
+            # a held page asked about again on every cycle trigger would
+            # otherwise be written twice each time (review of #3101, N1).
+            if settled_state(item.get("suspension")) != SETTLED_ON:
+                await write_unsettled(item_id, subscription, reminders, rules)
+                rewritten.add(item_id)
             if reminders and scheduling_db is not None:
                 await asyncio.to_thread(run_finite_local_worker,
                     _restore_reminders, scheduling_db, reminders)
@@ -2344,6 +2354,9 @@ async def _resume_pass(
             text = _record_text(
                 subscription=subscription, reminders=reminders, rules=rules,
                 held=held, settled=SETTLED_ON if only_held else None)
+        if (item_id not in rewritten and text is not None
+                and json.loads(text) == record):
+            continue  # still held for the same reason: nothing to write
         try:
             # ``only_live``: a watch retired since the pass began carries
             # its retirement record, which this pass must not rewrite
@@ -2581,16 +2594,21 @@ async def retry_unfinished_resume(
     address (a portal or VPN resolver answers every name that way); the
     retry is the same public-address check, so it can never switch on a
     page that still resolves privately. The startup check must not
-    look addresses up on every start (round 3, T19), so the cycle -- at
-    most once a day, and only while Dreams is on -- does it instead: when
-    any live watch's record still has work for a resume pass
+    look addresses up on every start (round 3, T19), so the cycle does it
+    instead, on every cycle run while Dreams is on -- the daily schedule, a
+    startup catch-up, and each run the user starts -- because it runs
+    before the cycle checks whether the day's collection is already taken:
+    when any live watch's record still has work for a resume pass
     (:func:`_resume_has_work`: unfinished, or held for a reason that may
     pass) it asks for one, through :func:`reconcile_tracking` so that it
     cannot run beside a switch the user makes at that moment.
 
-    One read when there is nothing to do. No scheduler reload is asked
-    for: a source this switches back on is picked up by the queue's own
-    periodic reload.
+    Cost: one read when there is nothing to do; otherwise one lookup per
+    held source on every retry, one after another and with no backoff. A
+    rider whose record would come out the same (still held, for the same
+    reason) is not rewritten (review of #3101, N1). No scheduler reload is
+    asked for: a source this switches back on is picked up by the queue's
+    own periodic reload.
 
     Returns:
         How many wrappers the pass worked on (0 when none was needed).
