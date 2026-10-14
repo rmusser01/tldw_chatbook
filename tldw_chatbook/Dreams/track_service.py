@@ -88,6 +88,7 @@ cancelled caller cannot cut it short, and overlapping requests coalesce
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -956,14 +957,30 @@ async def _unsettle_held(dreams_db: Any, riders: list[dict]) -> None:
     fails leaves a record the next pass finishes -- not a running source
     reported as held (review of #3101, round 2: S1 for the resume pass, and
     the re-track path). A write that fails here raises, and the source
-    stays off.
+    stays off; the riders already un-settled get their hold back first, so
+    every row still reads paused and a start does not look the name up
+    (round 3, T3).
     """
-    for rider in riders:
-        if _settled_hold_only(rider.get("suspension")):
-            await asyncio.to_thread(run_finite_local_worker,
-                partial(dreams_db.set_tracked_suspension, only_live=True),
-                int(rider["id"]),
-                _record_text(subscription=True, reminders=[], rules=[]))
+    async def write(rider: dict, text: str | None) -> None:
+        await asyncio.to_thread(run_finite_local_worker,
+            partial(dreams_db.set_tracked_suspension, only_live=True),
+            int(rider["id"]), text)
+
+    done: list[dict] = []
+    try:
+        for rider in riders:
+            if _settled_hold_only(rider.get("suspension")):
+                await write(rider, _record_text(
+                    subscription=True, reminders=[], rules=[]))
+                done.append(rider)
+    except Exception:
+        for rider in done:
+            # Best effort: the failure being raised is the one reported;
+            # a rider whose hold cannot be put back is only asked about at
+            # the next start.
+            with contextlib.suppress(Exception):
+                await write(rider, rider.get("suspension"))
+        raise
 
 
 async def _retry_held_source(
@@ -2306,6 +2323,9 @@ async def _resume_pass(
     # Wrappers whose restore failed part-way: the record written last is
     # the truth about them, and the stale row read at pass start is not.
     failed: set[int] = set()
+    # Subscriptions whose held riders could not be un-settled, so their
+    # source stayed off (review of #3101, round 3, T3).
+    unsettle_failed: set[int] = set()
 
     async def write_unsettled(
         item_id: int, subscription: bool, reminders: list[str], rules: list[int]
@@ -2323,9 +2343,13 @@ async def _resume_pass(
         # whose own step failed is included (round 3, T1): its skipped
         # write-ahead would have written exactly this, and the closing
         # loop below leaves its record as last written.
-        await _unsettle_held(dreams_db, [
-            rider for rider in items
-            if int(rider.get("subscription_id") or 0) == subscription_id])
+        try:
+            await _unsettle_held(dreams_db, [
+                rider for rider in items
+                if int(rider.get("subscription_id") or 0) == subscription_id])
+        except Exception:
+            unsettle_failed.add(subscription_id)
+            raise
 
     for item in pending:
         item_id = int(item["id"])
@@ -2386,8 +2410,11 @@ async def _resume_pass(
     for item in pending:
         subscription_id = int(item.get("subscription_id") or 0)
         item_id = int(item["id"])
+        # A failed un-settling is that subscription's decision too: its
+        # source stays off for this pass (round 3, T3).
         if (item_id not in left or not left[item_id][0]
                 or not subscription_id or subscription_id in outcomes
+                or subscription_id in unsettle_failed
                 or subs_service is None):
             continue
         try:
@@ -2403,6 +2430,12 @@ async def _resume_pass(
         item_id = int(item["id"])
         record = _suspension_record(item)
         if record is None:
+            continue
+        if (int(item.get("subscription_id") or 0) in unsettle_failed
+                and _settled_hold_only(item.get("suspension"))):
+            # The page passed but its source stayed off, because un-settling
+            # failed: the hold stands as recorded (round 3, T3), not as a
+            # bare debt the next start would look up.
             continue
         outcome = outcomes.get(int(item.get("subscription_id") or 0))
         if item_id in left:

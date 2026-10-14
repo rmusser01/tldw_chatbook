@@ -5487,6 +5487,54 @@ async def test_a_rider_whose_first_step_failed_is_un_settled_too(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("riders, failing_write", [(1, 1), (2, 2)],
+                         ids=["only-rider", "second-rider"])
+async def test_a_failed_un_settling_keeps_the_hold_while_the_source_is_off(
+        tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch,
+        riders, failing_write):
+    """Review of #3101, round 3, T3. The page passes, but un-settling a
+    held record fails, so the source stays off. Every rider then keeps its
+    hold as recorded -- its row still reads paused and a start does not
+    look the name up -- including a rider un-settled before the failure.
+    The closing write must not turn the hold into a bare unsettled debt."""
+    import json
+
+    subs_db, service = subs_stack
+    if riders == 1:
+        owned = [await _held_at(
+            dreams_db, service, scheduling_db, monkeypatch, "10.0.0.5",
+            "private")]
+    else:
+        owned = list(await _two_held_riders(
+            dreams_db, service, scheduling_db, monkeypatch))
+    ids = {o["tracked_item_id"] for o in owned}
+    _resolve_publicly(monkeypatch)
+    real = dreams_db.set_tracked_suspension
+    unsettling: list[int] = []
+
+    def nth_unsettling_fails(tracked_item_id, record, **kwargs):
+        if (int(tracked_item_id) in ids and record is not None
+                and "held" not in json.loads(record)):
+            unsettling.append(int(tracked_item_id))
+            if len(unsettling) == failing_write:
+                raise RuntimeError("disk full")
+        return real(tracked_item_id, record, **kwargs)
+
+    monkeypatch.setattr(dreams_db, "set_tracked_suspension", nth_unsettling_fails)
+
+    await retry_unfinished_resume(
+        service, dreams_db,
+        scheduling_db_getter=_sched_getter(scheduling_db), now=NOW)
+
+    assert len(unsettling) >= failing_write, "fixture: the n-th write failed"
+    assert _is_active(subs_db, owned[0]["subscription_id"]) == 0
+    for item_id in ids:
+        record = _record(dreams_db, item_id)
+        assert (record["held"], record["settled"]) == ("private", "on")
+    assert _boot_needs_switch(dreams_db, enabled=True) is False
+
+
+@pytest.mark.asyncio
 async def test_a_settled_record_that_owes_more_than_its_hold_is_written_ahead(
         tmp_path, dreams_db, settings, subs_stack, scheduling_db, monkeypatch):
     """Review of #3101, round 2, S2. Only a record that owes nothing but
