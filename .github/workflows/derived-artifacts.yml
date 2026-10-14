@@ -491,12 +491,54 @@ jobs:
             --timeout=300 \
             --tb=short
 
+  dreams-tracking:
+    # TASK-34929: Tests/Dreams/test_track_service.py (219 tests of the Dreams
+    # tracking and switch logic) ran in no pull-request lane; seven of its
+    # tests went red with the #2921 merge and stayed red unnoticed.
+    #
+    # Its own job, on every PR, not a step on an existing lane: serially it
+    # measured 6m35s and 5m42s locally (load average 10-18), and four
+    # Dreams-family files that already run in console-p0-gate take 1.3-1.7x
+    # their local time in CI, so ~8-11 min here -- more than the room left in any lane
+    # (the PR Fast Lane halves reach ~21 min of 35, console-p0-gate 18.7 of
+    # 20). Not path-filtered: the file imports Notifications, Scheduling and
+    # Utils/egress as well as Dreams and Subscriptions, and a skipped job
+    # fails the aggregate's `!= 'success'` verdict anyway.
+    #
+    # Sandboxed only (no bootstrap_profile node), so one invocation; same
+    # minimal dependency set and serial pytest as the other lanes.
+    # timeout-minutes: ~1 min setup + ~8-11 min of tests leaves ~8 min, and
+    # one hung test at --timeout=180 still ends ~5 min under the cap.
+    name: Dreams tracking tests
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Same line as pr-fast-lane, on purpose (see ui-fast-lane's note).
+      - name: Install fast-lane dependencies
+        run: python -m pip install -e . pytest pytest-asyncio pytest-timeout packaging
+
+      - name: Run the Dreams tracking tests
+        run: |
+          pytest \
+            Tests/Dreams/test_track_service.py \
+            --timeout=180 \
+            --tb=short
+
   derived-artifacts:
     # This job's name is the string the owner enters under branch protection ->
     # required status checks. Renaming it silently detaches the gate, so keep it
     # stable.
     name: Derived artifacts reproduce from their sources
-    needs: [pr-fast-lane, pr-fast-lane-admission, ui-fast-lane, console-p0-gate]
+    needs: [pr-fast-lane, pr-fast-lane-admission, ui-fast-lane, console-p0-gate, dreams-tracking]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -548,6 +590,14 @@ jobs:
         run: |
           echo "Console P0 regression gate result: ${{ needs.console-p0-gate.result }}"
           echo "::error::The required Console P0 regression gate did not succeed."
+          exit 1
+
+      # TASK-34929: same shape again, for the Dreams tracking tests.
+      - name: Require successful Dreams tracking tests
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.dreams-tracking.result != 'success' }}
+        run: |
+          echo "Dreams tracking tests result: ${{ needs.dreams-tracking.result }}"
+          echo "::error::The required Dreams tracking tests did not succeed."
           exit 1
 
       # Every step below is `if: '!cancelled()'` rather than the default

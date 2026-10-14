@@ -3312,7 +3312,13 @@ async def test_two_watches_on_one_source_both_record_its_silenced_rule(
 
 
 class _ParkedSources:
-    """Wraps a watchlists service; ``get_source`` waits until released."""
+    """Wraps a watchlists service; ``get_source`` waits until released.
+
+    The tests that use it await its events and their reconcile tasks with no
+    time bound of their own (TASK-34929): a fixed 5 s / 10 s ``wait_for`` ran
+    five times slower under load and could fail a correct pass. A real hang
+    is still bounded, by pytest-timeout, which also dumps every stack.
+    """
 
     def __init__(self, service):
         self._service = service
@@ -3367,12 +3373,12 @@ async def test_cancelling_a_reconcile_caller_does_not_cut_the_switch_short(
 
     caller = asyncio.create_task(
         track_service.reconcile_tracking(parked, dreams_db))
-    await asyncio.wait_for(parked.parked.wait(), timeout=5)
+    await parked.parked.wait()
     caller.cancel()  # e.g. another settings action cancelled the worker
     with pytest.raises(asyncio.CancelledError):
         await caller
     parked.release.set()
-    await asyncio.wait_for(track_service._RECONCILE_TASK, timeout=5)
+    await track_service._RECONCILE_TASK
 
     assert int(subs_db.get_subscription(
         owned["subscription_id"])["is_active"]) == 0, (
@@ -3399,13 +3405,13 @@ async def test_overlapping_reconciles_settle_on_the_latest_switch(
     settings["enabled"] = False
     first = asyncio.create_task(
         track_service.reconcile_tracking(parked, dreams_db))
-    await asyncio.wait_for(parked.parked.wait(), timeout=5)
+    await parked.parked.wait()
     settings["enabled"] = True
     second = asyncio.create_task(
         track_service.reconcile_tracking(parked, dreams_db, now=NOW))
     await asyncio.sleep(0)
     parked.release.set()
-    await asyncio.wait_for(asyncio.gather(first, second), timeout=10)
+    await asyncio.gather(first, second)
 
     assert int(subs_db.get_subscription(
         owned["subscription_id"])["is_active"]) == 1
@@ -4706,13 +4712,13 @@ async def test_overlapping_reconciles_report_settled_once_at_the_end(
     settings["enabled"] = False
     first = asyncio.create_task(track_service.reconcile_tracking(
         parked, dreams_db, on_settled=on_settled))
-    await asyncio.wait_for(parked.parked.wait(), timeout=5)
+    await parked.parked.wait()
     settings["enabled"] = True
     second = asyncio.create_task(track_service.reconcile_tracking(
         parked, dreams_db, now=NOW, on_settled=on_settled))
     await asyncio.sleep(0)
     parked.release.set()
-    await asyncio.wait_for(asyncio.gather(first, second), timeout=10)
+    await asyncio.gather(first, second)
 
     assert states_at_settle == [1], (
         "one reload, after the last pass, seeing the final state"

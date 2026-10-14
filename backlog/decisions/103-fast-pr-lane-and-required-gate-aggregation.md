@@ -212,3 +212,12 @@ the census and its order are unchanged. Four shards measured shard 3 at max 19.7
 min against the 20-min cap; a replay of 26 PR runs' shard logs put the heaviest
 shard at 17.4 min with five and 14.0 with six. Two more runners per PR: nine
 concurrent test runners, then the aggregate.
+
+2026-10-14 (TASK-34929): `Tests/Dreams/test_track_service.py`, in no pull-request
+lane before, runs whole on every pull request in its own job, `dreams-tracking`
+("Dreams tracking tests", 20-min cap, the PR Fast Lane's plugin set); the required
+check `needs` it and fails when it is not `success`. It is not path-filtered: the
+file also imports Notifications, Scheduling and the egress guard, and a skipped
+job would fail the aggregate's verdict. It costs ~8-11 min of CI, which fits in no
+existing lane's headroom. One more runner per PR: ten concurrent test runners,
+then the aggregate.

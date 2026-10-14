@@ -137,6 +137,8 @@ DREAMS_BOUNDARY_TARGETS = (
     "Tests/Watchlists/test_runtime_name_literals.py",
     "Tests/Notifications/test_notification_toast_markup.py",
 )
+#: TASK-34929: the Dreams tracking tests, gated whole in their own job.
+DREAMS_TRACKING_TARGET = "Tests/Dreams/test_track_service.py"
 DREAMS_ADMISSION_TARGETS = (
     "Tests/Dreams/test_boot_dispatch_admission.py",
     "Tests/Library/test_capture_url_provenance.py::test_actual_capture_first_and_retry_apply_egress_at_every_hop",
@@ -210,11 +212,13 @@ def _assert_required_aggregation(workflow: dict) -> None:
     # required check green.
     # TASK-33621.27: the Console P0 regression gate is the third lane.
     # TASK-34916: the PR Fast Lane's admission-sensitive half is its own job.
+    # TASK-34929: the Dreams tracking tests are the fifth lane.
     assert required.get("needs") == [
         "pr-fast-lane",
         "pr-fast-lane-admission",
         "ui-fast-lane",
         "console-p0-gate",
+        "dreams-tracking",
     ]
     assert required["if"] == "${{ always() }}"
     assert not required.get("continue-on-error", False)
@@ -227,6 +231,7 @@ def _assert_required_aggregation(workflow: dict) -> None:
     for lane, step_name in (
         ("pr-fast-lane", "Require successful PR fast lane"),
         ("pr-fast-lane-admission", "Require successful PR fast lane (admission-sensitive)"),
+        ("dreams-tracking", "Require successful Dreams tracking tests"),
     ):
         verdict = _named_step(required, step_name)
         assert not verdict.get("continue-on-error", False)
@@ -235,9 +240,10 @@ def _assert_required_aggregation(workflow: dict) -> None:
         )
         assert f"needs.{lane}.result" in verdict["run"]
         assert "exit 1" in verdict["run"]
-    admission = workflow["jobs"]["pr-fast-lane-admission"]
-    assert not admission.get("continue-on-error", False)
-    assert all(not step.get("continue-on-error", False) for step in admission["steps"])
+    for job_name in ("pr-fast-lane-admission", "dreams-tracking"):
+        job = workflow["jobs"][job_name]
+        assert not job.get("continue-on-error", False)
+        assert all(not step.get("continue-on-error", False) for step in job["steps"])
 
     ui_verdict = _named_step(required, "Require successful UI fast lane")
     assert not ui_verdict.get("continue-on-error", False)
@@ -470,6 +476,52 @@ def test_console_p0_gate_is_one_serial_minimal_python_312_job() -> None:
     assert not fast_targets & set(_pytest_targets(admission["run"]))
 
 
+def test_dreams_tracking_lane_is_one_serial_minimal_python_312_job() -> None:
+    """TASK-34929: the Dreams tracking tests run, whole, on every pull request.
+
+    Its own job because ~8-11 min of CI fits in no existing lane's headroom;
+    not path-filtered, so a change outside Dreams (egress, Scheduling,
+    Notifications) that breaks the file is caught too.
+    """
+    workflow = _workflow("derived-artifacts.yml")
+    job = workflow["jobs"]["dreams-tracking"]
+
+    assert job["name"] == "Dreams tracking tests"
+    assert job["if"] == LANES
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["timeout-minutes"] == 20
+    assert "strategy" not in job
+    assert len(job["steps"]) == 4
+    setup = next(
+        step for step in job["steps"] if step.get("uses") == "actions/setup-python@v5"
+    )
+    assert setup["with"]["python-version"] == "3.12"
+    install = _named_step(job, "Install fast-lane dependencies")["run"]
+    assert shlex.split(install) == shlex.split(
+        _named_step(workflow["jobs"]["pr-fast-lane"], "Install fast-lane dependencies")["run"]
+    )
+    step = _named_step(job, "Run the Dreams tracking tests")
+    assert "if" not in step
+    assert tuple(shlex.split(step["run"].replace("\\\n", " "), comments=True)) == (
+        "pytest",
+        DREAMS_TRACKING_TARGET,
+        "--timeout=180",
+        "--tb=short",
+    )
+    # It runs once: no other PR-lane step lists the file or one of its tests.
+    others = [
+        f"{key}: {candidate['name']}"
+        for key, other in workflow["jobs"].items()
+        if key != "dreams-tracking"
+        for candidate in other.get("steps", ())
+        if any(
+            target.split("::", 1)[0] == DREAMS_TRACKING_TARGET
+            for target in _pytest_targets(str(candidate.get("run", "")))
+        )
+    ]
+    assert others == []
+
+
 def test_fast_lane_target_set_is_exact_and_non_overlapping() -> None:
     """Require the approved exact pytest targets without nested selections."""
     workflow = _workflow("derived-artifacts.yml")
@@ -561,6 +613,9 @@ def test_required_aggregation_contract_rejects_partial_failure_check() -> None:
         ("pr-fast-lane-admission", None),
         ("pr-fast-lane-admission", "Run admission-sensitive suites"),
         ("derived-artifacts", "Require successful PR fast lane (admission-sensitive)"),
+        ("dreams-tracking", None),
+        ("dreams-tracking", "Run the Dreams tracking tests"),
+        ("derived-artifacts", "Require successful Dreams tracking tests"),
         ("console-p0-gate", None),
         ("console-p0-gate", "Run the admission-sensitive Console P0 regression tests"),
         ("derived-artifacts", None),

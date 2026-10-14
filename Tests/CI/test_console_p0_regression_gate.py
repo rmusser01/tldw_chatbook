@@ -220,6 +220,9 @@ def _lanes() -> dict[str, tuple[str, ...]]:
         "Dreams contracts (admission-sensitive)": _step_targets(
             "console-p0-gate", "Run Dreams admission-sensitive contracts"
         ),
+        "Dreams tracking (sandboxed)": _step_targets(
+            "dreams-tracking", "Run the Dreams tracking tests"
+        ),
     }
 
 

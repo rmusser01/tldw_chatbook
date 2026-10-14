@@ -61,6 +61,7 @@ VERDICTS = {
     "pr-fast-lane-admission": "Require successful PR fast lane (admission-sensitive)",
     "ui-fast-lane": "Require successful UI fast lane",
     "console-p0-gate": "Require successful Console P0 regression gate",
+    "dreams-tracking": "Require successful Dreams tracking tests",
 }
 
 
@@ -97,6 +98,8 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
         # TASK-33621.27: the Console review's P0 regression tests, moved out
         # of pr-fast-lane when they took it to 33m41s of its 35-min cap.
         "console-p0-gate",
+        # TASK-34929: Tests/Dreams/test_track_service.py, in no PR lane before.
+        "dreams-tracking",
         "derived-artifacts",
         "queue-tick",
     ]
@@ -372,7 +375,12 @@ def _pytest_step_targets() -> list[tuple[str, tuple[str, ...]]]:
     import shlex
 
     steps = []
-    for job_name in ("pr-fast-lane", "pr-fast-lane-admission", "console-p0-gate"):
+    for job_name in (
+        "pr-fast-lane",
+        "pr-fast-lane-admission",
+        "console-p0-gate",
+        "dreams-tracking",
+    ):
         for step in _workflow()["jobs"][job_name]["steps"]:
             run = step.get("run", "")
             if not run.lstrip().startswith("pytest"):
@@ -411,6 +419,7 @@ def test_every_pr_lane_pytest_step_has_disjoint_targets():
         "console-p0-gate: Run the admission-sensitive Console P0 regression tests",
         "console-p0-gate: Run Dreams and Guardian boundary contracts",
         "console-p0-gate: Run Dreams admission-sensitive contracts",
+        "dreams-tracking: Run the Dreams tracking tests",
     )
     overlapping = _census_checker().overlapping_targets
     for name, targets in steps:
